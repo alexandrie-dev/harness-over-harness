@@ -10,3 +10,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hoh-brand = { path = "../hoh-brand" }
+hoh-home-paths = { path = "../hoh-home-paths" }
+hoh-util-crypto = { path = "../hoh-util-crypto" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
