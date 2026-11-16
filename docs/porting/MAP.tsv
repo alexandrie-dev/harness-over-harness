@@ -95,10 +95,10 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/terminal/terminal	@deepseek-ai/dsh-terminal	hoh-terminal	694	634	todo	
 1	port	packages/terminal/terminal-bash	@deepseek-ai/dsh-terminal-bash	hoh-terminal-bash	1369	3391	todo	
 1	infra	packages/test-support/agent-loop-testkit	@deepseek-ai/dsh-agent-loop-testkit	hoh-agent-loop-testkit	211	174	todo	нужное переносится в hoh-conformance и тестовые помощники; зависит от: dsh-tool-executor-ptc=redesign
-1	infra	packages/test-support/llm-mock-server	@deepseek-ai/dsh-llm-mock-server	hoh-conformance	1018	489	todo	мок сервера модели: внутрь hoh-conformance
-1	infra	packages/test-support/llm-replay	@deepseek-ai/dsh-llm-replay	hoh-conformance	1212	2528	todo	воспроизведение потока модели: внутрь hoh-conformance
+1	infra	packages/test-support/llm-mock-server	@deepseek-ai/dsh-llm-mock-server	hoh-llm-mock-server	1018	489	todo	HTTP-сервер сбоев модели для тестов apps/cli; в прогоне сценариев не участвует
+1	infra	packages/test-support/llm-replay	@deepseek-ai/dsh-llm-replay	hoh-llm-replay	1212	2528	todo	плагин: подменяет модель записанным потоком StreamChunk внутри процесса; подключается к hoh только в сборке для прогона сценариев
 1	infra	packages/test-support/loader-smoke	@deepseek-ai/dsh-loader-smoke	hoh-loader-smoke	375	742	todo	нужное переносится в hoh-conformance и тестовые помощники
-1	infra	packages/test-support/session-snapshot	@deepseek-ai/dsh-session-snapshot	hoh-conformance	4819	6449	todo	прогон сценариев: внутрь hoh-conformance
+1	infra	packages/test-support/session-snapshot	@deepseek-ai/dsh-session-snapshot	hoh-conformance	4819	6449	todo	прогон и сверка сценариев: внутрь hoh-conformance (описание в crates/hoh-conformance/README.md)
 1	infra	packages/test-support/tool-testkit	@deepseek-ai/dsh-tool-testkit	hoh-tool-testkit	92	42	todo	нужное переносится в hoh-conformance и тестовые помощники
 1	port	packages/todo/tool-todo	@deepseek-ai/dsh-tool-todo	hoh-tool-todo	271	683	todo	
 1	port	packages/util/atomic-write	@deepseek-ai/dsh-atomic-write	hoh-atomic-write	293	513	writing:b1-c1	

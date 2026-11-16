@@ -65,6 +65,23 @@ dsh на коммите `39163dd30f703a79079e2d2446545cff3c453738`, cordis на 
 Kimi: основатель ставит сам и сообщит; подключается писателем со следующей партии. Проверено: Codex в песочнице `workspace-write`
 собирает офлайн (`CARGO_NET_OFFLINE=true`, свой `CARGO_TARGET_DIR` через `--add-dir`). В `crates/*` каждый каталог обязан иметь `Cargo.toml`.
 
+Выводы из описания прогона сценариев (`crates/hoh-conformance/README.md`), решения ведущего 2026-11-16:
+- Модель подменяется внутри процесса плагином `llm-replay` на слое `StreamChunk`; инструменты выполняются по-настоящему.
+  Значит `hoh-llm-replay` — отдельный плагин-crate, который входит в `hoh` только в сборке для прогона (feature `conformance`).
+- Побайтно сверяются: 81 системный промпт и 77 наборов схем инструментов (файлы-сателлиты), тексты результатов и ошибок
+  инструментов, события журнала V4, пакетирование дельт, stdout/stderr headless, кадры SDK и ACP. Правило раздела 5 PORTING.md подтверждено.
+- Патчи сценариев адресуют строки по `id` и именам `@deepseek-ai/dsh-*`: `hoh-loader` сохраняет те же `id` и понимает имена dsh
+  через таблицу соответствия; прогонщик патчи не переписывает.
+- `!!js` в патчах — не только условия `disabled`, но и значения `config` (`process.env.X ?? …`, `dshHomePath('sessions')` 123 раза,
+  `process.cwd()`, `ctx.headlessStartup.task`, `Number(...)`, `JSON.parse(...)`, `new URL(...).pathname`): загрузчику нужен
+  вычислитель закрытого набора выражений. Сверить с тем, что предложит описание ядра.
+- В 134 сценариях из 242 подключены локальные подставки на JS: 85 файлов, 3509 строк, 58 из них не длиннее 50 строк.
+  Переписываются на Rust как плагины-подставки внутри `hoh-conformance` (модуль `fixtures`), подключаются тем же feature.
+  Подставки для экспериментальных пакетов (`cua-*`, `claude-code-mods`) не переписываются: сценарий получает причину.
+- Часть подготовок рабочей папки копирует файлы из клона dsh: прогонщику нужен путь к образцу (`/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness`).
+- Не разобрано исполнителем и остаётся писателю прогонщика: миграции V0–V3 → V4 и строгая схема V4 (`packages/session/*`),
+  сценарные проверки из тела `headless.snapshot.ts`/`sdk.snapshot.ts` (список в разделе 7, п. 9 README), телеметрия в ACP-прогонах.
+
 Осталось на этапе 0: принять `docs/kernel.md` и описание прогона сценариев, дополнить `DEPS.md` библиотеками этапа 1,
 затем ядро, макросы, загрузчик, `hoh-conformance`, `scripts/verify.sh`. Замены сторонних библиотек образца, требующие
 решения на этапе 1: `sharp` (libvips, LGPL — не берём, нужен crate `image`), `node-pty` и `@xterm/headless` (вид экрана
@@ -243,7 +260,7 @@ Kimi: основатель ставит сам и сообщит; подключ
 | Разбор кода ближайших аналогов плагина задачи (Harness², Qwen Code `/learn`, Self-Harness, SkillLearnBench) | a6b7ca12082cc89b3 | done 2026-11-16: отчёт на месте (721 строка), шесть пунктов чтения и предложения a–f есть; ведущий прочитал «Главное», раздел 1.1–1.6 и раздел 8–9 целиком, разделы 2–7 — справочник | `research/task-plugin-design-input.md` |
 | Rust-инструменты для настольного приложения, связь приложения с движком | a101dbc16a0945c87 | done 2026-11-16: отчёт на месте (729 строк), пять пунктов задания есть; ведущий прочитал разделы 0–2, 4–6, 7.4, 8–9, раздел 3 — справочник | `research/desktop-ui-rust.md` |
 | Этап 0: описание ядра (`hoh-kernel`, `hoh-kernel-macros`, `hoh-loader`) и первый список разрешённых библиотек | a3d05523ab6819e72 | running с 2026-11-16; ждать родное уведомление о завершении; проверить по девяти пунктам задания (API, правила с источниками, автомат состояний, загрузчик и замена `!!js`, три примера, таблица TS→Rust, план тестов, открытые вопросы) | `docs/kernel.md`, `docs/porting/DEPS.md` |
-| Этап 0: как dsh воспроизводит и сверяет записанные сценарии; таблица сценариев (Sonnet) | ad08a6b6b1c9cd873 | running с 2026-11-16; ждать родное уведомление; проверить по пунктам a–g задания и числу строк таблицы (192 + 41 + 9) | `crates/hoh-conformance/README.md`, `conformance/EXPECTED.tsv` |
+| Этап 0: как dsh воспроизводит и сверяет записанные сценарии; таблица сценариев (Sonnet) | ad08a6b6b1c9cd873 | done 2026-11-16: README 650 строк, пункты a–g есть; таблица 242 строки (192 + 41 + 9), все `todo`; ведущий прочитал разделы 1 и 6–8, разделы 2–5 — справочник для писателя прогонщика | `crates/hoh-conformance/README.md`, `conformance/EXPECTED.tsv` |
 | Партия 1, писатель c1 (Codex, high): `hoh-error`, `hoh-brand`, `hoh-deque`, `hoh-chunked-list`, `hoh-util-crypto`, `hoh-home-paths`, `hoh-atomic-write`, `hoh-anonymous-user-id` | фоновая задача `b1hpec9c2` | running с 2026-11-16; ждать родное уведомление; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c1.report.md`, ID сессии Codex в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c1.stderr` (для `codex exec resume`) | задание `plans/briefs/batch1-c1.md`; тесты и clippy чисто, `PORT_NOTES.md` |
 | Партия 1, писатель c2 (Codex, high): `hoh-fs-patch`, `hoh-timeout`, `hoh-output-retention` | фоновая задача `b5m2gp40q` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c2.report.md` | задание `plans/briefs/batch1-c2.md` |
 | Партия 1, писатель c3 (Codex, high): `hoh-util-code-language`, `hoh-util-workspace-path` | фоновая задача `bqlf4rxaa` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c3.report.md` | задание `plans/briefs/batch1-c3.md` |
