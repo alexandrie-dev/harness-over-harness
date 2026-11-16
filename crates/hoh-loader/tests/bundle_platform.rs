@@ -74,3 +74,29 @@ fn admits_wsl_independently_of_ordinary_linux_and_native_windows() {
     assert!(load("linux", list(&["linux"]), true).skipped.is_empty());
     assert_eq!(load("linux", list(&["win32"]), true).skipped.len(), 1);
 }
+
+#[test]
+fn non_string_metadata_is_rejected_at_the_bundle_deserialization_boundary() {
+    for platforms in [
+        serde_json::json!(null),
+        serde_json::json!(true),
+        serde_json::json!("darwin"),
+        serde_json::json!([1]),
+        serde_json::json!(["darwin", false]),
+    ] {
+        let error = serde_json::from_value::<Bundle>(
+            serde_json::json!({"name":"b","dir":null,"platforms":platforms,"files":[]}),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "dsh.bundle.platforms must be a nonempty list of Node platform names or wsl"
+        );
+    }
+    assert!(
+        serde_json::from_value::<Bundle>(serde_json::json!({"name":"b","dir":null,"files":[]}))
+            .unwrap()
+            .platforms
+            .is_none()
+    );
+}

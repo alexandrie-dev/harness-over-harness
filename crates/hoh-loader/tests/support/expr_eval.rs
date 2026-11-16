@@ -49,7 +49,9 @@ fn values_use_javascript_operands_truthiness_and_service_views() {
             "process.cwd() + '/skills'",
             Some(json!("/test/work/skills")),
         ),
-        ("1 + true + null", Some(json!("1truenull"))),
+        ("1 + 2 + 3", Some(json!(6))),
+        ("1 + 2 + 'x'", Some(json!("3x"))),
+        ("'x' + true + null", Some(json!("xtruenull"))),
         (
             "dshHomePath('office-kit','outputs')",
             Some(json!("/test/home/office-kit/outputs")),
@@ -101,6 +103,9 @@ fn evaluation_errors_are_explicit() {
         "undefined + 'x'",
         "Number('no')",
         "Number(null)",
+        "1 + true + null",
+        "null + 1",
+        "true + false",
         "JSON.parse('invalid')",
         "process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('absent/package.json'))",
         "decodeURIComponent(new URL('./x', 'file:///bad%XY/config').pathname)",
@@ -240,4 +245,111 @@ fn json_parse_uses_javascript_numbers_and_optional_chaining_keeps_null_distinct(
             "{source}"
         );
     }
+}
+
+#[test]
+fn json_parse_preserves_js_key_order_depth_and_error_message() {
+    let source = r#"JSON.parse('{"b":0,"2":0,"1":0}')"#;
+    let value = evaluate(
+        &Expr::parse(source).unwrap(),
+        &env(),
+        Path::new("/base"),
+        &|_| None,
+        &|_| None,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["1", "2", "b"]
+    );
+    let json = format!("{}0{}", "[".repeat(129), "]".repeat(129));
+    let source = format!("JSON.parse('{json}')");
+    let value = evaluate(
+        &Expr::parse(&source).unwrap(),
+        &env(),
+        Path::new("/base"),
+        &|_| None,
+        &|_| None,
+    )
+    .unwrap()
+    .unwrap();
+    let mut inner = &value;
+    for _ in 0..129 {
+        inner = &inner[0];
+    }
+    assert_eq!(inner, &json!(0));
+    let error = evaluate(
+        &Expr::parse("JSON.parse('bad')").unwrap(),
+        &env(),
+        Path::new("/base"),
+        &|_| None,
+        &|_| None,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.message,
+        hoh_util_values::js_json_parse("bad")
+            .unwrap_err()
+            .to_string()
+    );
+}
+#[test]
+fn includes_evaluates_all_elements_before_the_argument() {
+    let seen = std::cell::RefCell::new(Vec::new());
+    let source = "[ctx.get('first'), ctx.get('second')].includes(ctx.get('needle'))";
+    let result = evaluate(
+        &Expr::parse(source).unwrap(),
+        &env(),
+        Path::new("/base"),
+        &|name| {
+            seen.borrow_mut().push(name.to_owned());
+            Some(json!(1))
+        },
+        &|_| None,
+    )
+    .unwrap();
+    assert_eq!(result, Some(json!(true)));
+    assert_eq!(*seen.borrow(), ["first", "second", "needle"]);
+    let error = evaluate(
+        &Expr::parse("[ctx.element.x].includes(ctx.argument.x)").unwrap(),
+        &env(),
+        Path::new("/base"),
+        &|_| None,
+        &|_| None,
+    )
+    .unwrap_err();
+    assert!(error.message.contains("service element is absent"));
+}
+#[test]
+fn uri_escapes_reject_signs_instead_of_treating_them_as_hex() {
+    let error = evaluate(
+        &Expr::parse("decodeURIComponent(new URL('./x%+1', 'file:///base.yml').pathname)").unwrap(),
+        &env(),
+        Path::new("/base"),
+        &|_| None,
+        &|_| None,
+    )
+    .unwrap_err();
+    assert_eq!(error.message, "URI malformed");
+}
+#[test]
+fn windows_rooted_resolve_retains_unc_device() {
+    let mut environment = env();
+    environment.platform = "win32";
+    environment.cwd = r"\\server\share\work".into();
+    let result = evaluate(
+        &Expr::parse("process.getBuiltinModule('node:path').resolve('/x')").unwrap(),
+        &environment,
+        Path::new("/base"),
+        &|_| None,
+        &|_| None,
+    )
+    .unwrap();
+    assert_eq!(result, Some(json!(r"\\server\share\x")));
 }

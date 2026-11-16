@@ -2,12 +2,30 @@ use crate::{EvalEnv, Layer, LayerSource, LoadError, Patch, compose, parse_patche
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct Bundle {
     pub name: String,
     pub dir: Option<PathBuf>,
+    #[serde(default, deserialize_with = "deserialize_platforms")]
     pub platforms: Option<Vec<String>>,
     pub files: Vec<(String, String)>,
+}
+fn deserialize_platforms<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<String>>, D::Error> {
+    use serde::Deserialize;
+    let value = Value::deserialize(d)?;
+    let error = || {
+        serde::de::Error::custom(
+            "dsh.bundle.platforms must be a nonempty list of Node platform names or wsl",
+        )
+    };
+    let rows = value.as_array().ok_or_else(error)?;
+    let strings = rows
+        .iter()
+        .map(|v| v.as_str().map(str::to_owned).ok_or_else(error))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(strings))
 }
 pub trait BundleSource: Send + Sync {
     fn bundle(&self, name: &str) -> Result<Bundle, LoadError>;
@@ -63,24 +81,17 @@ impl Profile {
         };
         let manifest = dir.join("package.json");
         let value: Value =
-            serde_json::from_str(&read(&manifest)?).map_err(|e| LoadError::Shape {
+            hoh_util_values::js_json_parse(&read(&manifest)?).map_err(|e| LoadError::Shape {
                 file: manifest.clone(),
-                line: e.line(),
-                column: e.column(),
+                line: 1,
+                column: 1,
                 message: e.to_string(),
             })?;
         if !value.is_object() {
             return Err(shape(&manifest, "profile manifest must hold a JSON object"));
         }
-        for path in ["/dsh", "/dsh/profile"] {
-            if let Some(value) = value.pointer(path)
-                && !value.is_object()
-            {
-                return Err(shape(&manifest, format!("{path} must be an object")));
-            }
-        }
         let names = match value.pointer("/dsh/profile/bundles") {
-            None => Vec::new(),
+            None | Some(Value::Null) => Vec::new(),
             Some(Value::Array(items)) => items
                 .iter()
                 .map(|v| {
@@ -102,7 +113,8 @@ impl Profile {
             let loaded = (|| {
                 let bundle = bundles.bundle(&name)?;
                 platform(&bundle.platforms, env, &manifest)?;
-                let mut loaded = Vec::new();
+                let mut patches = Vec::new();
+                let mut files = Vec::new();
                 for (file, text) in bundle.files {
                     let file = match &bundle.dir {
                         Some(bundle_dir) => {
@@ -111,21 +123,21 @@ impl Profile {
                             } else {
                                 env.cwd.join(bundle_dir)
                             };
-                            bundle_dir.join(file)
+                            node_join(&bundle_dir, &file)
                         }
-                        None => dir.join(".hoh-bundles").join(&name).join(file),
+                        None => node_join(&node_join(&dir.join(".hoh-bundles"), &name), &file),
                     };
-                    let patches = parse_patches(&text, &file)?;
-                    loaded.push(Layer {
-                        source: LayerSource::Bundle(name.clone()),
-                        file: Some(file),
-                        patches,
-                    });
+                    patches.extend(parse_patches(&text, &file)?);
+                    files.push(file);
                 }
-                Ok::<_, LoadError>(loaded)
+                Ok::<_, LoadError>(Layer {
+                    source: LayerSource::Bundle(name.clone()),
+                    file: if files.len() == 1 { files.pop() } else { None },
+                    patches,
+                })
             })();
             match loaded {
-                Ok(loaded) => layers.extend(loaded),
+                Ok(loaded) => layers.push(loaded),
                 Err(error) => skipped.push(SkippedBundle {
                     name,
                     reason: error.to_string(),
@@ -164,7 +176,7 @@ impl Profile {
         }
         if (env.var)("DSH_TELEMETRY_DISABLED").is_some_and(|v| !v.is_empty()) {
             let entries = compose(&[], &layers, &mut |_| {}).entries;
-            if contains(&entries, "session-telemetry-otel") {
+            if entries.iter().any(|row| row.id == "session-telemetry-otel") {
                 layers.push(Layer {
                     source: LayerSource::Launcher("DSH_TELEMETRY_DISABLED"),
                     file: None,
@@ -185,13 +197,11 @@ impl Profile {
         })
     }
 }
-fn contains(rows: &[crate::Entry], id: &str) -> bool {
-    rows.iter().any(|r| {
-        r.id == id
-            || (r.group
-                && serde_json::from_value::<Vec<crate::Entry>>(r.config.clone())
-                    .is_ok_and(|rows| contains(&rows, id)))
-    })
+fn node_join(base: &Path, part: &str) -> PathBuf {
+    PathBuf::from(crate::expr::platform_join(
+        &[base.to_string_lossy().into_owned(), part.into()],
+        if cfg!(windows) { "win32" } else { "linux" },
+    ))
 }
 fn platform(platforms: &Option<Vec<String>>, env: &EvalEnv, file: &Path) -> Result<(), LoadError> {
     let Some(platforms) = platforms else {

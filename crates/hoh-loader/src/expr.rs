@@ -3,6 +3,8 @@ use hoh_util_values::js_string;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+const EXPR_MAX_TOKENS: usize = 256;
+
 /// A parsed term of the closed configuration language (§5.5).
 #[derive(Clone, Debug)]
 pub enum Expr {
@@ -34,6 +36,7 @@ struct Term {
 #[derive(Clone, Debug)]
 enum Kind {
     Literal(Option<Value>),
+    Parenthesized(Box<Term>),
     Env(String),
     Cwd,
     Exe,
@@ -104,6 +107,13 @@ fn lex(source: &str) -> Result<Vec<Token>, ExprError> {
             i += c.len_utf8();
             continue;
         }
+        if result.len() >= EXPR_MAX_TOKENS {
+            return Err(error(
+                source,
+                i,
+                "expression size limit exceeded (256 tokens)",
+            ));
+        }
         let at = i;
         if c == '\'' || c == '"' {
             i += 1;
@@ -142,12 +152,16 @@ fn lex(source: &str) -> Result<Vec<Token>, ExprError> {
                         let hex = source
                             .get(i..i + digits)
                             .ok_or_else(|| error(source, i, "unfinished unicode escape"))?;
+                        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                            return Err(error(source, i, "invalid unicode escape"));
+                        }
                         let mut code = u32::from_str_radix(hex, 16)
                             .map_err(|_| error(source, i, "invalid unicode escape"))?;
                         i += digits;
                         if (0xd800..=0xdbff).contains(&code) && source[i..].starts_with("\\u") {
                             let low = source
                                 .get(i + 2..i + 6)
+                                .filter(|s| s.bytes().all(|b| b.is_ascii_hexdigit()))
                                 .and_then(|s| u32::from_str_radix(s, 16).ok())
                                 .filter(|low| (0xdc00..=0xdfff).contains(low))
                                 .ok_or_else(|| error(source, i, "invalid surrogate pair"))?;
@@ -317,7 +331,10 @@ impl Reader<'_> {
             return self.unary();
         }
         let mut left = self.binary(level + 1)?;
+        let mut nullish = false;
+        let mut logical = matches!(left.kind, Kind::Binary(Op::And, _, _));
         loop {
+            let operator_at = self.at();
             let op = match level {
                 0 if self.eat("||") => Op::Or,
                 0 if self.eat("??") => Op::Nullish,
@@ -328,6 +345,18 @@ impl Reader<'_> {
                 _ => break,
             };
             let right = self.binary(level + 1)?;
+            if level == 0 {
+                nullish |= matches!(op, Op::Nullish);
+                logical |=
+                    matches!(op, Op::Or) || matches!(right.kind, Kind::Binary(Op::And, _, _));
+                if nullish && logical {
+                    return Err(error(
+                        self.source,
+                        operator_at,
+                        "?? cannot be mixed with || or && without parentheses",
+                    ));
+                }
+            }
             left = Term {
                 at: left.at,
                 kind: Kind::Binary(op, Box::new(left), Box::new(right)),
@@ -381,7 +410,10 @@ impl Reader<'_> {
         let kind = if self.eat("(") {
             let term = self.expr()?;
             self.need(")")?;
-            return Ok(term);
+            return Ok(Term {
+                at,
+                kind: Kind::Parenthesized(Box::new(term)),
+            });
         } else if self.tokens[self.next].string.is_some() {
             Kind::Literal(Some(Value::String(self.string()?)))
         } else if self.eat("true") {
@@ -549,15 +581,7 @@ impl Reader<'_> {
 }
 
 fn number_value(number: f64) -> Value {
-    if number == 0.0 {
-        json!(0)
-    } else if number.fract() == 0.0 && number >= i64::MIN as f64 && number < i64::MAX as f64 {
-        json!(number as i64)
-    } else if number.fract() == 0.0 && number >= 0.0 && number < u64::MAX as f64 {
-        json!(number as u64)
-    } else {
-        json!(number)
-    }
+    crate::yaml::finite_number(number)
 }
 fn truthy(value: &Option<Value>) -> bool {
     match value {
@@ -617,6 +641,7 @@ impl Scope<'_> {
     fn eval(&self, term: &Term) -> Result<Option<Value>, ExprError> {
         let value = match &term.kind {
             Kind::Literal(v) => return Ok(v.clone()),
+            Kind::Parenthesized(inner) => return self.eval(inner),
             Kind::Env(name) => return Ok((self.env.var)(name).map(Value::String)),
             Kind::Cwd => Value::String(self.env.cwd.to_string_lossy().into()),
             Kind::Exe => Value::String(self.env.exe.to_string_lossy().into()),
@@ -662,15 +687,15 @@ impl Scope<'_> {
             ),
             Kind::Includes(items, needle) => {
                 // Evaluate original elements so an undefined slot is not confused with null.
-                let needle = self.eval(needle)?;
                 let Kind::Array(items) = &items.kind else {
                     return Err(self.fail(term, "includes requires an array literal"));
                 };
-                let mut found = false;
-                for item in items {
-                    found |= strict_equal(&self.eval(item)?, &needle);
-                }
-                json!(found)
+                let elements = items
+                    .iter()
+                    .map(|item| self.eval(item))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let needle = self.eval(needle)?;
+                json!(elements.iter().any(|item| strict_equal(item, &needle)))
             }
             Kind::Not(e) => json!(!truthy(&self.eval(e)?)),
             Kind::Binary(op, a, b) => {
@@ -694,7 +719,19 @@ impl Scope<'_> {
                             a.ok_or_else(|| self.fail(term, "undefined in string concatenation"))?;
                         let b =
                             b.ok_or_else(|| self.fail(term, "undefined in string concatenation"))?;
-                        json!(js_string(&a) + &js_string(&b))
+                        if a.is_string() || b.is_string() {
+                            json!(js_string(&a) + &js_string(&b))
+                        } else if let (Some(a), Some(b)) = (a.as_f64(), b.as_f64()) {
+                            let sum = a + b;
+                            if !sum.is_finite() {
+                                return Err(self.fail(term, "non-finite sum"));
+                            }
+                            number_value(sum)
+                        } else {
+                            return Err(
+                                self.fail(term, "+ requires a string operand or two numbers")
+                            );
+                        }
                     }
                 }
             }
@@ -714,12 +751,8 @@ impl Scope<'_> {
                         .ok_or_else(|| self.fail(term, "Number argument is not a number"))?,
                 )
             }
-            Kind::Json(e) => {
-                let mut value = serde_json::from_str(&self.string(e)?)
-                    .map_err(|e| self.fail(term, format!("JSON.parse: {e}")))?;
-                normalize_json_numbers(&mut value);
-                value
-            }
+            Kind::Json(e) => hoh_util_values::js_json_parse(&self.string(e)?)
+                .map_err(|e| self.fail(term, e.to_string()))?,
             Kind::Join(parts) => {
                 let parts = parts
                     .iter()
@@ -781,14 +814,6 @@ fn js_number(text: &str) -> Option<f64> {
 fn js_whitespace(c: char) -> bool {
     matches!(c, '\u{9}'..='\u{d}' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
 }
-fn normalize_json_numbers(value: &mut Value) {
-    match value {
-        Value::Number(number) => *value = number_value(number.as_f64().unwrap_or(f64::NAN)),
-        Value::Array(items) => items.iter_mut().for_each(normalize_json_numbers),
-        Value::Object(map) => map.values_mut().for_each(normalize_json_numbers),
-        Value::Null | Value::Bool(_) | Value::String(_) => {}
-    }
-}
 pub(crate) fn normalize(path: &str) -> String {
     let absolute = path.starts_with('/');
     let trailing = path.ends_with('/');
@@ -822,7 +847,7 @@ fn join_path(parts: &[String]) -> String {
             .join("/"),
     )
 }
-fn platform_join(parts: &[String], platform: &str) -> String {
+pub(crate) fn platform_join(parts: &[String], platform: &str) -> String {
     if platform == "win32" {
         windows_normalize(
             &parts
@@ -881,7 +906,14 @@ fn resolve_path(path: &str, env: &EvalEnv) -> String {
     let joined = if path.starts_with("//") || (prefix.is_some() && absolute) {
         path
     } else if absolute {
-        format!("{}{path}", drive(&cwd).unwrap_or(""))
+        let device = if let Some(drive) = drive(&cwd) {
+            drive.to_owned()
+        } else if let Some(unc) = cwd.strip_prefix("//") {
+            format!("//{}", unc.split('/').take(2).collect::<Vec<_>>().join("/"))
+        } else {
+            String::new()
+        };
+        format!("{device}{path}")
     } else if let Some(prefix) = prefix {
         let base = if drive(&cwd).is_some_and(|d| d.eq_ignore_ascii_case(prefix)) {
             cwd.clone()
@@ -909,6 +941,9 @@ fn decode_uri(text: &str) -> Result<String, String> {
     while i < bytes.len() {
         if bytes[i] == b'%' {
             let hex = text.get(i + 1..i + 3).ok_or("incomplete URI escape")?;
+            if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("URI malformed".into());
+            }
             out.push(u8::from_str_radix(hex, 16).map_err(|_| "invalid URI escape")?);
             i += 3;
         } else {

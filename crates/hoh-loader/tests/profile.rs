@@ -151,12 +151,7 @@ fn still_rejects_invalid_profile_manifests_and_user_patches() {
     let root = tempfile::tempdir().unwrap();
     let dir = write_profile(root.path(), &[]);
     let source = Source(vec![]);
-    for manifest in [
-        "[]",
-        "{broken",
-        r#"{"dsh":{"profile":{"bundles":[1]}}}"#,
-        r#"{"dsh":{"profile":{"bundles":null}}}"#,
-    ] {
+    for manifest in ["[]", "{broken", r#"{"dsh":{"profile":{"bundles":[1]}}}"#] {
         std::fs::write(dir.join("package.json"), manifest).unwrap();
         assert!(
             Profile::load(
@@ -196,7 +191,7 @@ fn applies_layers_over_an_empty_root_and_reports_skipped_patches() {
         ],
         &mut |w| warnings.push(w),
     );
-    assert_eq!(warnings, ["[a] patch: entry absent not found"]);
+    assert_eq!(warnings, ["[a] patch: entry \"absent\" not found"]);
     assert_eq!(result.entries[0].config, json!({"v":1}));
 }
 #[test]
@@ -264,4 +259,184 @@ fn rejects_a_bundle_atomically_if_a_later_file_is_broken() {
     .unwrap();
     assert!(profile.layers.is_empty());
     assert_eq!(profile.skipped.len(), 1);
+}
+
+#[test]
+fn optional_manifest_chain_accepts_missing_or_null_at_each_level() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = write_profile(root.path(), &[]);
+    for manifest in [
+        json!({}),
+        json!({"dsh":null}),
+        json!({"dsh":{}}),
+        json!({"dsh":{"profile":null}}),
+        json!({"dsh":{"profile":{}}}),
+        json!({"dsh":{"profile":{"bundles":null}}}),
+        json!({"dsh":false}),
+        json!({"dsh":{"profile":42}}),
+    ] {
+        std::fs::write(dir.join("package.json"), manifest.to_string()).unwrap();
+        let profile = Profile::load(
+            &dir,
+            &Source(vec![]),
+            &root.path().join("home"),
+            &[],
+            &env(root.path()),
+        )
+        .unwrap();
+        assert!(profile.layers.is_empty());
+        assert!(profile.skipped.is_empty());
+    }
+}
+#[test]
+fn manifest_uses_js_json_parser_beyond_serde_default_depth() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = write_profile(root.path(), &[]);
+    let text = format!(
+        r#"{{"unused":{}0{},"dsh":{{"profile":{{"bundles":null}}}}}}"#,
+        "[".repeat(129),
+        "]".repeat(129)
+    );
+    std::fs::write(dir.join("package.json"), text).unwrap();
+    let profile = Profile::load(
+        &dir,
+        &Source(vec![]),
+        &root.path().join("home"),
+        &[],
+        &env(root.path()),
+    )
+    .unwrap();
+    assert!(profile.layers.is_empty());
+}
+#[test]
+fn nested_telemetry_row_does_not_emit_a_launcher_patch() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = write_profile(root.path(), &["base"]);
+    let source = Source(vec![bundle(
+        "base",
+        "- insert: [{id: g, name: cordis:group, group: true, config: [{id: session-telemetry-otel, name: p}]}]",
+    )]);
+    let mut environment = env(root.path());
+    environment.var =
+        std::sync::Arc::new(|name| (name == "DSH_TELEMETRY_DISABLED").then(|| "1".into()));
+    let profile =
+        Profile::load(&dir, &source, &root.path().join("home"), &[], &environment).unwrap();
+    assert!(
+        !profile
+            .layers
+            .iter()
+            .any(|l| matches!(l.source, LayerSource::Launcher(_)))
+    );
+}
+#[test]
+fn repeated_loads_read_current_files_when_telemetry_variable_is_unset() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = write_profile(root.path(), &["base"]);
+    let home = root.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let source = Source(vec![bundle(
+        "base",
+        "- insert: [{id: session-telemetry-otel, name: p, disabled: false}]",
+    )]);
+    let overlay = root.path().join("overlay.yml");
+    std::fs::write(
+        &overlay,
+        "- id: session-telemetry-otel\n  disabled: false\n",
+    )
+    .unwrap();
+    let load = |overlays: &[std::path::PathBuf]| {
+        let profile = Profile::load(&dir, &source, &home, overlays, &env(root.path())).unwrap();
+        assert!(
+            !profile
+                .layers
+                .iter()
+                .any(|l| matches!(l.source, LayerSource::Launcher(_)))
+        );
+        compose(&[], &profile.layers, &mut |w| panic!("{w}")).entries[0]
+            .disabled
+            .clone()
+    };
+    assert_eq!(load(&[]), json!(false));
+    std::fs::write(
+        dir.join("cordis.patch.yml"),
+        "- id: session-telemetry-otel\n  disabled: true\n",
+    )
+    .unwrap();
+    assert_eq!(load(&[]), json!(true));
+    assert_eq!(load(std::slice::from_ref(&overlay)), json!(false));
+    std::fs::write(
+        home.join("cordis.patch.yml"),
+        "- id: session-telemetry-otel\n  disabled: false\n",
+    )
+    .unwrap();
+    assert_eq!(load(&[]), json!(false));
+    std::fs::write(home.join("cordis.patch.yml"), "[]\n").unwrap();
+    assert_eq!(load(&[]), json!(true));
+    std::fs::write(
+        dir.join("cordis.patch.yml"),
+        "- id: session-telemetry-otel\n  disabled: false\n",
+    )
+    .unwrap();
+    assert_eq!(load(&[]), json!(false));
+    std::fs::write(&overlay, "- id: session-telemetry-otel\n  disabled: true\n").unwrap();
+    assert_eq!(load(&[overlay]), json!(true));
+}
+#[test]
+fn multiple_files_of_one_bundle_have_one_provenance_boundary() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = write_profile(root.path(), &["base", "multi"]);
+    let mut multi = bundle("multi", "- id: a\n  config: {v: 1}");
+    multi
+        .files
+        .push(("second.yml".into(), "- id: a\n  config: {v: 2}".into()));
+    let profile = Profile::load(
+        &dir,
+        &Source(vec![
+            bundle("base", "- insert: [{id: a, name: p, config: {v: 0}}]"),
+            multi,
+        ]),
+        &root.path().join("home"),
+        &[],
+        &env(root.path()),
+    )
+    .unwrap();
+    assert_eq!(profile.layers.len(), 2);
+    let result = compose(&[], &profile.layers, &mut |w| panic!("{w}"));
+    assert_eq!(result.origins["a"].patched_by, ["multi"]);
+    assert_eq!(result.entries[0].config, json!({"v":2}));
+}
+#[test]
+fn absolute_bundle_segments_follow_node_join_instead_of_replacing_the_base() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = write_profile(root.path(), &["b", "/virtual"]);
+    let mut b = bundle("b", "");
+    b.files = vec![(
+        "/layers/one.yml".into(),
+        "- insert: [{id: a, name: ./plugin.js}]".into(),
+    )];
+    let mut virtual_bundle = bundle("/virtual", "");
+    virtual_bundle.dir = None;
+    virtual_bundle.files = vec![(
+        "/layers/two.yml".into(),
+        "- insert: [{id: b, name: ./plugin.js}]".into(),
+    )];
+    let profile = Profile::load(
+        &dir,
+        &Source(vec![b, virtual_bundle]),
+        &root.path().join("home"),
+        &[],
+        &env(root.path()),
+    )
+    .unwrap();
+    assert!(profile.skipped.is_empty());
+    assert_eq!(
+        profile.layers[0].file.as_deref(),
+        Some(std::path::Path::new("/bundles/b/layers/one.yml"))
+    );
+    assert_eq!(
+        profile.layers[1].file.as_ref().unwrap(),
+        &dir.join(".hoh-bundles/virtual/layers/two.yml")
+    );
+    let result = compose(&[], &profile.layers, &mut |w| panic!("{w}"));
+    assert_eq!(result.entries[0].name, "file:///bundles/b/layers/plugin.js");
 }

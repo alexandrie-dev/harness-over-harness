@@ -46,7 +46,7 @@ fn composes_all_layers_as_one_flattened_patch_list_exactly_like_boot() {
     ];
     let mut warnings = Vec::new();
     let result = compose(&base, &layers, &mut |w| warnings.push(w));
-    assert_eq!(warnings, ["[b.yml] patch: entry child not found"]);
+    assert_eq!(warnings, ["[b.yml] patch: entry \"child\" not found"]);
     assert_eq!(result.entries[0].config[0]["config"]["v"], json!(1));
     assert_eq!(result.origins["g"].patched_by, ["a.yml"]);
     assert_eq!(
@@ -74,7 +74,10 @@ fn reports_a_patch_whose_target_row_is_absent_through_warn_with_its_layer_label_
         )],
         &mut |w| warnings.push(w),
     );
-    assert_eq!(warnings, ["[overlay.yml] patch: entry absent not found"]);
+    assert_eq!(
+        warnings,
+        ["[overlay.yml] patch: entry \"absent\" not found"]
+    );
     assert_eq!(result.entries[0].config, json!({"value":"patched"}));
 }
 #[test]

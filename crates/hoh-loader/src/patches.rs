@@ -1,6 +1,6 @@
 use crate::yaml::{entries_value, entry_value, write_yaml};
 use crate::{Composition, Entry, Layer, LayerSource, Origin, Patch};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 
@@ -42,7 +42,20 @@ fn snapshot(row: &Row) -> Value {
     }
     value
 }
-fn run(base: &[Entry], patches: &[Patch], warn: &mut dyn FnMut(String)) -> Vec<Entry> {
+fn argument(text: &str, quoted: bool) -> String {
+    if quoted {
+        hoh_util_values::js_json_stringify(&Value::String(text.into()))
+    } else {
+        text.into()
+    }
+}
+fn run(
+    base: &[Entry],
+    patches: &[Patch],
+    warn: &mut dyn FnMut(String),
+    quoted: bool,
+    reserved: &IndexSet<String>,
+) -> Vec<Entry> {
     let mut index = IndexMap::new();
     let mut roots = base
         .iter()
@@ -53,11 +66,17 @@ fn run(base: &[Entry], patches: &[Patch], warn: &mut dyn FnMut(String)) -> Vec<E
         if let Some(insert) = &patch.insert {
             let target = if let Some(id) = id {
                 let Some(target) = index.get(id).cloned() else {
-                    warn(format!("patch insert: entry {id} not found"));
+                    warn(format!(
+                        "patch insert: entry {} not found",
+                        argument(id, quoted)
+                    ));
                     continue;
                 };
                 if target.borrow().value.get("group") != Some(&json!(true)) {
-                    warn(format!("patch insert: entry {id} is not a group"));
+                    warn(format!(
+                        "patch insert: entry {} is not a group",
+                        argument(id, quoted)
+                    ));
                     continue;
                 }
                 Some(target)
@@ -97,7 +116,7 @@ fn run(base: &[Entry], patches: &[Patch], warn: &mut dyn FnMut(String)) -> Vec<E
             continue;
         };
         let Some(target) = index.get(id) else {
-            warn(format!("patch: entry {id} not found"));
+            warn(format!("patch: entry {} not found", argument(id, quoted)));
             continue;
         };
         let mut target = target.borrow_mut();
@@ -107,10 +126,14 @@ fn run(base: &[Entry], patches: &[Patch], warn: &mut dyn FnMut(String)) -> Vec<E
             .and_then(Value::as_str)
             .unwrap_or("");
         if let Some(assertion) = &patch.name
+            && !assertion.is_empty()
             && assertion != name
         {
             warn(format!(
-                "patch: name mismatch for {id} (expected {name}, got {assertion}), skipping"
+                "patch: name mismatch for {} (expected {}, got {}), skipping",
+                argument(id, quoted),
+                argument(name, quoted),
+                argument(assertion, quoted)
             ));
             continue;
         }
@@ -137,13 +160,20 @@ fn run(base: &[Entry], patches: &[Patch], warn: &mut dyn FnMut(String)) -> Vec<E
             target.children = None;
         }
     }
-    roots
+    let mut result = roots
         .iter()
         .map(|row| {
             // Roots start as typed Entry; validated updates and snapshots only replace arbitrary config.
             serde_json::from_value(snapshot(row)).expect("patch engine preserves Entry field types")
         })
-        .collect()
+        .collect::<Vec<Entry>>();
+    let mut pool = IdPool {
+        reserved: reserved.clone(),
+        seen: IndexSet::new(),
+        next: 0,
+    };
+    pool.rows(&mut result);
+    result
 }
 /// Apply all patches against one initial index; inserted descendants join that index.
 pub fn apply_patches(
@@ -151,9 +181,101 @@ pub fn apply_patches(
     patches: &[Patch],
     warn: &mut dyn FnMut(String),
 ) -> Vec<Entry> {
-    run(base, patches, warn)
+    let reserved = IdPool::new(base, patches).reserved;
+    run(base, patches, warn, false, &reserved)
 }
 
+// One allocation domain for the base and every inserted subtree, including all later layers.
+struct IdPool {
+    reserved: IndexSet<String>,
+    seen: IndexSet<String>,
+    next: u32,
+}
+impl IdPool {
+    fn new(base: &[Entry], patches: &[Patch]) -> Self {
+        fn collect(value: &Value, ids: &mut IndexSet<String>) {
+            match value {
+                Value::Object(map) => {
+                    if let Some(id) = map.get("id").and_then(Value::as_str) {
+                        ids.insert(id.into());
+                    }
+                    for value in map.values() {
+                        collect(value, ids);
+                    }
+                }
+                Value::Array(rows) => {
+                    for row in rows {
+                        collect(row, ids);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut reserved = IndexSet::new();
+        for row in base {
+            reserved.insert(row.id.clone());
+            collect(&row.config, &mut reserved);
+        }
+        for patch in patches {
+            if let Some(rows) = &patch.insert {
+                for row in rows {
+                    reserved.insert(row.id.clone());
+                    collect(&row.config, &mut reserved);
+                }
+            }
+            for value in patch.set.values() {
+                collect(value, &mut reserved);
+            }
+        }
+        Self {
+            reserved,
+            seen: IndexSet::new(),
+            next: 0,
+        }
+    }
+    fn id(&mut self, id: &mut String) {
+        if !id.is_empty() && self.seen.insert(id.clone()) {
+            return;
+        }
+        loop {
+            self.next = self.next.wrapping_add(1);
+            let fresh = format!("{:08x}", self.next);
+            if self.reserved.insert(fresh.clone()) {
+                self.seen.insert(fresh.clone());
+                *id = fresh;
+                return;
+            }
+        }
+    }
+    fn value(&mut self, value: &mut Value) {
+        if let Some(rows) = value.as_array_mut() {
+            for row in rows {
+                if let Some(map) = row.as_object_mut() {
+                    let mut id = map
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned();
+                    self.id(&mut id);
+                    map.insert("id".into(), Value::String(id));
+                    if map.get("group") == Some(&Value::Bool(true))
+                        && let Some(config) = map.get_mut("config")
+                    {
+                        self.value(config);
+                    }
+                }
+            }
+        }
+    }
+    fn rows(&mut self, rows: &mut [Entry]) {
+        for row in rows {
+            self.id(&mut row.id);
+            if row.group {
+                self.value(&mut row.config);
+            }
+        }
+    }
+}
 fn label(layer: &Layer) -> String {
     match &layer.source {
         LayerSource::Bundle(name) => name.clone(),
@@ -182,8 +304,15 @@ fn flatten(rows: &[Entry]) -> IndexMap<String, Value> {
 }
 /// Prefix snapshots always apply ONE flattened list to the original base (§L9).
 pub fn compose(base: &[Entry], layers: &[Layer], warn: &mut dyn FnMut(String)) -> Composition {
+    let patches = layers
+        .iter()
+        .flat_map(|l| l.patches.iter().cloned())
+        .collect::<Vec<_>>();
+    let mut pool = IdPool::new(base, &patches);
+    let reserved = pool.reserved.clone();
     let mut entries = base.to_vec();
-    let mut previous = flatten(base);
+    pool.rows(&mut entries);
+    let mut previous = flatten(&entries);
     let mut origins: IndexMap<String, Origin> = previous
         .keys()
         .map(|id| {
@@ -196,13 +325,19 @@ pub fn compose(base: &[Entry], layers: &[Layer], warn: &mut dyn FnMut(String)) -
             )
         })
         .collect();
-    let mut patches = Vec::new();
+    let mut count = 0;
     let mut warnings_seen = 0;
     for layer in layers {
-        patches.extend(layer.patches.iter().cloned());
+        count += layer.patches.len();
         let label = label(layer);
         let mut warnings = Vec::new();
-        entries = run(base, &patches, &mut |w| warnings.push(w));
+        entries = run(
+            base,
+            &patches[..count],
+            &mut |w| warnings.push(w),
+            true,
+            &reserved,
+        );
         for warning in &warnings[warnings_seen..] {
             warn(format!("[{label}] {warning}"));
         }

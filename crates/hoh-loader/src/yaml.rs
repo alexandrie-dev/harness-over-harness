@@ -2,24 +2,30 @@ use crate::{Entry, Expr, LoadError, Patch, expression};
 use indexmap::{IndexMap, IndexSet};
 use saphyr_parser::{Event, Marker, Parser, ScalarStyle, Tag};
 use serde_json::{Value, json};
-use std::{collections::VecDeque, path::Path};
+use std::{collections::VecDeque, path::Path, rc::Rc};
+
+const YAML_MAX_DEPTH: usize = 128;
+const YAML_MAX_EXPANDED_NODES: usize = 100_000;
+type NodeRef = Rc<Node>;
 
 #[derive(Clone)]
 struct Node {
     kind: NodeKind,
     mark: Marker,
+    height: usize,
+    size: usize,
 }
 #[derive(Clone)]
 enum NodeKind {
     Scalar(Value),
-    Seq(Vec<Node>),
-    Map(IndexMap<String, Node>),
+    Seq(Vec<NodeRef>),
+    Map(IndexMap<String, NodeRef>),
 }
 impl Node {
     fn value(&self) -> Value {
         match &self.kind {
             NodeKind::Scalar(v) => v.clone(),
-            NodeKind::Seq(items) => Value::Array(items.iter().map(Self::value).collect()),
+            NodeKind::Seq(items) => Value::Array(items.iter().map(|n| n.value()).collect()),
             NodeKind::Map(map) => {
                 Value::Object(map.iter().map(|(k, v)| (k.clone(), v.value())).collect())
             }
@@ -33,13 +39,13 @@ impl Node {
             message: message.into(),
         }
     }
-    fn map(&self, file: &Path) -> Result<&IndexMap<String, Node>, LoadError> {
+    fn map(&self, file: &Path) -> Result<&IndexMap<String, NodeRef>, LoadError> {
         match &self.kind {
             NodeKind::Map(map) => Ok(map),
             _ => Err(self.shape(file, "entry must be a mapping")),
         }
     }
-    fn seq(&self, file: &Path) -> Result<&[Node], LoadError> {
+    fn seq(&self, file: &Path) -> Result<&[NodeRef], LoadError> {
         match &self.kind {
             NodeKind::Seq(items) => Ok(items),
             _ => Err(self.shape(file, "config file must be a top-level YAML array")),
@@ -48,8 +54,9 @@ impl Node {
 }
 struct Builder<'a> {
     events: VecDeque<(Event<'a>, Marker)>,
-    anchors: IndexMap<usize, Node>,
+    anchors: IndexMap<usize, NodeRef>,
     file: &'a Path,
+    expanded_nodes: usize,
 }
 impl Builder<'_> {
     fn yaml(&self, mark: Marker, message: impl Into<String>) -> LoadError {
@@ -60,13 +67,29 @@ impl Builder<'_> {
             message: message.into(),
         }
     }
-    fn node(&mut self, depth: usize) -> Result<Node, LoadError> {
+    fn node(&mut self, depth: usize) -> Result<NodeRef, LoadError> {
         let (event, mark) = self
             .events
             .pop_front()
             .ok_or_else(|| self.yaml(Marker::default(), "expected YAML value"))?;
-        if depth > 128 {
+        if depth >= YAML_MAX_DEPTH {
             return Err(self.yaml(mark, "YAML nesting limit exceeded"));
+        }
+        let cost = if let Event::Alias(id) = &event {
+            let node = self
+                .anchors
+                .get(id)
+                .ok_or_else(|| self.yaml(mark, "unknown or cyclic YAML alias"))?;
+            if depth + node.height > YAML_MAX_DEPTH {
+                return Err(self.yaml(mark, "expanded YAML nesting limit exceeded"));
+            }
+            node.size
+        } else {
+            1
+        };
+        self.expanded_nodes = self.expanded_nodes.saturating_add(cost);
+        if self.expanded_nodes > YAML_MAX_EXPANDED_NODES {
+            return Err(self.yaml(mark, "expanded YAML node limit exceeded (100000)"));
         }
         let (kind, anchor) = match event {
             Event::Scalar(text, style, anchor, tag) => (
@@ -109,7 +132,23 @@ impl Builder<'_> {
             }
             _ => return Err(self.yaml(mark, "expected YAML value")),
         };
-        let node = Node { kind, mark };
+        let (height, size) = match &kind {
+            NodeKind::Scalar(_) => (1, 1),
+            NodeKind::Seq(items) => (
+                1 + items.iter().map(|n| n.height).max().unwrap_or(0),
+                1 + items.iter().map(|n| n.size).sum::<usize>(),
+            ),
+            NodeKind::Map(items) => (
+                1 + items.values().map(|n| n.height).max().unwrap_or(0),
+                1 + items.values().map(|n| n.size).sum::<usize>(),
+            ),
+        };
+        let node = Rc::new(Node {
+            kind,
+            mark,
+            height,
+            size,
+        });
         if anchor != 0 {
             self.anchors.insert(anchor, node.clone());
         }
@@ -127,7 +166,7 @@ impl Builder<'_> {
         Ok(())
     }
 }
-fn document<'a>(text: &'a str, file: &'a Path) -> Result<Node, LoadError> {
+fn document<'a>(text: &'a str, file: &'a Path) -> Result<NodeRef, LoadError> {
     let mut events = VecDeque::new();
     for event in Parser::new_from_str(text) {
         let (event, span) = event.map_err(|e| LoadError::Yaml {
@@ -142,13 +181,16 @@ fn document<'a>(text: &'a str, file: &'a Path) -> Result<Node, LoadError> {
         events,
         anchors: IndexMap::new(),
         file,
+        expanded_nodes: 0,
     };
     builder.events.pop_front(); // StreamStart is guaranteed by saphyr-parser.
     if matches!(builder.events.front(), Some((Event::StreamEnd, _))) {
-        return Ok(Node {
+        return Ok(Rc::new(Node {
             kind: NodeKind::Scalar(Value::Null),
             mark: Marker::new(0, 1, 0),
-        });
+            height: 1,
+            size: 1,
+        }));
     }
     builder.events.pop_front(); // DocumentStart is guaranteed by saphyr-parser.
     let node = builder.node(0)?;
@@ -163,15 +205,17 @@ fn document<'a>(text: &'a str, file: &'a Path) -> Result<Node, LoadError> {
     Ok(node)
 }
 fn validate_expressions(node: &Node, file: &Path) -> Result<(), LoadError> {
-    let value = node.value();
-    if value
-        .as_object()
-        .is_some_and(|map| map.len() == 1 && map.contains_key("__jsExpr"))
-        && expression(&value).is_none()
-    {
-        return Err(node.shape(file, "__jsExpr must contain expression text"));
-    }
-    if let Some(source) = expression(&value) {
+    let source = match &node.kind {
+        NodeKind::Scalar(value) => expression(value),
+        NodeKind::Map(map) if map.len() == 1 && map.contains_key("__jsExpr") => {
+            match &map["__jsExpr"].kind {
+                NodeKind::Scalar(Value::String(source)) => Some(source.as_str()),
+                _ => return Err(node.shape(file, "__jsExpr must contain expression text")),
+            }
+        }
+        _ => None,
+    };
+    if let Some(source) = source {
         Expr::parse(source).map_err(|reason| LoadError::Expr {
             file: file.into(),
             line: node.mark.line().max(1),
@@ -197,95 +241,129 @@ fn validate_expressions(node: &Node, file: &Path) -> Result<(), LoadError> {
     Ok(())
 }
 
-// js-yaml 4 JSON_SCHEMA includes the core int/float resolvers, including underscores,
-// leading zeroes, binary/octal/hex integers, .inf and .nan (not YAML 1.1 sexagesimal).
-fn numeric(text: &str) -> Option<f64> {
+// js-yaml 4.3.2 lib/type/int.js:20-116 and float.js:6-51.
+fn integer(text: &str) -> Option<f64> {
     let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
+    if unsigned == "0" {
+        return Some(0.0);
+    } // parseYamlInteger deliberately discards -0's sign.
     let sign = if text.starts_with('-') { -1.0 } else { 1.0 };
-    if unsigned.is_empty() || unsigned.starts_with('_') || unsigned.ends_with('_') {
-        return None;
-    }
-    for (prefix, radix) in [("0b", 2), ("0o", 8), ("0x", 16)] {
+    for (prefix, width, radix) in [("0b", 1, 2), ("0o", 3, 8), ("0x", 4, 16)] {
         if let Some(digits) = unsigned.strip_prefix(prefix) {
-            if digits.is_empty() {
+            if digits.is_empty()
+                || !digits
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && char::from(b).is_digit(radix))
+            {
                 return None;
             }
-            return digits
-                .chars()
-                .filter(|c| *c != '_')
-                .try_fold(0.0, |n, c| {
-                    c.to_digit(radix)
-                        .map(|d| n * f64::from(radix) + f64::from(d))
-                })
-                .map(|n| sign * n);
+            let number = sign * radix_number(digits, width);
+            return number.is_finite().then_some(number);
         }
     }
-    if unsigned.chars().all(|c| c.is_ascii_digit() || c == '_') {
-        return unsigned
-            .replace('_', "")
-            .parse::<f64>()
-            .ok()
-            .map(|n| sign * n);
+    if unsigned.is_empty() || !unsigned.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
     }
+    text.parse::<f64>().ok().filter(|n| n.is_finite())
+}
+// Round a power-of-two radix integer once, rather than rounding at every digit.
+fn radix_number(digits: &str, width: usize) -> f64 {
+    let mut significant = 0usize;
+    let mut top = 0u64;
+    let mut guard = false;
+    let mut sticky = false;
+    let mut started = false;
+    for digit in digits.chars() {
+        let value = digit.to_digit(16).unwrap_or(0);
+        for bit in (0..width).rev() {
+            let one = value & (1 << bit) != 0;
+            if !started && !one {
+                continue;
+            }
+            started = true;
+            significant += 1;
+            if significant <= 53 {
+                top = (top << 1) | u64::from(one);
+            } else if significant == 54 {
+                guard = one;
+            } else {
+                sticky |= one;
+            }
+        }
+    }
+    if significant <= 53 {
+        return top as f64;
+    }
+    if guard && (sticky || top & 1 != 0) {
+        top += 1;
+    }
+    let exponent = i32::try_from(significant - 53).unwrap_or(i32::MAX);
+    (top as f64) * 2.0f64.powi(exponent)
+}
+fn float(text: &str) -> Option<f64> {
+    let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
     if matches!(unsigned, ".inf" | ".Inf" | ".INF") {
-        return Some(sign * f64::INFINITY);
+        return Some(if text.starts_with('-') {
+            -f64::INFINITY
+        } else {
+            f64::INFINITY
+        });
     }
     if matches!(text, ".nan" | ".NaN" | ".NAN") {
         return Some(f64::NAN);
     }
     let mut exponent = unsigned.split(['e', 'E']);
     let mantissa = exponent.next()?;
-    let power = exponent.next();
-    if exponent.next().is_some() {
-        return None;
-    }
-    if let Some(power) = power {
+    if let Some(power) = exponent.next() {
         let digits = power.strip_prefix(['+', '-']).unwrap_or(power);
-        if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) {
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
+    }
+    if exponent.next().is_some() {
+        return None;
     }
     let mut point = mantissa.split('.');
     let left = point.next()?;
     let right = point.next();
-    if point.next().is_some() || (right.is_none() && power.is_none()) {
+    if point.next().is_some() {
         return None;
     }
-    if !left.is_empty()
-        && (!left.as_bytes()[0].is_ascii_digit()
-            || !left.bytes().all(|c| c.is_ascii_digit() || c == b'_'))
-    {
+    if left.is_empty() {
+        if text != unsigned || right.is_none_or(|s| s.is_empty()) {
+            return None;
+        }
+    } else if !left.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    if left.is_empty() && right.is_none() {
+    if right.is_some_and(|s| !s.bytes().all(|b| b.is_ascii_digit())) {
         return None;
     }
-    if right.is_some_and(|s| !s.bytes().all(|c| c.is_ascii_digit() || c == b'_')) {
-        return None;
-    }
-    // js-yaml's float pattern also admits '.', '+.' and '.e2'; its constructor yields NaN.
-    Some(text.replace('_', "").parse().unwrap_or(f64::NAN))
+    text.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 fn resolved(text: &str) -> Value {
     match text {
         "" | "~" | "null" | "Null" | "NULL" => Value::Null,
         "true" | "True" | "TRUE" => json!(true),
         "false" | "False" | "FALSE" => json!(false),
-        _ => match numeric(text) {
+        _ => match integer(text).or_else(|| float(text)) {
             Some(n) => finite_number(n),
             None => json!(text),
         },
     }
 }
-fn finite_number(n: f64) -> Value {
+pub(crate) fn finite_number(n: f64) -> Value {
     if n == 0.0 && n.is_sign_negative() {
         json!(-0.0)
-    } else if n.fract() == 0.0 && n >= i64::MIN as f64 && n < i64::MAX as f64 {
-        json!(n as i64)
-    } else if n.fract() == 0.0 && n >= 0.0 && n < u64::MAX as f64 {
-        json!(n as u64)
     } else {
-        json!(n)
+        let text = hoh_util_values::js_number_string(n);
+        if let Ok(integer) = text.parse::<i64>() {
+            json!(integer)
+        } else if let Ok(integer) = text.parse::<u64>() {
+            json!(integer)
+        } else {
+            json!(n)
+        }
     }
 }
 fn scalar(text: &str, style: ScalarStyle, tag: Option<&Tag>) -> Result<Value, String> {
@@ -293,7 +371,7 @@ fn scalar(text: &str, style: ScalarStyle, tag: Option<&Tag>) -> Result<Value, St
         if style != ScalarStyle::Plain {
             return Ok(json!(text));
         }
-        if numeric(text).is_some_and(|n| !n.is_finite()) {
+        if float(text).is_some_and(|n| !n.is_finite()) {
             return Err("non-finite YAML number cannot be represented as JSON".into());
         }
         return Ok(resolved(text));
@@ -308,25 +386,26 @@ fn scalar(text: &str, style: ScalarStyle, tag: Option<&Tag>) -> Result<Value, St
         "js" if !text.trim().is_empty() => Ok(json!({"__jsExpr":text})),
         "js" => Err("!!js requires an expression body".into()),
         "str" => Ok(json!(text)),
-        "null" if resolved(text).is_null() && numeric(text).is_none() => Ok(Value::Null),
+        "null"
+            if matches!(text, "~" | "null" | "Null" | "NULL")
+                || (text.is_empty() && style == ScalarStyle::Plain) =>
+        {
+            Ok(Value::Null)
+        }
         "bool" if resolved(text).is_boolean() => Ok(resolved(text)),
-        "int" | "float" => numeric(text)
-            .filter(|_| {
-                let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
-                let integer = unsigned.starts_with("0x")
-                    || unsigned.starts_with("0o")
-                    || unsigned.starts_with("0b")
-                    || unsigned.bytes().all(|c| c.is_ascii_digit() || c == b'_');
-                integer == (tag.suffix == "int")
-            })
-            .filter(|n| n.is_finite())
-            .map(finite_number)
-            .ok_or_else(|| "invalid numeric scalar".into()),
+        "int" | "float" => (if tag.suffix == "int" {
+            integer(text)
+        } else {
+            float(text)
+        })
+        .filter(|n| n.is_finite())
+        .map(finite_number)
+        .ok_or_else(|| "invalid numeric scalar".into()),
         _ => Err(format!("unsupported or invalid YAML tag {tag}")),
     }
 }
 
-fn entry(node: &Node, file: &Path, patch: bool) -> Result<Entry, LoadError> {
+fn validate_row(node: &Node, file: &Path, patch: bool) -> Result<(), LoadError> {
     let map = node.map(file)?;
     for (key, value) in map {
         if ![
@@ -344,18 +423,23 @@ fn entry(node: &Node, file: &Path, patch: bool) -> Result<Entry, LoadError> {
             return Err(value.shape(file, format!("unknown row key {key:?}")));
         }
     }
-    let mut value = node.value();
+    // Do not materialize config at each group ancestor: each subtree is converted once below.
+    let mut value = Value::Object(
+        map.iter()
+            .filter(|(key, _)| key.as_str() != "config")
+            .map(|(key, node)| (key.clone(), node.value()))
+            .collect(),
+    );
     if patch && let Some(map) = value.as_object_mut() {
         map.retain(|_, v| !v.is_null());
         map.entry("name").or_insert(json!(""));
     }
-    let mut row: Entry =
-        serde_json::from_value(value).map_err(|e| node.shape(file, e.to_string()))?;
+    let row: Entry = serde_json::from_value(value).map_err(|e| node.shape(file, e.to_string()))?;
     if !row.disabled.is_null() && !row.disabled.is_boolean() && expression(&row.disabled).is_none()
     {
         return Err(map
             .get("disabled")
-            .unwrap_or(node)
+            .map_or(node, |n| n.as_ref())
             .shape(file, "disabled must be bool, null or an expression"));
     }
     if let Some(intercept) = &row.intercept
@@ -363,19 +447,22 @@ fn entry(node: &Node, file: &Path, patch: bool) -> Result<Entry, LoadError> {
     {
         return Err(map
             .get("intercept")
-            .unwrap_or(node)
+            .map_or(node, |n| n.as_ref())
             .shape(file, "intercept values must be objects"));
     }
-    if row.group && !row.config.is_null() {
-        let config = map.get("config").unwrap_or(node);
-        let rows = config
-            .seq(file)?
-            .iter()
-            .map(|n| entry(n, file, false))
-            .collect::<Result<Vec<_>, _>>()?;
-        row.config = entries_value(&rows);
+    if row.group
+        && let Some(config) = map.get("config")
+        && !matches!(config.kind, NodeKind::Scalar(Value::Null))
+    {
+        for child in config.seq(file)? {
+            validate_row(child, file, false)?;
+        }
     }
-    Ok(row)
+    Ok(())
+}
+fn entry(node: &Node, file: &Path) -> Result<Entry, LoadError> {
+    validate_row(node, file, false)?;
+    serde_json::from_value(node.value()).map_err(|e| node.shape(file, e.to_string()))
 }
 pub(crate) fn entries_value(rows: &[Entry]) -> Value {
     Value::Array(rows.iter().map(entry_value).collect())
@@ -402,38 +489,57 @@ fn collect_ids(value: &Value, used: &mut IndexSet<String>) {
 }
 pub(crate) fn assign_ids(rows: &mut [Entry], seed: &str) {
     let mut used = IndexSet::new();
-    collect_ids(&entries_value(rows), &mut used);
+    for row in rows.iter() {
+        if !row.id.is_empty() {
+            used.insert(row.id.clone());
+        }
+        if row.group {
+            collect_ids(&row.config, &mut used);
+        }
+    }
     let mut next = seed.bytes().fold(0x811c9dc5u32, |hash, b| {
         (hash ^ u32::from(b)).wrapping_mul(0x01000193)
     });
-    fn walk(rows: &mut [Entry], used: &mut IndexSet<String>, next: &mut u32) {
-        for row in rows {
-            if row.id.is_empty() {
-                loop {
-                    *next = next.wrapping_add(1);
-                    let id = format!("{next:08x}");
-                    if used.insert(id.clone()) {
-                        row.id = id;
-                        break;
-                    }
-                }
-            }
-            if row.group
-                && let Ok(mut children) = serde_json::from_value::<Vec<Entry>>(row.config.clone())
-            {
-                walk(&mut children, used, next);
-                row.config = entries_value(&children);
+    fn fresh(used: &mut IndexSet<String>, next: &mut u32) -> String {
+        loop {
+            *next = next.wrapping_add(1);
+            let id = format!("{next:08x}");
+            if used.insert(id.clone()) {
+                return id;
             }
         }
     }
-    walk(rows, &mut used, &mut next);
+    fn walk(value: &mut Value, used: &mut IndexSet<String>, next: &mut u32) {
+        if let Some(rows) = value.as_array_mut() {
+            for row in rows {
+                if row
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_none_or(str::is_empty)
+                {
+                    row["id"] = Value::String(fresh(used, next));
+                }
+                if row.get("group") == Some(&Value::Bool(true)) {
+                    walk(&mut row["config"], used, next);
+                }
+            }
+        }
+    }
+    for row in rows {
+        if row.id.is_empty() {
+            row.id = fresh(&mut used, &mut next);
+        }
+        if row.group {
+            walk(&mut row.config, &mut used, &mut next);
+        }
+    }
 }
 pub fn parse_entries(text: &str, file: &Path) -> Result<Vec<Entry>, LoadError> {
     let doc = document(text, file)?;
     let mut rows = doc
         .seq(file)?
         .iter()
-        .map(|n| entry(n, file, false))
+        .map(|n| entry(n, file))
         .collect::<Result<Vec<_>, _>>()?;
     assign_ids(&mut rows, &format!("entries:{}", file.display()));
     Ok(rows)
@@ -445,6 +551,7 @@ pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
         let mut fields = node.map(file)?.clone();
         let id = fields
             .shift_remove("id")
+            .filter(|n| !matches!(n.kind, NodeKind::Scalar(Value::Null)))
             .map(|n| {
                 n.value()
                     .as_str()
@@ -454,6 +561,7 @@ pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
             .transpose()?;
         let name = fields
             .shift_remove("name")
+            .filter(|n| !matches!(n.kind, NodeKind::Scalar(Value::Null)))
             .map(|n| {
                 n.value()
                     .as_str()
@@ -463,23 +571,31 @@ pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
             .transpose()?;
         let insert = fields
             .shift_remove("insert")
+            .filter(|n| !matches!(n.kind, NodeKind::Scalar(Value::Null)))
             .map(|n| {
                 n.seq(file)?
                     .iter()
-                    .map(|n| entry(n, file, false))
+                    .map(|n| entry(n, file))
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()?;
-        let set = fields.iter().map(|(k, v)| (k.clone(), v.value())).collect();
         // Validate patch fields with the same row schema, allowing null to remove a field.
-        entry(
+        validate_row(
             &Node {
                 kind: NodeKind::Map(fields),
                 mark: node.mark,
+                height: node.height,
+                size: node.size,
             },
             file,
             true,
         )?;
+        let set = node
+            .map(file)?
+            .iter()
+            .filter(|(key, _)| !["id", "name", "insert"].contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.value()))
+            .collect();
         patches.push(Patch {
             id,
             name,
@@ -507,22 +623,39 @@ pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
     Ok(patches)
 }
 fn anchor(row: &mut Entry, file: &Path) -> Result<(), LoadError> {
-    if Path::new(&row.name).is_absolute()
-        || row.name.starts_with("./")
-        || row.name.starts_with("../")
-    {
+    anchor_name(&mut row.name, file)?;
+    fn walk(value: &mut Value, file: &Path) -> Result<(), LoadError> {
+        if let Some(rows) = value.as_array_mut() {
+            for row in rows {
+                if let Some(Value::String(name)) = row.get_mut("name") {
+                    anchor_name(name, file)?;
+                }
+                if row.get("group") == Some(&Value::Bool(true)) {
+                    walk(&mut row["config"], file)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    if row.group {
+        walk(&mut row.config, file)?;
+    }
+    Ok(())
+}
+fn anchor_name(name: &mut String, file: &Path) -> Result<(), LoadError> {
+    if Path::new(name).is_absolute() || name.starts_with("./") || name.starts_with("../") {
         let base = file.parent().unwrap_or(Path::new("."));
-        let path = if Path::new(&row.name).is_absolute() {
-            row.name.clone()
+        let path = if Path::new(name).is_absolute() {
+            name.clone()
         } else {
-            format!("{}/{}", base.display(), row.name)
+            format!("{}/{}", base.display(), name)
         };
         let path = if cfg!(windows) {
             crate::expr::windows_normalize(&path)
         } else {
             crate::expr::normalize(&path)
         };
-        row.name = url::Url::from_file_path(&path)
+        *name = url::Url::from_file_path(&path)
             .map_err(|_| LoadError::Shape {
                 file: file.into(),
                 line: 1,
@@ -530,14 +663,6 @@ fn anchor(row: &mut Entry, file: &Path) -> Result<(), LoadError> {
                 message: "patch file must have an absolute path to anchor plugin names".into(),
             })?
             .into();
-    }
-    if row.group
-        && let Ok(mut children) = serde_json::from_value::<Vec<Entry>>(row.config.clone())
-    {
-        for child in &mut children {
-            anchor(child, file)?;
-        }
-        row.config = entries_value(&children);
     }
     Ok(())
 }
@@ -552,9 +677,9 @@ pub(crate) fn write_yaml(value: &Value) -> String {
             Value::Bool(b) => Some(b.to_string()),
             Value::Number(n) => {
                 let number = n.as_f64().unwrap_or(f64::NAN);
-                // YAML's integer resolver preserves the sign of -0, unlike String(-0).
+                // js-yaml int.js:104 drops -0's sign; float.js:76 preserves it as -0.0.
                 Some(if number == 0.0 && number.is_sign_negative() {
-                    "-0".into()
+                    "-0.0".into()
                 } else {
                     hoh_util_values::js_number_string(number)
                 })
@@ -623,7 +748,40 @@ fn identifier(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
 }
 fn quote(s: &str) -> String {
-    Value::String(s.into()).to_string()
+    let mut result = String::from("\"");
+    for ch in s.chars() {
+        match ch {
+            '\0' => result.push_str("\\0"),
+            '\u{7}' => result.push_str("\\a"),
+            '\u{8}' => result.push_str("\\b"),
+            '\t' => result.push_str("\\t"),
+            '\n' => result.push_str("\\n"),
+            '\u{b}' => result.push_str("\\v"),
+            '\u{c}' => result.push_str("\\f"),
+            '\r' => result.push_str("\\r"),
+            '\u{1b}' => result.push_str("\\e"),
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\u{85}' => result.push_str("\\N"),
+            '\u{a0}' => result.push_str("\\_"),
+            '\u{2028}' => result.push_str("\\L"),
+            '\u{2029}' => result.push_str("\\P"),
+            ch if ch < '\u{20}'
+                || ('\u{7f}'..='\u{9f}').contains(&ch)
+                || matches!(ch, '\u{feff}' | '\u{fffe}' | '\u{ffff}') =>
+            {
+                let code = u32::from(ch);
+                if code <= 0xff {
+                    result.push_str(&format!("\\x{code:02X}"));
+                } else {
+                    result.push_str(&format!("\\u{code:04X}"));
+                }
+            }
+            ch => result.push(ch),
+        }
+    }
+    result.push('"');
+    result
 }
 
 #[cfg(test)]
@@ -634,9 +792,9 @@ mod tests {
         for (text, expected) in [
             ("01", json!(1)),
             ("+0xF", json!(15)),
-            ("0b1_0", json!(2)),
-            ("0o7_1", json!(57)),
-            ("1__2", json!(12)),
+            ("0b1_0", json!("0b1_0")),
+            ("0o7_1", json!("0o7_1")),
+            ("1__2", json!("1__2")),
             ("1.e2", json!(100)),
             (".2", json!(0.2)),
             ("1e2", json!(100)),

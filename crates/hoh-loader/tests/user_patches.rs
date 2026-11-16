@@ -68,19 +68,62 @@ fn fails_loud_on_an_unreadable_file_a_present_user_patch_layer_is_never_skipped(
 }
 #[test]
 fn fails_loud_on_unparsable_yaml_and_on_a_js_tag_with_no_expression_body() {
-    for text in ["invalid: [unclosed\n", "- id: x\n  config:\n    a: !!js\n"] {
-        assert!(parse_patches(text, Path::new("/bad.yml")).is_err());
+    for (text, wanted_line, wanted_column, wanted_message) in [
+        (
+            "invalid: [unclosed\n",
+            2,
+            1,
+            "while parsing a flow sequence, expected ',' or ']'",
+        ),
+        (
+            "- id: x\n  config:\n    a: !!js\n",
+            3,
+            8,
+            "!!js requires an expression body",
+        ),
+    ] {
+        let error = parse_patches(text, Path::new("/bad.yml")).unwrap_err();
+        match error {
+            LoadError::Yaml {
+                file,
+                line,
+                column,
+                message,
+            } => {
+                assert_eq!(file, Path::new("/bad.yml"));
+                assert_eq!((line, column), (wanted_line, wanted_column));
+                assert_eq!(message, wanted_message);
+            }
+            _ => panic!("{error}"),
+        }
     }
 }
 #[test]
 fn fails_loud_when_the_file_is_not_a_top_level_array_or_an_entry_is_not_an_object() {
-    for text in [
-        "id: not-a-list\n",
-        "- just-a-string\n",
-        "- []\n",
-        "- null\n",
+    for (text, wanted_column, wanted_message) in [
+        (
+            "id: not-a-list\n",
+            1,
+            "config file must be a top-level YAML array",
+        ),
+        ("- just-a-string\n", 3, "entry must be a mapping"),
+        ("- []\n", 3, "entry must be a mapping"),
+        ("- null\n", 3, "entry must be a mapping"),
     ] {
-        assert!(parse_patches(text, Path::new("/bad.yml")).is_err());
+        let error = parse_patches(text, Path::new("/bad.yml")).unwrap_err();
+        match error {
+            LoadError::Shape {
+                file,
+                line,
+                column,
+                message,
+            } => {
+                assert_eq!(file, Path::new("/bad.yml"));
+                assert_eq!((line, column), (1, wanted_column));
+                assert_eq!(message, wanted_message);
+            }
+            _ => panic!("{error}"),
+        }
     }
 }
 #[test]

@@ -48,9 +48,48 @@ fn escaped_strings_and_operator_precedence_parse() {
         r#"'it\'s' + "a\u0020b""#,
         r#"'\uD83D\uDE00'"#,
         "false ? 1 : true ? 2 : 3",
-        "1 + 2 === '12' && !false || undefined ?? 'x'",
+        "(1 + 2 === 3 && !false || undefined) ?? 'x'",
         "[true,false,undefined].includes(null)",
     ] {
         Expr::parse(source).unwrap();
     }
+}
+
+#[test]
+fn nullish_mixing_requires_parentheses_and_reports_the_operator() {
+    for source in [
+        "true ?? false || true",
+        "true || false ?? true",
+        "true ?? false && true",
+        "true && false ?? true",
+    ] {
+        let error = Expr::parse(source).unwrap_err();
+        assert!(error.message.contains("without parentheses"));
+        assert!(error.position > 0 && error.position < source.len());
+    }
+    for source in [
+        "(true ?? false) || true",
+        "true ?? (false || true)",
+        "(true && false) ?? true",
+        "true && (false ?? true)",
+    ] {
+        Expr::parse(source).unwrap();
+    }
+}
+#[test]
+fn escape_digits_are_strictly_hexadecimal() {
+    for source in [r"'\x+1'", r"'\u+123'", r"'\xG1'", r"'\u000Z'"] {
+        let error = Expr::parse(source).unwrap_err();
+        assert_eq!(error.position, 3);
+        assert_eq!(error.message, "invalid unicode escape");
+    }
+}
+#[test]
+fn long_chains_are_rejected_before_a_deep_tree_is_constructed() {
+    let source = vec!["'a'"; 200_000].join("+");
+    let error = Expr::parse(&source).unwrap_err();
+    assert_eq!(error.message, "expression size limit exceeded (256 tokens)");
+    assert_eq!(error.position, 512);
+    let accepted = Expr::parse(&vec!["'a'"; 128].join("+")).unwrap();
+    let _cloned = accepted.clone();
 }

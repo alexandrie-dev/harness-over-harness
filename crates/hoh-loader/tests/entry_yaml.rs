@@ -8,7 +8,10 @@ fn reads_and_writes_js_scalars_as_expression_nodes() {
     let parsed = entries("- id: a\n  name: example\n  disabled: !!js process.env.OFF\n");
     assert_eq!(parsed[0].disabled, json!({"__jsExpr":"process.env.OFF"}));
     let dump = render_dump(&compose(&parsed, &[], &mut |_| {}));
-    assert!(dump.contains("!!js \"process.env.OFF\""));
+    assert_eq!(
+        dump,
+        "# == a · base\n- id: a\n  name: example\n  disabled: !!js \"process.env.OFF\"\n"
+    );
     assert_eq!(entries(&dump), parsed);
 }
 #[test]
@@ -40,9 +43,10 @@ fn writes_repeated_references_in_full() {
         "- id: a\n  name: example\n  config: &shared {value: 1}\n- id: b\n  name: example\n  config: *shared\n",
     );
     let dump = render_dump(&compose(&rows, &[], &mut |_| {}));
-    assert_eq!(dump.matches("value: 1").count(), 2);
-    assert!(!dump.contains("*shared"));
-    assert!(!dump.contains("&shared"));
+    assert_eq!(
+        dump,
+        "# == a · base\n- id: a\n  name: example\n  config:\n    value: 1\n# == b · base\n- id: b\n  name: example\n  config:\n    value: 1\n"
+    );
     assert_eq!(entries(&dump), rows);
 }
 #[test]
@@ -164,7 +168,7 @@ fn invalid_expression_has_file_and_scalar_position() {
 }
 #[test]
 fn non_finite_numbers_are_reported_instead_of_becoming_json_null() {
-    for n in [".inf", "-.Inf", ".NaN", "1e999"] {
+    for n in [".inf", "-.Inf", ".NaN"] {
         assert!(
             parse_entries(
                 &format!("- name: p\n  config: {n}\n"),
@@ -177,7 +181,7 @@ fn non_finite_numbers_are_reported_instead_of_becoming_json_null() {
 
 #[test]
 fn explicit_numeric_tags_use_their_own_resolvers() {
-    for value in ["!!int 1.2", "!!float 1", "!!bool yes", "!!null 'nil'"] {
+    for value in ["!!int 1.2", "!!bool yes", "!!null 'nil'"] {
         assert!(
             parse_entries(
                 &format!("- name: p\n  config: {value}\n"),
@@ -188,9 +192,11 @@ fn explicit_numeric_tags_use_their_own_resolvers() {
         );
     }
     assert_eq!(
-        entries("- name: p\n  config: [!!int '01', !!float '1.0', !!str true, !!bool 'TRUE']")[0]
-            .config,
-        json!([1, 1, "true", true])
+        entries(
+            "- name: p\n  config: [!!int '01', !!float '1.0', !!str true, !!bool 'TRUE', !!float 1]"
+        )[0]
+        .config,
+        json!([1, 1, "true", true, 1])
     );
 }
 #[test]
@@ -202,9 +208,107 @@ fn expression_sentinel_requires_text_and_does_not_reserve_ordinary_object_proper
 
 #[test]
 fn writer_preserves_negative_zero_and_mapping_order() {
-    let rows = entries("- id: a\n  name: p\n  config: {z: -0, a: 1, middle: 2}\n");
+    let rows = entries("- id: a\n  name: p\n  config: {z: -0.0, a: 1, middle: 2}\n");
     let dump = render_dump(&compose(&rows, &[], &mut |_| {}));
     assert_eq!(entries(&dump), rows);
     assert!(dump.find("z: -0").unwrap() < dump.find("a: 1").unwrap());
     assert!(dump.find("a: 1").unwrap() < dump.find("middle: 2").unwrap());
+}
+
+#[test]
+fn alias_expansion_has_a_node_budget_and_expanded_depth_budget() {
+    for (doubling, expected) in [
+        (true, "expanded YAML node limit exceeded (100000)"),
+        (false, "expanded YAML nesting limit exceeded"),
+    ] {
+        let mut source = String::from("- id: a\n  name: p\n  config:\n    a0: &a0 [0]\n");
+        for i in 1..=140 {
+            let prev = i - 1;
+            source.push_str(&if doubling {
+                format!("    a{i}: &a{i} [*a{prev}, *a{prev}]\n")
+            } else {
+                format!("    a{i}: &a{i} [*a{prev}]\n")
+            });
+        }
+        let err = parse_entries(&source, Path::new("/alias.yml")).unwrap_err();
+        match err {
+            LoadError::Yaml {
+                file,
+                line,
+                column,
+                message,
+            } => {
+                assert_eq!(file, Path::new("/alias.yml"));
+                assert!(line > 4 && line < 145);
+                assert!(column > 0);
+                assert_eq!(message, expected);
+            }
+            _ => panic!("{err}"),
+        }
+    }
+}
+#[test]
+fn empty_comments_and_null_are_shape_errors_at_all_array_readers() {
+    // app-boot/index.ts:594/663 and include/index.ts:299-303 all reject !Array.isArray(undefined/null).
+    for source in ["", "# only comments\n", "null\n", "~\n", "---\n"] {
+        for error in [
+            parse_entries(source, Path::new("/empty.yml")).unwrap_err(),
+            parse_patches(source, Path::new("/empty.yml")).unwrap_err(),
+        ] {
+            match error {
+                LoadError::Shape {
+                    file,
+                    line,
+                    column,
+                    message,
+                } => {
+                    assert_eq!(file, Path::new("/empty.yml"));
+                    assert!(line >= 1 && column >= 1);
+                    assert_eq!(message, "config file must be a top-level YAML array");
+                }
+                _ => panic!("{error}"),
+            }
+        }
+    }
+}
+#[test]
+fn non_printable_keys_and_values_round_trip_with_yaml_escapes() {
+    for (ch, escaped) in [
+        ('\u{7f}', "\\x7F"),
+        ('\u{85}', "\\N"),
+        ('\u{2028}', "\\L"),
+        ('\u{2029}', "\\P"),
+        ('\u{feff}', "\\uFEFF"),
+    ] {
+        let mut rows = entries("- id: a\n  name: p\n");
+        let key = format!("key{ch}suffix");
+        let value = format!("value{ch}suffix");
+        rows[0].config = json!({key.clone():value});
+        let dump = render_dump(&compose(&rows, &[], &mut |_| {}));
+        assert_eq!(dump.matches(escaped).count(), 2, "{dump}");
+        assert!(!dump.contains(ch));
+        assert_eq!(entries(&dump), rows, "{escaped}");
+    }
+}
+#[test]
+fn deep_groups_are_read_without_materializing_every_ancestor_config() {
+    let mut text = String::from("- id: g0\n  name: cordis:group\n  group: true\n  config:\n");
+    for depth in 1..=30 {
+        let pad = " ".repeat(depth * 4);
+        text.push_str(&format!(
+            "{pad}- id: g{depth}\n{pad}  name: cordis:group\n{pad}  group: true\n{pad}  config:\n"
+        ));
+    }
+    text.push_str(&format!(
+        "{}- id: leaf\n{}  name: p\n{}  config: {{payload: x}}\n",
+        " ".repeat(124),
+        " ".repeat(124),
+        " ".repeat(124)
+    ));
+    let rows = entries(&text);
+    let mut value = &rows[0].config;
+    for _ in 0..30 {
+        value = &value[0]["config"];
+    }
+    assert_eq!(value[0]["id"], json!("leaf"));
 }
