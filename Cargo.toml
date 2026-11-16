@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+# `ui` joins the members when the desktop window is started (PLAN.md, line P).
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+# The only place where third-party crates and their versions are named.
+# A crate may be added here only together with a line in docs/porting/DEPS.md.
+[workspace.dependencies]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
