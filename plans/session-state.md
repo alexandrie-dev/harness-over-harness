@@ -56,6 +56,15 @@ dsh на коммите `39163dd30f703a79079e2d2446545cff3c453738`, cordis на 
 - Codex: вход выполнен (ChatGPT), модель по умолчанию `gpt-6.1-sol`; образец вызова — `starter-kit/scripts/codex-review.sh`
   (`codex exec -s read-only … --ephemeral`, для писателя `-s workspace-write`).
 
+Партия 1 (2026-11-16): по настоящим импортам 32 пакета не зависят от ядра; 16 из них отданы пяти писателям до готовности
+описания ядра (это перестановка порядка, не объёма). После сдачи: ведущий сам гоняет `cargo test`/`clippy` по каждому crate,
+затем перекрёстное ревью (написанное Codex читает Sonnet, написанное Sonnet читает Codex `-s read-only`), исправление, статус `done`.
+Вторая партия без ядра: `hoh-session-format` (ждёт `hoh-util-values`), затем `hoh-session-format-v0-to-v1` (ждёт ещё `hoh-util-time`).
+Отложены до решений: `lazy-require` (механизм JS, вероятно убрать), `package-manifest`, `official-bundles`, `native-command`
+(по описанию загрузчика), `http-proxy` (после выбора HTTP-клиента), `llm-mock-server` (внутрь `hoh-conformance`), `cosmokit` (по описанию ядра).
+Kimi: основатель ставит сам и сообщит; подключается писателем со следующей партии. Проверено: Codex в песочнице `workspace-write`
+собирает офлайн (`CARGO_NET_OFFLINE=true`, свой `CARGO_TARGET_DIR` через `--add-dir`). В `crates/*` каждый каталог обязан иметь `Cargo.toml`.
+
 Осталось на этапе 0: принять `docs/kernel.md` и описание прогона сценариев, дополнить `DEPS.md` библиотеками этапа 1,
 затем ядро, макросы, загрузчик, `hoh-conformance`, `scripts/verify.sh`. Замены сторонних библиотек образца, требующие
 решения на этапе 1: `sharp` (libvips, LGPL — не берём, нужен crate `image`), `node-pty` и `@xterm/headless` (вид экрана
@@ -235,6 +244,11 @@ dsh на коммите `39163dd30f703a79079e2d2446545cff3c453738`, cordis на 
 | Rust-инструменты для настольного приложения, связь приложения с движком | a101dbc16a0945c87 | done 2026-11-16: отчёт на месте (729 строк), пять пунктов задания есть; ведущий прочитал разделы 0–2, 4–6, 7.4, 8–9, раздел 3 — справочник | `research/desktop-ui-rust.md` |
 | Этап 0: описание ядра (`hoh-kernel`, `hoh-kernel-macros`, `hoh-loader`) и первый список разрешённых библиотек | a3d05523ab6819e72 | running с 2026-11-16; ждать родное уведомление о завершении; проверить по девяти пунктам задания (API, правила с источниками, автомат состояний, загрузчик и замена `!!js`, три примера, таблица TS→Rust, план тестов, открытые вопросы) | `docs/kernel.md`, `docs/porting/DEPS.md` |
 | Этап 0: как dsh воспроизводит и сверяет записанные сценарии; таблица сценариев (Sonnet) | ad08a6b6b1c9cd873 | running с 2026-11-16; ждать родное уведомление; проверить по пунктам a–g задания и числу строк таблицы (192 + 41 + 9) | `crates/hoh-conformance/README.md`, `conformance/EXPECTED.tsv` |
+| Партия 1, писатель c1 (Codex, high): `hoh-error`, `hoh-brand`, `hoh-deque`, `hoh-chunked-list`, `hoh-util-crypto`, `hoh-home-paths`, `hoh-atomic-write`, `hoh-anonymous-user-id` | фоновая задача `b1hpec9c2` | running с 2026-11-16; ждать родное уведомление; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c1.report.md`, ID сессии Codex в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c1.stderr` (для `codex exec resume`) | задание `plans/briefs/batch1-c1.md`; тесты и clippy чисто, `PORT_NOTES.md` |
+| Партия 1, писатель c2 (Codex, high): `hoh-fs-patch`, `hoh-timeout`, `hoh-output-retention` | фоновая задача `b5m2gp40q` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c2.report.md` | задание `plans/briefs/batch1-c2.md` |
+| Партия 1, писатель c3 (Codex, high): `hoh-util-code-language`, `hoh-util-workspace-path` | фоновая задача `bqlf4rxaa` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c3.report.md` | задание `plans/briefs/batch1-c3.md` |
+| Партия 1, писатель s1 (Sonnet): `hoh-util-values` | a2e187c76c29c66ea | running с 2026-11-16; ждать родное уведомление | задание `plans/briefs/batch1-s1.md` |
+| Партия 1, писатель s2 (Sonnet): `hoh-util-time` | ad6d421359b75ffb4 | running с 2026-11-16; ждать родное уведомление | задание `plans/briefs/batch1-s2.md` |
 
 Выводы из отчёта о самонастройке, которые идут в план (подробности и ссылки в самом отчёте):
 
