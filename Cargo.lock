@@ -241,6 +241,7 @@ dependencies = [
 name = "hoh-attachment"
 version = "0.1.0"
 dependencies = [
+ "hoh-brand",
  "hoh-error",
  "hoh-kernel",
 ]
@@ -265,8 +266,11 @@ dependencies = [
 name = "hoh-commander"
 version = "0.1.0"
 dependencies = [
+ "hoh-util-values",
  "indexmap",
+ "rustix",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -361,21 +365,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "hoh-llm"
-version = "0.1.0"
-dependencies = [
- "hoh-brand",
- "hoh-error",
- "hoh-kernel",
- "hoh-timeout",
- "hoh-util-crypto",
- "hoh-util-values",
-]
-
-[[package]]
 name = "hoh-loader"
 version = "0.1.0"
 dependencies = [
+ "hoh-kernel",
  "hoh-util-values",
  "indexmap",
  "saphyr-parser",
@@ -391,7 +384,15 @@ dependencies = [
 name = "hoh-native-command"
 version = "0.1.0"
 dependencies = [
- "hoh-kernel",
+ "base64",
+ "indexmap",
+ "regex",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -401,15 +402,6 @@ dependencies = [
  "landlock",
  "rustix",
  "tempfile",
-]
-
-[[package]]
-name = "hoh-office-kit"
-version = "0.1.0"
-dependencies = [
- "hoh-brand",
- "hoh-home-paths",
- "hoh-kernel",
 ]
 
 [[package]]
@@ -424,7 +416,9 @@ dependencies = [
 name = "hoh-package-manifest"
 version = "0.1.0"
 dependencies = [
- "hoh-kernel",
+ "indexmap",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

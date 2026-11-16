@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hoh-kernel = { path = "../hoh-kernel" }
 hoh-util-values = { path = "../hoh-util-values" }
 indexmap.workspace = true
 saphyr-parser.workspace = true
