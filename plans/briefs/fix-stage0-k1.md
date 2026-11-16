@@ -75,6 +75,18 @@ B3. **rule violations in texts and numbers** (one test each):
     - `config.rs:406`: the depth limit of 128 counts reference hops, so valid values nested about 64 levels
       under a recursive schema fail. Count the nesting of the value; the limit is that of
       `hoh_util_values::JS_JSON_MAX_DEPTH`.
+    - `config.rs:505`, `:598`: `const` and `enum` reject `1.0` against `1`, and the volatile comparison
+      treats them as different. In JavaScript they are one number: compare numbers by value everywhere.
+B4. **bug — unreferenced definitions are never inspected** (`config.rs:306`): an unsupported keyword inside a
+    member of `$defs` that nothing references passes. Inspect every definition.
+B5. **bug — a nullable object is turned into `{}`** (`config.rs:245`). For a root schema with `properties` and
+    `type: ["object", "null"]` (what `schemars` gives for an optional inline struct) a valid `null` is replaced
+    by an empty object and then fails on a missing field. `null` must stay `null`. Test: `Option<InlineStruct>`
+    with a required field and the input `null`.
+B6. **bug — unknown fields are lost below the top level** (`fiber.rs:65`). For `{"nested":{"known":1,"extra":2}}`
+    the merge replaces the whole nested object by its typed serialization, dropping `extra`; the source keeps
+    unknown fields at every depth (R50, R51). Merge recursively. Test raw against effective configuration at
+    two levels of nesting and inside an array of structs.
 
 ## C. Lifecycle (`src/fiber.rs`, `src/effects.rs`, `src/context.rs`)
 
@@ -109,20 +121,58 @@ C5. **hazard — waiting on oneself outside `apply`.** The ancestry mark is set 
     (`fiber.rs:257-262`, `:307-314`, `:1116-1118`). A cleanup future that awaits its own fiber's `dispose()`
     never finishes, and the same holds for update handlers and `ctx.spawn` tasks. Set the mark in every task
     the kernel runs on behalf of a fiber. Test: a cleanup that awaits `ctx.fiber().dispose()` completes.
+    Event dispatch loses the mark as well (`events.rs:495`): `serial`, `waterfall` and `parallel` run listeners
+    in tasks of their own, so when `apply` awaits `ctx.serial(..)` and a listener awaits that fiber's
+    `settled()`, both wait for ever. A task that dispatch creates inherits the mark of the task that called
+    the dispatch. Test that indirect wait: it returns `SelfWait`.
 C6. **hazard — a panic in a caller's closure that the actor runs.** The filter of a dispatch listener
     (`on_dispatch`) is called inside the actor outside any isolation; if it panics, the actor fails and the
     kernel closes (R62). Every closure of plugin code that the actor itself calls (filters, resolvers,
     exporters, hooks) must be isolated the way listeners of kernel events are. Test: a panicking filter does
     not close the kernel. And when the actor does fail, cancel the token of every live activation so that
     plugin tasks stop instead of running on in a closed kernel; extend the actor-failure test to assert it.
+    A suspended update handler owns its reply sender outside the node's waiters (`fiber.rs:1205`, `:1322`), so
+    after an actor failure the caller of that `update` waits until the handler ends, possibly for ever: every
+    waiter must receive `Closed` (R62). Test: suspend a retained update, inject the fault, and require `Closed`
+    before the handler is released.
 C7. **note — `Context::interval` with a zero period** returns an empty stream (`context.rs:334`). The source's
     timer passes the delay to `setInterval`, where Node treats 0 as 1 ms. Do the same and test it with paused
-    time.
+    time. The stream also replays ticks nobody asked for (`context.rs:335`; tokio's interval bursts by
+    default): after an idle period the next reads return the overdue ticks at once, while the source's timer
+    (`vendor/timer/src/index.ts`) discards a tick when no read is pending, so a read after an idle period
+    waits for the next tick. Follow the source. Test: create, advance several periods without reading, then
+    read twice and assert the times.
 C8. **note — smaller.** `Disposer::dispose` outside a tokio runtime panics in `tokio::spawn`
     (`effects.rs:165`): it must not panic (run what is synchronous, report the rest). The table of service
     types (`fiber.rs:812`) never shrinks, so a name keeps its first `TypeId` for the life of the kernel even
     after every provider and consumer of that name is gone: release the entry then, and test providing the
     same name with another type afterwards.
+C9. **bug — a context kept by a caller keeps released services alive.** Unloading replaces the actor's
+    context, but an old `Context` held elsewhere still owns its activation's `View` with the service values
+    (`fiber.rs:673`, `effects.rs:237`): the dependency is logically released (R10) and physically retained, and
+    the R35 warning then misleads. When an activation closes, its view must let go of the values. Test: keep
+    only a consumer's context, dispose consumer and provider, check a `Weak` to the service value.
+C10. **hazard — a superseded update still restarts newer work.** Update A suspends in its handler; update B
+    completes in place; A then calls `next`, whose tail calls `restart()` unconditionally (`fiber.rs:1200`) and
+    remounts the fiber although A is outdated. Establish from `vendor/cordis/src` and the harness test
+    "publishes successful retained-instance updates and ignores stale or rejected completions" what an
+    outdated delegation does in the source, and do the same; report the `path:line`. Test: record mounts across
+    exactly this order of events.
+C11. **rule violation — notifications about services cover only the visible table.** A provider that is still
+    loading can register and withdraw a binding without any `InternalService` event (`fiber.rs:883`); R28
+    requires a notification when a record disappears, and the source's `reflect.ts` notifies on withdrawal
+    before activation too. Test: a provider held in `Loading` withdraws its own binding; the event arrives.
+C12. **bug — `Listen::on_update` with prepend is not atomic** (`events.rs:117`): the handler is appended under
+    one lock and moved under a second, so a concurrent update can take a snapshot of the intermediate order
+    (R41). One lock acquisition.
+C13. **bug — aggregate errors are flattened one level only** (`logger.rs:96`): a member that is itself an
+    aggregate is logged as one record with the aggregate's text; the source flattens recursively (R57).
+    Test an aggregate nested in an aggregate with two leaves.
+C14. **note — nested continuations.** A `waterfall` or forwarding chain polls each listener's continuation
+    inside the previous one (`events.rs:288`, `fiber.rs:1292`), so the stack grows with the number of listeners
+    of one event. That number is bounded by what plugins register, not by input, so the nesting is allowed;
+    state the bound in the notes and add a test with 2,000 forwarding listeners of one event on a thread with
+    the default 2 MiB stack. If it overflows, run each continuation as a task of its own.
 
 ## D. Macros (`crates/hoh-kernel-macros/src/lib.rs`)
 
@@ -130,7 +180,9 @@ D1. **bug — generated code is not hygienic.** The expansion writes `Result<(),
     `vec!` (`:57-58`) unqualified. With `type Result<T> = std::result::Result<T, hoh_kernel::Error>;` in scope —
     the usual alias in a crate — `#[plugin]` fails to compile. Qualify every path the macros emit
     (`::core::result::Result`, `::std::vec::Vec`, …). Add a trybuild pass case with that alias and with a local
-    macro named `vec`.
+    macro named `vec`. The generated parameters `ctx`, `deps` and `config` also shadow a plugin function that
+    has one of those names: give generated identifiers names a caller cannot collide with, and add a pass
+    case for a plugin function called `config`.
 
 D6. **`View`**: `View::default().service::<K>()` and `Inject::resolve(&View::default())` panic through the
     `expect` at `hoh-kernel/src/lib.rs:105-118`, and `View::default` is public. Make an empty `View`
@@ -162,9 +214,15 @@ E2. **Weakened or missing assertions**, source line → port line. Restore each:
       the removal because the bus is private: assert it through something observable, or move the case to a
       unit test beside the bus;
     - `cordis-timer.spec.ts` — `tests/timer.rs` never advances time, never checks the period, asserts nothing
-      for operation 0 and replaces the source's three concurrent reads by one reader. Port it as written; if
-      one reader is all the Rust stream allows, say so in the notes and still assert the period and each
-      operation.
+      for operation 0 and replaces the source's three concurrent reads by one reader; the case the notes
+      claim (`PORT_NOTES.md:128`, pending reads settled on return, throw and dispose) creates no pending read
+      and never throws, and its second branch tests a restart instead. Port it as written; if one reader is
+      all the Rust stream allows, say so in the notes and still assert the period and each operation;
+    - `update.spec.ts`, the superseded generator (`tests/update.rs:137`): nothing observable follows the `push`,
+      so the test passes if the `Inactive` behaviour is removed. Add a marker after the push and assert it;
+    - `service-dispose.spec.ts`, composed provider effects (`tests/service_dispose.rs:342`): the port shuts the
+      kernel down where the source disposes the owner's subtree. Dispose the subtree and keep the source's
+      assertions made before the release.
 
 ## F. Notes
 
@@ -175,5 +233,6 @@ every handle does not stop its actor (the lead records the same in the specifica
 ## Done when
 
 `cargo test`, `cargo clippy --all-targets -- -D warnings` and `cargo fmt -- --check` are clean for both crates,
-with the new tests. Final report: the result lines; one line per item (A1…F) saying what changed; every
-finding you dispute, with the reason; anything unfinished. At most 500 words.
+with the new tests. Final report: the result lines; one line per item (A1…F) saying what changed, with the
+source `path:line` you relied on for C3 and C10; every finding you dispute, with the reason; anything
+unfinished. At most 600 words.
