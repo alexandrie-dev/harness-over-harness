@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -11,10 +11,26 @@ use hoh_node_addon_system::{
 };
 use tempfile::TempDir;
 
+fn launcher() -> PathBuf {
+    std::env::var_os("HOH_LANDLOCK_RUN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_landlock-run")))
+}
+
 fn fake(root: &Path, name: &str, script: &str) -> PathBuf {
     let file = root.join(name);
-    fs::write(&file, format!("#!/bin/sh\n{script}\n")).unwrap();
-    fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+    // A child writes the script. A descriptor open for writing in this process can be inherited by a
+    // process another test is starting at that moment, and running the script then fails (ETXTBSY):
+    // measured as 14 failed runs of 80 before this change.
+    let written = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(r#"printf '#!/bin/sh\n%s\n' "$2" > "$1" && chmod 755 "$1""#)
+        .arg("sh")
+        .arg(&file)
+        .arg(script)
+        .status()
+        .unwrap();
+    assert!(written.success());
     file
 }
 
@@ -113,10 +129,25 @@ fn hanging_probe_is_unusable() {
 
 #[test]
 fn real_launcher_probe() {
-    assert!(matches!(
-        probe(Some(Path::new(env!("CARGO_BIN_EXE_landlock-run"))), None),
-        Full | Partial
-    ));
+    assert!(matches!(probe(Some(&launcher()), None), Full | Partial));
+}
+
+#[test]
+fn grant_args_preserves_non_utf8_paths() {
+    let path = OsString::from_vec(b"/non-utf8-\xff".to_vec());
+    let args = grant_args(&LauncherGrants {
+        read_only: vec![PathBuf::from(&path)],
+        read_write: vec![PathBuf::from(&path)],
+    });
+    assert_eq!(
+        args,
+        [
+            OsString::from("--ro"),
+            path.clone(),
+            OsString::from("--rw"),
+            path
+        ]
+    );
 }
 
 #[test]

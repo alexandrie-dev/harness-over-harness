@@ -11,7 +11,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 0	kernel	vendor/schemastery	@deepseek-ai/schemastery	hoh-kernel	962	0	review	
 0	kernel	vendor/timer	@deepseek-ai/cordis-plugin-timer	hoh-kernel	153	0	review	
 1	port	apps/cli	@deepseek-ai/dsh	apps/hoh	1070	20216	todo	становится apps/hoh
-1	port	native/system/packages/entry	@deepseek-ai/node-addon-system	hoh-node-addon-system	646	0	review	запуск под Landlock и блокировка файлов flock
+1	port	native/system/packages/entry	@deepseek-ai/node-addon-system	hoh-node-addon-system	646	0	done	запуск под Landlock и блокировка файлов flock
 1	port	packages/attachment/attachment	@deepseek-ai/dsh-attachment	hoh-attachment	710	476	todo	
 1	port	packages/attachment/attachment-local	@deepseek-ai/dsh-attachment-local	hoh-attachment-local	1559	1810	todo	
 1	port	packages/bundle/sdk-app	@deepseek-ai/dsh-sdk-app	hoh-sdk-app	62	100	todo	профиль как данные; зависит от: dsh-client-connection=skip, dsh-client-file-upload=skip

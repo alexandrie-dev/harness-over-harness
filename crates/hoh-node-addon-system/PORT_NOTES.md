@@ -40,6 +40,54 @@ directory-only прав у файлов частичным enforcement, тогд
 Поэтому права файлов сужаются до передачи библиотеке; последняя также согласует права со старым ABI.
 Probe пишет ровно строку C: 281, обычный partial-run — строку C: 292.
 
+### Линковка launcher
+
+Поставляется **только статический** файл, собранный ведущим через `scripts/build-landlock-run.sh`:
+`-C target-feature=+crt-static`, отдельный target, release; скрипт проверяет отсутствие `INTERP`
+и `NEEDED` в ELF. Обычный `cargo build`/`cargo test` создаёт динамический `landlock-run` для тестов:
+этот файл **нельзя поставлять**, его loader обрабатывает LD-переменные до установки ruleset.
+Статический файл не загружает библиотеки из `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`.
+
+Для запуска тестов с поставляемым файлом служит только тестовый `HOH_LANDLOCK_RUN`:
+в `tests/launcher.rs` и `tests/entry.rs` по одному helper выбирает этот путь либо
+`CARGO_BIN_EXE_landlock-run`. Сам launcher не использует эту переменную и не меняет окружение.
+`static_launcher_ignores_loader_variables` — единственный ignored-тест обычной сборки;
+скрипт запускает его с `--include-ignored` и статическим файлом.
+
+Статическая glibc здесь отличается от статической musl образца. После установки ruleset
+glibc `execvp` при ENOEXEC запускает файл без shebang через `/bin/sh` (ведущий измерил exit 0);
+musl возвращает `Exec format error`, и исходный launcher завершился бы с 125.
+При отсутствующем `PATH` применяется default search path glibc вместо musl;
+тексты некоторых редких errno тоже отличаются. Кроме того, glibc обрабатывает
+`GLIBC_TUNABLES` при старте даже статического executable; отсутствие динамического loader
+не означает полного игнорирования этой переменной. Это остаётся отличием от musl.
+
+### Проверка чувствительности новых тестов
+
+Тесты написаны до временных изменений реализации. Каждая мутация после наблюдаемого
+падения восстановлена; в поставляемом коде мутаций нет.
+
+| тест | временное нарушение | наблюдаемое падение |
+| --- | --- | --- |
+| `static_launcher_ignores_loader_variables` | обычный динамический бинарник | stderr содержит ошибки loader для LD_AUDIT и LD_PRELOAD вместо пустой строки |
+| `refer_allows_links_inside_read_write_grant_and_refuses_imports` | REFER удалён из handled и `--rw` | `os.link('W/a/f', 'W/b/g')` получил EXDEV (18) вместо успеха |
+| `truncate_by_path_requires_the_truncate_right` | TRUNCATE удалён из handled и `--rw` | path-truncate вернул 0 вместо EACCES (13) |
+| `ioctl_on_devices_requires_the_ioctl_dev_right` | IOCTL_DEV удалён из handled и `--rw` | FIONREAD вернул ENOTTY (25) вместо EACCES (13) |
+| `full_or_partial_notice_strictly_matches_the_probe` | partial notice печатается и при Full | лишняя строка stderr вместо пустой строки |
+| `read_write_regular_file_grant_allows_read_overwrite_and_truncate_but_no_sibling` | file-права сужены до чтения | `open('target', 'r+b')` получил EACCES |
+| `read_only_regular_file_grant_allows_reading_but_not_writing` | file-grant получил write-права | запись успешна (0) вместо EACCES (13) |
+| `commands_without_execute_permission_or_naming_a_directory_fail` | exec failure возвращает 0 | статус 0 вместо 125 |
+| `command_sees_sigpipe_with_default_disposition` | перед командой shell явно игнорирует SIGPIPE | `SigIgn` содержит бит 13 (`0x1000`) |
+| `grant_args_preserves_non_utf8_paths` | lossy UTF-8 преобразование пути | `0xff` заменён на U+FFFD |
+
+REFER, path-TRUNCATE и device-IOCTL тесты требуют probe Full (ABI ≥ 5) и явно падают
+при любом другом результате. Прямые системные операции выполняет `/usr/bin/python3 -I`;
+отсутствие Python приводит к ошибке с именем инструмента. Link выполняется через `os.link`,
+truncate — через `os.truncate(path, 0)` без открытия файла на запись, ioctl — FIONREAD на `/dev/zero`.
+Все обычные файлы, hard links и каталоги принадлежат `tempfile`; device-тест открывает `/dev/zero`
+только для чтения. Проверки stderr успешных confined-команд строго следуют результату probe:
+Partial требует ровно notice, Full — пустую строку.
+
 ## Отличия от образца
 
 - `run_launcher(args, stdout, stderr)` — дополнительный публичный Rust API вместо C `main`;
@@ -57,13 +105,16 @@ Probe пишет ровно строку C: 281, обычный partial-run — 
   `partially enforced` при exit 0; пустой/иной stdout означает `Full`. Неуспех, сигнал,
   timeout, spawn/read failure или превышение Node maxBuffer 1 МиБ означают `Unusable`.
   Pipe читается неблокирующе, дочерний процесс завершается и reap-ится при отказе.
+  После timeout отправляется SIGTERM; затем `probe` ждёт завершения ребёнка без ограничения,
+  как `spawnSync`: ребёнок, игнорирующий SIGTERM, может задержать возврат дольше timeout.
 - `try_lock_exclusive` синхронный по заданию. На Unix принимает `AsFd`, возвращает
   `io::Result<()>`; положительный числовой syscall errno доступен через `raw_os_error()`:
   EAGAIN/EWOULDBLOCK — contention, остальные коды передаются без замены. JS-поля
   `code`, `errno`, `syscall` и текст `${code}: flock failed` заменены стандартной Rust-ошибкой.
-  Вне поддерживаемых Linux/macOS x64/arm64 возвращается `ErrorKind::Unsupported` с
+  На любом Unix вызывается `flock`, без ограничения архитектуры или списка npm-пакетов.
+  На не-Unix возвращается `ErrorKind::Unsupported` с
   `ERR_FLOCK_UNSUPPORTED_PLATFORM: flock is not supported on <platform>-<arch>`;
-  на не-Unix параметр — `&File`, так как `AsFd` там отсутствует. macOS сохраняет flock,
+  на не-Unix параметр — `&File`, так как `AsFd` там отсутствует.
   На macOS probe сохраняет запуск переданного launcher, как образец; стандартный launcher
   отсутствует, а запуск Rust-бинарника завершается с ошибкой unsupported Landlock.
   На не-Unix probe возвращает `Unusable` без запуска.
@@ -73,6 +124,10 @@ Probe пишет ровно строку C: 281, обычный partial-run — 
   передать отрицательный или закрытый fd через `AsFd` безопасный Rust не позволяет.
 - `rustix` feature `stdio` включён только в dev-dependencies для передачи и закрытия
   унаследованного fd в дочерней тестовой программе. Новых зависимостей нет.
+- Rust runtime при старте открывает `/dev/null` вместо закрытого стандартного дескриптора;
+  C launcher передаёт закрытый дескриптор команде как есть. SIGPIPE игнорируется Rust runtime,
+  но `CommandExt::exec` восстанавливает default перед `execvp`: бит SIGPIPE в `SigIgn` команды
+  проверяется тестом. Маска заблокированных сигналов наследуется без изменений.
 
 ## Не перенесено
 
@@ -88,13 +143,28 @@ Probe пишет ровно строку C: 281, обычный partial-run — 
 
 ## Не проверено
 
-На Linux выполнены `cargo build`, `cargo test` (45 passed: entry 9, flock 16, launcher 20;
-0 failed, 0 ignored), `cargo clippy --all-targets -- -D warnings`.
+Счётчики `cargo test` включают `flock_child`: это entry point дочернего helper-процесса,
+а не самостоятельный поведенческий случай. Итоги fix-round на Linux:
+
+| команда | результат |
+| --- | --- |
+| `cargo test -p hoh-node-addon-system` | entry: `10 passed; 0 failed; 0 ignored`; flock: `16 passed; 0 failed; 0 ignored`; launcher: `28 passed; 0 failed; 1 ignored`; library/bin/doc-tests: по 0 тестов |
+| `bash scripts/build-landlock-run.sh .` | exit 0; entry: `10 passed; 0 failed; 0 ignored`; launcher: `29 passed; 0 failed; 0 ignored`; ELF без loader и shared libraries |
+| `cargo clippy -p hoh-node-addon-system --all-targets -- -D warnings` | `Finished dev profile`, exit 0, предупреждений нет |
+| `cargo fmt -p hoh-node-addon-system -- --check` | exit 0, вывода нет |
+
+Каждая команда выполнена с `CARGO_NET_OFFLINE=true` и
+`CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-p1`; скрипт дополнительно с
+`HOH_LANDLOCK_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-p1-static`.
+Проверенный статический launcher:
+`/mnt/toshiba/alexandrie/hoh/target-p1-static/x86_64-unknown-linux-gnu/release/landlock-run`.
+Обычный прогон имеет ровно один ignored-тест — только проверку LD-переменных для статической сборки.
 Ни один confinement-тест sandbox не заблокировал. Ревью исходного C и Rust выполнено только чтением.
 
 - Ветки macOS (включая настоящий flock), Windows и прочих OS/архитектур не собирались и
   не запускались по заданию. Ошибка unsupported выражается в стандартном Rust API, как описано выше.
-- Реальные ядра ABI 1–4, disabled/unsupported Landlock, отказы prctl/create/add/restrict,
+- Отказ на ядре без Landlock не проверен: такого ядра в окружении нет.
+  Реальные ядра ABI 1–4, disabled Landlock, отказы prctl/create/add/restrict,
   исчерпание памяти/дескрипторов не воспроизводились. Права и решение full/partial сверены с C.
 - Отказ выделения памяти при разборе argv и резервировании grant-списков возвращает
   `landlock-run: out of memory` и 125, как C: 148–150. OOM внутри получения `args_os`,
