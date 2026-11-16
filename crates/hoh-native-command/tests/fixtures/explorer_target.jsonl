@@ -41,6 +41,14 @@
 {"path":"\\\\?\\UNC\\server\\share\\file.txt","target":"file://server/share/file.txt"}
 {"path":"\\\\.\\pipe\\name","target":"file://./pipe/name"}
 {"path":"//server/share/file.txt","target":"file://server/share/file.txt"}
+{"path":"\\\\?\\unc\\server\\share\\file.txt","target":"file:///unc/server/share/file.txt"}
+{"path":"\\\\?\\Unc\\Server\\share\\file.txt","target":"file:///Unc/Server/share/file.txt"}
+{"path":"\\\\?\\c:\\w\\file.txt","target":"file:///c:/w/file.txt"}
+{"path":"\\\\сервер\\share\\файл.txt","target":"file://xn--b1afb6bcb/share/файл.txt"}
+{"path":"\\\\SERVER.Example.COM\\share\\f.txt","target":"file://server.example.com/share/f.txt"}
+{"path":"Z:\\","target":"file:///Z://"}
+{"path":"c:/","target":"file:///c://"}
+{"path":"C:\\w\\a\\\\..\\b","target":"file:///C:/w/b"}
 {"path":"C:\\w\\a b.txt","target":"file:///C:/w/a%20b.txt"}
 {"path":"C:\\w\\a!b.txt","target":"file:///C:/w/a!b.txt"}
 {"path":"C:\\w\\a\"b.txt","target":"file:///C:/w/a%22b.txt"}

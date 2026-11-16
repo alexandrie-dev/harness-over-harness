@@ -26,6 +26,9 @@ const paths = [
   '\\\\server\\share\\..\\file.txt', '\\\\server\\share\\a b,c=d.txt', '\\\\server\\share\\файл.txt',
   '\\\\wsl.localhost\\Ubuntu\\home\\u\\file.txt', '\\\\wsl$\\Ubuntu\\home\\u\\file.txt', '\\\\192.168.1.5\\share\\f.txt',
   '\\\\?\\C:\\w\\file.txt', '\\\\?\\UNC\\server\\share\\file.txt', '\\\\.\\pipe\\name', '//server/share/file.txt',
+  // Added after the closure review: prefixes in another case, a host that needs punycode, a host with dots.
+  '\\\\?\\unc\\server\\share\\file.txt', '\\\\?\\Unc\\Server\\share\\file.txt', '\\\\?\\c:\\w\\file.txt',
+  '\\\\сервер\\share\\файл.txt', '\\\\SERVER.Example.COM\\share\\f.txt', 'Z:\\', 'c:/', 'C:\\w\\a\\\\..\\b',
 ]
 for (let code = 0x20; code <= 0x7e; code++) {
   const ch = String.fromCharCode(code)
