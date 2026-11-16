@@ -1,4 +1,6 @@
 use super::*;
+use hoh_error::SharedError;
+use hoh_timeout::{AbortController, is_abort_error};
 use std::{
     collections::VecDeque,
     sync::{
@@ -22,6 +24,7 @@ struct State {
     probe_responses: Option<usize>,
     other_user: bool,
     probe_all_exited: bool,
+    abort_after_lock: Option<(Arc<AbortController>, SharedError)>,
 }
 #[derive(Default)]
 struct Fake(Mutex<State>);
@@ -45,10 +48,29 @@ impl Runtime for Fake {
             s.rename_failures.pop_front()
         };
         if let Some(kind) = fail {
-            return Err(io::Error::new(
-                kind,
-                "injected rename failure without a code",
-            ));
+            return Err(match kind {
+                io::ErrorKind::PermissionDenied => {
+                    #[cfg(unix)]
+                    {
+                        io::Error::from_raw_os_error(rustix::io::Errno::ACCESS.raw_os_error())
+                    }
+                    #[cfg(windows)]
+                    {
+                        io::Error::from_raw_os_error(5)
+                    }
+                }
+                io::ErrorKind::ResourceBusy => {
+                    #[cfg(unix)]
+                    {
+                        io::Error::from_raw_os_error(rustix::io::Errno::BUSY.raw_os_error())
+                    }
+                    #[cfg(windows)]
+                    {
+                        io::Error::from_raw_os_error(170)
+                    }
+                }
+                kind => io::Error::new(kind, "injected rename failure without a code"),
+            });
         }
         tokio::fs::rename(from, to).await
     }
@@ -88,6 +110,12 @@ impl Runtime for Fake {
             });
         }
         write_new(path, data, mode).await?;
+        if lock(path) {
+            let abort = self.0.lock().unwrap().abort_after_lock.take();
+            if let Some((controller, reason)) = abort {
+                controller.abort_with(reason);
+            }
+        }
         if claim(path) {
             let replacement = self.0.lock().unwrap().after_claim.take();
             if let Some(record) = replacement {
@@ -366,9 +394,10 @@ async fn cancels_waiter_without_releasing_holder() {
         .unwrap();
     });
     entered_rx.await.unwrap();
-    let (tx, rx) = watch::channel(false);
+    let controller = AbortController::new();
+    let reason = SharedError::new(std::io::Error::other("caller cancelled"));
     let options = FileLockOptions {
-        signal: Some(rx),
+        signal: Some(controller.signal()),
         wait_ms: Some(10000),
         ..Default::default()
     };
@@ -383,24 +412,25 @@ async fn cancels_waiter_without_releasing_holder() {
     );
     let cancel = async {
         tokio::time::sleep(Duration::from_millis(1)).await;
-        tx.send(true).unwrap();
+        controller.abort_with(reason.clone());
     };
     let (result, ()) = tokio::join!(waiter, cancel);
-    assert!(matches!(
-        result.unwrap_err().downcast_ref::<AtomicWriteError>(),
-        Some(AtomicWriteError::Aborted)
-    ));
+    let error = result.unwrap_err();
+    assert!(is_abort_error(error.as_ref()));
+    assert_eq!(error.to_string(), "The operation was aborted");
+    assert!(
+        SharedError::of(error.source().unwrap())
+            .unwrap()
+            .ptr_eq(&reason)
+    );
     assert_eq!(
         read_lock_record(&sibling(&p, ".lock")).await.unwrap(),
         record(std::process::id())
     );
-    assert!(matches!(
-        with_file_lock(&p, || async { Ok(()) }, options)
-            .await
-            .unwrap_err()
-            .downcast_ref::<AtomicWriteError>(),
-        Some(AtomicWriteError::Aborted)
-    ));
+    let error = with_file_lock(&p, || async { Ok(()) }, options)
+        .await
+        .unwrap_err();
+    assert!(SharedError::of(error.as_ref()).unwrap().ptr_eq(&reason));
     release_tx.send(()).unwrap();
     holder.await.unwrap();
     assert_eq!(
@@ -744,4 +774,165 @@ async fn preserves_operation_error_and_releases_lock_on_failure() {
             .kind(),
         io::ErrorKind::NotFound
     );
+}
+
+#[tokio::test]
+async fn preaborted_acquisition_throws_the_reason_itself() {
+    let (dir, p) = setup();
+    let controller = AbortController::new();
+    let reason = SharedError::new(HarnessError::new("cancelled", "CANCELLED"));
+    controller.abort_with(reason.clone());
+    let result = with_file_lock(
+        &p,
+        || async {
+            panic!("cancelled operation ran");
+            #[allow(unreachable_code)]
+            Ok(())
+        },
+        FileLockOptions {
+            signal: Some(controller.signal()),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(
+        SharedError::of(result.unwrap_err().as_ref())
+            .unwrap()
+            .ptr_eq(&reason)
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+#[tokio::test]
+async fn abort_after_acquisition_throws_reason_and_releases_the_lock() {
+    let (dir, p) = setup();
+    let controller = Arc::new(AbortController::new());
+    let reason = SharedError::new(std::io::Error::other("cancelled"));
+    let fake = Fake::default();
+    fake.0.lock().unwrap().abort_after_lock = Some((controller.clone(), reason.clone()));
+    let result = with_file_lock_with(
+        &fake,
+        &p,
+        || async {
+            panic!("cancelled operation ran");
+            #[allow(unreachable_code)]
+            Ok(())
+        },
+        FileLockOptions {
+            signal: Some(controller.signal()),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(
+        SharedError::of(result.unwrap_err().as_ref())
+            .unwrap()
+            .ptr_eq(&reason)
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+#[tokio::test(start_paused = true)]
+async fn dropping_a_timed_out_operation_releases_lock_for_the_next_writer() {
+    let (_dir, p) = setup();
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+    let mut first = Box::pin(with_file_lock(
+        &p,
+        || async {
+            entered_tx.send(()).unwrap();
+            std::future::pending::<Result<(), BoxError>>().await
+        },
+        FileLockOptions::default(),
+    ));
+    tokio::select! {
+        result=&mut first => panic!("holder finished: {result:?}"),
+        result=entered_rx => result.unwrap(),
+    }
+    assert_eq!(
+        read_lock_record(&sibling(&p, ".lock")).await.unwrap(),
+        record(std::process::id())
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(1), first)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        with_file_lock(&p, || async { Ok("next") }, options(0))
+            .await
+            .unwrap(),
+        "next"
+    );
+    assert!(!sibling(&p, ".lock").exists());
+}
+#[test]
+fn dropped_guard_does_not_remove_a_changed_holder_record() {
+    let (_dir, p) = setup();
+    let path = sibling(&p, ".lock");
+    std::fs::write(&path, record(std::process::id())).unwrap();
+    let guard = LockGuard::new(&path);
+    std::fs::write(&path, "successor\n").unwrap();
+    drop(guard);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "successor\n");
+}
+#[cfg(unix)]
+#[test]
+fn dropped_guard_does_not_remove_successor_inode_with_same_pid() {
+    let (_dir, p) = setup();
+    let path = sibling(&p, ".lock");
+    std::fs::write(&path, record(std::process::id())).unwrap();
+    let guard = LockGuard::new(&path);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, record(std::process::id())).unwrap();
+    drop(guard);
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        record(std::process::id())
+    );
+}
+#[cfg(unix)]
+#[test]
+fn native_parent_process_is_not_proven_gone() {
+    let parent = rustix::process::getppid().unwrap();
+    assert!(!default_process_exited(parent.as_raw_nonzero().get() as u32).unwrap());
+}
+#[cfg(unix)]
+#[test]
+fn native_pid_one_is_not_proven_gone_for_non_root() {
+    if rustix::process::getuid().is_root() {
+        eprintln!("skipped PID 1 permission probe: test runs as root");
+        return;
+    }
+    assert!(!default_process_exited(1).unwrap());
+}
+#[cfg(unix)]
+#[test]
+fn transient_rename_mapping_accepts_exactly_the_named_unix_errno_codes() {
+    for errno in [
+        rustix::io::Errno::ACCESS,
+        rustix::io::Errno::BUSY,
+        rustix::io::Errno::PERM,
+    ] {
+        assert!(transient(&io::Error::from_raw_os_error(
+            errno.raw_os_error()
+        )));
+    }
+    for errno in [rustix::io::Errno::IO, rustix::io::Errno::NOENT] {
+        assert!(!transient(&io::Error::from_raw_os_error(
+            errno.raw_os_error()
+        )));
+    }
+    assert!(!transient(&io::Error::from(
+        io::ErrorKind::PermissionDenied
+    )));
+    assert!(!transient(&io::Error::from(io::ErrorKind::ResourceBusy)));
+}
+#[cfg(windows)]
+#[test]
+fn transient_rename_mapping_uses_only_documented_windows_codes() {
+    for code in [5, 32, 33, 170, 1314] {
+        assert!(transient(&io::Error::from_raw_os_error(code)));
+    }
+    assert!(!transient(&io::Error::from_raw_os_error(2)));
+    assert!(!transient(&io::Error::from(
+        io::ErrorKind::PermissionDenied
+    )));
 }

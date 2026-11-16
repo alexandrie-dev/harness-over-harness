@@ -1,5 +1,6 @@
 //! Atomic replacement and exclusive-create writer coordination.
 use hoh_error::{BoxError, HarnessError};
+use hoh_timeout::{AbortError, AbortSignal};
 use sha2::{Digest, Sha256};
 use std::{
     future::Future,
@@ -8,7 +9,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{io::AsyncWriteExt, sync::watch, time::Instant};
+use tokio::{io::AsyncWriteExt, time::Instant};
 
 pub struct WriteFileAtomicOptions {
     pub mode: u32,
@@ -17,7 +18,7 @@ pub struct WriteFileAtomicOptions {
 
 #[derive(Clone, Default)]
 pub struct FileLockOptions {
-    pub signal: Option<watch::Receiver<bool>>,
+    pub signal: Option<AbortSignal>,
     pub wait_ms: Option<u64>,
     /// Reports true only when a signal-zero probe proves ESRCH.
     /// Overrides the native Unix probe; Windows has no default probe until stage 5.
@@ -55,12 +56,6 @@ impl FileLockError {
         )
         .with_detail(FileLockErrorDetails { lock_path })
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AtomicWriteError {
-    #[error("The operation was aborted")]
-    Aborted,
 }
 
 trait Runtime {
@@ -149,9 +144,27 @@ fn permission(error: &io::Error) -> bool {
     }
 }
 fn transient(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::PermissionDenied
-        || error.kind() == io::ErrorKind::ResourceBusy
-        || matches!(error.raw_os_error(), Some(5 | 32 | 33)) && cfg!(windows)
+    #[cfg(unix)]
+    {
+        error.raw_os_error().is_some_and(|code| {
+            [
+                rustix::io::Errno::ACCESS,
+                rustix::io::Errno::BUSY,
+                rustix::io::Errno::PERM,
+            ]
+            .iter()
+            .any(|errno| errno.raw_os_error() == code)
+        })
+    }
+    #[cfg(windows)]
+    {
+        matches!(error.raw_os_error(), Some(5 | 32 | 33 | 170 | 1314))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = error;
+        false
+    }
 }
 async fn rename_atomic_temp(
     runtime: &impl Runtime,
@@ -283,24 +296,21 @@ async fn take_over_exited_lock(
     result
 }
 fn check_signal(options: &FileLockOptions) -> Result<(), BoxError> {
-    if options.signal.as_ref().is_some_and(|s| *s.borrow()) {
-        Err(AtomicWriteError::Aborted.into())
-    } else {
-        Ok(())
+    if let Some(signal) = &options.signal {
+        signal.throw_if_aborted()?;
     }
+    Ok(())
 }
 async fn wait(delay: u64, options: &FileLockOptions) -> Result<(), BoxError> {
     let cancelled = async {
-        if let Some(mut signal) = options.signal.clone()
-            && signal.wait_for(|aborted| *aborted).await.is_ok()
-        {
-            return;
+        match &options.signal {
+            Some(signal) => signal.cancelled().await,
+            None => std::future::pending().await,
         }
-        std::future::pending::<()>().await;
     };
     tokio::select! {
         () = tokio::time::sleep(Duration::from_millis(delay)) => Ok(()),
-        () = cancelled => Err(AtomicWriteError::Aborted.into()),
+        reason = cancelled => Err(AbortError::new("The operation was aborted").with_cause(reason).into()),
     }
 }
 pub async fn with_file_lock<T, F: Future<Output = Result<T, BoxError>>>(
@@ -309,6 +319,63 @@ pub async fn with_file_lock<T, F: Future<Output = Result<T, BoxError>>>(
     options: FileLockOptions,
 ) -> Result<T, BoxError> {
     with_file_lock_with(&SystemRuntime, filename.as_ref(), operation, options).await
+}
+
+struct LockGuard {
+    path: PathBuf,
+    record: Vec<u8>,
+    armed: bool,
+    #[cfg(unix)]
+    inode: Option<(u64, u64)>,
+    #[cfg(unix)]
+    _holder: Option<std::fs::File>,
+}
+impl LockGuard {
+    fn new(path: &Path) -> Self {
+        #[cfg(unix)]
+        let holder = std::fs::File::open(path).ok();
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            holder
+                .as_ref()
+                .and_then(|file| file.metadata().ok())
+                .map(|metadata| (metadata.dev(), metadata.ino()))
+        };
+        Self {
+            path: path.into(),
+            record: format!("{}\n", std::process::id()).into_bytes(),
+            armed: true,
+            #[cfg(unix)]
+            inode,
+            // Keep the original inode allocated until cleanup, preventing same-PID inode reuse.
+            #[cfg(unix)]
+            _holder: holder,
+        }
+    }
+}
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if std::fs::symlink_metadata(&self.path)
+                .ok()
+                .map(|metadata| (metadata.dev(), metadata.ino()))
+                != self.inode
+                || self.inode.is_none()
+            {
+                return;
+            }
+        }
+        if std::fs::read(&self.path).ok().as_deref() == Some(self.record.as_slice()) {
+            // Drop cannot await: release this holder's record synchronously, best effort.
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }
 async fn with_file_lock_with<T, F: Future<Output = Result<T, BoxError>>>(
     runtime: &impl Runtime,
@@ -350,11 +417,13 @@ async fn with_file_lock_with<T, F: Future<Output = Result<T, BoxError>>>(
         wait(delay, &options).await?;
         delay = (delay * 2).min(200);
     }
+    let mut guard = LockGuard::new(&lock_path);
     let result = match check_signal(&options) {
         Ok(()) => operation().await,
         Err(error) => Err(error),
     };
     runtime.remove(&lock_path).await?;
+    guard.armed = false;
     result
 }
 

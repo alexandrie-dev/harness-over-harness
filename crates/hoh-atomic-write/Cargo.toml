@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 hoh-error = { path = "../hoh-error" }
+hoh-timeout = { path = "../hoh-timeout" }
 getrandom.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

@@ -10,6 +10,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hoh-error = { path = "../hoh-error" }
+tokio-util.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 

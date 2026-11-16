@@ -1,4 +1,4 @@
-use hoh_error::{BoxError, HarnessError};
+use hoh_error::{BoxError, HarnessError, SharedError};
 use std::error::Error;
 
 struct SampleError;
@@ -116,4 +116,68 @@ fn clone_shares_the_concrete_cause_and_detail() {
             .is_some()
     );
     assert_eq!(clone.detail::<Detail>().unwrap().path, "archive");
+}
+
+#[test]
+fn shared_identity_survives_cloning_boxing_and_rewrapping() {
+    let reason = SharedError::new(std::io::Error::other("reason"));
+    assert!(reason.ptr_eq(&reason.clone()));
+    assert!(reason.ptr_eq(&SharedError::new(reason.clone())));
+    let thrown: BoxError = reason.clone().into();
+    assert!(reason.ptr_eq(SharedError::of(thrown.as_ref()).unwrap()));
+    assert!(reason.ptr_eq(&SharedError::new(thrown)));
+    assert!(!reason.ptr_eq(&SharedError::new(std::io::Error::other("reason"))));
+}
+#[test]
+fn shared_downcast_and_recognition_check_only_the_value_itself() {
+    let reason = SharedError::new(std::io::Error::from(std::io::ErrorKind::NotFound));
+    assert_eq!(
+        reason.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(reason.downcast_ref::<HarnessError>().is_none());
+    assert!(reason.ptr_eq(SharedError::of(&reason).unwrap()));
+    #[derive(Debug, thiserror::Error)]
+    #[error("plain")]
+    struct Plain {
+        #[source]
+        source: SharedError,
+    }
+    let plain = Plain { source: reason };
+    assert!(SharedError::of(&plain).is_none());
+    assert!(SharedError::of(plain.source().unwrap()).is_some());
+}
+#[test]
+fn harness_reason_is_recognized_directly_and_after_throwing() {
+    let reason = SharedError::new(HarnessError::named("SampleError", "reason", "SAMPLE"));
+    assert!(HarnessError::of(&reason).unwrap().is_named("SampleError"));
+    let thrown: BoxError = reason.into();
+    assert_eq!(HarnessError::of(thrown.as_ref()).unwrap().code(), "SAMPLE");
+}
+#[test]
+fn shared_display_and_source_are_transparent() {
+    let reason = SharedError::new(
+        HarnessError::new("outer", "OUTER")
+            .with_cause(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+    );
+    assert_eq!(reason.to_string(), "outer");
+    let original = reason.downcast_ref::<HarnessError>().unwrap();
+    assert!(std::ptr::eq(
+        reason.source().unwrap(),
+        original.source().unwrap()
+    ));
+    assert_eq!(
+        reason
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert!(
+        SharedError::new(std::io::Error::other("plain"))
+            .source()
+            .is_none()
+    );
 }

@@ -1,11 +1,13 @@
 //! Shared timeout arithmetic, signal fusion and classification; notification only.
+use hoh_error::SharedError;
 use std::{
-    any::Any,
     future::Future,
-    sync::{Arc, Mutex, MutexGuard, Weak},
+    sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
-use tokio::{sync::watch, task::JoinHandle, time::Instant};
+use tokio::{task::JoinHandle, time::Instant};
+mod abort;
+pub use abort::{AbortController, AbortError, AbortSignal, DomTimeoutError, is_abort_error};
 
 /// Internal reason carrying a capability-owned code and elapsed deadline.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -93,9 +95,11 @@ pub fn clamp_timeout(
     })
 }
 
-/// Classify a bare reason, optionally scoped to a capability-owned code.
+/// Classify a signal's or caught error's shared reason, optionally scoped to a code.
+/// For a signal: `let reason = signal.reason(); timeout_of(reason.as_ref(), code)`.
+/// For a caught `BoxError`: use `SharedError::of(error.as_ref())` as the first argument.
 pub fn timeout_of<'a>(
-    reason: Option<&'a (dyn Any + Send + Sync)>,
+    reason: Option<&'a SharedError>,
     code: Option<&str>,
 ) -> Option<&'a TimeoutReason> {
     let reason = reason?.downcast_ref::<TimeoutReason>()?;
@@ -106,95 +110,10 @@ pub fn timeout_of<'a>(
     }
 }
 
-type Reason = Arc<dyn Any + Send + Sync>;
-struct SignalState {
-    reason: Option<Reason>,
-    followers: Vec<Weak<Mutex<SignalState>>>,
-    changed: watch::Sender<()>,
-}
-
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// Provisional abort signal, backed by Tokio notifications; first reason wins.
-#[derive(Clone)]
-pub struct AbortSignal {
-    inner: Arc<Mutex<SignalState>>,
-}
-
-impl Default for AbortSignal {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AbortSignal {
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(SignalState {
-                reason: None,
-                followers: vec![],
-                changed: watch::channel(()).0,
-            })),
-        }
-    }
-    pub fn aborted(&self) -> bool {
-        lock(&self.inner).reason.is_some()
-    }
-    pub fn reason(&self) -> Option<Reason> {
-        lock(&self.inner).reason.clone()
-    }
-    pub fn abort(&self, reason: impl Any + Send + Sync) {
-        self.abort_shared(Arc::new(reason));
-    }
-
-    fn abort_shared(&self, reason: Reason) {
-        let followers = {
-            let mut state = lock(&self.inner);
-            if state.reason.is_some() {
-                return;
-            }
-            state.reason = Some(reason.clone());
-            state.changed.send_replace(());
-            std::mem::take(&mut state.followers)
-        };
-        for follower in followers {
-            if let Some(inner) = follower.upgrade() {
-                Self { inner }.abort_shared(reason.clone());
-            }
-        }
-    }
-
-    fn fuse(upstream: Option<&Self>, timer: &Self) -> Self {
-        let signal = Self::new();
-        for source in upstream.into_iter().chain(std::iter::once(timer)) {
-            let mut state = lock(&source.inner);
-            if let Some(reason) = &state.reason {
-                signal.abort_shared(reason.clone());
-            } else {
-                state
-                    .followers
-                    .retain(|follower| follower.strong_count() > 0);
-                state.followers.push(Arc::downgrade(&signal.inner));
-            }
-        }
-        signal
-    }
-
-    /// Wait for cancellation, including an already-aborted signal.
-    pub async fn cancelled(&self) -> Reason {
-        let mut changed = lock(&self.inner).changed.subscribe();
-        loop {
-            if let Some(reason) = self.reason() {
-                return reason;
-            }
-            // The sender lives in self for the entire wait.
-            let _ = changed.changed().await;
-        }
-    }
 }
 
 fn timer_instant(timeout_ms: f64) -> Instant {
@@ -227,18 +146,25 @@ pub fn deadline(
 ) -> Result<Deadline, TimeoutError> {
     if timeout_ms <= 0.0 {
         return Ok(Deadline {
-            signal: upstream.cloned().unwrap_or_default(),
+            signal: upstream
+                .cloned()
+                .unwrap_or_else(|| AbortController::new().signal()),
             timer: None,
         });
     }
     assert_timer_delay(timeout_ms, "deadline timeoutMs")?;
-    let timer_signal = AbortSignal::new();
-    let signal = AbortSignal::fuse(upstream, &timer_signal);
+    let timer_signal = AbortController::new();
+    let signal = AbortSignal::any(
+        upstream
+            .into_iter()
+            .cloned()
+            .chain(std::iter::once(timer_signal.signal())),
+    );
     let reason = TimeoutReason::new(code, timeout_ms);
     let at = timer_instant(timeout_ms);
     let timer = tokio::spawn(async move {
         tokio::time::sleep_until(at).await;
-        timer_signal.abort(reason);
+        timer_signal.abort_with(reason);
     });
     Ok(Deadline {
         signal,
@@ -251,7 +177,7 @@ pub enum IdleWatchdogError {
     #[error(transparent)]
     State(#[from] TimeoutError),
     #[error(transparent)]
-    Timeout(Arc<TimeoutReason>),
+    Timeout(SharedError),
     #[error(transparent)]
     Task(#[from] tokio::task::JoinError),
 }
@@ -274,8 +200,9 @@ impl WatchdogState {
 
 pub struct IdleWatchdog {
     pub signal: AbortSignal,
-    timeout: AbortSignal,
-    reason: Arc<TimeoutReason>,
+    timeout: Arc<AbortController>,
+    reason: SharedError,
+    timeout_ms: f64,
     state: Arc<Mutex<WatchdogState>>,
 }
 
@@ -305,16 +232,16 @@ impl IdleWatchdog {
     fn arm(&self, state: &mut WatchdogState) {
         state.clear_timer();
         let generation = state.generation;
-        let at = timer_instant(self.reason.timeout_ms);
+        let at = timer_instant(self.timeout_ms);
         let shared_state = Arc::downgrade(&self.state);
         let timeout = self.timeout.clone();
-        let reason: Reason = self.reason.clone();
+        let reason = self.reason.clone();
         state.timer = Some(tokio::spawn(async move {
             tokio::time::sleep_until(at).await;
             if let Some(shared) = shared_state.upgrade() {
                 let state = lock(&shared);
                 if !state.disposed && state.outstanding && state.generation == generation {
-                    timeout.abort_shared(reason);
+                    timeout.abort_with(reason);
                 }
             }
         }));
@@ -330,7 +257,7 @@ impl IdleWatchdog {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        let mut expired = lock(&self.timeout.inner).changed.subscribe();
+        let mut expired = self.timeout.signal().subscribe();
         let guard = {
             let mut state = lock(&self.state);
             if state.disposed {
@@ -399,11 +326,17 @@ pub fn idle_watchdog(
     code: &str,
 ) -> Result<IdleWatchdog, TimeoutError> {
     assert_timer_delay(timeout_ms, "idleWatchdog timeoutMs")?;
-    let timeout = AbortSignal::new();
+    let timeout = Arc::new(AbortController::new());
     Ok(IdleWatchdog {
-        signal: AbortSignal::fuse(upstream, &timeout),
+        signal: AbortSignal::any(
+            upstream
+                .into_iter()
+                .cloned()
+                .chain(std::iter::once(timeout.signal())),
+        ),
         timeout,
-        reason: Arc::new(TimeoutReason::new(code, timeout_ms)),
+        reason: SharedError::new(TimeoutReason::new(code, timeout_ms)),
+        timeout_ms,
         state: Arc::new(Mutex::new(WatchdogState::default())),
     })
 }

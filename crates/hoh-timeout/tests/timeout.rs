@@ -1,9 +1,10 @@
+use hoh_error::{BoxError, SharedError};
 use hoh_timeout::{
-    AbortSignal, IdleWatchdogError, MAX_TIMER_DELAY_MS, TimeoutReason, clamp_timeout, deadline,
-    idle_watchdog, timeout_of,
+    AbortController, AbortError, AbortSignal, DomTimeoutError, IdleWatchdogError,
+    MAX_TIMER_DELAY_MS, TimeoutReason, clamp_timeout, deadline, idle_watchdog, is_abort_error,
+    timeout_of,
 };
 use std::{
-    any::Any,
     future::{self, Future},
     pin::Pin,
     sync::{
@@ -17,7 +18,7 @@ use tokio::sync::oneshot;
 
 fn classify(signal: &AbortSignal, code: Option<&str>) -> Option<TimeoutReason> {
     let reason = signal.reason();
-    timeout_of(reason.as_deref(), code).cloned()
+    timeout_of(reason.as_ref(), code).cloned()
 }
 async fn elapse(ms: u64) {
     tokio::task::yield_now().await;
@@ -28,8 +29,7 @@ fn assert_same_timeout(error: IdleWatchdogError, signal: &AbortSignal) {
     let IdleWatchdogError::Timeout(reason) = error else {
         panic!("Expected timeout")
     };
-    let erased: Arc<dyn Any + Send + Sync> = reason;
-    assert!(Arc::ptr_eq(&erased, &signal.reason().unwrap()));
+    assert!(reason.ptr_eq(&signal.reason().unwrap()));
 }
 
 #[test]
@@ -158,46 +158,51 @@ fn rejects_delays_node_would_clamp_to_one_ms() {
 }
 #[tokio::test(start_paused = true)]
 async fn aborts_on_upstream_cancellation_not_timeout() {
-    let upstream = AbortSignal::new();
+    let controller = AbortController::new();
+    let upstream = controller.signal();
     let d = deadline(Some(&upstream), 60_000.0, "BASH_TIMEOUT").unwrap();
-    upstream.abort("user cancelled");
+    controller.abort_with(std::io::Error::other("user cancelled"));
     assert!(d.signal.aborted());
     assert!(classify(&d.signal, None).is_none());
 }
 #[tokio::test(start_paused = true)]
 async fn cancel_wins_before_timeout() {
-    let upstream = AbortSignal::new();
+    let controller = AbortController::new();
+    let upstream = controller.signal();
     let d = deadline(Some(&upstream), 100.0, "BASH_TIMEOUT").unwrap();
-    upstream.abort("user cancelled");
+    controller.abort_with(std::io::Error::other("user cancelled"));
     elapse(200).await;
     assert!(d.signal.aborted());
     assert!(classify(&d.signal, None).is_none());
 }
 #[tokio::test(start_paused = true)]
 async fn timeout_wins_before_cancellation() {
-    let upstream = AbortSignal::new();
+    let controller = AbortController::new();
+    let upstream = controller.signal();
     let d = deadline(Some(&upstream), 100.0, "WEB_FETCH_TIMEOUT").unwrap();
     elapse(150).await;
     assert!(d.signal.aborted());
     assert_eq!(classify(&d.signal, None).unwrap().code, "WEB_FETCH_TIMEOUT");
-    upstream.abort("too late");
+    controller.abort_with(std::io::Error::other("too late"));
     assert_eq!(classify(&d.signal, None).unwrap().code, "WEB_FETCH_TIMEOUT");
 }
 #[tokio::test(start_paused = true)]
 async fn forwards_preaborted_upstream_immediately() {
-    let upstream = AbortSignal::new();
-    upstream.abort("already gone");
+    let controller = AbortController::new();
+    let upstream = controller.signal();
+    controller.abort_with(std::io::Error::other("already gone"));
     let d = deadline(Some(&upstream), 60_000.0, "BASH_TIMEOUT").unwrap();
     assert!(d.signal.aborted());
     assert!(classify(&d.signal, None).is_none());
 }
 #[tokio::test(start_paused = true)]
 async fn sentinel_arms_no_timer_and_forwards_upstream() {
-    let upstream = AbortSignal::new();
+    let controller = AbortController::new();
+    let upstream = controller.signal();
     let d = deadline(Some(&upstream), 0.0, "BASH_TIMEOUT").unwrap();
     elapse(1_000_000).await;
     assert!(!d.signal.aborted());
-    upstream.abort("kill");
+    controller.abort_with(std::io::Error::other("kill"));
     assert!(d.signal.aborted());
     assert!(classify(&d.signal, None).is_none());
 }
@@ -217,31 +222,44 @@ fn negative_timeout_same_as_zero() {
 }
 #[test]
 fn classifies_bare_timeout_reason_carrier() {
-    let reason = TimeoutReason::new("WEB_FETCH_TIMEOUT", 50.0);
+    let reason = SharedError::new(TimeoutReason::new("WEB_FETCH_TIMEOUT", 50.0));
     assert!(std::ptr::eq(
         timeout_of(Some(&reason), None).unwrap(),
-        &reason
+        reason.downcast_ref::<TimeoutReason>().unwrap()
     ));
 }
 #[test]
 fn returns_none_for_nontimeout_reason() {
-    assert!(timeout_of(Some(&std::io::Error::other("other")), None).is_none());
-    assert!(timeout_of(Some(&"user cancelled"), None).is_none());
+    assert!(
+        timeout_of(
+            Some(&SharedError::new(std::io::Error::other("other"))),
+            None
+        )
+        .is_none()
+    );
+    assert!(
+        timeout_of(
+            Some(&SharedError::new(std::io::Error::other("user cancelled"))),
+            None
+        )
+        .is_none()
+    );
     assert!(timeout_of(None, None).is_none());
 }
 #[test]
 fn matches_only_requested_code() {
-    let reason = TimeoutReason::new("BASH_TIMEOUT", 100.0);
+    let reason = SharedError::new(TimeoutReason::new("BASH_TIMEOUT", 100.0));
     assert!(std::ptr::eq(
         timeout_of(Some(&reason), Some("BASH_TIMEOUT")).unwrap(),
-        &reason
+        reason.downcast_ref::<TimeoutReason>().unwrap()
     ));
     assert!(timeout_of(Some(&reason), Some("WEB_FETCH_TIMEOUT")).is_none());
 }
 #[tokio::test(start_paused = true)]
 async fn does_not_misclassify_outer_timeout_as_inner_code() {
-    let outer = AbortSignal::new();
-    outer.abort(TimeoutReason::new("OUTER_TIMEOUT", 30.0));
+    let controller = AbortController::new();
+    let outer = controller.signal();
+    controller.abort_with(TimeoutReason::new("OUTER_TIMEOUT", 30.0));
     let inner = deadline(Some(&outer), 60_000.0, "BASH_TIMEOUT").unwrap();
     assert!(inner.signal.aborted());
     assert!(classify(&inner.signal, Some("BASH_TIMEOUT")).is_none());
@@ -300,15 +318,22 @@ async fn watchdog_rearms_outstanding_demand_on_activity_pulse() {
 }
 #[tokio::test(start_paused = true)]
 async fn watchdog_keeps_upstream_abort_distinct() {
-    let upstream = AbortSignal::new();
+    let controller = AbortController::new();
+    let upstream = controller.signal();
     let watchdog = idle_watchdog(Some(&upstream), 100.0, "LLM_STREAM_IDLE_TIMEOUT").unwrap();
-    upstream.abort("caller cancelled");
+    controller.abort_with(std::io::Error::other("caller cancelled"));
     assert!(watchdog.signal.aborted());
     assert!(classify(&watchdog.signal, Some("LLM_STREAM_IDLE_TIMEOUT")).is_none());
     elapse(1_000).await;
     assert_eq!(
-        watchdog.signal.reason().unwrap().downcast_ref::<&str>(),
-        Some(&"caller cancelled")
+        watchdog
+            .signal
+            .reason()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .to_string(),
+        "caller cancelled"
     );
 }
 #[tokio::test(start_paused = true)]
@@ -382,11 +407,12 @@ async fn watchdog_rejects_invalid_bounds_and_concurrent_demand() {
 
 #[tokio::test(start_paused = true)]
 async fn upstream_abort_does_not_shorten_outstanding_demand() {
-    let upstream = AbortSignal::new();
+    let controller = AbortController::new();
+    let upstream = controller.signal();
     let watchdog = idle_watchdog(Some(&upstream), 100.0, "IDLE").unwrap();
     let pending = future::pending::<()>();
     let next = watchdog.next(pending);
-    upstream.abort("caller cancelled");
+    controller.abort_with(std::io::Error::other("caller cancelled"));
     assert!(watchdog.signal.aborted());
     tokio::pin!(next);
     tokio::select! {
@@ -397,7 +423,7 @@ async fn upstream_abort_does_not_shorten_outstanding_demand() {
     let IdleWatchdogError::Timeout(reason) = next.await.unwrap_err() else {
         panic!("Expected timeout")
     };
-    assert_eq!(reason.code, "IDLE");
+    assert_eq!(reason.downcast_ref::<TimeoutReason>().unwrap().code, "IDLE");
     assert!(classify(&watchdog.signal, None).is_none());
 }
 
@@ -474,4 +500,283 @@ async fn dropping_watchdog_and_next_does_not_detach_demand() {
     drop(watchdog);
     elapse(0).await;
     assert!(dropped.load(Ordering::SeqCst));
+}
+
+#[test]
+fn controller_starts_unaborted_and_is_send_sync() {
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<AbortController>();
+    send_sync::<AbortSignal>();
+    let controller = AbortController::new();
+    let signal = controller.signal();
+    assert!(!signal.aborted());
+    assert!(signal.reason().is_none());
+    assert!(signal.throw_if_aborted().is_ok());
+    assert!(format!("{signal:?}").contains("AbortSignal"));
+}
+#[test]
+fn first_abort_wins_and_default_reason_is_abort_error() {
+    let controller = AbortController::default();
+    controller.abort();
+    let reason = controller.signal().reason().unwrap();
+    assert!(is_abort_error(&reason));
+    assert_eq!(reason.to_string(), "This operation was aborted");
+    controller.abort_with(std::io::Error::other("late"));
+    controller.abort();
+    assert!(reason.ptr_eq(&controller.signal().reason().unwrap()));
+    let named = AbortController::new();
+    named.abort_with(std::io::Error::other("first"));
+    let first = named.signal().reason().unwrap();
+    named.abort();
+    assert!(first.ptr_eq(&named.signal().reason().unwrap()));
+}
+#[tokio::test]
+async fn reason_identity_survives_throw_wait_question_mark_and_boxing() {
+    let controller = AbortController::new();
+    controller.abort_with(std::io::Error::other("reason"));
+    let signal = controller.signal();
+    let reason = signal.reason().unwrap();
+    assert!(reason.ptr_eq(&signal.reason().unwrap()));
+    assert!(reason.ptr_eq(&signal.throw_if_aborted().unwrap_err()));
+    assert!(reason.ptr_eq(&signal.cancelled().await));
+    fn operation(signal: &AbortSignal) -> Result<(), BoxError> {
+        signal.throw_if_aborted()?;
+        Ok(())
+    }
+    assert!(reason.ptr_eq(&SharedError::new(operation(&signal).unwrap_err())));
+}
+#[test]
+fn forwarding_keeps_the_same_reason() {
+    let a = AbortController::new();
+    let b = AbortController::new();
+    a.abort_with(std::io::Error::other("reason"));
+    b.abort_with(a.signal().reason().unwrap());
+    assert!(
+        a.signal()
+            .reason()
+            .unwrap()
+            .ptr_eq(&b.signal().reason().unwrap())
+    );
+}
+#[tokio::test]
+async fn cancellation_wakes_every_waiter() {
+    let controller = AbortController::new();
+    let mut waiters = Vec::new();
+    for _ in 0..8 {
+        let signal = controller.signal();
+        waiters.push(tokio::spawn(async move { signal.cancelled().await }));
+    }
+    tokio::task::yield_now().await;
+    controller.abort();
+    let reason = controller.signal().reason().unwrap();
+    for waiter in waiters {
+        assert!(reason.ptr_eq(&waiter.await.unwrap()));
+    }
+}
+#[test]
+fn any_adopts_preaborted_sources_in_input_order() {
+    let a = AbortController::new();
+    let b = AbortController::new();
+    a.abort();
+    b.abort();
+    let result = AbortSignal::any([b.signal(), a.signal()]);
+    assert!(result.aborted());
+    assert!(
+        result
+            .reason()
+            .unwrap()
+            .ptr_eq(&b.signal().reason().unwrap())
+    );
+}
+#[tokio::test]
+async fn any_uses_the_first_abort_in_time_not_input_order() {
+    let a = AbortController::new();
+    let b = AbortController::new();
+    let result = AbortSignal::any([b.signal(), a.signal()]);
+    a.abort_with(std::io::Error::other("first"));
+    b.abort_with(std::io::Error::other("second"));
+    assert!(
+        result
+            .cancelled()
+            .await
+            .ptr_eq(&a.signal().reason().unwrap())
+    );
+}
+#[tokio::test(start_paused = true)]
+async fn empty_any_never_aborts() {
+    let signal = AbortSignal::any([]);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), signal.cancelled())
+            .await
+            .is_err()
+    );
+    assert!(!signal.aborted());
+}
+#[tokio::test(start_paused = true)]
+async fn timeout_truncates_delay_and_has_dom_timeout_reason() {
+    let signal = AbortSignal::timeout(10.9);
+    elapse(9).await;
+    assert!(!signal.aborted());
+    elapse(1).await;
+    assert!(signal.aborted());
+    let reason = signal.cancelled().await;
+    assert!(reason.downcast_ref::<DomTimeoutError>().is_some());
+    assert_eq!(
+        reason.to_string(),
+        "The operation was aborted due to timeout"
+    );
+    assert!(reason.ptr_eq(&signal.reason().unwrap()));
+    for delay in [0.0, -1.0, 0.9] {
+        let signal = AbortSignal::timeout(delay);
+        assert!(!signal.aborted());
+        elapse(1).await;
+        assert!(signal.aborted());
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn timeout_wakes_a_waiter_and_any_observes_it() {
+    let early = AbortSignal::timeout(10.0);
+    let late = AbortSignal::timeout(20.0);
+    let result = AbortSignal::any([late, early.clone()]);
+    let reason = result.cancelled().await;
+    assert!(reason.ptr_eq(&early.reason().unwrap()));
+}
+#[tokio::test(start_paused = true)]
+async fn any_preserves_the_earlier_elapsed_timer_before_observation() {
+    let early = AbortSignal::timeout(10.0);
+    let late = AbortSignal::timeout(20.0);
+    let result = AbortSignal::any([late, early.clone()]);
+    elapse(30).await;
+    assert!(result.reason().unwrap().ptr_eq(&early.reason().unwrap()));
+}
+#[tokio::test(start_paused = true)]
+async fn several_unobserved_timers_choose_the_earliest_in_any_input_order() {
+    for early_last in [false, true] {
+        let early = AbortSignal::timeout(10.0);
+        let middle = AbortSignal::timeout(20.0);
+        let late = AbortSignal::timeout(30.0);
+        let sources = if early_last {
+            [late, middle, early.clone()]
+        } else {
+            [late, early.clone(), middle]
+        };
+        let result = AbortSignal::any(sources);
+        elapse(40).await;
+        assert!(result.reason().unwrap().ptr_eq(&early.reason().unwrap()));
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn an_elapsed_timeout_precedes_a_later_controller_abort() {
+    let early = AbortSignal::timeout(10.0);
+    let controller = AbortController::new();
+    let result = AbortSignal::any([controller.signal(), early.clone()]);
+    elapse(20).await;
+    controller.abort();
+    assert!(result.reason().unwrap().ptr_eq(&early.reason().unwrap()));
+}
+#[tokio::test]
+async fn token_bridge_observes_cancellation_without_waiters_and_keeps_identity() {
+    let token = tokio_util::sync::CancellationToken::new();
+    let signal = AbortSignal::from_token(token.clone());
+    assert!(!signal.aborted());
+    token.cancel();
+    assert!(signal.aborted());
+    let reason = signal.reason().unwrap();
+    assert!(is_abort_error(&reason));
+    assert!(reason.ptr_eq(&signal.reason().unwrap()));
+    assert!(reason.ptr_eq(&signal.cancelled().await));
+}
+#[tokio::test]
+async fn token_bridge_wakes_waiters() {
+    let token = tokio_util::sync::CancellationToken::new();
+    let signal = AbortSignal::from_token(token.clone());
+    let waiting = {
+        let signal = signal.clone();
+        tokio::spawn(async move { signal.cancelled().await })
+    };
+    tokio::task::yield_now().await;
+    token.cancel();
+    assert!(waiting.await.unwrap().ptr_eq(&signal.reason().unwrap()));
+}
+#[tokio::test]
+async fn token_and_controller_can_each_win_any() {
+    for token_first in [true, false] {
+        let token = tokio_util::sync::CancellationToken::new();
+        let bridged = AbortSignal::from_token(token.clone());
+        let controller = AbortController::new();
+        let result = AbortSignal::any([controller.signal(), bridged.clone()]);
+        if token_first {
+            token.cancel();
+            controller.abort();
+        } else {
+            controller.abort();
+            token.cancel();
+        }
+        let expected = if token_first {
+            bridged.reason().unwrap()
+        } else {
+            controller.signal().reason().unwrap()
+        };
+        assert!(result.cancelled().await.ptr_eq(&expected));
+    }
+}
+#[test]
+fn any_keeps_token_cancellation_order_without_an_executor_or_observers() {
+    let first = tokio_util::sync::CancellationToken::new();
+    let second = tokio_util::sync::CancellationToken::new();
+    let first_signal = AbortSignal::from_token(first.clone());
+    let second_signal = AbortSignal::from_token(second.clone());
+    let result = AbortSignal::any([second_signal, first_signal.clone()]);
+    first.cancel();
+    second.cancel();
+    assert!(
+        result
+            .reason()
+            .unwrap()
+            .ptr_eq(&first_signal.reason().unwrap())
+    );
+}
+#[test]
+fn abort_error_recognition_is_transparent_but_never_walks_sources() {
+    let error = AbortError::new("custom");
+    assert_eq!(error.to_string(), "custom");
+    assert!(is_abort_error(&error));
+    assert!(is_abort_error(&SharedError::new(error)));
+    #[derive(Debug, thiserror::Error)]
+    #[error("outer")]
+    struct Outer {
+        #[source]
+        cause: AbortError,
+    }
+    assert!(!is_abort_error(&Outer {
+        cause: AbortError::default()
+    }));
+    assert!(!is_abort_error(&SharedError::new(Outer {
+        cause: AbortError::default()
+    })));
+    assert!(!is_abort_error(&DomTimeoutError));
+}
+#[test]
+fn timeout_of_classifies_both_signal_and_caught_reason() {
+    let controller = AbortController::new();
+    controller.abort_with(TimeoutReason::new("LIMIT", 12.0));
+    let signal = controller.signal();
+    let signal_reason = signal.reason();
+    assert_eq!(
+        timeout_of(signal_reason.as_ref(), Some("LIMIT"))
+            .unwrap()
+            .timeout_ms,
+        12.0
+    );
+    let caught = signal.throw_if_aborted().unwrap_err();
+    assert_eq!(timeout_of(Some(&caught), None).unwrap().code, "LIMIT");
+    assert!(timeout_of(Some(&caught), Some("OTHER")).is_none());
+}
+#[tokio::test(start_paused = true)]
+async fn dropping_deadline_disposes_timer_even_if_signal_survives() {
+    let deadline = deadline(None, 10.0, "DEADLINE").unwrap();
+    let signal = deadline.signal.clone();
+    drop(deadline);
+    elapse(100).await;
+    assert!(!signal.aborted());
 }
