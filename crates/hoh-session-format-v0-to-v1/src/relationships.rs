@@ -341,8 +341,9 @@ pub fn assert_released_artifact_relationships(
                     let source =
                         exact_index(&d["sourceEventSeq"]).and_then(|i| artifact.events.get(i));
                     if d["kind"] != "success"
-                        || source
-                            .is_none_or(|e| matches!(event_type(e), "command/run" | "command/done"))
+                        || source.is_some_and(|e| {
+                            matches!(event_type(e), "command/run" | "command/done")
+                        })
                     {
                         return Err(err(format!("command/done {id} has invalid sourceEventSeq")));
                     }
