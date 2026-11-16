@@ -562,16 +562,22 @@ name = "hoh-launch-environment"
 version = "0.1.0"
 dependencies = [
  "hoh-kernel",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
 name = "hoh-loader"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "hoh-kernel",
  "hoh-util-values",
  "indexmap",
  "saphyr-parser",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
@@ -626,6 +632,10 @@ name = "hoh-scope"
 version = "0.1.0"
 dependencies = [
  "hoh-kernel",
+ "indexmap",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -654,6 +664,12 @@ name = "hoh-storage"
 version = "0.1.0"
 dependencies = [
  "hoh-kernel",
+ "indexmap",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
