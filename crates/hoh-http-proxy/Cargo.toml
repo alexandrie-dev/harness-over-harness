@@ -1,0 +1,13 @@
+[package]
+name = "hoh-http-proxy"
+description = "Port of @deepseek-ai/dsh-http-proxy (packages/util/http-proxy)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reqwest.workspace = true
