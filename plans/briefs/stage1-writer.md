@@ -45,8 +45,11 @@ exports no ported package uses.
   repository on other crates at the same time.
 - If a crate you depend on lacks something you need, do not change it and do not copy its code: finish what
   can be finished, and describe exactly what is missing under "Вопросы ведущему" in your notes and in your report.
-- Dependencies: the crates already in your manifest, plus crates named in `[workspace.dependencies]` of the root
-  `Cargo.toml`, written as `name.workspace = true` (dev-dependencies may add features, for example
+- Dependencies: the crates already in your manifest (they are the packages your source imports); the shared
+  crates that `docs/porting/PORTING.md` tells every port to use, added as `name = { path = "../name" }` when a
+  rule calls for them — `hoh-timeout` (`AbortSignal`, timeouts), `hoh-error`, `hoh-util-values` (JavaScript
+  number and JSON text), `hoh-util-time` — even though a global of JavaScript leaves no import in the source;
+  plus crates named in `[workspace.dependencies]` of the root `Cargo.toml`, written as `name.workspace = true` (dev-dependencies may add features, for example
   `tokio = { workspace = true, features = ["test-util"] }`). Nothing else; if the source uses a library that has
   no entry in `docs/porting/DEPS.md`, stop and report it.
 - Allowed commands, always with the environment `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=<your build directory>`:
