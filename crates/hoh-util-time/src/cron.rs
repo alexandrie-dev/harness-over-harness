@@ -11,8 +11,8 @@ use crate::instant::{
     MAX_FOUR_DIGIT_YEAR_MS, MIN_FOUR_DIGIT_YEAR_MS, canonicalize_zone, is_four_digit_year_instant,
 };
 use crate::recurrence::{
-    RecurrenceInputError, RecurrenceOccurrence, RecurrenceRejection, RecurrenceResult,
-    parse_recurrence, recurrence_decision,
+    RecurrenceCause, RecurrenceInputError, RecurrenceOccurrence, RecurrenceRejection,
+    RecurrenceResult, parse_recurrence, recurrence_decision,
 };
 use crate::zone::Zone;
 
@@ -428,7 +428,8 @@ fn cron_times(parsed: &CronFields, reverse: bool) -> Vec<i64> {
 }
 
 /// Resolve one local minute of a date; a date `jiff` cannot hold lies beyond the four-digit-year ceiling.
-fn resolve_minute(zone: &Zone, days: i64, minute: i64) -> Option<Option<i64>> {
+fn resolve_minute(zone: &Zone, days: i64, minute: i64, work: &mut CronWork) -> Option<Option<i64>> {
+    work.conversions += 1;
     let (year, month, day) = civil_from_days(days);
     zone.resolve((year, month, day, minute / 60, minute % 60, 0, 0))
         .ok()
@@ -444,7 +445,12 @@ fn first_of_next_month(days: i64) -> i64 {
 ///
 /// The walk stops at [`CRON_SEARCH_HORIZON_YEARS`] past the floor date when that horizon precedes the four-digit
 /// ceiling, so a rule with no match inside the horizon resolves to exhaustion.
-fn next_cron_target(parsed: &CronFields, zone: &Zone, floor: i64) -> Option<String> {
+fn next_cron_target(
+    parsed: &CronFields,
+    zone: &Zone,
+    floor: i64,
+    work: &mut CronWork,
+) -> Option<String> {
     let matches = DateMatch::new(parsed);
     let times = cron_times(parsed, false);
     let local_floor = floor + zone.offset_ms_at(floor);
@@ -462,6 +468,7 @@ fn next_cron_target(parsed: &CronFields, zone: &Zone, floor: i64) -> Option<Stri
     while date <= last_date {
         let (_, month, day) = civil_from_days(date);
         if !parsed.months.contains(&(month as u32)) {
+            work.date_steps += 1;
             date = first_of_next_month(date);
             continue;
         }
@@ -471,7 +478,7 @@ fn next_cron_target(parsed: &CronFields, zone: &Zone, floor: i64) -> Option<Stri
                     continue;
                 }
                 // A date beyond what the zone data holds is past the ceiling.
-                let target = resolve_minute(zone, date, minute)?;
+                let target = resolve_minute(zone, date, minute, work)?;
                 let Some(target) = target else { continue };
                 if target > MAX_FOUR_DIGIT_YEAR_MS {
                     return None;
@@ -481,6 +488,7 @@ fn next_cron_target(parsed: &CronFields, zone: &Zone, floor: i64) -> Option<Stri
                 }
             }
         }
+        work.date_steps += 1;
         date += 1;
     }
     None
@@ -491,6 +499,7 @@ fn next_cron_target(parsed: &CronFields, zone: &Zone, floor: i64) -> Option<Stri
 /// The walk stops at [`CRON_SEARCH_HORIZON_YEARS`] before the decision date when that horizon follows the
 /// four-digit floor: a rule with no match inside the horizon keeps the committed target.
 fn latest_cron_occurrence(
+    work: &mut CronWork,
     parsed: &CronFields,
     zone: &Zone,
     decision: i64,
@@ -512,6 +521,7 @@ fn latest_cron_occurrence(
     while date >= first_date {
         let (year, month, day) = civil_from_days(date);
         if !parsed.months.contains(&(month as u32)) {
+            work.date_steps += 1;
             date = days_from_civil(year, month, 1) - 1;
             continue;
         }
@@ -520,7 +530,7 @@ fn latest_cron_occurrence(
             // decision. An earliest time that a DST gap removes leaves the bound to the first time that does exist.
             let mut earliest: Option<i64> = None;
             for &minute in &forward {
-                earliest = match resolve_minute(zone, date, minute) {
+                earliest = match resolve_minute(zone, date, minute, work) {
                     Some(resolved) => resolved,
                     None => Some(i64::MAX),
                 };
@@ -529,11 +539,12 @@ fn latest_cron_occurrence(
                 }
             }
             if earliest.is_some_and(|earliest| earliest > decision) {
+                work.date_steps += 1;
                 date -= 1;
                 continue;
             }
             for &minute in &backward {
-                let Some(Some(candidate)) = resolve_minute(zone, date, minute) else {
+                let Some(Some(candidate)) = resolve_minute(zone, date, minute, work) else {
                     continue;
                 };
                 if candidate > decision || candidate < MIN_FOUR_DIGIT_YEAR_MS {
@@ -543,9 +554,20 @@ fn latest_cron_occurrence(
                 return candidate.max(saved_target);
             }
         }
+        work.date_steps += 1;
         date -= 1;
     }
     saved_target
+}
+
+/// Calendar work one search did, counted so that tests can assert the bounds the source asserts with spies.
+#[doc(hidden)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CronWork {
+    /// Steps from one candidate date to another (the source's `PlainDate.add`/`subtract` calls).
+    pub date_steps: u64,
+    /// Local wall-clock candidates converted to instants (the source's `toPlainDateTime` calls).
+    pub conversions: u64,
 }
 
 /// Parsed Cron value; expression and zone stay authoritative independently of any task.
@@ -576,11 +598,11 @@ impl Cron {
     pub fn parse(expression: &str, time_zone: &str) -> RecurrenceResult<Cron> {
         parse_recurrence(|| {
             let parsed = parse_cron_expression(expression)?;
-            let (time_zone, zone) = canonicalize_zone(time_zone).map_err(|(reason, _)| {
+            let (time_zone, zone) = canonicalize_zone(time_zone).map_err(|rejected| {
                 RecurrenceInputError::with_cause(
                     RecurrenceRejection::TimeZone,
                     "Cron requires a valid UTC or IANA Area/Location zone.",
-                    reason.as_str().to_owned(),
+                    RecurrenceCause::TimeZone(rejected),
                 )
             })?;
             Ok(Cron {
@@ -601,7 +623,12 @@ impl Cron {
                 "Cron lower bound must be a four-digit-year instant".to_owned(),
             ));
         }
-        Ok(next_cron_target(&self.parsed, &self.zone, after))
+        Ok(next_cron_target(
+            &self.parsed,
+            &self.zone,
+            after,
+            &mut CronWork::default(),
+        ))
     }
 
     /// Latest due occurrence and first future occurrence, without replaying a backlog.
@@ -613,17 +640,37 @@ impl Cron {
         scheduled_at: &str,
         accepted_at: i64,
     ) -> Result<RecurrenceOccurrence, TimeError> {
+        self.resolve_counted(scheduled_at, accepted_at)
+            .map(|(occurrence, _)| occurrence)
+    }
+
+    /// [`Cron::resolve`] together with the work it did; for tests only.
+    #[doc(hidden)]
+    pub fn resolve_counted(
+        &self,
+        scheduled_at: &str,
+        accepted_at: i64,
+    ) -> Result<(RecurrenceOccurrence, CronWork), TimeError> {
         let saved_target = recurrence_decision(scheduled_at, accepted_at)?;
+        let mut work = CronWork::default();
         let occurrence_at = iso_string(latest_cron_occurrence(
+            &mut work,
             &self.parsed,
             &self.zone,
             accepted_at,
             saved_target,
         ));
-        let next_scheduled_at = self.next(accepted_at)?;
-        Ok(RecurrenceOccurrence {
-            occurrence_at,
-            next_scheduled_at,
-        })
+        let next_scheduled_at = if is_four_digit_year_instant(accepted_at) {
+            next_cron_target(&self.parsed, &self.zone, accepted_at, &mut work)
+        } else {
+            None
+        };
+        Ok((
+            RecurrenceOccurrence {
+                occurrence_at,
+                next_scheduled_at,
+            },
+            work,
+        ))
     }
 }

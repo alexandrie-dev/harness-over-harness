@@ -11,8 +11,8 @@ use crate::calendar::{
 use crate::error::TimeError;
 use crate::instant::{MAX_FOUR_DIGIT_YEAR_MS, canonicalize_zone, is_four_digit_year_instant};
 use crate::recurrence::{
-    RecurrenceInputError, RecurrenceOccurrence, RecurrenceRejection, RecurrenceResult,
-    parse_recurrence, recurrence_decision,
+    RecurrenceCause, RecurrenceInputError, RecurrenceOccurrence, RecurrenceRejection,
+    RecurrenceResult, parse_recurrence, recurrence_decision,
 };
 use crate::zone::Zone;
 
@@ -250,7 +250,7 @@ fn basic_time(field: &str, text: &str) -> Result<i64, RecurrenceInputError> {
         return Err(RecurrenceInputError::with_cause(
             RecurrenceRejection::Syntax,
             message,
-            "RangeError: date-time field out of range".to_owned(),
+            RecurrenceCause::Detail("RangeError: date-time field out of range".to_owned()),
         ));
     }
     Ok(epoch_ms(year, month, day, hour, minute, second, 0))
@@ -276,11 +276,11 @@ fn recurrence_lines(value: &str) -> Result<(String, String), RecurrenceInputErro
 
 /// Require a canonical zone while retaining the parser's validation result.
 fn validated_zone(value: &str) -> Result<(String, Zone), RecurrenceInputError> {
-    canonicalize_zone(value).map_err(|(reason, cause)| {
+    canonicalize_zone(value).map_err(|rejected| {
         RecurrenceInputError::with_cause(
             RecurrenceRejection::TimeZone,
             "TZID must be UTC or a valid IANA Area/Location name.",
-            cause.unwrap_or_else(|| reason.as_str().to_owned()),
+            RecurrenceCause::TimeZone(rejected),
         )
     })
 }

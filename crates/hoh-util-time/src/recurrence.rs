@@ -1,7 +1,9 @@
 //! Bounded calendar recurrence shared by consumers of Cron and RRULE.
 
 use crate::error::TimeError;
-use crate::instant::{InstantResult, four_digit_year_epoch, is_four_digit_year_instant};
+use crate::instant::{
+    InstantResult, TimeZoneResult, four_digit_year_epoch, is_four_digit_year_instant,
+};
 
 /// Latest admitted occurrence and the first future occurrence, if one exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +36,15 @@ impl RecurrenceRejection {
     }
 }
 
+/// The failure behind a recurrence refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecurrenceCause {
+    /// The rejected zone result, as the source carries it.
+    TimeZone(TimeZoneResult),
+    /// A calendar failure of the platform, with its description.
+    Detail(String),
+}
+
 /// A parsed recurrence or its validation reason; no consumer-specific error codes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecurrenceResult<T> {
@@ -49,7 +60,7 @@ pub enum RecurrenceResult<T> {
         /// Human-readable detail, byte for byte as the source words it.
         detail: String,
         /// The underlying failure, when there is one.
-        cause: Option<String>,
+        cause: Option<RecurrenceCause>,
     },
 }
 
@@ -71,7 +82,7 @@ pub struct RecurrenceInputError {
     /// The refusal text.
     pub message: String,
     /// The underlying failure, when there is one.
-    pub cause: Option<String>,
+    pub cause: Option<RecurrenceCause>,
 }
 
 impl RecurrenceInputError {
@@ -88,7 +99,7 @@ impl RecurrenceInputError {
     pub fn with_cause(
         reason: RecurrenceRejection,
         message: impl Into<String>,
-        cause: String,
+        cause: RecurrenceCause,
     ) -> RecurrenceInputError {
         RecurrenceInputError {
             reason,

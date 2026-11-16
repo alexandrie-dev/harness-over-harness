@@ -141,6 +141,16 @@ pub enum LocalCalendarResult {
     },
 }
 
+/// The platform failure behind a refused well-formed zone name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TimeZoneCause {
+    /// The `RangeError` the platform raised, with its message.
+    RangeError {
+        /// The platform's message.
+        message: String,
+    },
+}
+
 /// Discriminated result of resolving one raw IANA zone selector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TimeZoneResult {
@@ -154,7 +164,7 @@ pub enum TimeZoneResult {
         /// The stable reason.
         reason: TimeZoneRejection,
         /// Platform error caught while resolving the name; present when the platform refused a well-formed one.
-        cause: Option<String>,
+        cause: Option<TimeZoneCause>,
     },
 }
 
@@ -431,9 +441,23 @@ fn link_target(alias: &str) -> Option<&'static str> {
 }
 
 /// Find the name the zone data knows for a requested name: exact first, then ignoring ASCII case.
+///
+/// The answer is the spelling the zone data uses, never the caller's. Only names the zone data lists are known:
+/// `jiff` itself also admits special identifiers such as `Etc/Unknown`, which the platform of the source refuses.
 fn known_name(value: &str) -> Option<String> {
-    if value == "UTC" || link_target(value).is_some() || Zone::get(value).is_ok() {
+    if value == "UTC" {
         return Some(value.to_owned());
+    }
+    if let Some((link, _)) = ZONE_LINKS.iter().find(|(link, _)| *link == value) {
+        return Some((*link).to_owned());
+    }
+    let listed = || {
+        jiff::tz::db()
+            .available()
+            .map(|name| name.as_str().to_owned())
+    };
+    if let Some(name) = listed().find(|name| name == value) {
+        return Some(name);
     }
     if let Some((link, _)) = ZONE_LINKS
         .iter()
@@ -441,10 +465,7 @@ fn known_name(value: &str) -> Option<String> {
     {
         return Some((*link).to_owned());
     }
-    jiff::tz::db()
-        .available()
-        .map(|name| name.as_str().to_owned())
-        .find(|name| name.eq_ignore_ascii_case(value))
+    listed().find(|name| name.eq_ignore_ascii_case(value))
 }
 
 /// Resolve a requested name to its canonical spelling and zone, or the platform's refusal text.
@@ -462,23 +483,27 @@ fn canonical_zone(value: &str) -> Result<(String, Zone), String> {
 }
 
 /// Validate and canonicalize a zone selector, keeping the resolved zone for callers inside this crate.
-pub(crate) fn canonicalize_zone(
-    value: &str,
-) -> Result<(String, Zone), (TimeZoneRejection, Option<String>)> {
+pub(crate) fn canonicalize_zone(value: &str) -> Result<(String, Zone), TimeZoneResult> {
+    let rejected = |reason| TimeZoneResult::Rejected {
+        reason,
+        cause: None,
+    };
     if value.is_empty() {
-        return Err((TimeZoneRejection::Blank, None));
+        return Err(rejected(TimeZoneRejection::Blank));
     }
     if value.trim_matches(is_js_whitespace) != value {
-        return Err((TimeZoneRejection::Padded, None));
+        return Err(rejected(TimeZoneRejection::Padded));
     }
     if value != "UTC" && !is_area_location(value) {
-        return Err((TimeZoneRejection::NotAreaLocation, None));
+        return Err(rejected(TimeZoneRejection::NotAreaLocation));
     }
     // The platform refuses a well-formed name its zone data does not know; its text is the caller's only evidence.
-    let (canonical, zone) =
-        canonical_zone(value).map_err(|cause| (TimeZoneRejection::Unsupported, Some(cause)))?;
+    let (canonical, zone) = canonical_zone(value).map_err(|message| TimeZoneResult::Rejected {
+        reason: TimeZoneRejection::Unsupported,
+        cause: Some(TimeZoneCause::RangeError { message }),
+    })?;
     if canonical != "UTC" && !is_area_location(&canonical) {
-        return Err((TimeZoneRejection::NotCanonicalShape, None));
+        return Err(rejected(TimeZoneRejection::NotCanonicalShape));
     }
     Ok((canonical, zone))
 }
@@ -490,7 +515,7 @@ pub(crate) fn canonicalize_zone(
 pub fn canonicalize_time_zone(value: &str) -> TimeZoneResult {
     match canonicalize_zone(value) {
         Ok((time_zone, _)) => TimeZoneResult::Accepted { time_zone },
-        Err((reason, cause)) => TimeZoneResult::Rejected { reason, cause },
+        Err(rejected) => rejected,
     }
 }
 

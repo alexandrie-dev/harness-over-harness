@@ -2,7 +2,7 @@
 
 use hoh_util_time::{
     InstantRejection, InstantResult, LocalCalendarRejection, LocalCalendarResult,
-    LocalCalendarTime, MAX_FOUR_DIGIT_YEAR_MS, MIN_FOUR_DIGIT_YEAR_MS, TimeError,
+    LocalCalendarTime, MAX_FOUR_DIGIT_YEAR_MS, MIN_FOUR_DIGIT_YEAR_MS, TimeError, TimeZoneCause,
     TimeZoneRejection, TimeZoneResult, canonicalize_time_zone, format_four_digit_year_instant,
     four_digit_year_epoch, is_four_digit_year_instant, parse_local_calendar, parse_offset_instant,
     resolve_local_instant,
@@ -372,7 +372,12 @@ fn canonicalize_time_zone_reports_why_a_name_is_refused() {
     };
     assert_eq!(reason, TimeZoneRejection::Unsupported);
     // The platform refusal is the caller's only evidence of why a well-formed name failed, so the rejection carries it.
-    assert!(cause.is_some());
+    assert_eq!(
+        cause,
+        Some(TimeZoneCause::RangeError {
+            message: "Invalid time zone specified: Not/A_Real_Zone".to_owned()
+        })
+    );
     assert_eq!(
         canonicalize_time_zone("Asia"),
         TimeZoneResult::Rejected {
@@ -380,6 +385,67 @@ fn canonicalize_time_zone_reports_why_a_name_is_refused() {
             cause: None
         }
     );
+}
+
+#[test]
+fn canonicalize_time_zone_answers_the_canonical_spelling_not_the_callers() {
+    for (asked, canonical) in [
+        ("america/new_york", "America/New_York"),
+        ("EUROPE/MOSCOW", "Europe/Moscow"),
+        ("us/eastern", "America/New_York"),
+        ("Europe/MOSCOW", "Europe/Moscow"),
+    ] {
+        assert_eq!(
+            canonicalize_time_zone(asked),
+            zone_accepted(canonical),
+            "{asked}"
+        );
+    }
+    // `W-SU` is an alias of Europe/Moscow, but a name without a slash is refused by shape, as in the source.
+    assert_eq!(
+        canonicalize_time_zone("w-su"),
+        zone_rejected(TimeZoneRejection::NotAreaLocation)
+    );
+}
+
+#[test]
+fn canonicalize_time_zone_answers_utc_for_the_utc_aliases_and_keeps_fixed_offset_names() {
+    for asked in [
+        "Etc/UTC",
+        "Etc/GMT",
+        "Etc/UCT",
+        "Etc/Zulu",
+        "Etc/Greenwich",
+        "Etc/Universal",
+        "Etc/GMT0",
+        "Etc/GMT+0",
+        "Etc/GMT-0",
+    ] {
+        assert_eq!(
+            canonicalize_time_zone(asked),
+            zone_accepted("UTC"),
+            "{asked}"
+        );
+    }
+    for kept in ["Etc/GMT-1", "Etc/GMT+5"] {
+        assert_eq!(canonicalize_time_zone(kept), zone_accepted(kept), "{kept}");
+    }
+}
+
+#[test]
+fn canonicalize_time_zone_refuses_the_special_unknown_zone() {
+    for asked in ["Etc/Unknown", "etc/unknown"] {
+        assert!(
+            matches!(
+                canonicalize_time_zone(asked),
+                TimeZoneResult::Rejected {
+                    reason: TimeZoneRejection::Unsupported,
+                    cause: Some(_)
+                }
+            ),
+            "{asked}"
+        );
+    }
 }
 
 // resolveLocalInstant

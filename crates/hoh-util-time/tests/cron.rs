@@ -672,9 +672,8 @@ fn retains_the_committed_target_when_no_local_occurrence_is_representable() {
 
 #[test]
 fn stops_an_unsatisfiable_rule_at_the_documented_horizon_instead_of_the_year_ceiling() {
-    // The source counts `Temporal.PlainDate` add/subtract calls with spies on the polyfill; that instrumentation has
-    // no counterpart here. What is observable is kept: the search ends with the committed target, and the horizon
-    // constant is the documented one.
+    // The source counts `Temporal.PlainDate` add/subtract calls with spies on the polyfill; the guarantee is kept through
+    // the crate's test-only work counter (`resolve_counted`).
     assert_eq!(CRON_SEARCH_HORIZON_YEARS, 400);
     let impossible = Reference {
         rule: parsed("0 0 30 2 *"),
@@ -683,6 +682,16 @@ fn stops_an_unsatisfiable_rule_at_the_documented_horizon_instead_of_the_year_cei
     assert_eq!(
         decision(&impossible, "2026-09-16T00:00:00Z"),
         last(&impossible.scheduled_at)
+    );
+    // Each searched year costs at most 366 day steps and 12 month skips in each direction.
+    let (_, work) = impossible
+        .rule
+        .resolve_counted(&impossible.scheduled_at, date_parse("2026-09-16T00:00:00Z"))
+        .unwrap();
+    assert!(work.date_steps > 0);
+    assert!(
+        work.date_steps <= CRON_SEARCH_HORIZON_YEARS as u64 * (366 + 12) * 2,
+        "{work:?}"
     );
     assert_eq!(
         impossible
@@ -695,13 +704,21 @@ fn stops_an_unsatisfiable_rule_at_the_documented_horizon_instead_of_the_year_cei
 
 #[test]
 fn converts_a_walked_date_once_while_it_lies_beyond_the_decision() {
-    // The source bounds the number of `PlainDate.toPlainDateTime` calls with a spy; only the result is observable
-    // here: an every-minute rule resolves to the decision's own minute.
+    // The source bounds the number of `PlainDate.toPlainDateTime` calls with a spy; the guarantee is kept through
+    // the crate's test-only work counter.
     let record = reference_in("2026-09-16T00:00:00Z", "* * * * *", "America/New_York");
     assert_eq!(
         decision(&record, "2026-09-16T12:00:00Z"),
         due("2026-09-16T12:00:00.000Z", "2026-09-16T12:01:00.000Z")
     );
+    // The date after the decision costs one candidate and the date that straddles it scans down from 23:59 to the
+    // decision's minute; without the whole-date skip the walk built all 1440 times of the date beyond it (2402).
+    let (_, work) = record
+        .rule
+        .resolve_counted(&record.scheduled_at, date_parse("2026-09-16T12:00:00Z"))
+        .unwrap();
+    assert!(work.conversions > 0);
+    assert!(work.conversions <= 1_500, "{work:?}");
 }
 
 #[test]

@@ -15,16 +15,19 @@ pub mod instant;
 pub mod recurrence;
 pub mod rrule;
 
-pub use cron::{CRON_SEARCH_HORIZON_YEARS, Cron, CronFields};
+pub use cron::{CRON_SEARCH_HORIZON_YEARS, Cron, CronFields, CronWork};
 pub use duration::{Duration, DurationParts};
 pub use error::TimeError;
 pub use instant::{
     InstantRejection, InstantResult, LocalCalendarRejection, LocalCalendarResult,
-    LocalCalendarTime, MAX_FOUR_DIGIT_YEAR_MS, MIN_FOUR_DIGIT_YEAR_MS, TimeZoneRejection,
-    TimeZoneResult, canonicalize_time_zone, format_four_digit_year_instant, four_digit_year_epoch,
-    is_four_digit_year_instant, parse_local_calendar, parse_offset_instant, resolve_local_instant,
+    LocalCalendarTime, MAX_FOUR_DIGIT_YEAR_MS, MIN_FOUR_DIGIT_YEAR_MS, TimeZoneCause,
+    TimeZoneRejection, TimeZoneResult, canonicalize_time_zone, format_four_digit_year_instant,
+    four_digit_year_epoch, is_four_digit_year_instant, parse_local_calendar, parse_offset_instant,
+    resolve_local_instant,
 };
-pub use recurrence::{RecurrenceOccurrence, RecurrenceRejection, RecurrenceResult};
+pub use recurrence::{
+    RecurrenceCause, RecurrenceOccurrence, RecurrenceRejection, RecurrenceResult,
+};
 pub use rrule::{RRule, RRuleParseOptions};
 
 /// Validate and canonicalize one caller-supplied IANA zone at a wire boundary.

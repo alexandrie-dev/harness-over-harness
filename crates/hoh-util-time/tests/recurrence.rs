@@ -3,7 +3,8 @@
 
 use hoh_util_time::{
     Cron, InstantResult, MAX_FOUR_DIGIT_YEAR_MS, MIN_FOUR_DIGIT_YEAR_MS, RRule, RRuleParseOptions,
-    RecurrenceOccurrence, RecurrenceRejection, RecurrenceResult, TimeError, parse_offset_instant,
+    RecurrenceCause, RecurrenceOccurrence, RecurrenceRejection, RecurrenceResult, TimeError,
+    TimeZoneRejection, TimeZoneResult, parse_offset_instant,
 };
 
 fn date_parse(text: &str) -> i64 {
@@ -251,4 +252,64 @@ fn permits_a_stricter_authoring_profile_without_changing_valid_rfc_arithmetic() 
             ..
         }
     ));
+}
+
+fn rejected_cause<T>(result: RecurrenceResult<T>) -> Option<RecurrenceCause> {
+    match result {
+        RecurrenceResult::Rejected { cause, .. } => cause,
+        RecurrenceResult::Accepted { .. } => panic!("expected a rejection"),
+    }
+}
+
+#[test]
+fn carries_the_rejected_zone_result_as_the_cause() {
+    let not_area = Some(RecurrenceCause::TimeZone(TimeZoneResult::Rejected {
+        reason: TimeZoneRejection::NotAreaLocation,
+        cause: None,
+    }));
+    assert_eq!(rejected_cause(Cron::parse("* * * * *", "Asia")), not_area);
+    assert_eq!(
+        rejected_cause(RRule::parse(
+            "DTSTART;TZID=Asia:20260916T010000\nRRULE:FREQ=DAILY",
+            RRuleParseOptions::default()
+        )),
+        not_area
+    );
+}
+
+#[test]
+fn exposes_the_canonical_spelling_of_the_zone_and_refuses_the_unknown_zone() {
+    assert_eq!(
+        accepted(Cron::parse("* * * * *", "america/new_york")).time_zone(),
+        "America/New_York"
+    );
+    assert_eq!(
+        accepted(Cron::parse("* * * * *", "EUROPE/MOSCOW")).time_zone(),
+        "Europe/Moscow"
+    );
+    assert_eq!(
+        rrule("DTSTART;TZID=america/new_york:20260916T010000\nRRULE:FREQ=DAILY").time_zone(),
+        "America/New_York"
+    );
+    assert_eq!(
+        rrule("DTSTART;TZID=Etc/UTC:20260916T010000\nRRULE:FREQ=DAILY").time_zone(),
+        "UTC"
+    );
+    let unsupported = |cause: Option<RecurrenceCause>| {
+        matches!(
+            cause,
+            Some(RecurrenceCause::TimeZone(TimeZoneResult::Rejected {
+                reason: TimeZoneRejection::Unsupported,
+                ..
+            }))
+        )
+    };
+    assert!(unsupported(rejected_cause(Cron::parse(
+        "* * * * *",
+        "Etc/Unknown"
+    ))));
+    assert!(unsupported(rejected_cause(RRule::parse(
+        "DTSTART;TZID=Etc/Unknown:20260916T010000\nRRULE:FREQ=DAILY",
+        RRuleParseOptions::default()
+    ))));
 }
