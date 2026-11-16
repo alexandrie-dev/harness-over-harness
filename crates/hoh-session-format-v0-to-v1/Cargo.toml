@@ -1,0 +1,17 @@
+[package]
+name = "hoh-session-format-v0-to-v1"
+description = "Port of @deepseek-ai/dsh-session-format-v0-to-v1 (packages/session/session-format-v0-to-v1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-session-format = { path = "../hoh-session-format" }
+hoh-util-time = { path = "../hoh-util-time" }
+hoh-util-values = { path = "../hoh-util-values" }
+indexmap.workspace = true
+serde_json.workspace = true
