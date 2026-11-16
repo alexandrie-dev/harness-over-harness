@@ -1,7 +1,8 @@
+use hoh_error::{BoxError, HarnessError};
 use hoh_kernel::Kernel;
 use hoh_storage::{
     BackendFuture, BackendRegistry, Storage, StorageBackend, StorageError, StoragePlugin,
-    storage_backend_service_key,
+    StorageService, storage_backend_service_key,
 };
 use std::sync::Arc;
 
@@ -124,4 +125,40 @@ fn preserves_diagnostic_name_order_and_error_cause() {
         std::error::Error::source(&error).unwrap().to_string(),
         "cause"
     );
+}
+
+#[test]
+fn routes_hub_failures_as_shared_harness_errors() {
+    let storage = StorageService::new();
+    let _unregister = storage.backend.register("json", fake_backend()).unwrap();
+    let _unmount = storage.mount("domain", Arc::new(())).unwrap();
+    let errors = [
+        (
+            storage.backend.get("missing").err().unwrap(),
+            "backend-not-found",
+        ),
+        (
+            storage
+                .backend
+                .register("json", fake_backend())
+                .err()
+                .unwrap(),
+            "duplicate-backend",
+        ),
+        (storage.form("missing").err().unwrap(), "form-not-mounted"),
+        (
+            storage.mount("domain", Arc::new(())).err().unwrap(),
+            "duplicate-mount",
+        ),
+    ];
+    for (error, code) in errors {
+        let boxed: BoxError = Box::new(error);
+        let shared = HarnessError::of(boxed.as_ref()).unwrap();
+        assert!(shared.is_named(StorageError::NAME));
+        assert_eq!(shared.code(), code);
+        assert!(std::ptr::eq(
+            shared,
+            boxed.downcast_ref::<HarnessError>().unwrap()
+        ));
+    }
 }

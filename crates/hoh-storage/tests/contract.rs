@@ -1,6 +1,7 @@
 //! Shared backend contract, imported by backend crates with #[path = ...].
 //! No backend is supplied by the hub itself. Rust JSON values cannot contain
 //! the throwing `toJSON` objects in the two JavaScript serialization cases.
+use hoh_error::HarnessError;
 use hoh_storage::{KvUnitDescriptor, StorageBackend};
 use serde_json::{Value, json};
 use std::{future::Future, sync::Arc};
@@ -24,6 +25,10 @@ fn descriptor() -> KvUnitDescriptor {
 
 fn tables(value: impl serde::Serialize) -> Value {
     serde_json::to_value(value).unwrap()
+}
+
+fn storage_error<'a>(error: &'a (dyn std::error::Error + 'static)) -> &'a HarnessError {
+    HarnessError::of(error).expect("backend failure must be the shared HarnessError")
 }
 
 pub async fn opens_a_missing_unit_as_empty_and_serves_load_all_immediately(
@@ -137,7 +142,7 @@ pub async fn rejects_version_on_reopen_without_touching_the_data(
     let mut changed = descriptor();
     changed.version = version;
     let error = reopened.kv().unwrap().open(changed).await.err().unwrap();
-    let error = error.downcast_ref::<hoh_storage::StorageError>().unwrap();
+    let error = storage_error(error.as_ref());
     assert_eq!(error.name(), "StorageError");
     assert_eq!(error.code(), "version-mismatch");
     assert_eq!(
@@ -292,13 +297,7 @@ pub async fn commits_the_current_stamp_with_its_data(h: KvBackendContractHarness
         .await
         .err()
         .unwrap();
-    assert_eq!(
-        error
-            .downcast_ref::<hoh_storage::StorageError>()
-            .unwrap()
-            .code(),
-        "version-mismatch"
-    );
+    assert_eq!(storage_error(error.as_ref()).code(), "version-mismatch");
     let saved = restarted
         .kv()
         .unwrap()
@@ -384,16 +383,17 @@ pub async fn reads_historical_values_through(h: KvBackendContractHarness, write_
     third.close().await.unwrap();
     let restarted = (h.reopen)().await.unwrap();
     assert_eq!(
-        restarted
-            .kv()
-            .unwrap()
-            .open(v2)
-            .await
-            .err()
-            .unwrap()
-            .downcast_ref::<hoh_storage::StorageError>()
-            .unwrap()
-            .code(),
+        storage_error(
+            restarted
+                .kv()
+                .unwrap()
+                .open(v2)
+                .await
+                .err()
+                .unwrap()
+                .as_ref()
+        )
+        .code(),
         "version-mismatch"
     );
     let snapshot = restarted
@@ -426,13 +426,7 @@ pub async fn rejects_operations_after_unit_close_and_close_is_idempotent(
         .await
         .unwrap_err();
     for error in [put, load, delete] {
-        assert_eq!(
-            error
-                .downcast_ref::<hoh_storage::StorageError>()
-                .unwrap()
-                .code(),
-            "closed"
-        );
+        assert_eq!(storage_error(error.as_ref()).code(), "closed");
     }
     h.backend.close().await.unwrap();
     h.backend.close().await.unwrap();
@@ -461,4 +455,66 @@ where
         reads_historical_values_through(create().await, write_v2).await;
     }
     rejects_operations_after_unit_close_and_close_is_idempotent(create().await).await;
+}
+
+#[test]
+fn contract_descriptor_preserves_source_fields_and_optional_defaults() {
+    let descriptor = descriptor();
+    let value = tables(&descriptor);
+    assert_eq!(
+        value,
+        json!({
+            "name": "contract_unit", "version": 3,
+            "tables": ["alpha", "beta"], "hasGlobal": true
+        })
+    );
+    assert_eq!(
+        value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["name", "version", "tables", "hasGlobal"]
+    );
+    let restored: KvUnitDescriptor = serde_json::from_value(value).unwrap();
+    assert_eq!(restored, descriptor);
+    assert!(restored.layout.is_none());
+    assert!(restored.compatible_versions.is_none());
+}
+
+#[tokio::test]
+async fn contract_error_checks_recognize_backend_future_failures() {
+    use hoh_error::{BoxError, SharedError};
+    use hoh_storage::{BackendFuture, StorageError, StorageErrorCode};
+
+    // Exercise the same failure extraction used by the version/closed scenarios
+    // through their actual async result type, without inventing a KV backend.
+    for code in [StorageErrorCode::VersionMismatch, StorageErrorCode::Closed] {
+        let result: BackendFuture<'_, ()> = Box::pin(async move {
+            Err(StorageError::new(code, "backend diagnostic")
+                .with_cause(std::io::Error::other("medium failure"))
+                .into())
+        });
+        let boxed = result.await.unwrap_err();
+        let error = storage_error(boxed.as_ref());
+        assert!(error.is_named(StorageError::NAME));
+        assert_eq!(error.name(), "StorageError");
+        assert_eq!(error.code(), code.as_str());
+        assert_eq!(error.message(), "backend diagnostic");
+        assert_eq!(
+            std::error::Error::source(error).unwrap().to_string(),
+            "medium failure"
+        );
+
+        let shared = SharedError::new(boxed);
+        let clone = shared.clone();
+        let forwarded: BoxError = Box::new(clone);
+        assert_eq!(storage_error(forwarded.as_ref()).code(), code.as_str());
+        assert!(storage_error(forwarded.as_ref()).is_named(StorageError::NAME));
+        assert!(std::ptr::eq(
+            storage_error(&shared),
+            storage_error(forwarded.as_ref())
+        ));
+    }
 }

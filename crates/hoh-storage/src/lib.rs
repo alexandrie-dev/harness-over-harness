@@ -11,7 +11,8 @@ pub use error::{StorageError, StorageErrorCode};
 pub use registry::BackendRegistry;
 
 use error::StorageResult;
-use hoh_kernel::{Context, Error, plugin, service};
+use hoh_error::BoxError;
+use hoh_kernel::{Context, plugin, service};
 use indexmap::IndexMap;
 use std::{
     any::Any,
@@ -79,7 +80,7 @@ impl StorageService {
 service!(pub Storage: StorageService = "storage");
 
 #[plugin(StoragePlugin, name = "storage")]
-pub async fn apply(ctx: Context) -> Result<(), Error> {
+pub async fn apply(ctx: Context) -> Result<(), BoxError> {
     ctx.provide::<Storage>(Arc::new(StorageService::new()))
         .await?;
     Ok(())

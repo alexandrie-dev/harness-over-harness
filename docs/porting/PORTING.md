@@ -96,6 +96,26 @@ crates/hoh-<имя>/
 - Регулярные выражения: crate `regex`. В JavaScript без флага `u` классы `\d`, `\w`, `\b` работают только
   с ASCII, а в `regex` по умолчанию с Unicode: писать `(?-u:\d)` или явный класс. Выражение с заглядыванием
   или обратной ссылкой переписывается кодом; если нельзя — вопрос ведущему.
+- То, что Node и JavaScript делают сами, воспроизводится общими помощниками, а не заново в каждом crate.
+  Каждый из них проверен по образцу, снятому с Node 22.23.1 (`tests/fixtures` их crates):
+  - **Пробельные символы.** `trim()`, `trimStart()`, `trimEnd()` и `\s` JavaScript — это
+    `hoh_util_values::{js_trim, js_trim_start, js_trim_end, is_js_white_space}` и класс
+    `JS_WHITE_SPACE_SET` для `regex`. `str::trim`, `char::is_whitespace`, `split_whitespace` и `\s` crate
+    `regex` считают иначе: U+FEFF пробел только в JavaScript, U+0085 и U+001C–U+001F только в Rust. Файл с
+    BOM в начале даёт разный результат.
+  - **Пути `path`.** `join`, `normalize`, `resolve`, `relative`, `dirname`, `basename`, `extname`,
+    `isAbsolute` — это `hoh_util_workspace_path::node_path::*` над строками. `Path::join`, `Path::parent`,
+    `Path::components` дают другое: `join('/x//y', 'a')` в Node — `/x/y/a`, `dirname('/')` — `/`,
+    `dirname('/a/.')` — `/a`. `std::path` годится там, где путь только передаётся системе и никуда не пишется.
+  - **Порядок `readdir`.** `readdir` Node (обычный и с `withFileTypes`, без `recursive`) на Unix отдаёт имена
+    отсортированными по байтам; `opendir`/`Dir.read` — в порядке системы. `read_dir` в `std` и `tokio` не
+    сортирует: перенос `readdir` обязан отсортировать имена по байтам до любого обхода.
+  - **Тексты системных ошибок.** Сообщение ошибки `fs` в Node — `ENOENT: no such file or directory, open
+    '/x'`, запуска процесса — `spawn cmd ENOENT`. Там, где образец показывает `error.message` или сверяет
+    `error.code`, перенос строит текст через `hoh_error::{node_fs_error_message, node_spawn_error_message,
+    node_error_code}`; `Display` у `io::Error` (`No such file or directory (os error 2)`) в видимый текст не идёт.
+    Какое слово (`open`, `scandir`, `copyfile`, …) Node ставит для какой функции — таблица в
+    `crates/hoh-error/PORT_NOTES.md`.
 
 ## 5. Текст, который видит модель или пользователь
 

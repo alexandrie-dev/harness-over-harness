@@ -17,7 +17,7 @@ pub static UNIT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Object-safe asynchronous backend result, including arbitrary I/O failures.
 pub type BackendFuture<'a, T> =
-    Pin<Box<dyn Future<Output = Result<T, hoh_kernel::Error>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<T, hoh_error::BoxError>> + Send + 'a>>;
 
 /// One medium, shared across all its optional facets. Closing drains in-flight
 /// writes and releases the medium; repeated/concurrent closes await teardown.

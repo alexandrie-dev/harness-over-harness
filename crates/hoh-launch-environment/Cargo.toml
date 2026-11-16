@@ -11,3 +11,9 @@ workspace = true
 
 [dependencies]
 hoh-kernel = { path = "../hoh-kernel" }
+indexmap.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

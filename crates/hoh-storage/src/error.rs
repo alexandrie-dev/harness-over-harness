@@ -1,6 +1,6 @@
 //! Storage error vocabulary shared by the hub and backend implementers.
+use hoh_error::HarnessError;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -30,39 +30,15 @@ impl StorageErrorCode {
     }
 }
 
-/// Source StorageError extends plain Error. Pending the manifest dependency
-/// clarification in PORT_NOTES, this preserves its name/code/message/cause.
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("{message}")]
-pub struct StorageError {
-    code: StorageErrorCode,
-    message: String,
-    #[source]
-    cause: Option<Arc<dyn std::error::Error + Send + Sync>>,
-}
+/// Constructor for the source error class; thrown values use the shared type.
+pub struct StorageError;
 
 impl StorageError {
     pub const NAME: &'static str = "StorageError";
-    pub fn new(code: StorageErrorCode, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
-            cause: None,
-        }
-    }
-    pub fn with_cause(mut self, cause: impl Into<hoh_kernel::Error>) -> Self {
-        self.cause = Some(Arc::from(cause.into()));
-        self
-    }
-    pub fn name(&self) -> &'static str {
-        Self::NAME
-    }
-    pub fn code(&self) -> &'static str {
-        self.code.as_str()
-    }
-    pub fn message(&self) -> &str {
-        &self.message
+    #[allow(clippy::new_ret_no_self)] // Error-class factory required by PORTING.md §7.
+    pub fn new(code: StorageErrorCode, message: impl Into<String>) -> HarnessError {
+        HarnessError::named(Self::NAME, message, code.as_str())
     }
 }
 
-pub type StorageResult<T> = Result<T, StorageError>;
+pub type StorageResult<T> = Result<T, HarnessError>;
