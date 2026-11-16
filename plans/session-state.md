@@ -433,12 +433,18 @@ llama.cpp) не установлено. Есть rustc 1.97 nightly, Node 20, Py
 
 ## Следующий шаг
 
-Этап 0 идёт (запись 2026-11-16, после ревью ядра от Sonnet, коммит `7941ac5`). Живые задачи, ID в таблице
-исполнителей: второй судья ядра — Codex `b429haau6`; третий круг загрузчика l1 `b9ntz0cw2`; правки jsdiff — Codex
-`bskehtowm`; писатель `hoh-commander` n1 `bh383ko6k`. Ревью ядра от Sonnet сдано (13 замечаний, главные
-проверены ведущим по коду); сведённое задание писателю ядра готово: `plans/briefs/fix-stage0-k1.md` — дополнить
-замечаниями Codex и возобновить сессию `01a1e540-dcef-7f90-86f1-45eb1286aee0`. `hoh-error`, `hoh-timeout`,
-`hoh-atomic-write` — `done` (коммит `caa5e38`), в описи 17 из 206. Kimi недоступен до сброса
+Этап 0 идёт (запись 2026-11-16, после обоих ревью ядра, коммит `2ca9cc9`). Живые задачи, ID в таблице
+исполнителей: **второй круг ядра k1 — фоновая задача `bcm6kevcf`** (сессия Codex
+`01a1e540-dcef-7f90-86f1-45eb1286aee0`, усилие по умолчанию, итог в
+`/mnt/toshiba/alexandrie/hoh/logs/stage0-k1.report2.md`, задание `plans/briefs/fix-stage0-k1.md`: решения A1–A7,
+проверка конфигурации B1–B6, жизненный цикл C1–C14, макросы D1–D2, тесты E1–E2); третий круг загрузчика l1
+`b9ntz0cw2`; правки jsdiff — Codex `bskehtowm`; писатель `hoh-commander` n1 `bh383ko6k`. Оба ревью ядра сданы:
+Sonnet 13 замечаний, Codex 20 (итог в `/mnt/toshiba/alexandrie/hoh/logs/review-hoh-kernel.codex.md`), около
+половины совпали; главные проверены ведущим по коду. После сдачи k1: `scripts/verify.sh hoh-kernel
+hoh-kernel-macros`, спорные пункты разобрать, проверка закрытия ревьюером Sonnet `a32628e2c7d5651c0` (и Kimi,
+если лимит вернулся), затем `done` и часть B загрузчика (`plans/briefs/stage0-l1-loader-b.md`; перед запуском
+вернуть `hoh-kernel` в зависимости `hoh-loader`). `hoh-error`, `hoh-timeout`, `hoh-atomic-write` — `done`
+(коммит `caa5e38`), в описи 17 из 206. Kimi недоступен до сброса
 пятичасового лимита подписки (исчерпан около 20:54). Ждать родные уведомления. Первая волна этапа 1 после
 принятого ядра: `HOH_ASSUME_DONE="hoh-kernel …" bash scripts/port-status.sh ready 1` (14 пакетов, главный —
 `hoh-llm`); общее задание писателю — `plans/briefs/stage1-writer.md`. По каждой сдаче: проверка ведущим
