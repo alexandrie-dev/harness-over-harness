@@ -1,7 +1,8 @@
 [workspace]
 resolver = "3"
-# `ui` joins the members when the desktop window is started (PLAN.md, line P).
-members = ["crates/*", "apps/*"]
+# `apps/*` joins the members with the first application, `ui` with the desktop window (PLAN.md).
+# Cargo rejects a glob that matches nothing.
+members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +13,18 @@ publish = false
 # The only place where third-party crates and their versions are named.
 # A crate may be added here only together with a line in docs/porting/DEPS.md.
 [workspace.dependencies]
+base64 = "0.23.1"
+getrandom = "0.4.3"
+indexmap = { version = "2.14.2", features = ["serde"] }
+jiff = "1.0.0"
+regex = "1.13.1"
+rrule = "0.14.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha2 = "0.11.1"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

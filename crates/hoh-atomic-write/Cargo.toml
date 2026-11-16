@@ -1,0 +1,12 @@
+[package]
+name = "hoh-atomic-write"
+description = "Port of @deepseek-ai/dsh-atomic-write (packages/util/atomic-write)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

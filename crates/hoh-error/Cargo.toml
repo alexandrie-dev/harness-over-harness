@@ -1,0 +1,12 @@
+[package]
+name = "hoh-error"
+description = "Port of @deepseek-ai/dsh-error (packages/util/error)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

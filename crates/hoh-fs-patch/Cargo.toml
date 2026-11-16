@@ -1,0 +1,12 @@
+[package]
+name = "hoh-fs-patch"
+description = "Port of @deepseek-ai/dsh-fs-patch (packages/fs/fs-patch)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

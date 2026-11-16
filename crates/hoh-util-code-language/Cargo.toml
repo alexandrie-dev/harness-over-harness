@@ -1,0 +1,12 @@
+[package]
+name = "hoh-util-code-language"
+description = "Port of @deepseek-ai/dsh-util-code-language (packages/util/code-language)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

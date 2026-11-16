@@ -1,0 +1,12 @@
+[package]
+name = "hoh-output-retention"
+description = "Port of @deepseek-ai/dsh-output-retention (packages/util/output-retention)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

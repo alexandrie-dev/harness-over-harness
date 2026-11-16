@@ -1,0 +1,12 @@
+[package]
+name = "hoh-util-values"
+description = "Port of @deepseek-ai/dsh-util-values (packages/util/values)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

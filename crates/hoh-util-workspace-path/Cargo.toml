@@ -1,0 +1,12 @@
+[package]
+name = "hoh-util-workspace-path"
+description = "Port of @deepseek-ai/dsh-util-workspace-path (packages/util/workspace-path)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
