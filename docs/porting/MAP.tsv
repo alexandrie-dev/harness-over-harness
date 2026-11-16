@@ -67,7 +67,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/sdk/server	@deepseek-ai/dsh-sdk-jsonrpc-server	hoh-sdk-jsonrpc-server	1049	4674	todo	
 1	port	packages/session-query/session-query	@deepseek-ai/dsh-session-query	hoh-session-query	2241	3066	todo	
 1	port	packages/session/session-checkpoint-policy	@deepseek-ai/dsh-session-checkpoint-policy	hoh-session-checkpoint-policy	83	453	todo	
-1	port	packages/session/session-format	@deepseek-ai/dsh-session-format	hoh-session-format	945	758	todo	
+1	port	packages/session/session-format	@deepseek-ai/dsh-session-format	hoh-session-format	945	758	writing:b2-s3	
 1	port	packages/session/session-format-catalog	@deepseek-ai/dsh-session-format-catalog	hoh-session-format-catalog	154	563	todo	
 1	port	packages/session/session-format-v0-to-v1	@deepseek-ai/dsh-session-format-v0-to-v1	hoh-session-format-v0-to-v1	2879	2509	todo	
 1	port	packages/session/session-format-v1-to-v2	@deepseek-ai/dsh-session-format-v1-to-v2	hoh-session-format-v1-to-v2	1256	1989	todo	
@@ -118,7 +118,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/package-manifest	@deepseek-ai/dsh-package-manifest	hoh-package-manifest	167	0	todo	
 1	port	packages/util/time	@deepseek-ai/dsh-util-time	hoh-util-time	1708	1250	writing:b1-s2	
 1	port	packages/util/timeout	@deepseek-ai/dsh-timeout	hoh-timeout	212	306	writing:b1-c2	
-1	port	packages/util/values	@deepseek-ai/dsh-util-values	hoh-util-values	959	1317	writing:b1-s1	
+1	port	packages/util/values	@deepseek-ai/dsh-util-values	hoh-util-values	959	1317	review	
 1	port	packages/util/workspace-path	@deepseek-ai/dsh-util-workspace-path	hoh-util-workspace-path	236	251	writing:b1-c3	
 1	port	packages/workspace/workspace	@deepseek-ai/dsh-workspace	hoh-workspace	1448	1587	todo	зависит от: dsh-typert-protocol=skip
 2	port	packages/bundle/base	@deepseek-ai/dsh-base	hoh-base	9	85	todo	профиль как данные; строки pwsh подключаются на этапе 5
