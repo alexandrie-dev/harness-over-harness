@@ -1,7 +1,7 @@
 mod support;
 use hoh_commander::{InvalidArgumentError, Opt, ParseOptions};
 use serde_json::{Value, json};
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, Mutex};
 use support::{failure, program};
 
 // options.bool.test.js, options.flags.test.js, options.bool.small.combined.test.js
@@ -257,7 +257,7 @@ fn when_boolean_combo_then_explicit_defaults_and_last_option_win() {
 // options.custom-processing.test.js.
 #[test]
 fn when_option_specified_multiple_times_then_callback_gets_previous_value() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(Mutex::new(Vec::new()));
     let callback = calls.clone();
     let mut p = program();
     p.option_with_parser_and_default(
@@ -265,18 +265,19 @@ fn when_option_specified_multiple_times_then_callback_gets_previous_value() {
         "",
         move |raw, previous| {
             callback
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push((raw.to_string(), previous.cloned()));
             Ok(json!(raw))
         },
         1,
     );
     p.parse([] as [&str; 0], ParseOptions::USER).unwrap();
-    assert!(calls.borrow().is_empty());
+    assert!(calls.lock().unwrap().is_empty());
     assert_eq!(p.opts()["n"], 1);
     p.parse(["-n", "2", "-n", "3"], ParseOptions::USER).unwrap();
     assert_eq!(
-        *calls.borrow(),
+        *calls.lock().unwrap(),
         vec![("2".into(), Some(json!(1))), ("3".into(), Some(json!("2")))]
     );
 }

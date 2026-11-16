@@ -69,10 +69,10 @@ fn when_preset_used_then_preserve_type_or_coerce() {
     p.parse(["--number"], ParseOptions::USER).unwrap();
     assert_eq!(p.opts()["number"], 123);
     let mut p = program();
-    p.add_option(Opt::new("--debug [value...]", "").preset("foo"));
-    p.parse(["--debug", "--debug", "bar"], ParseOptions::USER)
+    p.add_option(Opt::new("-n, --name [name...]", "").preset("two"));
+    p.parse(["-n", "one", "-n", "-n", "three"], ParseOptions::USER)
         .unwrap();
-    assert_eq!(p.opts()["debug"], json!(["foo", "bar"]));
+    assert_eq!(p.opts()["name"], json!(["one", "two", "three"]));
 }
 // command.parse.test.js: user arguments are readonly snapshots; lazy reset.
 #[test]
@@ -228,9 +228,9 @@ fn when_version_flags_then_exact_stdout_and_exit() {
         assert!(p.help_information().contains("custom version description"));
         let opt = Opt::new(flags, "");
         for flag in opt.short.iter().chain(opt.long.iter()) {
-            output.out.borrow_mut().clear();
+            output.out.lock().unwrap().clear();
             assert_eq!(failure(&mut p, &[flag]).exit_code, 0);
-            assert_eq!(*output.out.borrow(), "1.2.3\n");
+            assert_eq!(*output.out.lock().unwrap(), "1.2.3\n");
             assert!(p.opts().is_empty());
         }
     }

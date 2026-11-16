@@ -1,4 +1,5 @@
 use crate::{Argument, Command, Opt};
+use hoh_util_values::js_json_stringify;
 use serde_json::Value;
 
 impl Command {
@@ -28,6 +29,10 @@ impl Command {
 
     /// Built-in help, excluding the custom text added with add_help_text.
     pub fn help_information(&self) -> String {
+        self.help_information_for(false)
+    }
+    fn help_information_for(&self, error: bool) -> String {
+        let help_width = self.help_width(error);
         let options = self.visible_options();
         let arguments = if self
             .registered_arguments
@@ -59,27 +64,37 @@ impl Command {
             String::new(),
         ];
         if !self.command_description.is_empty() {
-            output.push(box_wrap(&self.command_description, 80));
+            output.push(box_wrap(&self.command_description, help_width));
             output.push(String::new());
         }
         if !arguments.is_empty() {
             output.push("Arguments:".into());
             for arg in arguments {
-                output.push(format_item(arg.name(), width, &argument_description(arg)));
+                output.push(format_item(
+                    arg.name(),
+                    width,
+                    &argument_description(arg),
+                    help_width,
+                ));
             }
             output.push(String::new());
         }
         if !options.is_empty() {
             output.push("Options:".into());
             for opt in options {
-                output.push(format_item(&opt.flags, width, &option_description(&opt)));
+                output.push(format_item(
+                    &opt.flags,
+                    width,
+                    &option_description(&opt),
+                    help_width,
+                ));
             }
             output.push(String::new());
         }
         if !commands.is_empty() {
             output.push("Commands:".into());
             for (term, description) in commands {
-                output.push(format_item(&term, width, &description));
+                output.push(format_item(&term, width, &description, help_width));
             }
             output.push(String::new());
         }
@@ -93,7 +108,7 @@ impl Command {
         }
         self.write_help_position("beforeAll", error);
         self.write_help_position("before", error);
-        self.write_help(&self.help_information(), error);
+        self.write_help(&self.help_information_for(error), error);
         self.write_help_position("after", error);
         self.write_help_position("afterAll", error);
         for text in &self.inherited_after {
@@ -169,7 +184,7 @@ fn option_description(option: &Opt) -> String {
             "choices: {}",
             choices
                 .iter()
-                .map(|v| json_text(&Value::String(v.clone())))
+                .map(|v| js_json_stringify(&Value::String(v.clone())))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -184,13 +199,13 @@ fn option_description(option: &Opt) -> String {
                 .as_ref()
                 .filter(|s| !s.is_empty())
                 .cloned()
-                .unwrap_or_else(|| json_text(default))
+                .unwrap_or_else(|| js_json_stringify(default))
         ));
     }
     if option.optional
         && let Some(preset) = &option.preset_arg
     {
-        extra.push(format!("preset: {}", json_text(preset)));
+        extra.push(format!("preset: {}", js_json_stringify(preset)));
     }
     annotate(&option.description, extra)
 }
@@ -201,7 +216,7 @@ fn argument_description(argument: &Argument) -> String {
             "choices: {}",
             choices
                 .iter()
-                .map(|v| json_text(&Value::String(v.clone())))
+                .map(|v| js_json_stringify(&Value::String(v.clone())))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -214,7 +229,7 @@ fn argument_description(argument: &Argument) -> String {
                 .as_ref()
                 .filter(|s| !s.is_empty())
                 .cloned()
-                .unwrap_or_else(|| json_text(default))
+                .unwrap_or_else(|| js_json_stringify(default))
         ));
     }
     annotate(&argument.description, extra)
@@ -223,19 +238,23 @@ fn argument_description(argument: &Argument) -> String {
 pub(crate) fn display_width(text: &str) -> usize {
     strip_ansi(text).encode_utf16().count()
 }
+// ECMAScript WhiteSpace and LineTerminator, the set matched by JavaScript's \s.
+fn js_whitespace(c: char) -> bool {
+    matches!(c, '\u{0009}'..='\u{000d}' | ' ' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
+}
 fn preformatted(text: &str) -> bool {
     text.split('\n').skip(1).any(|s| {
         s.chars()
             .next()
-            .is_some_and(|c| c.is_whitespace() && c != '\r' && c != '\n')
+            .is_some_and(|c| js_whitespace(c) && c != '\r' && c != '\n')
     })
 }
-fn format_item(term: &str, term_width: usize, description: &str) -> String {
+fn format_item(term: &str, term_width: usize, description: &str, help_width: usize) -> String {
     if description.is_empty() {
         return format!("  {term}");
     }
     let padding = " ".repeat(term_width.saturating_sub(display_width(term)));
-    let remaining = 80_usize.saturating_sub(term_width + 4);
+    let remaining = help_width.saturating_sub(term_width + 4);
     let description = if remaining < 40 || preformatted(description) {
         description.to_string()
     } else {
@@ -254,7 +273,7 @@ fn box_wrap(text: &str, width: usize) -> String {
         let mut start = 0;
         let mut in_word = false;
         for (i, c) in line.char_indices() {
-            if c.is_whitespace() {
+            if js_whitespace(c) {
                 if in_word {
                     chunks.push(&line[start..i]);
                     start = i;
@@ -280,7 +299,7 @@ fn box_wrap(text: &str, width: usize) -> String {
                 used += visible;
             } else {
                 lines.push(current);
-                current = chunk.trim_start().into();
+                current = chunk.trim_start_matches(js_whitespace).into();
                 used = display_width(&current);
             }
         }
@@ -322,126 +341,26 @@ pub(crate) fn strip_ansi(text: &str) -> String {
     result
 }
 
-pub(crate) fn js_string(value: &Value) -> String {
-    match value {
-        Value::Null => "null".into(),
-        Value::Bool(v) => v.to_string(),
-        Value::Number(v) => number_text(v),
-        Value::String(s) => s.clone(),
-        Value::Array(a) => a
-            .iter()
-            .map(|v| {
-                if v.is_null() {
-                    String::new()
-                } else {
-                    js_string(v)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        Value::Object(_) => "[object Object]".into(),
-    }
-}
-fn number_text(value: &serde_json::Number) -> String {
-    if value.as_f64() == Some(0.0) {
-        return "0".into();
-    }
-    let raw = value.to_string();
-    if let Some(raw) = raw.strip_suffix(".0") {
-        return raw.into();
-    }
-    let Some((mantissa, exponent)) = raw.split_once(['e', 'E']) else {
-        return raw;
-    };
-    let Ok(exponent) = exponent.parse::<i32>() else {
-        return raw;
-    };
-    let (sign, mantissa) = if let Some(m) = mantissa.strip_prefix('-') {
-        ("-", m)
-    } else {
-        ("", mantissa)
-    };
-    let digits = mantissa.replace('.', "");
-    let digits = digits.trim_end_matches('0');
-    let point = mantissa.find('.').unwrap_or(mantissa.len()) as i32 + exponent;
-    if point > 0 && point <= 21 {
-        let point = point as usize;
-        if point >= digits.len() {
-            format!("{sign}{digits}{}", "0".repeat(point - digits.len()))
-        } else {
-            format!("{sign}{}.{}", &digits[..point], &digits[point..])
-        }
-    } else if point <= 0 && point > -6 {
-        format!("{sign}0.{}{digits}", "0".repeat((-point) as usize))
-    } else {
-        let tail = if digits.len() > 1 {
-            format!(".{}", &digits[1..])
-        } else {
-            String::new()
-        };
-        let e = point - 1;
-        format!(
-            "{sign}{}{tail}e{}{e}",
-            &digits[..1],
-            if e >= 0 { "+" } else { "" }
-        )
-    }
-}
-
-// JSON.stringify for defaults/choices without a dependency outside the task manifest.
-pub(crate) fn json_text(value: &Value) -> String {
-    match value {
-        Value::Null | Value::Bool(_) | Value::Number(_) => js_string(value),
-        Value::String(s) => {
-            let mut result = String::from("\"");
-            for c in s.chars() {
-                match c {
-                    '"' => result.push_str("\\\""),
-                    '\\' => result.push_str("\\\\"),
-                    '\n' => result.push_str("\\n"),
-                    '\r' => result.push_str("\\r"),
-                    '\t' => result.push_str("\\t"),
-                    '\u{8}' => result.push_str("\\b"),
-                    '\u{c}' => result.push_str("\\f"),
-                    c if c < ' ' => result.push_str(&format!("\\u{:04x}", u32::from(c))),
-                    c => result.push(c),
-                }
-            }
-            result.push('"');
-            result
-        }
-        Value::Array(values) => format!(
-            "[{}]",
-            values.iter().map(json_text).collect::<Vec<_>>().join(",")
-        ),
-        Value::Object(values) => {
-            let mut entries: Vec<_> = values.iter().collect();
-            entries.sort_by_key(|(key, _)| {
-                key.parse::<u32>()
-                    .ok()
-                    .filter(|v| *v != u32::MAX && v.to_string() == **key)
-                    .map_or((1, 0), |v| (0, v))
-            });
-            format!(
-                "{{{}}}",
-                entries
-                    .into_iter()
-                    .map(|(key, value)| format!(
-                        "{}:{}",
-                        json_text(&Value::String(key.clone())),
-                        json_text(value)
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn whitespace_matches_javascript_for_feff_and_0085() {
+        assert!(js_whitespace('\u{feff}'));
+        assert!(!js_whitespace('\u{0085}'));
+        assert!(preformatted("a\n\u{feff}b"));
+        assert!(!preformatted("a\n\u{0085}b"));
+        assert_eq!(
+            box_wrap(&format!("{}\u{feff}tail", "x".repeat(40)), 40),
+            format!("{}\ntail", "x".repeat(40))
+        );
+        assert_eq!(
+            box_wrap(&format!("{}\u{0085}tail", "x".repeat(40)), 40),
+            format!("{}\u{0085}tail", "x".repeat(40))
+        );
+    }
 
     // help.boxWrap.test.js: 14 cases, excluding configurable minWidthToWrap.
     #[test]
@@ -581,10 +500,10 @@ mod tests {
             (json!(1e-7), "1e-7"),
             (json!("a\n\t\"\\"), "\"a\\n\\t\\\"\\\\\""),
         ] {
-            assert_eq!(json_text(&value), expected);
+            assert_eq!(js_json_stringify(&value), expected);
         }
         assert_eq!(
-            json_text(&json!({"b":null,"2":true,"1":false})),
+            js_json_stringify(&json!({"b":null,"2":true,"1":false})),
             "{\"1\":false,\"2\":true,\"b\":null}"
         );
     }

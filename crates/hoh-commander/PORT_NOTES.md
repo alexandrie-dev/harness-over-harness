@@ -19,6 +19,7 @@
 | deepseek-harness/packages/bundle/web-app/src/startup.ts | tests/support/programs.rs: web | декларация и тексты |
 | deepseek-harness/packages/api/gateway/src/index.ts | отсутствует CLI | в указанной ревизии файл не импортирует commander и не объявляет программу |
 | deepseek-harness/packages/boot/cmdline/src/index.ts, tests/cmdline.spec.ts | tests/command.rs, tests/repeated_parse.rs, tests/programs.rs | проверены перехват, writers, snapshot аргументов, action и отличие произвольной ошибки от commander exit; Cordis/Loader/EOF вне этого crate |
+| plans/briefs/fix-stage1-n1-commander.md | tests/fix_round.rs, изменения реализации и исходных тестов | выполнены пункты 1–13; oracle ведущего не изменён |
 
 До реализации насчитаны **23 различных метода commander**, вызываемых семью указанными
 файлами: name, description, usage, version, option, requiredOption, addOption, choices,
@@ -29,6 +30,15 @@ opts, help. Дополнительно используются args, commands �
 сам error: этому соответствует error_handler, проверенный и для грамматической ошибки.
 Вызовы default в gateway и sdk принадлежат схемам, а не commander; default всё равно
 перенесён по прямому требованию задания.
+
+Это область **переносимых сейчас потребителей**, а не всех импортов commander в dsh.
+Ещё два потребителя пока вне переноса по MAP.tsv:
+apps/plugin-market-generator (skip) использует new Command('plugin-market-generator') и
+showHelpAfterError('(run with --help for usage)'). При его переносе нужен name(...) вместо
+конструктора с именем и поддержка showHelpAfterError (включая наследование настройки
+подкомандами при их регистрации). packages/experimental/cua-mcp (later) использует
+new Command(commandName): требуется name(commandName) или отдельный именованный конструктор;
+остальные его вызовы commander уже поддержаны. Сейчас оба пакета не портируются.
 
 Шесть реальных деклараций — dsh, его plugin, headless, sdk, acp, web. Все builders доступны
 из tests/support/programs.rs для повторного использования другим integration test.
@@ -65,23 +75,36 @@ help, все объявленные флаги, успешный и неуспе
   Типизированные preset сохраняются при встроенных choices/variadic.
 - Action — Fn(processed_args, options, &mut Command) -> Result<(), ParseError>.
   Снимки первых двух параметров позволяют вызвать error/help у команды без конфликта заимствований.
-  Состояние closures можно хранить через Rc/RefCell. ParseError::Commander хранит CommanderError,
-  ParseError::Other сохраняет исходный Box<dyn Error>; доступны other и commander.
+  Все сохраняемые closures — Send + Sync и хранятся в Arc; захваченное изменяемое состояние
+  можно хранить через Arc/Mutex. Command, Opt, Argument, Output, ParseError и CommanderError
+  проверены на Send. ParseError::Commander хранит CommanderError,
+  ParseError::Other сохраняет исходный Box<dyn Error + Send + Sync>; доступны other и commander.
+  Типы ошибок используют thiserror::Error.
   JS this заменён явным параметром команды. Поля ошибок exit_code, code, message публичны.
 - error/help возвращают CommanderError; вызывающий action передаёт его через Err(...into()).
-  parse возвращает Result<&mut Command, ParseError>. exit_override всегда перехватывает выход.
-  Без override перед возвратом ошибки вызывается явно установленный exit_callback(code).
+  parse возвращает Result<&mut Command, ParseError>. error/error_with_options/help/help_with_error
+  помечены #[must_use] с требованием вернуть ошибку из action.
+  Для exit_override и exit_callback действует последний вызов: callback после override
+  снова включает callback, override после callback его подавляет.
   Без callback библиотека только возвращает ошибку. Она никогда не завершает процесс.
   error_handler заменяет стандартный error, включая его вывод и код, как headless в JSON-режиме.
 - Ошибки определения builder (плохие флаги, конфликт регистрации, variadic не последним,
   неиспользуемый default обязательного argument, некорректная позиция help text) возвращаются
   как ParseError::Other при parse, а не бросаются при построении. Тексты сохраняются.
-  Это позволяет оставить chaining без panic и без Result у каждого setter.
-- Ширина help всегда **80**, minWidthToWrap **40**: именно fallback commander для вывода
-  вне терминала. TTY, цвет и переменные окружения цвета не определяются.
-  Длины и edit distance считаются в UTF-16. Для JSON-аннотаций реализована запись строк,
-  чисел и порядка целочисленных ключей JavaScript внутри crate, поскольку разрешены только
-  indexmap и serde_json; -0 выводится как 0.
+  Каждая команда сохраняет первую ошибку. Перед любым разбором проверяется всё дерево:
+  собственная ошибка, затем подкоманды в порядке регистрации с обходом в глубину.
+  Если ошибочны и родитель, и ребёнок, JS сообщает ошибку первого по времени builder call,
+  Rust — родителя. Это отличие необходимо для chaining без panic и Result у каждого setter.
+  pass_through_options проверяет настройку родителя в момент вызова; включение positional
+  у родителя уведомляет уже созданные дочерние команды, поздние дети получают текущий снимок.
+- Output::out_help_width/err_help_width задают независимые ширины stdout/stderr.
+  Output::default на Unix читает число колонок каждого терминального потока через безопасный
+  rustix::termios::tcgetwinsize; у нетерминальных потоков и на остальных платформах ширины
+  остаются unset. Fallback — **80**, minWidthToWrap — **40**. Цвет не определяется.
+  Длины и edit distance считаются в UTF-16; пробелы help используют точное множество JS \\s
+  (U+FEFF включён, U+0085 исключён). JSON-аннотации и преобразование значений используют
+  hoh_util_values::js_json_stringify/js_string; ручная сериализация удалена.
+  В fix brief разрешены hoh-util-values, thiserror и Unix-зависимость rustix с feature termios.
 - suggestSimilar сортирует равные кандидаты в порядке, соответствующем используемым
   ASCII-именам. Общий ICU localeCompare для произвольных Unicode-команд не воспроизведён:
   в commander это единственное используемое место localeCompare. Настраиваемые сортировки
@@ -89,7 +112,7 @@ help, все объявленные флаги, успешный и неуспе
 
 ## Не перенесено
 
-Ни один из следующих API не вызывается указанными программами; исключения тестов помечены
+Ни один из следующих API не вызывается переносимыми сейчас программами; исключения тестов помечены
 индивидуально в [SOURCE_TESTS.md](SOURCE_TESTS.md).
 
 - Исполняемые подкоманды, поиск executable, executableDir, inspector-port, сигналы дочерним
@@ -111,9 +134,12 @@ help, все объявленные флаги, успешный и неуспе
 - configureHelp, пользовательские Help subclasses/методы/стили, sortOptions/sortSubcommands,
   showGlobalOptions, option/command/help groups и заголовки групп.
   Встроенные алгоритмы Help перенесены как закрытые функции и проверены unit tests.
-- Терминальная ширина, getOut/ErrHelpWidth, getOut/ErrHasColors, FORCE_COLOR/NO_COLOR,
+- Пользовательские callback getOut/ErrHelpWidth (вместо них ширины задаются Output builder),
+  getOut/ErrHasColors, FORCE_COLOR/NO_COLOR,
   stripColor replacement, outputError и getters configureOutput.
-- showHelpAfterError и showSuggestionAfterError как настройки; стандартные suggestions включены.
+- showHelpAfterError и наследование этой настройки пока не нужны переносимым потребителям;
+  они понадобятся для исключённого plugin-market-generator, как описано выше.
+  showSuggestionAfterError как настройка не используется; стандартные suggestions включены.
 - Функциональный addHelpText с JS context; deprecated callback help/outputHelp.
   Все четыре строковые позиции before/beforeAll/after/afterAll перенесены.
 - Возможность бросить произвольное значение из value parser: по контракту задания parser
@@ -245,15 +271,23 @@ help, все объявленные флаги, успешный и неуспе
 
 Проверки выполнены с CARGO_NET_OFFLINE=true и
 CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-n1:
-cargo test -p hoh-commander — суммарно 179 passed, 0 failed;
-cargo clippy -p hoh-commander --all-targets -- -D warnings — успешно;
+cargo test -p hoh-commander — суммарно 191 passed, 0 failed, включая oracle;
+cargo clippy -p hoh-commander --all-targets -- -D warnings — exit 101:
+защищённый tests/oracle.rs:135 содержит .map(|op| list(op)), clippy::redundant_closure.
+Файл принадлежит ведущему и запрещён к редактированию; lint не подавлен.
+Других диагностик этот запуск не сообщил.
 cargo fmt -p hoh-commander -- --check — успешно.
 Независимое read-only ревью проверило три исправленных краевых случая
 (-0, тип preset, optional parser в короткой группе), не запуская проверок.
 
-Независимое выполнение fixtures против настоящего Node commander не проводилось:
-задание запрещает запускать эталон; сравнение выполняет ведущий. Ожидаемые тексты перенесены
-из исходника и upstream tests. Произвольные Unicode localeCompare-кандидаты, изменение
+Oracle ведущего проверяет 996 запусков 13 программ и 9 отклоняемых определений; все совпали.
+tests/oracle.rs и tests/fixtures не изменены. Node и генератор fixture не запускались.
+Для пункта 7 новый тест сначала упал на старом поведении; тесты пунктов 10–12 сначала усилены,
+затем подтвердили отказы на временных поломках dispatch help, выбора root action и накопления
+variadic preset. Поломки удалены; исходные аргументы preset восстановлены до байта.
+На не-Unix платформах автоматическое определение ширины не реализовано; ширины unset.
+Терминальные Unix-потоки и другие платформы не проверены в этом нетерминальном запуске.
+Произвольные Unicode localeCompare-кандидаты, изменение
 публичного дерева команд изнутри action и необычные JS-объекты не являются входами harness.
 Ветвления Windows/macOS для запуска subprocess относятся к исключённым executable-командам.
 Тестовые builders не запускают настоящие сервисы, браузер, транспорт и lifecycle приложения.

@@ -21,7 +21,7 @@ fn check(mut p: Command, args: &[&str], bad: &[&str], plugin: bool) -> Command {
     } else {
         p.output_help(false);
     }
-    assert!(output.out.borrow().contains("Usage:"));
+    assert!(output.out.lock().unwrap().contains("Usage:"));
     assert_ne!(failure(&mut p, bad).exit_code, 0);
     p.parse(args, ParseOptions::USER).unwrap();
     p

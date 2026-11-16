@@ -1,10 +1,7 @@
 mod support;
 use hoh_commander::{CommanderError, Opt, Output, ParseError, ParseOptions};
 use serde_json::json;
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use std::sync::{Arc, Mutex};
 use support::{Capture, failure, program};
 
 // command.name.test.js, command.description.test.js, command.usage.test.js.
@@ -72,14 +69,14 @@ fn when_options_commands_arguments_then_usage_contains_all() {
 // command.action.test.js, cmdline.spec.ts action interception.
 #[test]
 fn when_action_called_then_command_options_and_processed_arguments_passed() {
-    let called = Rc::new(Cell::new(0));
+    let called = Arc::new(Mutex::new(0));
     let capture = called.clone();
     let mut p = program();
     p.name("test")
         .option("--debug", "")
         .argument("[file]", "")
         .action(move |args, opts, command| {
-            capture.set(capture.get() + 1);
+            *capture.lock().unwrap() += 1;
             assert_eq!(args, [Some(json!("f"))]);
             assert_eq!(opts["debug"], true);
             assert_eq!(command.get_name(), "test");
@@ -89,21 +86,21 @@ fn when_action_called_then_command_options_and_processed_arguments_passed() {
     assert!(p.has_action());
     assert!(p.has_action_recursive());
     p.parse(["f", "--debug"], ParseOptions::USER).unwrap();
-    assert_eq!(called.get(), 1);
+    assert_eq!(*called.lock().unwrap(), 1);
 }
 #[test]
 fn when_action_on_program_and_no_arguments_then_action_called() {
-    let called = Rc::new(Cell::new(false));
+    let called = Arc::new(Mutex::new(false));
     let capture = called.clone();
     let mut p = program();
     p.action(move |args, opts, _| {
         assert!(args.is_empty());
         assert!(opts.is_empty());
-        capture.set(true);
+        *capture.lock().unwrap() = true;
         Ok(())
     });
     p.parse([] as [&str; 0], ParseOptions::USER).unwrap();
-    assert!(called.get());
+    assert!(*called.lock().unwrap());
 }
 #[test]
 fn when_subcommand_action_then_root_action_is_not_called() {
@@ -134,7 +131,7 @@ fn when_action_calls_error_then_output_and_commander_exit() {
         failure(&mut p, &[]),
         CommanderError::new(1, "commander.error", "error: rejected")
     );
-    assert_eq!(*output.err.borrow(), "error: rejected\n");
+    assert_eq!(*output.err.lock().unwrap(), "error: rejected\n");
 }
 // command.error.test.js + command.configureOutput.test.js.
 #[test]
@@ -146,8 +143,8 @@ fn when_error_called_with_code_and_exit_code_then_exact_error() {
         p.error_with_options("Oops", 2, "custom.code"),
         CommanderError::new(2, "custom.code", "Oops")
     );
-    assert_eq!(*output.err.borrow(), "Oops\n");
-    assert!(output.out.borrow().is_empty());
+    assert_eq!(*output.err.lock().unwrap(), "Oops\n");
+    assert!(output.out.lock().unwrap().is_empty());
     assert_eq!(p.error("default").exit_code, 1);
 }
 #[test]
@@ -155,16 +152,19 @@ fn when_no_override_and_error_then_exit_callback_called() {
     let output = Capture::default();
     let mut p = hoh_commander::Command::new();
     let err = output.err.clone();
-    p.configure_output(Output::new(|_| {}, move |s| err.borrow_mut().push_str(s)));
-    let exits = Rc::new(RefCell::new(Vec::new()));
+    p.configure_output(Output::new(
+        |_| {},
+        move |s| err.lock().unwrap().push_str(s),
+    ));
+    let exits = Arc::new(Mutex::new(Vec::new()));
     let capture = exits.clone();
-    p.exit_callback(move |code| capture.borrow_mut().push(code));
+    p.exit_callback(move |code| capture.lock().unwrap().push(code));
     assert_eq!(p.error("Oops").exit_code, 1);
     assert_eq!(p.error_with_options("Oops", 2, "code").exit_code, 2);
-    assert_eq!(*exits.borrow(), [1, 2]);
+    assert_eq!(*exits.lock().unwrap(), [1, 2]);
     p.exit_override();
-    p.error("Oops");
-    assert_eq!(*exits.borrow(), [1, 2]);
+    let _ = p.error("Oops");
+    assert_eq!(*exits.lock().unwrap(), [1, 2]);
 }
 #[test]
 fn when_help_or_version_then_output_is_routed() {
@@ -174,13 +174,13 @@ fn when_help_or_version_then_output_is_routed() {
     p.version("1.2.3");
     let e = failure(&mut p, &["--version"]);
     assert_eq!(e, CommanderError::new(0, "commander.version", "1.2.3"));
-    assert_eq!(*output.out.borrow(), "1.2.3\n");
-    assert!(output.err.borrow().is_empty());
-    output.out.borrow_mut().clear();
+    assert_eq!(*output.out.lock().unwrap(), "1.2.3\n");
+    assert!(output.err.lock().unwrap().is_empty());
+    output.out.lock().unwrap().clear();
     assert_eq!(failure(&mut p, &["--help"]).code, "commander.helpDisplayed");
-    assert_eq!(*output.out.borrow(), p.help_information());
+    assert_eq!(*output.out.lock().unwrap(), p.help_information());
     assert_eq!(p.help_with_error(true).exit_code, 1);
-    assert_eq!(*output.err.borrow(), p.help_information());
+    assert_eq!(*output.err.lock().unwrap(), p.help_information());
 }
 #[test]
 fn when_error_handler_replaced_then_grammar_errors_use_replacement() {
@@ -188,14 +188,14 @@ fn when_error_handler_replaced_then_grammar_errors_use_replacement() {
     let output = Capture::default();
     output.install(&mut p);
     let json_out = output.out.clone();
-    p.error_handler(move |message, status, code| { json_out.borrow_mut().push_str(&format!("{}\n", serde_json::to_string(&json!({"type":"error","message": message.strip_prefix("error: ").unwrap_or(message)})).unwrap())); CommanderError::new(status, code, message) });
+    p.error_handler(move |message, status, code| { json_out.lock().unwrap().push_str(&format!("{}\n", serde_json::to_string(&json!({"type":"error","message": message.strip_prefix("error: ").unwrap_or(message)})).unwrap())); CommanderError::new(status, code, message) });
     assert_eq!(
         failure(&mut p, &["--unknown"]).code,
         "commander.unknownOption"
     );
-    assert!(output.err.borrow().is_empty());
+    assert!(output.err.lock().unwrap().is_empty());
     assert_eq!(
-        *output.out.borrow(),
+        *output.out.lock().unwrap(),
         "{\"type\":\"error\",\"message\":\"unknown option '--unknown'\"}\n"
     );
 }
@@ -249,7 +249,9 @@ fn when_unknown_command_then_error_unless_action_takes_argument() {
         failure(&mut p, &["unknown"]).code,
         "commander.excessArguments"
     );
-    p.argument("[arg]", "").action(|_, _, _| Ok(()));
+    let mut p = program();
+    p.command("sub");
+    p.argument("[args...]", "").action(|_, _, _| Ok(()));
     p.parse(["unknown"], ParseOptions::USER).unwrap();
     let mut p = program();
     p.command("sub");
@@ -418,21 +420,58 @@ fn when_subcommands_then_implicit_help_command_unless_disabled() {
     assert!(!p.help_information().contains("help [command]"));
     let mut p = program();
     p.name("test");
+    let output = Capture::default();
+    output.install(&mut p);
     p.command("sub");
     assert!(p.help_information().contains("help [command]"));
     assert_eq!(failure(&mut p, &["help"]).code, "commander.help");
+    assert!(
+        output
+            .out
+            .lock()
+            .unwrap()
+            .starts_with("Usage: test [options] [command]\n")
+    );
+    output.out.lock().unwrap().clear();
     assert_eq!(failure(&mut p, &["help", "unknown"]).exit_code, 1);
     assert_eq!(failure(&mut p, &["help", "sub"]).exit_code, 0);
+    assert!(
+        output
+            .out
+            .lock()
+            .unwrap()
+            .starts_with("Usage: test sub [options]\n")
+    );
+    output.out.lock().unwrap().clear();
     p.commands[0].command("nested");
     assert_eq!(failure(&mut p, &["sub", "help", "nested"]).exit_code, 0);
+    assert!(
+        output
+            .out
+            .lock()
+            .unwrap()
+            .starts_with("Usage: test sub nested [options]\n")
+    );
+    output.out.lock().unwrap().clear();
     p.help_command_with_description("assist [cmd]", "show assistance");
     assert!(p.help_information().contains("assist [cmd]"));
+    assert!(p.help_information().contains("show assistance"));
     assert_eq!(failure(&mut p, &["assist", "sub"]).exit_code, 0);
+    assert!(
+        output
+            .out
+            .lock()
+            .unwrap()
+            .starts_with("Usage: test sub [options] [command]\n")
+    );
 }
 #[test]
 fn when_help_sub_and_child_help_flags_differ_or_disabled_then_help_still_works() {
     for flags in [None, Some("-H"), Some("--HELP")] {
         let mut p = program();
+        p.name("test");
+        let output = Capture::default();
+        output.install(&mut p);
         let sub = p.command("sub");
         if let Some(flags) = flags {
             sub.help_option(flags, "help");
@@ -440,6 +479,27 @@ fn when_help_sub_and_child_help_flags_differ_or_disabled_then_help_still_works()
             sub.help_option_enabled(false);
         }
         assert_eq!(failure(&mut p, &["help", "sub"]).exit_code, 0);
+        assert!(output.out.lock().unwrap().starts_with("Usage: test sub "));
+    }
+    for parent_flags in ["-H", "-h, --help"] {
+        let mut p = program();
+        p.name("test")
+            .help_option(parent_flags, "display help for command");
+        let output = Capture::default();
+        output.install(&mut p);
+        p.command("sub");
+        if parent_flags == "-h, --help" {
+            p.help_option(parent_flags, "display help for command");
+            p.commands[0].help_option("-a, --assist", "display help for command");
+        }
+        assert_eq!(failure(&mut p, &["help", "sub"]).exit_code, 0);
+        assert!(
+            output
+                .out
+                .lock()
+                .unwrap()
+                .starts_with("Usage: test sub [options]\n")
+        );
     }
 }
 // command.addHelpText.test.js (string positions).
@@ -455,21 +515,21 @@ fn when_all_simple_help_positions_then_strings_in_order() {
         .add_help_text("beforeAll", "D");
     p.output_help(false);
     assert_eq!(
-        *output.out.borrow(),
+        *output.out.lock().unwrap(),
         format!("D\nB\n{}A\nC\n", p.help_information())
     );
-    output.out.borrow_mut().clear();
+    output.out.lock().unwrap().clear();
     p.command("sub")
         .add_help_text("before", "E")
         .add_help_text("after", "F");
     p.commands[0].output_help(false);
     assert_eq!(
-        *output.out.borrow(),
+        *output.out.lock().unwrap(),
         format!("D\nE\n{}F\nC\n", p.commands[0].help_information())
     );
     p.output_help(true);
     assert_eq!(
-        *output.err.borrow(),
+        *output.err.lock().unwrap(),
         format!("D\nB\n{}A\nC\n", p.help_information())
     );
 }
@@ -495,8 +555,11 @@ fn when_configured_after_registration_then_existing_child_keeps_settings() {
     let second = Capture::default();
     second.install(&mut p);
     failure(&mut p, &["sub", "--unknown"]);
-    assert_eq!(*first.err.borrow(), "error: unknown option '--unknown'\n");
-    assert!(second.err.borrow().is_empty());
+    assert_eq!(
+        *first.err.lock().unwrap(),
+        "error: unknown option '--unknown'\n"
+    );
+    assert!(second.err.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -509,10 +572,10 @@ fn when_action_with_argument_then_missing_required_prevents_action() {
                 if with_sub {
                     p.command("subcommand");
                 }
-                let called = Rc::new(Cell::new(false));
+                let called = Arc::new(Mutex::new(false));
                 let capture = called.clone();
                 p.action(move |args, _, _| {
-                    capture.set(true);
+                    *capture.lock().unwrap() = true;
                     assert_eq!(
                         args,
                         [if supplied {
@@ -525,14 +588,14 @@ fn when_action_with_argument_then_missing_required_prevents_action() {
                 });
                 if required && !supplied {
                     assert_eq!(failure(&mut p, &[]).code, "commander.missingArgument");
-                    assert!(!called.get());
+                    assert!(!*called.lock().unwrap());
                 } else {
                     p.parse(
                         if supplied { vec!["my-file"] } else { vec![] },
                         ParseOptions::USER,
                     )
                     .unwrap();
-                    assert!(called.get());
+                    assert!(*called.lock().unwrap());
                 }
             }
         }
@@ -548,14 +611,14 @@ fn when_unknown_option_allowed_and_only_subcommands_then_help_for_error() {
 #[test]
 fn when_call_nested_subcommand_then_runs() {
     let mut p = program();
-    let calls = Rc::new(Cell::new(0));
+    let calls = Arc::new(Mutex::new(0));
     let capture = calls.clone();
     p.command("sub1").command("sub2").action(move |_, _, _| {
-        capture.set(capture.get() + 1);
+        *capture.lock().unwrap() += 1;
         Ok(())
     });
     p.parse(["sub1", "sub2"], ParseOptions::USER).unwrap();
-    assert_eq!(calls.get(), 1);
+    assert_eq!(*calls.lock().unwrap(), 1);
     assert!(
         p.commands[0].commands[0]
             .help_information()

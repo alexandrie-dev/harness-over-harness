@@ -16,10 +16,11 @@ pub use error::{CommanderError, InvalidArgumentError, ParseError};
 pub use option::Opt;
 
 use serde_json::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// A missing previous value is JavaScript's `undefined`, distinct from JSON null.
-pub type ValueParser = Rc<dyn Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError>>;
+pub type ValueParser =
+    Arc<dyn Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + Send + Sync>;
 
 pub(crate) fn collect(value: Value, previous: Option<&Value>, is_default: bool) -> Value {
     let mut values = if !is_default {

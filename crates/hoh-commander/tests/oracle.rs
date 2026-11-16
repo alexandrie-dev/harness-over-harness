@@ -132,7 +132,7 @@ fn build(command: &mut Command, ops: &[Value], actions: &Arc<Mutex<Vec<Value>>>)
 /// The `helpWidth` call of a program: the number of columns its output reports for help.
 fn help_width(ops: &[Value]) -> Option<usize> {
     ops.iter()
-        .map(|op| list(op))
+        .map(list)
         .find(|a| text(&a[0]) == "helpWidth")
         .map(|a| a[1].as_u64().expect("a width in the fixture") as usize)
 }

@@ -12,3 +12,8 @@ workspace = true
 [dependencies]
 indexmap.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+hoh-util-values = { path = "../hoh-util-values" }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["termios"] }

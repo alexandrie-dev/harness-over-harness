@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 pub mod programs;
 use hoh_commander::{Command, CommanderError, Output, ParseOptions};
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
 pub struct Capture {
-    pub out: Rc<RefCell<String>>,
-    pub err: Rc<RefCell<String>>,
+    pub out: Arc<Mutex<String>>,
+    pub err: Arc<Mutex<String>>,
 }
 impl Capture {
     pub fn install(&self, command: &mut Command) {
@@ -14,8 +14,8 @@ impl Capture {
         let err = self.err.clone();
         command
             .configure_output(Output::new(
-                move |s| out.borrow_mut().push_str(s),
-                move |s| err.borrow_mut().push_str(s),
+                move |s| out.lock().unwrap().push_str(s),
+                move |s| err.lock().unwrap().push_str(s),
             ))
             .exit_override();
     }

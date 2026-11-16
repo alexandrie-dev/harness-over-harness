@@ -1,6 +1,6 @@
 use crate::{InvalidArgumentError, ValueParser, collect};
 use serde_json::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Argument {
@@ -48,9 +48,9 @@ impl Argument {
     }
     pub fn arg_parser<F>(mut self, parser: F) -> Self
     where
-        F: Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + 'static,
+        F: Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + Send + Sync + 'static,
     {
-        self.parser = Some(Rc::new(parser));
+        self.parser = Some(Arc::new(parser));
         self
     }
     pub fn choices<I, S>(mut self, values: I) -> Self

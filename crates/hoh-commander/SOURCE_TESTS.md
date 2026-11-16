@@ -1,5 +1,17 @@
 # Реестр тестов commander v15.0.0
 
+Область аудита — потребители, переносимые сейчас, а не все импорты commander в dsh.
+apps/plugin-market-generator (MAP.tsv: skip) требует new Command(name) → name(...)
+и пока не перенесённый showHelpAfterError с наследованием настройки.
+packages/experimental/cua-mcp (later) требует new Command(commandName) → name(commandName);
+остальные его commander-вызовы поддержаны. Оба пакета сейчас не портируются.
+
+Fix round добавил tests/fix_round.rs и неизменённый oracle ведущего (996 запусков, 9 определений).
+Это дополнительные проверки, не новые декларации upstream в счётчике ниже.
+Тесты help command теперь проверяют usage конкретной команды, включая -H у родителя
+и различающиеся help flags; preset использует -n one -n -n three; root action проверяется
+при наличии подкоманды. Временные поломки подтвердили силу этих проверок и удалены.
+
 Разобраны все 109 файлов *.test.js, *.test.cjs, *.test.mjs из tests/.
 Единица учёта — декларация test(), а не количество её запусков внутри JS forEach.
 Из 1117 деклараций: 612 перенесены, 505 исключены с причиной.
@@ -381,8 +393,8 @@ fixtures-extensions/** обслуживают исключённые Node/import
 | 220 | `when_call_hook_then_returns_this` | Lifecycle hooks и события не используются. |
 | 226 | `when_call_setoptionvalue_then_returns_this` | Публичные setters и сведения об источниках опций не используются. |
 | 232 | `when_call_setoptionvaluewithsource_then_returns_this` | Публичные setters и сведения об источниках опций не используются. |
-| 238 | `when_call_showhelpaftererror_then_returns_this` | Эти переключатели не используются; стандартные suggestions включены. |
-| 244 | `when_call_showsuggestionaftererror_then_returns_this` | Эти переключатели не используются; стандартные suggestions включены. |
+| 238 | `when_call_showhelpaftererror_then_returns_this` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
+| 244 | `when_call_showsuggestionaftererror_then_returns_this` | Настройки не нужны переносимым сейчас потребителям; стандартные suggestions включены. |
 | 250 | `when_call_copyinheritedsettings_then_returns_this` | Этот JS-метод/идентичность объекта не используется; Rust Opt/Argument возвращают владение, Command — &mut Self. |
 | 257 | `when_set_namefromfilename_then_returns_this` | Этот JS-метод/идентичность объекта не используется; Rust Opt/Argument возвращают владение, Command — &mut Self. |
 | 263 | `when_set_helpgroup_heading_then_returns_this` | Группы команд и опций не используются. |
@@ -417,19 +429,19 @@ fixtures-extensions/** обслуживают исключённые Node/import
 | 74 | `when_custom_write_then_help_error_on_custom_output` | Перенесён: tests/command.rs / src/help.rs tests |
 | 85 | `when_default_writeerr_then_help_error_on_stderr` | Перенесён: tests/default_output.rs |
 | 93 | `when_custom_writeerr_then_help_error_on_custom_output` | Перенесён: tests/command.rs / src/help.rs tests |
-| 104 | `when_default_getouthelpwidth_then_help_helpwidth_from_stdout` | Подмена глобальных stdio Node, getters, outputError, цвета и настраиваемая ширина не используются; writeOut/writeErr проверены. |
-| 127 | `when_custom_getouthelpwidth_then_help_helpwidth_custom` | Подмена глобальных stdio Node, getters, outputError, цвета и настраиваемая ширина не используются; writeOut/writeErr проверены. |
-| 147 | `when_default_geterrhelpwidth_then_help_error_helpwidth_from_stderr` | Подмена глобальных stdio Node, getters, outputError, цвета и настраиваемая ширина не используются; writeOut/writeErr проверены. |
-| 169 | `when_custom_geterrhelpwidth_then_help_error_helpwidth_custom` | Подмена глобальных stdio Node, getters, outputError, цвета и настраиваемая ширина не используются; writeOut/writeErr проверены. |
+| 104 | `when_default_getouthelpwidth_then_help_helpwidth_from_stdout` | Node-подмена stdio, callback getters, outputError и цвет вне переносимого API; writeOut/writeErr и ширины Output builder проверены отдельно. |
+| 127 | `when_custom_getouthelpwidth_then_help_helpwidth_custom` | Node-подмена stdio, callback getters, outputError и цвет вне переносимого API; writeOut/writeErr и ширины Output builder проверены отдельно. |
+| 147 | `when_default_geterrhelpwidth_then_help_error_helpwidth_from_stderr` | Node-подмена stdio, callback getters, outputError и цвет вне переносимого API; writeOut/writeErr и ширины Output builder проверены отдельно. |
+| 169 | `when_custom_geterrhelpwidth_then_help_error_helpwidth_custom` | Node-подмена stdio, callback getters, outputError и цвет вне переносимого API; writeOut/writeErr и ширины Output builder проверены отдельно. |
 | 189 | `when_custom_getouthelpwidth_and_configurehelp_helpwidth_then_help_helpwidth_from_configurehelp` | Фабрики, подклассы и пользовательская конфигурация Help не используются. |
 | 210 | `when_custom_geterrhelpwidth_and_configurehelp_helpwidth_then_help_error_helpwidth_from_configurehelp` | Фабрики, подклассы и пользовательская конфигурация Help не используются. |
 | 231 | `when_no_custom_setup_and_call_formathelp_direct_then_effective_helpwidth_is_fallback_80` | Перенесён: tests/command.rs / src/help.rs tests |
 | 246 | `when_no_custom_setup_and_call_formatitem_direct_then_effective_helpwidth_is_fallback_80` | Перенесён: tests/command.rs / src/help.rs tests |
-| 264 | `when_set_configureoutput_then_get_configureoutput` | Подмена глобальных stdio Node, getters, outputError, цвета и настраиваемая ширина не используются; writeOut/writeErr проверены. |
-| 280 | `when_custom_outputerr_and_error_then_outputerr_called` | Подмена глобальных stdio Node, getters, outputError, цвета и настраиваемая ширина не используются; writeOut/writeErr проверены. |
-| 300 | `when_custom_outputerr_and_writeerr_and_error_then_outputerr_passed_writeerr` | Подмена глобальных stdio Node, getters, outputError, цвета и настраиваемая ширина не используются; writeOut/writeErr проверены. |
+| 264 | `when_set_configureoutput_then_get_configureoutput` | Node-подмена stdio, callback getters, outputError и цвет вне переносимого API; writeOut/writeErr и ширины Output builder проверены отдельно. |
+| 280 | `when_custom_outputerr_and_error_then_outputerr_called` | Node-подмена stdio, callback getters, outputError и цвет вне переносимого API; writeOut/writeErr и ширины Output builder проверены отдельно. |
+| 300 | `when_custom_outputerr_and_writeerr_and_error_then_outputerr_passed_writeerr` | Node-подмена stdio, callback getters, outputError и цвет вне переносимого API; writeOut/writeErr и ширины Output builder проверены отдельно. |
 | 316 | `when_configureoutput_after_copyinheritedsettings_then_original_unchanged` | Перенесён: tests/command.rs / src/help.rs tests |
-| 333 | `when_envvar_then_getfoohascolors_returns_expected` | Подмена глобальных stdio Node, getters, outputError, цвета и настраиваемая ширина не используются; writeOut/writeErr проверены. |
+| 333 | `when_envvar_then_getfoohascolors_returns_expected` | Node-подмена stdio, callback getters, outputError и цвет вне переносимого API; writeOut/writeErr и ширины Output builder проверены отдельно. |
 
 ## command.copySettings.test.js
 
@@ -447,7 +459,7 @@ fixtures-extensions/** обслуживают исключённые Node/import
 | 111 | `when_copyinheritedsettings_then_copies_combineflagandoptionalvalue` | Перенесён: tests/repeated_parse.rs / tests/command.rs |
 | 121 | `when_copyinheritedsettings_then_copies_allowexcessarguments` | Перенесён: tests/repeated_parse.rs / tests/command.rs |
 | 131 | `when_copyinheritedsettings_then_copies_enablepositionaloptions` | Перенесён: tests/repeated_parse.rs / tests/command.rs |
-| 141 | `when_copyinheritedsettings_then_copies_showhelpaftererror` | Эти переключатели не используются; стандартные suggestions включены. |
+| 141 | `when_copyinheritedsettings_then_copies_showhelpaftererror` | Наследование showHelpAfterError не нужно переносимым сейчас потребителям; потребуется при переносе plugin-market-generator (skip). |
 
 ## command.createArgument.test.js
 
@@ -709,7 +721,7 @@ fixtures-extensions/** обслуживают исключённые Node/import
 
 | Строка | Случай (snake_case) | Решение |
 | ---: | --- | --- |
-| 7 | `when_construct_with_name_then_name_is_set` | Конструктор с именем заменён Command::new().name(...); harness вызывает только new Command(). |
+| 7 | `when_construct_with_name_then_name_is_set` | Для переносимых сейчас потребителей достаточно Command::new().name(...). new Command(name) используется в plugin-market-generator (skip) и cua-mcp (later), описанных выше. |
 | 12 | `when_set_program_name_and_parse_then_name_is_as_assigned` | Перенесён: tests/command.rs |
 | 19 | `when_program_name_not_set_and_parse_with_script_argument_then_plain_name_is_found_from_script_name` | Node/Electron/eval, process.argv и вывод имени из script path не используются; from:user перенесён. |
 | 27 | `when_command_name_not_set_and_no_script_argument_in_parse_then_name_is_program` | Перенесён: tests/command.rs |
@@ -881,23 +893,23 @@ fixtures-extensions/** обслуживают исключённые Node/import
 
 | Строка | Случай (snake_case) | Решение |
 | ---: | --- | --- |
-| 19 | `when_missing_command_argument_then_shows_help` | Эти переключатели не используются; стандартные suggestions включены. |
-| 34 | `when_missing_option_argument_then_shows_help` | Эти переключатели не используются; стандартные suggestions включены. |
-| 49 | `when_missing_mandatory_option_then_shows_help` | Эти переключатели не используются; стандартные suggestions включены. |
-| 64 | `when_unknown_option_then_shows_help` | Эти переключатели не используются; стандартные suggestions включены. |
-| 78 | `when_too_many_command_arguments_then_shows_help` | Эти переключатели не используются; стандартные suggestions включены. |
-| 93 | `when_unknown_command_then_shows_help` | Эти переключатели не используются; стандартные suggestions включены. |
-| 108 | `when_invalid_option_choice_then_shows_help` | Эти переключатели не используются; стандартные suggestions включены. |
-| 124 | `when_command_showhelpaftererror_and_error_and_then_shows_full_help` | Эти переключатели не используются; стандартные suggestions включены. |
+| 19 | `when_missing_command_argument_then_shows_help` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
+| 34 | `when_missing_option_argument_then_shows_help` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
+| 49 | `when_missing_mandatory_option_then_shows_help` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
+| 64 | `when_unknown_option_then_shows_help` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
+| 78 | `when_too_many_command_arguments_then_shows_help` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
+| 93 | `when_unknown_command_then_shows_help` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
+| 108 | `when_invalid_option_choice_then_shows_help` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
+| 124 | `when_command_showhelpaftererror_and_error_and_then_shows_full_help` | showHelpAfterError не нужен переносимым сейчас потребителям; используется в plugin-market-generator (skip). |
 
 ## command.showSuggestionAfterError.test.js
 
 | Строка | Случай (snake_case) | Решение |
 | ---: | --- | --- |
-| 23 | `when_unknown_command_and_showsuggestionaftererror_then_show_suggestion` | Эти переключатели не используются; стандартные suggestions включены. |
-| 31 | `when_unknown_command_and_showsuggestionaftererror_false_then_do_not_show_suggestion` | Эти переключатели не используются; стандартные suggestions включены. |
-| 39 | `when_unknown_option_and_showsuggestionaftererror_then_show_suggestion` | Эти переключатели не используются; стандартные suggestions включены. |
-| 47 | `when_unknown_option_and_showsuggestionaftererror_false_then_do_not_show_suggestion` | Эти переключатели не используются; стандартные suggestions включены. |
+| 23 | `when_unknown_command_and_showsuggestionaftererror_then_show_suggestion` | Настройки не нужны переносимым сейчас потребителям; стандартные suggestions включены. |
+| 31 | `when_unknown_command_and_showsuggestionaftererror_false_then_do_not_show_suggestion` | Настройки не нужны переносимым сейчас потребителям; стандартные suggestions включены. |
+| 39 | `when_unknown_option_and_showsuggestionaftererror_then_show_suggestion` | Настройки не нужны переносимым сейчас потребителям; стандартные suggestions включены. |
+| 47 | `when_unknown_option_and_showsuggestionaftererror_false_then_do_not_show_suggestion` | Настройки не нужны переносимым сейчас потребителям; стандартные suggestions включены. |
 
 ## command.summary.test.js
 
@@ -999,7 +1011,7 @@ fixtures-extensions/** обслуживают исключённые Node/import
 | 92 | `when_second_word_longer_than_width_then_wrap_and_soft_wrap` | Перенесён: src/help.rs tests |
 | 99 | `when_set_width_41_then_wrap_at_41` | Перенесён: src/help.rs tests |
 | 108 | `when_set_width_12_too_small_then_skip_wrap` | Перенесён: src/help.rs tests |
-| 115 | `when_set_width_12_and_set_minwrapwidth_then_skip_wrap` | Настраиваемые ширина и minWidthToWrap не используются; ширина 80 и порог 40 перенесены. |
+| 115 | `when_set_width_12_and_set_minwrapwidth_then_skip_wrap` | Настройка minWidthToWrap не нужна переносимым потребителям; порог 40 сохранён, ширина задаётся Output builder с fallback 80. |
 
 ## help.commandTerm.test.js
 
@@ -1051,9 +1063,9 @@ fixtures-extensions/** обслуживают исключённые Node/import
 
 | Строка | Случай (snake_case) | Решение |
 | ---: | --- | --- |
-| 6 | `when_enough_width_then_wrap` | Настраиваемые ширина и minWidthToWrap не используются; ширина 80 и порог 40 перенесены. |
-| 22 | `when_not_enough_width_then_no_wrap` | Настраиваемые ширина и minWidthToWrap не используются; ширина 80 и порог 40 перенесены. |
-| 33 | `when_make_minwidthtowrap_small_then_wrap` | Настраиваемые ширина и minWidthToWrap не используются; ширина 80 и порог 40 перенесены. |
+| 6 | `when_enough_width_then_wrap` | Настройка minWidthToWrap не нужна переносимым потребителям; порог 40 сохранён, ширина задаётся Output builder с fallback 80. |
+| 22 | `when_not_enough_width_then_no_wrap` | Настройка minWidthToWrap не нужна переносимым потребителям; порог 40 сохранён, ширина задаётся Output builder с fallback 80. |
+| 33 | `when_make_minwidthtowrap_small_then_wrap` | Настройка minWidthToWrap не нужна переносимым потребителям; порог 40 сохранён, ширина задаётся Output builder с fallback 80. |
 
 ## help.optionDescription.test.js
 

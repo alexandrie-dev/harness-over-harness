@@ -4,38 +4,76 @@ use indexmap::IndexMap;
 use serde_json::Value;
 use std::{
     io::{self, Write},
-    rc::Rc,
+    sync::Arc,
 };
 
 pub type Options = IndexMap<String, Value>;
-type Action = Rc<dyn Fn(&[Option<Value>], &Options, &mut Command) -> Result<(), ParseError>>;
-type ErrorHandler = Rc<dyn Fn(&str, i32, &str) -> CommanderError>;
-type Writer = Rc<dyn Fn(&str)>;
+type Action =
+    Arc<dyn Fn(&[Option<Value>], &Options, &mut Command) -> Result<(), ParseError> + Send + Sync>;
+type ErrorHandler = Arc<dyn Fn(&str, i32, &str) -> CommanderError + Send + Sync>;
+type Writer = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Output callbacks are shared with commands registered afterwards, as in commander.
 #[derive(Clone)]
 pub struct Output {
     pub write_out: Writer,
     pub write_err: Writer,
+    out_help_width: Option<usize>,
+    err_help_width: Option<usize>,
 }
 impl Output {
-    pub fn new(out: impl Fn(&str) + 'static, err: impl Fn(&str) + 'static) -> Self {
+    pub fn new(
+        out: impl Fn(&str) + Send + Sync + 'static,
+        err: impl Fn(&str) + Send + Sync + 'static,
+    ) -> Self {
         Self {
-            write_out: Rc::new(out),
-            write_err: Rc::new(err),
+            write_out: Arc::new(out),
+            write_err: Arc::new(err),
+            out_help_width: None,
+            err_help_width: None,
         }
+    }
+    pub fn out_help_width(mut self, columns: usize) -> Self {
+        self.out_help_width = Some(columns);
+        self
+    }
+    pub fn err_help_width(mut self, columns: usize) -> Self {
+        self.err_help_width = Some(columns);
+        self
     }
 }
 impl Default for Output {
     fn default() -> Self {
-        Self::new(
+        let output = Self::new(
             |s| {
                 let _ = io::stdout().write_all(s.as_bytes());
             },
             |s| {
                 let _ = io::stderr().write_all(s.as_bytes());
             },
-        )
+        );
+        #[cfg(unix)]
+        {
+            let mut output = output;
+            use std::io::IsTerminal;
+            let stdout = io::stdout();
+            let stderr = io::stderr();
+            if stdout.is_terminal() {
+                output.out_help_width = rustix::termios::tcgetwinsize(&stdout)
+                    .ok()
+                    .map(|size| usize::from(size.ws_col));
+            }
+            if stderr.is_terminal() {
+                output.err_help_width = rustix::termios::tcgetwinsize(&stderr)
+                    .ok()
+                    .map(|size| usize::from(size.ws_col));
+            }
+            output
+        }
+        #[cfg(not(unix))]
+        {
+            output
+        }
     }
 }
 
@@ -50,7 +88,7 @@ impl ParseOptions {
 struct ExitPolicy {
     output: Output,
     override_exit: bool,
-    exit: Option<Rc<dyn Fn(i32)>>,
+    exit: Option<Arc<dyn Fn(i32) + Send + Sync>>,
     error_handler: Option<ErrorHandler>,
 }
 impl ExitPolicy {
@@ -102,6 +140,7 @@ pub struct Command {
     allow_unknown: bool,
     allow_excess: bool,
     positional: bool,
+    parent_positional: Option<bool>,
     pass_through: bool,
     combine_optional: bool,
     action_handler: Option<Action>,
@@ -140,6 +179,7 @@ impl Command {
             allow_unknown: false,
             allow_excess: false,
             positional: false,
+            parent_positional: None,
             pass_through: false,
             seen_options: indexmap::IndexSet::new(),
             combine_optional: true,
@@ -207,7 +247,7 @@ impl Command {
     }
     pub fn option_with_parser<F>(&mut self, flags: &str, description: &str, parser: F) -> &mut Self
     where
-        F: Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + 'static,
+        F: Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + Send + Sync + 'static,
     {
         self.add_option(Opt::new(flags, description).arg_parser(parser))
     }
@@ -219,7 +259,7 @@ impl Command {
         default: impl Into<Value>,
     ) -> &mut Self
     where
-        F: Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + 'static,
+        F: Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + Send + Sync + 'static,
     {
         self.add_option(
             Opt::new(flags, description)
@@ -237,7 +277,7 @@ impl Command {
         parser: F,
     ) -> &mut Self
     where
-        F: Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + 'static,
+        F: Fn(&str, Option<&Value>) -> Result<Value, InvalidArgumentError> + Send + Sync + 'static,
     {
         self.add_option(
             Opt::new(flags, description)
@@ -247,27 +287,26 @@ impl Command {
     }
     pub fn add_option(&mut self, option: Opt) -> &mut Self {
         if let Some(error) = &option.definition_error {
-            self.definition_error = Some(error.clone());
+            self.record_definition_error(error.clone());
         }
-        let conflict = option
-            .long
+        let short_owner = option
+            .short
             .as_ref()
-            .filter(|f| self.find_option(f).is_some())
-            .or_else(|| {
-                option
-                    .short
-                    .as_ref()
-                    .filter(|f| self.find_option(f).is_some())
-            });
-        if let Some(flag) = conflict
-            && let Some(other) = self.find_option(flag)
-        {
+            .and_then(|flag| self.find_option(flag));
+        let long_owner = option.long.as_ref().and_then(|flag| self.find_option(flag));
+        if let Some(other) = short_owner.or(long_owner) {
+            let flag = if long_owner.is_some() {
+                option.long.as_deref()
+            } else {
+                option.short.as_deref()
+            }
+            .unwrap_or_default();
             let command = if self.command_name.is_empty() {
                 String::new()
             } else {
                 format!(" to command '{}'", self.command_name)
             };
-            self.definition_error = Some(format!(
+            self.record_definition_error(format!(
                 "Cannot add option '{}'{} due to conflicting flag '{}'\n-  already used by option '{}'",
                 option.flags, command, flag, self.options[other].flags
             ));
@@ -301,15 +340,16 @@ impl Command {
                 .last()
                 .map(Argument::name)
                 .unwrap_or_default();
-            self.definition_error =
-                Some(format!("only the last argument can be variadic '{name}'"));
+            self.record_definition_error(format!(
+                "only the last argument can be variadic '{name}'"
+            ));
         }
         if argument.required
             && argument.default_value.is_some()
             && argument.parser.is_none()
             && argument.arg_choices.is_none()
         {
-            self.definition_error = Some(format!(
+            self.record_definition_error(format!(
                 "a default value for a required argument is never used: '{}'",
                 argument.name()
             ));
@@ -331,12 +371,13 @@ impl Command {
         child.help_command_description = self.help_command_description.clone();
         child.allow_excess = self.allow_excess;
         child.positional = self.positional;
+        child.parent_positional = Some(self.positional);
         child.combine_optional = self.combine_optional;
         for part in parts {
             child.argument(part, "");
         }
         if self.commands.iter().any(|c| c.command_name == name) {
-            self.definition_error = Some(format!(
+            self.record_definition_error(format!(
                 "cannot add command '{name}' as already have command '{name}'"
             ));
         }
@@ -368,9 +409,12 @@ impl Command {
     }
     pub fn action<F>(&mut self, action: F) -> &mut Self
     where
-        F: Fn(&[Option<Value>], &Options, &mut Command) -> Result<(), ParseError> + 'static,
+        F: Fn(&[Option<Value>], &Options, &mut Command) -> Result<(), ParseError>
+            + Send
+            + Sync
+            + 'static,
     {
-        self.action_handler = Some(Rc::new(action));
+        self.action_handler = Some(Arc::new(action));
         self
     }
     pub fn has_action(&self) -> bool {
@@ -416,7 +460,7 @@ impl Command {
     }
     pub fn add_help_text(&mut self, position: &str, text: impl Into<String>) -> &mut Self {
         if !["before", "after", "beforeAll", "afterAll"].contains(&position) {
-            self.definition_error = Some("Unexpected value for position to addHelpText.\nExpecting one of 'beforeAll', 'before', 'after', 'afterAll'".into());
+            self.record_definition_error("Unexpected value for position to addHelpText.\nExpecting one of 'beforeAll', 'before', 'after', 'afterAll'".into());
         }
         self.help_texts.push((position.into(), text.into()));
         self.refresh_children();
@@ -432,10 +476,19 @@ impl Command {
     }
     pub fn enable_positional_options(&mut self, enable: bool) -> &mut Self {
         self.positional = enable;
+        for child in &mut self.commands {
+            child.parent_positional = Some(enable);
+        }
         self
     }
     pub fn pass_through_options(&mut self, enable: bool) -> &mut Self {
         self.pass_through = enable;
+        if enable && self.parent_positional == Some(false) {
+            self.record_definition_error(format!(
+                "passThroughOptions cannot be used for '{}' without turning on enablePositionalOptions for parent command(s)",
+                self.command_name
+            ));
+        }
         self
     }
     pub fn combine_flag_and_optional_value(&mut self, combine: bool) -> &mut Self {
@@ -446,8 +499,9 @@ impl Command {
         self.policy.override_exit = true;
         self
     }
-    pub fn exit_callback(&mut self, callback: impl Fn(i32) + 'static) -> &mut Self {
-        self.policy.exit = Some(Rc::new(callback));
+    pub fn exit_callback(&mut self, callback: impl Fn(i32) + Send + Sync + 'static) -> &mut Self {
+        self.policy.exit = Some(Arc::new(callback));
+        self.policy.override_exit = false;
         self
     }
     pub fn configure_output(&mut self, output: Output) -> &mut Self {
@@ -457,17 +511,19 @@ impl Command {
     /// Equivalent to replacing `program.error`, as headless does in JSON mode.
     pub fn error_handler(
         &mut self,
-        handler: impl Fn(&str, i32, &str) -> CommanderError + 'static,
+        handler: impl Fn(&str, i32, &str) -> CommanderError + Send + Sync + 'static,
     ) -> &mut Self {
-        self.policy.error_handler = Some(Rc::new(handler));
+        self.policy.error_handler = Some(Arc::new(handler));
         self
     }
     pub fn opts(&self) -> &Options {
         &self.values
     }
+    #[must_use = "return this error from the action with return Err(error.into())"]
     pub fn error(&self, message: &str) -> CommanderError {
         self.error_with_options(message, 1, "commander.error")
     }
+    #[must_use = "return this error from the action with return Err(error.into())"]
     pub fn error_with_options(&self, message: &str, exit_code: i32, code: &str) -> CommanderError {
         self.policy.error(
             message,
@@ -479,9 +535,11 @@ impl Command {
             },
         )
     }
+    #[must_use = "return this error from the action with return Err(error.into())"]
     pub fn help(&self) -> CommanderError {
         self.help_with_error(false)
     }
+    #[must_use = "return this error from the action with return Err(error.into())"]
     pub fn help_with_error(&self, error: bool) -> CommanderError {
         self.output_help(error);
         self.policy
@@ -492,6 +550,9 @@ impl Command {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        if let Some(error) = self.definition_error_in_tree() {
+            return Err(ParseError::other(io::Error::other(error.to_string())));
+        }
         self.prepare();
         if self.command_name.is_empty() {
             self.command_name = "program".into();
@@ -501,6 +562,19 @@ impl Command {
         self.raw_args = args.clone();
         self.parse_command(Vec::new(), args, &[])?;
         Ok(self)
+    }
+    fn record_definition_error(&mut self, error: String) {
+        self.definition_error.get_or_insert(error);
+    }
+    fn definition_error_in_tree(&self) -> Option<&str> {
+        let mut pending = vec![self];
+        while let Some(command) = pending.pop() {
+            if let Some(error) = &command.definition_error {
+                return Some(error);
+            }
+            pending.extend(command.commands.iter().rev());
+        }
+        None
     }
     fn prepare(&mut self) {
         if let Some(values) = &self.saved_values {
@@ -539,6 +613,14 @@ impl Command {
             &self.policy.output.write_out
         };
         writer(&crate::help::strip_ansi(text));
+    }
+    pub(crate) fn help_width(&self, error: bool) -> usize {
+        if error {
+            self.policy.output.err_help_width
+        } else {
+            self.policy.output.out_help_width
+        }
+        .unwrap_or(80)
     }
     fn ancestor(&self) -> Ancestor {
         Ancestor {
@@ -594,7 +676,7 @@ impl Command {
             let parsed = if let Some(parser) = &option.parser {
                 let raw_value = value
                     .as_ref()
-                    .map(crate::help::js_string)
+                    .map(hoh_util_values::js_string)
                     .unwrap_or_else(|| "undefined".into());
                 parser(&raw_value, previous)
             } else if option.arg_choices.as_ref().is_some_and(|choices| {
@@ -776,15 +858,6 @@ impl Command {
         unknown: Vec<String>,
         ancestors: &[Ancestor],
     ) -> Result<(), ParseError> {
-        if let Some(error) = &self.definition_error {
-            return Err(ParseError::other(io::Error::other(error.clone())));
-        }
-        if self.pass_through && ancestors.last().is_some_and(|p| !p.positional) {
-            return Err(ParseError::other(io::Error::other(format!(
-                "passThroughOptions cannot be used for '{}' without turning on enablePositionalOptions for parent command(s)",
-                self.command_name
-            ))));
-        }
         let (more_operands, unknown) = self.parse_options(&unknown, ancestors)?;
         operands.extend(more_operands);
         self.args = operands.iter().chain(&unknown).cloned().collect();
@@ -802,7 +875,7 @@ impl Command {
             && operands.first().map(String::as_str)
                 == self.help_command_signature.split_whitespace().next()
         {
-            if let Some(name) = operands.get(1) {
+            if let Some(name) = operands.get(1).filter(|name| !name.is_empty()) {
                 if let Some(child) = self.commands.iter().find(|c| c.command_name == *name) {
                     return Err(child.help().into());
                 }
@@ -983,6 +1056,18 @@ fn negative_number(arg: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn default_output_leaves_help_width_unset_for_non_terminals() {
+        use std::io::IsTerminal;
+        let output = Output::default();
+        if !io::stdout().is_terminal() {
+            assert_eq!(output.out_help_width, None);
+        }
+        if !io::stderr().is_terminal() {
+            assert_eq!(output.err_help_width, None);
+        }
+    }
 
     // command.parseOptions.test.js, direct split tests and POSIX matrix.
     #[test]

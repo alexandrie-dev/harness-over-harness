@@ -1,7 +1,7 @@
 mod support;
 use hoh_commander::{Argument, InvalidArgumentError, ParseOptions};
 use serde_json::{Value, json};
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, Mutex};
 use support::{failure, program};
 
 // argument.required.test.js, argument.chain.test.js.
@@ -160,11 +160,12 @@ fn when_argument_not_specified_then_callback_not_called_and_default_used() {
 fn when_argument_specified_then_callback_receives_raw_and_previous() {
     for action in [false, true] {
         for default in [None, Some(json!(1))] {
-            let calls = Rc::new(RefCell::new(Vec::new()));
+            let calls = Arc::new(Mutex::new(Vec::new()));
             let capture = calls.clone();
             let mut arg = Argument::new("[n]", "number").arg_parser(move |raw, previous| {
                 capture
-                    .borrow_mut()
+                    .lock()
+                    .unwrap()
                     .push((raw.to_string(), previous.cloned()));
                 Ok(json!(2))
             });
@@ -180,7 +181,7 @@ fn when_argument_specified_then_callback_receives_raw_and_previous() {
                 });
             }
             p.parse(["alpha"], ParseOptions::USER).unwrap();
-            assert_eq!(*calls.borrow(), [("alpha".into(), default)]);
+            assert_eq!(*calls.lock().unwrap(), [("alpha".into(), default)]);
             assert_eq!(p.args, ["alpha"]);
             assert_eq!(p.processed_args, [Some(json!(2))]);
         }
