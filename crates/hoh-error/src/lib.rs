@@ -1,4 +1,9 @@
 //! One concrete type for every machine-routable harness failure.
+mod node;
+pub use node::{
+    node_error_code, node_error_description, node_fs_error_message, node_spawn_error_message,
+};
+
 use std::{any::Any, error::Error, fmt, sync::Arc};
 
 pub type BoxError = Box<dyn Error + Send + Sync + 'static>;

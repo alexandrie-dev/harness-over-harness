@@ -5,6 +5,7 @@
 //! Rust counterpart; see `PORT_NOTES.md`.
 
 mod js_json;
+mod js_text;
 pub mod partial_json;
 
 use serde_json::Number;
@@ -12,6 +13,7 @@ use serde_json::Number;
 pub use js_json::{
     JS_JSON_MAX_DEPTH, JsonParseError, js_json_parse, js_json_stringify, js_json_stringify_pretty,
 };
+pub use js_text::{JS_WHITE_SPACE_SET, is_js_white_space, js_trim, js_trim_end, js_trim_start};
 pub use partial_json::{LengthReadOptions, PartialArguments, SealedViewError};
 /// A value that round-trips through JSON without loss.
 pub use serde_json::Value as JsonValue;

@@ -434,6 +434,7 @@ dependencies = [
  "hoh-brand",
  "hoh-error",
  "hoh-kernel",
+ "hoh-timeout",
  "serde",
  "serde_json",
  "tokio",
@@ -476,13 +477,28 @@ version = "0.1.0"
 dependencies = [
  "hoh-brand",
  "hoh-kernel",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "hoh-deepseek-llm-api-extensions"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
+ "hoh-error",
  "hoh-kernel",
+ "hoh-timeout",
+ "hoh-util-values",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -493,6 +509,9 @@ version = "0.1.0"
 name = "hoh-error"
 version = "0.1.0"
 dependencies = [
+ "rustix",
+ "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -518,7 +537,11 @@ dependencies = [
 name = "hoh-http-proxy"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
  "reqwest",
+ "serde",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -663,12 +686,12 @@ dependencies = [
 name = "hoh-storage"
 version = "0.1.0"
 dependencies = [
+ "hoh-error",
  "hoh-kernel",
  "indexmap",
  "regex",
  "serde",
  "serde_json",
- "thiserror",
  "tokio",
 ]
 
@@ -709,6 +732,7 @@ name = "hoh-util-values"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "regex",
  "serde_json",
  "thiserror",
 ]
@@ -718,6 +742,7 @@ name = "hoh-util-workspace-path"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror",
  "url",
 ]

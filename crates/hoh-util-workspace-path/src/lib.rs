@@ -1,6 +1,7 @@
 //! Port of `@deepseek-ai/dsh-util-workspace-path` (`packages/util/workspace-path`).
 
 pub mod file_address;
+pub mod node_path;
 pub use file_address::*;
 
 use serde::{Deserialize, Serialize};
