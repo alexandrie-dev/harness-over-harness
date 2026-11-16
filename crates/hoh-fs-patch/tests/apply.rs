@@ -177,3 +177,19 @@ fn failure_patterns_independent_of_hunk_arrays() {
     failure.pattern.push("caller annotation".into());
     assert_eq!(hunks[0].old_lines, ["missing"]);
 }
+
+#[test]
+fn serialized_application_records_preserve_source_key_order() {
+    assert_eq!(
+        serde_json::to_string(&apply_hunks("a\n", &update(&["-a", "+b"]))).unwrap(),
+        r#"{"ok":true,"after":"b\n"}"#,
+    );
+    assert_eq!(
+        serde_json::to_string(&apply_hunks("a\n", &update(&["@@ missing", "+b"]))).unwrap(),
+        r#"{"ok":false,"failure":{"hunkLineNumber":3,"stage":"context","searchStart":0,"pattern":["missing"]}}"#,
+    );
+    assert_eq!(
+        serde_json::to_string(&apply_hunks("a\n", &update(&["-missing", "+b"]))).unwrap(),
+        r#"{"ok":false,"failure":{"hunkLineNumber":3,"stage":"oldLines","searchStart":0,"pattern":["missing"]}}"#,
+    );
+}

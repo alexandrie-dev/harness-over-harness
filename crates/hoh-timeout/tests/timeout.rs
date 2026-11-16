@@ -2,7 +2,17 @@ use hoh_timeout::{
     AbortSignal, IdleWatchdogError, MAX_TIMER_DELAY_MS, TimeoutReason, clamp_timeout, deadline,
     idle_watchdog, timeout_of,
 };
-use std::{any::Any, future, sync::Arc, time::Duration};
+use std::{
+    any::Any,
+    future::{self, Future},
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio::sync::oneshot;
 
 fn classify(signal: &AbortSignal, code: Option<&str>) -> Option<TimeoutReason> {
@@ -261,7 +271,7 @@ async fn watchdog_arms_only_during_next_and_rearms_same_signal() {
         100.0
     );
     assert_same_timeout(second_next.await.unwrap_err(), stable_signal);
-    second_tx.send(2).unwrap();
+    assert!(second_tx.send(2).is_err());
 }
 
 #[tokio::test(start_paused = true)]
@@ -284,7 +294,7 @@ async fn watchdog_rearms_outstanding_demand_on_activity_pulse() {
         100.0
     );
     assert_same_timeout(next.await.unwrap_err(), &watchdog.signal);
-    tx.send(()).unwrap();
+    assert!(tx.send(()).is_err());
     watchdog.dispose();
     watchdog.pulse();
 }
@@ -401,4 +411,67 @@ async fn settled_demand_disarms_even_before_caller_reads_result() {
     elapse(1_000).await;
     assert!(!watchdog.signal.aborted());
     assert_eq!(next.await.unwrap().unwrap(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_watchdog_does_not_settle_outstanding_demand() {
+    let (tx, rx) = oneshot::channel();
+    let watchdog = idle_watchdog(None, 100.0, "IDLE").unwrap();
+    let next = watchdog.next(rx);
+    elapse(0).await;
+    drop(watchdog);
+    elapse(1_000).await;
+    tx.send(42).unwrap();
+    assert_eq!(next.await.unwrap().unwrap(), 42);
+}
+
+struct NeverResolvingDemand {
+    dropped: Arc<AtomicBool>,
+}
+
+impl Future for NeverResolvingDemand {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
+    }
+}
+
+impl Drop for NeverResolvingDemand {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn timeout_drops_never_resolving_demand_within_bound() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let watchdog = idle_watchdog(None, 100.0, "IDLE").unwrap();
+    let next = watchdog.next(NeverResolvingDemand {
+        dropped: dropped.clone(),
+    });
+    elapse(99).await;
+    assert!(!dropped.load(Ordering::SeqCst));
+    elapse(1).await;
+    let error = tokio::time::timeout(Duration::from_millis(1), next)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_same_timeout(error, &watchdog.signal);
+    assert!(dropped.load(Ordering::SeqCst));
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_watchdog_and_next_does_not_detach_demand() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let watchdog = idle_watchdog(None, 100.0, "IDLE").unwrap();
+    let next = watchdog.next(NeverResolvingDemand {
+        dropped: dropped.clone(),
+    });
+    elapse(0).await;
+    assert!(!dropped.load(Ordering::SeqCst));
+    drop(next);
+    drop(watchdog);
+    elapse(0).await;
+    assert!(dropped.load(Ordering::SeqCst));
 }

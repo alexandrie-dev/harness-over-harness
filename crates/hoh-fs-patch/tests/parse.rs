@@ -57,6 +57,38 @@ fn preserves_file_order_repeated_paths_and_move_endpoints() {
 }
 
 #[test]
+fn serialized_records_preserve_source_key_insertion_order() {
+    let operations = parse_patch(&patch(&[
+        "*** Add File: a",
+        "+x",
+        "*** Delete File: b",
+        "*** Update File: c",
+        "@@ anchor",
+        "-old",
+        "+new",
+        "@@",
+        "+tail",
+        "*** End of File",
+        "*** Update File: d",
+        "*** Move to: e",
+        "+x",
+    ]))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_string(&operations).unwrap(),
+        concat!(
+            r#"[{"kind":"add","path":"a","lineNumber":2,"content":"x\n"},"#,
+            r#"{"kind":"delete","path":"b","lineNumber":4},"#,
+            r#"{"kind":"update","path":"c","lineNumber":5,"hunks":["#,
+            r#"{"lineNumber":6,"oldLines":["old"],"newLines":["new"],"isEndOfFile":false,"context":"anchor"},"#,
+            r#"{"lineNumber":9,"oldLines":[],"newLines":["tail"],"isEndOfFile":true}]},"#,
+            r#"{"kind":"update","path":"d","lineNumber":12,"hunks":["#,
+            r#"{"lineNumber":14,"oldLines":[],"newLines":["x"],"isEndOfFile":false}],"moveTo":"e"}]"#,
+        )
+    );
+}
+
+#[test]
 fn accepts_empty_patch_and_empty_creation() {
     assert_eq!(parsed(&patch(&[])), json!([]));
     assert_eq!(

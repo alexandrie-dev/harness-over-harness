@@ -14,7 +14,7 @@
 
 ## Отличия от образца
 - Исключение парсера представлено `Result<_, PatchParseError>`; текст Display совпадает с message образца. `PatchParseError::new` соответствует конструктору. JavaScript name представлен именем Rust-типа.
-- `ApplyHunksResult` — enum Success/Failure с сериализацией исходного булевого тега ok. Публичный `types::FailureStage` представляет закрытые строковые значения context/oldLines. JSON сохраняет имена, порядок полей и отсутствие необязательных полей.
+- `ApplyHunksResult` — enum Success/Failure с сериализацией исходного булевого тега ok. Публичный `types::FailureStage` представляет закрытые строковые значения context/oldLines. JSON сохраняет имена и отсутствие необязательных полей. После исправления ревью порядок следует именно созданию объектов в parse.ts, а не объявлению интерфейсов types.ts: context идёт после lineNumber/oldLines/newLines/isEndOfFile, moveTo — после kind/path/lineNumber/hunks. Порядок всех записей парсинга и результатов применения проверяется сравнением serde_json::to_string с литералами JSON.
 - Счётчики — u64, внутренние индексы — usize; строки Rust содержат корректный Unicode. Unicode White_Space соответствует char::is_whitespace; BOM не удаляется.
 - Параметризованные случаи тестов представлены отдельными тестами либо циклами с теми же данными и проверками.
 

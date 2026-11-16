@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 #[serde(rename_all = "camelCase")]
 pub struct PatchHunk {
     pub line_number: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<String>,
     pub old_lines: Vec<String>,
     pub new_lines: Vec<String>,
     pub is_end_of_file: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,9 +30,9 @@ pub enum PatchOperation {
     Update {
         path: String,
         line_number: u64,
+        hunks: Vec<PatchHunk>,
         #[serde(skip_serializing_if = "Option::is_none")]
         move_to: Option<String>,
-        hunks: Vec<PatchHunk>,
     },
 }
 

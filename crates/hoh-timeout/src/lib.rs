@@ -282,6 +282,17 @@ pub struct IdleWatchdog {
 struct DemandGuard {
     state: Arc<Mutex<WatchdogState>>,
 }
+
+struct DemandTask<T> {
+    task: JoinHandle<T>,
+}
+
+impl<T> Drop for DemandTask<T> {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 impl Drop for DemandGuard {
     fn drop(&mut self) {
         let mut state = lock(&self.state);
@@ -310,7 +321,7 @@ impl IdleWatchdog {
     }
 
     /// Start one iterator demand immediately, like an eager JavaScript promise.
-    /// On timeout the demand keeps running and must release resources via the signal.
+    /// Timeout or dropping the returned future drops the demand rather than detaching it.
     pub fn next<F>(
         &self,
         demand: F,
@@ -336,23 +347,27 @@ impl IdleWatchdog {
         };
         let reason = self.reason.clone();
         let task = guard.map(|guard| {
-            tokio::spawn(async move {
-                let mut demand = Box::pin(demand);
-                let result = tokio::select! {
-                    biased;
-                    _ = expired.changed() => {
-                        // Promise.race abandons rather than cancels the original demand.
-                        // Its owner must stop transport work by observing signal.
-                        tokio::spawn(demand);
-                        Err(IdleWatchdogError::Timeout(reason))
-                    },
-                    value = &mut demand => Ok(value),
-                };
-                drop(guard);
-                result
-            })
+            DemandTask {
+                task: tokio::spawn(async move {
+                    let mut demand = Box::pin(demand);
+                    let result = tokio::select! {
+                        biased;
+                        expired = expired.changed() => match expired {
+                            Ok(()) => Err(IdleWatchdogError::Timeout(reason)),
+                            // Disposal may drop the sender; it must not settle demand.
+                            Err(_) => Ok(demand.await),
+                        },
+                        value = &mut demand => Ok(value),
+                    };
+                    drop(guard);
+                    result
+                }),
+            }
         });
-        async move { task?.await? }
+        async move {
+            let mut task = task?;
+            (&mut task.task).await?
+        }
     }
 
     pub fn pulse(&self) {
