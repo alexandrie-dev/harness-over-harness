@@ -104,9 +104,9 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/atomic-write	@deepseek-ai/dsh-atomic-write	hoh-atomic-write	293	513	writing:b1-c1	
 1	port	packages/util/brand	@deepseek-ai/dsh-brand	hoh-brand	39	13	writing:b1-c1	
 1	port	packages/util/chunked-list	@deepseek-ai/dsh-chunked-list	hoh-chunked-list	58	59	writing:b1-c1	
-1	port	packages/util/code-language	@deepseek-ai/dsh-util-code-language	hoh-util-code-language	233	174	writing:b1-c3	
+1	port	packages/util/code-language	@deepseek-ai/dsh-util-code-language	hoh-util-code-language	233	174	review	
 1	port	packages/util/crypto	@deepseek-ai/dsh-util-crypto	hoh-util-crypto	41	37	writing:b1-c1	
-1	port	packages/util/deque	@deepseek-ai/dsh-deque	hoh-deque	95	94	writing:b1-c1	
+1	port	packages/util/deque	@deepseek-ai/dsh-deque	hoh-deque	95	94	writing:b1-c1	в переносимых пакетах никем не импортируется
 1	port	packages/util/error	@deepseek-ai/dsh-error	hoh-error	22	19	writing:b1-c1	
 1	port	packages/util/home-paths	@deepseek-ai/dsh-home-paths	hoh-home-paths	238	155	writing:b1-c1	
 1	port	packages/util/http-proxy	@deepseek-ai/dsh-http-proxy	hoh-http-proxy	737	921	todo	
@@ -119,7 +119,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/time	@deepseek-ai/dsh-util-time	hoh-util-time	1708	1250	writing:b1-s2	
 1	port	packages/util/timeout	@deepseek-ai/dsh-timeout	hoh-timeout	212	306	writing:b1-c2	
 1	port	packages/util/values	@deepseek-ai/dsh-util-values	hoh-util-values	959	1317	review	
-1	port	packages/util/workspace-path	@deepseek-ai/dsh-util-workspace-path	hoh-util-workspace-path	236	251	writing:b1-c3	
+1	port	packages/util/workspace-path	@deepseek-ai/dsh-util-workspace-path	hoh-util-workspace-path	236	251	review	в образце используется только окном; перенесён, пригодится hoh-client
 1	port	packages/workspace/workspace	@deepseek-ai/dsh-workspace	hoh-workspace	1448	1587	todo	зависит от: dsh-typert-protocol=skip
 2	port	packages/bundle/base	@deepseek-ai/dsh-base	hoh-base	9	85	todo	профиль как данные; строки pwsh подключаются на этапе 5
 2	port	packages/bundle/headless	@deepseek-ai/dsh-headless	hoh-headless	992	2273	todo	профиль как данные
@@ -163,8 +163,6 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/team/agent-team	@deepseek-ai/dsh-agent-team	hoh-agent-team	1109	1862	todo	зависит от: dsh-typert-protocol=skip
 2	port	packages/team/tool-agent-team	@deepseek-ai/dsh-tool-agent-team	hoh-tool-agent-team	235	1064	todo	
 2	port	packages/telemetry/otel	@deepseek-ai/dsh-otel	hoh-otel	475	466	todo	
-2	port	packages/util/plugin-detail	@deepseek-ai/dsh-plugin-detail	hoh-plugin-detail	485	252	todo	
-2	port	packages/util/plugin-market-index	@deepseek-ai/dsh-plugin-market-index	hoh-plugin-market-index	445	312	todo	
 2	port	packages/util/ripgrep	@deepseek-ai/dsh-util-ripgrep	hoh-util-ripgrep	109	189	todo	
 2	port	packages/web/tool-web	@deepseek-ai/dsh-tool-web	hoh-tool-web	1054	1692	todo	
 2	port	packages/web/web	@deepseek-ai/dsh-web	hoh-web	507	394	todo	зависит от: dsh-typert-protocol=skip
@@ -188,7 +186,6 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 3	port	packages/session/session-stats	@deepseek-ai/dsh-session-stats	hoh-session-stats	299	450	todo	
 3	port	packages/session/session-turn-outline	@deepseek-ai/dsh-session-turn-outline	hoh-session-turn-outline	229	377	todo	
 3	port	packages/storage/storage-sqlite	@deepseek-ai/dsh-storage-sqlite	hoh-storage-sqlite	516	499	todo	
-3	port	packages/util/file-drag	@deepseek-ai/dsh-util-file-drag	hoh-util-file-drag	76	31	todo	
 3	port	packages/util/text-search	@deepseek-ai/dsh-util-text-search	hoh-util-text-search	301	203	todo	
 4	port4	packages/acp/acp	@deepseek-ai/dsh-acp	hoh-acp	1782	3583	todo	
 4	port4	packages/bundle/acp-app	@deepseek-ai/dsh-acp-app	hoh-acp-app	48	97	todo	профиль ACP
@@ -400,6 +397,9 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 9	skip	packages/typert/loader	@deepseek-ai/dsh-typert-loader	-	507	849	-	их браузерный интерфейс и его транспорт
 9	skip	packages/typert/protocol	@deepseek-ai/dsh-typert-protocol	-	1804	1137	-	их браузерный интерфейс и его транспорт
 9	skip	packages/typert/registry	@deepseek-ai/dsh-typert-registry	-	977	780	-	их браузерный интерфейс и его транспорт
+9	skip	packages/util/file-drag	@deepseek-ai/dsh-util-file-drag	-	76	31	-	используется только окном dsh
+9	after-v1	packages/util/plugin-detail	@deepseek-ai/dsh-plugin-detail	-	485	252	-	marketplace: в переносимых пакетах никем не импортируется
+9	after-v1	packages/util/plugin-market-index	@deepseek-ai/dsh-plugin-market-index	-	445	312	-	marketplace: в переносимых пакетах никем не импортируется
 9	redesign	packages/workflow/tool-workflow	@deepseek-ai/dsh-tool-workflow	-	620	743	-	исполнение программ модели в Node: в Rust нужен другой механизм
 9	redesign	packages/workflow/workflow	@deepseek-ai/dsh-workflow	-	397	130	-	исполнение программ модели в Node: в Rust нужен другой механизм
 9	redesign	packages/workflow/workflow-ptc	@deepseek-ai/dsh-workflow-ptc	-	1363	2421	-	исполнение программ модели в Node: в Rust нужен другой механизм
