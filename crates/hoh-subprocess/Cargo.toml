@@ -1,0 +1,15 @@
+[package]
+name = "hoh-subprocess"
+description = "Port of @deepseek-ai/dsh-subprocess (packages/subprocess/subprocess)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-error = { path = "../hoh-error" }
+hoh-http-proxy = { path = "../hoh-http-proxy" }
+hoh-kernel = { path = "../hoh-kernel" }
