@@ -1,0 +1,76 @@
+dshHomePath('sessions')
+dshHomePath('office-kit', 'outputs')
+dshHomePath('storages')
+dshHomePath('dsh-runtimes', 'dsh-primary-runtime')
+dshHomePath('team-requests.jsonl')
+dshHomePath('plan-requests.jsonl')
+dshHomePath('permission-requests.jsonl')
+dshHomePath('goal-requests.jsonl')
+dshHomePath('compact-requests.jsonl')
+dshHomePath('command-identity-requests.jsonl')
+dshHomePath('command-attachment-requests.jsonl')
+dshHomePath('children/first')
+dshHomePath('children/second')
+E.DSH_SNAPSHOT_SPILL_ROOT
+E.DSH_SNAPSHOT_SPILL_LOCATOR_ROOT
+E.DSH_MCP_DEMO_URL
+E.DSH_TEST_CHILD_PATCH
+E.DSH_SNAPSHOT_PROVIDER_CWD
+E.DSH_CLIENT_VERSION
+E.DSH_TEST_CHILD_HOME
+E.DSH_SNAPSHOT_PROVIDER
+E.DSH_SNAPSHOT_MODEL
+E.DSH_PRODUCT_ANALYTICS_OTLP_URL
+E.DSH_PRIMARY_RUNTIME
+[E.DSH_MCP_RESOURCES_FIXTURE]
+!E.DSH_PRIMARY_RUNTIME
+E.DSH_SNAPSHOT_SPILL_ROOT ?? './.spill'
+E.DSH_PERMISSION_MODE ?? 'workspace-write'
+E.DSH_SNAPSHOT_SESSIONS_ROOT ?? './.sessions'
+E.DSH_SNAPSHOT_SESSIONS_ROOT ?? dshHomePath('sessions')
+E.DSH_SYSTEM_PROMPT ?? 'You are a helpful software engineer assistant.'
+E.DSH_TELEMETRY_OTLP_URL ?? 'https://dsh-otel-collector.deepseeksvc.com/v1/logs'
+E.DSH_TELEMETRY_MODE || 'FEEDBACK_ONLY'
+E.DSH_MODEL ?? 'deepseek-v4-flash'
+E.DSH_PERMISSION_MODE ?? (E.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')
+E.DSH_SNAPSHOT === undefined ? 'zstd' : 'none'
+E.DSH_SNAPSHOT !== 'record'
+E.DSH_SNAPSHOT_FEEDBACK !== '1'
+E.DSH_SNAPSHOT && 200 || 12500
+E.DSH_PRIMARY_RUNTIME ? 'workspace-dependencies' : 'user'
+(E.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger-full-access' ? 'never' : 'ask'
+(E.DSH_PERMISSION_MODE ?? (E.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')) === 'danger-full-access' ? 'never' : 'ask'
+E.DSH_MAX_TOKENS_AS_SUCCESS === undefined ? true : JSON.parse(E.DSH_MAX_TOKENS_AS_SUCCESS)
+Number(E.DSH_CONTEXT_WINDOW ?? 1000000)
+JSON.parse(E.DSH_TEST_CHILD_PATCHES ?? '[]')
+process.cwd()
+process.execPath
+process.cwd() + '/office-skills'
+process.cwd() + '/office-ptc-node'
+process.cwd() + '/runtime-source'
+process.cwd() + '/runtime-installed'
+process.cwd() + '/native-helper.mjs'
+E.DSH_SNAPSHOT_SPILL_ROOT + '/dsh-escalated.txt'
+process.platform === 'win32'
+process.platform !== 'win32'
+P.join(process.cwd(), 'broken-skills')
+P.join(process.cwd(), 'approved.txt')
+P.resolve(E.DSH_PRIMARY_RUNTIME ?? '')
+P.join(P.dirname(REQ('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')
+decodeURIComponent(new URL('./runner.mjs', 'file://' + E.DSH_SNAPSHOT_FILE).pathname)
+decodeURIComponent(new URL('../../../packages/subagent/subagent-acp/tests/mock-acp-server.ts', 'file://' + E.DSH_SNAPSHOT_FILE).pathname)
+!ctx.get('profileContext')
+ctx.get('profileContext')?.name !== 'desktop'
+ctx.get('profileContext')?.name !== 'desktop' || !E.DSH_PRIMARY_RUNTIME
+ctx.get('profileContext')?.name === 'desktop' && E.DSH_PRIMARY_RUNTIME ? 'workspace-dependencies' : 'user'
+ctx.get('profileContext')?.name === 'desktop' && ['darwin', 'win32'].includes(process.platform) ? process.platform : null
+ctx.headlessStartup.task
+ctx.headlessStartup.sessionId
+ctx.headlessStartup.json
+ctx.headlessStartup.additionalWritableRoots
+ctx.webStartup.trustedHosts
+ctx.webStartup.tls
+ctx.webStartup.publicUrl
+ctx.webStartup.openBrowser
+ctx.webStartup.port ?? 3080
+ctx.webStartup.host ?? '127.0.0.1'

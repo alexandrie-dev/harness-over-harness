@@ -10,12 +10,14 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hoh-util-values = { path = "../hoh-util-values" }
 indexmap.workspace = true
 saphyr-parser.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
