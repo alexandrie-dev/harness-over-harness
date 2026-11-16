@@ -375,5 +375,5 @@ fn unsupported_refusal(
 
 /// `JSON.stringify` of a string.
 fn json_string(text: &str) -> String {
-    serde_json::to_string(text).unwrap_or_else(|_| format!("\"{text}\""))
+    hoh_util_values::js_json_stringify(&serde_json::Value::String(text.to_owned()))
 }

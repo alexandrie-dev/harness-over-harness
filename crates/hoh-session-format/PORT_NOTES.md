@@ -73,6 +73,9 @@
   здесь отказ `current Session restorer returned v0; expected v0` (`session_format_version_labeled` отклоняет `-0`). Тест:
   `restorer_returning_negative_zero_version_is_rejected_unlike_javascript`.
 
+- Fix-round c4, пункты 1 и 8: `SessionFormatEventRun: Any + Send` позволяет стабильный upcast `&dyn SessionFormatEventRun -> &dyn Any` и `Box<dyn SessionFormatEventRun> -> Box<dyn Any + Send>`, без дополнительных методов и без раскрытия run. Конкретный тип должен быть `'static` (требование `Any`); владение строками/событиями и синхронные операции сохранены. Тест `event_runs_support_borrowed_and_owned_any_upcasts_preserving_send` проверяет borrowed/owned downcast, сохранение allocation после отказа по чужому типу и последующее раскрытие.
+- Fix-round c4, пункт 8: JSON-кавычки имени миграции в `chain::json_string` пишет `hoh_util_values::js_json_stringify`; имеющаяся path-зависимость уже достаточна. Тест `duplicate_migration_names_use_shared_js_json_quoting` проверяет кавычку, backslash, перенос строки и управляющие символы в имени. Все 31 прежний тест и 2 новых проходят (33 passed, 0 failed); clippy с `--all-targets -- -D warnings` и fmt `-- --check` чисты при `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-c4`.
+
 ## Не перенесено
 - `deepFreeze` (раздел 8 / задание): нет аналога.
 - Случаи `tests/json.spec.ts`, не выразимые в `serde_json::Value`: `Infinity`, `undefined`-член, разреженный массив, символьный ключ, неперечислимый член,

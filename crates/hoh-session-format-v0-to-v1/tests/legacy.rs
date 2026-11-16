@@ -325,3 +325,37 @@ fn refuses_invalid_legacy_relationship_facts_instead_of_rewriting() {
         "empty exactly",
     );
 }
+
+#[test]
+fn legacy_replacement_does_not_truncate_or_saturate_an_invalid_start() {
+    let mut st = stage("legacy");
+    transform(st.as_mut(), surface("user/message", 0, user("zero"))).unwrap();
+    transform(st.as_mut(), surface("user/message", 2, user("two"))).unwrap();
+    for start in [json!(-1), json!(2.5), json!(9_007_199_254_740_994.0)] {
+        let row = merge(
+            event(
+                "tool/result",
+                3,
+                json!({"turn":1,"step":1,"callId":"call","content":[],"isError":false}),
+            ),
+            json!({"surfaceOp":{"op":"replace","start":start,"end":0}}),
+        );
+        let error = transform(st.as_mut(), row).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "tool/result 3 replacement cites a message without identity"
+        );
+    }
+    let row = merge(
+        event(
+            "tool/result",
+            3,
+            json!({"turn":1,"step":1,"callId":"call","content":[],"isError":false}),
+        ),
+        json!({"surfaceOp":{"op":"replace","start":2.0,"end":2}}),
+    );
+    assert_eq!(
+        transform(st.as_mut(), row).unwrap()["data"]["message"]["id"],
+        "two"
+    );
+}

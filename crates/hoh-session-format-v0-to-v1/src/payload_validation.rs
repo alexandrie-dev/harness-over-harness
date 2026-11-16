@@ -1,9 +1,10 @@
-use crate::validation_helpers::{event_seq, event_type, field, has, js_stringify, keys, record};
+use crate::validation_helpers::{event_label, event_type, field, has, keys, record};
 use hoh_session_format::{
     SessionFormatError, SessionFormatEvent, session_format_count, session_format_safe_integer,
 };
 use hoh_util_time::{InstantResult, four_digit_year_epoch};
 use hoh_util_values::deep_equal_json;
+use hoh_util_values::js_json_stringify;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
@@ -14,8 +15,8 @@ fn error(text: impl Into<String>) -> SessionFormatError {
 
 pub fn assert_released_payload_semantics(event: &SessionFormatEvent, version: u64) -> Result {
     let kind = event_type(event);
-    let seq = event_seq(event);
-    let label = format!("{kind} {seq}");
+    let seq = field(event, "seq").as_f64().unwrap_or(f64::NAN);
+    let label = event_label(event);
     let data = record(field(event, "data"), &format!("{label} data"))?;
     // Each arm preserves the source's validation order, including optional fields.
     match kind {
@@ -357,7 +358,10 @@ pub fn assert_released_payload_semantics(event: &SessionFormatEvent, version: u6
         _ => {
             return Err(error(format!(
                 "released payload validator is missing event {}",
-                js_stringify(field(event, "type"))
+                event
+                    .get("type")
+                    .map(js_json_stringify)
+                    .unwrap_or_else(|| "undefined".into())
             )));
         }
     }
@@ -476,16 +480,16 @@ fn coordinates(data: &Value, label: &str) -> Result {
     count(&data["step"], &format!("{label} step"))?;
     Ok(())
 }
-fn earlier_seq(value: &Value, event_seq: u64, label: &str) -> Result<u64> {
+fn earlier_seq(value: &Value, event_seq: f64, label: &str) -> Result<u64> {
     let n = count(value, label)?;
-    if n >= event_seq {
+    if n as f64 >= event_seq {
         return Err(error(format!("{label} must identify an earlier event")));
     }
     Ok(n)
 }
 fn seq_array<'a>(
     value: &'a Value,
-    event_seq: u64,
+    event_seq: f64,
     label: &str,
     require_nonempty: bool,
 ) -> Result<&'a [Value]> {
@@ -679,7 +683,7 @@ fn legacy_goal_message_value(message: &Value, source: &Value, label: &str) -> Re
     } else {
         json!({"goal":change["goal"],"roundsStarted":change["roundsStarted"],"createdAt":change["createdAt"],"updatedAt":change["updatedAt"]})
     };
-    let expected = json!([{"type":"text","text":format!("<goal_state>{}</goal_state>",js_stringify(&payload))}]);
+    let expected = json!([{"type":"text","text":format!("<goal_state>{}</goal_state>",js_json_stringify(&payload))}]);
     if !deep_equal_json(&message["content"], &expected) {
         return Err(error(format!(
             "{label} legacy goal content does not match its change"
@@ -982,7 +986,7 @@ fn stream_chunk_value(value: &Value, label: &str) -> Result {
             return Err(error(format!(
                 "{label} has unknown stream chunk type {}",
                 c.get("type")
-                    .map(js_stringify)
+                    .map(js_json_stringify)
                     .unwrap_or_else(|| "undefined".into())
             )));
         }
@@ -1080,7 +1084,7 @@ fn request_header_value(value: &Value, label: &str) -> Result {
     }
     Ok(())
 }
-fn shadowed_value(data: &Value, seq: u64, label: &str) -> Result {
+fn shadowed_value(data: &Value, seq: f64, label: &str) -> Result {
     let r = exact(
         &data["shadowedRange"],
         &format!("{label} shadowedRange"),

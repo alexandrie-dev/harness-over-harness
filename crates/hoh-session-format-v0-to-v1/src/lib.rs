@@ -1,4 +1,9 @@
 //! Frozen released-v0 physical codec and migration into shared-layout v1.
+//!
+//! JSON text enters through `hoh_util_values::js_json_parse` and leaves through
+//! `js_json_stringify` / `js_json_stringify_pretty`. Recursive payload validators
+//! require values no deeper than `hoh_util_values::JS_JSON_MAX_DEPTH`, including
+//! values assembled in code (PORTING section 4).
 pub mod codec;
 pub mod dispositions;
 pub mod migration;

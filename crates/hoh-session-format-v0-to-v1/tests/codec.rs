@@ -2,6 +2,7 @@ mod common;
 use common::*;
 use hoh_session_format::*;
 use hoh_session_format_v0_to_v1::*;
+use hoh_util_values::{js_json_parse, js_json_stringify};
 use serde_json::{Value, json};
 fn full_header() -> Value {
     json!({"type":"session","version":1,"id":"codec","createdAt":1,"cwd":"/work","parentSession":"parent","seedLength":0,"origin":"subagent","delegationDepth":1,"agentPreset":"default"})
@@ -128,7 +129,7 @@ fn expands_valid_text_reasoning_and_named_or_unnamed_tool_call_rows_exactly() {
 #[test]
 fn refuses_malformed_packed_rows() {
     let base = json!({"type":"text-chunks","seq0":0,"time0":1,"data":{"turn":1,"step":0,"index":0,"dt":[],"texts":["a"]}});
-    let mut cases = vec![merge(base.clone(), json!({"extra":true}))];
+    let mut cases = vec![json!({"type":"text-chunks","seq0":0,"time0":1,"data":{},"extra":true})];
     for (key, value) in [
         ("texts", json!([])),
         ("texts", json!([1])),
@@ -140,6 +141,7 @@ fn refuses_malformed_packed_rows() {
         cases.push(row);
     }
     cases.extend([
+        json!({"type":"reasoning-chunks","seq0":0,"time0":1,"data":{"turn":1,"step":0,"index":0,"dt":[],"texts":["a","b"]}}),
         json!({"type":"tool-call-chunks","seq0":0,"time0":1,"data":{"turn":1,"step":0,"index":0,"id":1,"dt":[],"args":["a"]}}),
         json!({"type":"tool-call-chunks","seq0":0,"time0":1,"data":{"turn":1,"step":0,"index":0,"id":"id","name":1,"dt":[],"args":["a"]}}),
         json!({"type":"text-chunks","seq0":0,"time0":9_007_199_254_740_991_u64,"data":{"turn":1,"step":0,"index":0,"dt":[1],"texts":["a","b"]}}),
@@ -261,10 +263,9 @@ fn refuses_overlapping_ranges_after_a_valid_first_range() {
 fn preserves_js_integer_spelling_key_order_and_integral_packed_gaps() {
     let mut row = surface("user/message", 0, user("numbers"));
     row["time"] = json!(1.0);
-    row["data"]["source"] = serde_json::from_str(
-        r#"{"kind":"future","2":2.0,"1":1.0,"nested":{"z":1.0,"nothing":null}}"#,
-    )
-    .unwrap();
+    row["data"]["source"] =
+        js_json_parse(r#"{"kind":"future","2":2.0,"1":1.0,"nested":{"z":1.0,"nothing":null}}"#)
+            .unwrap();
     let original = row.clone();
     let a = decode_artifact(
         &header(1, "codec"),
@@ -273,10 +274,10 @@ fn preserves_js_integer_spelling_key_order_and_integral_packed_gaps() {
     )
     .unwrap();
     assert_eq!(
-        serde_json::to_string(&a.events[0]["data"]["source"]).unwrap(),
+        js_json_stringify(&a.events[0]["data"]["source"]),
         r#"{"1":1,"2":2,"kind":"future","nested":{"z":1,"nothing":null}}"#
     );
-    assert_eq!(a.events[0]["time"].to_string(), "1");
+    assert_eq!(js_json_stringify(&a.events[0]["time"]), "1");
     assert_eq!(row, original);
     let row = json!({"type":"text-chunks","seq0":0.0,"time0":1.0,"data":{"turn":1.0,"step":1.0,"index":0.0,"dt":[2.0,-1.0],"texts":["a","b","c"]}});
     let a = decode_artifact(&header(1, "codec"), &[row], SessionFormatRecovery::Strict).unwrap();
@@ -286,5 +287,89 @@ fn preserves_js_integer_spelling_key_order_and_integral_packed_gaps() {
             .map(|e| e["time"].clone())
             .collect::<Vec<_>>(),
         vec![json!(1), json!(3), json!(2)]
+    );
+}
+
+#[test]
+fn narrows_a_released_run_by_borrow_and_ownership_without_expanding() {
+    let row = json!({"type":"tool-call-chunks","seq0":0,"time0":6,"data":{"turn":3,"step":4,"index":2,"id":"call","name":"read","dt":[1],"args":["{","}"]}});
+    let mut decoder = RELEASED_V1_SESSION_FORMAT_CODEC
+        .create_decoder(&full_header(), SessionFormatRecovery::Strict)
+        .unwrap();
+    let mut context = Items::default();
+    decoder.decode_row(row, &mut context).unwrap();
+    let run = context.runs.remove(0);
+    let released = as_released_assistant_chunk_run(run.as_ref()).unwrap();
+    let pointer = std::ptr::from_ref(released);
+    assert_eq!(
+        (
+            released.first_seq,
+            released.event_count,
+            released.turn,
+            released.step,
+            released.last_seq,
+            released.last_time
+        ),
+        (0, 2, 3, 4, 1, 7)
+    );
+    assert_eq!(released.stream,json!({"type":"tool-call-chunks","time0":6,"index":2,"dt":[1],"id":"call","name":"read","args":["{","}"]}).as_object().unwrap().clone());
+    let released =
+        into_released_assistant_chunk_run(run).unwrap_or_else(|_| panic!("expected released run"));
+    assert!(std::ptr::eq(pointer, released.as_ref()));
+    assert_eq!(released.expand().count(), 2);
+}
+
+struct OtherRun {
+    tag: &'static str,
+    retained: String,
+}
+impl SessionFormatEventRun for OtherRun {
+    fn run_type(&self) -> &str {
+        self.tag
+    }
+    fn first_seq(&self) -> u64 {
+        7
+    }
+    fn event_count(&self) -> u64 {
+        0
+    }
+    fn expand(self: Box<Self>) -> Box<dyn Iterator<Item = SessionFormatEvent>> {
+        panic!("narrowing must not expand another run")
+    }
+}
+#[test]
+fn returns_another_run_unchanged_even_when_it_has_the_released_tag() {
+    for tag in ["other-run", "released-assistant-chunks"] {
+        let original = Box::new(OtherRun {
+            tag,
+            retained: "unchanged".into(),
+        });
+        let pointer = std::ptr::from_ref(original.as_ref());
+        let run: Box<dyn SessionFormatEventRun> = original;
+        assert_eq!(
+            is_released_assistant_chunk_run(run.as_ref()),
+            tag == "released-assistant-chunks"
+        );
+        assert!(as_released_assistant_chunk_run(run.as_ref()).is_none());
+        let run = into_released_assistant_chunk_run(run).expect_err("another concrete type");
+        let any: &dyn std::any::Any = run.as_ref();
+        let other = any.downcast_ref::<OtherRun>().unwrap();
+        assert!(std::ptr::eq(pointer, other));
+        assert_eq!(other.retained, "unchanged");
+        assert_eq!(
+            (run.run_type(), run.first_seq(), run.event_count()),
+            (tag, 7, 0)
+        );
+    }
+}
+
+#[test]
+fn uses_the_shared_json_boundary_for_opaque_values() {
+    let row = js_json_parse(r#"{"type":"plugin/opaque","seq":0,"time":1e0,"data":{"2":2.0,"1":1e20,"small":1e-7,"rounded":9007199254740993}}"#).unwrap();
+    let decoded =
+        decode_artifact(&header(1, "codec"), &[row], SessionFormatRecovery::Strict).unwrap();
+    assert_eq!(
+        js_json_stringify(&Value::Object(decoded.events[0].clone())),
+        r#"{"type":"plugin/opaque","seq":0,"time":1,"data":{"1":100000000000000000000,"2":2,"small":1e-7,"rounded":9007199254740992}}"#
     );
 }

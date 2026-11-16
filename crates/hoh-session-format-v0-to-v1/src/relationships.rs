@@ -1,8 +1,12 @@
 use crate::dispositions::RELEASED_V0_EVENT_TYPES;
 use crate::validation::is_surface;
-use crate::validation_helpers::{event_seq, event_type, field, has, js_stringify, record};
+use crate::validation_helpers::{
+    event_seq, event_seq_text, event_type, event_type_text, exact_index, exact_u64, field, has,
+    record,
+};
 use hoh_session_format::{SessionFormatArtifact, SessionFormatError, SessionFormatEvent};
 use hoh_util_values::deep_equal_json;
+use hoh_util_values::{js_json_stringify, js_number_string, js_string};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -17,7 +21,7 @@ struct CompactionState {
     id: Value,
     source_command_id: Option<Value>,
     turn: Value,
-    start_seq: u64,
+    start_seq: Option<u64>,
     summarized: bool,
 }
 struct PtcStart {
@@ -35,12 +39,6 @@ struct ToolLifecycle {
 type Result = std::result::Result<(), SessionFormatError>;
 fn err(message: impl Into<String>) -> SessionFormatError {
     SessionFormatError::new(message)
-}
-fn n(value: &Value) -> u64 {
-    value
-        .as_u64()
-        .or_else(|| value.as_f64().map(|v| v as u64))
-        .unwrap_or(0)
 }
 fn s(value: &Value) -> &str {
     value.as_str().unwrap_or("")
@@ -72,7 +70,7 @@ pub fn assert_released_artifact_relationships(
     let mut command_runs = HashSet::new();
     for event in &artifact.events {
         let kind = event_type(event);
-        let seq = event_seq(event);
+        let seq = event_seq_text(event);
         let extension = extensions.step_events.contains(kind);
         if !RELEASED_V0_EVENT_TYPES.contains(&kind) && !extension {
             continue;
@@ -100,14 +98,15 @@ pub fn assert_released_artifact_relationships(
                     && open_turn.is_some_and(|t| {
                         crate::validation::number_eq(&d["turn"], t + 1) && next_turn == t
                     })
-                    && let Some(previous) = seq
-                        .checked_sub(1)
-                        .and_then(|i| artifact.events.get(i as usize))
+                    && let Some(previous) = event_seq(event)
+                        .and_then(|seq| seq.checked_sub(1))
+                        .and_then(|i| usize::try_from(i).ok())
+                        .and_then(|i| artifact.events.get(i))
                         .filter(|e| event_type(e) == "agent/inbox/spliced")
                 {
                     let splice = record(
                         field(previous, "data"),
-                        &format!("agent/inbox/spliced {} data", event_seq(previous)),
+                        &format!("agent/inbox/spliced {} data", event_seq_text(previous)),
                     )?;
                     if splice["target"] == "next-turn"
                         && splice["inserted"].as_array().is_some_and(|a| !a.is_empty())
@@ -119,10 +118,10 @@ pub fn assert_released_artifact_relationships(
                 if open_turn.is_some() || !crate::validation::number_eq(&d["turn"], next_turn) {
                     return Err(err(format!(
                         "turn/start {} does not open expected turn {next_turn}",
-                        js_stringify(&d["turn"])
+                        js_json_stringify(&d["turn"])
                     )));
                 }
-                open_turn = Some(n(&d["turn"]));
+                open_turn = exact_u64(&d["turn"]);
                 open_step = None;
                 tools.clear();
                 next_step = 1;
@@ -131,14 +130,14 @@ pub fn assert_released_artifact_relationships(
                 if !equal_count(&d["turn"], open_turn) {
                     return Err(err(format!(
                         "turn/end {} has no matching open turn",
-                        js_stringify(&d["turn"])
+                        js_json_stringify(&d["turn"])
                     )));
                 }
                 no_unresolved(&tools, "turn/end")?;
                 if open_step.is_some() {
                     return Err(err(format!(
                         "turn/end {} crosses an open step",
-                        js_stringify(&d["turn"])
+                        js_json_stringify(&d["turn"])
                     )));
                 }
                 open_turn = None;
@@ -153,7 +152,7 @@ pub fn assert_released_artifact_relationships(
                         "{kind} does not match the open turn and next step"
                     )));
                 }
-                open_step = Some(n(&d["step"]));
+                open_step = exact_u64(&d["step"]);
             }
             "step/end" => {
                 require_open_step(event, d, open_turn, open_step)?;
@@ -314,8 +313,8 @@ pub fn assert_released_artifact_relationships(
                 }
                 let key = format!(
                     "{}\0{}",
-                    js_stringify(&d["retryId"]),
-                    js_stringify(&d["retry"])
+                    js_json_stringify(&d["retryId"]),
+                    js_json_stringify(&d["retry"])
                 );
                 if !retry_starts.insert(key) {
                     return Err(err("llm/retry-started repeats one scheduled attempt"));
@@ -339,11 +338,11 @@ pub fn assert_released_artifact_relationships(
                     return Err(err(format!("command/done {id} has no prior command/run")));
                 }
                 if has(d, "sourceEventSeq") {
-                    let source = artifact.events.get(n(&d["sourceEventSeq"]) as usize);
+                    let source =
+                        exact_index(&d["sourceEventSeq"]).and_then(|i| artifact.events.get(i));
                     if d["kind"] != "success"
-                        || source.is_some_and(|e| {
-                            matches!(event_type(e), "command/run" | "command/done")
-                        })
+                        || source
+                            .is_none_or(|e| matches!(event_type(e), "command/run" | "command/done"))
                     {
                         return Err(err(format!("command/done {id} has invalid sourceEventSeq")));
                     }
@@ -357,7 +356,7 @@ pub fn assert_released_artifact_relationships(
                     .unwrap_or(0.into());
                 if deep_equal_json(&accepted, field(&artifact.header, "version")) {
                     let inherited = artifact.header.contains_key("parentSession")
-                        && seq < artifact.inherited_event_count;
+                        && event_seq(event).is_some_and(|seq| seq < artifact.inherited_event_count);
                     if !inherited && d["sessionId"] != *field(&artifact.header, "id") {
                         return Err(err(
                             "current-generation delivery marker names the wrong Session",
@@ -374,7 +373,7 @@ pub fn assert_released_artifact_relationships(
                     id: d["compactionId"].clone(),
                     source_command_id: d.get("sourceCommandId").cloned(),
                     turn: d["turn"].clone(),
-                    start_seq: seq,
+                    start_seq: event_seq(event),
                     summarized: false,
                 });
             }
@@ -422,7 +421,7 @@ pub fn assert_released_artifact_relationships(
     }
     Ok(())
 }
-fn inherited_orphan_compaction_starts(events: &[SessionFormatEvent]) -> HashSet<u64> {
+fn inherited_orphan_compaction_starts(events: &[SessionFormatEvent]) -> HashSet<Option<u64>> {
     let mut stale = HashSet::new();
     let mut open = None;
     for e in events {
@@ -446,9 +445,14 @@ fn assert_retry_chain(retries: &[&SessionFormatEvent], d: &Value) -> Result {
             .iter()
             .all(|key| deep_equal_json(&p[*key], &d[*key]))
     });
-    let expected = prior.map(|e| n(&field(e, "data")["retry"])).unwrap_or(0) + 1;
-    if !crate::validation::number_eq(&d["retry"], expected) {
-        return Err(err(format!("llm/retry must use retry {expected}")));
+    let expected = prior.map_or(1.0, |e| {
+        field(e, "data")["retry"].as_f64().unwrap_or(f64::NAN) + 1.0
+    });
+    if d["retry"].as_f64() != Some(expected) {
+        return Err(err(format!(
+            "llm/retry must use retry {}",
+            js_number_string(expected)
+        )));
     }
     if prior.is_some_and(|e| field(e, "data")["retryId"] != d["retryId"]) {
         return Err(err(
@@ -462,7 +466,7 @@ fn assert_retry_chain(retries: &[&SessionFormatEvent], d: &Value) -> Result {
     {
         return Err(err(format!(
             "llm/retry reuses retryId {} across policy chains",
-            js_stringify(&d["retryId"])
+            js_json_stringify(&d["retryId"])
         )));
     }
     Ok(())
@@ -480,7 +484,7 @@ fn require_open_step(
     {
         return Err(err(format!(
             "{} does not match an open turn and step",
-            event_type(event)
+            event_type_text(event)
         )));
     }
     Ok(())
@@ -502,7 +506,7 @@ fn is_exact_tool_not_started_repair(
     d["error"]["name"] == "ToolNotStartedError"
         && d["error"]["code"] == "TOOL_NOT_STARTED"
         && !event.contains_key("sourceEventSeqs")
-        && m["id"] == format!("interrupted-tool-result-{id}-{}", event_seq(event))
+        && m["id"] == format!("interrupted-tool-result-{id}-{}", event_seq_text(event))
         && block["isError"] == true
         && content.as_array().is_some_and(|a| a.len() == 1)
         && content[0]["type"] == "text"
@@ -510,9 +514,9 @@ fn is_exact_tool_not_started_repair(
             == "The tool call was interrupted before the Harness recorded it as started. Retry it if it is still needed."
 }
 fn apply_surface(
-    surface: &[u64],
+    surface: &[Option<u64>],
     event: &SessionFormatEvent,
-) -> std::result::Result<Vec<u64>, SessionFormatError> {
+) -> std::result::Result<Vec<Option<u64>>, SessionFormatError> {
     let kind = event_type(event);
     let seq = event_seq(event);
     let Some(op) = event.get("surfaceOp") else {
@@ -525,10 +529,10 @@ fn apply_surface(
     }
     let start = surface
         .iter()
-        .position(|v| crate::validation::number_eq(&op["start"], *v));
+        .position(|v| v.is_some_and(|v| crate::validation::number_eq(&op["start"], v)));
     let end = surface
         .iter()
-        .position(|v| crate::validation::number_eq(&op["end"], *v));
+        .position(|v| v.is_some_and(|v| crate::validation::number_eq(&op["end"], v)));
     let (Some(start), Some(end)) = (start, end) else {
         return Err(err(format!(
             "{kind} replacement range is not on the current surface"
@@ -541,7 +545,9 @@ fn apply_surface(
     }
     let sources = field(event, "sourceEventSeqs").as_array();
     if surface[start..=end].iter().any(|seq| {
-        !sources.is_some_and(|a| a.iter().any(|v| crate::validation::number_eq(v, *seq)))
+        !seq.is_some_and(|seq| {
+            sources.is_some_and(|a| a.iter().any(|v| crate::validation::number_eq(v, seq)))
+        })
     }) {
         return Err(err(format!(
             "{kind} replacement sourceEventSeqs omit a shadowed surface node"
@@ -561,7 +567,7 @@ fn assert_title_sources(
     validate_text: bool,
 ) -> Result {
     let kind = event_type(event);
-    let seq = event_seq(event);
+    let seq = event_seq_text(event);
     let seqs = d["messageSeqs"]
         .as_array()
         .map(Vec::as_slice)
@@ -581,19 +587,19 @@ fn assert_title_sources(
                 "{kind} {seq} messageSeqs must cite earlier human user/message events"
             ))
         };
-        let Some(source) = events
-            .get(n(source_seq) as usize)
+        let Some(source) = exact_index(source_seq)
+            .and_then(|index| events.get(index))
             .filter(|e| event_type(e) == "user/message")
         else {
             return Err(invalid());
         };
         let sd = record(
             field(source, "data"),
-            &format!("user/message {} data", n(source_seq)),
+            &format!("user/message {} data", js_string(source_seq)),
         )?;
         let ms = record(
             &sd["source"],
-            &format!("user/message {} source", n(source_seq)),
+            &format!("user/message {} source", js_string(source_seq)),
         )?;
         if ms["kind"] != "user" {
             return Err(invalid());
@@ -616,7 +622,7 @@ fn assert_title_sources(
     if kind == "session/title-llm-request" {
         let expected = format!(
             "Generate the session title from this JSON array of human messages:\n{}",
-            js_stringify(&Value::Array(selected))
+            js_json_stringify(&Value::Array(selected))
         );
         let messages = &d["messages"];
         let m = &messages[0];
@@ -661,13 +667,13 @@ fn compaction_turn(owner: &Value, open_turn: Option<u64>, kind: &str) -> Result 
     }
     Ok(())
 }
-fn current_surface_span(surface: &[u64], d: &Value, kind: &str) -> Result {
-    let start = surface
-        .iter()
-        .position(|v| crate::validation::number_eq(&d["shadowedRange"]["start"], *v));
-    let end = surface
-        .iter()
-        .position(|v| crate::validation::number_eq(&d["shadowedRange"]["end"], *v));
+fn current_surface_span(surface: &[Option<u64>], d: &Value, kind: &str) -> Result {
+    let start = surface.iter().position(|v| {
+        v.is_some_and(|v| crate::validation::number_eq(&d["shadowedRange"]["start"], v))
+    });
+    let end = surface.iter().position(|v| {
+        v.is_some_and(|v| crate::validation::number_eq(&d["shadowedRange"]["end"], v))
+    });
     let expected = match (start, end) {
         (Some(a), Some(b)) if b >= a => &surface[a..=b],
         _ => &[],
@@ -680,7 +686,7 @@ fn current_surface_span(surface: &[u64], d: &Value, kind: &str) -> Result {
         || expected
             .iter()
             .zip(seqs)
-            .any(|(a, b)| !crate::validation::number_eq(b, *a))
+            .any(|(a, b)| !a.is_some_and(|a| crate::validation::number_eq(b, a)))
     {
         return Err(err(format!(
             "{kind} shadowedSeqs do not name an exact current surface span"

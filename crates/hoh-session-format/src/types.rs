@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::sync::Arc;
 
 use crate::error::SessionFormatError;
@@ -150,7 +151,7 @@ pub trait SessionFormatCurrentEncoder: Send + Sync {
 }
 
 /// A codec-owned compact run that adjacent migrations may consume without expanding.
-pub trait SessionFormatEventRun: Send {
+pub trait SessionFormatEventRun: Any + Send {
     fn run_type(&self) -> &str;
     fn first_seq(&self) -> u64;
     fn event_count(&self) -> u64;

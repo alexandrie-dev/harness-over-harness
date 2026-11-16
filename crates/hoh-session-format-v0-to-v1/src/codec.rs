@@ -1,7 +1,5 @@
 use crate::validation::{assert_released_session_format_header, number_eq};
-use crate::validation_helpers::{
-    assert_released_v0_keys, field, js_display, normalize_json_layout, released_v0_record,
-};
+use crate::validation_helpers::{assert_released_v0_keys, field, js_display, released_v0_record};
 use hoh_session_format::{
     SessionFormatArtifactDecoder, SessionFormatCodec, SessionFormatError, SessionFormatEvent,
     SessionFormatEventRun, SessionFormatHeader, SessionFormatJsonObject,
@@ -26,6 +24,28 @@ pub fn is_released_assistant_chunk_run(run: &dyn SessionFormatEventRun) -> bool 
     run.run_type() == "released-assistant-chunks"
 }
 
+/// Narrow a compact run without expanding it or relying on its tag alone.
+pub fn as_released_assistant_chunk_run(
+    run: &dyn SessionFormatEventRun,
+) -> Option<&ReleasedAssistantChunkRun> {
+    let any: &dyn std::any::Any = run;
+    any.downcast_ref()
+}
+
+/// Consume a released run, returning another concrete type unchanged on refusal.
+pub fn into_released_assistant_chunk_run(
+    run: Box<dyn SessionFormatEventRun>,
+) -> Result<Box<ReleasedAssistantChunkRun>, Box<dyn SessionFormatEventRun>> {
+    if as_released_assistant_chunk_run(run.as_ref()).is_none() {
+        return Err(run);
+    }
+    let any: Box<dyn std::any::Any + Send> = run;
+    // The borrowed check above proves the concrete type; owning upcast preserves it.
+    Ok(any
+        .downcast()
+        .unwrap_or_else(|_| unreachable!("checked concrete run type")))
+}
+
 impl SessionFormatEventRun for ReleasedAssistantChunkRun {
     fn run_type(&self) -> &str {
         "released-assistant-chunks"
@@ -37,16 +57,15 @@ impl SessionFormatEventRun for ReleasedAssistantChunkRun {
         self.event_count
     }
     fn expand(self: Box<Self>) -> Box<dyn Iterator<Item = SessionFormatEvent>> {
-        let integer = |v: &Value| {
-            v.as_i64()
-                .or_else(|| v.as_f64().map(|f| f as i64))
-                .unwrap_or(0)
-        };
+        let integer =
+            |v: &Value| session_format_safe_integer(v, "released Assistant chunk time").ok();
         let mut time = integer(field(&self.stream, "time0"));
-        Box::new((0..self.event_count).map(move |index| {
-            if index > 0 { time += integer(&field(&self.stream,"dt")[index as usize - 1]); }
+        Box::new((0..self.event_count).filter_map(move |index| {
+            let index = usize::try_from(index).ok()?;
+            let time = time.as_mut()?;
+            if index > 0 { *time += integer(&field(&self.stream,"dt")[index - 1])?; }
             let tool = field(&self.stream,"type") == "tool-call-chunks";
-            let member = field(&self.stream,if tool { "args" } else { "texts" })[index as usize].clone();
+            let member = field(&self.stream,if tool { "args" } else { "texts" })[index].clone();
             let chunk = if !tool {
                 json!({"type":if field(&self.stream,"type") == "text-chunks" { "text-delta" } else { "reasoning-delta" },"index":field(&self.stream,"index"),"text":member})
             } else {
@@ -56,8 +75,8 @@ impl SessionFormatEventRun for ReleasedAssistantChunkRun {
                 c.insert("argumentsDelta".into(),member); Value::Object(c)
             };
             let mut event = SessionFormatEvent::new();
-            event.insert("type".into(),"assistant/chunk".into()); event.insert("seq".into(),(self.first_seq + index).into()); event.insert("time".into(),time.into());
-            event.insert("data".into(),json!({"turn":self.turn,"step":self.step,"chunk":chunk})); event
+            event.insert("type".into(),"assistant/chunk".into()); event.insert("seq".into(),(self.first_seq + index as u64).into()); event.insert("time".into(),(*time).into());
+            event.insert("data".into(),json!({"turn":self.turn,"step":self.step,"chunk":chunk})); Some(event)
         }))
     }
 }
@@ -280,9 +299,6 @@ fn decode_event(
         let decoded = decode_seq_ranges(sources, seq)?;
         record.insert("sourceEventSeqs".into(), Value::Array(decoded));
     }
-    for value in record.values_mut() {
-        normalize_json_layout(value);
-    }
     Ok(record)
 }
 fn decode_packed_run(
@@ -358,9 +374,6 @@ fn decode_packed_run(
         }
     }
     stream.insert(if tool { "args" } else { "texts" }.into(), payload.clone());
-    for value in stream.values_mut() {
-        normalize_json_layout(value);
-    }
     Ok(ReleasedAssistantChunkRun {
         first_seq: seq0,
         event_count: members.len() as u64,

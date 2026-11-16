@@ -68,6 +68,43 @@ fn test_run() -> Box<dyn SessionFormatEventRun> {
     Box::new(TestRun(vec![event()]))
 }
 
+#[test]
+fn event_runs_support_borrowed_and_owned_any_upcasts_preserving_send() {
+    let run = test_run();
+    let any: &dyn std::any::Any = run.as_ref();
+    let concrete = any.downcast_ref::<TestRun>().unwrap();
+    let pointer = std::ptr::from_ref(concrete);
+    assert_eq!(concrete.0, vec![event()]);
+    let any: Box<dyn std::any::Any + Send> = run;
+    let any = any.downcast::<String>().expect_err("wrong concrete type");
+    let concrete = any
+        .downcast::<TestRun>()
+        .unwrap_or_else(|_| panic!("original type retained"));
+    assert!(std::ptr::eq(pointer, concrete.as_ref()));
+    assert_eq!(concrete.expand().collect::<Vec<_>>(), vec![event()]);
+}
+
+#[test]
+fn duplicate_migration_names_use_shared_js_json_quoting() {
+    let name = "@test/\"quote\\slash\n\u{0001}\u{2028}";
+    let mut first = migration();
+    first.name = name.to_owned();
+    let mut second = migration();
+    second.name = name.to_owned();
+    second.from = 1;
+    second.to = 2;
+    let error = create_session_format_chain(options(2, vec![first, second], Arc::new(Ok)))
+        .err()
+        .expect("duplicate name");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Session migration name {} is duplicated",
+            hoh_util_values::js_json_stringify(&json!(name))
+        )
+    );
+}
+
 type EventFn =
     Box<dyn FnMut(SessionFormatEvent, &mut dyn SessionFormatMigrationContext) -> Res<()> + Send>;
 type RunFn = Box<

@@ -777,3 +777,46 @@ fn accepts_turn_enclosed_request_context_and_refuses_step_work_without_open_step
         "open turn and step",
     );
 }
+
+#[test]
+fn standalone_relationships_do_not_alias_invalid_event_indices() {
+    let extensions = ReleasedRelationshipExtensions::default();
+    for source in [json!(-1), json!(2.5)] {
+        let rows = vec![
+            event("feedback/record", 0, json!({"text":"zero"})),
+            event(
+                "command/run",
+                1,
+                json!({"commandId":"c","name":"x","source":{"kind":"user"}}),
+            ),
+            event("feedback/record", 2, json!({"text":"two"})),
+            event(
+                "command/done",
+                3,
+                json!({"commandId":"c","kind":"success","sourceEventSeq":source}),
+            ),
+        ];
+        let error =
+            assert_released_artifact_relationships(&artifact(rows), &extensions).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "command/done c has invalid sourceEventSeq"
+        );
+    }
+    let mut rows = vec![
+        surface("user/message", 0, user("human")),
+        event(
+            "session/title",
+            1,
+            json!({"title":"Title","messageSeqs":[-1],"source":{"kind":"fallback"}}),
+        ),
+    ];
+    let error =
+        assert_released_artifact_relationships(&artifact(rows.clone()), &extensions).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "session/title 1 messageSeqs must cite earlier human user/message events"
+    );
+    rows[1]["data"]["messageSeqs"] = json!([0.0]);
+    assert_released_artifact_relationships(&artifact(rows), &extensions).unwrap();
+}

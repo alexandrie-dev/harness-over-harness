@@ -769,3 +769,66 @@ fn pins_released_log_instant_profile_at_bounds_and_against_noncanonical_spelling
         );
     }
 }
+
+#[test]
+fn direct_payload_diagnostics_keep_raw_event_fields() {
+    for (seq, text) in [
+        (Some(json!(1.5)), "1.5"),
+        (Some(json!("abc")), "abc"),
+        (None, "undefined"),
+    ] {
+        let mut e = object(event("feedback/record", 0, json!({"text":1})));
+        if let Some(seq) = seq {
+            e.insert("seq".into(), seq);
+        } else {
+            e.shift_remove("seq");
+        }
+        let error = assert_released_event_payload(&e, 0).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("feedback/record {text} text must be a non-empty string")
+        );
+    }
+    let mut e = object(event("feedback/record", 0, json!({})));
+    e.shift_remove("type");
+    e.insert("seq".into(), json!(1.5));
+    assert_eq!(
+        assert_released_event_payload(&e, 0)
+            .unwrap_err()
+            .to_string(),
+        "format v0 contains unknown historical event type undefined at seq 1.5; migration refuses unknown historical events even when ignorable"
+    );
+    assert_eq!(
+        assert_released_payload_semantics(&e, 0)
+            .unwrap_err()
+            .to_string(),
+        "released payload validator is missing event undefined"
+    );
+}
+
+#[test]
+fn programmatic_objects_report_the_first_unexpected_key_in_js_order() {
+    let mut e = object(event("feedback/record", 0, json!({"text":"kept"})));
+    e["data"] = serde_json::from_str(r#"{"text":"kept","2":true,"1":false}"#).unwrap();
+    assert_eq!(
+        assert_released_event_payload(&e, 0)
+            .unwrap_err()
+            .to_string(),
+        "feedback/record 0 data has unexpected member \"1\""
+    );
+}
+
+#[test]
+fn inherited_object_member_names_remain_unknown_event_types() {
+    for kind in ["toString", "constructor", "hasOwnProperty"] {
+        let error =
+            assert_released_event_payload(&object(event(kind, 0, json!({}))), 0).unwrap_err();
+        assert!(error.is_unsupported_migration());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "format v0 contains unknown historical event type \"{kind}\" at seq 0; migration refuses unknown historical events even when ignorable"
+            )
+        );
+    }
+}

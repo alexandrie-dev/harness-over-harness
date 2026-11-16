@@ -1,12 +1,13 @@
 use crate::dispositions::released_v0_event_dispositions;
 use crate::payload_validation::{SUBAGENT_DESCRIPTOR_VERSIONS, assert_released_payload_semantics};
 use crate::validation_helpers::{
-    assert_released_v0_keys, event_seq, event_type, field, js_stringify, released_v0_record,
+    assert_released_v0_keys, event_label, event_seq_text, event_type, field, released_v0_record,
 };
 use hoh_session_format::{
     SessionFormatArtifact, SessionFormatError, SessionFormatEvent, SessionFormatHeader,
     session_format_count, session_format_count_u64, session_format_safe_integer,
 };
+use hoh_util_values::js_json_stringify;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -144,7 +145,7 @@ pub fn assert_released_artifact_coordinates(
             } else {
                 SessionFormatError::unsupported_migration(format!(
                     "format v1 contains unknown required event type {} at seq {index}",
-                    js_stringify(&Value::from(kind))
+                    js_json_stringify(&Value::from(kind))
                 ))
             });
         }
@@ -169,7 +170,7 @@ pub fn assert_released_artifact_coordinates(
                 "Session event {index} has non-dense seq {}",
                 event
                     .get("seq")
-                    .map(js_stringify)
+                    .map(js_json_stringify)
                     .unwrap_or_else(|| "undefined".into())
             )));
         }
@@ -192,7 +193,7 @@ pub(crate) fn is_surface(kind: &str) -> bool {
 pub(crate) fn unknown_historical(kind: &str, seq: u64) -> SessionFormatError {
     SessionFormatError::unsupported_migration(format!(
         "format v0 contains unknown historical event type {} at seq {seq}; migration refuses unknown historical events even when ignorable",
-        js_stringify(&Value::from(kind))
+        js_json_stringify(&Value::from(kind))
     ))
 }
 
@@ -268,18 +269,18 @@ pub fn assert_released_event_payload(
     version: u64,
 ) -> Result<(), SessionFormatError> {
     let kind = event_type(event);
-    let seq = event_seq(event);
+    let seq = event_seq_text(event);
     let inventory = released_v0_event_dispositions();
     let Some(disposition) = inventory.get(kind) else {
         return Err(SessionFormatError::unsupported_migration(format!(
             "format v0 contains unknown historical event type {} at seq {seq}; migration refuses unknown historical events even when ignorable",
             event
                 .get("type")
-                .map(js_stringify)
+                .map(js_json_stringify)
                 .unwrap_or_else(|| "undefined".into())
         )));
     };
-    let label = format!("{kind} {seq}");
+    let label = event_label(event);
     let data = released_v0_record(field(event, "data"), &format!("{label} data"))?;
     if kind == "subagent/descriptor"
         && !SUBAGENT_DESCRIPTOR_VERSIONS

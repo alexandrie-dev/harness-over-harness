@@ -1,11 +1,14 @@
 use crate::codec::is_released_assistant_chunk_run;
 use crate::validation::{assert_released_event_payload, assert_released_v1_header, number_eq};
-use crate::validation_helpers::{event_seq, event_type, field, has, js_stringify, keys, record};
+use crate::validation_helpers::{
+    event_label, event_seq, event_seq_text, event_type, exact_u64, field, has, keys, record,
+};
 use hoh_session_format::{
     SessionFormatError, SessionFormatEvent, SessionFormatEventRun, SessionFormatHeader,
     SessionFormatMigration, SessionFormatMigrationContext, SessionFormatMigrationStage,
     SessionFormatMigrationStageInput, session_format_count,
 };
+use hoh_util_values::js_json_stringify;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -74,15 +77,15 @@ impl SessionFormatMigrationStage for ReleasedV0ToV1Stage {
         if event_type(&event) == "session-log-deepseek/delivery-accepted" {
             let d = record(
                 field(&event, "data"),
-                &format!("{} {} data", event_type(&event), event_seq(&event)),
+                &format!("{} data", event_label(&event)),
             )?;
             let accepted = d
                 .get("sessionFormatVersion")
                 .filter(|v| !v.is_null())
                 .cloned()
                 .unwrap_or(0.into());
-            let inherited =
-                self.source_header.contains_key("parentSession") && event_seq(&event) < self.cut;
+            let inherited = self.source_header.contains_key("parentSession")
+                && event_seq(&event).is_some_and(|seq| seq < self.cut);
             if number_eq(&accepted, 0)
                 && !inherited
                 && d["sessionId"] != *field(&self.source_header, "id")
@@ -131,20 +134,20 @@ struct LegacyNormalizationState {
     retry_ids: HashMap<String, String>,
     compaction_id: Option<String>,
 }
-fn malformed(id: &str, kind: &str, seq: u64) -> SessionFormatError {
+fn malformed(id: &str, kind: &str, seq: &str) -> SessionFormatError {
     SessionFormatError::new(format!(
         "session {} contains malformed pre-react-loop {kind} at seq {seq}",
-        js_stringify(&Value::from(id))
+        js_json_stringify(&Value::from(id))
     ))
 }
 fn data_of(event: &SessionFormatEvent) -> Result<Value, SessionFormatError> {
     Ok(record(
         field(event, "data"),
-        &format!("{} {} data", event_type(event), event_seq(event)),
+        &format!("{} data", event_label(event)),
     )?
     .clone())
 }
-fn legacy_id(id: &str, seq: u64) -> String {
+fn legacy_id(id: &str, seq: &str) -> String {
     format!("legacy-message:{id}:{seq}")
 }
 fn normalize_released_v0_event(
@@ -163,17 +166,17 @@ fn normalize_released_v0_event(
         event.insert("type".into(), kind.into());
     }
     let kind = event_type(&event).to_owned();
-    let seq = event_seq(&event);
+    let seq = event_seq_text(&event);
     if matches!(kind.as_str(), "request/header-delta" | "mode/set") {
         return Err(SessionFormatError::unsupported_migration(format!(
             "session {} contains unsupported legacy {kind} event at seq {seq}",
-            js_stringify(&Value::from(id))
+            js_json_stringify(&Value::from(id))
         )));
     }
     if kind == "request/header" && data_of(&event)?["reason"] == "fallback" {
         return Err(SessionFormatError::unsupported_migration(format!(
             "session {} contains unsupported request/header reason \"fallback\" at seq {seq}",
-            js_stringify(&Value::from(id))
+            js_json_stringify(&Value::from(id))
         )));
     }
     if kind == "turn/start" {
@@ -188,7 +191,7 @@ fn normalize_released_v0_event(
             let turn = session_format_count(&d["turn"], &format!("turn/start {seq} turn"))?;
             let trigger = record(&d["trigger"], &format!("turn/start {seq} trigger"))?;
             if turn < 1 || !trigger["kind"].as_str().is_some_and(|s| !s.is_empty()) {
-                return Err(malformed(id, "turn/start", seq));
+                return Err(malformed(id, "turn/start", &seq));
             }
             event.insert("data".into(), json!({"turn":turn}));
         }
@@ -202,11 +205,11 @@ fn normalize_released_v0_event(
             &format!("turn/end {seq} data"),
         )?;
         if session_format_count(&d["turn"], &format!("turn/end {seq} turn"))? < 1 {
-            return Err(malformed(id, "turn/end", seq));
+            return Err(malformed(id, "turn/end", &seq));
         }
         let r = record(&d["reason"], &format!("turn/end {seq} reason"))?;
         let Some(reason_kind) = r["kind"].as_str() else {
-            return Err(malformed(id, "turn/end", seq));
+            return Err(malformed(id, "turn/end", &seq));
         };
         let current = match reason_kind {
             "completed" | "blocked" | "max-tokens" | "interrupted" => {
@@ -221,7 +224,7 @@ fn normalize_released_v0_event(
                 keys(r, &["kind"], &[], &format!("turn/end {seq} reason"))?;
                 Some(json!({"kind":"aborted","reason":{"kind":"disposed"}}))
             }
-            "error" if !has(r, "error") => Some(normalize_legacy_error_reason(r, seq, id)?),
+            "error" if !has(r, "error") => Some(normalize_legacy_error_reason(r, &seq, id)?),
             _ => None,
         };
         if let Some(r) = current {
@@ -236,7 +239,7 @@ fn normalize_released_v0_event(
             if !h["messagePrefix"].is_array() {
                 return Err(SessionFormatError::new(format!(
                     "session {} contains malformed request/header messagePrefix at seq {seq}",
-                    js_stringify(&Value::from(id))
+                    js_json_stringify(&Value::from(id))
                 )));
             }
             let mut h = h.clone();
@@ -262,7 +265,7 @@ fn normalize_released_v0_event(
             session_format_count(&d["turn"], &format!("{l} turn"))?;
             let mut m = d;
             remove(&mut m, "turn");
-            m["id"] = legacy_id(id, seq).into();
+            m["id"] = legacy_id(id, &seq).into();
             m["role"] = "user".into();
             m
         };
@@ -281,7 +284,9 @@ fn normalize_released_v0_event(
     } else {
         &d["message"]
     };
-    if let Some(message_id) = message["id"].as_str() {
+    if let Some(message_id) = message["id"].as_str()
+        && let Some(seq) = event_seq(&event)
+    {
         state.message_ids.insert(seq, message_id.to_owned());
     }
     Ok(event)
@@ -293,7 +298,7 @@ fn remove(value: &mut Value, key: &str) {
 }
 fn normalize_legacy_error_reason(
     r: &Value,
-    seq: u64,
+    seq: &str,
     id: &str,
 ) -> Result<Value, SessionFormatError> {
     session_format_count(&r["step"], &format!("turn/end {seq} error step"))?;
@@ -338,9 +343,9 @@ fn normalize_legacy_retry(
         return Ok(());
     }
     let mut d = data_of(event)?;
-    let seq = event_seq(event);
+    let seq = event_seq_text(event);
     let chain = ["turn", "step", "provider", "policyKey"]
-        .map(|key| d.get(key).map(js_stringify).unwrap_or_default())
+        .map(|key| d.get(key).map(js_json_stringify).unwrap_or_default())
         .join("\0");
     if let Some(retry_id) = d["retryId"].as_str().filter(|s| !s.is_empty()) {
         ids.insert(chain, retry_id.to_owned());
@@ -363,7 +368,7 @@ fn normalize_legacy_compaction(
     state: &mut LegacyNormalizationState,
 ) -> Result<(), SessionFormatError> {
     let kind = event_type(event);
-    let seq = event_seq(event);
+    let seq = event_seq_text(event);
     if kind == "session/end-seed" {
         state.compaction_id = None;
         return Ok(());
@@ -417,7 +422,7 @@ fn normalize_legacy_message(
     ids: &HashMap<u64, String>,
 ) -> Result<(), SessionFormatError> {
     let mut d = data_of(event)?;
-    let seq = event_seq(event);
+    let seq = event_seq_text(event);
     match event_type(event) {
         "user/message" => {
             if has(&d, "id")
@@ -428,7 +433,7 @@ fn normalize_legacy_message(
             {
                 return Ok(());
             }
-            d["id"] = legacy_id(id, seq).into();
+            d["id"] = legacy_id(id, &seq).into();
             d["role"] = "user".into();
         }
         "assistant/message" => {
@@ -444,7 +449,7 @@ fn normalize_legacy_message(
             .clone();
             remove(&mut d, "provenance");
             source["kind"] = "model".into();
-            d["message"] = json!({"id":legacy_id(id,seq),"role":"assistant","content":content,"source":source});
+            d["message"] = json!({"id":legacy_id(id,&seq),"role":"assistant","content":content,"source":source});
         }
         "tool/result" => {
             if has(&d, "message")
@@ -462,16 +467,14 @@ fn normalize_legacy_message(
             }
             let operation = field(event, "surfaceOp");
             let message_id = if operation.is_object() && operation["op"] == "replace" {
-                let start = operation["start"]
-                    .as_u64()
-                    .or_else(|| operation["start"].as_f64().map(|v| v as u64));
+                let start = exact_u64(&operation["start"]);
                 start.and_then(|n| ids.get(&n).cloned()).ok_or_else(|| {
                     SessionFormatError::new(format!(
                         "tool/result {seq} replacement cites a message without identity"
                     ))
                 })?
             } else {
-                legacy_id(id, seq)
+                legacy_id(id, &seq)
             };
             for key in ["callId", "content", "isError"] {
                 remove(&mut d, key);
