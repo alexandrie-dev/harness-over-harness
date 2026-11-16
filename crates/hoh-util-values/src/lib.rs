@@ -75,3 +75,65 @@ pub fn deep_equal_json(a: &JsonValue, b: &JsonValue) -> bool {
         _ => false,
     }
 }
+
+/// ECMAScript `Number::toString(10)`: `NaN`, `Infinity`, `-Infinity`, `0` for both zeros, decimal
+/// notation for decimal exponents from -6 up to 20, otherwise exponent notation (`1e+21`, `1.5e-7`),
+/// with the shortest digits that round-trip.
+pub fn js_number_string(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    if value.is_infinite() {
+        return if value < 0.0 { "-Infinity" } else { "Infinity" }.to_owned();
+    }
+    let sign = if value < 0.0 { "-" } else { "" };
+    // Rust's `{:e}` prints the shortest round-trip digits as `d.ddde<exp>`.
+    let scientific = format!("{:e}", value.abs());
+    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    // `n` of the specification: the value is 0.<digits> * 10^n.
+    let n = exponent.parse::<i32>().unwrap_or(0) + 1;
+    let k = digits.len() as i32;
+    let body = if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    } else {
+        let e = n - 1;
+        let exponent = format!("e{}{}", if e < 0 { '-' } else { '+' }, e.abs());
+        if k == 1 {
+            format!("{digits}{exponent}")
+        } else {
+            format!("{}.{}{exponent}", &digits[..1], &digits[1..])
+        }
+    };
+    format!("{sign}{body}")
+}
+
+/// ECMAScript `String(value)` for a JSON value: strings unquoted, numbers through
+/// [`js_number_string`], arrays joined with `,` (a `null` element is empty), objects `[object Object]`.
+pub fn js_string(value: &JsonValue) -> String {
+    match value {
+        JsonValue::Null => "null".to_owned(),
+        JsonValue::Bool(flag) => flag.to_string(),
+        JsonValue::Number(number) => js_number_string(number.as_f64().unwrap_or(f64::NAN)),
+        JsonValue::String(text) => text.clone(),
+        JsonValue::Array(items) => items
+            .iter()
+            .map(|item| {
+                if item.is_null() {
+                    String::new()
+                } else {
+                    js_string(item)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        JsonValue::Object(_) => "[object Object]".to_owned(),
+    }
+}
