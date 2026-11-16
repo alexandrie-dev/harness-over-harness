@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use crate::{Change, PatchOptions};
 
@@ -10,6 +10,19 @@ struct Component {
     removed: bool,
     count: usize,
     previous: Option<Rc<Component>>,
+}
+
+impl Drop for Component {
+    fn drop(&mut self) {
+        let mut previous = self.previous.take();
+        while let Some(component) = previous {
+            match Rc::try_unwrap(component) {
+                Ok(mut component) => previous = component.previous.take(),
+                // Another path still owns this prefix; its last owner will release it.
+                Err(_) => break,
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -31,10 +44,7 @@ pub(crate) fn diff(
         let limit = isize::try_from(limit).unwrap_or(isize::MAX);
         max_edit_length = max_edit_length.min(limit);
     }
-    let started_at = now_millis();
-    let abort_after_timestamp = options.timeout_ms.map_or(u128::MAX, |timeout| {
-        started_at.saturating_add(u128::from(timeout))
-    });
+    let started_at = Instant::now();
 
     let mut initial_path = Path {
         old_pos: -1,
@@ -53,13 +63,19 @@ pub(crate) fn diff(
     let mut min_diagonal_to_consider = None;
     let mut max_diagonal_to_consider = None;
 
-    while edit_length <= max_edit_length && now_millis() <= abort_after_timestamp {
+    while edit_length <= max_edit_length
+        && options
+            .timeout_ms
+            .is_none_or(|timeout| started_at.elapsed().as_millis() <= u128::from(timeout))
+    {
         let first_diagonal =
             min_diagonal_to_consider.map_or(-edit_length, |min: isize| min.max(-edit_length));
-        let last_diagonal =
-            max_diagonal_to_consider.map_or(edit_length, |max: isize| max.min(edit_length));
-
-        for diagonal_path in (first_diagonal..=last_diagonal).step_by(2) {
+        for diagonal_path in (first_diagonal..).step_by(2) {
+            if diagonal_path
+                > max_diagonal_to_consider.map_or(edit_length, |max: isize| max.min(edit_length))
+            {
+                break;
+            }
             let remove_path = best_path.remove(&(diagonal_path - 1));
             let add_path = best_path.get(&(diagonal_path + 1)).cloned();
 
@@ -219,8 +235,94 @@ fn build_values(
     changes
 }
 
-fn now_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_millis())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Follow the known winning path for these inputs without the quadratic diagonal search.
+    fn alternating_insertion_path(n: usize) -> (Path, Vec<String>, Vec<String>) {
+        let old_tokens: Vec<_> = "a\n"
+            .repeat(n)
+            .split_inclusive('\n')
+            .map(str::to_owned)
+            .collect();
+        let new_tokens: Vec<_> = "a\nb\n"
+            .repeat(n)
+            .split_inclusive('\n')
+            .map(str::to_owned)
+            .collect();
+        let mut path = Path {
+            old_pos: -1,
+            last_component: None,
+        };
+        extract_common(&mut path, &new_tokens, &old_tokens, 0);
+        for edit_length in 1..=n {
+            path = add_to_path(&path, true, false, 0);
+            extract_common(&mut path, &new_tokens, &old_tokens, -(edit_length as isize));
+        }
+        (path, old_tokens, new_tokens)
+    }
+
+    #[test]
+    fn winning_chain_of_four_hundred_thousand_components_drops_on_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let n = 200_000;
+                let (path, old_tokens, new_tokens) = alternating_insertion_path(n);
+                let first = {
+                    let mut component = path.last_component.as_ref().unwrap();
+                    while let Some(previous) = &component.previous {
+                        component = previous;
+                    }
+                    Rc::downgrade(component)
+                };
+                let changes = build_values(path.last_component, &new_tokens, &old_tokens);
+                assert_eq!(changes.len(), 2 * n);
+                for pair in changes.chunks_exact(2) {
+                    assert_eq!(
+                        pair[0],
+                        Change {
+                            value: "a\n".to_owned(),
+                            added: false,
+                            removed: false,
+                            count: 1,
+                        }
+                    );
+                    assert_eq!(
+                        pair[1],
+                        Change {
+                            value: "b\n".to_owned(),
+                            added: true,
+                            removed: false,
+                            count: 1,
+                        }
+                    );
+                }
+                assert!(first.upgrade().is_none());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn abandoned_shared_chains_drop_on_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let (path, _, _) = alternating_insertion_path(200_000);
+                let last = Rc::downgrade(path.last_component.as_ref().unwrap());
+                let mut best_path =
+                    BTreeMap::from([(0, path.clone()), (1, add_to_path(&path, false, true, 1))]);
+                drop(path);
+                best_path.remove(&0);
+                assert!(last.upgrade().is_some());
+                drop(best_path);
+                assert!(last.upgrade().is_none());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

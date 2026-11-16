@@ -90,6 +90,34 @@ fn should_prefer_to_do_deletions_before_insertions_like_unix_diff_does() {
 }
 
 #[test]
+fn ignores_absence_of_newline_on_the_last_line_of_file_wrt_equality_when_ignore_newline_at_eof_baseline()
+ {
+    assert_eq!(
+        diff_lines("a\nb\nc", "a\nb", &PatchOptions::default()).unwrap(),
+        vec![
+            Change {
+                value: "a\n".to_owned(),
+                count: 1,
+                added: false,
+                removed: false,
+            },
+            Change {
+                value: "b\nc".to_owned(),
+                count: 2,
+                added: false,
+                removed: true,
+            },
+            Change {
+                value: "b".to_owned(),
+                count: 1,
+                added: true,
+                removed: false,
+            },
+        ]
+    );
+}
+
+#[test]
 fn given_max_edit_length_terminates_early() {
     let options = PatchOptions {
         max_edit_length: Some(1),

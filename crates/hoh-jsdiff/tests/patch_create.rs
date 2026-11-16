@@ -339,9 +339,28 @@ mod source_structured_patch {
             &PatchOptions::default(),
         )
         .unwrap();
-        assert_eq!(patch.old_header, None);
-        assert_eq!(patch.new_header, None);
-        assert_eq!(patch.hunks[0].lines[4], "\\ No newline at end of file");
+        assert_eq!(
+            patch,
+            StructuredPatch {
+                old_file_name: "oldfile".to_owned(),
+                new_file_name: "newfile".to_owned(),
+                old_header: None,
+                new_header: None,
+                hunks: vec![Hunk {
+                    old_start: 1,
+                    old_lines: 3,
+                    new_start: 1,
+                    new_lines: 3,
+                    lines: vec![
+                        " line2".to_owned(),
+                        " line3".to_owned(),
+                        "-line4".to_owned(),
+                        "+line5".to_owned(),
+                        "\\ No newline at end of file".to_owned(),
+                    ],
+                }],
+            }
+        );
     }
 
     #[test]
@@ -367,6 +386,27 @@ mod source_structured_patch {
 
 mod source_format_patch {
     use super::*;
+
+    #[test]
+    fn empty_ranges_starting_at_zero_are_formatted_as_negative_one() {
+        let patch = StructuredPatch {
+            old_file_name: "oldfile".to_owned(),
+            new_file_name: "newfile".to_owned(),
+            old_header: None,
+            new_header: None,
+            hunks: vec![Hunk {
+                old_start: 0,
+                old_lines: 0,
+                new_start: 0,
+                new_lines: 0,
+                lines: Vec::new(),
+            }],
+        };
+        assert_eq!(
+            format_patch(&patch),
+            "===================================================================\n--- oldfile\n+++ newfile\n@@ --1,0 +-1,0 @@\n"
+        );
+    }
 
     #[test]
     fn should_generate_a_patch_string_from_an_input_diff() {

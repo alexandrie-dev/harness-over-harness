@@ -147,16 +147,8 @@ pub fn format_patch(patch: &StructuredPatch) -> String {
     ));
 
     for hunk in &patch.hunks {
-        let old_start = if hunk.old_lines == 0 {
-            hunk.old_start.saturating_sub(1)
-        } else {
-            hunk.old_start
-        };
-        let new_start = if hunk.new_lines == 0 {
-            hunk.new_start.saturating_sub(1)
-        } else {
-            hunk.new_start
-        };
+        let old_start = hunk.old_start as i128 - i128::from(hunk.old_lines == 0);
+        let new_start = hunk.new_start as i128 - i128::from(hunk.new_lines == 0);
         ret.push(format!(
             "@@ -{old_start},{} +{new_start},{} @@",
             hunk.old_lines, hunk.new_lines
