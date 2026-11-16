@@ -39,6 +39,10 @@ phase() { # name command...
 phase fmt cargo fmt "${fmt_select[@]}" -- --check
 phase clippy cargo clippy "${select[@]}" --all-targets -- -D warnings
 phase test cargo test "${select[@]}"
+# The launcher confines only as a static executable: build it that way and test that file too.
+if (($# == 0)) || [[ " $* " == *" hoh-node-addon-system "* ]]; then
+  phase landlock-run bash scripts/build-landlock-run.sh
+fi
 
 read -r passed broken < <(awk '/^test result:/ { p += $4; f += $6 } END { print p + 0, f + 0 }' "$report/test.log")
 say "тесты: прошло $passed, упало $broken"
