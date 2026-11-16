@@ -11,10 +11,11 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 0	kernel	vendor/schemastery	@deepseek-ai/schemastery	hoh-kernel	962	0	todo	
 0	kernel	vendor/timer	@deepseek-ai/cordis-plugin-timer	hoh-kernel	153	0	todo	
 1	port	apps/cli	@deepseek-ai/dsh	apps/hoh	1070	20216	todo	становится apps/hoh
-1	port	native/system/packages/entry	@deepseek-ai/node-addon-system	hoh-node-addon-system	646	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
+1	port	native/system/packages/entry	@deepseek-ai/node-addon-system	hoh-node-addon-system	646	0	todo	запуск под Landlock и блокировка файлов flock
 1	port	packages/attachment/attachment	@deepseek-ai/dsh-attachment	hoh-attachment	710	476	todo	
 1	port	packages/attachment/attachment-local	@deepseek-ai/dsh-attachment-local	hoh-attachment-local	1559	1810	todo	
 1	port	packages/bundle/sdk-app	@deepseek-ai/dsh-sdk-app	hoh-sdk-app	62	100	todo	профиль как данные; зависит от: dsh-client-connection=skip, dsh-client-file-upload=skip
+1	port	packages/bundle/sdk-minimal	@deepseek-ai/dsh-sdk-minimal	hoh-sdk-minimal	9	92	todo	профиль как данные
 1	port	packages/compaction/compaction	@deepseek-ai/dsh-compaction	hoh-compaction	504	605	todo	
 1	port	packages/compaction/compaction-basic	@deepseek-ai/dsh-compaction-basic	hoh-compaction-basic	1789	4434	todo	
 1	port	packages/compaction/compaction-image-offload	@deepseek-ai/dsh-compaction-image-offload	hoh-compaction-image-offload	197	614	todo	
@@ -120,6 +121,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/values	@deepseek-ai/dsh-util-values	hoh-util-values	959	1317	todo	
 1	port	packages/util/workspace-path	@deepseek-ai/dsh-util-workspace-path	hoh-util-workspace-path	236	251	todo	
 1	port	packages/workspace/workspace	@deepseek-ai/dsh-workspace	hoh-workspace	1448	1587	todo	зависит от: dsh-typert-protocol=skip
+2	port	packages/bundle/base	@deepseek-ai/dsh-base	hoh-base	9	85	todo	профиль как данные; строки pwsh подключаются на этапе 5
 2	port	packages/bundle/headless	@deepseek-ai/dsh-headless	hoh-headless	992	2273	todo	профиль как данные
 2	port	packages/compaction/command-compact	@deepseek-ai/dsh-command-compact	hoh-command-compact	109	469	todo	
 2	port	packages/context/agent-instructions	@deepseek-ai/dsh-agent-instructions	hoh-agent-instructions	2114	6711	todo	
@@ -169,14 +171,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	todo	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
 2	port	packages/web/web-fetch-http	@deepseek-ai/dsh-web-fetch-http	hoh-web-fetch-http	601	853	todo	
 2	port	packages/web/web-search-deepseek	@deepseek-ai/dsh-web-search-deepseek	hoh-web-search-deepseek	696	1322	todo	зависит от: dsh-deepseek-account=later
-3	port	native/system	@deepseek-ai/node-addon-system-workspace	hoh-node-addon-system-workspace	0	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
-3	port	native/system/packages/darwin-arm64	@deepseek-ai/node-addon-system-darwin-arm64	hoh-node-addon-system-darwin-arm64	0	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
-3	port	native/system/packages/darwin-x64	@deepseek-ai/node-addon-system-darwin-x64	hoh-node-addon-system-darwin-x64	0	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
-3	port	native/system/packages/linux-arm64	@deepseek-ai/node-addon-system-linux-arm64	hoh-node-addon-system-linux-arm64	0	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
-3	port	native/system/packages/linux-x64	@deepseek-ai/node-addon-system-linux-x64	hoh-node-addon-system-linux-x64	0	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
 3	port	packages/browser-use/browser-use	@deepseek-ai/dsh-browser-use	hoh-browser-use	65	51	todo	
-3	port	packages/bundle/base	@deepseek-ai/dsh-base	hoh-base	9	85	todo	профиль как данные
-3	port	packages/bundle/sdk-minimal	@deepseek-ai/dsh-sdk-minimal	hoh-sdk-minimal	9	92	todo	профиль как данные
 3	port	packages/computer-use/computer-use	@deepseek-ai/dsh-computer-use	hoh-computer-use	65	51	todo	
 3	port	packages/context/harness-dev-context	@deepseek-ai/dsh-harness-dev-context	hoh-harness-dev-context	158	231	todo	
 3	port	packages/context/session-reference	@deepseek-ai/dsh-session-reference	hoh-session-reference	1011	1545	todo	
@@ -216,6 +211,11 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 9	skip	apps/desktop-publisher	@deepseek-ai/dsh-desktop-publisher	-	2142	1673	-	их окно и публикация
 9	skip	apps/plugin-market-generator	@deepseek-ai/dsh-plugin-market-generator	-	1453	1085	-	их окно и публикация
 9	skip	apps/web	@deepseek-ai/dsh-web-frontend	-	67	94200	-	их окно и публикация
+9	drop	native/system	@deepseek-ai/node-addon-system-workspace	-	0	0	-	корень рабочего каталога npm без кода
+9	drop	native/system/packages/darwin-arm64	@deepseek-ai/node-addon-system-darwin-arm64	-	0	0	-	готовые двоичные файлы под платформу: в Rust это код внутри hoh-node-addon-system
+9	drop	native/system/packages/darwin-x64	@deepseek-ai/node-addon-system-darwin-x64	-	0	0	-	готовые двоичные файлы под платформу: в Rust это код внутри hoh-node-addon-system
+9	drop	native/system/packages/linux-arm64	@deepseek-ai/node-addon-system-linux-arm64	-	0	0	-	готовые двоичные файлы под платформу: в Rust это код внутри hoh-node-addon-system
+9	drop	native/system/packages/linux-x64	@deepseek-ai/node-addon-system-linux-x64	-	0	0	-	готовые двоичные файлы под платформу: в Rust это код внутри hoh-node-addon-system
 9	skip	packages/api/gateway	@deepseek-ai/dsh-api-gateway	-	5671	12104	-	их браузерный интерфейс и его транспорт
 9	skip	packages/api/job-controller	@deepseek-ai/dsh-api-job-controller	-	994	1362	-	их браузерный интерфейс и его транспорт
 9	skip	packages/api/remote-access	@deepseek-ai/dsh-api-remote-access	-	1073	1135	-	их браузерный интерфейс и его транспорт
