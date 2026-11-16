@@ -3,11 +3,12 @@
 use indexmap::IndexMap;
 use reqwest::{Client, ClientBuilder, Proxy};
 use serde::{Deserialize, Serialize};
+use std::{fmt, time::Duration};
 use url::Url;
 
 use crate::policy::{
     EnvLookup, POLICY_ENV_NAMES, PROXY_ENV_NAMES, ProxyPolicy, ProxySource, is_supported_proxy_url,
-    proxy_for_url, resolve_proxy_policy,
+    proxy_for_url, redacted_proxy_url, resolve_proxy_policy,
 };
 
 /// Apply these entries to a child environment: `None` removes a name.
@@ -20,18 +21,95 @@ pub struct DispatcherOptions {
     pub allow_h2: Option<bool>,
 }
 
-/// A captured route owns a clone of the same pooled client, so it outlives its installation.
+impl DispatcherOptions {
+    pub fn http1_only(self) -> bool {
+        self.allow_h2 == Some(false)
+    }
+}
+
 #[derive(Clone, Debug)]
+struct RouteConfiguration {
+    policy: ProxyPolicy,
+    options: DispatcherOptions,
+}
+
+/// A pooled client together with the policy and transport choices it was built from.
+#[derive(Clone, Debug)]
+pub struct RouteDispatcher {
+    client: Client,
+    configuration: RouteConfiguration,
+}
+
+impl RouteDispatcher {
+    fn build(configuration: RouteConfiguration) -> Result<Self, reqwest::Error> {
+        let client = configuration.builder().build()?;
+        Ok(Self {
+            client,
+            configuration,
+        })
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub fn options(&self) -> DispatcherOptions {
+        self.configuration.options
+    }
+
+    pub fn http1_only(&self) -> bool {
+        self.options().http1_only()
+    }
+
+    pub fn route_for(&self, url: &Url) -> ProxyRoute {
+        match proxy_for_url(&self.configuration.policy, url) {
+            Some(proxy) => ProxyRoute::Proxied {
+                proxy: proxy.to_owned(),
+                dispatcher: self.clone(),
+            },
+            None => ProxyRoute::Direct {
+                options: self.options(),
+            },
+        }
+    }
+}
+
+impl std::ops::Deref for RouteDispatcher {
+    type Target = Client;
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
+/// A captured route owns a clone of the same pooled client, so it outlives its installation.
+#[derive(Clone)]
 pub enum ProxyRoute {
-    Proxied { proxy: String, dispatcher: Client },
-    Direct,
+    Proxied {
+        proxy: String,
+        dispatcher: RouteDispatcher,
+    },
+    Direct {
+        options: DispatcherOptions,
+    },
+}
+
+impl ProxyRoute {
+    pub fn options(&self) -> DispatcherOptions {
+        match self {
+            Self::Proxied { dispatcher, .. } => dispatcher.options(),
+            Self::Direct { options } => *options,
+        }
+    }
+
+    pub fn http1_only(&self) -> bool {
+        self.options().http1_only()
+    }
 }
 
 /// The launcher owns this value and explicitly shares its client with HTTP consumers.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ProxyInstallation {
-    policy: ProxyPolicy,
-    client: Client,
+    dispatcher: RouteDispatcher,
     inherited: Option<ProxyEnvironment>,
     environment: ProxyEnvironment,
 }
@@ -39,22 +117,83 @@ pub struct ProxyInstallation {
 /// Build a client whose single proxy predicate is also used by `proxy_route_for`.
 /// Further request-specific transport settings can be applied before `.build()`.
 pub fn route_client_builder(policy: ProxyPolicy, options: DispatcherOptions) -> ClientBuilder {
-    // Disable reqwest's automatic environment proxy matcher, including for direct policies.
-    let mut builder = Client::builder().no_proxy();
-    if options.allow_h2 == Some(false) {
-        builder = builder.http1_only();
+    RouteConfiguration { policy, options }.builder()
+}
+
+impl RouteConfiguration {
+    fn builder(&self) -> ClientBuilder {
+        // Disable reqwest's automatic environment proxy matcher, including for direct policies.
+        let mut builder = Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(300))
+            .redirect(reqwest::redirect::Policy::limited(20))
+            .referer(false);
+        if self.options.http1_only() {
+            builder = builder.http1_only();
+        }
+        let policy = self.policy.clone();
+        builder.proxy(Proxy::custom(move |url| {
+            proxy_for_url(&policy, url).map(str::to_owned)
+        }))
     }
-    builder.proxy(Proxy::custom(move |url| {
-        proxy_for_url(&policy, url).map(str::to_owned)
-    }))
 }
 
 fn snapshot_proxy_env() -> ProxyEnvironment {
+    snapshot_proxy_env_from(|name| std::env::var_os(name))
+}
+
+fn snapshot_proxy_env_from(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> ProxyEnvironment {
     POLICY_ENV_NAMES
         .iter()
         .flat_map(|(_, names)| names)
-        .map(|name| ((*name).to_owned(), std::env::var(name).ok()))
+        .map(|name| {
+            (
+                (*name).to_owned(),
+                get(name).map(|value| value.to_string_lossy().into_owned()),
+            )
+        })
         .collect()
+}
+
+struct RedactedEnvironment<'a>(&'a ProxyEnvironment);
+
+impl fmt::Debug for RedactedEnvironment<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map()
+            .entries(
+                self.0
+                    .iter()
+                    .map(|(name, value)| (name, value.as_deref().map(redacted_proxy_url))),
+            )
+            .finish()
+    }
+}
+
+impl fmt::Debug for ProxyInstallation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProxyInstallation")
+            .field("dispatcher", &self.dispatcher)
+            .field(
+                "inherited",
+                &self.inherited.as_ref().map(RedactedEnvironment),
+            )
+            .field("environment", &RedactedEnvironment(&self.environment))
+            .finish()
+    }
+}
+
+impl fmt::Debug for ProxyRoute {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Proxied { proxy, dispatcher } => f
+                .debug_struct("Proxied")
+                .field("proxy", &redacted_proxy_url(proxy))
+                .field("dispatcher", dispatcher)
+                .finish(),
+            Self::Direct { options } => f.debug_struct("Direct").field("options", options).finish(),
+        }
+    }
 }
 
 fn complete_snapshot(snapshot: ProxyEnvironment) -> ProxyEnvironment {
@@ -117,10 +256,9 @@ impl ProxyInstallation {
                 environment,
             )
         };
-        let client = route_client_builder(policy.clone(), options).build()?;
+        let dispatcher = RouteDispatcher::build(RouteConfiguration { policy, options })?;
         Ok(Self {
-            policy,
-            client,
+            dispatcher,
             inherited,
             environment,
         })
@@ -144,11 +282,19 @@ impl ProxyInstallation {
     }
 
     pub fn client(&self) -> &Client {
-        &self.client
+        self.dispatcher.client()
     }
 
     pub fn policy(&self) -> &ProxyPolicy {
-        &self.policy
+        &self.dispatcher.configuration.policy
+    }
+
+    pub fn options(&self) -> DispatcherOptions {
+        self.dispatcher.options()
+    }
+
+    pub fn http1_only(&self) -> bool {
+        self.dispatcher.http1_only()
     }
 
     /// The six policy environment names this installation would publish.
@@ -170,35 +316,34 @@ pub fn install_proxy_from_environment(
 pub fn create_route_dispatcher(
     env: &(impl EnvLookup + ?Sized),
     options: DispatcherOptions,
-) -> Result<Client, reqwest::Error> {
-    route_client_builder(resolve_proxy_policy(env).policy, options).build()
+) -> Result<RouteDispatcher, reqwest::Error> {
+    RouteDispatcher::build(RouteConfiguration {
+        policy: resolve_proxy_policy(env).policy,
+        options,
+    })
 }
 
 pub fn proxy_route_for(installation: Option<&ProxyInstallation>, url: &Url) -> ProxyRoute {
     let Some(installation) = installation else {
-        return ProxyRoute::Direct;
+        return ProxyRoute::Direct {
+            options: DispatcherOptions::default(),
+        };
     };
-    match proxy_for_url(&installation.policy, url) {
-        Some(proxy) => ProxyRoute::Proxied {
-            proxy: proxy.to_owned(),
-            dispatcher: installation.client.clone(),
-        },
-        None => ProxyRoute::Direct,
-    }
+    installation.dispatcher.route_for(url)
 }
 
 pub fn proxy_environment_for_child(installation: Option<&ProxyInstallation>) -> ProxyEnvironment {
     let Some(installation) = installation else {
         return IndexMap::new();
     };
-    if installation.policy.source == ProxySource::None {
+    if installation.policy().source == ProxySource::None {
         return IndexMap::new();
     }
     let Some(inherited) = &installation.inherited else {
         return IndexMap::new();
     };
     let mut overlay = IndexMap::from([("NODE_USE_ENV_PROXY".to_owned(), Some("1".to_owned()))]);
-    let resolved = published_environment(&installation.policy);
+    let resolved = published_environment(installation.policy());
     for (field, names) in POLICY_ENV_NAMES {
         let named = field != "noProxy"
             && names
@@ -235,4 +380,35 @@ pub fn cleared_proxy_env() -> ProxyEnvironment {
         .into_iter()
         .map(|name| (name.to_owned(), None))
         .collect()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    #[test]
+    fn non_unicode_environment_value_remains_named_and_reaches_child_lossily() {
+        let snapshot = snapshot_proxy_env_from(|name| {
+            (name == "HTTP_PROXY").then(|| OsString::from_vec(b"socks5://proxy.test/\xff".to_vec()))
+        });
+        assert_eq!(
+            snapshot["HTTP_PROXY"].as_deref(),
+            Some("socks5://proxy.test/\u{fffd}")
+        );
+        let installed = ProxyInstallation::with_inherited_environment(
+            &|name: &str| (name == "ALL_PROXY").then(|| "http://proxy.test:3128".to_owned()),
+            snapshot,
+            |_| {},
+            DispatcherOptions::default(),
+        )
+        .unwrap();
+        let child = proxy_environment_for_child(Some(&installed));
+        assert_eq!(
+            child["HTTP_PROXY"].as_deref(),
+            Some("socks5://proxy.test/\u{fffd}")
+        );
+        assert_eq!(child["http_proxy"], None);
+        assert!(!child.contains_key("NODE_USE_ENV_PROXY"));
+    }
 }

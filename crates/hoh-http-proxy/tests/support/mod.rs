@@ -4,7 +4,10 @@ use hoh_http_proxy::{DispatcherOptions, ProxyEnvironment, ProxyInstallation};
 use indexmap::IndexMap;
 use std::{
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use tokio::{
@@ -75,9 +78,63 @@ pub struct Server {
     task: JoinHandle<()>,
     received: Arc<Notify>,
     release: Arc<Notify>,
+    accepted: Arc<AtomicUsize>,
 }
 
 impl Server {
+    pub async fn keep_alive(body: &'static str) -> Self {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorded = seen.clone();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let count = accepted.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                count.fetch_add(1, Ordering::SeqCst);
+                loop {
+                    let mut request = Vec::new();
+                    let mut byte = [0u8];
+                    while !request.ends_with(b"\r\n\r\n") {
+                        match stream.read(&mut byte).await {
+                            Ok(1) => request.push(byte[0]),
+                            _ => break,
+                        }
+                    }
+                    if request.is_empty() {
+                        break;
+                    }
+                    recorded.lock().unwrap().push(
+                        String::from_utf8(request)
+                            .unwrap()
+                            .lines()
+                            .next()
+                            .unwrap()
+                            .to_owned(),
+                    );
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
+                        body.len()
+                    );
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            address,
+            seen,
+            task,
+            received: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+            accepted,
+        }
+    }
+
     pub async fn start(body: &'static str) -> Self {
         Self::start_with_gate(body, false).await
     }
@@ -97,9 +154,12 @@ impl Server {
         let release = Arc::new(Notify::new());
         let signal = received.clone();
         let gate = release.clone();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let count = accepted.clone();
         let task = tokio::spawn(async move {
             loop {
                 let (mut stream, _) = listener.accept().await.unwrap();
+                count.fetch_add(1, Ordering::SeqCst);
                 let mut request = Vec::new();
                 let mut byte = [0u8];
                 while !request.ends_with(b"\r\n\r\n") {
@@ -132,6 +192,7 @@ impl Server {
             task,
             received,
             release,
+            accepted,
         }
     }
 
@@ -140,6 +201,10 @@ impl Server {
     }
     pub fn requests(&self) -> Vec<String> {
         self.seen.lock().unwrap().clone()
+    }
+
+    pub fn accepted_connections(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
     }
 
     pub async fn wait_for_request(&self) {

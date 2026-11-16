@@ -1,6 +1,7 @@
 //! Transport-independent environment resolution and bypass matching.
 
 use serde::{Deserialize, Serialize};
+use std::{borrow::Cow, fmt};
 use url::Url;
 
 /// Lookup in the launcher's already layered environment snapshot.
@@ -50,7 +51,7 @@ pub enum ProxySource {
     None,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyPolicy {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,6 +60,47 @@ pub struct ProxyPolicy {
     pub https_proxy: Option<String>,
     pub no_proxy: String,
     pub source: ProxySource,
+}
+
+// Preserve the spelling, and also redact malformed inherited values that URL cannot parse.
+pub(crate) fn redacted_proxy_url(value: &str) -> Cow<'_, str> {
+    if let Ok(mut url) = Url::parse(value)
+        && url.password().is_some()
+        && url.set_password(Some("***")).is_ok()
+    {
+        return Cow::Owned(url.into());
+    }
+    // An inherited value may be malformed (including an unescaped slash in its password).
+    // In that case redact through the final @ rather than trusting authority boundaries.
+    let start = value.find("://").map_or(0, |i| i + 3);
+    let Some(at) = value[start..].rfind('@') else {
+        return Cow::Borrowed(value);
+    };
+    let Some(colon) = value[start..start + at].find(':') else {
+        return Cow::Borrowed(value);
+    };
+    Cow::Owned(format!(
+        "{}***{}",
+        &value[..start + colon + 1],
+        &value[start + at..]
+    ))
+}
+
+impl fmt::Debug for ProxyPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProxyPolicy")
+            .field(
+                "http_proxy",
+                &self.http_proxy.as_deref().map(redacted_proxy_url),
+            )
+            .field(
+                "https_proxy",
+                &self.https_proxy.as_deref().map(redacted_proxy_url),
+            )
+            .field("no_proxy", &redacted_proxy_url(&self.no_proxy))
+            .field("source", &self.source)
+            .finish()
+    }
 }
 
 pub const DIRECT_POLICY: ProxyPolicy = ProxyPolicy {

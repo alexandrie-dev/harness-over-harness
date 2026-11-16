@@ -11,7 +11,7 @@ fn url(value: &str) -> Url {
     Url::parse(value).unwrap()
 }
 fn direct(route: ProxyRoute) {
-    assert!(matches!(route, ProxyRoute::Direct));
+    assert!(matches!(route, ProxyRoute::Direct { .. }));
 }
 fn value<'a>(env: &'a ProxyEnvironment, name: &str) -> Option<&'a str> {
     env.get(name).and_then(Option::as_deref)
@@ -105,20 +105,35 @@ fn publishes_the_policy_through_the_proxy_environment_in_both_casings() {
 
 #[test]
 fn removes_an_environment_name_the_policy_leaves_unset() {
+    // With no global state to restore, layering and disposal leave the outer installation unchanged.
     let original = inherited(&[("HTTPS_PROXY", "http://stale.example")]);
-    let values = env(&[
-        ("HTTP_PROXY", NESTED),
-        ("HTTPS_PROXY", "socks5://127.0.0.1:1080"),
-    ]);
-    let installed = ProxyInstallation::with_inherited_environment(
-        &lookup(&values),
+    let outer = ProxyInstallation::with_inherited_environment(
+        &lookup(&env(&[
+            ("HTTP_PROXY", NESTED),
+            ("HTTPS_PROXY", "http://stale.example"),
+        ])),
         original.clone(),
         |_| {},
         DispatcherOptions::default(),
     )
     .unwrap();
+    let values = env(&[
+        ("HTTP_PROXY", NESTED),
+        ("HTTPS_PROXY", "socks5://127.0.0.1:1080"),
+    ]);
+    let installed = outer
+        .layer(&lookup(&values), |_| {}, DispatcherOptions::default())
+        .unwrap();
     assert_eq!(installed.environment().get("HTTPS_PROXY"), Some(&None));
     drop(installed);
+    assert_eq!(
+        value(outer.environment(), "HTTPS_PROXY"),
+        Some("http://stale.example")
+    );
+    assert_eq!(
+        outer.policy().https_proxy.as_deref(),
+        Some("http://stale.example")
+    );
     assert_eq!(
         value(&original, "HTTPS_PROXY"),
         Some("http://stale.example")
@@ -127,6 +142,7 @@ fn removes_an_environment_name_the_policy_leaves_unset() {
 
 #[tokio::test]
 async fn restores_the_dispatcher_the_route_and_the_environment_on_disposal() {
+    // Explicit layering does not mutate the outer installation; disposal exposes that same data.
     let proxy = Server::start("VIA-PROXY").await;
     let origin = Server::start("DIRECT").await;
     let (before, _) = install(&[]);
@@ -217,6 +233,43 @@ async fn keeps_a_scheme_direct_when_the_policy_refused_the_proxy_the_user_named_
 
 #[tokio::test]
 async fn carries_the_dispatcher_already_routing_so_a_branch_and_its_request_agree() {
+    let proxy = Server::keep_alive("VIA-PROXY").await;
+    let (installation, _) = install(&[("HTTP_PROXY", &proxy.url())]);
+    let ProxyRoute::Proxied {
+        proxy: routed_proxy,
+        dispatcher,
+    } = proxy_route_for(Some(&installation), &url(TARGET))
+    else {
+        panic!("expected proxy")
+    };
+    assert_eq!(routed_proxy, proxy.url());
+    for client in [installation.client(), dispatcher.client()] {
+        let body = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            client
+                .get(TARGET)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(body, "VIA-PROXY");
+    }
+    assert_eq!(
+        proxy.requests(),
+        [
+            format!("GET {TARGET} HTTP/1.1"),
+            format!("GET {TARGET} HTTP/1.1")
+        ]
+    );
+    assert_eq!(proxy.accepted_connections(), 1);
+}
+
+#[tokio::test]
+async fn captured_route_finishes_in_flight_request_after_installation_is_dropped() {
     let proxy = Server::paused("VIA-PROXY").await;
     let (installation, _) = install(&[("HTTP_PROXY", &proxy.url())]);
     let ProxyRoute::Proxied {

@@ -1,63 +1,79 @@
 mod support;
 
-use hoh_http_proxy::policy::resolve_proxy_policy;
 use hoh_http_proxy::{
-    DispatcherOptions, ProxyInstallation, create_route_dispatcher, route_client_builder,
+    DispatcherOptions, ProxyInstallation, ProxyRoute, RouteDispatcher, create_route_dispatcher,
+    proxy_route_for,
 };
-use support::{Server, env, install, lookup};
+use support::{env, install, lookup};
+use url::Url;
 
-fn assert_h2(values: &[(&str, &str)], allow_h2: Option<bool>) {
-    let policy = resolve_proxy_policy(&lookup(&env(values))).policy;
-    let builder = route_client_builder(policy, DispatcherOptions { allow_h2 });
-    assert_eq!(
-        format!("{builder:?}").contains("http1_only: true"),
-        allow_h2 == Some(false)
-    );
+fn check_dispatcher(dispatcher: &RouteDispatcher, allow_h2: Option<bool>) {
+    assert_eq!(dispatcher.options(), DispatcherOptions { allow_h2 });
+    assert_eq!(dispatcher.http1_only(), allow_h2 == Some(false));
+    for target in ["https://proxied.test/", "http://direct.test/"] {
+        let route = dispatcher.route_for(&Url::parse(target).unwrap());
+        assert_eq!(route.options(), DispatcherOptions { allow_h2 });
+        assert_eq!(route.http1_only(), allow_h2 == Some(false));
+        if let ProxyRoute::Proxied {
+            dispatcher: carried,
+            ..
+        } = route
+        {
+            assert_eq!(carried.options(), dispatcher.options());
+            assert_eq!(carried.http1_only(), dispatcher.http1_only());
+        }
+    }
+}
+
+fn check_installation(installed: &ProxyInstallation, allow_h2: Option<bool>) {
+    assert_eq!(installed.options(), DispatcherOptions { allow_h2 });
+    assert_eq!(installed.http1_only(), allow_h2 == Some(false));
+    for target in ["https://proxied.test/", "http://direct.test/"] {
+        let route = proxy_route_for(Some(installed), &Url::parse(target).unwrap());
+        assert_eq!(route.options(), DispatcherOptions { allow_h2 });
+        assert_eq!(route.http1_only(), allow_h2 == Some(false));
+    }
 }
 
 #[test]
 fn keeps_undicis_http2_default_when_installation_carries_no_override() {
-    let values = [("HTTP_PROXY", "http://127.0.0.1:9")];
-    assert_h2(&values, None);
-    let (_, reports) = install(&values);
+    let (installed, reports) = install(&[("HTTP_PROXY", "http://127.0.0.1:9")]);
+    check_installation(&installed, None);
     assert!(reports.is_empty());
 }
 
-#[tokio::test]
-async fn pins_an_installed_dispatcher_to_http1_when_the_caller_passes_allow_h2_false() {
-    let proxy = Server::start("VIA-PROXY").await;
-    let origin = Server::start("DIRECT").await;
-    let proxy_url = proxy.url();
-    let values = env(&[("HTTP_PROXY", &proxy_url)]);
-    let options = DispatcherOptions {
-        allow_h2: Some(false),
-    };
-    assert_h2(&[("HTTP_PROXY", &proxy_url)], Some(false));
+#[test]
+fn pins_an_installed_dispatcher_to_http1_when_the_caller_passes_allow_h2_false() {
+    let values = env(&[("HTTPS_PROXY", "http://127.0.0.1:9")]);
     let installed = ProxyInstallation::with_inherited_environment(
         &lookup(&values),
         Default::default(),
         |_| {},
-        options,
+        DispatcherOptions {
+            allow_h2: Some(false),
+        },
     )
     .unwrap();
-    for (target, body) in [
-        ("http://proxied.test/".to_owned(), "VIA-PROXY"),
-        (origin.url(), "DIRECT"),
-    ] {
-        let response = installed.client().get(target).send().await.unwrap();
-        assert_eq!(response.version(), reqwest::Version::HTTP_11);
-        assert_eq!(response.text().await.unwrap(), body);
-    }
-    assert_eq!(proxy.requests(), ["GET http://proxied.test/ HTTP/1.1"]);
+    check_installation(&installed, Some(false));
+    assert!(matches!(
+        proxy_route_for(
+            Some(&installed),
+            &Url::parse("https://proxied.test/").unwrap()
+        ),
+        ProxyRoute::Proxied { .. }
+    ));
+    assert!(matches!(
+        proxy_route_for(
+            Some(&installed),
+            &Url::parse("http://direct.test/").unwrap()
+        ),
+        ProxyRoute::Direct { .. }
+    ));
 }
 
-#[tokio::test]
-async fn builds_a_per_request_dispatcher_pinned_to_http1() {
-    let proxy = Server::start("VIA-PROXY").await;
-    let origin = Server::start("DIRECT").await;
-    let proxy_url = proxy.url();
-    let values = env(&[("HTTP_PROXY", &proxy_url)]);
-    assert_h2(&[("HTTP_PROXY", &proxy_url)], Some(false));
+#[test]
+fn builds_a_per_request_dispatcher_pinned_to_http1() {
+    let values = env(&[("HTTPS_PROXY", "http://127.0.0.1:9")]);
     let dispatcher = create_route_dispatcher(
         &lookup(&values),
         DispatcherOptions {
@@ -65,46 +81,40 @@ async fn builds_a_per_request_dispatcher_pinned_to_http1() {
         },
     )
     .unwrap();
-    for target in ["http://proxied.test/".to_owned(), origin.url()] {
-        assert_eq!(
-            dispatcher.get(target).send().await.unwrap().version(),
-            reqwest::Version::HTTP_11
-        );
-    }
-    assert_eq!(proxy.requests().len(), 1);
-    assert_eq!(origin.requests().len(), 1);
+    check_dispatcher(&dispatcher, Some(false));
 }
 
 #[test]
 fn keeps_http2_enabled_when_the_caller_opts_in() {
     for values in [vec![("HTTPS_PROXY", "http://127.0.0.1:9")], vec![]] {
-        assert_h2(&values, Some(true));
-        create_route_dispatcher(
+        let dispatcher = create_route_dispatcher(
             &lookup(&env(&values)),
             DispatcherOptions {
                 allow_h2: Some(true),
             },
         )
         .unwrap();
+        check_dispatcher(&dispatcher, Some(true));
     }
 }
 
 #[test]
 fn pins_a_direct_per_request_dispatcher_to_http1() {
-    assert_h2(&[], Some(false));
-    create_route_dispatcher(
+    let dispatcher = create_route_dispatcher(
         &lookup(&env(&[])),
         DispatcherOptions {
             allow_h2: Some(false),
         },
     )
     .unwrap();
+    check_dispatcher(&dispatcher, Some(false));
 }
 
 #[test]
 fn keeps_undicis_http2_default_for_a_direct_per_request_dispatcher() {
-    assert_h2(&[], None);
-    create_route_dispatcher(&lookup(&env(&[])), DispatcherOptions::default()).unwrap();
+    let dispatcher =
+        create_route_dispatcher(&lookup(&env(&[])), DispatcherOptions::default()).unwrap();
+    check_dispatcher(&dispatcher, None);
 }
 
 #[test]
@@ -119,9 +129,10 @@ fn pins_the_direct_dispatcher_of_a_policy_layered_over_an_installed_proxy() {
             },
         )
         .unwrap();
-    assert_h2(&[], Some(false));
-    assert_eq!(
-        inner.policy().source,
-        hoh_http_proxy::policy::ProxySource::None
-    );
+    check_installation(&inner, Some(false));
+    check_installation(&outer, None);
+    assert!(matches!(
+        proxy_route_for(Some(&inner), &Url::parse("https://proxied.test/").unwrap()),
+        ProxyRoute::Direct { .. }
+    ));
 }

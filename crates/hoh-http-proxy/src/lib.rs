@@ -8,7 +8,7 @@ pub mod install;
 pub mod policy;
 
 pub use install::{
-    DispatcherOptions, ProxyEnvironment, ProxyInstallation, ProxyRoute, cleared_proxy_env,
-    create_route_dispatcher, install_proxy_from_environment, proxy_environment_for_child,
-    proxy_route_for, route_client_builder,
+    DispatcherOptions, ProxyEnvironment, ProxyInstallation, ProxyRoute, RouteDispatcher,
+    cleared_proxy_env, create_route_dispatcher, install_proxy_from_environment,
+    proxy_environment_for_child, proxy_route_for, route_client_builder,
 };
