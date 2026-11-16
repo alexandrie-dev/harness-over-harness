@@ -1,0 +1,13 @@
+[package]
+name = "hoh-launch-environment"
+description = "Port of @deepseek-ai/dsh-launch-environment (packages/util/launch-environment)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-kernel = { path = "../hoh-kernel" }

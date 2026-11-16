@@ -1,0 +1,13 @@
+[package]
+name = "hoh-scope"
+description = "Port of @deepseek-ai/dsh-scope (packages/core/scope)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-kernel = { path = "../hoh-kernel" }

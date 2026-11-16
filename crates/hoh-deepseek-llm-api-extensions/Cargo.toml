@@ -1,0 +1,13 @@
+[package]
+name = "hoh-deepseek-llm-api-extensions"
+description = "Port of @deepseek-ai/dsh-deepseek-llm-api-extensions (packages/llm/deepseek-llm-api-extensions)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-kernel = { path = "../hoh-kernel" }

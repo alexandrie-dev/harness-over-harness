@@ -238,6 +238,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-attachment"
+version = "0.1.0"
+dependencies = [
+ "hoh-error",
+ "hoh-kernel",
+]
+
+[[package]]
 name = "hoh-brand"
 version = "0.1.0"
 dependencies = [
@@ -264,6 +272,21 @@ dependencies = [
 [[package]]
 name = "hoh-conformance"
 version = "0.1.0"
+
+[[package]]
+name = "hoh-credentials"
+version = "0.1.0"
+dependencies = [
+ "hoh-brand",
+ "hoh-kernel",
+]
+
+[[package]]
+name = "hoh-deepseek-llm-api-extensions"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
+]
 
 [[package]]
 name = "hoh-deque"
@@ -331,6 +354,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-launch-environment"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
+]
+
+[[package]]
+name = "hoh-llm"
+version = "0.1.0"
+dependencies = [
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-timeout",
+ "hoh-util-crypto",
+ "hoh-util-values",
+]
+
+[[package]]
 name = "hoh-loader"
 version = "0.1.0"
 dependencies = [
@@ -346,6 +388,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-native-command"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
+]
+
+[[package]]
 name = "hoh-node-addon-system"
 version = "0.1.0"
 dependencies = [
@@ -355,11 +404,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-office-kit"
+version = "0.1.0"
+dependencies = [
+ "hoh-brand",
+ "hoh-home-paths",
+ "hoh-kernel",
+]
+
+[[package]]
 name = "hoh-output-retention"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hoh-package-manifest"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
+]
+
+[[package]]
+name = "hoh-scope"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
 ]
 
 [[package]]
@@ -381,6 +453,13 @@ dependencies = [
  "hoh-util-values",
  "indexmap",
  "serde_json",
+]
+
+[[package]]
+name = "hoh-storage"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
 ]
 
 [[package]]

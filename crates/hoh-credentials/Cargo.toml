@@ -1,0 +1,14 @@
+[package]
+name = "hoh-credentials"
+description = "Port of @deepseek-ai/dsh-credentials (packages/credentials/credentials)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-brand = { path = "../hoh-brand" }
+hoh-kernel = { path = "../hoh-kernel" }

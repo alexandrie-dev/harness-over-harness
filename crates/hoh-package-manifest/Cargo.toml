@@ -1,0 +1,12 @@
+[package]
+name = "hoh-package-manifest"
+description = "Port of @deepseek-ai/dsh-package-manifest (packages/util/package-manifest)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
