@@ -17,13 +17,16 @@ base64 = "0.23.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 getrandom = "0.4.3"
 http = "1.5.0"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 indexmap = { version = "2.14.2", features = ["serde"] }
 jiff = "1.0.0"
+kamadak-exif = "0.6.2"
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "stream"] }
 landlock = "0.4.7"
+moxcms = "0.8.1"
 rustix = { version = "1.1.6", features = ["fs", "process"] }
 saphyr-parser = "0.3.4"
 schemars = { version = "1.2.3", features = ["preserve_order", "indexmap2"] }
@@ -37,6 +40,7 @@ tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "process", 
 tokio-util = "0.7.20"
 trybuild = "1.0.125"
 url = "2.5.8"
+webp = { version = "0.3.1", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

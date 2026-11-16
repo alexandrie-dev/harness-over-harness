@@ -1,0 +1,20 @@
+[package]
+name = "hoh-attachment-local"
+description = "Port of @deepseek-ai/dsh-attachment-local (packages/attachment/attachment-local)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-attachment = { path = "../hoh-attachment" }
+hoh-brand = { path = "../hoh-brand" }
+hoh-home-paths = { path = "../hoh-home-paths" }
+hoh-kernel = { path = "../hoh-kernel" }
+image.workspace = true
+kamadak-exif.workspace = true
+moxcms.workspace = true
+webp.workspace = true
