@@ -407,3 +407,4 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 9	drop	vendor/hmr	@deepseek-ai/cordis-plugin-hmr	-	464	0	-	замена кода на лету не переносится
 9	skip	website	@deepseek-ai/website	-	0	1520	-	
 1	own	refs/jsdiff (v9.0.0)	diff	hoh-jsdiff	1421	0	review	общий перенос structuredPatch из jsdiff 9.0.0 (BSD-3-Clause); в dsh это npm-библиотека, не пакет
+1	own	refs/commander (v15.0.0)	commander	hoh-commander	4180	0	writing:n1	общий перенос используемой части commander 15.0.0 (MIT); в dsh это npm-библиотека, не пакет

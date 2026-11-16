@@ -234,6 +234,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-commander"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "serde_json",
+]
+
+[[package]]
 name = "hoh-conformance"
 version = "0.1.0"
 
