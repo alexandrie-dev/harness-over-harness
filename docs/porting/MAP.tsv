@@ -88,7 +88,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/skill/skill-office	@deepseek-ai/dsh-skill-office	hoh-skill-office	141	1141	todo	
 1	port	packages/skill/tool-workspace-dependencies	@deepseek-ai/dsh-tool-workspace-dependencies	hoh-tool-workspace-dependencies	388	629	todo	
 1	port	packages/storage/storage	@deepseek-ai/dsh-storage	hoh-storage	364	346	done	
-1	port	packages/storage/storage-domain	@deepseek-ai/dsh-storage-domain	hoh-storage-domain	910	714	writing:w4	
+1	port	packages/storage/storage-domain	@deepseek-ai/dsh-storage-domain	hoh-storage-domain	910	714	review	
 1	port	packages/subagent/subagent	@deepseek-ai/dsh-subagent	hoh-subagent	5057	11365	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/subprocess/subprocess	@deepseek-ai/dsh-subprocess	hoh-subprocess	576	334	todo	
 1	port	packages/subprocess/subprocess-local	@deepseek-ai/dsh-subprocess-local	hoh-subprocess-local	5104	8920	todo	
@@ -109,10 +109,10 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/deque	@deepseek-ai/dsh-deque	hoh-deque	95	94	done	в переносимых пакетах никем не импортируется
 1	port	packages/util/error	@deepseek-ai/dsh-error	hoh-error	22	19	done	
 1	port	packages/util/home-paths	@deepseek-ai/dsh-home-paths	hoh-home-paths	238	155	done	
-1	port	packages/util/http-proxy	@deepseek-ai/dsh-http-proxy	hoh-http-proxy	737	921	review	
+1	port	packages/util/http-proxy	@deepseek-ai/dsh-http-proxy	hoh-http-proxy	737	921	done	
 1	port	packages/util/launch-environment	@deepseek-ai/dsh-launch-environment	hoh-launch-environment	137	87	done	
 9	drop	packages/util/lazy-require	@deepseek-ai/dsh-lazy-require	-	24	29	-	ленивая загрузка модуля Node (createRequire с кэшем): в Rust зависимости связываются при сборке, потребители обращаются к crate напрямую
-1	port	packages/util/native-command	@deepseek-ai/dsh-native-command	hoh-native-command	1052	978	review	
+1	port	packages/util/native-command	@deepseek-ai/dsh-native-command	hoh-native-command	1052	978	done	
 1	port	packages/util/official-bundles	@deepseek-ai/dsh-official-bundles	hoh-official-bundles	213	32	done	
 1	port	packages/util/output-retention	@deepseek-ai/dsh-output-retention	hoh-output-retention	460	409	done	
 1	port	packages/util/package-manifest	@deepseek-ai/dsh-package-manifest	hoh-package-manifest	167	0	done	

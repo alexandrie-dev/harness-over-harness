@@ -1,15 +1,27 @@
 mod support;
 
+use hoh_http_proxy::policy::DIRECT_POLICY;
 use hoh_http_proxy::{
     DispatcherOptions, ProxyInstallation, ProxyRoute, RouteDispatcher, create_route_dispatcher,
-    proxy_route_for,
+    proxy_route_for, route_client_builder,
 };
 use support::{env, install, lookup};
 use url::Url;
 
+fn check_built_pin(options: DispatcherOptions) {
+    // Inspect the shared builder using the object's stored record, as well as its metadata.
+    let builder = route_client_builder(DIRECT_POLICY, options).unwrap();
+    assert_eq!(
+        format!("{builder:?}").contains("http1_only: true"),
+        options.allow_h2 == Some(false),
+        "client builder must apply the stored transport options: {options:?}"
+    );
+}
+
 fn check_dispatcher(dispatcher: &RouteDispatcher, allow_h2: Option<bool>) {
     assert_eq!(dispatcher.options(), DispatcherOptions { allow_h2 });
     assert_eq!(dispatcher.http1_only(), allow_h2 == Some(false));
+    check_built_pin(dispatcher.options());
     for target in ["https://proxied.test/", "http://direct.test/"] {
         let route = dispatcher.route_for(&Url::parse(target).unwrap());
         assert_eq!(route.options(), DispatcherOptions { allow_h2 });
@@ -28,6 +40,7 @@ fn check_dispatcher(dispatcher: &RouteDispatcher, allow_h2: Option<bool>) {
 fn check_installation(installed: &ProxyInstallation, allow_h2: Option<bool>) {
     assert_eq!(installed.options(), DispatcherOptions { allow_h2 });
     assert_eq!(installed.http1_only(), allow_h2 == Some(false));
+    check_built_pin(installed.options());
     for target in ["https://proxied.test/", "http://direct.test/"] {
         let route = proxy_route_for(Some(installed), &Url::parse(target).unwrap());
         assert_eq!(route.options(), DispatcherOptions { allow_h2 });

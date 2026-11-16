@@ -92,6 +92,7 @@ fn mac_bundle_for_https(plist: &str) -> Option<String> {
 
 fn explorer_target(path: &str) -> String {
     let path = path.replace('\\', "/");
+    let verbatim = path.starts_with("//?/");
     let path = if let Some(rest) = path.strip_prefix("//?/UNC/") {
         format!("//{rest}")
     } else {
@@ -101,10 +102,19 @@ fn explorer_target(path: &str) -> String {
     let (prefix, rest) = if let Some(unc) = path.strip_prefix("//") {
         let (server, rest) = unc.split_once('/').unwrap_or((unc, ""));
         (
-            format!("file://{}/", server.to_ascii_lowercase()),
+            format!(
+                "file://{}/",
+                url::Host::parse(server)
+                    .map(|host| host.to_string())
+                    .unwrap_or_else(|_| server.to_ascii_lowercase())
+            ),
             rest.to_owned(),
         )
     } else if path.as_bytes().get(1) == Some(&b':') {
+        ("file:///".into(), path.clone())
+    } else if verbatim {
+        // Node strips only the uppercase UNC verbatim prefix; lowercase variants
+        // become an ordinary absolute URL path, without consulting cwd.
         ("file:///".into(), path.clone())
     } else {
         let cwd = std::env::current_dir()

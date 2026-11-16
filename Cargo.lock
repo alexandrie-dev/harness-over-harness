@@ -513,13 +513,27 @@ dependencies = [
 name = "hoh-attachment-local"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "futures-util",
+ "getrandom 0.4.3",
  "hoh-attachment",
  "hoh-brand",
+ "hoh-error",
  "hoh-home-paths",
  "hoh-kernel",
+ "hoh-timeout",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
  "image",
  "kamadak-exif",
  "moxcms",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
  "webp",
 ]
 
@@ -559,6 +573,7 @@ name = "hoh-credentials"
 version = "0.1.0"
 dependencies = [
  "hoh-brand",
+ "hoh-error",
  "hoh-kernel",
  "indexmap",
  "schemars",
@@ -695,13 +710,16 @@ name = "hoh-loader"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "getrandom 0.4.3",
  "hoh-kernel",
  "hoh-util-values",
  "indexmap",
+ "rustix",
  "saphyr-parser",
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
@@ -725,6 +743,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -768,6 +787,7 @@ dependencies = [
 name = "hoh-scope"
 version = "0.1.0"
 dependencies = [
+ "hoh-error",
  "hoh-kernel",
  "indexmap",
  "serde_json",

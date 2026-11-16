@@ -1,5 +1,5 @@
 use hoh_error::{SharedError, node_error_code, node_fs_error_message, node_spawn_error_message};
-use hoh_timeout::AbortSignal;
+use hoh_timeout::{AbortError, AbortSignal};
 use std::{future::Future, pin::Pin, process::Stdio};
 use tokio::io::AsyncReadExt;
 
@@ -94,13 +94,15 @@ pub async fn run_native_command(
     signal: &AbortSignal,
     window: Window,
 ) -> Result<CommandOutput, SharedError> {
-    signal.throw_if_aborted()?;
+    if let Some(reason) = signal.reason() {
+        return Err(command_aborted(reason, &[], &[]));
+    }
     let mut cmd = tokio::process::Command::new(command);
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .kill_on_drop(false);
     #[cfg(windows)]
     if window == Window::Hidden {
         cmd.creation_flags(0x08000000);
@@ -143,20 +145,17 @@ pub async fn run_native_command(
     };
     let status = tokio::select! {
         biased;
-        reason = signal.cancelled() => Err(reason),
+        reason = signal.cancelled() => {
+            terminate_once(&mut child);
+            // Detached reaping does not hold the pipes or delay the abort callback.
+            // kill_on_drop=false also leaves a TERM-ignoring child alive, as Node does.
+            tokio::spawn(async move { let _ = child.wait().await; });
+            return Err(command_aborted(reason, &out, &err));
+        },
         result = capture => result,
     };
     if status.is_err() {
-        #[cfg(unix)]
-        if let Some(pid) = child
-            .id()
-            .and_then(|id| i32::try_from(id).ok())
-            .and_then(rustix::process::Pid::from_raw)
-        {
-            let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
-        }
-        #[cfg(windows)]
-        child.start_kill().ok();
+        terminate_once(&mut child);
         let _ = tokio::join!(
             child.wait(),
             read_limited(&mut stdout, &mut out, "stdout"),
@@ -193,10 +192,6 @@ pub async fn run_native_command(
             .into())
         }
         Err(error) => {
-            // Cancellation forwards the exact caller reason, without a command-error wrapper.
-            if signal.reason().is_some_and(|reason| reason.ptr_eq(&error)) {
-                return Err(error);
-            }
             if let Some(detail) = error.downcast_ref::<NativeCommandError>() {
                 return Err(NativeCommandError {
                     stdout: Some(output.stdout),
@@ -208,6 +203,32 @@ pub async fn run_native_command(
             Err(error)
         }
     }
+}
+
+fn command_aborted(reason: SharedError, stdout: &[u8], stderr: &[u8]) -> SharedError {
+    NativeCommandError {
+        code: Some(CommandCode::Name("ABORT_ERR".into())),
+        stdout: Some(String::from_utf8_lossy(stdout).into_owned()),
+        stderr: Some(String::from_utf8_lossy(stderr).into_owned()),
+        cause: Some(SharedError::new(
+            AbortError::new("The operation was aborted").with_cause(reason),
+        )),
+        ..NativeCommandError::message("The operation was aborted")
+    }
+    .into()
+}
+
+fn terminate_once(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
+    }
+    #[cfg(windows)]
+    child.start_kill().ok();
 }
 
 #[cfg(unix)]

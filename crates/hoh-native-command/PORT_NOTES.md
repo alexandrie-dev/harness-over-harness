@@ -19,7 +19,8 @@
 | tests/file-applications-linux.spec.ts | tests/file_applications_linux.rs | 4 исходных случая и проверка desktop-полей/иконок |
 | tests/file-applications-linux-native.spec.ts | tests/file_applications_linux_native.rs | настоящий GIO, закрытые XDG-каталоги, путь и завершение PID |
 | tests/file-applications-windows.spec.ts | tests/file_applications_windows.rs | Windows-only, приватный обработчик, регистрация/очистка и PID |
-| дополнительные случаи fix brief | tests/review_regressions.rs | whitespace, GIO regex, порядок readdir, пути, 136 Explorer targets, тексты/форма ошибок, OS env, JS JSON |
+| дополнительные случаи fix brief | tests/review_regressions.rs | whitespace, GIO regex, порядок readdir, пути, 144 Explorer targets, тексты/форма ошибок, OS env, JS JSON |
+| дополнительные случаи fix2 brief | tests/fix2.rs | немедленная отмена, частичный вывод, cause/identity, TERM-игнорирование и reaping, реальный ENOEXEC |
 
 Перенесены все исходные объявления it: 38 + 13 + 4 + 2 + 4 и две
 платформенные интеграционные проверки; ни одно не исключено из переноса.
@@ -35,9 +36,18 @@ LICENSE у исходного пакета нет.
   не меняет исходный базовый класс Error.
 - По исправленному решению ведущего используется hoh_timeout::AbortSignal.
   Собственного CommandSignal и собственного состояния отмены больше нет.
-  Границы вызовов и парсеры возвращают hoh_error::SharedError: причина отмены и
-  проброшенная ошибка runner сохраняют ptr_eq. Возврат исходной причины вместо
-  Node execFile AbortError-обёртки — прямое требование fix brief, пункт 1.
+  Границы вызовов и парсеры возвращают hoh_error::SharedError. Ошибочная фраза
+  первого fix brief о возврате голой причины runner исправлена решением fix2:
+  runner возвращает NativeCommandError с message="The operation was aborted",
+  code=ABORT_ERR и прочитанными до отмены stdout/stderr. cause — AbortError
+  с тем же сообщением; его cause — исходная причина сигнала с сохранённым ptr_eq.
+  Уже отменённый сигнал получает ту же обёртку с пустыми потоками. Без явной
+  причины внутренняя причина — AbortError("This operation was aborted").
+  Runner посылает один SIGTERM и сразу возвращает ошибку, не ожидая exit или
+  закрытия pipe и не посылая SIGKILL. Child с kill_on_drop=false передаётся
+  отдельной Tokio-задаче, которая делает wait/reap без владения потоками.
+  Игнорирующий TERM ребёнок продолжает жить до собственного завершения или
+  внешнего сигнала, как в Node; сброс ожидания не убивает его.
   NativeCommandError доступна через downcast_ref; её stdout/stderr — Option:
   Some("") у ошибок callback ENOENT/EACCES и None у синхронного отказа ENOTDIR.
   signal хранит имя завершившего процесс сигнала, code=None соответствует null.
@@ -55,15 +65,23 @@ LICENSE у исходного пакета нет.
   дедупликация сохранены. Создание и удаление временного каталога PowerShell
   выполняются через spawn_blocking, запись файла — tokio::fs.
 - Входы Windows-opener: абсолютные Windows drive/UNC-пути и абсолютный результат
-  wslpath -w. Все 136 строк неизменённой ведущей фикстуры
+  wslpath -w. Все 144 строки неизменённой ведущей фикстуры
   tests/fixtures/explorer_target.jsonl проверяются через публичный open_native_path
   с platform=win32. Фикстура снята на POSIX-хосте: drive root C:\ имеет target
   file:///C://; cfg(windows) сохраняет исходное host-зависимое file:///C:/.
   Относительные и drive-relative пути требуют окружения Windows process.cwd()
-  и не считаются проверенными.
-- Намеренное отличие exec: файл без строки интерпретатора Node запускает через
-  /bin/sh (execvp), а Rust Command отказывает с ENOEXEC. Это существенно для
-  BROWSER, если он указывает на такой скрипт; автоматическая оболочка не добавляется.
+  и не считаются проверенными. Имена UNC host проходят через url::Host::parse:
+  проверены punycode для «сервер», точки и прописные буквы. Только uppercase
+  UNC после \\?\ является специальным префиксом; unc и Unc превращаются
+  в URL-путь с сохранённым регистром.
+- Наблюдаемое отличие exec: ведущий измерил, что Node запускает файл без строки
+  интерпретатора через /bin/sh. Тест no_interpreter_script_is_refused_by_the_real_runner_on_glibc
+  создаёт такой файл с mode=755 и вызывает настоящий runner: на этой системе
+  (Ubuntu GLIBC 2.39-0ubuntu8.12, release 2.39, Linux GNU target) подтверждены
+  code=ENOEXEC, message="spawn ENOEXEC", без stdout/stderr. Это измерение
+  текущей Rust/std/libc-связки, не утверждение обо всех libc, ОС и реализациях
+  posix_spawnp. Это существенно для BROWSER со скриптом без #!;
+  автоматическая оболочка в переносе не добавляется.
   stdin дочернего процесса в переносе закрыт (Stdio::null), а у Node это открытая
   труба, в которую никто не пишет.
 - На Windows Hidden использует безопасный CREATE_NO_WINDOW для консольных
@@ -98,7 +116,7 @@ client/api/host/typert/experimental-пакетов не используются
 - Реальный SystemCommandRunner выполняет /bin/sh -c и получает данные argv
   с пробелами, кавычками, $, Unicode и текстом $(touch nope) без интерпретации.
   Проверены UTF-8 stdout/stderr, точный command failure, sleeping child с
-  проверкой завершения PID и ptr_eq причины. Default opener проверяется в
+  проверкой завершения PID и ptr_eq причины в цепочке cause. Default opener проверяется в
   дочернем тестовом процессе с частным PATH и временными executable-фикстурами
   xdg-open/open/explorer.exe; globals/окружение родительского теста не меняются.
 - Случай исчезнувшего desktop-файла воспроизводится без гонки: desktop-запись —
@@ -111,6 +129,37 @@ client/api/host/typert/experimental-пакетов не используются
   проверены Visible при маршрутизации и реальный запуск с обоими Window, но
   не Win32 STARTUPINFO. Остальные перечисленные review ослабления устранены.
 
+Проверки и аудит fix2:
+- До правок три новых теста отмены дали 0 passed; 3 failed, включая два
+  превышения секундного предела на игнорирующем TERM ребёнке. Восстановленный
+  исходный тест native-command.spec.ts снова проверяет code=ABORT_ERR;
+  до правки он и случай заранее отменённого сигнала дали 4 passed; 2 failed.
+- Настоящие дети печатают stdout/stderr до abort; проверяются возврат менее чем
+  за секунду, точные частичные потоки, обе ступени cause и ptr_eq исходной причины.
+  Для игнорирующего TERM ребёнка проверяется, что он ещё жив. Только тестовый
+  cleanup посылает KILL и ждёт, что фоновый reaper убрал PID; библиотека не
+  усиливает отмену до KILL. Реальный Explorer-адаптер возвращает голую причину.
+- path-opener.ts: runExplorer в catch вызывает throwIfAborted перед проверкой
+  code — возвращается голая причина. openWslPath/reveal и desktopTarget из
+  file-applications.ts проверяют сигнал после успешного wslpath; отказ самого
+  wslpath пробрасывает runner ABORT_ERR. Предварительные проверки reveal/query/
+  desktopTarget и проверка на каждой Linux application возвращают голую причину.
+  Прямые open/open -t/open -b/xdg-open/BROWSER, gio info/mime/launch, osascript
+  и PowerShell не заменяют ошибку runner. defaults read при отказе, в том числе
+  abort, проглатывается, после чего fallback run на отменённом сигнале даёт
+  ABORT_ERR. Эти места сохранены по исходнику: общей замены ошибки любого opener
+  на signal.reason нет.
+- Другие потребители (прочитаны, не менялись): api/workspace-controller/
+  default-directory.ts при отмене во время run получает ABORT_ERR; проверки
+  до вызова и после успешного результата бросают голую причину. host/
+  directory-picker-native/native-picker.ts в Linux rethrowIfAborted бросает
+  именно пойманную ошибку (ABORT_ERR), а не reason; macOS также пробрасывает её.
+  Windows picker использует отдельный Win32 dialog. host/open-in-app/resolver.ts:
+  output с AbortSignal.timeout проглатывает все ошибки, включая ABORT_ERR,
+  и возвращает null (unavailable). runShellOpen использует собственный
+  неотменяемый controller signal: watch не отменяет opener; ранняя ошибка
+  классифицируется missing/failed, поздняя проглатывается после launched.
+
 ## Не перенесено
 Нет исходных файлов/тестов, исключённых из переноса. Ветки не вызывают пакеты
 этапа 5: исходный C# Shell-хелпер — текст внешнего процесса, не Rust unsafe.
@@ -121,7 +170,7 @@ client/api/host/typert/experimental-пакетов не используются
   Explorer и Windows termination. Реальный WSL/Windows desktop не запускался.
 - Настоящие macOS LaunchServices/AppKit/JXA и open/defaults. Адаптеры, metadata
   parsing и дедупликация проверены на Linux по исходным фикстурам.
-- Относительные Windows-пути, drive-relative C:foo, IDN UNC и одиночные UTF-16
+- Относительные Windows-пути, drive-relative C:foo и одиночные UTF-16
   суррогаты вне контракта входных UTF-8 абсолютных путей фикстуры.
 - Крайний maxBuffer посередине многобайтного символа отдельно с Node не сверен;
   установленный лимит 1 МиБ и код отказа сохранены.

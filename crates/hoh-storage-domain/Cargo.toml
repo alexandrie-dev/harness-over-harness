@@ -12,3 +12,12 @@ workspace = true
 [dependencies]
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-storage = { path = "../hoh-storage" }
+hoh-error = { path = "../hoh-error" }
+hoh-util-values = { path = "../hoh-util-values" }
+futures-util.workspace = true
+indexmap.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

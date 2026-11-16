@@ -219,12 +219,14 @@ fn policy_client_builder_refuses_unusable_urls_before_building_a_client() {
         format!("http://proxy.test/{}", "a".repeat(65_535)),
         "http://proxy{bad}.test/".to_owned(),
     ] {
-        let policy = resolve_proxy_policy(&lookup(&env(&[("HTTP_PROXY", &proxy)]))).policy;
-        let error = route_client_builder(policy, DispatcherOptions::default()).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "http_proxy is not a valid URL; connecting directly"
-        );
+        for (name, field) in [("HTTP_PROXY", "http_proxy"), ("HTTPS_PROXY", "https_proxy")] {
+            let policy = resolve_proxy_policy(&lookup(&env(&[(name, &proxy)]))).policy;
+            let error = route_client_builder(policy, DispatcherOptions::default()).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!("{field}: proxy URL cannot be used to build the HTTP client")
+            );
+        }
     }
 }
 

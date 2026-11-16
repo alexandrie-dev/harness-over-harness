@@ -113,17 +113,36 @@ async fn terminates_the_child_when_the_signal_aborts() {
     let reason = SharedError::new(std::io::Error::other("closed"));
     abort.abort_with(reason.clone());
     let failure = pending.await.unwrap_err();
-    assert!(failure.ptr_eq(&reason));
-    assert!(request.reason().unwrap().ptr_eq(&failure));
-    #[cfg(unix)]
     assert_eq!(
-        rustix::process::test_kill_process(rustix::process::Pid::from_raw(pid).unwrap()),
-        Err(rustix::io::Errno::SRCH)
+        detail(&failure).code,
+        Some(CommandCode::Name("ABORT_ERR".into()))
     );
+    assert_eq!(failure.to_string(), "The operation was aborted");
+    let abort_error = detail(&failure).cause.as_ref().unwrap();
+    assert!(
+        abort_error
+            .downcast_ref::<hoh_timeout::AbortError>()
+            .is_some()
+    );
+    let cause = SharedError::of(abort_error.source().unwrap()).unwrap();
+    assert!(cause.ptr_eq(&reason));
+    #[cfg(unix)]
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if rustix::process::test_kill_process(rustix::process::Pid::from_raw(pid).unwrap())
+                == Err(rustix::io::Errno::SRCH)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
-async fn already_aborted_commands_return_the_original_shared_reason() {
+async fn already_aborted_commands_wrap_the_original_shared_reason() {
     let controller = AbortController::new();
     let reason = SharedError::new(std::io::Error::other("closed"));
     controller.abort_with(reason.clone());
@@ -135,7 +154,21 @@ async fn already_aborted_commands_return_the_original_shared_reason() {
     )
     .await
     .unwrap_err();
-    assert!(error.ptr_eq(&reason));
+    assert_eq!(
+        detail(&error).code,
+        Some(CommandCode::Name("ABORT_ERR".into()))
+    );
+    let abort_error = detail(&error).cause.as_ref().unwrap();
+    assert!(
+        abort_error
+            .downcast_ref::<hoh_timeout::AbortError>()
+            .is_some()
+    );
+    assert!(
+        SharedError::of(abort_error.source().unwrap())
+            .unwrap()
+            .ptr_eq(&reason)
+    );
 }
 
 #[cfg(unix)]

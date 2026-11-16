@@ -17,7 +17,7 @@ pub type ProxyEnvironment = IndexMap<String, Option<String>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyBuildError {
-    #[error("{origin} is not a valid URL; connecting directly")]
+    #[error("{origin}: proxy URL cannot be used to build the HTTP client")]
     InvalidProxyUrl { origin: &'static str },
     #[error(transparent)]
     Client(#[from] reqwest::Error),

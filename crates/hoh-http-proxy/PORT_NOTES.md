@@ -9,10 +9,14 @@
 | `src/index.ts` | `src/lib.rs` | Все пять функций и оба типа экспортированы в snake_case; модули `policy` и `install` публичны. |
 | `tests/policy.spec.ts` | `tests/policy.rs` | 56 исходных случаев, включая развёрнутые `it.each`; ещё 2 проверки точных текстов и граничных значений. Все 58 проходят. |
 | `tests/install.spec.ts` | `tests/install.rs` | Все 24 исходных случая представлены. `removes_an_environment_name…` и `restores_the_dispatcher…` проверяют неизменность исходного снимка/внешней установки при layering и Drop: глобального состояния для восстановления нет. Identity транспорта проверяется двумя запросами через общий keep-alive сокет (один accept); in-flight lifetime — отдельным дополнительным случаем. В трёх случаях проверен overlay, но не запуск Node, см. ниже. |
-| `tests/install-http1.spec.ts` | `tests/install-http1.rs` | Все 7 случаев проверяют options/http1_only установки, dispatcher и созданных ими routes, включая direct-слой поверх proxy. Some(true) отличается от None в самом сохранённом record; ClientBuilder, построенный отдельно тестом, больше не служит доказательством. |
+| `tests/install-http1.spec.ts` | `tests/install-http1.rs` | Все 7 случаев проверяют options/http1_only установки, dispatcher и созданных ими routes, включая direct-слой поверх proxy. Из сохранённого record строится общий ClientBuilder; его Debug проверяется на наличие `http1_only: true` для Some(false) и отсутствие для None/Some(true). |
 | `tests/matcher-parity.spec.ts` | `tests/matcher-parity.rs` | Все 9 случаев. Прямой путь использует loopback origin и DNS override вместо внешнего DNS и ожидаемого отказа. |
 | Дополнительные проверки fix-round | `tests/transport.rs`, unit test в `src/install.rs` | Настройки fetch-транспорта, Debug трёх публичных типов, не-Unicode snapshot без изменения окружения процесса. Все 9 transport-тестов проходят: oversized URL, несовместимые символы authority, отказ для вручную собранной policy, граница длины и нормализация URL. |
 | `README.md` | эти примечания и rustdoc | Прочитан полностью; публичный контракт и ограничения учтены. |
+
+Чувствительность проверки pin подтверждена командой `cargo test -p hoh-http-proxy --test install-http1`:
+при временном удалении `builder.http1_only()` — `3 passed; 4 failed`, все четыре отказа на новой
+проверке Debug ClientBuilder; после восстановления вызова — `7 passed; 0 failed` в полном прогоне.
 
 В образце нет `locale/`, собственного `LICENSE` и указаний на заимствованный код в этом пакете.
 Новых внутренних зависимостей нет. Добавлены только разрешённые workspace-зависимости `indexmap`,
@@ -75,13 +79,17 @@
    Добавлен `RouteDispatcher` с `client`, `options`, `http1_only`, `route_for`, `diagnostics` и Deref к Client;
    `DispatcherOptions` и `ProxyRoute` также имеют `http1_only`, у route есть `options`.
    `ProxyBuildError` имеет варианты `InvalidProxyUrl { origin }` и `Client(reqwest::Error)`;
-   его сообщение для некорректной proxy URL совпадает с текстом invalid-диагностики образца и не содержит URL.
+   для InvalidProxyUrl введён новый текст Rust, у которого нет аналога в образце:
+   `{origin}: proxy URL cannot be used to build the HTTP client`.
+   Он называет поле и сообщает о жёстком отказе построения клиента, не раскрывая URL.
+   Текст policy-диагностики `{origin} is not a valid URL; connecting directly` сохранён до байта.
 7. Тестовые серверы слушают только `127.0.0.1:0`; порт выбирает ОС. Прямые запросы к тестовым доменам
    используют `ClientBuilder::resolve` с loopback-адресом fixture. Внешних DNS/HTTP-запросов нет.
    Тест lifetime ждёт получения запроса сервером до удаления установки и затем разрешает ответ.
 8. Debug для ProxyPolicy, ProxyInstallation и ProxyRoute скрывает пароль URL как `***`, включая
    унаследованные и публикуемые proxy-env значения. Сериализация, реальные поля и значения ребёнка
    не изменяются. Debug вложенного RouteDispatcher использует тот же redacted ProxyPolicy.
+   `ProxyEnvironment` — обычная упорядоченная карта: Debug `installation.environment()` или child overlay выводит исходные proxy URL вместе с паролями; перед логированием потребитель сам скрывает пароли.
 9. Trust roots отличаются от Node: reqwest/rustls использует системное хранилище через
    rustls-platform-verifier; Node поставляет свои корни. Корпоративный CA, установленный в ОС,
    доверяется без отдельной настройки. `NODE_EXTRA_CA_CERTS`, рекомендуемый README образца, не читается.
@@ -153,35 +161,13 @@ launcher в `apps/cli`. `createRouteDispatcher` используется тол�
 
 ## Не проверено
 
-Полный прогон заблокирован средой: sandbox отвергает `TcpListener::bind(127.0.0.1:0)` с
-`Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }` до первого запроса.
-Тесты не пропущены, не помечены ignored и не ослаблены ради зелёного результата.
-
-Команда:
+Listener-тесты выполняются только вне sandbox. В прогоне ведущего от **2026-11-16** прошёл весь
+набор, включая 8 listener-тестов `install.rs` и 9 случаев `matcher-parity.rs`:
+**109 passed, 0 failed**. Тесты не помечены ignored и не ослаблены. Команда с окружением сборки:
 
 ```text
 CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w6 cargo test -p hoh-http-proxy --no-fail-fast
 ```
-
-Результаты fix-round: unit tests — `1 passed; 0 failed`; `policy` — `58 passed; 0 failed`;
-`install` — `17 passed; 8 failed`; `install-http1` — `7 passed; 0 failed`;
-`matcher-parity` — `0 passed; 9 failed`; `transport` — `9 passed; 0 failed`.
-Всего 92 passed, 17 failed; все 17 отказов — запрет loopback listener. Ранее ведущий прогнал
-предыдущую версию вне sandbox: 105 passed и одна ожидаемая ошибка oversized URL; теперь эта
-регрессия также проходит в sandbox вместе с тремя новыми transport-тестами.
-
-Не удалось выполнить проверки после создания listener:
-
-- `carries_the_dispatcher_already_routing_so_a_branch_and_its_request_agree`;
-- `captured_route_finishes_in_flight_request_after_installation_is_dropped`;
-- `connects_directly_when_the_bypass_list_covers_the_target`;
-- `keeps_a_scheme_direct_when_the_policy_refused_the_proxy_the_user_named_for_it`;
-- `reports_a_value_it_cannot_use_and_installs_the_rest`;
-- `restores_the_dispatcher_the_route_and_the_environment_on_disposal`;
-- `routes_the_explicitly_shared_fetch_client_through_the_proxy`;
-- `stops_proxying_when_the_mounted_policy_proxies_nothing`;
-- все 9 `agrees_on_*` случаев в `tests/matcher-parity.rs` (empty, exact host, dot suffix,
-  star suffix, other host, star, default port, wrong port, comma list).
 
 `cargo build -p hoh-http-proxy`, `cargo clippy -p hoh-http-proxy --all-targets -- -D warnings`
 и `cargo fmt -p hoh-http-proxy -- --check` завершились успешно (exit 0), с теми же тремя

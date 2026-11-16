@@ -193,7 +193,7 @@ async fn xdg_roots_with_extra_slashes_produce_the_same_application_id() {
 }
 
 #[tokio::test]
-async fn explorer_matches_all_136_node_22_targets() {
+async fn explorer_matches_all_144_node_22_targets() {
     #[derive(Deserialize)]
     struct Case {
         path: String,
@@ -213,7 +213,7 @@ async fn explorer_matches_all_136_node_22_targets() {
         }
         count += 1;
     }
-    assert_eq!(count, 136);
+    assert_eq!(count, 144);
     assert!(differences.is_empty(), "{differences:#?}");
 }
 
