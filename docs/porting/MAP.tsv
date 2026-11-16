@@ -116,7 +116,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/official-bundles	@deepseek-ai/dsh-official-bundles	hoh-official-bundles	213	32	todo	
 1	port	packages/util/output-retention	@deepseek-ai/dsh-output-retention	hoh-output-retention	460	409	review	
 1	port	packages/util/package-manifest	@deepseek-ai/dsh-package-manifest	hoh-package-manifest	167	0	todo	
-1	port	packages/util/time	@deepseek-ai/dsh-util-time	hoh-util-time	1708	1250	review	
+1	port	packages/util/time	@deepseek-ai/dsh-util-time	hoh-util-time	1708	1250	done	
 1	port	packages/util/timeout	@deepseek-ai/dsh-timeout	hoh-timeout	212	306	review	
 1	port	packages/util/values	@deepseek-ai/dsh-util-values	hoh-util-values	959	1317	done	
 1	port	packages/util/workspace-path	@deepseek-ai/dsh-util-workspace-path	hoh-util-workspace-path	236	251	done	в образце используется только окном; перенесён, пригодится hoh-client
