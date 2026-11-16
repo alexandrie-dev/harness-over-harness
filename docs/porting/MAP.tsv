@@ -1,15 +1,15 @@
 stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
-0	kernel	packages/boot/app-boot	@deepseek-ai/dsh-app-boot	hoh-loader	5425	9882	todo	загрузчик и профили
-0	kernel	packages/boot/cmdline	@deepseek-ai/dsh-cmdline	hoh-loader	239	371	todo	загрузчик и профили
-0	kernel	packages/boot/config-editor	@deepseek-ai/dsh-config-editor	hoh-loader	155	0	todo	загрузчик и профили
-0	kernel	vendor/cordis	@deepseek-ai/cordis	hoh-kernel	2865	0	todo	
-0	kernel	vendor/cosmokit	@deepseek-ai/cosmokit	hoh-kernel	591	0	todo	
-0	kernel	vendor/group	@deepseek-ai/cordis-plugin-group	hoh-loader	3	0	todo	
-0	kernel	vendor/include	@deepseek-ai/cordis-plugin-include	hoh-loader	1004	0	todo	
-0	kernel	vendor/loader	@deepseek-ai/cordis-plugin-loader	hoh-loader	1224	0	todo	
-0	kernel	vendor/logger-console	@deepseek-ai/cordis-plugin-logger-console	hoh-kernel	145	0	todo	
-0	kernel	vendor/schemastery	@deepseek-ai/schemastery	hoh-kernel	962	0	todo	
-0	kernel	vendor/timer	@deepseek-ai/cordis-plugin-timer	hoh-kernel	153	0	todo	
+0	kernel	packages/boot/app-boot	@deepseek-ai/dsh-app-boot	hoh-loader	5425	9882	writing:l1	загрузчик и профили
+0	kernel	packages/boot/cmdline	@deepseek-ai/dsh-cmdline	hoh-loader	239	371	writing:l1	загрузчик и профили
+0	kernel	packages/boot/config-editor	@deepseek-ai/dsh-config-editor	hoh-loader	155	0	writing:l1	загрузчик и профили
+0	kernel	vendor/cordis	@deepseek-ai/cordis	hoh-kernel	2865	0	writing:k1	
+0	kernel	vendor/cosmokit	@deepseek-ai/cosmokit	hoh-kernel	591	0	writing:k1	
+0	kernel	vendor/group	@deepseek-ai/cordis-plugin-group	hoh-loader	3	0	writing:l1	
+0	kernel	vendor/include	@deepseek-ai/cordis-plugin-include	hoh-loader	1004	0	writing:l1	
+0	kernel	vendor/loader	@deepseek-ai/cordis-plugin-loader	hoh-loader	1224	0	writing:l1	
+0	kernel	vendor/logger-console	@deepseek-ai/cordis-plugin-logger-console	hoh-kernel	145	0	writing:k1	
+0	kernel	vendor/schemastery	@deepseek-ai/schemastery	hoh-kernel	962	0	writing:k1	
+0	kernel	vendor/timer	@deepseek-ai/cordis-plugin-timer	hoh-kernel	153	0	writing:k1	
 1	port	apps/cli	@deepseek-ai/dsh	apps/hoh	1070	20216	todo	становится apps/hoh
 1	port	native/system/packages/entry	@deepseek-ai/node-addon-system	hoh-node-addon-system	646	0	todo	запуск под Landlock и блокировка файлов flock
 1	port	packages/attachment/attachment	@deepseek-ai/dsh-attachment	hoh-attachment	710	476	todo	
@@ -41,7 +41,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/fs/fs-patch	@deepseek-ai/dsh-fs-patch	hoh-fs-patch	350	334	done	
 1	port	packages/fs/tool-fs	@deepseek-ai/dsh-tool-fs	hoh-tool-fs	2444	4566	todo	
 1	port	packages/goal/goal	@deepseek-ai/dsh-goal	hoh-goal	1309	1250	todo	зависит от: dsh-typert-protocol=skip
-1	port	packages/identity/anonymous-user-id	@deepseek-ai/dsh-anonymous-user-id	hoh-anonymous-user-id	100	105	review	
+1	port	packages/identity/anonymous-user-id	@deepseek-ai/dsh-anonymous-user-id	hoh-anonymous-user-id	100	105	done	
 1	port	packages/interaction/commands	@deepseek-ai/dsh-commands	hoh-commands	734	716	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/interaction/permission-presets	@deepseek-ai/dsh-permission-presets	hoh-permission-presets	556	786	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/interaction/tool-ask-user	@deepseek-ai/dsh-tool-ask-user	hoh-tool-ask-user	332	698	todo	
@@ -102,13 +102,13 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	infra	packages/test-support/tool-testkit	@deepseek-ai/dsh-tool-testkit	hoh-tool-testkit	92	42	todo	нужное переносится в hoh-conformance и тестовые помощники
 1	port	packages/todo/tool-todo	@deepseek-ai/dsh-tool-todo	hoh-tool-todo	271	683	todo	
 1	port	packages/util/atomic-write	@deepseek-ai/dsh-atomic-write	hoh-atomic-write	293	513	review	
-1	port	packages/util/brand	@deepseek-ai/dsh-brand	hoh-brand	39	13	review	
-1	port	packages/util/chunked-list	@deepseek-ai/dsh-chunked-list	hoh-chunked-list	58	59	review	
+1	port	packages/util/brand	@deepseek-ai/dsh-brand	hoh-brand	39	13	done	
+1	port	packages/util/chunked-list	@deepseek-ai/dsh-chunked-list	hoh-chunked-list	58	59	done	
 1	port	packages/util/code-language	@deepseek-ai/dsh-util-code-language	hoh-util-code-language	233	174	done	
-1	port	packages/util/crypto	@deepseek-ai/dsh-util-crypto	hoh-util-crypto	41	37	review	
-1	port	packages/util/deque	@deepseek-ai/dsh-deque	hoh-deque	95	94	review	в переносимых пакетах никем не импортируется
+1	port	packages/util/crypto	@deepseek-ai/dsh-util-crypto	hoh-util-crypto	41	37	done	
+1	port	packages/util/deque	@deepseek-ai/dsh-deque	hoh-deque	95	94	done	в переносимых пакетах никем не импортируется
 1	port	packages/util/error	@deepseek-ai/dsh-error	hoh-error	22	19	review	
-1	port	packages/util/home-paths	@deepseek-ai/dsh-home-paths	hoh-home-paths	238	155	review	
+1	port	packages/util/home-paths	@deepseek-ai/dsh-home-paths	hoh-home-paths	238	155	done	
 1	port	packages/util/http-proxy	@deepseek-ai/dsh-http-proxy	hoh-http-proxy	737	921	todo	
 1	port	packages/util/launch-environment	@deepseek-ai/dsh-launch-environment	hoh-launch-environment	137	87	todo	
 1	port	packages/util/lazy-require	@deepseek-ai/dsh-lazy-require	hoh-lazy-require	24	29	todo	
@@ -117,7 +117,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/output-retention	@deepseek-ai/dsh-output-retention	hoh-output-retention	460	409	done	
 1	port	packages/util/package-manifest	@deepseek-ai/dsh-package-manifest	hoh-package-manifest	167	0	todo	
 1	port	packages/util/time	@deepseek-ai/dsh-util-time	hoh-util-time	1708	1250	done	
-1	port	packages/util/timeout	@deepseek-ai/dsh-timeout	hoh-timeout	212	306	done	тип сигнала отмены и таймеры согласовать с ядром после docs/kernel.md
+1	port	packages/util/timeout	@deepseek-ai/dsh-timeout	hoh-timeout	212	306	review	тип сигнала отмены и таймеры согласовать с ядром после docs/kernel.md
 1	port	packages/util/values	@deepseek-ai/dsh-util-values	hoh-util-values	959	1317	done	
 1	port	packages/util/workspace-path	@deepseek-ai/dsh-util-workspace-path	hoh-util-workspace-path	236	251	done	в образце используется только окном; перенесён, пригодится hoh-client
 1	port	packages/workspace/workspace	@deepseek-ai/dsh-workspace	hoh-workspace	1448	1587	todo	зависит от: dsh-typert-protocol=skip
