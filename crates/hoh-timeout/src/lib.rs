@@ -239,8 +239,11 @@ impl IdleWatchdog {
         state.timer = Some(tokio::spawn(async move {
             tokio::time::sleep_until(at).await;
             if let Some(shared) = shared_state.upgrade() {
-                let state = lock(&shared);
-                if !state.disposed && state.outstanding && state.generation == generation {
+                let should_abort = {
+                    let state = lock(&shared);
+                    !state.disposed && state.outstanding && state.generation == generation
+                };
+                if should_abort {
                     timeout.abort_with(reason);
                 }
             }
@@ -339,4 +342,49 @@ pub fn idle_watchdog(
         timeout_ms,
         state: Arc::new(Mutex::new(WatchdogState::default())),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        task::{Context, Poll, Wake, Waker},
+    };
+
+    struct LockCheckingWake {
+        state: Arc<Mutex<WatchdogState>>,
+        calls: AtomicUsize,
+        unlocked: AtomicBool,
+    }
+    impl Wake for LockCheckingWake {
+        fn wake(self: Arc<Self>) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.state.try_lock().is_err() {
+                self.unlocked.store(false, Ordering::SeqCst);
+            }
+        }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn watchdog_wakes_observers_after_releasing_its_state_lock() {
+        let watchdog = idle_watchdog(None, 10.0, "IDLE").unwrap();
+        let demand = watchdog.next(std::future::pending::<()>());
+        let wake = Arc::new(LockCheckingWake {
+            state: watchdog.state.clone(),
+            calls: AtomicUsize::new(0),
+            unlocked: AtomicBool::new(true),
+        });
+        let waker = Waker::from(wake.clone());
+        let mut cancelled = Box::pin(watchdog.signal.cancelled());
+        assert!(matches!(
+            cancelled.as_mut().poll(&mut Context::from_waker(&waker)),
+            Poll::Pending
+        ));
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
+        assert!(wake.calls.load(Ordering::SeqCst) > 0);
+        assert!(wake.unlocked.load(Ordering::SeqCst));
+        assert!(matches!(demand.await, Err(IdleWatchdogError::Timeout(_))));
+    }
 }

@@ -25,6 +25,10 @@ struct State {
     other_user: bool,
     probe_all_exited: bool,
     abort_after_lock: Option<(Arc<AbortController>, SharedError)>,
+    identity_failure: bool,
+    pause_write: Option<FileKind>,
+    pause_remove: Option<FileKind>,
+    paused: Option<tokio::sync::oneshot::Sender<PathBuf>>,
 }
 #[derive(Default)]
 struct Fake(Mutex<State>);
@@ -75,6 +79,28 @@ impl Runtime for Fake {
         tokio::fs::rename(from, to).await
     }
     async fn remove(&self, path: &Path) -> io::Result<()> {
+        let kind = if claim(path) {
+            FileKind::Claim
+        } else if lock(path) {
+            FileKind::Lock
+        } else {
+            FileKind::Temp
+        };
+        let paused = {
+            let mut state = self.0.lock().unwrap();
+            if state.pause_remove == Some(kind) {
+                state.pause_remove = None;
+                Some(state.paused.take())
+            } else {
+                None
+            }
+        };
+        if let Some(notify) = paused {
+            if let Some(notify) = notify {
+                let _ = notify.send(path.into());
+            }
+            std::future::pending::<()>().await;
+        }
         let fail = {
             let s = self.0.lock().unwrap();
             claim(path) && s.claim_removal_fails || lock(path) && s.lock_removal_fails
@@ -84,7 +110,8 @@ impl Runtime for Fake {
         }
         remove(path).await
     }
-    async fn write_new(&self, path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
+    async fn write_new(&self, owner: &FileGuard, mode: u32) -> io::Result<()> {
+        let path = &owner.shared.path;
         let (failure, release) = {
             let mut s = self.0.lock().unwrap();
             if claim(path) {
@@ -109,7 +136,8 @@ impl Runtime for Fake {
                 kind.into()
             });
         }
-        write_new(path, data, mode).await?;
+        let identity_failure = self.0.lock().unwrap().identity_failure;
+        write_new(owner, mode, identity_failure).await?;
         if lock(path) {
             let abort = self.0.lock().unwrap().abort_after_lock.take();
             if let Some((controller, reason)) = abort {
@@ -123,6 +151,21 @@ impl Runtime for Fake {
                 let (lock_name, _) = name.split_once(".takeover-").unwrap();
                 tokio::fs::write(lock_name, record).await?;
             }
+        }
+        let paused = {
+            let mut state = self.0.lock().unwrap();
+            if state.pause_write == Some(owner.shared.kind) {
+                state.pause_write = None;
+                Some(state.paused.take())
+            } else {
+                None
+            }
+        };
+        if let Some(notify) = paused {
+            if let Some(notify) = notify {
+                let _ = notify.send(path.clone());
+            }
+            std::future::pending::<()>().await;
         }
         Ok(())
     }
@@ -867,8 +910,8 @@ async fn dropping_a_timed_out_operation_releases_lock_for_the_next_writer() {
 fn dropped_guard_does_not_remove_a_changed_holder_record() {
     let (_dir, p) = setup();
     let path = sibling(&p, ".lock");
-    std::fs::write(&path, record(std::process::id())).unwrap();
-    let guard = LockGuard::new(&path);
+    let guard = FileGuard::new(&path, record(std::process::id()).as_bytes(), FileKind::Lock);
+    create_and_write(guard.shared.clone(), 0o600, false).unwrap();
     std::fs::write(&path, "successor\n").unwrap();
     drop(guard);
     assert_eq!(std::fs::read_to_string(path).unwrap(), "successor\n");
@@ -878,8 +921,8 @@ fn dropped_guard_does_not_remove_a_changed_holder_record() {
 fn dropped_guard_does_not_remove_successor_inode_with_same_pid() {
     let (_dir, p) = setup();
     let path = sibling(&p, ".lock");
-    std::fs::write(&path, record(std::process::id())).unwrap();
-    let guard = LockGuard::new(&path);
+    let guard = FileGuard::new(&path, record(std::process::id()).as_bytes(), FileKind::Lock);
+    create_and_write(guard.shared.clone(), 0o600, false).unwrap();
     std::fs::remove_file(&path).unwrap();
     std::fs::write(&path, record(std::process::id())).unwrap();
     drop(guard);
@@ -891,7 +934,10 @@ fn dropped_guard_does_not_remove_successor_inode_with_same_pid() {
 #[cfg(unix)]
 #[test]
 fn native_parent_process_is_not_proven_gone() {
-    let parent = rustix::process::getppid().unwrap();
+    let Some(parent) = rustix::process::getppid() else {
+        eprintln!("skipped parent PID probe: no visible parent (PID 1 or another PID namespace)");
+        return;
+    };
     assert!(!default_process_exited(parent.as_raw_nonzero().get() as u32).unwrap());
 }
 #[cfg(unix)]
@@ -915,7 +961,13 @@ fn transient_rename_mapping_accepts_exactly_the_named_unix_errno_codes() {
             errno.raw_os_error()
         )));
     }
-    for errno in [rustix::io::Errno::IO, rustix::io::Errno::NOENT] {
+    for errno in [
+        rustix::io::Errno::IO,
+        rustix::io::Errno::NOENT,
+        rustix::io::Errno::AGAIN,
+        rustix::io::Errno::EXIST,
+        rustix::io::Errno::NOTEMPTY,
+    ] {
         assert!(!transient(&io::Error::from_raw_os_error(
             errno.raw_os_error()
         )));
@@ -935,4 +987,232 @@ fn transient_rename_mapping_uses_only_documented_windows_codes() {
     assert!(!transient(&io::Error::from(
         io::ErrorKind::PermissionDenied
     )));
+}
+
+fn pause_write(fake: &Fake, kind: FileKind) -> tokio::sync::oneshot::Receiver<PathBuf> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut state = fake.0.lock().unwrap();
+    state.pause_write = Some(kind);
+    state.paused = Some(tx);
+    rx
+}
+fn pause_remove(fake: &Fake, kind: FileKind) -> tokio::sync::oneshot::Receiver<PathBuf> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut state = fake.0.lock().unwrap();
+    state.pause_remove = Some(kind);
+    state.paused = Some(tx);
+    rx
+}
+async fn drop_at_pause<F: Future>(
+    future: F,
+    paused: tokio::sync::oneshot::Receiver<PathBuf>,
+) -> PathBuf
+where
+    F::Output: std::fmt::Debug,
+{
+    let mut future = Box::pin(future);
+    let path = tokio::select! {
+        result = &mut future => panic!("operation completed before injected pause: {result:?}"),
+        path = paused => path.unwrap(),
+    };
+    drop(future);
+    path
+}
+fn takeover_claim(target: &Path, held: &str) -> PathBuf {
+    let hash = Sha256::digest(held.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    sibling(target, &format!(".lock.takeover-{}", &hash[..16]))
+}
+
+async fn dropped_pending_lock_write(identity_failure: bool) {
+    let (dir, target) = setup();
+    let fake = Fake::default();
+    fake.0.lock().unwrap().identity_failure = identity_failure;
+    let paused = pause_write(&fake, FileKind::Lock);
+    let path = drop_at_pause(
+        with_file_lock_with(
+            &fake,
+            &target,
+            || async {
+                panic!("operation ran before write returned");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+            options(0),
+        ),
+        paused,
+    )
+    .await;
+    assert_eq!(path, sibling(&target, ".lock"));
+    assert!(!path.exists());
+    assert_eq!(
+        with_file_lock_with(&fake, &target, || async { Ok("next") }, options(0))
+            .await
+            .unwrap(),
+        "next"
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+#[tokio::test]
+async fn drop_during_lock_write_releases_lock_and_next_caller_acquires() {
+    dropped_pending_lock_write(false).await;
+}
+#[tokio::test]
+async fn failed_identity_read_falls_back_to_holder_record_on_drop() {
+    dropped_pending_lock_write(true).await;
+}
+
+#[tokio::test]
+async fn drop_during_claim_write_releases_claim_and_allows_takeover() {
+    let (dir, target) = setup();
+    let fake = Fake::default();
+    let held_record = record(EXITED_PID);
+    held(&target, &held_record).await;
+    let paused = pause_write(&fake, FileKind::Claim);
+    let path = drop_at_pause(
+        with_file_lock_with(&fake, &target, || async { Ok(()) }, options(0)),
+        paused,
+    )
+    .await;
+    assert_eq!(path, takeover_claim(&target, &held_record));
+    assert!(!path.exists());
+    assert_eq!(
+        read_lock_record(&sibling(&target, ".lock")).await.unwrap(),
+        held_record
+    );
+    assert_eq!(
+        with_file_lock_with(&fake, &target, || async { Ok("next") }, options(0))
+            .await
+            .unwrap(),
+        "next"
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+#[tokio::test]
+async fn drop_during_takeover_remove_releases_claim_and_allows_takeover() {
+    let (dir, target) = setup();
+    let fake = Fake::default();
+    let held_record = record(EXITED_PID);
+    held(&target, &held_record).await;
+    let paused = pause_remove(&fake, FileKind::Lock);
+    drop_at_pause(
+        with_file_lock_with(&fake, &target, || async { Ok(()) }, options(0)),
+        paused,
+    )
+    .await;
+    assert!(!takeover_claim(&target, &held_record).exists());
+    assert_eq!(
+        read_lock_record(&sibling(&target, ".lock")).await.unwrap(),
+        held_record
+    );
+    assert_eq!(
+        with_file_lock_with(&fake, &target, || async { Ok("next") }, options(0))
+            .await
+            .unwrap(),
+        "next"
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+#[tokio::test]
+async fn drop_during_temp_write_removes_temp_and_preserves_target() {
+    let (dir, target) = setup();
+    let fake = Fake::default();
+    std::fs::write(&target, "old").unwrap();
+    let paused = pause_write(&fake, FileKind::Temp);
+    let path = drop_at_pause(
+        write_file_atomic_with(&fake, &target, b"new", write_options()),
+        paused,
+    )
+    .await;
+    assert!(!path.exists());
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "old");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+#[tokio::test]
+async fn drop_during_temp_cleanup_removes_temp() {
+    let (dir, target) = setup();
+    let fake = Fake::default();
+    fake.0
+        .lock()
+        .unwrap()
+        .rename_failures
+        .push_back(io::ErrorKind::Other);
+    let paused = pause_remove(&fake, FileKind::Temp);
+    let path = drop_at_pause(
+        write_file_atomic_with(&fake, &target, b"new", write_options()),
+        paused,
+    )
+    .await;
+    assert!(!path.exists());
+    assert!(!target.exists());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn a_blocking_creator_finishing_after_cancellation_removes_its_file() {
+    let (_dir, target) = setup();
+    let path = sibling(&target, ".lock");
+    let guard = FileGuard::new(&path, record(std::process::id()).as_bytes(), FileKind::Lock);
+    let owner = guard.shared.clone();
+    let (release, resume) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        resume.recv().unwrap();
+        create_and_write(owner, 0o600, false)
+    });
+    drop(guard);
+    release.send(()).unwrap();
+    assert_eq!(
+        worker.join().unwrap().unwrap_err().kind(),
+        io::ErrorKind::Interrupted
+    );
+    assert!(!path.exists());
+}
+#[test]
+fn drop_after_exclusive_create_removes_an_empty_record_even_without_identity() {
+    for fail_identity in [false, true] {
+        let (_dir, target) = setup();
+        let path = sibling(&target, ".lock");
+        let guard = FileGuard::new(&path, record(std::process::id()).as_bytes(), FileKind::Lock);
+        let file = Arc::new(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap(),
+        );
+        let metadata = if fail_identity {
+            None
+        } else {
+            file.metadata().ok()
+        };
+        assert!(guard.shared.created(file.clone(), metadata));
+        drop(guard);
+        assert!(!path.exists());
+        drop(file);
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn abort_wins_when_wait_timer_and_signal_are_both_ready() {
+    let controller = AbortController::new();
+    let reason = SharedError::new(std::io::Error::other("cancelled"));
+    let options = FileLockOptions {
+        signal: Some(controller.signal()),
+        ..Default::default()
+    };
+    let mut waiting = Box::pin(wait(10, &options));
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx).is_pending()))
+            .await
+    );
+    tokio::time::advance(Duration::from_millis(10)).await;
+    controller.abort_with(reason.clone());
+    let error = waiting.await.unwrap_err();
+    assert!(is_abort_error(error.as_ref()));
+    assert!(
+        SharedError::of(error.source().unwrap())
+            .unwrap()
+            .ptr_eq(&reason)
+    );
 }

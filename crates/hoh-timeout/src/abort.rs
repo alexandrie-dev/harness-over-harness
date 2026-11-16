@@ -101,8 +101,9 @@ pub struct AbortSignal {
 }
 impl fmt::Debug for AbortSignal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let reason = lock(&self.inner.state).reason.clone();
         f.debug_struct("AbortSignal")
-            .field("reason", &self.reason())
+            .field("reason", &reason)
             .finish()
     }
 }
@@ -155,9 +156,9 @@ impl AbortSignal {
         let event = match &self.inner.origin {
             Origin::Controller => None,
             Origin::Timer { at, reason } => (now >= *at
-                && cutoff.is_none_or(|cutoff| *at < cutoff))
+                && cutoff.is_none_or(|cutoff| *at <= cutoff))
             .then(|| (reason.clone(), *at)),
-            Origin::Token { token, reason } => (cutoff.is_none_or(|cutoff| now < cutoff)
+            Origin::Token { token, reason } => (cutoff.is_none_or(|cutoff| now <= cutoff)
                 && token.is_cancelled())
             .then(|| (reason.clone(), now)),
         };
@@ -167,7 +168,7 @@ impl AbortSignal {
             for source in &self.inner.sources {
                 source.refresh_before(cutoff);
                 if let Some((reason, at)) = source.event()
-                    && cutoff.is_none_or(|cutoff| at < cutoff)
+                    && cutoff.is_none_or(|cutoff| at <= cutoff)
                 {
                     self.abort_shared_at(reason, at);
                     break;
@@ -191,7 +192,7 @@ impl AbortSignal {
                 .filter_map(Weak::upgrade)
                 .collect::<Vec<_>>()
         };
-        // Only an earlier event may displace this one, including unobserved elapsed timers.
+        // An already-due event, including one at this instant, precedes this later abort call.
         for follower in &followers {
             Self {
                 inner: follower.clone(),
@@ -358,6 +359,26 @@ impl AbortController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test(start_paused = true)]
+    async fn debug_does_not_refresh_an_elapsed_timer() {
+        let signal = AbortSignal::timeout(10.0);
+        tokio::time::advance(std::time::Duration::from_millis(10)).await;
+        assert!(lock(&signal.inner.state).reason.is_none());
+        assert!(format!("{signal:?}").contains("AbortSignal"));
+        assert!(lock(&signal.inner.state).reason.is_none());
+        assert!(signal.aborted());
+    }
+    #[test]
+    fn elapsed_timer_reads_need_no_tokio_runtime() {
+        let mut signal = AbortSignal::timeout(10.0);
+        if let Origin::Timer { at, .. } = &mut Arc::get_mut(&mut signal.inner).unwrap().origin {
+            *at = Instant::now() - std::time::Duration::from_millis(1);
+        }
+        assert!(signal.aborted());
+        let reason = signal.reason().unwrap();
+        assert!(reason.downcast_ref::<DomTimeoutError>().is_some());
+        assert!(signal.throw_if_aborted().unwrap_err().ptr_eq(&reason));
+    }
     #[tokio::test(start_paused = true)]
     async fn dropped_signals_and_waits_leave_no_sources_tasks_or_timers() {
         let token = CancellationToken::new();

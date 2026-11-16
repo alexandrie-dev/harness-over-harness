@@ -780,3 +780,141 @@ async fn dropping_deadline_disposes_timer_even_if_signal_survives() {
     elapse(100).await;
     assert!(!signal.aborted());
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_due_timer_wins_before_a_later_abort_at_the_exact_same_instant() {
+    let timer = AbortSignal::timeout(10.0);
+    let controller = AbortController::new();
+    let result = AbortSignal::any([controller.signal(), timer.clone()]);
+    tokio::time::advance(Duration::from_millis(10)).await;
+    controller.abort();
+    assert!(result.reason().unwrap().ptr_eq(&timer.reason().unwrap()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn nested_any_keeps_first_reason_in_both_input_and_abort_orders() {
+    for controller_first_in_array in [false, true] {
+        for controller_wins in [false, true] {
+            let timer = AbortSignal::timeout(10.0);
+            let inner = AbortSignal::any([timer.clone()]);
+            let controller = AbortController::new();
+            let result = AbortSignal::any(if controller_first_in_array {
+                [controller.signal(), inner]
+            } else {
+                [inner, controller.signal()]
+            });
+            tokio::time::advance(Duration::from_millis(if controller_wins { 5 } else { 20 })).await;
+            controller.abort();
+            let expected = if controller_wins {
+                controller.signal().reason().unwrap()
+            } else {
+                timer.reason().unwrap()
+            };
+            assert!(result.reason().unwrap().ptr_eq(&expected));
+            tokio::time::advance(Duration::from_millis(30)).await;
+            assert!(result.reason().unwrap().ptr_eq(&expected));
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn any_outlives_external_source_handles_and_keeps_its_reason() {
+    let result = {
+        let timer = AbortSignal::timeout(10.0);
+        AbortSignal::any([AbortSignal::any([timer])])
+    };
+    tokio::time::advance(Duration::from_millis(10)).await;
+    let reason = result.reason().unwrap();
+    assert!(reason.downcast_ref::<DomTimeoutError>().is_some());
+    assert!(result.cancelled().await.ptr_eq(&reason));
+    assert!(result.throw_if_aborted().unwrap_err().ptr_eq(&reason));
+}
+
+#[test]
+fn concurrent_aborts_choose_one_reason_for_every_observer() {
+    let controllers = (0..8)
+        .map(|_| Arc::new(AbortController::new()))
+        .collect::<Vec<_>>();
+    let reasons = (0..8)
+        .map(|i| SharedError::new(std::io::Error::other(format!("reason {i}"))))
+        .collect::<Vec<_>>();
+    let result = AbortSignal::any(controllers.iter().map(|c| c.signal()));
+    let start = Arc::new(std::sync::Barrier::new(13));
+    let finished = Arc::new(std::sync::Barrier::new(5));
+    let writers = controllers
+        .iter()
+        .zip(&reasons)
+        .map(|(controller, reason)| {
+            let controller = controller.clone();
+            let reason = reason.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                controller.abort_with(reason);
+            })
+        })
+        .collect::<Vec<_>>();
+    let readers = (0..4)
+        .map(|_| {
+            let result = result.clone();
+            let start = start.clone();
+            let finished = finished.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                let mut seen: Option<SharedError> = None;
+                let mut consistent = true;
+                for _ in 0..32 {
+                    if let Some(reason) = result.reason() {
+                        if let Some(first) = &seen {
+                            consistent &= first.ptr_eq(&reason);
+                        }
+                        seen = Some(reason);
+                    }
+                }
+                finished.wait();
+                assert!(consistent);
+                let reason = result.reason().unwrap();
+                if let Some(first) = seen {
+                    assert!(first.ptr_eq(&reason));
+                }
+                assert!(result.aborted());
+                assert!(result.throw_if_aborted().unwrap_err().ptr_eq(&reason));
+                reason
+            })
+        })
+        .collect::<Vec<_>>();
+    start.wait();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    finished.wait();
+    let winner = result.reason().unwrap();
+    assert!(reasons.iter().any(|reason| reason.ptr_eq(&winner)));
+    for reader in readers {
+        assert!(reader.join().unwrap().ptr_eq(&winner));
+    }
+}
+
+#[test]
+fn creating_and_reading_timeout_and_token_signals_needs_no_runtime() {
+    let timer = AbortSignal::timeout(1.0);
+    let _ = timer.aborted();
+    let observed = timer.reason();
+    let thrown = timer.throw_if_aborted().err();
+    if let Some(reason) = observed {
+        assert!(thrown.as_ref().unwrap().ptr_eq(&reason));
+    }
+    if let Some(reason) = thrown {
+        assert!(reason.downcast_ref::<DomTimeoutError>().is_some());
+    }
+    let token = tokio_util::sync::CancellationToken::new();
+    let signal = AbortSignal::from_token(token.clone());
+    assert!(!signal.aborted());
+    assert!(signal.reason().is_none());
+    assert!(signal.throw_if_aborted().is_ok());
+    token.cancel();
+    assert!(signal.aborted());
+    let reason = signal.reason().unwrap();
+    assert!(is_abort_error(&reason));
+    assert!(signal.throw_if_aborted().unwrap_err().ptr_eq(&reason));
+}

@@ -6,10 +6,10 @@ use std::{
     future::Future,
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{io::AsyncWriteExt, time::Instant};
+use tokio::time::Instant;
 
 pub struct WriteFileAtomicOptions {
     pub mode: u32,
@@ -68,8 +68,8 @@ trait Runtime {
     async fn remove(&self, path: &Path) -> io::Result<()> {
         remove(path).await
     }
-    async fn write_new(&self, path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
-        write_new(path, data, mode).await
+    async fn write_new(&self, owner: &FileGuard, mode: u32) -> io::Result<()> {
+        write_new(owner, mode, false).await
     }
     fn exited(&self, pid: u32, options: &FileLockOptions) -> io::Result<bool> {
         if let Some(probe) = &options.process_exited {
@@ -109,25 +109,178 @@ fn sibling(filename: &Path, suffix: &str) -> PathBuf {
     name.push(suffix);
     name.into()
 }
-async fn remove(path: &Path) -> io::Result<()> {
-    match tokio::fs::remove_file(path).await {
+fn remove_file(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
 }
-async fn write_new(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
-    let mut options = tokio::fs::OpenOptions::new();
+async fn remove(path: &Path) -> io::Result<()> {
+    remove_file(path)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileKind {
+    Lock,
+    Claim,
+    Temp,
+}
+
+struct CreatedFile {
+    file: Option<Arc<std::fs::File>>,
+    metadata: Option<std::fs::Metadata>,
+    writing: bool,
+}
+#[derive(Default)]
+struct OwnershipState {
+    cancelled: bool,
+    created: Option<CreatedFile>,
+}
+struct FileOwnership {
+    path: PathBuf,
+    data: Arc<[u8]>,
+    kind: FileKind,
+    state: Mutex<OwnershipState>,
+}
+fn ownership_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+fn same_file(original: &std::fs::Metadata, current: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        original.dev() == current.dev() && original.ino() == current.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (original, current);
+        true
+    }
+}
+impl FileOwnership {
+    fn cleanup(&self, state: &mut OwnershipState) {
+        let Some(created) = &mut state.created else {
+            return;
+        };
+        let mut proven_inode = false;
+        if let Some(original) = &created.metadata {
+            match std::fs::symlink_metadata(&self.path) {
+                Ok(current) if !same_file(original, &current) => return,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    state.created = None;
+                    return;
+                }
+                Err(_) => {}
+                Ok(_) => proven_inode = cfg!(unix),
+            }
+        } else {
+            // No identity: free the creator descriptor before the record read (including EMFILE).
+            created.file.take();
+        }
+        let may_remove = proven_inode && (created.writing || self.kind == FileKind::Temp)
+            || std::fs::read(&self.path).ok().is_some_and(|data| {
+                data.as_slice() == self.data.as_ref()
+                    || created.writing && self.data.starts_with(&data)
+            });
+        if may_remove && remove_file(&self.path).is_ok() {
+            state.created = None;
+        }
+    }
+    fn created(&self, file: Arc<std::fs::File>, metadata: Option<std::fs::Metadata>) -> bool {
+        let mut state = ownership_lock(&self.state);
+        state.created = Some(CreatedFile {
+            file: Some(file),
+            metadata,
+            writing: true,
+        });
+        if state.cancelled {
+            self.cleanup(&mut state);
+            return false;
+        }
+        true
+    }
+    fn finished_write(&self, succeeded: bool) {
+        let mut state = ownership_lock(&self.state);
+        if succeeded && let Some(created) = &mut state.created {
+            created.writing = false;
+        }
+        if state.cancelled {
+            self.cleanup(&mut state);
+        }
+    }
+}
+struct FileGuard {
+    shared: Arc<FileOwnership>,
+    armed: bool,
+}
+impl FileGuard {
+    // Exists before any file-creating await; the worker registers ownership at exclusive creation.
+    fn new(path: &Path, data: &[u8], kind: FileKind) -> Self {
+        Self {
+            shared: Arc::new(FileOwnership {
+                path: path.into(),
+                data: data.into(),
+                kind,
+                state: Mutex::default(),
+            }),
+            armed: true,
+        }
+    }
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+impl Drop for FileGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut state = ownership_lock(&self.shared.state);
+        state.cancelled = true;
+        // Drop cannot await. A still-running creator observes cancellation and repeats cleanup.
+        self.shared.cleanup(&mut state);
+    }
+}
+fn create_and_write(owner: Arc<FileOwnership>, mode: u32, fail_identity: bool) -> io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
-    options.mode(mode);
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(mode);
+    }
     #[cfg(not(unix))]
     let _ = mode;
-    let mut file = options.open(path).await?;
-    file.write_all(data).await?;
-    // Node writeFile closes the descriptor before the rename/exclusive-create call returns.
-    file.flush().await?;
+    let file = Arc::new(options.open(&owner.path)?);
+    let metadata = if fail_identity {
+        None
+    } else {
+        file.metadata().ok()
+    };
+    if !owner.created(file.clone(), metadata) {
+        drop(file);
+        owner.finished_write(false);
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "file creation was cancelled",
+        ));
+    }
+    let result = {
+        let mut writer = file.as_ref();
+        writer.write_all(&owner.data).and_then(|()| writer.flush())
+    };
     drop(file);
-    Ok(())
+    owner.finished_write(result.is_ok());
+    result
+}
+async fn write_new(owner: &FileGuard, mode: u32, fail_identity: bool) -> io::Result<()> {
+    let shared = owner.shared.clone();
+    tokio::task::spawn_blocking(move || create_and_write(shared, mode, fail_identity))
+        .await
+        .map_err(|error| io::Error::other(error.to_string()))?
 }
 fn permission(error: &io::Error) -> bool {
     #[cfg(unix)]
@@ -217,8 +370,9 @@ async fn write_file_atomic_with(
             bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
         ),
     );
+    let mut guard = FileGuard::new(&temp, content, FileKind::Temp);
     let result = async {
-        runtime.write_new(&temp, content, options.mode).await?;
+        runtime.write_new(&guard, options.mode).await?;
         rename_atomic_temp(runtime, &temp, filename).await
     }
     .await;
@@ -226,6 +380,7 @@ async fn write_file_atomic_with(
         runtime.remove(&temp).await?;
         return Err(error);
     }
+    guard.disarm();
     Ok(())
 }
 fn holder_exited(
@@ -269,14 +424,12 @@ async fn take_over_exited_lock(
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     let claim = sibling(path, &format!(".takeover-{}", &hash[..16]));
-    match runtime
-        .write_new(
-            &claim,
-            format!("{}\n", std::process::id()).as_bytes(),
-            0o600,
-        )
-        .await
-    {
+    let mut guard = FileGuard::new(
+        &claim,
+        format!("{}\n", std::process::id()).as_bytes(),
+        FileKind::Claim,
+    );
+    match runtime.write_new(&guard, 0o600).await {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists || permission(&error) => {
             return Ok(false);
         }
@@ -292,7 +445,9 @@ async fn take_over_exited_lock(
         Ok(runtime.remove(path).await.is_ok())
     }
     .await;
-    let _ = runtime.remove(&claim).await;
+    if runtime.remove(&claim).await.is_ok() {
+        guard.disarm();
+    }
     result
 }
 fn check_signal(options: &FileLockOptions) -> Result<(), BoxError> {
@@ -309,8 +464,9 @@ async fn wait(delay: u64, options: &FileLockOptions) -> Result<(), BoxError> {
         }
     };
     tokio::select! {
-        () = tokio::time::sleep(Duration::from_millis(delay)) => Ok(()),
+        biased;
         reason = cancelled => Err(AbortError::new("The operation was aborted").with_cause(reason).into()),
+        () = tokio::time::sleep(Duration::from_millis(delay)) => Ok(()),
     }
 }
 pub async fn with_file_lock<T, F: Future<Output = Result<T, BoxError>>>(
@@ -321,62 +477,6 @@ pub async fn with_file_lock<T, F: Future<Output = Result<T, BoxError>>>(
     with_file_lock_with(&SystemRuntime, filename.as_ref(), operation, options).await
 }
 
-struct LockGuard {
-    path: PathBuf,
-    record: Vec<u8>,
-    armed: bool,
-    #[cfg(unix)]
-    inode: Option<(u64, u64)>,
-    #[cfg(unix)]
-    _holder: Option<std::fs::File>,
-}
-impl LockGuard {
-    fn new(path: &Path) -> Self {
-        #[cfg(unix)]
-        let holder = std::fs::File::open(path).ok();
-        #[cfg(unix)]
-        let inode = {
-            use std::os::unix::fs::MetadataExt;
-            holder
-                .as_ref()
-                .and_then(|file| file.metadata().ok())
-                .map(|metadata| (metadata.dev(), metadata.ino()))
-        };
-        Self {
-            path: path.into(),
-            record: format!("{}\n", std::process::id()).into_bytes(),
-            armed: true,
-            #[cfg(unix)]
-            inode,
-            // Keep the original inode allocated until cleanup, preventing same-PID inode reuse.
-            #[cfg(unix)]
-            _holder: holder,
-        }
-    }
-}
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if std::fs::symlink_metadata(&self.path)
-                .ok()
-                .map(|metadata| (metadata.dev(), metadata.ino()))
-                != self.inode
-                || self.inode.is_none()
-            {
-                return;
-            }
-        }
-        if std::fs::read(&self.path).ok().as_deref() == Some(self.record.as_slice()) {
-            // Drop cannot await: release this holder's record synchronously, best effort.
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
 async fn with_file_lock_with<T, F: Future<Output = Result<T, BoxError>>>(
     runtime: &impl Runtime,
     filename: &Path,
@@ -387,17 +487,15 @@ async fn with_file_lock_with<T, F: Future<Output = Result<T, BoxError>>>(
     let deadline = Instant::now() + Duration::from_millis(options.wait_ms.unwrap_or(2000));
     let mut delay = 20;
     let mut retried_permission = false;
-    loop {
+    let mut guard = loop {
         check_signal(&options)?;
-        match runtime
-            .write_new(
-                &lock_path,
-                format!("{}\n", std::process::id()).as_bytes(),
-                0o600,
-            )
-            .await
-        {
-            Ok(()) => break,
+        let candidate = FileGuard::new(
+            &lock_path,
+            format!("{}\n", std::process::id()).as_bytes(),
+            FileKind::Lock,
+        );
+        match runtime.write_new(&candidate, 0o600).await {
+            Ok(()) => break candidate,
             Err(error) => {
                 let contention = error.kind() == io::ErrorKind::AlreadyExists
                     || permission(&error) && tokio::fs::symlink_metadata(&lock_path).await.is_ok();
@@ -416,14 +514,13 @@ async fn with_file_lock_with<T, F: Future<Output = Result<T, BoxError>>>(
         }
         wait(delay, &options).await?;
         delay = (delay * 2).min(200);
-    }
-    let mut guard = LockGuard::new(&lock_path);
+    };
     let result = match check_signal(&options) {
         Ok(()) => operation().await,
         Err(error) => Err(error),
     };
     runtime.remove(&lock_path).await?;
-    guard.armed = false;
+    guard.disarm();
     result
 }
 
