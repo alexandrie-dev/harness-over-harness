@@ -29,7 +29,7 @@ fn client_builder_uses_fetch_transport_defaults() {
         DIRECT_POLICY,
         resolve_proxy_policy(&lookup(&env(&[("HTTP_PROXY", AUTHENTICATED)]))).policy,
     ] {
-        let builder = route_client_builder(policy, DispatcherOptions::default());
+        let builder = route_client_builder(policy, DispatcherOptions::default()).unwrap();
         let settings = format!("{builder:?}");
         assert!(settings.contains("connect_timeout: 10s"));
         assert!(settings.contains("redirect_policy: Policy(Limit(20))"));
@@ -145,8 +145,121 @@ fn rejects_a_url_the_policy_accepts_but_reqwests_uri_matcher_would_drop() {
     let per_request =
         hoh_http_proxy::create_route_dispatcher(&lookup(&values), DispatcherOptions::default())
             .unwrap();
+    assert_eq!(per_request.diagnostics().len(), 1);
+    assert_eq!(
+        per_request.diagnostics()[0].kind,
+        hoh_http_proxy::policy::ProxyDiagnosticKind::Invalid
+    );
+    assert_eq!(per_request.diagnostics()[0].origin, name);
+    assert_eq!(per_request.diagnostics()[0].message, reported[0]);
     assert!(matches!(
         per_request.route_for(&Url::parse("http://origin.test/").unwrap()),
         hoh_http_proxy::ProxyRoute::Direct { .. }
     ));
+}
+
+#[test]
+fn rejects_authority_characters_accepted_by_url_but_not_http_uri() {
+    for character in ['"', '`', '{', '}'] {
+        let proxy = format!("http://proxy{character}name.test:3128/");
+        let parsed = Url::parse(&proxy).unwrap();
+        assert!(parsed.as_str().parse::<http::Uri>().is_err());
+        let values = env(&[("HTTPS_PROXY", &proxy), ("ALL_PROXY", AUTHENTICATED)]);
+        assert_eq!(
+            resolve_proxy_policy(&lookup(&values))
+                .policy
+                .https_proxy
+                .as_deref(),
+            Some(proxy.as_str())
+        );
+        let mut reported = Vec::new();
+        let installed = ProxyInstallation::with_inherited_environment(
+            &lookup(&values),
+            Default::default(),
+            |message| reported.push(message.to_owned()),
+            DispatcherOptions::default(),
+        )
+        .unwrap();
+        let name = if cfg!(windows) {
+            "https_proxy"
+        } else {
+            "HTTPS_PROXY"
+        };
+        assert_eq!(
+            reported,
+            [format!("{name} is not a valid URL; connecting directly")]
+        );
+        assert_eq!(installed.policy().https_proxy, None);
+        assert_eq!(
+            installed.policy().http_proxy.as_deref(),
+            Some(AUTHENTICATED)
+        );
+        assert!(matches!(
+            proxy_route_for(
+                Some(&installed),
+                &Url::parse("https://origin.test/").unwrap()
+            ),
+            hoh_http_proxy::ProxyRoute::Direct { .. }
+        ));
+        let dispatcher =
+            hoh_http_proxy::create_route_dispatcher(&lookup(&values), DispatcherOptions::default())
+                .unwrap();
+        assert_eq!(dispatcher.diagnostics().len(), 1);
+        assert_eq!(dispatcher.diagnostics()[0].message, reported[0]);
+        assert!(matches!(
+            dispatcher.route_for(&Url::parse("https://origin.test/").unwrap()),
+            hoh_http_proxy::ProxyRoute::Direct { .. }
+        ));
+    }
+}
+
+#[test]
+fn policy_client_builder_refuses_unusable_urls_before_building_a_client() {
+    for proxy in [
+        format!("http://proxy.test/{}", "a".repeat(65_535)),
+        "http://proxy{bad}.test/".to_owned(),
+    ] {
+        let policy = resolve_proxy_policy(&lookup(&env(&[("HTTP_PROXY", &proxy)]))).policy;
+        let error = route_client_builder(policy, DispatcherOptions::default()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "http_proxy is not a valid URL; connecting directly"
+        );
+    }
+}
+
+#[test]
+fn transport_validation_preserves_normalization_credentials_and_uri_length_boundary() {
+    let prefix = "http://proxy.test/";
+    let maximum = format!("{prefix}{}", "a".repeat(65_534 - prefix.len()));
+    let mut accepted = vec![maximum];
+    accepted.extend(
+        [
+            " HTTP://USER:p%40ss@PROXY.test:80/path?query=1#fragment ",
+            "https://user:password@[::1]:3128/",
+            "http://例子.test/",
+            "http://proxy_name.test/",
+            "http://proxy.test/a|b^c?query=`{}",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    for proxy in accepted {
+        let values = env(&[("HTTP_PROXY", &proxy)]);
+        let policy = resolve_proxy_policy(&lookup(&values)).policy;
+        let mut reported = Vec::new();
+        let installed = ProxyInstallation::with_inherited_environment(
+            &lookup(&values),
+            Default::default(),
+            |message| reported.push(message.to_owned()),
+            DispatcherOptions::default(),
+        )
+        .unwrap();
+        assert!(reported.is_empty());
+        assert_eq!(installed.policy(), &policy);
+        route_client_builder(policy, DispatcherOptions::default())
+            .unwrap()
+            .build()
+            .unwrap();
+    }
 }

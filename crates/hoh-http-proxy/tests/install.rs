@@ -42,6 +42,7 @@ async fn connects_directly_when_the_bypass_list_covers_the_target() {
     let origin = Server::start("DIRECT").await;
     let (installation, _) = install(&[("HTTP_PROXY", &proxy.url()), ("NO_PROXY", "origin.test")]);
     let client = route_client_builder(installation.policy().clone(), DispatcherOptions::default())
+        .unwrap()
         .resolve("origin.test", origin.address)
         .build()
         .unwrap();
@@ -204,6 +205,7 @@ async fn keeps_a_scheme_direct_when_the_policy_refused_the_proxy_the_user_named_
     ]);
     // A local plaintext origin rejects the TLS handshake. DNS is overridden so no resolver is used.
     let client = route_client_builder(installation.policy().clone(), DispatcherOptions::default())
+        .unwrap()
         .resolve("refused-scheme.invalid", origin.address)
         .timeout(std::time::Duration::from_millis(200))
         .build()

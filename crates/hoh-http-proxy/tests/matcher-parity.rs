@@ -17,6 +17,7 @@ async fn parity(no_proxy: &str, path: &str, bypassed: bool) {
     let policy = resolve_proxy_policy(&lookup(&values)).policy;
     let url = Url::parse(&format!("http://probe.invalid{path}")).unwrap();
     let client = route_client_builder(policy.clone(), DispatcherOptions::default())
+        .unwrap()
         .resolve("probe.invalid", origin.address)
         .build()
         .unwrap();

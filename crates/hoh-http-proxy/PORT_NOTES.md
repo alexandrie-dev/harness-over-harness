@@ -11,18 +11,20 @@
 | `tests/install.spec.ts` | `tests/install.rs` | Все 24 исходных случая представлены. `removes_an_environment_name…` и `restores_the_dispatcher…` проверяют неизменность исходного снимка/внешней установки при layering и Drop: глобального состояния для восстановления нет. Identity транспорта проверяется двумя запросами через общий keep-alive сокет (один accept); in-flight lifetime — отдельным дополнительным случаем. В трёх случаях проверен overlay, но не запуск Node, см. ниже. |
 | `tests/install-http1.spec.ts` | `tests/install-http1.rs` | Все 7 случаев проверяют options/http1_only установки, dispatcher и созданных ими routes, включая direct-слой поверх proxy. Some(true) отличается от None в самом сохранённом record; ClientBuilder, построенный отдельно тестом, больше не служит доказательством. |
 | `tests/matcher-parity.spec.ts` | `tests/matcher-parity.rs` | Все 9 случаев. Прямой путь использует loopback origin и DNS override вместо внешнего DNS и ожидаемого отказа. |
-| Дополнительные проверки fix-round | `tests/transport.rs`, unit test в `src/install.rs` | Настройки fetch-транспорта, Debug трёх публичных типов, не-Unicode snapshot без изменения окружения процесса. Регрессия oversized proxy URL пока красная: ждёт workspace-зависимость http, см. вопросы. |
+| Дополнительные проверки fix-round | `tests/transport.rs`, unit test в `src/install.rs` | Настройки fetch-транспорта, Debug трёх публичных типов, не-Unicode snapshot без изменения окружения процесса. Все 9 transport-тестов проходят: oversized URL, несовместимые символы authority, отказ для вручную собранной policy, граница длины и нормализация URL. |
 | `README.md` | эти примечания и rustdoc | Прочитан полностью; публичный контракт и ограничения учтены. |
 
 В образце нет `locale/`, собственного `LICENSE` и указаний на заимствованный код в этом пакете.
 Новых внутренних зависимостей нет. Добавлены только разрешённые workspace-зависимости `indexmap`,
-`serde`, `url`; для тестов `tokio` с `net`. `reqwest` уже был в манифесте.
+`serde`, `url`, `http` (проверка URI тем же парсером, что у reqwest), `thiserror` (ошибка построения);
+для тестов `tokio` с `net`. `reqwest` уже был в манифесте. Все зависимости берутся из workspace;
+корневые Cargo.toml и Cargo.lock вручную не менялись.
 
 ## Отличия от образца
 
 1. По решению DEPS.md §5.5.1 и PORTING.md §6 отсутствуют глобальный dispatcher, глобальный `active`
    и изменение `process.env`. `install_proxy_from_environment(&env, report, options)` синхронно
-   возвращает `Result<ProxyInstallation, reqwest::Error>`. Построение клиента не выполняет запросов.
+   возвращает `Result<ProxyInstallation, ProxyBuildError>`. Построение клиента не выполняет запросов.
    Потребитель **обязан получить `installation.client().clone()` и отправлять запросы именно через
    этот `reqwest::Client`**: `client.get(url).send().await?`. Свободная функция `reqwest::get` и новый
    `Client::new()` не получают эту политику. Для собственного клиента вызывается
@@ -58,7 +60,7 @@
    Общие настройки транспорта соответствуют решению fix-брифа: connect_timeout 10 s,
    read_timeout 300 s (одна настройка для ожидания заголовков и чтения тела), максимум 20 переходов,
    referer(false). Общего total timeout нет. Потребитель с `redirect: 'manual'` в образце должен
-   вызвать `route_client_builder(policy, options)`, затем `.redirect(reqwest::redirect::Policy::none())`
+   вызвать `route_client_builder(policy, options)?`, затем `.redirect(reqwest::redirect::Policy::none())`
    перед `.build()`, используя возвращённый таким образом собственный клиент.
 5. `EnvLookup::get` возвращает `Option<String>` вместо объекта `{ value }`. Trait можно реализовать
    замыканием, `IndexMap<String, String>` или `HashMap<String, String>`. Как в образце, свёртка
@@ -67,11 +69,13 @@
    исходные имена, порядок полей и отсутствие необязательных proxy-полей.
 6. Новые публичные символы, необходимые для явного владения: `ProxyInstallation` с методами
    `with_inherited_environment`, `layer`, `client`, `policy`, `environment`, `options`, `http1_only`; `ProxyEnvironment`;
-   `ProxySource`, `ProxyDiagnosticKind`; `route_client_builder`. Последний возвращает настроенный
-   `ClientBuilder`, чтобы потребитель мог добавить, например, DNS override, не создавая второй
+   `ProxySource`, `ProxyDiagnosticKind`; `route_client_builder`. Последний возвращает
+   `Result<ClientBuilder, ProxyBuildError>`, чтобы потребитель мог добавить DNS override, не создавая второй
    matcher. Все имена функций образца сохранены с преобразованием camelCase → snake_case.
-   Добавлен `RouteDispatcher` с `client`, `options`, `http1_only`, `route_for` и Deref к Client;
+   Добавлен `RouteDispatcher` с `client`, `options`, `http1_only`, `route_for`, `diagnostics` и Deref к Client;
    `DispatcherOptions` и `ProxyRoute` также имеют `http1_only`, у route есть `options`.
+   `ProxyBuildError` имеет варианты `InvalidProxyUrl { origin }` и `Client(reqwest::Error)`;
+   его сообщение для некорректной proxy URL совпадает с текстом invalid-диагностики образца и не содержит URL.
 7. Тестовые серверы слушают только `127.0.0.1:0`; порт выбирает ОС. Прямые запросы к тестовым доменам
    используют `ClientBuilder::resolve` с loopback-адресом fixture. Внешних DNS/HTTP-запросов нет.
    Тест lifetime ждёт получения запроса сервером до удаления установки и затем разрешает ответ.
@@ -96,15 +100,38 @@
     Остальные перечисленные заголовки при текущих features reqwest не добавляет. Потребитель,
     которому нужен тот же вид запроса на проводе, задаёт недостающие заголовки сам. Решение
     о распаковке принимается с первым потребителем тел (DEPS.md §5.5.1), в этом crate её нет.
-11. При чтении зависимостей подтверждён риск из §3 fix-брифа:
-    `reqwest-0.13.5/src/proxy.rs:786–793` отбрасывает ошибку conversion и результат matcher;
-    `hyper-util-0.1.21/src/client/proxy/matcher.rs:336` вызывает parse::<http::Uri>().ok().
-    `http-1.5.0/src/uri/mod.rs:145,296` ограничивает URI 65 534 байтами, но url::Url принимает
-    `http://proxy.test/` с 65 535 символами пути. Красный regression test воспроизводит отсутствие
-    отказа при installation/route construction. Сам guard ещё не реализован: `http` отсутствует
-    в workspace.dependencies, а менять корневой манифест или добавлять стороннюю зависимость вне
-    workspace запрещено writer-брифом. Запрошено добавление `http = "1.5.0"` ведущим; библиотека
-    уже перечислена в DEPS.md. До этого fix-round не завершён.
+11. Guard из §3 fix-брифа выполняется до fallback и до построения любого клиента/route.
+    Установщик и `create_route_dispatcher` разрешают окружение через тот же алгоритм policy,
+    добавляя к HTTP(S)-кандидату проверку реальной transport-совместимости: `reqwest::Proxy::all`
+    запускает тот же IntoProxy, затем `http::Uri` разбирает сериализованный Url, после чего URI
+    перестраивается с удалённым userinfo и путём `/` — как в `hyper-util-0.1.21`
+    `src/client/proxy/matcher.rs:333–389`. Неподдерживаемые схемы/SOCKS/PAC обрабатываются исходной
+    policy до этой дополнительной проверки; порядок диагностик ALL → HTTP → HTTPS сохранён.
+    Отказ превращает слот в rejected, не absent: схема остаётся direct, не заимствуя fallback,
+    и получает точный текст `{origin} is not a valid URL; connecting directly` с исходным регистром
+    имени переменной. `install_proxy_from_environment` передаёт его report; потребитель отдельного
+    dispatcher читает `dispatcher.diagnostics()` и передаёт каждое `.message` в свой журнал/report.
+    Чистый `resolve_proxy_policy` и `is_supported_proxy_url` сохраняют исходное transport-free поведение.
+    Вручную собранная policy при `route_client_builder` не может обойти guard: несовместимое поле
+    возвращает `ProxyBuildError::InvalidProxyUrl` с origin `http_proxy` или `https_proxy`.
+    В `Proxy::custom` захватываются только заранее проверенные неизменяемые Url, а не строки,
+    которые reqwest мог бы затем не преобразовать и незаметно проигнорировать.
+
+    Подтверждённые тестами входы, принятые url::Url, но отвергаемые transport:
+
+    - сериализованная URL длиннее 65 534 байт (`http-1.5.0/src/uri/mod.rs:145,296`), включая
+      `http://proxy.test/` с 65 535 символами пути; ровно 65 534 байта принимаются;
+    - ASCII U+0022 (двойная кавычка), U+0060 (обратная кавычка), U+007B и U+007D (фигурные скобки)
+      в hostname, например `http://proxy{bad}.test:3128/`: WHATWG URL их допускает без STD3,
+      а таблица URI_CHARS и Authority::parse отвергают (`http-1.5.0/src/uri/mod.rs:154–168`,
+      `src/uri/authority.rs:495–516`). Проверены все четыре символа для установки и отдельного route.
+
+    Других подтверждённых отказов после успешного разбора HTTP(S) Url и Uri не найдено; проверка
+    authority/rebuild всё равно выполняется. Отсутствие authority, неподдерживаемые схемы,
+    неверные IPv6/порты и остаточные проценты hostname уже отсекаются исходным URL-парсером/политикой;
+    percent-encoded буквы hostname нормализуются до этого. Нормализация
+    регистра/пробелов/порта, IDN, IPv6 и percent-encoded credentials проверены как принимаемые.
+    Учет длины идёт по Url после нормализации, как у reqwest, а не по сырому значению переменной.
 
 По чтению `src` переносимых пакетов `proxyEnvironmentForChild` используется `subprocess`,
 `clearedProxyEnv` — `loader-smoke` и `session-snapshot`; `installProxyFromEnvironment` используется
@@ -138,9 +165,10 @@ CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandr
 
 Результаты fix-round: unit tests — `1 passed; 0 failed`; `policy` — `58 passed; 0 failed`;
 `install` — `17 passed; 8 failed`; `install-http1` — `7 passed; 0 failed`;
-`matcher-parity` — `0 passed; 9 failed`; `transport` — `5 passed; 1 failed`.
-Всего 88 passed, 18 failed. Из них 17 отказов — запрет loopback listener, один — сохранённая
-красная регрессия `rejects_a_url_the_policy_accepts_but_reqwests_uri_matcher_would_drop` (guard ждёт http).
+`matcher-parity` — `0 passed; 9 failed`; `transport` — `9 passed; 0 failed`.
+Всего 92 passed, 17 failed; все 17 отказов — запрет loopback listener. Ранее ведущий прогнал
+предыдущую версию вне sandbox: 105 passed и одна ожидаемая ошибка oversized URL; теперь эта
+регрессия также проходит в sandbox вместе с тремя новыми transport-тестами.
 
 Не удалось выполнить проверки после создания listener:
 
@@ -167,7 +195,4 @@ Windows/macOS не запускались. Свёртка настоящих Win
 
 ## Вопросы ведущему
 
-Внутренние crates ничего не блокируют. Для guard из §3 fix-брифа требуется разрешённая workspace-строка
-`http = "1.5.0"`: сейчас её нет; корневой манифест writer не меняет. Известный silent bypass по oversized
-URI до этого не закрыт. Ведущий сообщил, что исходный набор из 98 тестов прошёл вне sandbox.
-После исправлений также нужен его прогон loopback-тестов, включая новое доказательство reuse соединения.
+Нет. Guard реализован; недостающих API или workspace-зависимостей нет.

@@ -7,12 +7,51 @@ use std::{fmt, time::Duration};
 use url::Url;
 
 use crate::policy::{
-    EnvLookup, POLICY_ENV_NAMES, PROXY_ENV_NAMES, ProxyPolicy, ProxySource, is_supported_proxy_url,
-    proxy_for_url, redacted_proxy_url, resolve_proxy_policy,
+    EnvLookup, POLICY_ENV_NAMES, PROXY_ENV_NAMES, ProxyDiagnostic, ProxyPolicy, ProxyResolution,
+    ProxySource, is_supported_proxy_url, proxy_for_url, redacted_proxy_url,
+    resolve_proxy_policy_with_validation,
 };
 
 /// Apply these entries to a child environment: `None` removes a name.
 pub type ProxyEnvironment = IndexMap<String, Option<String>>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProxyBuildError {
+    #[error("{origin} is not a valid URL; connecting directly")]
+    InvalidProxyUrl { origin: &'static str },
+    #[error(transparent)]
+    Client(#[from] reqwest::Error),
+}
+
+fn validated_proxy_url(value: &str, origin: &'static str) -> Result<Url, ProxyBuildError> {
+    let invalid = || ProxyBuildError::InvalidProxyUrl { origin };
+    let url = Url::parse(value).map_err(|_| invalid())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(invalid());
+    }
+    // Use reqwest's IntoProxy conversion, then every fallible URI step of
+    // hyper-util 0.1.21 parse_env_uri, including its credential-stripped rebuild.
+    Proxy::all(url.clone()).map_err(|_| invalid())?;
+    let uri = url.as_str().parse::<http::Uri>().map_err(|_| invalid())?;
+    let scheme = uri.scheme().ok_or_else(invalid)?;
+    let authority = uri.authority().ok_or_else(invalid)?.as_str();
+    let host_port = authority
+        .split_once('@')
+        .map_or(authority, |(_, host_port)| host_port);
+    http::Uri::builder()
+        .scheme(scheme.clone())
+        .authority(host_port)
+        .path_and_query("/")
+        .build()
+        .map_err(|_| invalid())?;
+    Ok(url)
+}
+
+fn resolve_transport_policy(env: &(impl EnvLookup + ?Sized)) -> ProxyResolution {
+    resolve_proxy_policy_with_validation(env, |url| {
+        validated_proxy_url(url.as_str(), "proxy").is_ok()
+    })
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,19 +77,29 @@ struct RouteConfiguration {
 pub struct RouteDispatcher {
     client: Client,
     configuration: RouteConfiguration,
+    diagnostics: Vec<ProxyDiagnostic>,
 }
 
 impl RouteDispatcher {
-    fn build(configuration: RouteConfiguration) -> Result<Self, reqwest::Error> {
-        let client = configuration.builder().build()?;
+    fn build(
+        configuration: RouteConfiguration,
+        diagnostics: Vec<ProxyDiagnostic>,
+    ) -> Result<Self, ProxyBuildError> {
+        let client = configuration.builder()?.build()?;
         Ok(Self {
             client,
             configuration,
+            diagnostics,
         })
     }
 
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// Rejections from environment resolution; the caller decides how to report them.
+    pub fn diagnostics(&self) -> &[ProxyDiagnostic] {
+        &self.diagnostics
     }
 
     pub fn options(&self) -> DispatcherOptions {
@@ -116,12 +165,27 @@ pub struct ProxyInstallation {
 
 /// Build a client whose single proxy predicate is also used by `proxy_route_for`.
 /// Further request-specific transport settings can be applied before `.build()`.
-pub fn route_client_builder(policy: ProxyPolicy, options: DispatcherOptions) -> ClientBuilder {
+pub fn route_client_builder(
+    policy: ProxyPolicy,
+    options: DispatcherOptions,
+) -> Result<ClientBuilder, ProxyBuildError> {
     RouteConfiguration { policy, options }.builder()
 }
 
 impl RouteConfiguration {
-    fn builder(&self) -> ClientBuilder {
+    fn builder(&self) -> Result<ClientBuilder, ProxyBuildError> {
+        let http = self
+            .policy
+            .http_proxy
+            .as_deref()
+            .map(|value| validated_proxy_url(value, "http_proxy"))
+            .transpose()?;
+        let https = self
+            .policy
+            .https_proxy
+            .as_deref()
+            .map(|value| validated_proxy_url(value, "https_proxy"))
+            .transpose()?;
         // Disable reqwest's automatic environment proxy matcher, including for direct policies.
         let mut builder = Client::builder()
             .no_proxy()
@@ -133,9 +197,15 @@ impl RouteConfiguration {
             builder = builder.http1_only();
         }
         let policy = self.policy.clone();
-        builder.proxy(Proxy::custom(move |url| {
-            proxy_for_url(&policy, url).map(str::to_owned)
-        }))
+        Ok(builder.proxy(Proxy::custom(move |url| {
+            proxy_for_url(&policy, url)?;
+            // Only previously validated, immutable URLs reach reqwest's custom converter.
+            match url.scheme() {
+                "http" => http.clone(),
+                "https" => https.clone(),
+                _ => None,
+            }
+        })))
     }
 }
 
@@ -229,7 +299,7 @@ impl ProxyInstallation {
         inherited: ProxyEnvironment,
         report: impl FnMut(&str),
         options: DispatcherOptions,
-    ) -> Result<Self, reqwest::Error> {
+    ) -> Result<Self, ProxyBuildError> {
         Self::resolve(env, || inherited, None, report, options)
     }
 
@@ -239,8 +309,8 @@ impl ProxyInstallation {
         outer_inherited: Option<ProxyEnvironment>,
         mut report: impl FnMut(&str),
         options: DispatcherOptions,
-    ) -> Result<Self, reqwest::Error> {
-        let resolution = resolve_proxy_policy(env);
+    ) -> Result<Self, ProxyBuildError> {
+        let resolution = resolve_transport_policy(env);
         for diagnostic in &resolution.diagnostics {
             report(&diagnostic.message);
         }
@@ -256,7 +326,10 @@ impl ProxyInstallation {
                 environment,
             )
         };
-        let dispatcher = RouteDispatcher::build(RouteConfiguration { policy, options })?;
+        let dispatcher = RouteDispatcher::build(
+            RouteConfiguration { policy, options },
+            resolution.diagnostics,
+        )?;
         Ok(Self {
             dispatcher,
             inherited,
@@ -271,7 +344,7 @@ impl ProxyInstallation {
         env: &(impl EnvLookup + ?Sized),
         report: impl FnMut(&str),
         options: DispatcherOptions,
-    ) -> Result<Self, reqwest::Error> {
+    ) -> Result<Self, ProxyBuildError> {
         Self::resolve(
             env,
             snapshot_proxy_env,
@@ -308,7 +381,7 @@ pub fn install_proxy_from_environment(
     env: &(impl EnvLookup + ?Sized),
     report: impl FnMut(&str),
     options: DispatcherOptions,
-) -> Result<ProxyInstallation, reqwest::Error> {
+) -> Result<ProxyInstallation, ProxyBuildError> {
     ProxyInstallation::resolve(env, snapshot_proxy_env, None, report, options)
 }
 
@@ -316,11 +389,15 @@ pub fn install_proxy_from_environment(
 pub fn create_route_dispatcher(
     env: &(impl EnvLookup + ?Sized),
     options: DispatcherOptions,
-) -> Result<RouteDispatcher, reqwest::Error> {
-    RouteDispatcher::build(RouteConfiguration {
-        policy: resolve_proxy_policy(env).policy,
-        options,
-    })
+) -> Result<RouteDispatcher, ProxyBuildError> {
+    let resolution = resolve_transport_policy(env);
+    RouteDispatcher::build(
+        RouteConfiguration {
+            policy: resolution.policy,
+            options,
+        },
+        resolution.diagnostics,
+    )
 }
 
 pub fn proxy_route_for(installation: Option<&ProxyInstallation>, url: &Url) -> ProxyRoute {

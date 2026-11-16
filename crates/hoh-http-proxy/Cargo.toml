@@ -10,9 +10,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+http.workspace = true
 reqwest.workspace = true
 indexmap.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 url.workspace = true
 
 [dev-dependencies]

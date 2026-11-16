@@ -164,6 +164,7 @@ enum ProxyCandidate {
 fn accept_proxy_url(
     candidate: Option<(String, String)>,
     diagnostics: &mut Vec<ProxyDiagnostic>,
+    accepts_transport: &impl Fn(&Url) -> bool,
 ) -> ProxyCandidate {
     let Some((value, origin)) = candidate else {
         return ProxyCandidate::Absent;
@@ -174,7 +175,13 @@ fn accept_proxy_url(
             format!("{origin} is not a valid URL; connecting directly"),
         ),
         Ok(parsed) => match parsed.scheme() {
-            "http" | "https" => return ProxyCandidate::Accepted(value),
+            "http" | "https" if accepts_transport(&parsed) => {
+                return ProxyCandidate::Accepted(value);
+            }
+            "http" | "https" => (
+                ProxyDiagnosticKind::Invalid,
+                format!("{origin} is not a valid URL; connecting directly"),
+            ),
             "socks" | "socks4" | "socks4a" | "socks5" | "socks5h" => (
                 ProxyDiagnosticKind::Socks,
                 format!(
@@ -302,14 +309,33 @@ pub fn bypasses_proxy(no_proxy: &str, url: &Url) -> bool {
 }
 
 pub fn resolve_proxy_policy(env: &(impl EnvLookup + ?Sized)) -> ProxyResolution {
+    resolve_proxy_policy_with_validation(env, |_| true)
+}
+
+pub(crate) fn resolve_proxy_policy_with_validation(
+    env: &(impl EnvLookup + ?Sized),
+    accepts_transport: impl Fn(&Url) -> bool,
+) -> ProxyResolution {
     let mut diagnostics = Vec::new();
-    let all = accept_proxy_url(read_env(env, "all_proxy"), &mut diagnostics);
+    let all = accept_proxy_url(
+        read_env(env, "all_proxy"),
+        &mut diagnostics,
+        &accepts_transport,
+    );
     let all_value = match &all {
         ProxyCandidate::Accepted(value) => Some(value.as_str()),
         _ => None,
     };
-    let env_http = accept_proxy_url(read_env(env, "http_proxy"), &mut diagnostics);
-    let env_https = accept_proxy_url(read_env(env, "https_proxy"), &mut diagnostics);
+    let env_http = accept_proxy_url(
+        read_env(env, "http_proxy"),
+        &mut diagnostics,
+        &accepts_transport,
+    );
+    let env_https = accept_proxy_url(
+        read_env(env, "https_proxy"),
+        &mut diagnostics,
+        &accepts_transport,
+    );
     let http_proxy = resolve_scheme(env_http, &[all_value]);
     let https_proxy = resolve_scheme(env_https, &[all_value, http_proxy.as_deref()]);
     let policy = if http_proxy.is_none() && https_proxy.is_none() {
