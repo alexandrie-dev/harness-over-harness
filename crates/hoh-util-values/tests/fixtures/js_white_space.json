@@ -1,0 +1,463 @@
+{
+ "whiteSpace": [
+  9,
+  10,
+  11,
+  12,
+  13,
+  32,
+  160,
+  5760,
+  8192,
+  8193,
+  8194,
+  8195,
+  8196,
+  8197,
+  8198,
+  8199,
+  8200,
+  8201,
+  8202,
+  8232,
+  8233,
+  8239,
+  8287,
+  12288,
+  65279
+ ],
+ "trims": [
+  {
+   "input": "",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a",
+   "trim": "a",
+   "trimStart": "a",
+   "trimEnd": "a"
+  },
+  {
+   "input": " a ",
+   "trim": "a",
+   "trimStart": "a ",
+   "trimEnd": " a"
+  },
+  {
+   "input": "a b",
+   "trim": "a b",
+   "trimStart": "a b",
+   "trimEnd": "a b"
+  },
+  {
+   "input": "\u0085a\u0085",
+   "trim": "\u0085a\u0085",
+   "trimStart": "\u0085a\u0085",
+   "trimEnd": "\u0085a\u0085"
+  },
+  {
+   "input": "\u0085\u0085",
+   "trim": "\u0085\u0085",
+   "trimStart": "\u0085\u0085",
+   "trimEnd": "\u0085\u0085"
+  },
+  {
+   "input": "a\u0085b",
+   "trim": "a\u0085b",
+   "trimStart": "a\u0085b",
+   "trimEnd": "a\u0085b"
+  },
+  {
+   "input": " \u0085a \u0085",
+   "trim": "\u0085a \u0085",
+   "trimStart": "\u0085a \u0085",
+   "trimEnd": " \u0085a \u0085"
+  },
+  {
+   "input": "\ufeffa\ufeff",
+   "trim": "a",
+   "trimStart": "a\ufeff",
+   "trimEnd": "\ufeffa"
+  },
+  {
+   "input": "\ufeff\ufeff",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\ufeffb",
+   "trim": "a\ufeffb",
+   "trimStart": "a\ufeffb",
+   "trimEnd": "a\ufeffb"
+  },
+  {
+   "input": " \ufeffa \ufeff",
+   "trim": "a",
+   "trimStart": "a \ufeff",
+   "trimEnd": " \ufeffa"
+  },
+  {
+   "input": "\u00a0a\u00a0",
+   "trim": "a",
+   "trimStart": "a\u00a0",
+   "trimEnd": "\u00a0a"
+  },
+  {
+   "input": "\u00a0\u00a0",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\u00a0b",
+   "trim": "a\u00a0b",
+   "trimStart": "a\u00a0b",
+   "trimEnd": "a\u00a0b"
+  },
+  {
+   "input": " \u00a0a \u00a0",
+   "trim": "a",
+   "trimStart": "a \u00a0",
+   "trimEnd": " \u00a0a"
+  },
+  {
+   "input": "\u1680a\u1680",
+   "trim": "a",
+   "trimStart": "a\u1680",
+   "trimEnd": "\u1680a"
+  },
+  {
+   "input": "\u1680\u1680",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\u1680b",
+   "trim": "a\u1680b",
+   "trimStart": "a\u1680b",
+   "trimEnd": "a\u1680b"
+  },
+  {
+   "input": " \u1680a \u1680",
+   "trim": "a",
+   "trimStart": "a \u1680",
+   "trimEnd": " \u1680a"
+  },
+  {
+   "input": "\u180ea\u180e",
+   "trim": "\u180ea\u180e",
+   "trimStart": "\u180ea\u180e",
+   "trimEnd": "\u180ea\u180e"
+  },
+  {
+   "input": "\u180e\u180e",
+   "trim": "\u180e\u180e",
+   "trimStart": "\u180e\u180e",
+   "trimEnd": "\u180e\u180e"
+  },
+  {
+   "input": "a\u180eb",
+   "trim": "a\u180eb",
+   "trimStart": "a\u180eb",
+   "trimEnd": "a\u180eb"
+  },
+  {
+   "input": " \u180ea \u180e",
+   "trim": "\u180ea \u180e",
+   "trimStart": "\u180ea \u180e",
+   "trimEnd": " \u180ea \u180e"
+  },
+  {
+   "input": "\u2028a\u2028",
+   "trim": "a",
+   "trimStart": "a\u2028",
+   "trimEnd": "\u2028a"
+  },
+  {
+   "input": "\u2028\u2028",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\u2028b",
+   "trim": "a\u2028b",
+   "trimStart": "a\u2028b",
+   "trimEnd": "a\u2028b"
+  },
+  {
+   "input": " \u2028a \u2028",
+   "trim": "a",
+   "trimStart": "a \u2028",
+   "trimEnd": " \u2028a"
+  },
+  {
+   "input": "\u2029a\u2029",
+   "trim": "a",
+   "trimStart": "a\u2029",
+   "trimEnd": "\u2029a"
+  },
+  {
+   "input": "\u2029\u2029",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\u2029b",
+   "trim": "a\u2029b",
+   "trimStart": "a\u2029b",
+   "trimEnd": "a\u2029b"
+  },
+  {
+   "input": " \u2029a \u2029",
+   "trim": "a",
+   "trimStart": "a \u2029",
+   "trimEnd": " \u2029a"
+  },
+  {
+   "input": "\u200ba\u200b",
+   "trim": "\u200ba\u200b",
+   "trimStart": "\u200ba\u200b",
+   "trimEnd": "\u200ba\u200b"
+  },
+  {
+   "input": "\u200b\u200b",
+   "trim": "\u200b\u200b",
+   "trimStart": "\u200b\u200b",
+   "trimEnd": "\u200b\u200b"
+  },
+  {
+   "input": "a\u200bb",
+   "trim": "a\u200bb",
+   "trimStart": "a\u200bb",
+   "trimEnd": "a\u200bb"
+  },
+  {
+   "input": " \u200ba \u200b",
+   "trim": "\u200ba \u200b",
+   "trimStart": "\u200ba \u200b",
+   "trimEnd": " \u200ba \u200b"
+  },
+  {
+   "input": "\u3000a\u3000",
+   "trim": "a",
+   "trimStart": "a\u3000",
+   "trimEnd": "\u3000a"
+  },
+  {
+   "input": "\u3000\u3000",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\u3000b",
+   "trim": "a\u3000b",
+   "trimStart": "a\u3000b",
+   "trimEnd": "a\u3000b"
+  },
+  {
+   "input": " \u3000a \u3000",
+   "trim": "a",
+   "trimStart": "a \u3000",
+   "trimEnd": " \u3000a"
+  },
+  {
+   "input": "\ta\t",
+   "trim": "a",
+   "trimStart": "a\t",
+   "trimEnd": "\ta"
+  },
+  {
+   "input": "\t\t",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\tb",
+   "trim": "a\tb",
+   "trimStart": "a\tb",
+   "trimEnd": "a\tb"
+  },
+  {
+   "input": " \ta \t",
+   "trim": "a",
+   "trimStart": "a \t",
+   "trimEnd": " \ta"
+  },
+  {
+   "input": "\na\n",
+   "trim": "a",
+   "trimStart": "a\n",
+   "trimEnd": "\na"
+  },
+  {
+   "input": "\n\n",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\nb",
+   "trim": "a\nb",
+   "trimStart": "a\nb",
+   "trimEnd": "a\nb"
+  },
+  {
+   "input": " \na \n",
+   "trim": "a",
+   "trimStart": "a \n",
+   "trimEnd": " \na"
+  },
+  {
+   "input": "\ra\r",
+   "trim": "a",
+   "trimStart": "a\r",
+   "trimEnd": "\ra"
+  },
+  {
+   "input": "\r\r",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\rb",
+   "trim": "a\rb",
+   "trimStart": "a\rb",
+   "trimEnd": "a\rb"
+  },
+  {
+   "input": " \ra \r",
+   "trim": "a",
+   "trimStart": "a \r",
+   "trimEnd": " \ra"
+  },
+  {
+   "input": "\u000ba\u000b",
+   "trim": "a",
+   "trimStart": "a\u000b",
+   "trimEnd": "\u000ba"
+  },
+  {
+   "input": "\u000b\u000b",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\u000bb",
+   "trim": "a\u000bb",
+   "trimStart": "a\u000bb",
+   "trimEnd": "a\u000bb"
+  },
+  {
+   "input": " \u000ba \u000b",
+   "trim": "a",
+   "trimStart": "a \u000b",
+   "trimEnd": " \u000ba"
+  },
+  {
+   "input": "\fa\f",
+   "trim": "a",
+   "trimStart": "a\f",
+   "trimEnd": "\fa"
+  },
+  {
+   "input": "\f\f",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a\fb",
+   "trim": "a\fb",
+   "trimStart": "a\fb",
+   "trimEnd": "a\fb"
+  },
+  {
+   "input": " \fa \f",
+   "trim": "a",
+   "trimStart": "a \f",
+   "trimEnd": " \fa"
+  },
+  {
+   "input": " a ",
+   "trim": "a",
+   "trimStart": "a ",
+   "trimEnd": " a"
+  },
+  {
+   "input": "  ",
+   "trim": "",
+   "trimStart": "",
+   "trimEnd": ""
+  },
+  {
+   "input": "a b",
+   "trim": "a b",
+   "trimStart": "a b",
+   "trimEnd": "a b"
+  },
+  {
+   "input": "  a  ",
+   "trim": "a",
+   "trimStart": "a  ",
+   "trimEnd": "  a"
+  },
+  {
+   "input": "\u001ca\u001c",
+   "trim": "\u001ca\u001c",
+   "trimStart": "\u001ca\u001c",
+   "trimEnd": "\u001ca\u001c"
+  },
+  {
+   "input": "\u001c\u001c",
+   "trim": "\u001c\u001c",
+   "trimStart": "\u001c\u001c",
+   "trimEnd": "\u001c\u001c"
+  },
+  {
+   "input": "a\u001cb",
+   "trim": "a\u001cb",
+   "trimStart": "a\u001cb",
+   "trimEnd": "a\u001cb"
+  },
+  {
+   "input": " \u001ca \u001c",
+   "trim": "\u001ca \u001c",
+   "trimStart": "\u001ca \u001c",
+   "trimEnd": " \u001ca \u001c"
+  },
+  {
+   "input": "\u001fa\u001f",
+   "trim": "\u001fa\u001f",
+   "trimStart": "\u001fa\u001f",
+   "trimEnd": "\u001fa\u001f"
+  },
+  {
+   "input": "\u001f\u001f",
+   "trim": "\u001f\u001f",
+   "trimStart": "\u001f\u001f",
+   "trimEnd": "\u001f\u001f"
+  },
+  {
+   "input": "a\u001fb",
+   "trim": "a\u001fb",
+   "trimStart": "a\u001fb",
+   "trimEnd": "a\u001fb"
+  },
+  {
+   "input": " \u001fa \u001f",
+   "trim": "\u001fa \u001f",
+   "trimStart": "\u001fa \u001f",
+   "trimEnd": " \u001fa \u001f"
+  }
+ ]
+}

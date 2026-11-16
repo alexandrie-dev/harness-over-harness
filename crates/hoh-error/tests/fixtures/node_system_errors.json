@@ -1,0 +1,668 @@
+{
+ "table": [
+  {
+   "errno": -7,
+   "code": "E2BIG",
+   "description": "argument list too long"
+  },
+  {
+   "errno": -13,
+   "code": "EACCES",
+   "description": "permission denied"
+  },
+  {
+   "errno": -98,
+   "code": "EADDRINUSE",
+   "description": "address already in use"
+  },
+  {
+   "errno": -99,
+   "code": "EADDRNOTAVAIL",
+   "description": "address not available"
+  },
+  {
+   "errno": -97,
+   "code": "EAFNOSUPPORT",
+   "description": "address family not supported"
+  },
+  {
+   "errno": -11,
+   "code": "EAGAIN",
+   "description": "resource temporarily unavailable"
+  },
+  {
+   "errno": -3000,
+   "code": "EAI_ADDRFAMILY",
+   "description": "address family not supported"
+  },
+  {
+   "errno": -3001,
+   "code": "EAI_AGAIN",
+   "description": "temporary failure"
+  },
+  {
+   "errno": -3002,
+   "code": "EAI_BADFLAGS",
+   "description": "bad ai_flags value"
+  },
+  {
+   "errno": -3013,
+   "code": "EAI_BADHINTS",
+   "description": "invalid value for hints"
+  },
+  {
+   "errno": -3003,
+   "code": "EAI_CANCELED",
+   "description": "request canceled"
+  },
+  {
+   "errno": -3004,
+   "code": "EAI_FAIL",
+   "description": "permanent failure"
+  },
+  {
+   "errno": -3005,
+   "code": "EAI_FAMILY",
+   "description": "ai_family not supported"
+  },
+  {
+   "errno": -3006,
+   "code": "EAI_MEMORY",
+   "description": "out of memory"
+  },
+  {
+   "errno": -3007,
+   "code": "EAI_NODATA",
+   "description": "no address"
+  },
+  {
+   "errno": -3008,
+   "code": "EAI_NONAME",
+   "description": "unknown node or service"
+  },
+  {
+   "errno": -3009,
+   "code": "EAI_OVERFLOW",
+   "description": "argument buffer overflow"
+  },
+  {
+   "errno": -3014,
+   "code": "EAI_PROTOCOL",
+   "description": "resolved protocol is unknown"
+  },
+  {
+   "errno": -3010,
+   "code": "EAI_SERVICE",
+   "description": "service not available for socket type"
+  },
+  {
+   "errno": -3011,
+   "code": "EAI_SOCKTYPE",
+   "description": "socket type not supported"
+  },
+  {
+   "errno": -114,
+   "code": "EALREADY",
+   "description": "connection already in progress"
+  },
+  {
+   "errno": -9,
+   "code": "EBADF",
+   "description": "bad file descriptor"
+  },
+  {
+   "errno": -16,
+   "code": "EBUSY",
+   "description": "resource busy or locked"
+  },
+  {
+   "errno": -125,
+   "code": "ECANCELED",
+   "description": "operation canceled"
+  },
+  {
+   "errno": -4080,
+   "code": "ECHARSET",
+   "description": "invalid Unicode character"
+  },
+  {
+   "errno": -103,
+   "code": "ECONNABORTED",
+   "description": "software caused connection abort"
+  },
+  {
+   "errno": -111,
+   "code": "ECONNREFUSED",
+   "description": "connection refused"
+  },
+  {
+   "errno": -104,
+   "code": "ECONNRESET",
+   "description": "connection reset by peer"
+  },
+  {
+   "errno": -89,
+   "code": "EDESTADDRREQ",
+   "description": "destination address required"
+  },
+  {
+   "errno": -17,
+   "code": "EEXIST",
+   "description": "file already exists"
+  },
+  {
+   "errno": -14,
+   "code": "EFAULT",
+   "description": "bad address in system call argument"
+  },
+  {
+   "errno": -27,
+   "code": "EFBIG",
+   "description": "file too large"
+  },
+  {
+   "errno": -113,
+   "code": "EHOSTUNREACH",
+   "description": "host is unreachable"
+  },
+  {
+   "errno": -4,
+   "code": "EINTR",
+   "description": "interrupted system call"
+  },
+  {
+   "errno": -22,
+   "code": "EINVAL",
+   "description": "invalid argument"
+  },
+  {
+   "errno": -5,
+   "code": "EIO",
+   "description": "i/o error"
+  },
+  {
+   "errno": -106,
+   "code": "EISCONN",
+   "description": "socket is already connected"
+  },
+  {
+   "errno": -21,
+   "code": "EISDIR",
+   "description": "illegal operation on a directory"
+  },
+  {
+   "errno": -40,
+   "code": "ELOOP",
+   "description": "too many symbolic links encountered"
+  },
+  {
+   "errno": -24,
+   "code": "EMFILE",
+   "description": "too many open files"
+  },
+  {
+   "errno": -90,
+   "code": "EMSGSIZE",
+   "description": "message too long"
+  },
+  {
+   "errno": -36,
+   "code": "ENAMETOOLONG",
+   "description": "name too long"
+  },
+  {
+   "errno": -100,
+   "code": "ENETDOWN",
+   "description": "network is down"
+  },
+  {
+   "errno": -101,
+   "code": "ENETUNREACH",
+   "description": "network is unreachable"
+  },
+  {
+   "errno": -23,
+   "code": "ENFILE",
+   "description": "file table overflow"
+  },
+  {
+   "errno": -105,
+   "code": "ENOBUFS",
+   "description": "no buffer space available"
+  },
+  {
+   "errno": -19,
+   "code": "ENODEV",
+   "description": "no such device"
+  },
+  {
+   "errno": -2,
+   "code": "ENOENT",
+   "description": "no such file or directory"
+  },
+  {
+   "errno": -12,
+   "code": "ENOMEM",
+   "description": "not enough memory"
+  },
+  {
+   "errno": -64,
+   "code": "ENONET",
+   "description": "machine is not on the network"
+  },
+  {
+   "errno": -92,
+   "code": "ENOPROTOOPT",
+   "description": "protocol not available"
+  },
+  {
+   "errno": -28,
+   "code": "ENOSPC",
+   "description": "no space left on device"
+  },
+  {
+   "errno": -38,
+   "code": "ENOSYS",
+   "description": "function not implemented"
+  },
+  {
+   "errno": -107,
+   "code": "ENOTCONN",
+   "description": "socket is not connected"
+  },
+  {
+   "errno": -20,
+   "code": "ENOTDIR",
+   "description": "not a directory"
+  },
+  {
+   "errno": -39,
+   "code": "ENOTEMPTY",
+   "description": "directory not empty"
+  },
+  {
+   "errno": -88,
+   "code": "ENOTSOCK",
+   "description": "socket operation on non-socket"
+  },
+  {
+   "errno": -95,
+   "code": "ENOTSUP",
+   "description": "operation not supported on socket"
+  },
+  {
+   "errno": -75,
+   "code": "EOVERFLOW",
+   "description": "value too large for defined data type"
+  },
+  {
+   "errno": -1,
+   "code": "EPERM",
+   "description": "operation not permitted"
+  },
+  {
+   "errno": -32,
+   "code": "EPIPE",
+   "description": "broken pipe"
+  },
+  {
+   "errno": -71,
+   "code": "EPROTO",
+   "description": "protocol error"
+  },
+  {
+   "errno": -93,
+   "code": "EPROTONOSUPPORT",
+   "description": "protocol not supported"
+  },
+  {
+   "errno": -91,
+   "code": "EPROTOTYPE",
+   "description": "protocol wrong type for socket"
+  },
+  {
+   "errno": -34,
+   "code": "ERANGE",
+   "description": "result too large"
+  },
+  {
+   "errno": -30,
+   "code": "EROFS",
+   "description": "read-only file system"
+  },
+  {
+   "errno": -108,
+   "code": "ESHUTDOWN",
+   "description": "cannot send after transport endpoint shutdown"
+  },
+  {
+   "errno": -29,
+   "code": "ESPIPE",
+   "description": "invalid seek"
+  },
+  {
+   "errno": -3,
+   "code": "ESRCH",
+   "description": "no such process"
+  },
+  {
+   "errno": -110,
+   "code": "ETIMEDOUT",
+   "description": "connection timed out"
+  },
+  {
+   "errno": -26,
+   "code": "ETXTBSY",
+   "description": "text file is busy"
+  },
+  {
+   "errno": -18,
+   "code": "EXDEV",
+   "description": "cross-device link not permitted"
+  },
+  {
+   "errno": -4094,
+   "code": "UNKNOWN",
+   "description": "unknown error"
+  },
+  {
+   "errno": -4095,
+   "code": "EOF",
+   "description": "end of file"
+  },
+  {
+   "errno": -6,
+   "code": "ENXIO",
+   "description": "no such device or address"
+  },
+  {
+   "errno": -31,
+   "code": "EMLINK",
+   "description": "too many links"
+  },
+  {
+   "errno": -112,
+   "code": "EHOSTDOWN",
+   "description": "host is down"
+  },
+  {
+   "errno": -121,
+   "code": "EREMOTEIO",
+   "description": "remote I/O error"
+  },
+  {
+   "errno": -25,
+   "code": "ENOTTY",
+   "description": "inappropriate ioctl for device"
+  },
+  {
+   "errno": -4028,
+   "code": "EFTYPE",
+   "description": "inappropriate file type or format"
+  },
+  {
+   "errno": -84,
+   "code": "EILSEQ",
+   "description": "illegal byte sequence"
+  },
+  {
+   "errno": -94,
+   "code": "ESOCKTNOSUPPORT",
+   "description": "socket type not supported"
+  },
+  {
+   "errno": -61,
+   "code": "ENODATA",
+   "description": "no data available"
+  },
+  {
+   "errno": -49,
+   "code": "EUNATCH",
+   "description": "protocol driver not attached"
+  },
+  {
+   "errno": -8,
+   "code": "ENOEXEC",
+   "description": "exec format error"
+  }
+ ],
+ "fsMessages": {
+  "readFile missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "open",
+   "message": "ENOENT: no such file or directory, open '<root>/missing'"
+  },
+  "readFile directory": {
+   "code": "EISDIR",
+   "errno": -21,
+   "syscall": "read",
+   "message": "EISDIR: illegal operation on a directory, read"
+  },
+  "readFile under a file": {
+   "code": "ENOTDIR",
+   "errno": -20,
+   "syscall": "open",
+   "message": "ENOTDIR: not a directory, open '<root>/file/x'"
+  },
+  "writeFile into missing directory": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "open",
+   "message": "ENOENT: no such file or directory, open '<root>/missing/x'"
+  },
+  "writeFile onto directory": {
+   "code": "EISDIR",
+   "errno": -21,
+   "syscall": "open",
+   "message": "EISDIR: illegal operation on a directory, open '<root>/dir'"
+  },
+  "writeFile exclusive onto file": {
+   "code": "EEXIST",
+   "errno": -17,
+   "syscall": "open",
+   "message": "EEXIST: file already exists, open '<root>/file'"
+  },
+  "open missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "open",
+   "message": "ENOENT: no such file or directory, open '<root>/missing'"
+  },
+  "mkdir existing": {
+   "code": "EEXIST",
+   "errno": -17,
+   "syscall": "mkdir",
+   "message": "EEXIST: file already exists, mkdir '<root>/dir'"
+  },
+  "mkdir under missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "mkdir",
+   "message": "ENOENT: no such file or directory, mkdir '<root>/missing/x'"
+  },
+  "mkdir recursive under a file": {
+   "code": "ENOTDIR",
+   "errno": -20,
+   "syscall": "mkdir",
+   "message": "ENOTDIR: not a directory, mkdir '<root>/file/x/y'"
+  },
+  "readdir missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "scandir",
+   "message": "ENOENT: no such file or directory, scandir '<root>/missing'"
+  },
+  "readdir file": {
+   "code": "ENOTDIR",
+   "errno": -20,
+   "syscall": "scandir",
+   "message": "ENOTDIR: not a directory, scandir '<root>/file'"
+  },
+  "opendir missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "opendir",
+   "message": "ENOENT: no such file or directory, opendir '<root>/missing'"
+  },
+  "stat missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "stat",
+   "message": "ENOENT: no such file or directory, stat '<root>/missing'"
+  },
+  "lstat missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "lstat",
+   "message": "ENOENT: no such file or directory, lstat '<root>/missing'"
+  },
+  "access missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "access",
+   "message": "ENOENT: no such file or directory, access '<root>/missing'"
+  },
+  "realpath missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "realpath",
+   "message": "ENOENT: no such file or directory, realpath '<root>/missing'"
+  },
+  "readlink file": {
+   "code": "EINVAL",
+   "errno": -22,
+   "syscall": "readlink",
+   "message": "EINVAL: invalid argument, readlink '<root>/file'"
+  },
+  "rename missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "rename",
+   "message": "ENOENT: no such file or directory, rename '<root>/missing' -> '<root>/other'"
+  },
+  "unlink missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "unlink",
+   "message": "ENOENT: no such file or directory, unlink '<root>/missing'"
+  },
+  "unlink directory": {
+   "code": "EISDIR",
+   "errno": -21,
+   "syscall": "unlink",
+   "message": "EISDIR: illegal operation on a directory, unlink '<root>/dir'"
+  },
+  "rmdir not empty": {
+   "code": "ENOTEMPTY",
+   "errno": -39,
+   "syscall": "rmdir",
+   "message": "ENOTEMPTY: directory not empty, rmdir '<root>/full'"
+  },
+  "rmdir missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "rmdir",
+   "message": "ENOENT: no such file or directory, rmdir '<root>/missing'"
+  },
+  "rm missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "lstat",
+   "message": "ENOENT: no such file or directory, lstat '<root>/missing'"
+  },
+  "rm directory without recursive": {
+   "code": "ERR_FS_EISDIR",
+   "errno": 21,
+   "syscall": "rm",
+   "message": "Path is a directory: rm returned EISDIR (is a directory) <root>/dir"
+  },
+  "copyFile missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "copyfile",
+   "message": "ENOENT: no such file or directory, copyfile '<root>/missing' -> '<root>/copy'"
+  },
+  "link missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "link",
+   "message": "ENOENT: no such file or directory, link '<root>/missing' -> '<root>/hard'"
+  },
+  "symlink onto file": {
+   "code": "EEXIST",
+   "errno": -17,
+   "syscall": "symlink",
+   "message": "EEXIST: file already exists, symlink 'x' -> '<root>/file'"
+  },
+  "chmod missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "chmod",
+   "message": "ENOENT: no such file or directory, chmod '<root>/missing'"
+  },
+  "truncate missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "open",
+   "message": "ENOENT: no such file or directory, open '<root>/missing'"
+  },
+  "mkdtemp under missing": {
+   "code": "ENOENT",
+   "errno": -2,
+   "syscall": "mkdtemp",
+   "message": "ENOENT: no such file or directory, mkdtemp '<root>/missing/tmp-XXXXXX'"
+  }
+ },
+ "spawnMessages": {
+  "missing": {
+   "thrownByExecFile": false,
+   "code": "ENOENT",
+   "signal": null,
+   "message": "spawn <root>/missing ENOENT",
+   "hasStdout": true
+  },
+  "missing in PATH": {
+   "thrownByExecFile": false,
+   "code": "ENOENT",
+   "signal": null,
+   "message": "spawn hoh-no-such-command ENOENT",
+   "hasStdout": true
+  },
+  "not executable": {
+   "thrownByExecFile": false,
+   "code": "EACCES",
+   "signal": null,
+   "message": "spawn <root>/file EACCES",
+   "hasStdout": true
+  },
+  "directory": {
+   "thrownByExecFile": false,
+   "code": "EACCES",
+   "signal": null,
+   "message": "spawn <root>/dir EACCES",
+   "hasStdout": true
+  },
+  "under a file": {
+   "thrownByExecFile": true,
+   "code": "ENOTDIR",
+   "signal": null,
+   "message": "spawn ENOTDIR",
+   "hasStdout": false
+  },
+  "exit 3": {
+   "thrownByExecFile": false,
+   "code": 3,
+   "signal": null,
+   "message": "Command failed: /bin/sh -c echo out; echo err >&2; exit 3\nerr\n",
+   "hasStdout": true
+  },
+  "killed by TERM": {
+   "thrownByExecFile": false,
+   "code": null,
+   "signal": "SIGTERM",
+   "message": "Command failed: /bin/sh -c kill -TERM $$\n",
+   "hasStdout": true
+  }
+ }
+}

@@ -60,11 +60,18 @@ impl<'de> Deserialize<'de> for ManifestVersion {
 #[serde(untagged)]
 pub enum LocalizedText {
     Text(String),
-    Translations {
-        en: String,
-        #[serde(flatten)]
-        locales: IndexMap<String, String>,
-    },
+    Translations(IndexMap<String, String>),
+}
+
+impl LocalizedText {
+    /// Read the English entry of a translation map, if present.
+    /// Readers decide how to handle missing English text.
+    pub fn en(&self) -> Option<&str> {
+        match self {
+            Self::Text(_) => None,
+            Self::Translations(locales) => locales.get("en").map(String::as_str),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,15 +87,21 @@ pub struct PluginLocalizedMeta {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DshEnginesManifest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dsh: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub npm: Option<String>,
-    #[serde(flatten)]
-    pub other: IndexMap<String, String>,
+#[serde(transparent)]
+pub struct DshEnginesManifest(pub IndexMap<String, String>);
+
+impl DshEnginesManifest {
+    pub fn dsh(&self) -> Option<&str> {
+        self.0.get("dsh").map(String::as_str)
+    }
+
+    pub fn node(&self) -> Option<&str> {
+        self.0.get("node").map(String::as_str)
+    }
+
+    pub fn npm(&self) -> Option<&str> {
+        self.0.get("npm").map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
