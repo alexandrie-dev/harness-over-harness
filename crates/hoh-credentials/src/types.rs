@@ -1,5 +1,5 @@
 //! Client-safe credential brands, stored records, safe views and event payloads.
-use hoh_kernel::Emit;
+use hoh_kernel::Contained;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -88,7 +88,7 @@ pub struct CredentialsReferenceUpdated {
 }
 hoh_kernel::event!(
     CredentialsReferenceUpdated = "credentials/reference-updated",
-    Emit
+    Contained
 );
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,5 +97,5 @@ pub struct CredentialsRecordUpdated {
 }
 hoh_kernel::event!(
     CredentialsRecordUpdated = "credentials/record-updated",
-    Emit
+    Contained
 );

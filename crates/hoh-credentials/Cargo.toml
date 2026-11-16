@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 hoh-brand = { path = "../hoh-brand" }
 hoh-kernel = { path = "../hoh-kernel" }
+hoh-error = { path = "../hoh-error" }
 indexmap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,4 +20,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 schemars.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

@@ -31,7 +31,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/core/system-prompt	@deepseek-ai/dsh-system-prompt	hoh-system-prompt	699	1167	todo	
 1	port	packages/core/tool-executor-native	@deepseek-ai/dsh-tool-executor-native	hoh-tool-executor-native	35	0	todo	
 1	port	packages/core/tools	@deepseek-ai/dsh-tools	hoh-tools	3797	5419	todo	
-1	port	packages/credentials/credentials	@deepseek-ai/dsh-credentials	hoh-credentials	409	176	writing:w4	
+1	port	packages/credentials/credentials	@deepseek-ai/dsh-credentials	hoh-credentials	409	176	review	
 1	port	packages/deliverables/deliverable-file-references	@deepseek-ai/dsh-deliverable-file-references	hoh-deliverable-file-references	30	42	todo	
 1	port	packages/deliverables/tool-present	@deepseek-ai/dsh-tool-present	hoh-tool-present	127	282	todo	
 1	port	packages/document/office-kit	@deepseek-ai/dsh-office-kit	hoh-office-kit	1399	2071	todo	зависит от: dsh-typert-protocol=skip

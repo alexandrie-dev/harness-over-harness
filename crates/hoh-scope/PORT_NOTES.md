@@ -4,150 +4,170 @@
 
 | образец | перенос | состояние |
 |---|---|---|
-| `src/index.ts` | `src/lib.rs` | все 13 собственных экспортов представлены; ограничения ядра ниже |
-| `src/store.ts` | `src/store.rs` | все 4 экспорта; живые итераторы, поколения таблиц, откат и владение эффектами |
-| `tests/scope.spec.ts` | `tests/scope.rs` | 10 из 11 исходных случаев с адаптациями; ещё 2 собственных теста |
-| `tests/store.spec.ts` | `tests/store.rs` | 9 из 10 исходных случаев с адаптациями; ещё 5 собственных тестов |
-| `README.md` | документация API и эти заметки | прочитан, поведение учтено |
+| `src/index.ts` | `src/lib.rs` | все 13 собственных экспортов; синхронный scope, точный disposer, исходная композиция фильтра |
+| `src/store.ts` | `src/store.rs` | все 4 экспорта; живые таблицы, поколения, слияние, владение и откат эффектов |
+| `tests/scope.spec.ts` | `tests/scope.rs` | все 11 исходных случаев; ещё 7 собственных проверок |
+| `tests/store.spec.ts` | `tests/store.rs` | все 10 исходных случаев; ещё 6 собственных проверок |
+| `README.md` | rustdoc API и эти заметки | прочитан, контракт учтён |
 
-У пакета нет `locale/`, отдельного `LICENSE` или заимствованного фрагмента с отдельной лицензией.
-Cordis заменён существующим `hoh-kernel`; его публичный API и `PORT_NOTES.md` прочитаны.
-Других библиотек образец не использует. Дополнительные Rust-зависимости взяты только из workspace:
-`indexmap`, `serde_json`, `thiserror`, `tokio`; `tokio/test-util` только для тестов.
+У образца нет `locale/`, отдельного `LICENSE` или отдельно лицензированного фрагмента.
+Образец зависит только от Cordis; перенос использует существующий `hoh-kernel`, включая API четвёртого круга.
+Прочитаны `hoh-kernel/PORT_NOTES.md` от «Четвёртый круг: добавленный API» до конца и ext-stage0-k1 §B.
+`hoh-error` используется для общего `BoxError`; его API и заметки прочитаны.
+Остальные зависимости взяты из workspace: `indexmap`, `thiserror`; `serde_json` и `tokio/test-util` только для тестов.
+В образце нет trim, путей, readdir, системных ошибок, JSON-текста и таймеров: соответствующие общие
+помощники PORTING §4 здесь не вызываются. Поведение JS Map воспроизведено живыми итераторами таблиц.
 
 ## Отличия от образца
 
-### Соответствие публичного API
+### Публичный API для следующих пакетов
 
-| образец | Rust |
-|---|---|
-| `ScopeKey` (произвольный объект, сравниваемый по тождеству) | `ScopeKey::new()`, `Clone`, `Eq`, `Hash` по неизменной идентичности; предмет хранит свой ключ отдельно |
-| `ScopeParentBinding`, `bindScopeParent` | `ScopeParentBinding`, `bind_scope_parent(&key, parent) -> Result<_, ScopeError>` |
-| `scopeParentOf`, `scopeChainOf` | `scope_parent_of(&key)`, `scope_chain_of(Option<&ScopeKey>)` |
-| `CreateScopeOptions` | одноимённая структура с `parent: Option<ScopeKey>`, `Default` |
-| `Scope`, `createScope` | `Scope`, `create_scope(&ctx, key, options).await -> Result<Scope, hoh_kernel::Error>` |
-| `Scope.ctx`, `Scope.rawDispose`, `Scope.dispose()` | `ctx: Context`, `raw_dispose: ScopeDisposer`, `dispose()` возвращает ожидаемый future |
-| `scopeOf` | `scope_of(&ctx)`; приватный тип метки сохраняет ближайшее значение |
-| `Scoped<T>`, `scopeTarget` | `Scoped<T>`, `scope_target(&subject, Option<ScopeKey>)`; контекст рассылки — `carrier.context(&ctx)` |
-| `isScopeCarrier`, `carrierKeyOf` | `is_scope_carrier(&Scoped<T>)`, `carrier_key_of(&Scoped<T>)`; непереносчик отвергается типами |
-| `ScopeLayer` | одноимённый trait с `is_empty()` |
-| `NamedEntries<V>` | `NamedEntries<V, E = hoh_kernel::Error>`; фабрика ошибки вызывающего, `insert -> Result<EntryUndo, E>` |
-| `AnonymousEntries<V>` | одноимённый тип, `append -> EntryUndo` |
-| `ScopedLayers<L>` | одноимённый тип; `global: Arc<L>`, `peek`/`chain_layers` возвращают `Arc<L>`, `merge` — `IndexMap` |
-| `ScopedLayers.effect` | `effect(&ctx, action, EffectOptions) -> Result<Disposer, hoh_kernel::Error>`; action возвращает `Result<EntryUndo, _>` |
+`create_scope(&ctx, key, CreateScopeOptions::default()) -> Result<Scope, BoxError>` — **синхронная**
+функция: до первого await возвращается настоящий контекст дочернего fiber с исходным именем `scope`.
+`scope.ctx` — обычный `Context`; созданные через него эффекты принадлежат ребёнку, включая регистрации
+до активации. `scope.dispose()` отправляет запрос сразу и возвращает future полного покоя. Повторные
+вызовы и raw-first вызовы присоединяются к той же остановке через `Fiber::dispose()`.
 
-Новые публичные имена: `ScopeError` (две обычные ошибки с дословными исходными сообщениями),
-`ScopeDisposer` (тип raw-границы вместо функции), `store::EntryUndo` (клонируемое право на точную
-синхронную отмену через `.undo()`, а также `Into<Undo>`), `store::EffectOptions` (обязательный `label`
-и `notify`, конструктор `new(label)` задаёт `true`), `store::{Values, Keys, Entries}` (типы живых
-итераторов). `ScopedLayers::try_new` выражает бросающие фабрику слоя и уведомление через `Result`;
-обычный `new` принимает неошибающиеся функции. `ScopeDisposer: Into<Undo>` позволяет включать
-raw-границу в составной эффект. `Scoped::{context, admits, with_base_filter}` выражают маршрутизацию
-без JS-переносчика с символьным свойством. Стандартные `new`, `Default`, `Clone` заменяют конструкторы
-и копирование ссылок JS; `Clone` таблиц и слоёв сохраняет общий объект, а не копирует регистрации.
+Короткий пример потребителя (`Ping` и `consume` определены самим потребителем):
 
-Значения при чтении/итерации требуют `V: Clone`; для исходного заимствованного объекта нужно хранить
-`Arc<T>`, а не делать глубокую копию `T`. Проверка идентичности `Arc` есть в тесте anonymous entries.
-Синхронный undo идемпотентен и снимает конкретный слот, поэтому старая отмена не удаляет новую
-регистрацию под тем же именем. Удаление последней записи меняет поколение; исчерпанный итератор
-никогда не оживает. Порядок слияния и сохранение позиции затенённого имени совпадают с JS Map.
+```rust
+use hoh_scope::{create_scope, CreateScopeOptions, ScopeKey};
 
-Глобальных изменяемых таблиц нет: родитель хранится в самом ключе, переносчик хранит свой ключ.
-Единственный `static` — разрешённый счётчик уникальных идентификаторов; исчерпание 2^64 ключей вне
-представимого времени жизни процесса. Цепочки обходятся и освобождаются итеративно. Параллельные
-записи родителя и чтение цепочки проверяют согласованный снимок под упорядоченными блокировками.
-Синхронные изменения реестра сериализованы между потоками; повторный вход того же потока из action,
-factory или onChange разрешён. Внутренние mutex не удерживаются при вызове этих callbacks или через await.
-Ошибки callbacks выражаются `Result`; паника подчиняется правилам изоляции ядра.
+let key = ScopeKey::new();
+let scope = create_scope(&ctx, key, CreateScopeOptions::default())?;
+scope.ctx.on::<Ping>(|event| consume(event))?; // usable immediately; owner is the scope
+scope.dispose().await;                       // listener and other scope effects are gone
+```
 
-### Ограничения существующего ядра
+`scope.raw_dispose() -> hoh_kernel::Disposer` возвращает **точный** disposer из `Fiber::disposer()`.
+Это accessor вместо поля-функции JS: kernel handle потребляется, поэтому новый accessor-вызов выдаёт
+handle той же записи. Scope сохраняет исходный handle, так что accessor доступен и после teardown.
+Никакой `ScopeDisposer`-обёртки больше нет. Для упорядоченного включения: `undos.push(scope.raw_dispose())?`.
+Adoption снимает самостоятельное владение child-effect у родителя; выгрузка самого родителя тоже
+дожидается асинхронных соседей в точном порядке inner → scope → outer.
 
-1. В `Fiber` нет публичного контекста до активации. Поэтому `create_scope` асинхронен: приватный
-   плагин с исходным именем **`scope`** передаёт свой настоящий `Context` из apply через oneshot.
-   Возвращённый контекст владеет регистрациями и наследует теги, realms и intercepts; контекст родителя
-   вместо дочернего не подставляется. Опциональная связь parent ставится до создания fiber, как в образце.
-   Синхронная доступность до запуска child apply пока не реализована.
-2. В `Context` нет метода прочитать/скомпоновать уже установленный filter: `with_filter` заменяет его.
-   `scope_target` сохраняет тип предмета, но не извлекает скрытый фильтр предмета. Его нужно передать явно
-   через `.with_base_filter(move |listener| base.filter(listener))`, захватив правильный receiver.
-   Такой фильтр вызывается до проверки scope. Автоматическое сохранение фильтра произвольного base или
-   фильтрованного `Context` пока не реализовано; `.context(&ctx)` заменяет filter этого ctx.
-3. Ядро не выдаёт `Disposer` родительского эффекта, владеющего дочерним fiber. `ScopeDisposer` обращается
-   к настоящему `Fiber::dispose`, повторные вызовы ожидают общую остановку. Явное снятие составного
-   эффекта соблюдает порядок `inner, scope, outer` (исходный тест перенесён). Однако это не точная
-   идентичность исходного Cordis disposer и не перенос владения родительским child-effect через
-   `Undos::push`: при выгрузке всего родителя child-effect остаётся самостоятельным. Строгий порядок
-   относительно асинхронных соседей в этом сценарии без API adoption child-effect не гарантирован.
-4. Контекст child не получает committed dependency view minter: kernel `Context::binding` ищет свой
-   view и опубликованную таблицу, а не view предка. Обычные опубликованные сервисы доступны; доступ через
-   scoped ctx к уже снятому, но удержанному инъекцией minter сервису не гарантирован. Для полного
-   исходного контракта нужен механизм ядра наследовать этот view/путь разрешения.
-5. `Context` — конкретный тип, не подменяемый объектом с методом effect; списка эффектов с labels нет
-   в публичном API. `Disposer` потребляется один раз. Метод `ScopedLayers::effect` непосредственно
-   возвращает результат `ctx.try_effect` без обёртки. Дословная JS-проверка mock-идентичности невозможна;
-   label проверен через публичный журнал ошибки cleanup, идемпотентность — ранним снятием и shutdown.
+`scope_target(base: Arc<T>, key: Option<ScopeKey>) -> Scoped<T>`, где `T: ScopeFilter`, сохраняет тип
+предмета без предоставления его полей. Trait `ScopeFilter` — типизированное свойство `Context.filter`:
+обычный предмет реализует пустой `impl ScopeFilter for Subject {}`, фильтрованный предмет переопределяет
+`matches_filter(&self, listener: &Context)`. `Context` реализует trait через свой существующий
+`matches_filter`; `()` — предмет без фильтра; сам `Scoped<T>` тоже сохраняет свой фильтр как base.
+`Arc` сохраняет точный receiver вызова. При `carrier.context(&emitter).emit(&event)` сначала вызывается
+фильтр **base**, затем читается ближайшая scope-метка **listener** и его допуск по цепочке родителей.
+Фильтр emitter не является фильтром receiver и не добавляется: как `emit(thisArg, ...)` образца.
+`Listen::global()` обходит весь фильтр. `with_base_filter` и ручная передача фильтра удалены.
 
-`is_scope_carrier` принимает только типизированный переносчик, поэтому всегда истинен; это следствие
-статического ограничения параметра, а не динамическая проверка произвольного JS value. Исходные проверки
-непереносчика и отсутствия полей предмета выражены compile-fail doctests. `carrier_key_of` сохраняет
-различие keyed/unkeyed; в kernel-слушателях нет JS `this`, поэтому получение ключа из receiver слушателя
-требует отдельного решения на уровне событий. Kernel ограничивает labels строками `&'static str`.
+`bind_scope_parent(&key, parent)` возвращает `ScopeParentBinding`; только он делает `rebind(parent)`.
+Проверка already-bound предшествует проверке cycle. `scope_parent_of(&key)` читает только прямую связь;
+`scope_chain_of(Option<&ScopeKey>)` возвращает `[key, parent, …]`. Вложенный Context сам по себе
+не создаёт связь ключей: её задаёт только bind или `CreateScopeOptions { parent: Some(...) }`.
+`scope_of(&ctx)` читает приватную метку и учитывает ближайшее затенение.
+
+Идентификаторы `ScopeKey` — отдельные значения, сохраняющие тождество при `Clone`, вместо произвольного
+объекта JavaScript. Предмет хранит свой ключ отдельно; сравнение и Hash зависят только от неизменной
+идентичности. Родитель хранится в самом ключе, таблицы и переносчики не используют глобальные реестры.
+Единственный static — разрешённый AtomicU64 выдачи уникальных id; предел 2^64 выдач — инвариант времени
+жизни процесса. Обход, проверка и освобождение неограниченных цепочек итеративны. Между потоками записи
+родителя и чтение цепочки проверяют согласованный снимок под блокировками с единым порядком.
+
+`is_scope_carrier(&Scoped<T>)` и `carrier_key_of(&Scoped<T>)` сохраняют keyed/unkeyed различие;
+непереносчик не принимается типами Rust. Непрозрачность предмета и отрицательный вызов проверены
+compile-fail doctests вместо JS `in`/unknown/Symbol-проверок (§8 PORTING). Это языковая адаптация,
+а не ограничение ядра. Payload события содержит реальный предмет.
+
+### Таблицы и эффекты
+
+`NamedEntries<V, E = BoxError>` предоставляет `insert`, `get`, `has`, `keys`, `entries`, `values`, `is_empty`.
+Ошибка duplicate создаётся вызывающим и возвращается без преобразования; `insert -> Result<EntryUndo, E>`.
+`AnonymousEntries<V>` предоставляет `append`, `values`, `is_empty`; равные значения имеют независимые undo.
+`EntryUndo::undo()` синхронен и идемпотентен; `Into<Undo>` передаёт отмену контексту. Старый undo никогда
+не удаляет повторную вставку с тем же именем. После удаления последней записи меняется поколение таблицы;
+старый итератор не видит новых вставок. До исчерпания итератор живой, после исчерпания остаётся завершённым.
+Чтение/итерация требуют `V: Clone`: для исходных заимствованных объектов нужно хранить `Arc<T>`.
+Тесты проверяют сохранение идентичности значений, а не только их равенство.
+
+`ScopeLayer` — trait с `is_empty`. `ScopedLayers<L>::global: Arc<L>` создаётся сразу; `peek` никогда
+не создаёт overlay и не читает предков. `chain_layers` возвращает существующие слои дальних предков
+сначала; `merge` возвращает `IndexMap`, где ближайший слой выигрывает без перемещения позиции имени.
+`new` принимает неошибающиеся factory/onChange, `try_new` — callbacks с `Result`.
+`EffectOptions::new(label)` задаёт исходный `notify = true`; поле `notify: false` отключает оба уведомления.
+
+`ScopedLayers::effect(&ctx, action, options)` непосредственно возвращает disposer контекста:
+`Context` вызывает настоящий `try_effect`, действие возвращает `Result<EntryUndo, BoxError>`, undo
+собирается **до** onChange. Ошибка уведомления откатывает вставку; освобождается только полностью пустой
+агрегат слоя. Ошибки factory и action сохраняют исходный порядок и условия удаления слоя. Ошибка
+cleanup-уведомления оставляет удаление выполненным и логируется с исходной меткой эффекта.
+Синхронные мутации атомарны между потоками; повторный вход того же потока из factory/action/onChange
+допускается, внутренние mutex не удерживаются при callbacks или await.
+
+Дополнительный trait `store::RegistrationContext` выражает структурный аргумент исходного `effect`.
+У него associated `Disposer`, методы `scope_key`, `logger`, `try_effect`; обычный `Context` реализует его
+прямой передачей в ядро. Это позволяет перенести исходный mock **без** запуска setup: проверяются точное
+тождество возвращённого значения, единственный label и невызванный action. В production вызывающий
+по-прежнему передаёт `&Context` и получает настоящий `hoh_kernel::Disposer`.
+
+Новые публичные символы помимо исходных экспортов: `ScopeError`, `ScopeFilter`,
+`store::{EntryUndo, EffectOptions, RegistrationContext, Values, Keys, Entries}` и их описанные методы.
+Стандартные `new`/`Default`/`Clone` заменяют конструкторы и копирование ссылок JS. `Clone` таблиц и
+слоёв разделяет исходное состояние, не копирует регистрации. Labels имеют тип `&'static str`, как у ядра.
+
+### Ошибки и устранённые ограничения ядра
+
+`index.ts:60,74` бросает **обычный `new Error(...)`**, не HarnessError и не его наследника.
+`ScopeError` — обычный enum с thiserror, без поля code и без превращения в HarnessError.
+Оба исходных сообщения сохранены дословно. Тест через BoxError проверяет downcast в ScopeError
+и отрицательный `HarnessError::of`. Ошибки factory/action/onChange передаются как BoxError.
+
+Прежние пять вопросов закрыты реализацией kernel R66–R70:
+
+| требование образца | используемый API ядра | проверка через hoh-scope |
+|---|---|---|
+| index.ts:136–147, синхронные регистрации | `Context::child("scope")` | исходный pre-activation case и dispose до активации |
+| index.ts:115–118,143–145, raw и общий покой | `Fiber::disposer`, `Fiber::dispose` | исходный raw-first case; async ordered parent teardown с заблокированными inner и scope |
+| index.ts:140,150,174, ближайшая метка listener | `with_tag` / `tag` | исходные nearest-tag, ancestor и global cases |
+| index.ts:170–183, base-first с исходным receiver | `Context::matches_filter` | исходный receiver case, отдельный base Context и фильтрованный carrier как base |
+| index.ts:127–140, committed путь minter | `Context::child` и обычный `get` | чтение во время cleanup после withdrawal, isolation и освобождение последней Arc |
+
+Handoff, oneshot, асинхронный mint, ручной base-filter и raw-wrapper удалены; код чужих crates не копируется.
+Новый receiver/key API не нужен: kernel notes ссылаются на agent/dispatch.ts:113–125,
+tools/pipeline.ts:426–429 и session/index.ts:895–899 — переносимые слушатели берут предмет из payload.
+Production `carrierKeyOf(this)` найден только в api/remotes/src/index.ts:60–69 (Typert, исключён §8).
+Старые вопросы о receiver и невидимом filter/view больше не являются незавершённой работой.
 
 ### Потребители экспортов
 
-Проверены импорты из переносимых `packages/**/src` без client/api/typert/host/experimental и окон:
-tools, system-prompt, session, agent, agent-loop, tool-executor-ptc, jobs-local, mcp-resources,
-mcp-client, agent-preset-registry, commands, user-questions, user-approval, subagent, skill,
-cordis-host-runner. Все используемые ими экспорты представлены. Нет использования в исходном коде
-переносимых пакетов у `isScopeCarrier`, `carrierKeyOf` и имени типа `CreateScopeOptions`; эти экспорты
-всё равно перенесены. Первые два используются тестами scope/user-approval/subagent.
+До переноса просмотрены импорты из переносимых packages/**/src без client/api/typert/host/experimental:
+tools, system-prompt, session, agent, agent-loop, tool-executor-ptc, jobs-local, mcp-resources, mcp-client,
+agent-preset-registry, commands, user-questions, user-approval, subagent, skill, cordis-host-runner.
+Все используемые экспорты представлены. В production-коде этих пакетов не используются
+`isScopeCarrier`, `carrierKeyOf` и имя типа `CreateScopeOptions`; они всё равно перенесены.
 
 ## Не перенесено
 
-- `tests/scope.spec.ts`: `is usable synchronously before the backing fiber activates` — нет
-  публичного синхронного child-context API ядра (ограничение 1). Не подменён ослабленным тестом.
-- `tests/store.spec.ts`: `returns the exact context effect disposer` — JS-mock конкретного
-  `Context` неприменим (ограничение 5). Непосредственный возврат `ctx.try_effect` проверяется чтением кода.
-- JS WeakMap, Symbol и declaration merging заменены типами и собственным состоянием (§8 PORTING).
-  Динамические отрицательные проверки непереносчика заменены compile-fail, не объявлены runtime-проверками.
-
-Всего 21 исходный it: 19 перенесены с указанными адаптациями, 2 не перенесены.
-Имена исходных случаев сохранены в snake_case; два одинаковых имени поколения в store различены
-префиксами named/anonymous. У исходного теста ordered raw disposer проверен порядок, не JS function identity.
-У теста order/idempotence/labels introspection заменена журналом label и однократным снятием эффекта.
+Нет пропущенных исходных runtime-cases: **21 из 21**, включая ранее пропущенные
+`is_usable_synchronously_before_the_backing_fiber_activates` и `returns_the_exact_context_effect_disposer`.
+JS type/unknown/Symbol-assertions выражены типами и двумя compile-fail doctests, не объявляются
+выполненными runtime-проверками JavaScript. `getEffects`/повторный вызов consuming Disposer заменены
+наблюдением label через журнал и однократной отменой при раннем dispose плюс последующей выгрузке.
+Два одинаковых исходных имени поколений в store различены префиксами named/anonymous.
 
 ## Не проверено
 
-Платформенных веток и внешнего I/O в пакете нет. Тесты без сети; async-тесты с остановленным временем.
-Два независимых потока проверяют противонаправленные bind на 16 парах ключей.
-Полный исходный контракт синхронного mint, скрытого base-filter, raw adoption при выгрузке родителя,
-наследования удержанного committed view и JS receiver ограничен пунктами выше и не заявляется выполненным.
-
-Дополнительные тесты: carrier следует rebind и сохраняются имя scope/intercept; одновременные bind не
-замыкают цикл; merge дальних/ближних предков, отсутствие побочных слоёв при чтении и снятие при dispose;
-живые keys/entries при удалении/повторной вставке; повторный вход из action; исходный label в журнале;
-неактивный контекст не вызывает фабрику/action. Два compile-fail doctest проверяют непрозрачность carrier.
+Платформенных веток, сети и внешнего I/O нет. Async-тесты используют остановленное время и явные gate,
+без привязки к реальному времени; opposing bind проверяется на 16 парах в двух независимых потоках.
+Все пять ранее недоступных runtime-контрактов проверены через публичный API hoh-scope.
 
 ## Вопросы ведущему
 
-Нужны решения/расширения **hoh-kernel**, сам этот crate зависимости не меняет:
-
-- синхронно доступный дочерний Context с корректным владением эффектами;
-- публичная композиция существующего dispatch filter;
-- получение/adoption точного child-fiber Disposer в составном эффекте;
-- наследование scoped ctx пути разрешения committed dependencies minter, включая teardown;
-- нужно ли событию нести типизированный carrier/dispatch key для потребителей исходного `this`.
-
-Пока приняты явные Rust-адаптации выше; полная эквивалентность этим пяти аспектам не достигнута.
+Нет. Дополнительных API ядра не требуется; незавершённых частей переноса нет.
 
 ## Проверки
 
-Каждая команда выполняется из корня workspace с
-`CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w2`.
+Команды из корня workspace, каждая с
+`CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w2`:
 
-- `cargo test -p hoh-scope`: integration scope — **12 passed; 0 failed**; integration store —
-  **14 passed; 0 failed**; doctests — **2 passed; 0 failed**; unit — 0/0. Всего **28 passed; 0 failed**.
+- `cargo test -p hoh-scope`: scope — **18 passed; 0 failed**; store — **16 passed; 0 failed**;
+  doctests — **2 passed; 0 failed**; unit — 0/0. Всего **36 passed; 0 failed**.
 - `cargo clippy -p hoh-scope --all-targets -- -D warnings`: exit 0.
 - `cargo fmt -p hoh-scope -- --check`: exit 0.
 
-Изменения писателя ограничены `crates/hoh-scope`; исходник dsh только прочитан.
+Изменения ограничены `crates/hoh-scope`; source dsh и остальные crates только прочитаны.

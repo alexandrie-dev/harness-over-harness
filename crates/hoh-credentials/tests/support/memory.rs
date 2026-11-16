@@ -1,7 +1,7 @@
 use hoh_credentials::{
     CredentialFuture, CredentialInfo, CredentialKey, CredentialMutator, CredentialProvider,
     CredentialRecord, CredentialRecordEntry, CredentialRecordInfo, CredentialRef, Credentials,
-    CredentialsRecordUpdated, CredentialsReferenceUpdated, ResolvedCredential,
+    ResolvedCredential,
 };
 use hoh_kernel::{Cfg, Context, Error, plugin};
 use indexmap::IndexMap;
@@ -74,9 +74,7 @@ impl CredentialProvider for MemoryCredentials {
             .lock()
             .unwrap()
             .insert(reference.as_str().into(), value.into());
-        self.ctx.emit(&CredentialsReferenceUpdated {
-            reference: reference.clone(),
-        });
+        self.notify_updated(&self.ctx, reference);
         Box::pin(async { Ok(()) })
     }
 
@@ -88,9 +86,7 @@ impl CredentialProvider for MemoryCredentials {
             .shift_remove(reference.as_str())
             .is_some();
         if removed {
-            self.ctx.emit(&CredentialsReferenceUpdated {
-                reference: reference.clone(),
-            });
+            self.notify_updated(&self.ctx, reference);
         }
         Box::pin(async { Ok(()) })
     }
@@ -150,8 +146,7 @@ impl CredentialProvider for MemoryCredentials {
                 .lock()
                 .unwrap()
                 .insert(key.clone(), next.clone());
-            self.ctx
-                .emit(&CredentialsRecordUpdated { key: key.clone() });
+            self.notify_record_updated(&self.ctx, key);
             Ok(Some(next))
         })
     }
@@ -159,8 +154,7 @@ impl CredentialProvider for MemoryCredentials {
     fn delete_record<'a>(&'a self, key: &'a CredentialKey) -> CredentialFuture<'a, ()> {
         let removed = self.records.lock().unwrap().shift_remove(key).is_some();
         if removed {
-            self.ctx
-                .emit(&CredentialsRecordUpdated { key: key.clone() });
+            self.notify_record_updated(&self.ctx, key);
         }
         Box::pin(async { Ok(()) })
     }

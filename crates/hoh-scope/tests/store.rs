@@ -29,9 +29,9 @@ impl ScopeLayer for TestLayer {
     }
 }
 async fn mint(ctx: &Context, key: &ScopeKey) -> Scope {
-    create_scope(ctx, key.clone(), CreateScopeOptions::default())
-        .await
-        .unwrap()
+    let scope = create_scope(ctx, key.clone(), CreateScopeOptions::default()).unwrap();
+    scope.ctx.fiber().settled().await.unwrap();
+    scope
 }
 fn quiet(label: &'static str) -> EffectOptions {
     EffectOptions {
@@ -344,6 +344,56 @@ async fn rolls_back_a_scoped_insertion_when_notification_throws() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn returns_the_exact_context_effect_disposer() {
+    use hoh_scope::store::RegistrationContext;
+    struct MockContext {
+        raw: Arc<()>,
+        labels: Mutex<Vec<&'static str>>,
+        logger: hoh_kernel::Logger,
+    }
+    impl RegistrationContext for MockContext {
+        type Disposer = Arc<()>;
+        fn scope_key(&self) -> Option<ScopeKey> {
+            None
+        }
+        fn logger(&self) -> hoh_kernel::Logger {
+            self.logger.clone()
+        }
+        fn try_effect(
+            &self,
+            label: &'static str,
+            _setup: impl FnOnce(&hoh_kernel::Undos) -> Result<(), Error>,
+        ) -> Result<Self::Disposer, Error> {
+            self.labels.lock().unwrap().push(label);
+            Ok(self.raw.clone())
+        }
+    }
+    let kernel = Kernel::start();
+    let raw = Arc::new(());
+    let ctx = MockContext {
+        raw: raw.clone(),
+        labels: Mutex::new(Vec::new()),
+        logger: kernel.root().logger(),
+    };
+    let action_called = AtomicBool::new(false);
+    let layers = ScopedLayers::new(TestLayer::new, || {});
+    let returned = layers
+        .effect(
+            &ctx,
+            |_| {
+                action_called.store(true, Ordering::SeqCst);
+                Ok(EntryUndo::new(|| {}))
+            },
+            quiet("store.identity"),
+        )
+        .unwrap();
+    assert!(Arc::ptr_eq(&returned, &raw));
+    assert_eq!(*ctx.labels.lock().unwrap(), ["store.identity"]);
+    assert!(!action_called.load(Ordering::SeqCst));
+    kernel.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn merges_ancestor_layers_nearest_last_with_stable_name_order_and_live_rebinding() {
     let kernel = Kernel::start();
     let ctx = kernel.root();
@@ -529,5 +579,48 @@ async fn inactive_contexts_do_not_call_the_factory_or_action() {
     assert!(result.is_err());
     assert_eq!(created.load(Ordering::SeqCst), 1);
     assert!(layers.peek(scope_of(&scope.ctx).as_ref()).is_none());
+    kernel.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_cleanup_notification_keeps_the_removal_and_the_original_effect_label() {
+    let kernel = Kernel::start();
+    let scope = create_scope(
+        &kernel.root(),
+        ScopeKey::new(),
+        CreateScopeOptions::default(),
+    )
+    .unwrap();
+    let count = Arc::new(AtomicUsize::new(0));
+    let calls = count.clone();
+    let layers = ScopedLayers::try_new(
+        |key| Ok(TestLayer::new(key)),
+        move || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(())
+            } else {
+                Err("cleanup change failed".into())
+            }
+        },
+    )
+    .unwrap();
+    let dispose = layers
+        .effect(
+            &scope.ctx,
+            |layer| layer.named.insert("entry", 1),
+            EffectOptions::new("store.cleanup"),
+        )
+        .unwrap();
+    let key = scope_of(&scope.ctx).unwrap();
+    assert!(layers.peek(Some(&key)).is_some());
+    dispose.dispose().await;
+    assert!(layers.peek(Some(&key)).is_none());
+    assert_eq!(count.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        scope.ctx.logger().buffer().last().unwrap().message,
+        "effect \"store.cleanup\": cleanup change failed"
+    );
+    scope.dispose().await;
+    assert_eq!(count.load(Ordering::SeqCst), 2);
     kernel.shutdown().await;
 }

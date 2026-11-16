@@ -170,3 +170,20 @@ fn safe_views_omit_absent_fields_and_never_add_values() {
         json!("a/b")
     );
 }
+
+#[test]
+fn native_type_errors_remain_plain_errors_across_the_boxed_boundary() {
+    for error in [
+        credential_ref("invalid-ref").unwrap_err(),
+        credential_key("Invalid", "id").unwrap_err(),
+        parse_credential_key("not-a-key").unwrap_err(),
+    ] {
+        let error: hoh_error::BoxError = error.into();
+        assert!(error.is::<TypeError>());
+        assert_eq!(
+            error.downcast_ref::<TypeError>().unwrap().name(),
+            "TypeError"
+        );
+        assert!(hoh_error::HarnessError::of(error.as_ref()).is_none());
+    }
+}

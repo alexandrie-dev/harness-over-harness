@@ -1,13 +1,14 @@
 //! Port of @deepseek-ai/dsh-scope (packages/core/scope).
 //! Scope identities, routed event carriers, and scope-owned registration tables.
 //!
-//! `create_scope` awaits a real child activation; registrations belong to that child.
-//! See `PORT_NOTES.md` for kernel limitations compared with Cordis.
+//! `create_scope` immediately returns a real child context, ready for registrations
+//! before its backing fiber activates. See `PORT_NOTES.md` for the consumer API.
 
 pub mod store;
 pub use store::{AnonymousEntries, NamedEntries, ScopeLayer, ScopedLayers};
 
-use hoh_kernel::{Context, Error, Fiber, KernelError, Undo, plugin};
+use hoh_error::BoxError;
+use hoh_kernel::{Context, Disposer, Fiber, KernelError};
 use std::{
     collections::HashSet,
     fmt,
@@ -18,7 +19,6 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use tokio::sync::oneshot;
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -183,77 +183,44 @@ pub struct CreateScopeOptions {
 /// A scope's context and its raw child-fiber disposal boundary.
 pub struct Scope {
     pub ctx: Context,
-    pub raw_dispose: ScopeDisposer,
+    fiber: Fiber,
+    // Keep the exact parent-owned record alive so the accessor remains usable after teardown.
+    _raw_dispose: Disposer,
 }
 impl Scope {
-    /// Repeated calls join the same kernel teardown, including raw-disposer-first calls.
-    pub fn dispose(&self) -> impl Future<Output = ()> + Send + 'static {
-        self.raw_dispose.dispose()
+    /// The exact child effect, suitable for ordered adoption with `Undos::push`.
+    /// Repeated reads return handles of the same kernel record.
+    pub fn raw_dispose(&self) -> Disposer {
+        // `_raw_dispose` retains this child's parent-owned record for the lifetime of Scope.
+        self.fiber
+            .disposer()
+            .expect("scope retains its raw disposer")
     }
-}
-
-/// A reusable raw fiber disposer, also accepted by an ordered `Undos` composite.
-#[derive(Clone)]
-pub struct ScopeDisposer {
-    fiber: Fiber,
-}
-impl ScopeDisposer {
+    /// Repeated calls join the same kernel teardown, including raw-disposer-first calls.
     pub fn dispose(&self) -> impl Future<Output = ()> + Send + 'static {
         self.fiber.dispose()
     }
 }
-impl From<ScopeDisposer> for Undo {
-    fn from(disposer: ScopeDisposer) -> Self {
-        Undo::future(move || async move {
-            disposer.dispose().await;
-            Ok(())
-        })
-    }
-}
 
-struct Handoff(Mutex<Option<oneshot::Sender<Context>>>);
 struct ScopeTag(ScopeKey);
 
-#[plugin(ScopePlugin, name = "scope")]
-async fn apply_scope(ctx: Context) -> Result<(), Error> {
-    if let Some(handoff) = ctx.tag::<Handoff>()
-        && let Some(sender) = lock(&handoff.0).take()
-    {
-        let _ = sender.send(ctx);
-    }
-    Ok(())
-}
-
-/// Mint a scope. The current kernel exposes the child context only from its apply.
-pub async fn create_scope(
+/// Mint a synchronously usable scope; parent placement is bound before creation.
+pub fn create_scope(
     ctx: &Context,
     key: ScopeKey,
     options: CreateScopeOptions,
-) -> Result<Scope, Error> {
+) -> Result<Scope, BoxError> {
     if let Some(parent) = options.parent {
         bind_scope_parent(&key, parent)?;
     }
-    let (sender, receiver) = oneshot::channel();
-    let tagged = ctx
-        .with_tag(ScopeTag(key))
-        .with_tag(Handoff(Mutex::new(Some(sender))));
-    let fiber = tagged.plugin::<ScopePlugin>(serde_json::Value::Null)?;
-    let token = ctx.token();
-    let scoped = tokio::select! {
-        biased;
-        result = receiver => result.map_err(|_| KernelError::Inactive),
-        _ = token.cancelled() => Err(KernelError::Inactive),
-    };
-    match scoped {
-        Ok(ctx) => Ok(Scope {
-            ctx,
-            raw_dispose: ScopeDisposer { fiber },
-        }),
-        Err(error) => {
-            fiber.dispose().await;
-            Err(error.into())
-        }
-    }
+    let scoped = ctx.child("scope")?.with_tag(ScopeTag(key));
+    let fiber = scoped.fiber();
+    let raw = fiber.disposer().ok_or(KernelError::Inactive)?;
+    Ok(Scope {
+        ctx: scoped,
+        fiber,
+        _raw_dispose: raw,
+    })
 }
 
 pub fn scope_of(ctx: &Context) -> Option<ScopeKey> {
@@ -262,15 +229,31 @@ pub fn scope_of(ctx: &Context) -> Option<ScopeKey> {
 
 type Filter = Arc<dyn Fn(&Context) -> bool + Send + Sync>;
 
+/// The optional Cordis `Context.filter` property, expressed as a Rust method.
+/// Plain subjects use the default; subjects with a filter override it.
+pub trait ScopeFilter: Send + Sync + 'static {
+    fn matches_filter(&self, _listener: &Context) -> bool {
+        true
+    }
+}
+impl ScopeFilter for Context {
+    fn matches_filter(&self, listener: &Context) -> bool {
+        Context::matches_filter(self, listener)
+    }
+}
+impl ScopeFilter for () {}
+
 /// An opaque, typed routing carrier. It contains no subject properties.
 ///
 /// ```compile_fail
-/// let carrier = hoh_scope::scope_target(&String::from("subject"), None);
-/// carrier.len(); // The subject is not exposed through the carrier.
+/// struct Subject { value: u32 }
+/// impl hoh_scope::ScopeFilter for Subject {}
+/// let carrier = hoh_scope::scope_target(std::sync::Arc::new(Subject { value: 1 }), None);
+/// carrier.value; // The subject is not exposed through the carrier.
 /// ```
 pub struct Scoped<T: ?Sized> {
     key: Option<ScopeKey>,
-    base_filter: Option<Filter>,
+    base_filter: Filter,
     subject: PhantomData<fn(&T)>,
 }
 impl<T: ?Sized> Clone for Scoped<T> {
@@ -283,16 +266,8 @@ impl<T: ?Sized> Clone for Scoped<T> {
     }
 }
 impl<T: ?Sized> Scoped<T> {
-    /// Explicitly supply the base filter; capture its receiver when it needs one.
-    pub fn with_base_filter(
-        mut self,
-        filter: impl Fn(&Context) -> bool + Send + Sync + 'static,
-    ) -> Self {
-        self.base_filter = Some(Arc::new(filter));
-        self
-    }
     pub fn admits(&self, ctx: &Context) -> bool {
-        if self.base_filter.as_ref().is_some_and(|filter| !filter(ctx)) {
+        if !(self.base_filter)(ctx) {
             return false;
         }
         match scope_of(ctx) {
@@ -302,7 +277,7 @@ impl<T: ?Sized> Scoped<T> {
     }
     /// Derive a dispatch context. All five kernel dispatch modes use this filter;
     /// `Listen::global()` retains the kernel's bypass semantics.
-    /// Existing filters must be supplied through `with_base_filter` (see port notes).
+    /// Filtering belongs to the carrier's base, independently of the emitter's filter.
     pub fn context(&self, ctx: &Context) -> Context {
         let carrier = Scoped::<()> {
             key: self.key.clone(),
@@ -313,10 +288,16 @@ impl<T: ?Sized> Scoped<T> {
     }
 }
 
-pub fn scope_target<T: ?Sized>(_base: &T, key: Option<ScopeKey>) -> Scoped<T> {
+impl<T: ?Sized + 'static> ScopeFilter for Scoped<T> {
+    fn matches_filter(&self, listener: &Context) -> bool {
+        self.admits(listener)
+    }
+}
+
+pub fn scope_target<T: ScopeFilter + ?Sized>(base: Arc<T>, key: Option<ScopeKey>) -> Scoped<T> {
     Scoped {
         key,
-        base_filter: None,
+        base_filter: Arc::new(move |listener| base.matches_filter(listener)),
         subject: PhantomData,
     }
 }

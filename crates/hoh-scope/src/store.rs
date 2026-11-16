@@ -1,7 +1,8 @@
 //! Insertion-ordered, live registration tables and scope-owned aggregate layers.
 
 use crate::{ScopeKey, lock, scope_chain_of, scope_of};
-use hoh_kernel::{Context, Disposer, Error, Undo};
+use hoh_error::BoxError as Error;
+use hoh_kernel::{Context, Disposer, Logger, Undo, Undos};
 use indexmap::IndexMap;
 use std::{
     sync::{Arc, Condvar, Mutex},
@@ -266,6 +267,36 @@ pub trait ScopeLayer: Send + Sync + 'static {
     fn is_empty(&self) -> bool;
 }
 
+/// The structural context contract used by a registry registration.
+/// `Context` delegates directly to the kernel. The associated return type keeps
+/// the identity of a context's disposer, including contexts that defer setup.
+pub trait RegistrationContext {
+    type Disposer;
+    fn scope_key(&self) -> Option<ScopeKey>;
+    fn logger(&self) -> Logger;
+    fn try_effect(
+        &self,
+        label: &'static str,
+        setup: impl FnOnce(&Undos) -> Result<(), Error>,
+    ) -> Result<Self::Disposer, Error>;
+}
+impl RegistrationContext for Context {
+    type Disposer = Disposer;
+    fn scope_key(&self) -> Option<ScopeKey> {
+        scope_of(self)
+    }
+    fn logger(&self) -> Logger {
+        Context::logger(self)
+    }
+    fn try_effect(
+        &self,
+        label: &'static str,
+        setup: impl FnOnce(&Undos) -> Result<(), Error>,
+    ) -> Result<Disposer, Error> {
+        Context::try_effect(self, label, setup)
+    }
+}
+
 /// Effect label and change notification policy. Notification defaults to true.
 pub struct EffectOptions {
     pub label: &'static str,
@@ -403,13 +434,13 @@ impl<L: ScopeLayer> ScopedLayers<L> {
     /// Factory, mutation and notification form one synchronous transaction.
     /// Callbacks may reenter the registry on the same thread.
     /// The returned disposer is the exact one returned by `Context::try_effect`.
-    pub fn effect(
+    pub fn effect<C: RegistrationContext>(
         &self,
-        ctx: &Context,
+        ctx: &C,
         action: impl FnOnce(&L) -> Result<EntryUndo, Error>,
         options: EffectOptions,
-    ) -> Result<Disposer, Error> {
-        let scope = scope_of(ctx);
+    ) -> Result<C::Disposer, Error> {
+        let scope = ctx.scope_key();
         let _mutation = self.inner.mutation.enter();
         ctx.try_effect(options.label, |undos| {
             let (layer, undo) = {
@@ -451,7 +482,7 @@ impl<L: ScopeLayer> ScopedLayers<L> {
                 if options.notify
                     && let Err(error) = (inner.on_change)()
                 {
-                    log.error(error);
+                    log.error(format_args!("effect \"{}\": {error}", options.label));
                 }
             }))?;
             if options.notify {

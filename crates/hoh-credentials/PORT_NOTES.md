@@ -4,46 +4,54 @@
 
 | образец | перенос | состояние |
 | --- | --- | --- |
-| src/index.ts | src/lib.rs | Все публичные конструкторы/проверки ключей, views, абстрактный provider; inherited notifications заблокированы API ядра |
+| src/index.ts | src/lib.rs | Все конструкторы/проверки, views, абстрактный provider, inherited notify_updated/notify_record_updated, private fan_out/warn_listener_failure |
 | src/types.ts | src/types.rs | Все типы, оба бренда, объединение записей, обе декларации событий |
 | tests/credentials.spec.ts | tests/credentials.rs | Все 8/8 исходных случаев |
+| ../credentials-local/tests/review-fixes.spec.ts:112–136, блок contained update fan-out | tests/credentials.rs | Оба случая перенесены для seam-only provider, без файлового backend; имена в snake_case сохранены |
 | tests/memory.ts | tests/support/memory.rs | Полный test-only provider, все методы обоих пространств ключей |
-| — | tests/types.rs | 4 дополнительных теста грамматик, ошибок, JSON, тегов и порядка полей |
+| — | tests/credentials.rs | Ещё 2 проверки record notifications: три слушателя (throw/reject/success), порядок и non-waiting, только committed изменения |
+| — | tests/types.rs | 5 дополнительных тестов грамматик, ошибок, JSON, тегов и порядка полей; TypeError остаётся обычной ошибкой за BoxError |
 | README.md, package.json | — | Прочитаны; отдельной LICENSE и locale нет |
 
 ## Отличия от образца
 
 - CredentialProvider — object-safe trait, Credentials — ServiceKey с точным именем credentials. Это абстрактный seam, не конкретный плагин: как и в образце, его публикует плагин-поставщик. В тестах это MemoryCredentialsPlugin; production-поставщика в пакете образца нет. Добавлять фиктивный production plugin нельзя.
-- CredentialFuture и CredentialMutator — дополнительные публичные псевдонимы для boxed Send future и FnOnce. mutate получает owned snapshot, может async-решить замену; None означает отсутствие изменения, не удаление. Контракт сериализации и межпроцессного исключения принадлежит реализации provider.
+- CredentialFuture и CredentialMutator — дополнительные публичные псевдонимы для boxed Send future и FnOnce. CredentialFuture использует общий hoh_error::BoxError (это тот же тип, что hoh_kernel::Error). mutate получает owned snapshot, может async-решить замену; None означает отсутствие изменения, не удаление. Контракт сериализации и межпроцессного исключения принадлежит реализации provider.
 - Имена Rust — snake_case, но все тексты TypeError, имена сервисов, событий и JSON поля сохранены. TypeError — дополнительный Rust enum вместо встроенного JS TypeError, со стандартными Display/Error и name().
 - Оба branded_string! объявлены в src/types.rs и реэкспортированы из корня: подмодуль types сохраняет исходную отдельную точку входа ./types. Грамматики реализованы проверкой ASCII байтов (без расширения диапазонов на Unicode).
 - CredentialRecord — закрытый enum; ручной serde делегирует сериализацию ApiKeyRecord/GrantRecord и десериализует через закрытый #[serde(tag = "kind")] helper. Каждый standalone record также сериализуется с kind первым; нет дублированного поля kind. CredentialRecordKind — дополнительное имя исходного типа CredentialRecord['kind']; kind() читает тег. payload — opaque Value, env — IndexMap, None-поля опускаются. Результаты views имеют исходный порядок configured/source/writable/masked и configured/kind/writable.
-- CredentialsReferenceUpdated/CredentialsRecordUpdated — дополнительные имена Rust структур для исходных событий, режим Emit. Поле reference представляет исходный параметр ref (ключевое слово Rust); payload события внутри процесса не является протокольным объектом.
+- CredentialsReferenceUpdated/CredentialsRecordUpdated — дополнительные имена Rust структур для исходных событий, режим **Contained**. Имена остаются `credentials/reference-updated` и `credentials/record-updated`; on_dispatch по-прежнему видит Emit согласно kernel R63. Поле reference представляет исходный параметр ref (ключевое слово Rust); payload события внутри процесса не является протокольным объектом.
+- Защищённые методы исходного класса стали object-safe default-методами trait: `notify_updated(&self, ctx: &Context, reference: &CredentialRef)` и `notify_record_updated(&self, ctx: &Context, key: &CredentialKey)`. В Rust нет protected-наследования; Context передаётся явно вместо service Proxy, по docs/kernel.md §7. Поставщик вызывает helper со своим контекстом только после commit; контекст сохраняет routing/filter и logger metadata.
+- Private fan_out использует общий реестр kernel через `ctx.dispatch(event).invoke(report)`: синхронный Err (Threw) регистрируется до следующего callback; async Err (Rejected) наблюдается без ожидания операции. Оба вида вызывают одну warn_listener_failure, как в src/index.ts:283–304; собственной таблицы слушателей и собственных задач нет. Снимок/order/filter/alive и отмена async-работы с fiber слушателя — kernel R63–R65. Отдельные уведомления/специальные тексты для Threw/Rejected не добавлялись.
+- На каждый failure пишутся **ровно две WARN-записи**: `credentials: a <event> listener for "<subject>" failed`, затем Display ошибки и её цепочка source через `: ` одной строкой. Префикс source `src/index.ts:302` после подстановки `%s` сохранён до символа, ref/key не подменяются секретными значениями. Исходные printf/error arguments форматируются на месте вызова по docs/kernel.md §7 и решению ведущего о диагностическом журнале; JS util.inspect/идентичность args не воспроизводятся. Ошибки слушателей не меняют результат commit и не препятствуют успешному слушателю.
 - Low-level branded_string! разрешает unchecked From<String>, как общий brandString в образце. Гарантии credential_key_scope/id относятся к ключам из validating constructors. На некорректном unchecked ASCII ключе без slash сохранены slice(0,-1)/slice(0); для невалидного Unicode-бренда без slash scope удаляет последний Unicode scalar, а не UTF-16 code unit: Rust String не представляет непарные суррогаты. Валидные ключи всегда ASCII.
-- Test-only MemoryCredentials сохраняет исходные Map ordering, синхронные эффекты set/unset, отсутствие notify helpers (он и в образце напрямую вызывает ctx.emit). Короткие std::sync::Mutex не удерживаются через await; modify_record сохраняет исходную последовательность snapshot → await mutate → replacement, не добавляя отсутствующий в test helper замок между await. Это не production provider.
+- Test-only MemoryCredentials сохраняет исходные Map ordering и синхронные изменения set/unset. Вместо прямого ctx.emit исходного test helper он вызывает default notify helpers: типизированный Contained не допускает emit/on, и этот provider дополнительно служит fixture проверки inherited containment без credentials-local. Это осознанная адаптация тестового поставщика; обычные 8 исходных случаев сохранены. Короткие std::sync::Mutex не удерживаются через await; modify_record сохраняет последовательность snapshot → await mutate → replacement, не добавляя отсутствующий в test helper замок между await. Это не production provider.
 - До реализации просмотрены импорты разрешённых packages/src: credentials-local, authorization, deepseek-account, llm-pi-ai, llm-deepseek, llm-deepseek-api-key, mcp-client, web-deepseek-api и web-search-deepseek. Все публичные экспорты используются, кроме GrantRecord как самостоятельного импортируемого имени: потребители читают grant через CredentialRecord (в сгенерированном api-catalog имя присутствует, он не считается потребителем).
 
 ## Не перенесено
 
-- Из credentials.spec.ts не пропущено ничего: 8/8; дополнительно tests/types.rs — 4 случая.
-- **Не завершено:** protected notifyUpdated/notifyRecordUpdated и private fanOut/warnListenerFailure из src/index.ts:255–304. Ядро предоставляет только Context::emit, который прекращает обход при панике и не принимает async возвращаемые значения. Его приватный dispatch недоступен. Catch вокруг emit не исполняет оставшихся слушателей; смена режима на Parallel меняет контракт события и момент завершения. Свой параллельный реестр или копирование ядра запрещены границами задания и ломают общий ctx.on. Поэтому нет ложной реализации/пустой заглушки этих helpers; см. вопросы.
-- Обязательные будущие warning строки исходника: `credentials: a %s listener for "%s" failed` (event/subject подставляются) и отдельная запись самого error. Сохранить их после появления нужного API.
+- Нет незавершённого production-кода или исключённых runtime-случаев: исходные credentials.spec.ts 8/8 и дополнительно два исходных contained fan-out случая из credentials-local/tests/review-fixes.spec.ts; пропущено 0. Остальные тесты credentials-local (файл, locks, watcher) относятся к другому crate и в эту передачу не входят.
 - TS declaration merging заменён типизированными событиями, абстрактный Service — trait/service key по docs/kernel.md. Других исключений нет.
+
+## Проверка обновлённых правил переноса
+
+- PORTING.md §4, новый пункт о Node/JavaScript: production-код этого пакета не использует trim/\s, path, readdir, fs или запуск процессов. Для него нет применимых вызовов общих js_trim/node_path/node_fs_error_message; прямых Rust-подмен таких операций не найдено. ASCII-грамматики соответствуют исходным диапазонам без Unicode-расширений. Типы JSON и insertion order сохранены; библиотека не пишет JSON-текст наружу, поэтому serde используется только для значений, а не вместо JSON.stringify.
+- PORTING.md §7, базовый класс ошибки: source бросает встроенный TypeError, а test helper — обычный Error для пустого значения. Они не наследуют HarnessError и не превращаются в него. Собственный enum TypeError сохранён; добавлена проверка, что все три его варианта за BoxError узнаются как TypeError и **не** HarnessError. Arbitrary failures методов и слушателей используют общий BoxError. Других собственных классов ошибок, требующих переклассификации, в пакете нет.
 
 ## Не проверено
 
-- Contained notification fan-out требует расширения ядра; sync throw/async rejection и продолжение последующих слушателей не объявляются работающими.
+- Проверки notification fan-out не используют wall-clock ожиданий: paused Tokio, gate и уведомление logger exporter доказывают завершение commit до async rejection, продолжение слушателей и две записи на каждый отказ. Durable/file assertions credentials-local заменены проверкой уже committed memory-state — здесь проверяется абстрактная capability, не хранение на диске.
 - Сценарии durable storage, locks между процессами и ambient fallback принадлежат concrete providers и здесь не реализуются. Платформенных веток нет.
 
 ## Вопросы ведущему
 
-1. Нужен публичный contained Emit/dispatch API hoh-kernel: snapshot слушателей, respect filter/alive/disposal/order; синхронное исполнение каждого отдельно с продолжением после паники/ошибки, наблюдение async ошибок без ожидания commit, логирование каждой ошибки. Он должен использовать общий реестр ctx.on. Простого catch_unwind вокруг Context::emit недостаточно. После этого можно реализовать inherited notify_updated/notify_record_updated без изменения режима и поведения событий. Чужой kernel не менялся.
-2. Нужен согласованный Rust контракт async listener для Emit: текущая сигнатура on Fn(&E) -> () принципиально не возвращает future, в отличие от допускаемого Cordis Promise-like возврата.
+Нет. Оба прежних вопроса закрыты добавленным API hoh-kernel: Contained/on_contained/on_contained_async и dispatch(event).invoke(report) с ListenerFailure::Threw/Rejected. Свои обходные механизмы не понадобились; чужие crates не менялись.
 
 ## Проверки
 
-Все Cargo-команды: CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w4.
+Все Cargo-команды при передаче writer w5: CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w5.
 
-- cargo test -p hoh-credentials: credentials.rs — test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out. types.rs — test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out. Всего 12 passed; 0 failed; lib/doc-tests 0/0.
+- cargo build -p hoh-credentials: exit 0.
+- cargo test -p hoh-credentials: credentials.rs — `test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`; types.rs — `test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`. Всего 17 passed; 0 failed; lib/doc-tests 0/0.
 - cargo clippy -p hoh-credentials --all-targets -- -D warnings: exit 0.
 - cargo fmt -p hoh-credentials -- --check: exit 0.

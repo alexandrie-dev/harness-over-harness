@@ -11,10 +11,10 @@ workspace = true
 
 [dependencies]
 hoh-kernel = { path = "../hoh-kernel" }
+hoh-error = { path = "../hoh-error" }
 indexmap.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

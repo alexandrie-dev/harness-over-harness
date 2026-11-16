@@ -6,6 +6,7 @@ pub use types::{
     CredentialRef, CredentialsRecordUpdated, CredentialsReferenceUpdated, GrantRecord,
 };
 
+use hoh_kernel::{Contained, Context, Event, ListenerFailure, Logger};
 use serde::{Deserialize, Serialize};
 use std::{future::Future, pin::Pin};
 
@@ -106,7 +107,7 @@ pub struct CredentialRecordEntry {
 
 /// Object-safe asynchronous result; providers may fail with arbitrary errors.
 pub type CredentialFuture<'a, T> =
-    Pin<Box<dyn Future<Output = Result<T, hoh_kernel::Error>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<T, hoh_error::BoxError>> + Send + 'a>>;
 pub type CredentialMutator = Box<
     dyn FnOnce(Option<CredentialRecord>) -> CredentialFuture<'static, Option<CredentialRecord>>
         + Send,
@@ -146,6 +147,67 @@ pub trait CredentialProvider: Send + Sync {
     ) -> CredentialFuture<'a, Option<CredentialRecord>>;
     /// Missing record removal is silent; a committed removal emits an event.
     fn delete_record<'a>(&'a self, key: &'a CredentialKey) -> CredentialFuture<'a, ()>;
+
+    /// Notify reference observers only after a committed write or reload.
+    /// A failing listener never changes that operation's outcome. As with
+    /// Cordis's service context, ctx determines the notification's routing.
+    fn notify_updated(&self, ctx: &Context, reference: &CredentialRef) {
+        fan_out(
+            ctx,
+            CredentialsReferenceUpdated {
+                reference: reference.clone(),
+            },
+            reference.as_str(),
+        );
+    }
+
+    /// Notify record observers with the same containment and non-waiting
+    /// semantics as reference notifications, after a committed change.
+    fn notify_record_updated(&self, ctx: &Context, key: &CredentialKey) {
+        fan_out(
+            ctx,
+            CredentialsRecordUpdated { key: key.clone() },
+            key.as_str(),
+        );
+    }
+}
+
+fn fan_out<E: Event<Mode = Contained>>(ctx: &Context, event: E, subject: &str) {
+    let subject = subject.to_owned();
+    let logger = ctx.logger();
+    ctx.dispatch(event).invoke(move |failure| {
+        let error = match failure {
+            ListenerFailure::Threw(error) | ListenerFailure::Rejected(error) => error,
+        };
+        warn_listener_failure(&logger, E::NAME, &subject, error.as_ref());
+    });
+}
+
+fn warn_listener_failure(
+    logger: &Logger,
+    event: &str,
+    subject: &str,
+    error: &(dyn std::error::Error + 'static),
+) {
+    logger.warn(format_args!(
+        "credentials: a {event} listener for \"{subject}\" failed"
+    ));
+    logger.warn(ErrorChain(error));
+}
+
+// The journal takes one formatted string per call (docs/kernel.md §7).
+struct ErrorChain<'a>(&'a (dyn std::error::Error + 'static));
+
+impl std::fmt::Display for ErrorChain<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)?;
+        let mut cause = self.0.source();
+        while let Some(error) = cause {
+            write!(f, ": {error}")?;
+            cause = error.source();
+        }
+        Ok(())
+    }
 }
 
 hoh_kernel::service!(pub Credentials: dyn CredentialProvider = "credentials");
