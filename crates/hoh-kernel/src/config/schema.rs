@@ -4,10 +4,9 @@ use indexmap::IndexSet;
 use serde_json::{Number, Value, json};
 use std::cmp::Ordering;
 
-// Default draft-2020-12 output of schemars 1.2.3, plus standard applicators used by extensions.
+// Schemars 1.2.3 draft-2020-12 output and the original R48 numeric constraints.
 const WORDS: &[&str] = &[
     "$schema",
-    "$id",
     "$ref",
     "$defs",
     "title",
@@ -23,20 +22,14 @@ const WORDS: &[&str] = &[
     "const",
     "properties",
     "patternProperties",
-    "propertyNames",
     "required",
     "additionalProperties",
     "unevaluatedProperties",
-    "minProperties",
-    "maxProperties",
     "items",
     "prefixItems",
     "uniqueItems",
     "minItems",
     "maxItems",
-    "contains",
-    "minContains",
-    "maxContains",
     "minimum",
     "maximum",
     "exclusiveMinimum",
@@ -49,18 +42,13 @@ const WORDS: &[&str] = &[
     "oneOf",
     "allOf",
     "not",
-    "if",
-    "then",
-    "else",
-    "dependentRequired",
-    "dependentSchemas",
 ];
 pub(super) fn target<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> {
     reference.strip_prefix('#').and_then(|p| root.pointer(p))
 }
 pub(super) fn children(schema: &Value) -> Vec<&Value> {
     let mut out = vec![];
-    for word in ["properties", "patternProperties", "dependentSchemas"] {
+    for word in ["properties", "patternProperties"] {
         if let Some(map) = schema[word].as_object() {
             out.extend(map.values());
         }
@@ -69,12 +57,7 @@ pub(super) fn children(schema: &Value) -> Vec<&Value> {
         "items",
         "additionalProperties",
         "unevaluatedProperties",
-        "propertyNames",
-        "contains",
         "not",
-        "if",
-        "then",
-        "else",
     ] {
         if let Some(child) = schema.get(word) {
             out.push(child);
@@ -160,134 +143,128 @@ fn pattern(source: &str) -> Result<regex::Regex, regex::Error> {
     }
     regex::Regex::new(&output)
 }
-fn inspect(
-    root: &Value,
-    s: &Value,
-    path: &mut Vec<PathSeg>,
-    restricted: bool,
-    wrapped: bool,
-    refs: &mut Vec<String>,
-    out: &mut Vec<Issue>,
-) {
-    let Some(obj) = s.as_object() else { return };
-    for key in obj.keys() {
-        if !WORDS.contains(&key.as_str()) && !key.starts_with("x-") {
-            add(out, path, format!("unsupported schema keyword: {key}"));
+fn inspect(root: &Value) -> Vec<Issue> {
+    let mut issues = vec![];
+    let mut checked = std::collections::HashSet::new();
+    let mut contexts = std::collections::HashSet::new();
+    let mut placement_errors = std::collections::HashSet::new();
+    let mut pending = vec![(root, Vec::<PathSeg>::new(), false, false)];
+    while let Some((schema, path, restricted, wrapped)) = pending.pop() {
+        let pointer = std::ptr::from_ref(schema);
+        if !contexts.insert((pointer, restricted, wrapped)) {
+            continue;
         }
-    }
-    if let Some(p) = s["pattern"].as_str()
-        && let Err(e) = pattern(p)
-    {
-        add(out, path, format!("invalid schema pattern {p:?}: {e}"));
-    }
-    if let Some(props) = s["patternProperties"].as_object() {
-        for p in props.keys() {
-            if let Err(e) = pattern(p) {
-                add(out, path, format!("invalid schema pattern {p:?}: {e}"));
+        let Some(object) = schema.as_object() else {
+            continue;
+        };
+        // Declaration checks belong to a schema location, not to each reference to it.
+        if checked.insert(pointer) {
+            for word in object.keys() {
+                if !WORDS.contains(&word.as_str()) && !word.starts_with("x-") {
+                    add(
+                        &mut issues,
+                        &path,
+                        format!("unsupported schema keyword: {word}"),
+                    );
+                }
             }
-        }
-    }
-    let live = s["x-volatile"] == true;
-    if live && (restricted || wrapped) || s.get("x-volatile-invalid").is_some() {
-        add(
-            out,
-            path,
-            "invalid volatile placement or already wrapped value",
-        );
-    }
-    if let Some(r) = s["$ref"].as_str()
-        && !refs.iter().any(|v| v == r)
-    {
-        if let Some(t) = target(root, r) {
-            refs.push(r.into());
-            inspect(root, t, path, restricted, wrapped || live, refs, out);
-            refs.pop();
-        } else {
-            add(out, path, format!("unsupported schema reference: {r}"));
-        }
-    }
-    for word in ["properties", "patternProperties", "dependentSchemas"] {
-        if let Some(props) = s[word].as_object() {
-            for (k, v) in props {
-                path.push(PathSeg::Key(k.clone()));
-                inspect(
-                    root,
-                    v,
-                    path,
-                    restricted || word != "properties",
-                    wrapped || live,
-                    refs,
-                    out,
+            if let Some(source) = schema["pattern"].as_str()
+                && let Err(error) = pattern(source)
+            {
+                add(
+                    &mut issues,
+                    &path,
+                    format!("invalid schema pattern {source:?}: {error}"),
                 );
-                path.pop();
             }
-        }
-    }
-    for word in [
-        "items",
-        "additionalProperties",
-        "unevaluatedProperties",
-        "propertyNames",
-        "contains",
-        "not",
-        "if",
-        "then",
-        "else",
-    ] {
-        if let Some(v) = s.get(word) {
-            inspect(root, v, path, true, wrapped || live, refs, out);
-        }
-    }
-    for word in ["prefixItems", "anyOf", "oneOf", "allOf"] {
-        if let Some(a) = s[word].as_array() {
-            for v in a {
-                inspect(
-                    root,
-                    v,
-                    path,
-                    if nullable_choice(s).is_some() {
-                        restricted
-                    } else {
-                        true
-                    },
-                    wrapped || live,
-                    refs,
-                    out,
+            if let Some(patterns) = schema["patternProperties"].as_object() {
+                for source in patterns.keys() {
+                    if let Err(error) = pattern(source) {
+                        add(
+                            &mut issues,
+                            &path,
+                            format!("invalid schema pattern {source:?}: {error}"),
+                        );
+                    }
+                }
+            }
+            if let Some(reference) = schema["$ref"].as_str()
+                && target(root, reference).is_none()
+            {
+                add(
+                    &mut issues,
+                    &path,
+                    format!("unsupported schema reference: {reference}"),
                 );
             }
         }
+        let live = schema["x-volatile"] == true;
+        // Placement follows reference contexts, so one declaration may be valid at one
+        // use and forbidden at another. Report an invalid declaration only once.
+        if (live && (restricted || wrapped) || schema.get("x-volatile-invalid").is_some())
+            && placement_errors.insert(pointer)
+        {
+            add(
+                &mut issues,
+                &path,
+                "invalid volatile placement or already wrapped value",
+            );
+        }
+        if let Some(definitions) = schema["$defs"].as_object() {
+            for child in definitions.values() {
+                pending.push((child, vec![], false, false));
+            }
+        }
+        for word in ["properties", "patternProperties"] {
+            if let Some(properties) = schema[word].as_object() {
+                for (key, child) in properties {
+                    let mut child_path = path.clone();
+                    child_path.push(PathSeg::Key(key.clone()));
+                    pending.push((
+                        child,
+                        child_path,
+                        restricted || word != "properties",
+                        wrapped || live,
+                    ));
+                }
+            }
+        }
+        for word in [
+            "items",
+            "additionalProperties",
+            "unevaluatedProperties",
+            "not",
+        ] {
+            if let Some(child) = schema.get(word) {
+                pending.push((child, path.clone(), true, wrapped || live));
+            }
+        }
+        for word in ["prefixItems", "anyOf", "oneOf", "allOf"] {
+            if let Some(array) = schema[word].as_array() {
+                for child in array {
+                    pending.push((
+                        child,
+                        path.clone(),
+                        if nullable_choice(schema).is_some() {
+                            restricted
+                        } else {
+                            true
+                        },
+                        wrapped || live,
+                    ));
+                }
+            }
+        }
+        if let Some(reference) = schema["$ref"].as_str()
+            && let Some(child) = target(root, reference)
+        {
+            pending.push((child, path, restricted, wrapped || live));
+        }
     }
+    issues
 }
 pub fn validate(schema: &Value, value: &Value) -> Result<(), ValidationError> {
-    let mut issues = vec![];
-    inspect(
-        schema,
-        schema,
-        &mut vec![],
-        false,
-        false,
-        &mut vec![],
-        &mut issues,
-    );
-    // Definitions are declarations even when no instance reaches them.
-    let mut pending = vec![schema];
-    while let Some(s) = pending.pop() {
-        if let Some(defs) = s["$defs"].as_object() {
-            for d in defs.values() {
-                inspect(
-                    schema,
-                    d,
-                    &mut vec![],
-                    false,
-                    false,
-                    &mut vec![],
-                    &mut issues,
-                );
-                pending.push(d);
-            }
-        }
-        pending.extend(children(s));
-    }
+    let mut issues = inspect(schema);
     if !issues.is_empty() {
         return Err(ValidationError { issues });
     }
@@ -375,6 +352,12 @@ fn matches_type(t: &str, v: &Value) -> bool {
         _ => false,
     }
 }
+fn has_integer_type(schema: &Value) -> bool {
+    schema["type"] == "integer"
+        || schema["type"]
+            .as_array()
+            .is_some_and(|types| types.iter().any(|t| t == "integer"))
+}
 fn branch(
     root: &Value,
     s: &Value,
@@ -446,14 +429,21 @@ fn eval_inner(
             return;
         }
     }
-    if s["type"] == "integer"
+    if has_integer_type(s)
         && let (Some(n), Some((min, max))) = (
             v.as_number().and_then(integer),
             s["format"].as_str().and_then(limits),
         )
     {
-        for (bad, op, limit) in [(n < min, ">=", min), (n > max, "<=", max)] {
-            if bad {
+        for (bad, op, limit, keyword) in [
+            (n < min, ">=", min, "minimum"),
+            (n > max, "<=", max, "maximum"),
+        ] {
+            let checked_by_bound = s[keyword]
+                .as_number()
+                .and_then(integer)
+                .is_some_and(|bound| if op == ">=" { n < bound } else { n > bound });
+            if bad && !checked_by_bound {
                 add(
                     out,
                     path,
@@ -537,16 +527,7 @@ fn eval_inner(
             ),
         );
     }
-    if let Some(condition) = s.get("if") {
-        let keyword = if branch(root, condition, v, path, seen).1.is_empty() {
-            "then"
-        } else {
-            "else"
-        };
-        if let Some(next) = s.get(keyword) {
-            evaluated.extend(eval(root, next, v, path, seen, out));
-        }
-    }
+
     if let Some(map) = v.as_object() {
         if let Some(req) = s["required"].as_array() {
             for key in req.iter().filter_map(Value::as_str) {
@@ -578,40 +559,10 @@ fn eval_inner(
                 evaluated.insert(key.clone());
                 eval(root, child, value, path, &mut vec![], out);
             }
-            if let Some(child) = s.get("propertyNames") {
-                eval(
-                    root,
-                    child,
-                    &Value::String(key.clone()),
-                    path,
-                    &mut vec![],
-                    out,
-                );
-            }
+
             path.pop();
         }
-        if let Some(deps) = s["dependentRequired"].as_object() {
-            for (key, list) in deps {
-                if map.contains_key(key)
-                    && let Some(list) = list.as_array()
-                {
-                    for name in list.iter().filter_map(Value::as_str) {
-                        if !map.contains_key(name) {
-                            path.push(PathSeg::Key(name.into()));
-                            add(out, path, "missing required value");
-                            path.pop();
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(deps) = s["dependentSchemas"].as_object() {
-            for (key, child) in deps {
-                if map.contains_key(key) {
-                    evaluated.extend(eval(root, child, v, path, seen, out));
-                }
-            }
-        }
+
         if let Some(child) = s.get("unevaluatedProperties") {
             for (key, value) in map {
                 if !evaluated.contains(key) {
@@ -622,7 +573,6 @@ fn eval_inner(
                 }
             }
         }
-        lengths(s, map.len(), "Properties", "object size", path, out);
     }
     if let Some(array) = v.as_array() {
         for (i, value) in array.iter().enumerate() {
@@ -643,17 +593,6 @@ fn eval_inner(
                     add(out, path, "expected unique array item");
                     path.pop();
                 }
-            }
-        }
-        if let Some(child) = s.get("contains") {
-            let count = array
-                .iter()
-                .filter(|value| branch(root, child, value, path, &mut vec![]).1.is_empty())
-                .count();
-            let min = s["minContains"].as_u64().unwrap_or(1);
-            let max = s["maxContains"].as_u64().unwrap_or(u64::MAX);
-            if (count as u64) < min || (count as u64) > max {
-                add(out, path, "expected array containing matching items");
             }
         }
     }
@@ -738,7 +677,7 @@ pub(crate) fn coerce_integers(root: &Value, s: &Value, value: &mut Value) {
             return;
         }
         seen.push(p);
-        if s["type"] == "integer"
+        if has_integer_type(s)
             && let Some(n) = v.as_number().and_then(integer)
         {
             if let Ok(n) = u64::try_from(n) {

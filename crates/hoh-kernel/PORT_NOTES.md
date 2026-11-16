@@ -244,7 +244,7 @@ tests/concurrency.rs: R59, R60, R61, R17, R35, закрытие, отмена sp
 | `default` | D schema_exprs.rs:680-715, 772-822 (serde default; применяется serde, не validator) |
 | `minLength`, `maxLength`, `minItems`, `maxItems`, `minimum`, `maximum`, `pattern`, `format` | D attr/validation.rs:73-116 (length/range/pattern/contains/format), S _private/mod.rs::must_contain (pattern) |
 
-Дополнительно сохранены исходные R48 слова `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`; поддержаны стандартные applicators `propertyNames`, `minProperties`, `maxProperties`, `contains`, `minContains`, `maxContains`, `if`, `then`, `else`, `dependentRequired`, `dependentSchemas`. `$id` — аннотация, `x-*` — расширения; `x-volatile` и `x-volatile-invalid` проверяются ядром. Bool-схемы поддерживаются. Другие слова — schema error даже в неиспользованном определении. `format` — аннотация R48, кроме диапазонов Rust integer formats для pathed typed conversion (B3). Для новых Rust-only ограничений set/not/contains нет текстового checker-аналога schemastery: выдаётся понятное expected-замечание с путём.
+Это опись второго раунда. В третьем раунде дополнительные standard applicators удалены; действующий полный набор с точными строками источников приведён ниже. Исходные R48 numeric constraints сохранены с явно отмеченным разногласием. `x-*` остаются расширениями; bool-схемы поддерживаются. `format` — аннотация R48, кроме диапазонов Rust integer formats для pathed typed conversion (B3).
 
 ### E2: уточнённый учёт исходных случаев
 
@@ -267,13 +267,84 @@ tests/concurrency.rs: R59, R60, R61, R17, R35, закрытие, отмена sp
 - Realm — 64-битный монотонный counter, 0=root; его исчерпание за 2^64 выдач — документированный invariant process lifetime. Fiber uid — u32, binding/revision/generation — u64, по контракту этапа 0. Logger buffer — последние 1 000 records; строка console обрезается до 10 240 UTF-16 units, ts_ms saturating i64.
 - interval(0) — 1 мс; нет tick backlog, дедлайн не должен переполнять Instant (переполнение завершает stream). Stream один reader, disposal даёт None; cancellation sleep даёт Inactive. За пределами tokio runtime Disposer выполняет синхронный префикс и пишет Error про невыполненный async остаток, не запускает новый runtime.
 
+## Третий раунд (fix2-stage0-k1)
+
+Изменения ограничены двумя kernel crates. Прежние C3/C10/B3 unknown-key disputes приняты ведущим; R28/R49/R48 integer/R60 уточнены в docs/kernel.md §10.1. Перед изменениями реализации получены красные проверки:
+
+- `c11_loading_withdrawal_notifies`: [false, false] вместо [false] без очистки observations; `hidden_registration_activation_withdrawal_sequence`: ложное уведомление до активации.
+- `ready_replies_survive_shutdown`: три уже доставленных результата стали Closed (settled/update/internal restart).
+- `optional_integral_float_loads`: serde floating-point error без пути; `optional_integer_format_range_has_path`: overflow Option<u32> без пути.
+- `type_release_skips_unrelated_commands`: 11 scans вместо 0 после десяти snapshot-команд. Счётчик обходов и команда чтения существуют только под cfg(test); измеряется сам обход, не wall-clock время.
+- `referenced_definition_is_inspected_once`, `recursive_root_is_inspected_once`: два одинаковых замечания вместо одного.
+- `settled_active_fiber_allows_marked_serial_wait`: SelfWait для активного, устоявшегося A при dispatch из его spawn-задачи.
+- `non_emitted_schema_words_are_unsupported`: checker принимал лишние слова.
+
+### Результат по пунктам brief
+
+1. Только активация/активная регистрация дают available=true, снятие записи всегда даёт false. Скрытая регистрация молчит. Убрана очистка observations. Проверены точные последовательности register→withdraw [false] и register→activate→withdraw [true,false].
+2. Готовый reply имеет приоритет над closing token, включая internal restart. Closing token по-прежнему прерывает ожидание, если reply отсутствует; actor-failure/suspended-handler tests сохранены.
+3. Integer type в списке обрабатывается так же, как scalar integer: точная конверсия и диапазон format. Null не конвертируется. Замечание формата не дублирует более строгий явный bound. **Частный пример Option<u8>(300) оспорен:** он уже давал правильный путь и текст на принятой базе, поскольку schemars-1.2.3/src/json_schema_impls/primitives.rs:54 и :112 явно дают maximum=255. Никакого изменения этой working bound check нет; `optional_integer_range_has_path` закрепляет результат. Настоящий пропущенный format-bound воспроизведён на Option<u32>(4294967296), где maximum не выдаётся (:114 и :105).
+4. `derived_access_annotations_are_emitted_and_load` добавлен и прошёл на принятой базе: production checker уже поддерживал обе аннотации. WriteOnly получается в обычном Deserialize schema; ReadOnly — у производного типа с skip_deserializing при Serialize contract (в Deserialize контракте это поле исключено). Обе схемы проверены без handwritten schema, оба config-типа загружены. Изменений рабочего checker для аннотаций нет.
+5. `unknown_key_uses_never_wording_and_path` закрепляет точный Issue для deny_unknown_fields: path=[extra], message="expected nullable but got 7". Тест зелёный до изменений: это принятое **never wording** из vendor/schemastery/src/index.ts:653-655; нового unknown-key wording нет.
+6. types.retain вызывается лишь после фактического удаления binding или node в drive. provide/start/status/snapshot и другие команды без удаления обход не вызывают. Unit-тест измеряет 0 обходов read-only команд и один после withdrawal; прежний C8 reuse name/type проходит.
+7. Объявление схемы (keywords/pattern/ref validity) проверяется один раз по идентичности location, включая неиспользованные и вложенные defs. Contextual volatile placement анализируется отдельно для distinct (location, restricted, wrapped), максимум четыре состояния; ошибка одного объявления не дублируется. Это сохраняет проверку разных употреблений shared defs, например обычное поле и запрещённые array items.
+8. Actor отвечает, устоялся ли fiber, в порядке поступивших команд. Готовый результат возвращается без SelfWait; только реальное ожидание Loading/Unloading проходит ancestry guard. Поэтому queued update перед settled не теряется. `settled_active_fiber_allows_marked_serial_wait` зелёный; `loading_spawn_wait_still_reports_self_wait` и прежний indirect apply/serial guard остаются SelfWait. **Исправлен setup собственного concurrency-теста:** оба прежних SelfWait assertions сохранены, но ancestor теперь действительно Loading parent, ожидающий child; добавлен Ok для уже устоявшегося root. Прежний setup требовал SelfWait от Active root и противоречил новому R60. Источник: vendor/cordis/src/fiber.ts:776-782 ждёт только существующую inertia, иначе возвращает сразу.
+9. Удалены 12 недоказанных additions и весь оценивающий их код. unevaluatedProperties сохранён: есть реальная emission S _private/mod.rs:441 и derived witness `derived_flatten_emits_unevaluated_properties`. **Частичное разногласие:** сохранены исходные R48 exclusiveMinimum/exclusiveMaximum/multipleOf. Их natural emission при project features не подтверждена; generic extend не используется как уловка для доказательства. Удалить multipleOf и одновременно сохранить обязательный тест tests/config.rs:5–26 невозможно: schema inspection остановится до требуемых восьми value/path issues. Brief запрещает ослаблять этот тест. Исходная спецификация docs/kernel.md:780–785 прямо требует все три; source vendor/schemastery/src/index.ts:699–704 требует range/step и текст multiple-of. Разногласие закреплено зелёным до изменений `original_r48_numeric_constraints_remain_supported`; реализация этих трёх слов не менялась.
+10. Каждый шаг update/event chain исполняется своей задачей. После начала шага Drop ожидающего future не отменяет задачу: шаг продолжает работу, как JavaScript promise. `chain_steps_continue_after_caller_drop` закрепляет event и update ветви. У settled fiber settled() никогда не выдаёт SelfWait (ошибка Failed/Closed по-прежнему возможна по соответствующему состоянию).
+
+Новые тесты 4, 5, 10 — pin/coverage существующего корректного поведения, а не невоспроизведённые production fixes. Нет удалённых или ослабленных assertions второго раунда; исправлен противоречивый ancestor setup и удалена скрывавшая регрессию очистка. Списки исходных ported/not-ported cases не изменились.
+
+### Текущий WORDS: источник каждого слова
+
+S = schemars-1.2.3/src, D = schemars_derive-1.2.3/src в локальном cargo registry, как выше. Строки указывают emission, а не упоминание при обходе/transform. Все 33 emitted слова перечислены; ещё три исходных R48 слова — отдельное разногласие ниже.
+
+| Слово | Emission file:line |
+|---|---|
+| $schema | S generate.rs:463 |
+| $ref | S schema.rs:132 (generator вызов generate.rs:363) |
+| $defs | S generate.rs:110 задаёт definitions_path; generate.rs:598–603 вставляет определения |
+| title | S generate.rs:459 |
+| description | D attr/mod.rs:208 |
+| default | D schema_exprs.rs:715 |
+| examples | D attr/mod.rs:226 |
+| deprecated | D attr/mod.rs:215 |
+| readOnly | D ast/mod.rs:123 (Serialize contract witness) |
+| writeOnly | D ast/mod.rs:128 |
+| format | S json_schema_impls/primitives.rs:33 |
+| type | S json_schema_impls/primitives.rs:17 |
+| enum | D schema_exprs.rs:150 |
+| const | S json_schema_impls/nonzero.rs:22 |
+| properties | S json_schema_impls/maps.rs:141 |
+| patternProperties | S json_schema_impls/maps.rs:131 |
+| required | S json_schema_impls/std_time.rs:17 |
+| additionalProperties | S json_schema_impls/maps.rs:111 |
+| unevaluatedProperties | S _private/mod.rs:441 |
+| items | S json_schema_impls/sequences.rs:25 |
+| prefixItems | S json_schema_impls/tuple.rs:29 |
+| uniqueItems | S json_schema_impls/sequences.rs:51 |
+| minItems | S json_schema_impls/tuple.rs:32 |
+| maxItems | S json_schema_impls/tuple.rs:33 |
+| minimum | S json_schema_impls/primitives.rs:53 |
+| maximum | S json_schema_impls/primitives.rs:54 |
+| minLength | S json_schema_impls/primitives.rs:133 |
+| maxLength | S json_schema_impls/primitives.rs:134 |
+| pattern | D attr/validation.rs:85; S _private/mod.rs:351 (contains string attribute даёт pattern, не contains keyword) |
+| anyOf | S _private/mod.rs:94 |
+| oneOf | S json_schema_impls/core.rs:47 |
+| allOf | S _private/mod.rs:386 |
+| not | S json_schema_impls/nonzero.rs:21 |
+
+Kept, legacy R48 dispute: **exclusiveMinimum, exclusiveMaximum, multipleOf** — всего WORDS=36. Расширения x-* и boolean schemas сохранены.
+
+Removed: **contains, minContains, maxContains, if, then, else, dependentRequired, dependentSchemas, propertyNames, $id, minProperties, maxProperties**. Упоминания этих слов в S transform.rs / schema.rs не являются emission. Dynamic schemars extend позволяет любое слово и не расширяет закрытый набор. Их inspection traversal/value evaluation удалены; неизвестное слово даёт schema error до value validation.
+
+Witness unevaluatedProperties использует derived deny_unknown_fields + flattened tagged enum: схема действительно выдаётся schemars и проверяется напрямую (valid и extra-field invalid). Сам serde предупреждает об ограничении сочетания flatten/deny_unknown_fields; из этого witness не заявляется successful typed loading. Обычный flattened struct и strict struct по-прежнему загружаются отдельными прежними тестами.
+
 ## Проверки
 
 Все команды: `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-k1`.
 
-- `cargo test -p hoh-kernel`: 225 passed; 0 failed; 1 ignored (сумма итоговых строк 22 test binaries; doc-tests 0/0). Ignored — только C14 subprocess helper, фактически исполненный wrapper test на 2 МиБ.
+- `cargo test -p hoh-kernel`: 241 passed; 0 failed; 1 ignored (сумма итоговых строк 23 test binaries; doc-tests 0/0). Ignored — только C14 subprocess helper, фактически исполненный wrapper test на 2 МиБ.
 - `cargo test -p hoh-kernel-macros`: 1 passed; 0 failed (12 compile-fail + 2 pass trybuild fixtures; doc-tests 0/0).
-- `cargo clippy -p hoh-kernel --all-targets -- -D warnings`: exit 0.
-- `cargo clippy -p hoh-kernel-macros --all-targets -- -D warnings`: exit 0.
-- `cargo fmt -p hoh-kernel -- --check`: exit 0.
-- `cargo fmt -p hoh-kernel-macros -- --check`: exit 0.
+- `cargo clippy -p hoh-kernel -p hoh-kernel-macros --all-targets -- -D warnings`: exit 0.
+- `cargo fmt -p hoh-kernel -p hoh-kernel-macros -- --check`: exit 0.

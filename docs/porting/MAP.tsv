@@ -2,14 +2,14 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 0	kernel	packages/boot/app-boot	@deepseek-ai/dsh-app-boot	hoh-loader	5425	9882	writing:l1	загрузчик и профили
 0	kernel	packages/boot/cmdline	@deepseek-ai/dsh-cmdline	hoh-loader	239	371	writing:l1	загрузчик и профили
 0	kernel	packages/boot/config-editor	@deepseek-ai/dsh-config-editor	hoh-loader	155	0	writing:l1	загрузчик и профили
-0	kernel	vendor/cordis	@deepseek-ai/cordis	hoh-kernel	2865	0	review	
-0	kernel	vendor/cosmokit	@deepseek-ai/cosmokit	hoh-kernel	591	0	review	
+0	kernel	vendor/cordis	@deepseek-ai/cordis	hoh-kernel	2865	0	done	
+0	kernel	vendor/cosmokit	@deepseek-ai/cosmokit	hoh-kernel	591	0	done	
 0	kernel	vendor/group	@deepseek-ai/cordis-plugin-group	hoh-loader	3	0	writing:l1	
 0	kernel	vendor/include	@deepseek-ai/cordis-plugin-include	hoh-loader	1004	0	writing:l1	
 0	kernel	vendor/loader	@deepseek-ai/cordis-plugin-loader	hoh-loader	1224	0	writing:l1	
-0	kernel	vendor/logger-console	@deepseek-ai/cordis-plugin-logger-console	hoh-kernel	145	0	review	
-0	kernel	vendor/schemastery	@deepseek-ai/schemastery	hoh-kernel	962	0	review	
-0	kernel	vendor/timer	@deepseek-ai/cordis-plugin-timer	hoh-kernel	153	0	review	
+0	kernel	vendor/logger-console	@deepseek-ai/cordis-plugin-logger-console	hoh-kernel	145	0	done	
+0	kernel	vendor/schemastery	@deepseek-ai/schemastery	hoh-kernel	962	0	done	
+0	kernel	vendor/timer	@deepseek-ai/cordis-plugin-timer	hoh-kernel	153	0	done	
 1	port	apps/cli	@deepseek-ai/dsh	apps/hoh	1070	20216	todo	становится apps/hoh
 1	port	native/system/packages/entry	@deepseek-ai/node-addon-system	hoh-node-addon-system	646	0	done	запуск под Landlock и блокировка файлов flock
 1	port	packages/attachment/attachment	@deepseek-ai/dsh-attachment	hoh-attachment	710	476	todo	

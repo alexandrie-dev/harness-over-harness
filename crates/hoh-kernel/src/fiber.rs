@@ -269,24 +269,37 @@ impl Fiber {
     }
     fn wait_reply(
         &self,
-        rx: oneshot::Receiver<Result<(), KernelError>>,
+        mut rx: oneshot::Receiver<Result<(), KernelError>>,
     ) -> impl Future<Output = Result<(), KernelError>> + Send + 'static {
         let uid = self.uid();
         let closed = self.inner.closed_token.clone();
         async move {
+            match rx.try_recv() {
+                Ok(result) => return result,
+                Err(oneshot::error::TryRecvError::Closed) => return Err(KernelError::Closed),
+                Err(oneshot::error::TryRecvError::Empty) => {}
+            }
             if APPLY_ANCESTRY
                 .try_with(|a| a.contains(&uid))
                 .unwrap_or(false)
             {
                 return Err(KernelError::SelfWait);
             }
-            tokio::select! {biased;_=closed.cancelled()=>Err(KernelError::Closed),result=rx=>result.unwrap_or(Err(KernelError::Closed))}
+            tokio::select! {biased;result=rx=>result.unwrap_or(Err(KernelError::Closed)),_=closed.cancelled()=>Err(KernelError::Closed)}
         }
     }
     pub fn settled(&self) -> impl Future<Output = Result<(), KernelError>> + Send + 'static {
         let (tx, rx) = oneshot::channel();
         let _ = self.inner.tx.send(Command::Wait(self.uid(), tx));
-        self.wait_reply(rx)
+        let fiber = self.clone();
+        let closed = self.inner.closed_token.clone();
+        async move {
+            let settlement = tokio::select! {biased;result=rx=>result.map_err(|_|KernelError::Closed)?,_=closed.cancelled()=>return Err(KernelError::Closed)};
+            match settlement {
+                Settlement::Ready(result) => result,
+                Settlement::Waiting(rx) => fiber.wait_reply(rx).await,
+            }
+        }
     }
     pub fn update(
         &self,
@@ -317,7 +330,7 @@ impl Fiber {
         let _ = self.inner.tx.send(Command::Restart(self.uid(), tx));
         let closed = self.inner.closed_token.clone();
         async move {
-            tokio::select! {biased;_=closed.cancelled()=>Err(KernelError::Closed),result=rx=>result.unwrap_or(Err(KernelError::Closed))}
+            tokio::select! {biased;result=rx=>result.unwrap_or(Err(KernelError::Closed)),_=closed.cancelled()=>Err(KernelError::Closed)}
         }
     }
     pub fn commit_volatile(
@@ -447,6 +460,8 @@ impl Kernel {
             root_done: false,
             shutdown_waiters: vec![],
             notified: IndexMap::new(),
+            #[cfg(test)]
+            type_scans: 0,
         };
         actor.nodes.insert(0, Node::root(ctx));
         tokio::spawn(async move {
@@ -531,14 +546,20 @@ impl Context {
         Ok(fiber)
     }
 }
+pub(crate) enum Settlement {
+    Ready(Result<(), KernelError>),
+    Waiting(oneshot::Receiver<Result<(), KernelError>>),
+}
 pub(crate) enum Command {
     #[cfg(test)]
     Fault,
+    #[cfg(test)]
+    TypeScans(Reply<usize>),
     Create(Fiber, Context),
     Start(u32, u64),
     Loaded(u32, u64, Result<(), Error>),
     Unloaded(u32),
-    Wait(u32, Reply<Result<(), KernelError>>),
+    Wait(u32, Reply<Settlement>),
     Restart(u32, Reply<Result<(), KernelError>>),
     Update(u32, Json, Reply<Result<(), KernelError>>),
     RetainRaw(u32, Json, Reply<Result<(), KernelError>>),
@@ -628,6 +649,8 @@ struct Actor {
     root_done: bool,
     shutdown_waiters: Vec<Reply<()>>,
     notified: IndexMap<ServiceAddress, (u64, bool)>,
+    #[cfg(test)]
+    type_scans: usize,
 }
 impl Actor {
     async fn run(&mut self, mut rx: mpsc::UnboundedReceiver<Command>) {
@@ -662,6 +685,10 @@ impl Actor {
     }
     fn command(&mut self, command: Command) {
         match command {
+            #[cfg(test)]
+            Command::TypeScans(reply) => {
+                let _ = reply.send(self.type_scans);
+            }
             #[cfg(test)]
             Command::Fault => {
                 panic!("injected actor fault");
@@ -735,9 +762,16 @@ impl Actor {
             }
             Command::Wait(uid, reply) => {
                 if let Some(node) = self.nodes.get_mut(&uid) {
-                    node.waiters.push(reply);
+                    if matches!(node.state(), FiberState::Loading | FiberState::Unloading) {
+                        let (tx, rx) = oneshot::channel();
+                        node.waiters.push(tx);
+                        let _ = reply.send(Settlement::Waiting(rx));
+                    } else {
+                        let result = read(&node.ctx.data.state).error.clone().map_or(Ok(()), Err);
+                        let _ = reply.send(Settlement::Ready(result));
+                    }
                 } else {
-                    let _ = reply.send(Ok(()));
+                    let _ = reply.send(Settlement::Ready(Ok(())));
                 }
             }
             Command::Restart(uid, reply) => {
@@ -960,7 +994,7 @@ impl Actor {
             }
         }
         for (address, record) in &self.notified {
-            if old.get(address) != Some(record) {
+            if record.1 && old.get(address) != Some(record) {
                 root.emit(&InternalService {
                     name: address.0.clone(),
                     realm: address.1,
@@ -1009,6 +1043,7 @@ impl Actor {
         )
     }
     fn drive(&mut self) {
+        let mut release_types = false;
         loop {
             self.publish();
             let mut changed = false;
@@ -1091,6 +1126,7 @@ impl Actor {
                 .collect::<Vec<_>>();
             for id in withdrawn {
                 if let Some(binding) = self.bindings.shift_remove(&id) {
+                    release_types = true;
                     if let Some(owner) = self.nodes.get_mut(&binding.provision.owner) {
                         owner.retired.push(ReferenceProbe {
                             name: binding.provision.name.clone(),
@@ -1110,6 +1146,7 @@ impl Actor {
                 .collect::<Vec<_>>();
             for uid in disposed {
                 if let Some(mut node) = self.nodes.shift_remove(&uid) {
+                    release_types = true;
                     if let Some(effect) = node.ctx.data.parent_effect.upgrade() {
                         effect.retire_child();
                     }
@@ -1137,13 +1174,19 @@ impl Actor {
                 }
             }
         }
-        self.types.retain(|name, _| {
-            self.bindings.values().any(|b| b.provision.name == *name)
-                || self.nodes.values().any(|n| {
-                    n.ctx.data.def.deps.iter().any(|d| d.name == name.as_ref())
-                        || n.ctx.data.inject.contains(name)
-                })
-        });
+        if release_types {
+            #[cfg(test)]
+            {
+                self.type_scans += 1;
+            }
+            self.types.retain(|name, _| {
+                self.bindings.values().any(|b| b.provision.name == *name)
+                    || self.nodes.values().any(|n| {
+                        n.ctx.data.def.deps.iter().any(|d| d.name == name.as_ref())
+                            || n.ctx.data.inject.contains(name)
+                    })
+            });
+        }
     }
     fn start(&mut self, uid: u32, generation: u64) {
         let Some(node) = self.nodes.get(&uid) else {

@@ -73,18 +73,28 @@ async fn self_and_ancestor_waits_return_self_wait_after_sending_commands() {
     let (k, r, t) = harness();
     let x = t.clone();
     let f = r
-        .inject(move |ctx, (): ()| {
+        .inject(move |parent, (): ()| {
             let t = x.clone();
             async move {
-                assert!(matches!(
-                    ctx.fiber().settled().await,
-                    Err(KernelError::SelfWait)
-                ));
-                assert!(matches!(
-                    ctx.root().fiber().settled().await,
-                    Err(KernelError::SelfWait)
-                ));
-                t.push("done");
+                let ancestor = parent.fiber();
+                let child = parent.inject(move |ctx, (): ()| {
+                    let t = t.clone();
+                    let ancestor = ancestor.clone();
+                    async move {
+                        assert!(matches!(
+                            ctx.fiber().settled().await,
+                            Err(KernelError::SelfWait)
+                        ));
+                        assert!(matches!(
+                            ancestor.settled().await,
+                            Err(KernelError::SelfWait)
+                        ));
+                        ctx.root().fiber().settled().await.unwrap();
+                        t.push("done");
+                        Ok(())
+                    }
+                })?;
+                child.settled().await?;
                 Ok(())
             }
         })

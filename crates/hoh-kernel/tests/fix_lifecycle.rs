@@ -312,18 +312,13 @@ async fn c11_loading_withdrawal_notifies() {
         }
     })
     .unwrap();
-    let observations = seen.clone();
     let f = r
-        .inject(move |ctx, (): ()| {
-            let observations = observations.clone();
-            async move {
-                let d = ctx.provide::<A>(Arc::new(1)).await?;
-                lock(&observations).clear();
-                d.dispose().await;
-                let t = ctx.tag::<Arc<Track>>().unwrap();
-                t.gate.acquire().await.unwrap().forget();
-                Ok(())
-            }
+        .inject(move |ctx, (): ()| async move {
+            let d = ctx.provide::<A>(Arc::new(1)).await?;
+            d.dispose().await;
+            let t = ctx.tag::<Arc<Track>>().unwrap();
+            t.gate.acquire().await.unwrap().forget();
+            Ok(())
         })
         .unwrap();
     turn().await;

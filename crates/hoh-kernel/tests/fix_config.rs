@@ -364,3 +364,190 @@ async fn b6_preserves_key_order() {
     );
     k.shutdown().await;
 }
+
+#[tokio::test(start_paused = true)]
+async fn optional_integral_float_loads() {
+    let k = Kernel::start();
+    let f = k
+        .root()
+        .plugin::<Check<Field<Option<u32>>>>(json!({"value":2.0}))
+        .unwrap();
+    f.settled().await.unwrap();
+    assert_eq!(f.effective_config().unwrap()["value"], 2);
+    f.update(json!({"value":null})).await.unwrap();
+    assert!(f.effective_config().unwrap()["value"].is_null());
+    k.shutdown().await;
+}
+#[tokio::test(start_paused = true)]
+async fn optional_integer_range_has_path() {
+    let k = Kernel::start();
+    let f = k
+        .root()
+        .plugin::<Check<Field<Option<u8>>>>(json!({"value":null}))
+        .unwrap();
+    f.settled().await.unwrap();
+    let error = f.update(json!({"value":300})).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "invalid config:\n  - expected number <= 255 but got 300 (at value)"
+    );
+    k.shutdown().await;
+}
+#[tokio::test(start_paused = true)]
+async fn optional_integer_format_range_has_path() {
+    let k = Kernel::start();
+    let f = k
+        .root()
+        .plugin::<Check<Field<Option<u32>>>>(json!({"value":null}))
+        .unwrap();
+    f.settled().await.unwrap();
+    let error = f.update(json!({"value":4294967296_u64})).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "invalid config:\n  - expected number <= 4294967295 but got 4294967296 (at value)"
+    );
+    k.shutdown().await;
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct WriteOnly {
+    #[serde(skip_serializing)]
+    _secret: String,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct ReadOnly {
+    #[serde(skip_deserializing)]
+    readonly: u32,
+}
+#[tokio::test(start_paused = true)]
+async fn derived_access_annotations_are_emitted_and_load() {
+    let write = PluginDef::of::<Check<WriteOnly>>();
+    assert_eq!(write.schema()["properties"]["_secret"]["writeOnly"], true);
+    let read = schemars::generate::SchemaSettings::default()
+        .for_serialize()
+        .into_generator()
+        .into_root_schema_for::<ReadOnly>();
+    let read = serde_json::to_value(read).unwrap();
+    assert_eq!(read["properties"]["readonly"]["readOnly"], true);
+    config::validate(&read, &json!({"readonly":3})).unwrap();
+    config::validate(write.schema(), &json!({"_secret":"s"})).unwrap();
+    let k = Kernel::start();
+    k.root()
+        .plugin::<Check<WriteOnly>>(json!({"_secret":"s"}))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+    k.root()
+        .plugin::<Check<ReadOnly>>(json!({"readonly":3}))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+    k.shutdown().await;
+}
+#[tokio::test(start_paused = true)]
+async fn unknown_key_uses_never_wording_and_path() {
+    let def = PluginDef::of::<Check<Strict>>();
+    let e = config::validate(def.schema(), &json!({"n":1,"extra":7})).unwrap_err();
+    assert_eq!(
+        e.issues,
+        vec![Issue {
+            path: vec![PathSeg::Key("extra".into())],
+            message: "expected nullable but got 7".into()
+        }]
+    );
+}
+#[tokio::test(start_paused = true)]
+async fn referenced_definition_is_inspected_once() {
+    let e = config::validate(
+        &json!({"$ref":"#/$defs/Config","$defs":{"Config":{"unsupported":true}}}),
+        &json!({}),
+    )
+    .unwrap_err();
+    assert_eq!(e.issues.len(), 1);
+    assert_eq!(
+        e.issues[0].message,
+        "unsupported schema keyword: unsupported"
+    );
+}
+#[tokio::test(start_paused = true)]
+async fn recursive_root_is_inspected_once() {
+    let e = config::validate(&json!({"$ref":"#","unsupported":true}), &json!({})).unwrap_err();
+    assert_eq!(e.issues.len(), 1);
+    assert_eq!(
+        e.issues[0].message,
+        "unsupported schema keyword: unsupported"
+    );
+}
+#[tokio::test(start_paused = true)]
+async fn non_emitted_schema_words_are_unsupported() {
+    for word in [
+        "contains",
+        "minContains",
+        "maxContains",
+        "if",
+        "then",
+        "else",
+        "dependentRequired",
+        "dependentSchemas",
+        "propertyNames",
+        "$id",
+        "minProperties",
+        "maxProperties",
+    ] {
+        let schema = json!({word:0});
+        let e = config::validate(&schema, &Value::Null).unwrap_err();
+        assert_eq!(
+            e.issues[0].message,
+            format!("unsupported schema keyword: {word}")
+        );
+    }
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct FlattenedEnum {
+    #[serde(flatten)]
+    item: Internal,
+    flag: bool,
+}
+#[tokio::test(start_paused = true)]
+async fn derived_flatten_emits_unevaluated_properties() {
+    let def = PluginDef::of::<Check<FlattenedEnum>>();
+    assert_eq!(def.schema()["unevaluatedProperties"], false);
+    config::validate(def.schema(), &json!({"kind":"Record","n":1,"flag":true})).unwrap();
+    let e = config::validate(
+        def.schema(),
+        &json!({"kind":"Record","n":1,"flag":true,"extra":2}),
+    )
+    .unwrap_err();
+    assert_eq!(e.issues[0].path, [PathSeg::Key("extra".into())]);
+}
+#[tokio::test(start_paused = true)]
+async fn original_r48_numeric_constraints_remain_supported() {
+    for (schema, valid, invalid, message) in [
+        (
+            json!({"exclusiveMinimum":1}),
+            json!(2),
+            json!(1),
+            "expected number > 1 but got 1",
+        ),
+        (
+            json!({"exclusiveMaximum":1}),
+            json!(0),
+            json!(1),
+            "expected number < 1 but got 1",
+        ),
+        (
+            json!({"multipleOf":2}),
+            json!(4),
+            json!(3),
+            "expected number multiple of 2 but got 3",
+        ),
+    ] {
+        config::validate(&schema, &valid).unwrap();
+        assert_eq!(
+            config::validate(&schema, &invalid).unwrap_err().issues[0].message,
+            message
+        );
+    }
+}
