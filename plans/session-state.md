@@ -87,6 +87,11 @@ Kimi: основатель ставит сам и сообщит; подключ
 `util/workspace-path` и читатель неполного JSON в `util/values` в образце нужны только окну — уже перенесены, пригодятся `hoh-client`.
 Перед выдачей каждого следующего пакета проверять его потребителей. К переносу 204 пакета.
 
+Лицензии (2026-11-16): `packages/fs/fs-patch` содержит части OpenAI Codex под Apache-2.0 — внесено в `NOTICE`, файл лицензии лежит в crate;
+`native/system` под BSD-3-Clause (node-addon-landlock-run contributors) — внести в `NOTICE` при переносе `hoh-node-addon-system`.
+Сквозной вопрос на этап 1: вид чисел при повторной записи разобранного JSON (`1.0` в Rust против `1` в JavaScript) — решать общим
+помощником, когда сценарии покажут расхождение.
+
 Осталось на этапе 0: принять `docs/kernel.md` и описание прогона сценариев, дополнить `DEPS.md` библиотеками этапа 1,
 затем ядро, макросы, загрузчик, `hoh-conformance`, `scripts/verify.sh`. Замены сторонних библиотек образца, требующие
 решения на этапе 1: `sharp` (libvips, LGPL — не берём, нужен crate `image`), `node-pty` и `@xterm/headless` (вид экрана
@@ -266,14 +271,17 @@ Kimi: основатель ставит сам и сообщит; подключ
 | Rust-инструменты для настольного приложения, связь приложения с движком | a101dbc16a0945c87 | done 2026-11-16: отчёт на месте (729 строк), пять пунктов задания есть; ведущий прочитал разделы 0–2, 4–6, 7.4, 8–9, раздел 3 — справочник | `research/desktop-ui-rust.md` |
 | Этап 0: описание ядра (`hoh-kernel`, `hoh-kernel-macros`, `hoh-loader`) и первый список разрешённых библиотек | a3d05523ab6819e72 | running с 2026-11-16; ждать родное уведомление о завершении; проверить по девяти пунктам задания (API, правила с источниками, автомат состояний, загрузчик и замена `!!js`, три примера, таблица TS→Rust, план тестов, открытые вопросы) | `docs/kernel.md`, `docs/porting/DEPS.md` |
 | Этап 0: как dsh воспроизводит и сверяет записанные сценарии; таблица сценариев (Sonnet) | ad08a6b6b1c9cd873 | done 2026-11-16: README 650 строк, пункты a–g есть; таблица 242 строки (192 + 41 + 9), все `todo`; ведущий прочитал разделы 1 и 6–8, разделы 2–5 — справочник для писателя прогонщика | `crates/hoh-conformance/README.md`, `conformance/EXPECTED.tsv` |
-| Партия 1, писатель c1 (Codex, high): `hoh-error`, `hoh-brand`, `hoh-deque`, `hoh-chunked-list`, `hoh-util-crypto`, `hoh-home-paths`, `hoh-atomic-write`, `hoh-anonymous-user-id` | фоновая задача `b1hpec9c2` | running с 2026-11-16; ждать родное уведомление; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c1.report.md`, ID сессии Codex в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c1.stderr` (для `codex exec resume`) | задание `plans/briefs/batch1-c1.md`; тесты и clippy чисто, `PORT_NOTES.md` |
-| Партия 1, писатель c2 (Codex, high): `hoh-fs-patch`, `hoh-timeout`, `hoh-output-retention` | фоновая задача `b5m2gp40q` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch1-c2.report.md` | задание `plans/briefs/batch1-c2.md` |
-| Партия 1, писатель c3 (Codex, high): `hoh-util-code-language`, `hoh-util-workspace-path` | сессия Codex `01a1e513-1795-7681-b2df-c624568e4186` | сдано 2026-11-16 вместе с доделкой `file_media_url` на crate `url`; ведущий перепроверил: 15 и 13 + 15 + 10 тестов, clippy и fmt чисто (коммит `73c64de`). Ждёт ревью | задание `plans/briefs/batch1-c3.md` |
-| Ревью `hoh-util-code-language` и `hoh-util-workspace-path` (Sonnet, только чтение) | ab6189783dd59a8c3 | running с 2026-11-16; ждать родное уведомление | замечания с местом в Rust и TS, не более 700 слов |
-| Партия 1, писатель s1 (Sonnet): `hoh-util-values` | a2e187c76c29c66ea | сдано 2026-11-16, ведущий перепроверил: 70 + 3 теста, clippy и fmt чисто (коммит `eb3b5aa`); `WeakMapWithValues`, `assertNever`, `deepFreeze` не перенесены обоснованно; замечено: читатель неполного JSON в образце используют только пакеты окна — пригодится нашему клиенту; вопросы писателя решены: пара `text`/`text_utf16` остаётся, `append(&[u16])` не нужен. Ждёт ревью | задание `plans/briefs/batch1-s1.md` |
-| Ревью `hoh-util-values` (Codex, read-only, high) | фоновая задача `bbtkuyopd` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/review-hoh-util-values.md` | задание `plans/briefs/review-hoh-util-values.md`; замечания с местом в Rust и TS |
-| Партия 2, писатель s3 (Sonnet): `hoh-session-format` | aed5b48606c9e3271 | running с 2026-11-16; ждать родное уведомление | задание `plans/briefs/batch2-s3.md` |
-| Партия 1, писатель s2 (Sonnet): `hoh-util-time` | ad6d421359b75ffb4 | running с 2026-11-16; ждать родное уведомление | задание `plans/briefs/batch1-s2.md` |
+| Партия 1, c1 (Codex): восемь пакетов основы | сессия Codex `01a1e513-0498-72a0-abb3-ce2d805e5045` | сдано 2026-11-16, ведущий перепроверил (2, 2, 7, 5, 4, 15, 29, 9 тестов; clippy, fmt чисто); `hoh-atomic-write` доделан на `rustix`, проба Windows ждёт этапа 5 | `plans/briefs/batch1-c1.md` |
+| Партия 1, c2 (Codex): `hoh-fs-patch`, `hoh-timeout`, `hoh-output-retention` | сессия Codex `01a1e513-0dfc-7b41-924d-a189fff3c766` | сдано 2026-11-16, перепроверено (71, 30, 41 тест). `hoh-timeout`: временный тип сигнала отмены и таймеры tokio согласовать с ядром | `plans/briefs/batch1-c2.md` |
+| Партия 1, c3 (Codex): `hoh-util-code-language`, `hoh-util-workspace-path` | сессия Codex `01a1e513-1795-7681-b2df-c624568e4186` | **done** 2026-11-16: тесты 15 и 38, ревью Sonnet без ошибок, сверка `file_media_url` с Node 20 по 29 входам совпала | `plans/briefs/batch1-c3.md` |
+| Партия 1, s1 (Sonnet): `hoh-util-values` | a2e187c76c29c66ea | **done** 2026-11-16: 75 тестов; ревью Codex дало 10 пунктов, исправлены тесты (2), порядок целочисленных ключей, шаг NaN, заметки; остальные расхождения с JavaScript приняты и записаны в «Отличия» | `plans/briefs/batch1-s1.md`, ревью `/mnt/toshiba/alexandrie/hoh/logs/review-hoh-util-values.md` |
+| Партия 1, s2 (Sonnet): `hoh-util-time` | ad6d421359b75ffb4 | сдано 2026-11-16, перепроверено (88 тестов); библиотека `rrule` убрана, повторения написаны своим кодом, имена зон по IANA; сверки с настоящим npm `rrule` не было | `plans/briefs/batch1-s2.md` |
+| Партия 2, s3 (Sonnet): `hoh-session-format` | aed5b48606c9e3271 | сдано 2026-11-16, перепроверено (27 тестов); вопросы писателя решены: заголовок и событие остаются `Map`, `Send` оставить | `plans/briefs/batch2-s3.md` |
+| Ревью семи пакетов основы (Sonnet, только чтение) | a98459d027d9fa377 | running с 2026-11-16; ждать родное уведомление | в задании — проверка дизайна `hoh-error` и `hoh-brand` на настоящих местах использования |
+| Ревью `hoh-atomic-write`, `hoh-fs-patch`, `hoh-timeout`, `hoh-output-retention` (Sonnet, только чтение) | adf85c15a1d66a3b5 | running с 2026-11-16; ждать родное уведомление | замечания с местом в Rust и TS |
+| Ревью `hoh-util-time` (Codex, read-only) | фоновая задача `bqv8yl1le` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/review-hoh-util-time.md` | `plans/briefs/review-hoh-util-time.md` |
+| Ревью `hoh-session-format` (Codex, read-only) | фоновая задача `bj4f0lgfk` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/review-hoh-session-format.md` | `plans/briefs/review-hoh-session-format.md` |
+| Партия 2, c4 (Codex): `hoh-session-format-v0-to-v1` | фоновая задача `b5zzn410b` | running с 2026-11-16; итог в `/mnt/toshiba/alexandrie/hoh/logs/batch2-c4.report.md`, ID сессии в `batch2-c4.stderr` | `plans/briefs/batch2-c4.md` |
 
 Выводы из отчёта о самонастройке, которые идут в план (подробности и ссылки в самом отчёте):
 
