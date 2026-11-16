@@ -150,9 +150,16 @@ crates/hoh-<имя>/
 
 ## 7. Ошибки
 
-- Ошибка с кодом — всегда значение одного типа `hoh_error::HarnessError` (`name`, `code`, `message`, причина,
+- Какой тип у ошибки, решает базовый класс в образце. Ошибка, класс которой — `HarnessError` или его
+  наследник, — всегда значение одного типа `hoh_error::HarnessError` (`name`, `code`, `message`, причина,
   необязательные типизированные данные) с тем же кодом, именем и текстом, что в образце. Маршрутизация идёт по коду,
   не по тексту. Типов-обёрток над `HarnessError` нет: иначе ошибку нельзя узнать за `Box<dyn Error>`.
+- Класс, который наследует простой `Error`, — собственный тип ошибки crate, **даже когда у него есть поле
+  `code`** (`class StorageError extends Error`). В `HarnessError` его превращать нельзя: общие обработчики
+  образца отличают `instanceof HarnessError` от всего остального — `packages/core/tools/src/pipeline.ts:705`
+  отдаёт `{ name, code }` только для него, `packages/llm/llm/src/adapter-failure.ts:107` для остальных пишет
+  `UNKNOWN`. Проверка `e instanceof StorageError && e.code === 'closed'` переносится через
+  `downcast_ref::<StorageError>()`.
 - Класс-наследник образца (`class JobError extends HarnessError`) переносится пустой структурой с константой имени
   и конструктором, который возвращает `HarnessError`:
   `pub struct JobError; impl JobError { pub const NAME: &str = "JobError"; pub fn new(message, code: JobErrorCode) -> HarnessError }`.
