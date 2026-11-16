@@ -4,6 +4,9 @@ use futures_util::{
     stream::{FuturesOrdered, StreamExt},
 };
 use std::{any::TypeId, collections::HashMap, marker::PhantomData, panic::AssertUnwindSafe};
+#[cfg(test)]
+#[path = "events_review_tests.rs"]
+mod review_tests;
 pub trait Event: Send + Sync + 'static {
     const NAME: &'static str;
     type Mode: Mode;
@@ -114,19 +117,7 @@ impl<'a> Listen<'a> {
         C: Config,
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
-        let disposer = self.ctx.on_update::<C, Fut>(handler)?;
-        if self.prepend {
-            let mut hooks = write(&self.ctx.data.hooks);
-            if let Some(index) = hooks.updates.iter().position(|h| {
-                h.effect
-                    .upgrade()
-                    .is_some_and(|e| Arc::ptr_eq(&e, &disposer.effect))
-            }) {
-                let hook = hooks.updates.remove(index);
-                hooks.updates.insert(0, hook);
-            }
-        }
-        Ok(disposer)
+        self.ctx.on_update_ordered::<C, Fut>(handler, self.prepend)
     }
     pub fn prepend(mut self) -> Self {
         self.prepend = true;
@@ -294,18 +285,22 @@ fn chain(
     Next {
         call: Box::new(move || {
             Box::pin(async move {
-                let mut index = index;
-                while index < list.len() {
-                    let listener = &list[index];
-                    index += 1;
-                    if !listener.alive() {
-                        continue;
+                fiber::spawn_inherited(async move {
+                    let mut index = index;
+                    while index < list.len() {
+                        let listener = &list[index];
+                        index += 1;
+                        if !listener.alive() {
+                            continue;
+                        }
+                        if let Callback::Async(f) = &listener.callback {
+                            return f(event.clone(), chain(list.clone(), index, event, tail)).await;
+                        }
                     }
-                    if let Callback::Async(f) = &listener.callback {
-                        return f(event.clone(), chain(list.clone(), index, event, tail)).await;
-                    }
-                }
-                tail.run().await
+                    tail.run().await
+                })
+                .await
+                .map_err(|error| Box::new(error) as Error)?
             })
         }),
     }
@@ -398,7 +393,16 @@ impl Context {
         list.into_iter()
             .filter(|l| {
                 (l.global && TypeId::of::<E>() != TypeId::of::<VolatileUpdate>())
-                    || self.filter.as_ref().is_none_or(|f| f(&l.ctx))
+                    || self.filter.as_ref().is_none_or(|f| {
+                        match std::panic::catch_unwind(AssertUnwindSafe(|| f(&l.ctx))) {
+                            Ok(matches) => matches,
+                            Err(_) => {
+                                self.logger()
+                                    .error(format_args!("event \"{}\" filter panicked", E::NAME));
+                                false
+                            }
+                        }
+                    })
             })
             .collect()
     }
@@ -442,7 +446,7 @@ impl Context {
         let event = event.into();
         let list = self.dispatch(event.as_ref());
         let (tx, rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
+        fiber::spawn_inherited(async move {
             let mut tasks = FuturesOrdered::new();
             for l in list {
                 if l.alive()
@@ -492,7 +496,7 @@ impl Context {
     {
         let event = event.into();
         let list = self.dispatch(event.as_ref());
-        let task = tokio::spawn(async move {
+        let task = fiber::spawn_inherited(async move {
             for l in list {
                 if l.alive()
                     && let Callback::Async(f) = &l.callback
@@ -523,7 +527,8 @@ impl Context {
                 Box::pin(async move { Ok(Some(Box::new(tail(tail_event).await?) as Out)) })
             }),
         };
-        let task = tokio::spawn(async move { unpack(chain(list, 0, event, tail).run().await?) });
+        let task =
+            fiber::spawn_inherited(async move { unpack(chain(list, 0, event, tail).run().await?) });
         async move { task.await.map_err(|e| Box::new(e) as Error)? }
     }
 }

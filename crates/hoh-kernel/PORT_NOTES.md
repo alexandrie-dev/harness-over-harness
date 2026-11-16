@@ -12,28 +12,30 @@ API compiles — 2026-11-16 16:59 UTC (`cargo build -p hoh-kernel`).
 | core/src/fiber.ts effect runner | src/effects.rs | Undo, составные эффекты, rollback |
 | vendor/cordis/src/logger.ts, vendor/logger-console | src/logger.rs | журнал, stderr exporter |
 | vendor/timer | Context::sleep, interval | отменяемое время tokio |
-| vendor/schemastery, loader/src/config/diff.ts | src/config.rs | закрытый набор JSON Schema, volatile comparison |
+| vendor/schemastery, loader/src/config/diff.ts | src/config/{schema,diff}.rs | закрытый набор JSON Schema, volatile comparison |
 
 MIT LICENSE всех четырёх vendor пакетов совпадает до байта; сохранён в LICENSE.
 
 ## Отличия от спецификации
 
-1. `Fiber::dispose()` сохраняет `Future<Output = ()>`. При ожидании своего fiber/предка из apply команда отправляется, ожидание завершается немедленно, SelfWait пишется в журнал: вернуть Err с таким Output невозможно. Остальные ожидаемые переходы возвращают SelfWait. Методы с результатом (), Option, bool или Snapshot также не могут вернуть Closed: после остановки дают идемпотентный/пустой результат; Result-операции дают Closed.
-2. `Realm::new()` использует случайное 64-битное значение стандартного RandomState без глобального счётчика. Абсолютная уникальность в процессе несовместима с запретом глобального изменяемого состояния и сигнатурой без Kernel; вероятность коллизии ненулевая (63 случайных бита, ROOT исключён).
+Пункты 1–10 согласованы ведущим в brief A и docs/kernel.md §10.1; прежние вопросы закрыты.
+
+1. `Fiber::dispose()` сохраняет `Future<Output = ()>`. При ожидании своего fiber/предка команда отправляется, ожидание завершается немедленно, SelfWait пишется в журнал: вернуть Err с таким Output невозможно. Метка охватывает apply, cleanup, update, ctx.spawn и задачи dispatch. Остальные ожидаемые переходы возвращают SelfWait. Методы с результатом (), Option, bool или Snapshot также не могут вернуть Closed: после остановки дают идемпотентный/пустой результат; Result-операции дают Closed.
+2. Прежнее отклонение Realm устранено: процессный `AtomicU64::fetch_add`, ROOT исключён, разрешённое исключение PORTING §6.
 3. `PluginDef::of()` не может вернуть ошибку R48 при контрактном результате PluginDef. Неизвестное слово схемы даёт ValidationError при первой проверке, включая слова в отсутствующих полях.
 4. Обычный Emit распространяет панику слушателя: upstream events.spec «ctx.emit()» проверяет исключение. Это приоритет теста над R40. События ядра и VolatileUpdate изолируют панику каждого наблюдателя, R61 сохранено.
 5. Асинхронные retained-instance update handlers могут завершаться одновременно; публикация защищена идентичностью raw-снимка, поколением и закрытием активации. dsh core-lifecycle «publishes successful retained-instance updates and ignores stale or rejected completions» ждёт второе обновление до освобождения первого, что несовместимо с сериализацией R42. Приоритет теста; эпохи и переходы остаются строго последовательными.
 6. R26 уточнено по isolate.spec и core-lifecycle: собственный поставщик читает свою уже зарегистрированную запись в Loading. Другие fiber видят её только в Active. Запись и отмена предоставления по-прежнему команды actor.
 7. Добавлены `Fiber::retain_raw_config(raw)` (командный аналог rawConfig setter в dsh tests) и `Listen::on_update` (prepend в events.spec). Иначе соответствующие исходные случаи не выразить контрактным API.
-8. Добавлен скрытый `View::service<K>()`: derive из другого crate должен читать committed view. Конструктора Service нет. ConsoleConfig публичен как ассоциированный Config ConsoleExporter. Volatile имеет Default при T: Default.
+8. Добавлен скрытый `View::service<K>()`: derive из другого crate должен читать committed view. Конструкторов View и Service вне ядра нет. ConsoleConfig публичен как ассоциированный Config ConsoleExporter. Volatile имеет Default при T: Default.
 9. Универсальное `Logger::error(impl Display)` не позволяет безопасно распознать KernelError без дополнительного Any/'static bound, нарушающего вызовы с заимствованным format_args. R57 реализовано на типизированной границе логирования ошибок ядра; прямой Logger::error(Listeners) печатает одну aggregate-запись. Исходный тест flatten проверяет эту границу через ошибку apply.
-10. ConsoleExporter форматирует showTime в UTC: безопасного источника локальной временной зоны среди разрешённых зависимостей нет. ts_ms — Unix milliseconds, привязанные к tokio Instant; пауза времени детерминирована.
+10. Прежнее отклонение UTC устранено: ConsoleExporter использует местный пояс `jiff::tz::TimeZone::system()`. Форматирование получает пояс параметром; тесты передают UTC и фиксированный UTC+03. ts_ms — Unix milliseconds, привязанные к tokio Instant; пауза времени детерминирована.
 11. Trybuild — синхронный compile-only #[test], поскольку macros crate не имеет разрешённой зависимости tokio. Все проверки поведения — #[tokio::test(start_paused = true)].
 12. Volatile placement и повторная обёртка проверяются до проверки значения (в том числе при отсутствующем поле), по volatile-config source; JSON Schema несёт x-volatile и служебную x-volatile-invalid для повторной обёртки.
 
 ## Отличия от образца
 
-Типизированные Rust API, отмена активации CancellationToken, неизменяемые производные контексты, отсутствие Proxy/HMR, остановка после shutdown — решения спецификации. JSON defaults задаёт serde; Validator не исполняет TS transforms/autofix. Числа и UTF-16 строки форматируются локально: workspace-зависимость hoh-util-values запрещена заданием.
+Типизированные Rust API, отмена активации CancellationToken, неизменяемые производные контексты, отсутствие Proxy/HMR, остановка после shutdown — решения спецификации. JSON defaults задаёт serde; Validator не исполняет TS transforms/autofix. Видимый текст JSON и чисел формирует разрешённый теперь hoh-util-values; длина строк считается в UTF-16.
 
 Прямой ctx.foo и запись ctx.foo из TypeScript запрещены компилятором для любого Context (UI access_check/access_error/pinned_access). Поэтому pinned same-realm запрет строгого property access проверяется компилятором, а runtime get возвращает Option по общей Realm согласно R36. В isolate tests доступ ребёнка к значению родителя передаётся явно либо объявляется в Deps. UUID fiber в Rust остаётся u32; is_disposed заменяет сравнение uid с null.
 
@@ -127,9 +129,11 @@ MIT LICENSE всех четырёх vendor пакетов совпадает д�
 
 ### [D] cordis-timer.spec.ts → tests/timer.rs
 
-Перенесены (1): `settles_all_pending_interval_reads_on_return_throw_dispose`.
+Адаптированы (2): `completes_concurrent_interval_reads_in_order_one_per_tick`, `settles_all_pending_interval_reads_on_return_throw_dispose`. Теперь каждый случай проверяет период 10 мс (9 мс — Pending, ещё 1 — tick). Во втором случае перед каждой операцией действительно есть pending read, проверены завершение без продвижения времени и повторное None после dispose.
 
-Не перенесено / адаптация: completes concurrent interval reads in order, one per tick — один читатель Stream. stops throttle calls and trailing work after disposal (noTrailing=%s); cancels debounce work and makes both wrappers inert after owner disposal — O5/HMR.
+Ограничение контрактного Stream<Item=()>: один poll_next с эксклюзивным доступом; нет AsyncIterator.return(value), throw(error) и очереди трёх next(). Поэтому три чтения последовательны; return — отмена чтения и Drop потока, throw — ошибка потребителя с отменой/Drop, dispose — None (не JS rejection). В тесте select явно выполняет consumer return/error при pending read; это адаптация, а не проверка отсутствующих методов ядра. Значение return и идентичность JS error не перенесены. Счётчика активных таймеров tokio API не предоставляет; поток не создаёт фоновой задачи, Sleep уничтожается вместе с ним.
+
+Не перенесено: stops throttle calls and trailing work after disposal (noTrailing=%s); cancels debounce work and makes both wrappers inert after owner disposal — O5/HMR.
 
 ### [D] volatile-config.spec.ts → tests/volatile_config.rs
 
@@ -167,21 +171,108 @@ tests/concurrency.rs: R59, R60, R61, R17, R35, закрытие, отмена sp
 
 ## Не проверено
 
-Нет сетевых/внешних проверок; они не нужны ядру. Настоящий локальный timezone ConsoleExporter не реализован (UTC выше). Абсолютная уникальность Realm не доказуема вероятностным генератором. Многопоточная модель использует Send + actor и короткие Mutex/RwLock; тесты с остановленным временем работают в current-thread runtime.
+Нет сетевых/внешних проверок; они не нужны ядру. Пояса проверены фиксированными параметрами, без зависимости от TZ машины. Добавлены четыре bounded multi_thread-теста с четырьмя workers (E1) и многопоточный тест атомарности prepend (C12). Остальные асинхронные проверки используют остановленное время.
 
 ## Вопросы ведущему
 
-- Разрешить атомарный процессный счётчик Realm либо сохранить вероятностную уникальность?
-- Нужен ли dispose Result для возврата SelfWait и Result<PluginDef> для ошибки схемы непосредственно в of?
-- Утвердить приоритет source tests над R40/R42/R26 и дополнения retain_raw_config/Listen::on_update?
-- Расширить типизированный вход журнала для полного R57 при прямом логировании, и нужен ли локальный timezone для ConsoleExporter?
+Нет новых вопросов. Решения A реализованы; разногласия C3, C10 и подпункт B3 про неизвестный ключ описаны ниже с источниками.
+
+## Fix round: воспроизведение и результат
+
+До изменений реализации запущены новые тесты: fix_config — 11 passed / 17 failed; fix_lifecycle — 2 passed / 13 failed; unit review — 1 passed / 7 failed / 1 служебный ignored. Отдельно получены красные A7 и trybuild D1/D2 (hygiene не компилировался, View::default неожиданно компилировался). После этого исправлялась реализация. Дополнительные регрессии во время исправления также сначала получены красными: B2 recursive root, B4 вложенный unused $defs, B6 порядок ключей, E1 освобождение последней ссылки до пробуждения dispose.
+
+| Пункт | Тест/результат |
+|---|---|
+| A1 | Красный a1_realms_are_process_counter_ids; RandomState заменён счётчиком. |
+| A2 | Решение принято; C5 расширяет SelfWait на все задачи fiber. |
+| A3 | Решение принято; неизвестное слово проверяется при validate, включая unused $defs. |
+| A4 | Приняты R40/R42/R26 §10.1; прежние source assertions сохранены. |
+| A5 | Дополнения API сохранены; View закрыт (D2). |
+| A6 | Типизированная граница сохранена; рекурсивное раскрытие C13. |
+| A7 | Красный a7_fixed_timezone_not_utc; jiff, параметр TimeZone. |
+| B1 | Красные set/integer-map/signed-NonZero/root-recursion/writeOnly; остальные запрошенные derived-типы тоже проверены valid + invalid с путём. Полный набор ниже. |
+| B2 | Красный b2_nonrecursive_refs; следуем нерекурсивным ссылкам в compare и paths; ссылки с циклом остаются raw. Существующий recursive source test не ослаблен. |
+| B3 | Восемь красных тестов: JS number, typed integral/range path, exact bounds/multipleOf, type union, schema pattern error, JSON text, value depth, numeric equality. Подпункт unknown-key оспорен ниже. |
+| B4 | Красные b4_unused_defs_are_inspected и b4_nested_unused_defs_are_inspected; обход всех объявлений, включая вложенные. |
+| B5 | Красный nullable inline Option; null сохраняется. |
+| B6 | Красные recursive unknown-fields и key-order; merge идёт по объектам и массивам, не теряет неизвестные поля/позиции ключей. |
+| C1 | Два красных unit-теста по 10 000 disposals; завершённые эффекты и child undo удаляются, Weak освобождены. |
+| C2 | Два красных теста: late push выполняется с Inactive, adoption только при передаче undo эффекту. |
+| C3 | Исходный код уже проходит точный сценарий A accept / B reject / restart. Оспорен; raw B, effective прежний, restart B. |
+| C4 | Красный pending-resolver; provisional activation сразу закрыта, регистрация Inactive. |
+| C5 | Красные cleanup/spawn/indirect serial wait; ancestry наследуется cleanup/update/spawn/dispatch; внутренний tail restart остаётся разрешён. |
+| C6 | Красные filter-panic и actor-failure; catch filter, отмена всех activation tokens, Closed даже для suspended update. |
+| C7 | Два красных теста: zero → 1 мс, idle ticks не накапливаются. |
+| C8 | Красные outside-runtime dispose и reuse service name/type; synchronous prefix выполняется, async остаток явно логируется; таблица типов освобождается без providers/consumers. |
+| C9 | Красный Weak-тест со старым Context; закрытый View очищается, actor держит committed bindings до завершения cleanup. |
+| C10 | Исходный код уже проходит точный сценарий stale A.next после retained B. Оспорен; fiber перемонтируется с B, это поведение источника. |
+| C11 | Красный loading-withdrawal; notifications отслеживают записи, включая ещё невидимые. |
+| C12 | Красный concurrent prepend snapshot; вставка под одним write lock. |
+| C13 | Красный nested aggregate; итеративное раскрытие до leaves, порядок сохраняется. |
+| C14 | Красный subprocess stack overflow; каждая continuation — задача. 2 000 waterfall и 2 000 update forwarding listeners проходят на 2 МиБ. |
+| D1 | Красный trybuild pass; квалифицированные пути/macros, mixed-site identifiers; функции config/ctx/deps/__hoh_ctx. |
+| D2 | Новый compile-fail сначала неожиданно компилировался; Default удалён, empty доступен только ядру. |
+| E1 | Четыре multi_thread(4) timeout-теста: 64 child/dispose, 256 begin/finish, 128 reserve/close, 4×25 updates. Последний выявил race: dispose reply до Drop node; порядок исправлен. Проверены cleanup, Weak, snapshot, owner effects. |
+| E2 | Восстановлены все перечисленные assertions; компонент регистрирует реальный listener, stale failure реально возвращает ошибку (красные fixture-тесты: callback count, один Error, точный latest load failed). Подробности ниже. |
+| F | Обновлены оба PORT_NOTES; lifetime, keywords, limits и адаптации перечислены. |
+
+### Разногласия, без изменения исходного поведения
+
+Пути ниже относительно `/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness/`.
+
+- **C3 disputed:** `vendor/cordis/src/fiber.ts:811` сохраняет raw до handler; `:835` вызывает publish только при успехе, rollback отсутствует. `scripts/cordis-core-lifecycle.spec.ts:144-146` прямо требует raw 3 и effective 2 после rejection. Тест c3_source_retains_rejected_raw прошёл на принятой базе. Исправлять на rollback означало бы менять источник.
+- **C10 disputed:** `vendor/cordis/src/fiber.ts:817-819` restart closure безусловно вызывает restart; revision/epoch guards `:822-824` защищают только publish. Упомянутый harness test `scripts/cordis-core-lifecycle.spec.ts:122-148` не вызывает next у старого обработчика и не устанавливает обратного правила. Тест c10_source_stale_delegation_still_restarts прошёл на принятой базе; после принятого без remount обновления B старый A.next перемонтирует fiber с B (load 0, unload 0, load 2).
+- **B3 unknown-key wording disputed:** `vendor/schemastery/src/index.ts:811-822` не выдаёт unknown-key error: обычный object сохраняет ключи через merge, strict их отбрасывает. Сообщения, на которое просит заменить brief, в этом checker нет. Не изменён прежний отказ boolean false schema (`expected nullable ...`); deny_unknown_fields по-прежнему отклоняет с путём. Это JSON Schema ограничение Rust-типа, которому нет прямого strict-ошибочного аналога schemastery.
+
+### Набор слов схемы (schemars 1.2.3)
+
+Проверены локальные исходники `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/`. Ниже S = `schemars-1.2.3/src/`, D = `schemars_derive-1.2.3/src/`. Настройки — SchemaGenerator::default(), draft2020_12, Deserialize, без transforms; project features preserve_order/indexmap2. Произвольные пользовательские schemars extensions не делают любое слово допустимым.
+
+| Слова | Источник |
+|---|---|
+| `$schema`, `$defs`, `$ref` (включая `#`), `title` | S generate.rs (draft2020_12, root/subschema generation) |
+| `type`, `format`, `minimum`, `maximum`, `minLength`, `maxLength` | S json_schema_impls/primitives.rs:16-134 (числа, char, std strings/IP); std_time.rs, serdejson.rs, ffi.rs используют те же слова |
+| `items`, `uniqueItems` | S json_schema_impls/sequences.rs:23-52; indexmap2.rs делегирует этим реализациям |
+| `items`, `minItems`, `maxItems`, `prefixItems` | S json_schema_impls/array.rs:19-45, tuple.rs:23-36 |
+| `properties`, `additionalProperties`, `patternProperties` | S json_schema_impls/maps.rs:41-141; D schema_exprs.rs (object/enum) |
+| `required` | S json_schema_impls/core.rs:43-119, std_time.rs:17-40; D schema_exprs.rs:448-452, 720-755 |
+| `not`, `const`, `minimum` | S json_schema_impls/nonzero.rs:13-25 (signed not const 0; unsigned minimum 1) |
+| `oneOf`, `anyOf`, `allOf`, `enum`, `const` | D schema_exprs.rs (enum representations, flatten); S json_schema_impls/core.rs (Option, Result, Bound), S _private/mod.rs:49-160, 199-282, 368-386, 449-501 |
+| `unevaluatedProperties` | S _private/mod.rs:405-441 (complex flatten/deny_unknown_fields) |
+| `readOnly`, `writeOnly` | D ast/mod.rs:123-128 (serde skip annotations; не ограничения значения) |
+| `title`, `description`, `examples`, `deprecated` | D attr/mod.rs:197-226, schema_exprs.rs:595 (метаданные/документация; аннотации) |
+| `default` | D schema_exprs.rs:680-715, 772-822 (serde default; применяется serde, не validator) |
+| `minLength`, `maxLength`, `minItems`, `maxItems`, `minimum`, `maximum`, `pattern`, `format` | D attr/validation.rs:73-116 (length/range/pattern/contains/format), S _private/mod.rs::must_contain (pattern) |
+
+Дополнительно сохранены исходные R48 слова `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`; поддержаны стандартные applicators `propertyNames`, `minProperties`, `maxProperties`, `contains`, `minContains`, `maxContains`, `if`, `then`, `else`, `dependentRequired`, `dependentSchemas`. `$id` — аннотация, `x-*` — расширения; `x-volatile` и `x-volatile-invalid` проверяются ядром. Bool-схемы поддерживаются. Другие слова — schema error даже в неиспользованном определении. `format` — аннотация R48, кроме диапазонов Rust integer formats для pathed typed conversion (B3). Для новых Rust-only ограничений set/not/contains нет текстового checker-аналога schemastery: выдаётся понятное expected-замечание с путём.
+
+### E2: уточнённый учёт исходных случаев
+
+- fiber.spec: listener failed fiber удалён, callback ровно один; extra=1 проверено после второго load; resolved config сравнивается целиком. Инерция проверяет Active и значение сервиса (1 до withdrawal / 2 после повторной активации).
+- update.spec: до последнего load settled count=0, затем 3; ABA проверяет Active, raw value и identity канонического Arc snapshot (идентичность переданного JS object неприменима к owned Value). Stale failure логируется ровно один раз; оба caller получают точный `latest load failed`; после неудачного push стоит наблюдаемый marker, которого нет в логе.
+- service-dispose.spec: sibling cleanup принадлежит тому же blocked consumer; composed case удаляет owner subtree, root остаётся активным, assertions до release сохранены.
+- events.spec: проверка удаления последнего bucket перенесена также в private unit e2_empty_buckets_are_removed; публичная проверка callbacks сохранена.
+- cordis-timer.spec: оба исходных имени представлены, период и все три операции проверены с реальным pending read; ограничения Stream описаны в учёте файла выше. Дополнительных целиком пропущенных случаев нет.
+- Остальные списки ported/not ported исходных файлов не изменились. Старый unsupported-keyword тест использует `unsupported` вместо ставшего допустимым `not`; его проверка отказа на отсутствующем поле сохранена.
+
+### Пределы и жизнь ядра
+
+- Kernel живёт до явного `shutdown()`. Drop всех внешних Kernel/Context/Fiber handles не останавливает actor: он сам держит Shared с sender. Shutdown обязателен для завершения экземпляра; global registry нет.
+- JSON nesting — `hoh_util_values::JS_JSON_MAX_DEPTH` (4096 контейнеров), считаются уровни значения, не `$ref` hops. По PORTING потоки приложения имеют стек 64 МиБ; глубина 200 recursive nodes проверена на таком стеке. Произвольно глубокие Value собирать запрещено PORTING; обход значений рекурсивный в этом пределе.
+- Схемы с циклом не зацикливают validator; повтор того же schema на том же instance останавливается. Diff идёт по нерекурсивным refs; циклический ref сравнивает всю ссылочную ветвь raw. External refs не разрешаются.
+- JSON integers i64/u64 сравниваются точно (i128 intermediate); integral f64 принимается для typed conversion только точно и в пределах ±2^53, затем проверяются пределы Rust integer format. Видимый number/JSON text и numeric equality — hoh-util-values (JS nearest double).
+- Неподдерживаемые regex (look-ahead/back-reference и т.п.) — schema error с самим pattern. UTF-16 length и ASCII d/w/b остаются как в source.
+- Количество listeners ограничено регистрациями плагинов, фиксированного численного лимита нет. Continuations выполняются отдельными задачами, без линейного роста стека. Тест C14 запускает 2 000 listeners каждого из waterfall/update на 2 МиБ в subprocess; ignored helper не пропущен: его явно запускает обычный wrapper test.
+- E1 bounded iterations/timeout 10 с: 64/256/128/4×25. C12 ограничен 30 000 регистрациями; всё без сети. Эти concurrency tests используют настоящий monotonic timeout, а не wall-clock assertions.
+- Realm — 64-битный монотонный counter, 0=root; его исчерпание за 2^64 выдач — документированный invariant process lifetime. Fiber uid — u32, binding/revision/generation — u64, по контракту этапа 0. Logger buffer — последние 1 000 records; строка console обрезается до 10 240 UTF-16 units, ts_ms saturating i64.
+- interval(0) — 1 мс; нет tick backlog, дедлайн не должен переполнять Instant (переполнение завершает stream). Stream один reader, disposal даёт None; cancellation sleep даёт Inactive. За пределами tokio runtime Disposer выполняет синхронный префикс и пишет Error про невыполненный async остаток, не запускает новый runtime.
 
 ## Проверки
 
 Все команды: `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-k1`.
 
-- `cargo test -p hoh-kernel`: 165 passed; 0 failed (сумма итоговых строк 20 test binaries; doc-tests 0/0).
-- `cargo test -p hoh-kernel-macros`: 1 passed; 0 failed (11 compile-fail + 1 pass trybuild fixture; doc-tests 0/0).
+- `cargo test -p hoh-kernel`: 225 passed; 0 failed; 1 ignored (сумма итоговых строк 22 test binaries; doc-tests 0/0). Ignored — только C14 subprocess helper, фактически исполненный wrapper test на 2 МиБ.
+- `cargo test -p hoh-kernel-macros`: 1 passed; 0 failed (12 compile-fail + 2 pass trybuild fixtures; doc-tests 0/0).
 - `cargo clippy -p hoh-kernel --all-targets -- -D warnings`: exit 0.
 - `cargo clippy -p hoh-kernel-macros --all-targets -- -D warnings`: exit 0.
 - `cargo fmt -p hoh-kernel -- --check`: exit 0.

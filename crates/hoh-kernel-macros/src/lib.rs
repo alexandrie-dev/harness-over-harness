@@ -54,7 +54,7 @@ pub fn inject(input: TokenStream) -> TokenStream {
         let (ig, tg, wc) = input.generics.split_for_impl();
         Ok(quote! {
             impl #ig ::hoh_kernel::Inject for #name #tg #wc {
-                fn deps() -> ::std::vec::Vec<::hoh_kernel::Dep> { vec![#(::hoh_kernel::Dep { name: <#keys as ::hoh_kernel::ServiceKey>::NAME, key: ::std::any::TypeId::of::<#keys>() }),*] }
+                fn deps() -> ::std::vec::Vec<::hoh_kernel::Dep> { ::std::vec![#(::hoh_kernel::Dep { name: <#keys as ::hoh_kernel::ServiceKey>::NAME, key: ::core::any::TypeId::of::<#keys>() }),*] }
                 fn resolve(view: &::hoh_kernel::View) -> Self { Self { #(#names: view.service::<#keys>()),* } }
             }
         })
@@ -96,6 +96,9 @@ pub fn plugin(args: TokenStream, input: TokenStream) -> TokenStream {
         }
         let mut deps = quote! { () };
         let mut config = quote! { ::hoh_kernel::NoConfig };
+        let ctx_arg = syn::Ident::new("__hoh_ctx", proc_macro2::Span::mixed_site());
+        let deps_arg = syn::Ident::new("__hoh_deps", proc_macro2::Span::mixed_site());
+        let config_arg = syn::Ident::new("__hoh_config", proc_macro2::Span::mixed_site());
         let mut call = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for arg in &f.sig.inputs {
@@ -117,11 +120,11 @@ pub fn plugin(args: TokenStream, input: TokenStream) -> TokenStream {
                 return Err(syn::Error::new(pat.span(), "duplicate plugin parameter"));
             }
             match name {
-                "ctx" => call.push(quote! { ctx }),
+                "ctx" => call.push(quote! { #ctx_arg }),
                 "deps" => {
                     let ty = &arg.ty;
                     deps = quote! { #ty };
-                    call.push(quote! { deps });
+                    call.push(quote! { #deps_arg });
                 }
                 "config" => {
                     let Some(ty) = wrapped(&arg.ty, "Cfg") else {
@@ -131,7 +134,7 @@ pub fn plugin(args: TokenStream, input: TokenStream) -> TokenStream {
                         ));
                     };
                     config = quote! { #ty };
-                    call.push(quote! { config });
+                    call.push(quote! { #config_arg });
                 }
                 _ => {
                     return Err(syn::Error::new(
@@ -150,14 +153,16 @@ pub fn plugin(args: TokenStream, input: TokenStream) -> TokenStream {
         let ident = args.ident;
         let name = args.name;
         let fn_name = &f.sig.ident;
+        let function = syn::Ident::new("__hoh_function", proc_macro2::Span::mixed_site());
         Ok(quote! {
             #f
             pub struct #ident;
             impl ::hoh_kernel::Plugin for #ident {
-                const NAME: &'static str = #name;
+                const NAME: &'static ::core::primitive::str = #name;
                 type Config = #config; type Deps = #deps;
-                async fn apply(ctx: ::hoh_kernel::Context, deps: Self::Deps, config: ::hoh_kernel::Cfg<Self::Config>) -> Result<(), ::hoh_kernel::Error> {
-                    let _ = (&deps, &config); #fn_name(#(#call),*).await
+                async fn apply(#ctx_arg: ::hoh_kernel::Context, #deps_arg: Self::Deps, #config_arg: ::hoh_kernel::Cfg<Self::Config>) -> ::core::result::Result<(), ::hoh_kernel::Error> {
+                    let #function = #fn_name;
+                    let _ = (&#deps_arg, &#config_arg); #function(#(#call),*).await
                 }
             }
         })

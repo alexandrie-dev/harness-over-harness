@@ -12,6 +12,7 @@ async fn inertia(early: bool, provider: bool) {
             let t = t2.clone();
             async move {
                 t.push(format!("load {}", *deps.a));
+                lock(&t.contexts).push(ctx.clone());
                 ctx.effect_async::<Error, _>("delayed", move |u| async move {
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                     let _ = u.push(Undo::future(move || async move {
@@ -33,6 +34,7 @@ async fn inertia(early: bool, provider: bool) {
         tokio::time::advance(Duration::from_millis(600)).await;
         turn().await;
         assert_eq!(f.state(), FiberState::Active);
+        assert_eq!(*t.context().get::<A>().unwrap(), 1);
         p.dispose().await;
         assert_eq!(f.state(), FiberState::Pending);
     } else {
@@ -55,6 +57,8 @@ async fn inertia(early: bool, provider: bool) {
         tokio::time::advance(Duration::from_millis(1000)).await;
         f.settled().await.unwrap();
         withdrawn.await;
+        assert_eq!(f.state(), FiberState::Active);
+        assert_eq!(*t.context().get::<A>().unwrap(), 2);
         assert_eq!(t.list(), ["load 1", "load 2"]);
     }
     k.shutdown().await;
@@ -74,8 +78,12 @@ async fn inertia_lock_3() {
 #[tokio::test(start_paused = true)]
 async fn component_error() {
     let (k, r, t) = harness();
-    let a = r.plugin::<Recorded>(json!({"fail":true})).unwrap();
-    let b = r.plugin::<Recorded>(json!({"value":1})).unwrap();
+    let a = r
+        .plugin::<Recorded>(json!({"fail":true,"listen":true}))
+        .unwrap();
+    let b = r
+        .plugin::<Recorded>(json!({"value":1,"listen":true}))
+        .unwrap();
     assert!(a.settled().await.is_err());
     b.settled().await.unwrap();
     assert_eq!(a.state(), FiberState::Failed);
@@ -89,6 +97,8 @@ async fn component_error() {
         1
     );
     assert!(t.list().contains(&"unload 0".into()));
+    r.emit(&Ping);
+    assert_eq!(t.list().iter().filter(|s| s.as_str() == "event").count(), 1);
     k.shutdown().await;
 }
 #[tokio::test(start_paused = true)]
@@ -345,7 +355,10 @@ async fn pass_the_resolved_config_to_listeners() {
     f.update(json!({"ok":true,"extra":1,"delegate":true}))
         .await
         .unwrap();
-    assert_eq!(lock(&t.updates)[0]["resolved"], true);
+    assert_eq!(
+        lock(&t.updates)[0],
+        json!({"ok":true,"extra":1,"delegate":true,"resolved":true})
+    );
     assert_eq!(
         *f.raw_config(),
         json!({"ok":true,"extra":1,"delegate":true})
@@ -364,5 +377,6 @@ async fn keep_the_source_config_when_a_listener_handles_the_update() {
     assert_eq!(t.list(), ["load 0"]);
     f.restart().await.unwrap();
     assert_eq!(t.list(), ["load 0", "unload 0", "load 0"]);
+    assert_eq!(lock(&t.configs).last().unwrap().get()["extra"], 1);
     k.shutdown().await;
 }

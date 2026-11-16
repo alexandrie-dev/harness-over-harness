@@ -5,6 +5,9 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::Notify;
+#[cfg(test)]
+#[path = "effects_review_tests.rs"]
+mod review_tests;
 type UndoAction = Box<dyn FnOnce() -> Task<Result<(), Error>> + Send>;
 
 #[must_use = "setup эффекта обязан вернуть обратное действие"]
@@ -15,6 +18,12 @@ pub struct Undo {
 }
 
 impl Undo {
+    fn adopt(&self) {
+        if let Some(effect) = &self.adopted {
+            effect.adopted.store(true, Ordering::Release);
+            effect.detach();
+        }
+    }
     pub fn none() -> Self {
         Self {
             action: None,
@@ -71,7 +80,6 @@ impl Undo {
 }
 impl From<Disposer> for Undo {
     fn from(disposer: Disposer) -> Self {
-        disposer.effect.adopted.store(true, Ordering::Release);
         Self {
             action: None,
             sync: None,
@@ -88,6 +96,8 @@ pub(crate) struct Effect {
     notify: Notify,
     label: &'static str,
     log: Logger,
+    owner: std::sync::Weak<Activation>,
+    ancestry: Vec<u32>,
 }
 struct EffectData {
     ready: bool,
@@ -99,12 +109,18 @@ impl Effect {
         self.running.load(Ordering::Acquire)
     }
     pub(crate) fn add(&self, undo: Undo) {
+        undo.adopt();
         lock(&self.state).undos.push(undo);
     }
     pub(crate) fn on_begin(&self, f: impl FnOnce() + Send + 'static) {
         lock(&self.state).begin = Some(Box::new(f));
     }
-    fn new(label: &'static str, log: Logger) -> Arc<Self> {
+    fn new(
+        label: &'static str,
+        log: Logger,
+        owner: std::sync::Weak<Activation>,
+        ancestry: Vec<u32>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             requested: AtomicBool::new(false),
             adopted: AtomicBool::new(false),
@@ -118,11 +134,82 @@ impl Effect {
             notify: Notify::new(),
             label,
             log,
+            owner,
+            ancestry,
         })
     }
     pub(crate) fn finish_setup(&self) {
         lock(&self.state).ready = true;
         self.notify.notify_waiters();
+    }
+    fn detach(&self) {
+        if let Some(owner) = self.owner.upgrade() {
+            lock(&owner.effects)
+                .effects
+                .retain(|e| !std::ptr::eq(e.as_ref(), self));
+        }
+    }
+    fn complete(&self) {
+        self.detach();
+        self.done.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+    pub(crate) fn retire_child(self: &Arc<Self>) {
+        self.requested.store(true, Ordering::Release);
+        if !self.running.swap(true, Ordering::AcqRel) {
+            let undos = std::mem::take(&mut lock(&self.state).undos);
+            drop(undos);
+            self.complete();
+        } else {
+            self.detach();
+        }
+    }
+    fn synchronous(&self, undos: &mut Vec<Undo>) {
+        while let Some(mut undo) = undos.pop() {
+            match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                fiber::sync_scope(self.ancestry.clone(), || undo.run_sync())
+            })) {
+                Ok(true) => {}
+                Ok(false) => {
+                    undos.push(undo);
+                    break;
+                }
+                Err(_) => self
+                    .log
+                    .error(format_args!("effect \"{}\": cleanup panicked", self.label)),
+            }
+        }
+    }
+    fn late(self: &Arc<Self>, undo: Undo) {
+        let mut pending = vec![undo];
+        self.synchronous(&mut pending);
+        if pending.is_empty() {
+            return;
+        }
+        if tokio::runtime::Handle::try_current().is_err() {
+            self.log.error(format_args!(
+                "effect \"{}\": asynchronous disposal requires a tokio runtime",
+                self.label
+            ));
+            return;
+        }
+        let effect = self.clone();
+        fiber::spawn_for(self.ancestry.clone(), async move {
+            effect.cleanup(pending).await;
+        });
+    }
+    async fn cleanup(&self, undos: Vec<Undo>) {
+        for undo in undos.into_iter().rev() {
+            match AssertUnwindSafe(undo.run()).catch_unwind().await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => self
+                    .log
+                    .error(format_args!("effect \"{}\": {e}", self.label)),
+                Err(_) => self
+                    .log
+                    .error(format_args!("effect \"{}\": cleanup panicked", self.label)),
+            }
+        }
     }
     pub(crate) fn begin(self: &Arc<Self>) {
         self.requested.store(true, Ordering::Release);
@@ -135,34 +222,28 @@ impl Effect {
         }
         let pending = {
             let mut state = lock(&self.state);
-            if state.ready {
-                Some(std::mem::take(&mut state.undos))
-            } else {
-                None
-            }
+            state.ready.then(|| std::mem::take(&mut state.undos))
         };
         let pending = pending.map(|mut undos| {
-            while let Some(mut undo) = undos.pop() {
-                match std::panic::catch_unwind(AssertUnwindSafe(|| undo.run_sync())) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        undos.push(undo);
-                        break;
-                    }
-                    Err(_) => self
-                        .log
-                        .error(format_args!("effect \"{}\": cleanup panicked", self.label)),
-                }
-            }
+            self.synchronous(&mut undos);
             undos
         });
         if pending.as_ref().is_some_and(Vec::is_empty) {
-            self.done.store(true, Ordering::Release);
-            self.notify.notify_waiters();
+            self.complete();
+            return;
+        }
+        if tokio::runtime::Handle::try_current().is_err() {
+            self.log.error(format_args!(
+                "effect \"{}\": asynchronous disposal requires a tokio runtime",
+                self.label
+            ));
+            let undos = std::mem::take(&mut lock(&self.state).undos);
+            drop(undos);
+            self.complete();
             return;
         }
         let effect = self.clone();
-        tokio::spawn(async move {
+        fiber::spawn_for(self.ancestry.clone(), async move {
             loop {
                 let notified = effect.notify.notified();
                 if lock(&effect.state).ready {
@@ -171,20 +252,8 @@ impl Effect {
                 notified.await;
             }
             let undos = pending.unwrap_or_else(|| std::mem::take(&mut lock(&effect.state).undos));
-            for undo in undos.into_iter().rev() {
-                match AssertUnwindSafe(undo.run()).catch_unwind().await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => effect
-                        .log
-                        .error(format_args!("effect \"{}\": {error}", effect.label)),
-                    Err(_) => effect.log.error(format_args!(
-                        "effect \"{}\": cleanup panicked",
-                        effect.label
-                    )),
-                }
-            }
-            effect.done.store(true, Ordering::Release);
-            effect.notify.notify_waiters();
+            effect.cleanup(undos).await;
+            effect.complete();
         });
     }
     pub(crate) async fn wait(&self) {
@@ -214,8 +283,17 @@ pub struct Undos {
 }
 impl Undos {
     pub fn push(&self, undo: impl Into<Undo>) -> Result<(), KernelError> {
-        lock(&self.effect.state).undos.push(undo.into());
-        if self.effect.requested.load(Ordering::Acquire) {
+        let undo = undo.into();
+        undo.adopt();
+        let mut state = lock(&self.effect.state);
+        let inactive = self.effect.requested.load(Ordering::Acquire);
+        if inactive && state.ready {
+            drop(state);
+            self.effect.late(undo);
+            return Err(KernelError::Inactive);
+        }
+        state.undos.push(undo);
+        if inactive {
             Err(KernelError::Inactive)
         } else {
             Ok(())
@@ -234,7 +312,7 @@ impl Disposer {
 pub(crate) struct Activation {
     pub(crate) effects: Mutex<ActivationData>,
     pub(crate) token: tokio_util::sync::CancellationToken,
-    pub(crate) view: View,
+    pub(crate) view: RwLock<View>,
     pub(crate) cfg: Arc<RwLock<Value>>,
 }
 pub(crate) struct ActivationData {
@@ -253,7 +331,7 @@ impl Activation {
                 effects: vec![],
             }),
             token: tokio_util::sync::CancellationToken::new(),
-            view,
+            view: RwLock::new(view),
             cfg: Arc::new(RwLock::new(Arc::new(()))),
         })
     }
@@ -264,6 +342,9 @@ impl Activation {
         for effect in &state.effects {
             effect.requested.store(true, Ordering::Release);
         }
+        drop(state);
+        let old = std::mem::replace(&mut *write(&self.view), View::empty());
+        drop(old);
     }
     pub(crate) async fn unload(&self) {
         let effects = std::mem::take(&mut lock(&self.effects).effects);
@@ -285,7 +366,12 @@ impl Context {
         if self.inner.closed.load(Ordering::Acquire) {
             return Err(KernelError::Closed);
         }
-        let effect = Effect::new(label, self.logger());
+        let effect = Effect::new(
+            label,
+            self.logger(),
+            Arc::downgrade(&self.activation),
+            self.data.ancestry.clone(),
+        );
         {
             let mut state = lock(&self.activation.effects);
             if state.closed {
@@ -303,7 +389,7 @@ impl Context {
         let disposer = self.reserve_effect(label)?;
         let result = std::panic::catch_unwind(AssertUnwindSafe(setup));
         if let Ok(undo) = result {
-            lock(&disposer.effect.state).undos.push(undo);
+            disposer.effect.add(undo);
             disposer.effect.finish_setup();
             Ok(disposer)
         } else {
@@ -387,7 +473,7 @@ impl Context {
             let token = self.token().child_token();
             let cancel = token.clone();
             let log = self.logger();
-            let task = tokio::spawn(async move {
+            let task = fiber::spawn_for(self.data.ancestry.clone(), async move {
                 if let Err(e) = task(token).await {
                     log.error(e);
                 }

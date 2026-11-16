@@ -59,6 +59,10 @@ pub async fn recorded(ctx: Context, config: Cfg<Value>) -> Result<(), Error> {
     t.push(format!("load {n}"));
     lock(&t.contexts).push(ctx.clone());
     lock(&t.configs).push(config);
+    if c["listen"] == true {
+        let t = t.clone();
+        ctx.on::<Ping>(move |_| t.push("event"))?;
+    }
     if c["hook"] == true {
         let t = t.clone();
         ctx.on_update::<Value, _>(move |c, next| {
@@ -86,7 +90,7 @@ pub async fn recorded(ctx: Context, config: Cfg<Value>) -> Result<(), Error> {
             tokio::time::sleep(Duration::from_millis(ms)).await;
         }
         let t3 = t2.clone();
-        u.push(Undo::future(move || async move {
+        let pushed = u.push(Undo::future(move || async move {
             t3.push(format!("unload {n}"));
             if cleanup {
                 t3.cleanup.acquire().await.unwrap().forget();
@@ -95,9 +99,19 @@ pub async fn recorded(ctx: Context, config: Cfg<Value>) -> Result<(), Error> {
                 return Err("cleanup failure".into());
             }
             Ok(())
-        }))?;
+        }));
         if c["fail"] == true {
-            return Err::<(), Error>(format!("failure {n}").into());
+            return Err::<(), Error>(
+                c["message"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("failure {n}"))
+                    .into(),
+            );
+        }
+        pushed?;
+        if c["marker"] == true {
+            t2.push("outdated continuation");
         }
         Ok(())
     })

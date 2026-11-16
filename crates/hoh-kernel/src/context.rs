@@ -206,7 +206,7 @@ impl Context {
         {
             return Some(p.clone());
         }
-        if let Some(p) = self.activation.view.values.get(&key) {
+        if let Some(p) = read(&self.activation.view).values.get(&key) {
             return Some(p.clone());
         }
         read(&self.inner.published).get(&key).cloned()
@@ -279,6 +279,17 @@ impl Context {
         C: Config,
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
+        self.on_update_ordered::<C, Fut>(handler, false)
+    }
+    pub(crate) fn on_update_ordered<C, Fut>(
+        &self,
+        handler: impl Fn(Arc<C>, Next<()>) -> Fut + Send + Sync + 'static,
+        prepend: bool,
+    ) -> Result<Disposer, KernelError>
+    where
+        C: Config,
+        Fut: Future<Output = Result<(), Error>> + Send + 'static,
+    {
         self.config_type::<C>()?;
         let disposer = self.reserve_effect("ctx.on_update()")?;
         let hook = Arc::new(fiber::UpdateHook {
@@ -294,7 +305,14 @@ impl Context {
                 })
             }),
         });
-        write(&self.data.hooks).updates.push(hook.clone());
+        {
+            let mut hooks = write(&self.data.hooks);
+            if prepend {
+                hooks.updates.insert(0, hook.clone());
+            } else {
+                hooks.updates.push(hook.clone());
+            }
+        }
         let data = Arc::downgrade(&self.data);
         disposer.effect.add(Undo::sync(move || {
             if let Some(data) = data.upgrade() {
@@ -331,19 +349,26 @@ impl Context {
     ) -> impl futures_util::Stream<Item = ()> + Send + 'static {
         let token = self.token();
         let active = self.ensure_active().is_ok();
-        let interval = if active && !period.is_zero() {
-            Some(tokio::time::interval_at(
-                tokio::time::Instant::now() + period,
-                period,
-            ))
+        let period = if period.is_zero() {
+            Duration::from_millis(1)
         } else {
-            None
+            period
         };
+        let start = tokio::time::Instant::now();
         futures_util::StreamExt::fuse(futures_util::stream::unfold(
-            (interval, token),
-            |(interval, token)| async move {
-                let mut interval = interval?;
-                tokio::select! { biased; _=token.cancelled()=>None,_=interval.tick()=>Some(((),(Some(interval),token))) }
+            (active, token, start, period),
+            |(active, token, start, period)| async move {
+                if !active {
+                    return None;
+                }
+                let now = tokio::time::Instant::now();
+                let phase = now.duration_since(start).as_nanos() % period.as_nanos();
+                let phase = Duration::new(
+                    (phase / 1_000_000_000) as u64,
+                    (phase % 1_000_000_000) as u32,
+                );
+                let deadline = now.checked_add(period - phase)?;
+                tokio::select! { biased; _=token.cancelled()=>None,_=tokio::time::sleep_until(deadline)=>Some(((),(true,token,start,period))) }
             },
         ))
     }

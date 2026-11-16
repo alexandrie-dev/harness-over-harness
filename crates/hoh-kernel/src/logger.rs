@@ -89,15 +89,16 @@ impl Logger {
         self.record(Level::Debug, message);
     }
     pub(crate) fn kernel_error(&self, error: &KernelError) {
-        if let KernelError::Listeners { errors, .. } = error
-            && !errors.is_empty()
-        {
-            for e in errors {
-                self.error(e);
+        let mut pending: Vec<&(dyn std::error::Error + Send + Sync + 'static)> = vec![error];
+        while let Some(error) = pending.pop() {
+            match error.downcast_ref::<KernelError>() {
+                Some(KernelError::Listeners { errors, .. }) if !errors.is_empty() => {
+                    pending.extend(errors.iter().rev().map(|e| e.as_ref().as_ref()))
+                }
+                Some(KernelError::Failed(error)) => pending.push(error.as_ref().as_ref()),
+                _ => self.error(error),
             }
-            return;
         }
-        self.error(error);
     }
     fn record(&self, level: Level, message: impl fmt::Display) {
         let message = message.to_string();
@@ -215,7 +216,11 @@ impl Plugin for ConsoleExporter {
             let time = if config.show_time.is_empty() {
                 String::new()
             } else {
-                time_template(&config.show_time, record.ts_ms)
+                time_template(
+                    &config.show_time,
+                    record.ts_ms,
+                    &jiff::tz::TimeZone::system(),
+                )
             };
             let mut previous = lock(&previous);
             let diff = if config.show_diff {
@@ -272,31 +277,21 @@ fn time_diff(ms: i64) -> String {
     }
     format!("{ms}ms")
 }
-fn time_template(template: &str, ts: i64) -> String {
-    // Gregorian conversion from Unix days (civil_from_days); formatting stays deterministic in UTC.
-    let days = ts.div_euclid(86_400_000) + 719468;
-    let era = days.div_euclid(146097);
-    let doe = days - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let mut year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    if month <= 2 {
-        year += 1;
-    }
-    let seconds = ts.div_euclid(1000).rem_euclid(86400);
+fn time_template(template: &str, ts: i64, zone: &jiff::tz::TimeZone) -> String {
+    let Ok(instant) = jiff::Timestamp::from_millisecond(ts) else {
+        return template.to_owned();
+    };
+    let time = instant.to_zoned_datetime(zone.clone());
     let mut output = template.to_owned();
     for (token, value) in [
-        ("yyyy", format!("{year:04}")),
-        ("yy", format!("{:02}", year.rem_euclid(100))),
-        ("MM", format!("{month:02}")),
-        ("dd", format!("{day:02}")),
-        ("hh", format!("{:02}", seconds / 3600)),
-        ("mm", format!("{:02}", (seconds / 60) % 60)),
-        ("ss", format!("{:02}", seconds % 60)),
-        ("SSS", format!("{:03}", ts.rem_euclid(1000))),
+        ("yyyy", format!("{:04}", time.year())),
+        ("yy", format!("{:02}", time.year().rem_euclid(100))),
+        ("MM", format!("{:02}", time.month())),
+        ("dd", format!("{:02}", time.day())),
+        ("hh", format!("{:02}", time.hour())),
+        ("mm", format!("{:02}", time.minute())),
+        ("ss", format!("{:02}", time.second())),
+        ("SSS", format!("{:03}", time.millisecond())),
     ] {
         output = output.replacen(token, &value, 1);
     }
@@ -307,13 +302,28 @@ fn time_template(template: &str, ts: i64) -> String {
 mod tests {
     use super::*;
     #[tokio::test(start_paused = true)]
+    async fn a7_fixed_timezone_not_utc() {
+        assert_eq!(
+            time_template(
+                "yyyy-MM-dd hh:mm:ss.SSS",
+                0,
+                &jiff::tz::TimeZone::fixed(jiff::tz::offset(3))
+            ),
+            "1970-01-01 03:00:00.000"
+        );
+    }
+    #[tokio::test(start_paused = true)]
     async fn console_time_formats() {
         assert_eq!(
-            time_template("yyyy-MM-dd hh:mm:ss.SSS", 0),
+            time_template("yyyy-MM-dd hh:mm:ss.SSS", 0, &jiff::tz::TimeZone::UTC),
             "1970-01-01 00:00:00.000"
         );
         assert_eq!(
-            time_template("yyyy-MM-dd hh:mm:ss.SSS", 951782400001),
+            time_template(
+                "yyyy-MM-dd hh:mm:ss.SSS",
+                951782400001,
+                &jiff::tz::TimeZone::UTC
+            ),
             "2000-02-29 00:00:00.001"
         );
         assert_eq!(time_diff(1000), "1s");

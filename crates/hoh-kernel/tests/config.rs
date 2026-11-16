@@ -39,7 +39,13 @@ async fn validates_refs_boolean_schemas_and_combinations() {
     assert!(config::validate(&json!(true), &json!(1)).is_ok());
     assert!(config::validate(&json!({"oneOf":[true,true]}), &json!(1)).is_err());
     assert!(config::validate(&json!({"allOf":[{"minimum":0},{"maximum":2}]}), &json!(3)).is_err());
-    assert!(config::validate(&json!({"properties":{"unused":{"not":true}}}), &json!({})).is_err());
+    assert!(
+        config::validate(
+            &json!({"properties":{"unused":{"unsupported":true}}}),
+            &json!({})
+        )
+        .is_err()
+    );
 }
 #[tokio::test(start_paused = true)]
 async fn validates_javascript_ascii_classes_and_utf16_lengths() {

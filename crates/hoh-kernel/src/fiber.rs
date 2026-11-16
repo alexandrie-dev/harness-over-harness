@@ -12,7 +12,30 @@ use std::{
     },
 };
 use tokio::sync::{mpsc, oneshot};
+#[cfg(test)]
+#[path = "fiber_review_tests.rs"]
+mod review_tests;
 tokio::task_local! { static APPLY_ANCESTRY: Vec<u32>; }
+pub(crate) fn sync_scope<R>(ancestry: Vec<u32>, f: impl FnOnce() -> R) -> R {
+    APPLY_ANCESTRY.sync_scope(ancestry, f)
+}
+pub(crate) fn spawn_for<F>(ancestry: Vec<u32>, future: F) -> tokio::task::JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    tokio::spawn(APPLY_ANCESTRY.scope(ancestry, future))
+}
+pub(crate) fn spawn_inherited<F>(future: F) -> tokio::task::JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    spawn_for(
+        APPLY_ANCESTRY.try_with(Clone::clone).unwrap_or_default(),
+        future,
+    )
+}
 type Reply<T> = oneshot::Sender<T>;
 type ServiceAddress = (Arc<str>, Realm);
 type Apply = dyn Fn(Context, View, Arc<RwLock<Value>>) -> Task<Result<(), Error>> + Send + Sync;
@@ -49,24 +72,19 @@ impl PluginDef {
             deps: Arc::new(P::Deps::deps()),
             config_type: TypeId::of::<P::Config>(),
             parse: Arc::new(move |raw| {
-                let normalized =
+                let mut normalized =
                     if TypeId::of::<P::Config>() == TypeId::of::<NoConfig>() && raw.is_null() {
                         serde_json::json!({})
                     } else {
                         config::normalized(&parse_schema, raw)
                     };
                 config::validate(&parse_schema, &normalized)?;
+                config::coerce_integers(&parse_schema, &parse_schema, &mut normalized);
                 let parsed: P::Config = serde_json::from_value(normalized.clone())
                     .map_err(|e| KernelError::Validation(config::issue(e.to_string())))?;
                 let serialized = serde_json::to_value(&parsed)
                     .map_err(|e| KernelError::Validation(config::issue(e.to_string())))?;
-                let effective = match (normalized, serialized) {
-                    (Json::Object(mut original), Json::Object(defaults)) => {
-                        original.extend(defaults);
-                        Json::Object(original)
-                    }
-                    (_, serialized) => serialized,
-                };
+                let effective = config::merge(normalized, serialized);
                 Ok((effective, Arc::new(parsed)))
             }),
             apply: Arc::new(|ctx, view, value| {
@@ -182,7 +200,8 @@ pub(crate) struct FiberData {
     pub(crate) hooks: RwLock<Hooks>,
     resolver: Option<Arc<dyn ConfigResolver>>,
     inject: Vec<Arc<str>>,
-    ancestry: Vec<u32>,
+    pub(crate) ancestry: Vec<u32>,
+    parent_effect: Weak<effects::Effect>,
 }
 #[derive(Clone)]
 pub struct Fiber {
@@ -253,6 +272,7 @@ impl Fiber {
         rx: oneshot::Receiver<Result<(), KernelError>>,
     ) -> impl Future<Output = Result<(), KernelError>> + Send + 'static {
         let uid = self.uid();
+        let closed = self.inner.closed_token.clone();
         async move {
             if APPLY_ANCESTRY
                 .try_with(|a| a.contains(&uid))
@@ -260,7 +280,7 @@ impl Fiber {
             {
                 return Err(KernelError::SelfWait);
             }
-            rx.await.unwrap_or(Err(KernelError::Closed))
+            tokio::select! {biased;_=closed.cancelled()=>Err(KernelError::Closed),result=rx=>result.unwrap_or(Err(KernelError::Closed))}
         }
     }
     pub fn settled(&self) -> impl Future<Output = Result<(), KernelError>> + Send + 'static {
@@ -289,6 +309,16 @@ impl Fiber {
         let (tx, rx) = oneshot::channel();
         let _ = self.inner.tx.send(Command::Restart(self.uid(), tx));
         self.wait_reply(rx)
+    }
+    fn restart_from_update(
+        &self,
+    ) -> impl Future<Output = Result<(), KernelError>> + Send + 'static {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.inner.tx.send(Command::Restart(self.uid(), tx));
+        let closed = self.inner.closed_token.clone();
+        async move {
+            tokio::select! {biased;_=closed.cancelled()=>Err(KernelError::Closed),result=rx=>result.unwrap_or(Err(KernelError::Closed))}
+        }
     }
     pub fn commit_volatile(
         &self,
@@ -357,6 +387,7 @@ pub(crate) struct Shared {
     pub(crate) root: Arc<FiberData>,
     pub(crate) root_activation: Arc<effects::Activation>,
     pub(crate) closed: AtomicBool,
+    closed_token: tokio_util::sync::CancellationToken,
     next_uid: AtomicU32,
     pub(crate) published: RwLock<IndexMap<ServiceAddress, Arc<Provision>>>,
     pub(crate) own_published: RwLock<IndexMap<ServiceAddress, Arc<Provision>>>,
@@ -389,12 +420,14 @@ impl Kernel {
             resolver: None,
             inject: vec![],
             ancestry: vec![0],
+            parent_effect: Weak::new(),
         });
         let inner = Arc::new(Shared {
             tx,
             root: root.clone(),
-            root_activation: effects::Activation::new(View::default()),
+            root_activation: effects::Activation::new(View::empty()),
             closed: AtomicBool::new(false),
+            closed_token: tokio_util::sync::CancellationToken::new(),
             next_uid: AtomicU32::new(1),
             published: RwLock::default(),
             own_published: RwLock::default(),
@@ -413,6 +446,7 @@ impl Kernel {
             shutting_down: false,
             root_done: false,
             shutdown_waiters: vec![],
+            notified: IndexMap::new(),
         };
         actor.nodes.insert(0, Node::root(ctx));
         tokio::spawn(async move {
@@ -478,6 +512,7 @@ impl Context {
             resolver: options.resolver,
             inject: options.inject,
             ancestry,
+            parent_effect: Arc::downgrade(&disposer.effect),
         });
         let fiber = Fiber {
             inner: self.inner.clone(),
@@ -548,6 +583,7 @@ struct Node {
     waiters: Vec<Reply<Result<(), KernelError>>>,
     dispose_waiters: Vec<Reply<()>>,
     retired: Vec<ReferenceProbe>,
+    committed: View,
 }
 impl Node {
     fn root(ctx: Context) -> Self {
@@ -567,6 +603,7 @@ impl Node {
             waiters: vec![],
             dispose_waiters: vec![],
             retired: vec![],
+            committed: View::empty(),
         }
     }
     fn state(&self) -> FiberState {
@@ -590,6 +627,7 @@ struct Actor {
     shutting_down: bool,
     root_done: bool,
     shutdown_waiters: Vec<Reply<()>>,
+    notified: IndexMap<ServiceAddress, (u64, bool)>,
 }
 impl Actor {
     async fn run(&mut self, mut rx: mpsc::UnboundedReceiver<Command>) {
@@ -631,14 +669,18 @@ impl Actor {
             Command::Create(fiber, parent) => {
                 let ctx = parent.activation_context(
                     fiber.data.clone(),
-                    effects::Activation::new(View::default()),
+                    effects::Activation::new(View::empty()),
                 );
+                ctx.activation.close();
                 let mut node = Node::root(ctx.clone());
                 node.target = None;
                 node.loaded = None;
                 if parent.ensure_active().is_err() {
                     write(&fiber.data.state).disposed = true;
                     write(&fiber.data.state).state = FiberState::Disposed;
+                    if let Some(effect) = fiber.data.parent_effect.upgrade() {
+                        effect.retire_child();
+                    }
                     return;
                 }
                 write(&self.shared.contexts).insert(fiber.uid(), ctx.clone());
@@ -651,22 +693,16 @@ impl Actor {
                 let Some(node) = self.nodes.get_mut(&uid) else {
                     return;
                 };
-                let bindings = node
-                    .ctx
-                    .activation
-                    .view
-                    .values
-                    .values()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for p in bindings {
+                let bindings = std::mem::replace(&mut node.committed, View::empty());
+                for p in bindings.values.values() {
                     lock(&p.dependents).shift_remove(&uid);
                 }
+                drop(bindings);
                 node.loaded = None;
                 node.unload_started = false;
                 let disposed = node.disposed();
                 let failed = read(&node.ctx.data.state).error.is_some();
-                let activation = effects::Activation::new(View::default());
+                let activation = effects::Activation::new(View::empty());
                 activation.close();
                 node.ctx = node
                     .ctx
@@ -880,8 +916,8 @@ impl Actor {
                     && !(p.owner == 0 && self.shutting_down)
             })
     }
-    fn publish(&self) {
-        *write(&self.shared.own_published) = self
+    fn publish(&mut self) {
+        let all = self
             .bindings
             .values()
             .filter(|b| !b.provision.withdrawn.load(Ordering::Acquire))
@@ -891,8 +927,13 @@ impl Actor {
                     b.provision.clone(),
                 )
             })
-            .collect();
-        let new = self
+            .collect::<IndexMap<_, _>>();
+        let records = all
+            .iter()
+            .map(|(address, p)| (address.clone(), (p.id, self.visible(p))))
+            .collect::<IndexMap<_, _>>();
+        *write(&self.shared.own_published) = all;
+        *write(&self.shared.published) = self
             .bindings
             .values()
             .filter(|b| self.visible(&b.provision))
@@ -902,15 +943,15 @@ impl Actor {
                     b.provision.clone(),
                 )
             })
-            .collect::<IndexMap<_, _>>();
-        let old = std::mem::replace(&mut *write(&self.shared.published), new.clone());
+            .collect();
+        let old = std::mem::replace(&mut self.notified, records);
         let root = Context::base(
             self.shared.clone(),
             self.shared.root.clone(),
             self.shared.root_activation.clone(),
         );
-        for (address, p) in &old {
-            if new.get(address).is_none_or(|n| n.id != p.id) {
+        for (address, (id, _)) in &old {
+            if self.notified.get(address).is_none_or(|(new, _)| new != id) {
                 root.emit(&InternalService {
                     name: address.0.clone(),
                     realm: address.1,
@@ -918,18 +959,18 @@ impl Actor {
                 });
             }
         }
-        for (address, p) in &new {
-            if old.get(address).is_none_or(|n| n.id != p.id) {
+        for (address, record) in &self.notified {
+            if old.get(address) != Some(record) {
                 root.emit(&InternalService {
                     name: address.0.clone(),
                     realm: address.1,
-                    available: true,
+                    available: record.1,
                 });
             }
         }
     }
     fn wanted(&self, node: &Node) -> (Option<Epoch>, View, Vec<Arc<str>>) {
-        let mut view = View::default();
+        let mut view = View::empty();
         let mut ids = vec![];
         let mut missing = vec![];
         let table = read(&self.shared.published);
@@ -992,6 +1033,7 @@ impl Actor {
                             }
                         }
                         let activation = effects::Activation::new(view);
+                        node.committed = read(&activation.view).clone();
                         node.ctx = node
                             .ctx
                             .activation_context(node.ctx.data.clone(), activation);
@@ -1068,13 +1110,19 @@ impl Actor {
                 .collect::<Vec<_>>();
             for uid in disposed {
                 if let Some(mut node) = self.nodes.shift_remove(&uid) {
-                    for waiter in node.dispose_waiters.drain(..) {
+                    if let Some(effect) = node.ctx.data.parent_effect.upgrade() {
+                        effect.retire_child();
+                    }
+                    let dispose_waiters = std::mem::take(&mut node.dispose_waiters);
+                    let waiters = std::mem::take(&mut node.waiters);
+                    write(&self.shared.contexts).remove(&uid);
+                    drop(node);
+                    for waiter in dispose_waiters {
                         let _ = waiter.send(());
                     }
-                    for waiter in node.waiters.drain(..) {
+                    for waiter in waiters {
                         let _ = waiter.send(Ok(()));
                     }
-                    write(&self.shared.contexts).remove(&uid);
                 }
             }
             if !changed {
@@ -1089,6 +1137,13 @@ impl Actor {
                 }
             }
         }
+        self.types.retain(|name, _| {
+            self.bindings.values().any(|b| b.provision.name == *name)
+                || self.nodes.values().any(|n| {
+                    n.ctx.data.def.deps.iter().any(|d| d.name == name.as_ref())
+                        || n.ctx.data.inject.contains(name)
+                })
+        });
     }
     fn start(&mut self, uid: u32, generation: u64) {
         let Some(node) = self.nodes.get(&uid) else {
@@ -1109,7 +1164,7 @@ impl Actor {
                 *write(&node.ctx.activation.cfg) = typed;
                 let ctx = node.ctx.clone();
                 let apply = ctx.data.def.apply.clone();
-                let view = ctx.activation.view.clone();
+                let view = node.committed.clone();
                 let cfg = ctx.activation.cfg.clone();
                 let tx = self.shared.tx.clone();
                 let ancestry = ctx.data.ancestry.clone();
@@ -1198,11 +1253,16 @@ impl Actor {
             let tail = Next {
                 call: Box::new(move || {
                     flag.store(true, Ordering::Release);
-                    Box::pin(async move { fiber.restart().await.map_err(|e| Box::new(e) as Error) })
+                    Box::pin(async move {
+                        fiber
+                            .restart_from_update()
+                            .await
+                            .map_err(|e| Box::new(e) as Error)
+                    })
                 }),
             };
             let next = update_chain(Arc::new(hooks), 0, typed.clone(), tail);
-            tokio::spawn(async move {
+            spawn_for(node.ctx.data.ancestry.clone(), async move {
                 let result = AssertUnwindSafe(next.run())
                     .catch_unwind()
                     .await
@@ -1298,19 +1358,23 @@ fn update_chain(
     Next {
         call: Box::new(move || {
             Box::pin(async move {
-                let mut index = index;
-                while index < hooks.len() {
-                    let hook = &hooks[index];
-                    index += 1;
-                    if hook.effect.upgrade().is_some_and(|e| !e.is_running()) {
-                        return (hook.handler)(
-                            value.clone(),
-                            update_chain(hooks.clone(), index, value, tail),
-                        )
-                        .await;
+                spawn_inherited(async move {
+                    let mut index = index;
+                    while index < hooks.len() {
+                        let hook = &hooks[index];
+                        index += 1;
+                        if hook.effect.upgrade().is_some_and(|e| !e.is_running()) {
+                            return (hook.handler)(
+                                value.clone(),
+                                update_chain(hooks.clone(), index, value, tail),
+                            )
+                            .await;
+                        }
                     }
-                }
-                tail.run().await
+                    tail.run().await
+                })
+                .await
+                .map_err(|error| Box::new(error) as Error)?
             })
         }),
     }
@@ -1318,10 +1382,13 @@ fn update_chain(
 impl Drop for Actor {
     fn drop(&mut self) {
         self.shared.closed.store(true, Ordering::Release);
+        self.shared.closed_token.cancel();
+        self.shared.root_activation.close();
         for node in self.nodes.values_mut() {
             for waiter in node.waiters.drain(..) {
                 let _ = waiter.send(Err(KernelError::Closed));
             }
+            node.ctx.activation.close();
             node.ctx.activation.abandon();
         }
         self.shared.bus.clear();

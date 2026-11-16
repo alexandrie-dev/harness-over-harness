@@ -1,0 +1,5 @@
+error[E0599]: no associated function or constant named `default` found for struct `hoh_kernel::View` in the current scope
+ --> tests/ui/view_private.rs:1:39
+  |
+1 | fn main() { let _ = hoh_kernel::View::default(); }
+  |                                       ^^^^^^^ associated function or constant not found in `hoh_kernel::View`

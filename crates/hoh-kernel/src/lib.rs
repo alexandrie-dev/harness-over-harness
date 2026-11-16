@@ -102,11 +102,16 @@ impl Inject for () {
     fn resolve(_: &View) -> Self {}
 }
 #[doc(hidden)]
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct View {
     pub(crate) values: indexmap::IndexMap<(Arc<str>, Realm), Arc<fiber::Provision>>,
 }
 impl View {
+    pub(crate) fn empty() -> Self {
+        Self {
+            values: indexmap::IndexMap::new(),
+        }
+    }
     #[doc(hidden)]
     pub fn service<K: ServiceKey>(&self) -> Service<K> {
         // The kernel checks every declared dependency before constructing a committed view.
@@ -126,12 +131,25 @@ pub struct Realm(u64);
 impl Realm {
     pub const ROOT: Self = Self(0);
     pub fn new() -> Self {
-        use std::hash::BuildHasher;
-        Self(std::collections::hash_map::RandomState::new().hash_one("hoh realm") | 1)
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Exhausting all 2^64 process identifiers is outside the representable lifetime of this kernel.
+        assert!(id != 0, "realm identifier space exhausted");
+        Self(id)
     }
 }
 impl Default for Realm {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[cfg(test)]
+mod review_realm_tests {
+    use super::*;
+    #[test]
+    fn a1_realms_are_process_counter_ids() {
+        let ids = (0..1000).map(|_| Realm::new().0).collect::<Vec<_>>();
+        assert!(ids.iter().all(|id| *id != 0));
+        assert!(ids.windows(2).all(|w| w[0] < w[1]));
     }
 }

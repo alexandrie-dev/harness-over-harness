@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 futures-util.workspace = true
 indexmap.workspace = true
+jiff.workspace = true
 regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -20,6 +21,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 hoh-kernel-macros = { path = "../hoh-kernel-macros" }
+hoh-util-values = { path = "../hoh-util-values" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

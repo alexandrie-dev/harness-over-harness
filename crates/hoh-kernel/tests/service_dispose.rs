@@ -316,32 +316,67 @@ async fn allows_unrelated_providers_and_sibling_effects_to_clean_up_concurrently
         })
         .unwrap();
     independent.settled().await.unwrap();
-    let c = resource::consumer(&r, true, false).await;
-    let ctx = t.context();
-    let x = t.clone();
-    ctx.effect("provider sibling", move || {
-        Undo::sync(move || x.push("provider sibling"))
-    })
-    .unwrap();
-    let x = t.clone();
-    let sibling = r
-        .effect("sibling", move || Undo::sync(move || x.push("sibling")))
+    let c = r
+        .inject(|ctx, d: Deps| async move {
+            let t = ctx.tag::<Arc<Track>>().unwrap();
+            let wait = t.clone();
+            ctx.effect("blocked", move || {
+                Undo::future(move || async move {
+                    wait.gate.acquire().await.unwrap().forget();
+                    d.foo.read();
+                    Ok(())
+                })
+            })?;
+            ctx.effect("sibling", move || Undo::sync(move || t.push("sibling")))?;
+            Ok(())
+        })
         .unwrap();
+    c.settled().await.unwrap();
     let shutdown = k.shutdown();
     turn().await;
     assert!(value.live.load(Ordering::Acquire));
     assert!(t.list().contains(&"independent".into()));
     assert_eq!(c.state(), FiberState::Unloading);
-    drop(sibling.dispose());
-    turn().await;
     assert!(t.list().contains(&"sibling".into()));
     t.gate.add_permits(1);
     shutdown.await;
 }
 #[tokio::test(start_paused = true)]
 async fn supports_composed_provider_effects() {
-    for root in [false, true] {
-        resources(if root { 1 } else { 0 }, true, false).await;
+    for owner_shutdown in [false, true] {
+        let (k, r, t) = harness();
+        let children = Arc::new(std::sync::Mutex::new(None));
+        let out = children.clone();
+        let owner = r
+            .inject(move |ctx, (): ()| {
+                let out = out.clone();
+                async move {
+                    let p = resource::provider(&ctx, true).await;
+                    let c = resource::consumer(&ctx, true, false).await;
+                    *lock(&out) = Some((p, c));
+                    Ok(())
+                }
+            })
+            .unwrap();
+        owner.settled().await.unwrap();
+        let (p, c) = lock(&children).clone().unwrap();
+        let resource = r.get::<Foo>().unwrap();
+        let dispose = if owner_shutdown {
+            owner.dispose()
+        } else {
+            p.dispose()
+        };
+        turn().await;
+        assert!(resource.live.load(Ordering::Acquire));
+        assert!(t.list().is_empty());
+        t.gate.add_permits(1);
+        dispose.await;
+        assert_eq!(t.list(), ["consumer read: open", "provider closed"]);
+        assert!(r.ensure_active().is_ok());
+        owner.dispose().await;
+        c.dispose().await;
+        assert_eq!(k.snapshot().await.fibers.len(), 1);
+        k.shutdown().await;
     }
 }
 #[tokio::test(start_paused = true)]
