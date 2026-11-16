@@ -11,3 +11,11 @@ workspace = true
 
 [dependencies]
 hoh-kernel = { path = "../hoh-kernel" }
+indexmap.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
