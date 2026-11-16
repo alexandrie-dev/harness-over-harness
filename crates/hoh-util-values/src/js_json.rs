@@ -519,9 +519,10 @@ impl Parser {
                 match stack.last_mut() {
                     None => {
                         if self.peek() != Token::Eos {
-                            return Err(
-                                self.error_at("Unexpected non-whitespace character after JSON")
-                            );
+                            let error =
+                                self.error_at("Unexpected non-whitespace character after JSON");
+                            dispose(vec![value]);
+                            return Err(error);
                         }
                         return Ok(value);
                     }
@@ -540,7 +541,9 @@ impl Parser {
                         };
                     }
                     Some(Open::Object { map, key }) => {
-                        map.insert(std::mem::take(key), value);
+                        if let Some(replaced) = map.insert(std::mem::take(key), value) {
+                            dispose(vec![replaced]);
+                        }
                         if self.check(Token::Comma) {
                             let next =
                                 self.key("Expected double-quoted property name in JSON", false)?;

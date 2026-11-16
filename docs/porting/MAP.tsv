@@ -118,7 +118,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/package-manifest	@deepseek-ai/dsh-package-manifest	hoh-package-manifest	167	0	todo	
 1	port	packages/util/time	@deepseek-ai/dsh-util-time	hoh-util-time	1708	1250	done	
 1	port	packages/util/timeout	@deepseek-ai/dsh-timeout	hoh-timeout	212	306	review	тип сигнала отмены и таймеры согласовать с ядром после docs/kernel.md
-1	port	packages/util/values	@deepseek-ai/dsh-util-values	hoh-util-values	959	1317	review	
+1	port	packages/util/values	@deepseek-ai/dsh-util-values	hoh-util-values	959	1317	done	
 1	port	packages/util/workspace-path	@deepseek-ai/dsh-util-workspace-path	hoh-util-workspace-path	236	251	done	в образце используется только окном; перенесён, пригодится hoh-client
 1	port	packages/workspace/workspace	@deepseek-ai/dsh-workspace	hoh-workspace	1448	1587	todo	зависит от: dsh-typert-protocol=skip
 2	port	packages/bundle/base	@deepseek-ai/dsh-base	hoh-base	9	85	todo	профиль как данные; строки pwsh подключаются на этапе 5

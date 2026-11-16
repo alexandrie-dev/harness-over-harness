@@ -296,3 +296,60 @@ fn depth_limit_is_4096_levels() {
         .unwrap();
     handle.join().unwrap();
 }
+
+#[test]
+fn halfway_floats_print_with_the_even_digit() {
+    let value = json!(HALFWAY);
+    assert_eq!(js_json_stringify(&value), "1000000000000000.2");
+    assert_eq!(js_json_stringify(&json!(-HALFWAY)), "-1000000000000000.2");
+    assert_eq!(js_json_stringify_pretty(&value, 2), "1000000000000000.2");
+    assert_eq!(
+        js_json_stringify_pretty(&json!([HALFWAY, -HALFWAY]), 2),
+        "[\n  1000000000000000.2,\n  -1000000000000000.2\n]"
+    );
+}
+
+#[test]
+fn replaced_duplicate_value_and_trailing_input_are_dropped_without_recursion() {
+    let handle = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let depth = 4000;
+            let deep = format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+            let value = js_json_parse(&format!("{{\"a\":{deep},\"a\":0}}")).unwrap();
+            assert_eq!(js_json_stringify(&value), r#"{"a":0}"#);
+            let trailing = format!("{}0{}x", "[".repeat(depth), "]".repeat(depth));
+            let error = js_json_parse(&trailing).unwrap_err();
+            assert_eq!(
+                error.message(),
+                "Unexpected non-whitespace character after JSON at position 8001"
+            );
+        })
+        .unwrap();
+    handle.join().unwrap();
+}
+
+fn keys_of(value: &Value) -> Vec<&str> {
+    value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+#[test]
+fn parsed_maps_hold_javascript_key_order() {
+    let parsed = js_json_parse(r#"{"b":0,"2":0,"1":0}"#).unwrap();
+    assert_eq!(keys_of(&parsed), ["1", "2", "b"]);
+    let duplicate = js_json_parse(r#"{"b":1,"a":2,"b":3}"#).unwrap();
+    assert_eq!(keys_of(&duplicate), ["b", "a"]);
+    assert_eq!(duplicate["b"], json!(3));
+    let nested = js_json_parse(r#"{"z":{"y":0,"10":0,"9":0},"1":[{"c":0,"0":0}]}"#).unwrap();
+    assert_eq!(keys_of(&nested), ["1", "z"]);
+    assert_eq!(keys_of(&nested["z"]), ["9", "10", "y"]);
+    assert_eq!(keys_of(&nested["1"][0]), ["0", "c"]);
+}
+
+/// 1000000000000000.25, written as bits because a decimal literal of it trips an excess-precision lint.
+const HALFWAY: f64 = f64::from_bits(0x430c_6bf5_2634_0002);

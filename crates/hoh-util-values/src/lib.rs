@@ -97,7 +97,8 @@ pub fn js_number_string(value: f64) -> String {
     // Rust's `{:e}` prints the shortest round-trip digits as `d.ddde<exp>`.
     let scientific = format!("{:e}", value.abs());
     let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let mut digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    digits = prefer_even_tie(value.abs(), digits, exponent);
     // `n` of the specification: the value is 0.<digits> * 10^n.
     let n = exponent.parse::<i32>().unwrap_or(0) + 1;
     let k = digits.len() as i32;
@@ -139,5 +140,46 @@ pub fn js_string(value: &JsonValue) -> String {
             .collect::<Vec<_>>()
             .join(","),
         JsonValue::Object(_) => "[object Object]".to_owned(),
+    }
+}
+
+/// Among shortest digit strings that round-trip ECMAScript takes the closest to the value and, of two equally
+/// close, the one with an even last digit; Rust's shortest formatter rounds such a tie up. When the exact
+/// expansion of `value` is the shortest digits `D` followed by a single `5`, choose between `D` and `D + 1`.
+fn prefer_even_tie(value: f64, digits: String, exponent: &str) -> String {
+    let count = digits.len();
+    let digits_of = |text: &str| -> (String, String) {
+        let (mantissa, exp) = text.split_once('e').unwrap_or((text, "0"));
+        (
+            mantissa.chars().filter(char::is_ascii_digit).collect(),
+            exp.to_owned(),
+        )
+    };
+    // Cheap filter: a tie has `count + 1` significant digits ending in 5.
+    let (probe, _) = digits_of(&format!("{:.*e}", count, value));
+    if !probe.ends_with('5') {
+        return digits;
+    }
+    let (exact, exact_exponent) = digits_of(&format!("{:.800e}", value));
+    if exact_exponent != exponent || exact.len() <= count || exact.as_bytes()[count] != b'5' {
+        return digits;
+    }
+    if !exact[count + 1..].bytes().all(|byte| byte == b'0') {
+        return digits;
+    }
+    let lower = &exact[..count];
+    let last = lower.as_bytes()[count - 1];
+    let candidate = if (last - b'0').is_multiple_of(2) {
+        lower.to_owned()
+    } else if last == b'9' {
+        return digits;
+    } else {
+        format!("{}{}", &lower[..count - 1], char::from(last + 1))
+    };
+    let text = format!("{}.{}e{}", &candidate[..1], &candidate[1..], exponent);
+    if text.parse::<f64>().is_ok_and(|parsed| parsed == value) {
+        candidate
+    } else {
+        digits
     }
 }
