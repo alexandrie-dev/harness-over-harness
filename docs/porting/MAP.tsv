@@ -111,7 +111,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/home-paths	@deepseek-ai/dsh-home-paths	hoh-home-paths	238	155	done	
 1	port	packages/util/http-proxy	@deepseek-ai/dsh-http-proxy	hoh-http-proxy	737	921	todo	
 1	port	packages/util/launch-environment	@deepseek-ai/dsh-launch-environment	hoh-launch-environment	137	87	todo	
-1	port	packages/util/lazy-require	@deepseek-ai/dsh-lazy-require	hoh-lazy-require	24	29	todo	
+9	drop	packages/util/lazy-require	@deepseek-ai/dsh-lazy-require	-	24	29	-	ленивая загрузка модуля Node (createRequire с кэшем): в Rust зависимости связываются при сборке, потребители обращаются к crate напрямую
 1	port	packages/util/native-command	@deepseek-ai/dsh-native-command	hoh-native-command	1052	978	todo	
 1	port	packages/util/official-bundles	@deepseek-ai/dsh-official-bundles	hoh-official-bundles	213	32	todo	
 1	port	packages/util/output-retention	@deepseek-ai/dsh-output-retention	hoh-output-retention	460	409	done	
