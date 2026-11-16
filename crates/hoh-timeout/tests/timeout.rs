@@ -792,6 +792,38 @@ async fn a_due_timer_wins_before_a_later_abort_at_the_exact_same_instant() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn any_equal_timer_deadlines_choose_list_order() {
+    for reversed in [false, true] {
+        let t1 = AbortSignal::timeout(10.0);
+        let t2 = AbortSignal::timeout(10.0);
+        let result = AbortSignal::any(if reversed {
+            [t2.clone(), t1.clone()]
+        } else {
+            [t1.clone(), t2.clone()]
+        });
+        tokio::time::advance(Duration::from_millis(10)).await;
+        let reason = result.reason().unwrap();
+        let expected = if reversed { &t2 } else { &t1 };
+        let other = if reversed { &t1 } else { &t2 };
+        assert!(reason.ptr_eq(&expected.reason().unwrap()));
+        assert!(!reason.ptr_eq(&other.reason().unwrap()));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn any_equal_timer_deadlines_keep_list_order_when_other_source_is_read_first() {
+    let t1 = AbortSignal::timeout(10.0);
+    let t2 = AbortSignal::timeout(10.0);
+    let nested = AbortSignal::any([t1.clone()]);
+    let result = AbortSignal::any([nested, t2.clone()]);
+    tokio::time::advance(Duration::from_millis(10)).await;
+    let other = t2.reason().unwrap();
+    let reason = result.reason().unwrap();
+    assert!(reason.ptr_eq(&t1.reason().unwrap()));
+    assert!(!reason.ptr_eq(&other));
+}
+
+#[tokio::test(start_paused = true)]
 async fn nested_any_keeps_first_reason_in_both_input_and_abort_orders() {
     for controller_first_in_array in [false, true] {
         for controller_wins in [false, true] {
@@ -897,16 +929,18 @@ fn concurrent_aborts_choose_one_reason_for_every_observer() {
 
 #[test]
 fn creating_and_reading_timeout_and_token_signals_needs_no_runtime() {
+    assert!(tokio::runtime::Handle::try_current().is_err());
     let timer = AbortSignal::timeout(1.0);
-    let _ = timer.aborted();
-    let observed = timer.reason();
-    let thrown = timer.throw_if_aborted().err();
-    if let Some(reason) = observed {
-        assert!(thrown.as_ref().unwrap().ptr_eq(&reason));
-    }
-    if let Some(reason) = thrown {
-        assert!(reason.downcast_ref::<DomTimeoutError>().is_some());
-    }
+    // Outside a runtime the public timer uses std's monotonic clock, not Tokio's paused clock.
+    std::thread::sleep(Duration::from_millis(2));
+    assert!(timer.aborted());
+    let reason = timer.reason().unwrap();
+    assert!(reason.downcast_ref::<DomTimeoutError>().is_some());
+    assert_eq!(
+        reason.to_string(),
+        "The operation was aborted due to timeout"
+    );
+    assert!(timer.throw_if_aborted().unwrap_err().ptr_eq(&reason));
     let token = tokio_util::sync::CancellationToken::new();
     let signal = AbortSignal::from_token(token.clone());
     assert!(!signal.aborted());

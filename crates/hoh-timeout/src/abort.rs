@@ -141,10 +141,6 @@ impl AbortSignal {
     fn refresh(&self) {
         self.refresh_before(None);
     }
-    fn event(&self) -> Option<(SharedError, Instant)> {
-        let state = lock(&self.inner.state);
-        state.reason.clone().zip(state.aborted_at)
-    }
     fn refresh_before(&self, cutoff: Option<Instant>) {
         {
             let state = lock(&self.inner.state);
@@ -152,7 +148,24 @@ impl AbortSignal {
                 return;
             }
         }
-        let now = Instant::now();
+        if let Some((reason, at)) = self.event_before(cutoff, Instant::now()) {
+            self.abort_shared_at(reason, at);
+        }
+    }
+    fn event_before(
+        &self,
+        cutoff: Option<Instant>,
+        now: Instant,
+    ) -> Option<(SharedError, Instant)> {
+        {
+            let state = lock(&self.inner.state);
+            if let Some(event) = state.reason.clone().zip(state.aborted_at) {
+                return cutoff
+                    .is_none_or(|cutoff| event.1 <= cutoff)
+                    .then_some(event);
+            }
+        }
+        // Inspect without settling sources: a timer being settled still participates in ties.
         let event = match &self.inner.origin {
             Origin::Controller => None,
             Origin::Timer { at, reason } => (now >= *at
@@ -162,19 +175,18 @@ impl AbortSignal {
                 && token.is_cancelled())
             .then(|| (reason.clone(), now)),
         };
-        if let Some((reason, at)) = event {
-            self.abort_shared_at(reason, at);
-        } else {
-            for source in &self.inner.sources {
-                source.refresh_before(cutoff);
-                if let Some((reason, at)) = source.event()
-                    && cutoff.is_none_or(|cutoff| at <= cutoff)
-                {
-                    self.abort_shared_at(reason, at);
-                    break;
-                }
+        if event.is_some() {
+            return event;
+        }
+        let mut event: Option<(SharedError, Instant)> = None;
+        for source in &self.inner.sources {
+            if let Some(candidate) = source.event_before(cutoff, now)
+                && event.as_ref().is_none_or(|current| candidate.1 < current.1)
+            {
+                event = Some(candidate);
             }
         }
+        event
     }
     fn abort_shared(&self, reason: SharedError) {
         self.abort_shared_at(reason, Instant::now());

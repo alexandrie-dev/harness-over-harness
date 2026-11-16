@@ -1195,24 +1195,29 @@ fn drop_after_exclusive_create_removes_an_empty_record_even_without_identity() {
 }
 #[tokio::test(start_paused = true)]
 async fn abort_wins_when_wait_timer_and_signal_are_both_ready() {
-    let controller = AbortController::new();
-    let reason = SharedError::new(std::io::Error::other("cancelled"));
-    let options = FileLockOptions {
-        signal: Some(controller.signal()),
-        ..Default::default()
-    };
-    let mut waiting = Box::pin(wait(10, &options));
-    assert!(
-        std::future::poll_fn(|cx| std::task::Poll::Ready(waiting.as_mut().poll(cx).is_pending()))
+    // Without biased selection, passing all 128 independent ties has probability 2^-128.
+    for _ in 0..128 {
+        let controller = AbortController::new();
+        let reason = SharedError::new(std::io::Error::other("cancelled"));
+        let options = FileLockOptions {
+            signal: Some(controller.signal()),
+            ..Default::default()
+        };
+        let mut waiting = Box::pin(wait(10, &options));
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(
+                waiting.as_mut().poll(cx).is_pending()
+            ))
             .await
-    );
-    tokio::time::advance(Duration::from_millis(10)).await;
-    controller.abort_with(reason.clone());
-    let error = waiting.await.unwrap_err();
-    assert!(is_abort_error(error.as_ref()));
-    assert!(
-        SharedError::of(error.source().unwrap())
-            .unwrap()
-            .ptr_eq(&reason)
-    );
+        );
+        tokio::time::advance(Duration::from_millis(10)).await;
+        controller.abort_with(reason.clone());
+        let error = waiting.await.unwrap_err();
+        assert!(is_abort_error(error.as_ref()));
+        assert!(
+            SharedError::of(error.source().unwrap())
+                .unwrap()
+                .ptr_eq(&reason)
+        );
+    }
 }
