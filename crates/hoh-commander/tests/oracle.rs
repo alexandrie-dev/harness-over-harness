@@ -104,6 +104,7 @@ fn build(command: &mut Command, ops: &[Value], actions: &Arc<Mutex<Vec<Value>>>)
             }
             "passThroughOptions" => drop(command.pass_through_options(true)),
             "enablePositionalOptions" => drop(command.enable_positional_options(true)),
+            "helpWidth" => {}
             "combineFlagAndOptionalValue" => {
                 command.combine_flag_and_optional_value(a[1] == Value::Bool(true));
             }
@@ -128,16 +129,31 @@ fn build(command: &mut Command, ops: &[Value], actions: &Arc<Mutex<Vec<Value>>>)
     }
 }
 
-fn capture(command: &mut Command, out: &Arc<Mutex<String>>, err: &Arc<Mutex<String>>) {
+/// The `helpWidth` call of a program: the number of columns its output reports for help.
+fn help_width(ops: &[Value]) -> Option<usize> {
+    ops.iter()
+        .map(|op| list(op))
+        .find(|a| text(&a[0]) == "helpWidth")
+        .map(|a| a[1].as_u64().expect("a width in the fixture") as usize)
+}
+
+fn capture(
+    command: &mut Command,
+    out: &Arc<Mutex<String>>,
+    err: &Arc<Mutex<String>>,
+    width: Option<usize>,
+) {
     let (to_out, to_err) = (Arc::clone(out), Arc::clone(err));
-    command
-        .configure_output(Output::new(
-            move |text| to_out.lock().expect("stdout lock").push_str(text),
-            move |text| to_err.lock().expect("stderr lock").push_str(text),
-        ))
-        .exit_override();
+    let mut output = Output::new(
+        move |text| to_out.lock().expect("stdout lock").push_str(text),
+        move |text| to_err.lock().expect("stderr lock").push_str(text),
+    );
+    if let Some(columns) = width {
+        output = output.out_help_width(columns).err_help_width(columns);
+    }
+    command.configure_output(output).exit_override();
     for child in &mut command.commands {
-        capture(child, out, err);
+        capture(child, out, err, width);
     }
 }
 
@@ -150,7 +166,7 @@ fn run(ops: &[Value], argv: &[String]) -> Value {
     );
     let mut program = Command::new();
     build(&mut program, ops, &actions);
-    capture(&mut program, &out, &err);
+    capture(&mut program, &out, &err, help_width(ops));
     let error = match program.parse(argv, ParseOptions::USER) {
         Ok(_) => Value::Null,
         Err(ParseError::Commander(error)) => {
@@ -169,14 +185,40 @@ fn run(ops: &[Value], argv: &[String]) -> Value {
     })
 }
 
+/// Commander throws from the builder call that makes a definition wrong. The port keeps building and
+/// `parse` reports the first such error of the whole tree before it parses anything.
+fn definition_error(ops: &[Value]) -> Option<String> {
+    let mut program = Command::new();
+    build(&mut program, ops, &Arc::new(Mutex::new(Vec::new())));
+    let unread = Arc::new(Mutex::new(String::new()));
+    capture(&mut program, &unread, &unread, None);
+    let no_arguments: [&str; 0] = [];
+    match program.parse(no_arguments, ParseOptions::USER) {
+        Err(ParseError::Other(error)) => Some(error.to_string()),
+        Err(ParseError::Commander(error)) => Some(format!("a commander exit: {}", error.message)),
+        Ok(_) => None,
+    }
+}
+
 #[test]
 fn the_port_does_what_commander_does_for_every_recorded_run() {
     let mut programs: Vec<(String, Vec<Value>)> = Vec::new();
     let mut runs = 0;
+    let mut refused = 0;
     let mut failures = Vec::new();
     for line in ORACLE.lines() {
         let record: Value = serde_json::from_str(line).expect("a JSON line in the fixture");
         let name = text(&record["program"]);
+        if let Some(expected) = record.get("definitionError") {
+            refused += 1;
+            let actual = definition_error(list(&record["ops"]));
+            if actual.as_deref() != Some(text(expected)) {
+                failures.push(format!(
+                    "definition \"{name}\"\n  commander: {expected}\n  port:      {actual:?}"
+                ));
+            }
+            continue;
+        }
         if let Some(ops) = record.get("ops") {
             programs.push((name.to_owned(), list(ops).to_vec()));
             continue;
@@ -199,12 +241,16 @@ fn the_port_does_what_commander_does_for_every_recorded_run() {
     }
     assert!(runs >= 700, "the fixture lost its runs: {runs}");
     assert!(
+        refused >= 9,
+        "the fixture lost its refused definitions: {refused}"
+    );
+    assert!(
         failures.is_empty(),
         "{} differences in {runs} runs; the first ones:\n{}",
         failures.len(),
         failures
             .iter()
-            .take(12)
+            .take(40)
             .cloned()
             .collect::<Vec<_>>()
             .join("\n")

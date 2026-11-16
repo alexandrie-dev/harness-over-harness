@@ -49,6 +49,7 @@ function build(ops, actions, command = new Command()) {
       case 'passThroughOptions': command.passThroughOptions(); break
       case 'enablePositionalOptions': command.enablePositionalOptions(); break
       case 'combineFlagAndOptionalValue': command.combineFlagAndOptionalValue(a[0]); break
+      case 'helpWidth': break // read by run(): the width the output reports for help
       case 'command': build(a[1], actions, command.command(a[0])); break
       case 'action':
         command.action((...values) => {
@@ -68,8 +69,13 @@ function run(ops, argv) {
   const program = build(ops, actions)
   let stdout = ''
   let stderr = ''
+  const width = ops.find(([op]) => op === 'helpWidth')?.[1]
   const capture = command => {
-    command.exitOverride().configureOutput({ writeOut: text => { stdout += text }, writeErr: text => { stderr += text } })
+    command.exitOverride().configureOutput({
+      writeOut: text => { stdout += text },
+      writeErr: text => { stderr += text },
+      ...(width === undefined ? {} : { getOutHelpWidth: () => width, getErrHelpWidth: () => width }),
+    })
     command.commands.forEach(capture)
   }
   capture(program)
@@ -222,6 +228,48 @@ const PROGRAMS = {
     ['argument', '[second]', LONG],
     ['action'],
   ],
+  // Below 40 columns left for a description the library stops wrapping it; a wide terminal wraps later.
+  narrow: [
+    ['helpWidth', 50],
+    ['name', 'narrow'],
+    ['description', LONG],
+    ['option', '-s', LONG],
+    ['option', '--a-rather-long-option-name <value>', LONG],
+    ['argument', '[file]', LONG],
+    ['command', 'sub <x>', [['description', LONG], ['option', '-q', LONG], ['action']]],
+  ],
+  wide: [
+    ['helpWidth', 120],
+    ['name', 'wide'],
+    ['description', LONG],
+    ['option', '-s', LONG],
+    ['option', '--a-rather-long-option-name <value>', LONG],
+    ['argument', '[file]', LONG],
+    ['action'],
+  ],
+  // U+0085 is not white space for JavaScript's \s, U+FEFF is; Rust's char::is_whitespace says the opposite.
+  spaces: [
+    ['name', 'spaces'],
+    ['description', 'a description with\ttab, double  spaces, a\u2028line separator and a\u00a0no-break space in it, long enough to wrap'],
+    ['option', '-a, --aa', 'A'.repeat(60) + '\u0085' + 'B'.repeat(10)],
+    ['option', '-b, --bb', 'C'.repeat(60) + '\ufeff' + 'D'.repeat(10)],
+    ['option', '-c, --cc', 'E'.repeat(60) + '\u00a0' + 'F'.repeat(10)],
+    ['action'],
+  ],
+}
+
+// Programs commander refuses while they are being built (it throws an ordinary Error from the builder call).
+// The port reports the same text from `parse`, before it parses anything.
+const DEFINITION_ERRORS = {
+  'short flag of one option, long flag of another': [['option', '-a, --alpha', 'x'], ['option', '-b, --beta', 'y'], ['option', '-a, --beta', 'z']],
+  'the same long flag twice': [['name', 'twice'], ['option', '--one', 'x'], ['option', '--one', 'y']],
+  'variadic argument that is not last': [['argument', '<a...>', 'x'], ['argument', '[b]', 'y']],
+  'bad position of help text': [['addHelpText', 'bogus', 'x']],
+  'error in a subcommand that is not invoked': [['command', 'sub', [['addHelpText', 'bogus', 'x']]], ['command', 'other', [['action']]]],
+  'the same command twice': [['command', 'x', []], ['command', 'x', []]],
+  'pass-through before the parent has positional options': [['command', 'sub', [['passThroughOptions']]], ['enablePositionalOptions']],
+  'two errors: the first one is reported': [['addHelpText', 'bogus', 'x'], ['option', '--one', 'x'], ['option', '--one', 'y']],
+  'duplicate option in a subcommand': [['name', 'root'], ['command', 'sub', [['option', '-x', 'a'], ['option', '-x', 'b']]]],
 }
 
 const RUNS = {
@@ -244,13 +292,16 @@ const RUNS = {
   tree: [[], ['--help'], ['-h'], ['help'], ['help', 'serve'], ['help', 'build'], ['help', 'nothing'], ['serve'], ['serve', '80'], ['serve', '80', '-w'],
     ['serve', '--host', 'h', '80'], ['serve', '80', '81'], ['serve', '--help'], ['build'], ['build', 'a', 'b', '-o', 'd'], ['build', '-o'], ['build', '-h'],
     ['status'], ['status', 'x'], ['-v', 'status'], ['status', '-v'], ['serv', '80'], ['stat'], ['biuld'], ['unknowncommand'], ['-v'], ['--verbos', 'status'],
-    ['serve', '80', '--wach'], ['help', 'help'], ['--', 'status']],
+    ['serve', '80', '--wach'], ['help', 'help'], ['--', 'status'], ['help', ''], ['help', 'serve', 'x'], ['help', '--help']],
   strict: [[], ['a'], ['a', 'b'], ['a', 'b', 'c'], ['-f'], ['-f', 'a'], ['a', '-f'], ['-x', 'a'], ['--force=1', 'a'], ['--', '-f'], ['-h'], ['a', '--help'], ['--forc', 'a']],
   excess: [[], ['a'], ['a', 'b', 'c'], ['-n', '1', 'a', 'b'], ['-n'], ['-n1'], ['-n=1'], ['--number=1', 'x'], ['-q'], ['--', '-q', 'r']],
   unknown: [[], ['-q'], ['--what', 'now'], ['-k', '-q', 'a'], ['a', '-k'], ['--what=1', '-k'], ['-kq'], ['-qk'], ['--', '-k'], ['-h'], ['--help', '-q']],
   positional: [[], ['run'], ['run', 'tool'], ['-g', 'run', 'tool', '-g', '-t', '--x'], ['run', '-g', 'tool', '-g'], ['run', '-t', 'tool', '-t', '--', '-g'],
     ['run', 'tool', '--help'], ['run', '--help'], ['plain', '-t', 'a', '-g'], ['plain', 'a', '-t'], ['-g', 'plain'], ['plain', '-g'], ['--help'], ['run', 'tool', '-x', 'y']],
   flags: [[], ['-f'], ['-f', 'v'], ['-fv'], ['-fb'], ['-bf'], ['-bfv'], ['-ab'], ['-abf', 'x'], ['--flag'], ['--flag=v'], ['--flag', '-b'], ['-f', '--', 'x'], ['-b', 'x', '-f', 'y', 'z'], ['-fa', '-b']],
+  narrow: [[], ['--help'], ['-h'], ['help'], ['help', 'sub'], ['sub', '--help'], ['sub'], ['--nope']],
+  wide: [[], ['--help'], ['-h'], ['x', 'y'], ['--a-rather', 'v']],
+  spaces: [[], ['--help'], ['-h'], ['-a'], ['-abc']],
   custom: [[], ['-?'], ['--ayuda'], ['-h'], ['--help'], ['-v'], ['--vers'], ['-V'], ['-x'], ['--only-long', 'a', 'b'], ['a', 'b', 'c'], ['--level', '9'], ['--level'],
     ['--very-long-option-name-that-pushes-the-column', 'v', 'a'], ['--very-long', 'v'], ['--leve', '1'], ['--only-lon']],
 }
@@ -297,5 +348,15 @@ for (const [name, ops] of Object.entries(PROGRAMS)) {
     runs += 1
   }
 }
+for (const [name, ops] of Object.entries(DEFINITION_ERRORS)) {
+  let message = null
+  try {
+    build(ops, [])
+  } catch (error) {
+    message = error.message
+  }
+  if (message === null) throw new Error(`${name}: commander accepted this definition`)
+  lines.push({ program: name, ops, definitionError: message })
+}
 writeFileSync(out, lines.map(line => JSON.stringify(line)).join('\n') + '\n')
-console.log(`${Object.keys(PROGRAMS).length} programs, ${runs} runs`)
+console.log(`${Object.keys(PROGRAMS).length} programs, ${runs} runs, ${Object.keys(DEFINITION_ERRORS).length} refused definitions`)
