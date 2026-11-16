@@ -593,3 +593,59 @@ fn validates_every_adjacent_target_header_and_the_final_current_header() {
             .contains("header restorer returned v0")
     );
 }
+
+struct MovingEdge {
+    to: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl SessionFormatMigration for MovingEdge {
+    fn name(&self) -> &str {
+        "edge"
+    }
+    fn from_version(&self) -> u64 {
+        0
+    }
+    fn to_version(&self) -> u64 {
+        self.to.load(Ordering::SeqCst)
+    }
+    fn migrate_header(&self, mut header: SessionFormatHeader) -> Res<SessionFormatHeader> {
+        header.insert("version".to_owned(), json!(1));
+        Ok(header)
+    }
+    fn create_stage(
+        &self,
+        _input: SessionFormatMigrationStageInput<'_>,
+    ) -> Res<Box<dyn SessionFormatMigrationStage>> {
+        Ok(Box::new(identity_stage(Some(0))))
+    }
+    fn validate_target_header(&self, _header: &SessionFormatHeader) -> Res<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn reads_the_migration_declaration_once_at_construction() {
+    let to = Arc::new(std::sync::atomic::AtomicU64::new(1));
+    let current = create_session_format_chain(options_raw(vec![Arc::new(MovingEdge {
+        to: Arc::clone(&to),
+    })]))
+    .expect("chain");
+    to.store(2, Ordering::SeqCst);
+
+    let mut stream = current
+        .create_stream(header_v(0), Some(0), Discard)
+        .expect("declared toVersion stays 1");
+    assert_eq!(stream.finish().expect("finish"), 0);
+    assert_eq!(
+        current.migrate_header(&header_v(0)).expect("header")["version"],
+        json!(1)
+    );
+}
+
+fn options_raw(migrations: Vec<Arc<dyn SessionFormatMigration>>) -> SessionFormatChainOptions {
+    SessionFormatChainOptions {
+        current_version: 1,
+        migrations,
+        restore_current_header: Arc::new(Ok),
+    }
+}

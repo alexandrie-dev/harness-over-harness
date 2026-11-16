@@ -45,8 +45,7 @@
   `session_format_safe_integer` → `i64`). Значение, которого нет в заголовке, считается `undefined`/`null` и даёт тот же отказ.
 - Параметры по умолчанию. `label = '...'` в образце: у каждой функции две формы — короткая с меткой образца (`snapshot_session_format_json`,
   `snapshot_session_format_header`, `session_format_version`) и `_labeled` с явной меткой. `session_format_count`/`session_format_safe_integer` метку требуют.
-  Новые публичные символы: `session_format_count_u64`, `inspect_header_version` (проверка версии заголовка-объекта), `MAX_SAFE_INTEGER`,
-  `SessionFormatSourceKind`, `SessionFormatValidation`, `SessionFormatHeaderRestorer`, `SessionFormatArtifactRestorer`, `SessionFormatHeaderReadResult::status()`.
+  Новые публичные символы: `session_format_count_u64`, `SessionFormatSourceKind`, `SessionFormatValidation`, `SessionFormatHeaderRestorer`, `SessionFormatArtifactRestorer`, `SessionFormatHeaderReadResult::status()`.
 - `sessionFormatLogFilename(version: number)` → `session_format_log_filename(version: u64)`: отрицательные, дробные значения и `-0` непредставимы;
   проверка `> 2^53-1` сохранена.
 - `parseSessionFormatLogFilename` разобран вручную по выражению `^session(?:\.v([1-9][0-9]*))?\.jsonl$`, без `regex` (только ASCII-цифры; `$` не совпадает до `\n`).
@@ -55,6 +54,24 @@
 - `SessionFormatRestore` — структура (внутри два варианта), `finish(self)` расходует restore (образец: «вызвать `finish()` один раз»).
 - Обёртка `Object.freeze({...codec})` / `defineSessionFormatMigration(...)` возвращает ту же `Arc`, замораживания нет.
 - `SessionFormatRestoreOptions.validation` — enum `SessionFormatValidation { Transformed, Current }`.
+
+- Заголовок текущего восстановления. Образец кладёт в готовый артефакт сам объект заголовка декодера (`catalog.ts:180`), поэтому изменение,
+  сделанное декодером при разборе строк, видно в результате. Перенос берёт `decoder.header().clone()` при `finish()`, а `SessionFormatRestore::header()`
+  для текущей версии отдаёт заголовок декодера в его нынешнем состоянии. Просмотр настоящих декодеров (`session-format-v0-to-v1` … `v3-to-v4`
+  `src/codec.ts`): ни один не меняет заголовок после выдачи (заголовок строится один раз через `snapshotSessionFormatJson`, обёртки v2-to-v3 и v3-to-v4
+  копируют `{ ...decoder.header, version }` при создании). Для миграции заголовок берётся у потока, как в образце. Тест: `current_restore_takes_the_decoder_header_...`.
+- Описание миграции читается один раз при построении цепочки (`DeclaredMigration`: имя, `from_version`, `to_version`); образец копирует описание
+  (`chain.ts:33`). Позднее изменение того, что вернёт `to_version()`, цепочку не затрагивает. Тест: `reads_the_migration_declaration_once_at_construction`.
+- Значение в тексте ошибки печатается как в JavaScript (`hoh_util_values::js_string`): `current Session restorer returned v[object Object]; expected v1`;
+  отсутствующая версия — `undefined`. Тест: `restorer_version_diagnostics_print_the_value_like_javascript`.
+- Целые больше 2^53. Вход `9007199254740993` после снимка: здесь `9007199254740993`, в JavaScript `9007199254740992` (число округляется при разборе).
+- Число с плавающей записью. Вход `1e0` или `1.0`: здесь после снимка сериализуется как `1.0`, в JavaScript как `1`. Проверки координат (`session_format_count` и др.)
+  принимают такие значения как целые, как в образце; нормализации произвольного JSON нет.
+- Ключи-индексы объекта. Вход `{"2":"b","1":"a","x":0}`: здесь порядок ключей файла (`2,1,x`, сериализация `{"2":"b","1":"a","x":0}`),
+  в JavaScript целочисленные ключи идут по возрастанию первыми (`1,2,x`, `{"1":"a","2":"b","x":0}`), в том числе во вложенных объектах.
+- Версия `-0` от восстановителя. Текущая версия 0, восстановитель артефакта вернул версию `-0`: в JavaScript `-0 === 0`, проверка проходит;
+  здесь отказ `current Session restorer returned v0; expected v0` (`session_format_version_labeled` отклоняет `-0`). Тест:
+  `restorer_returning_negative_zero_version_is_rejected_unlike_javascript`.
 
 ## Не перенесено
 - `deepFreeze` (раздел 8 / задание): нет аналога.

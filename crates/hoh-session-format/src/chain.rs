@@ -51,8 +51,29 @@ pub fn create_session_format_chain(
 /// Pure adjacent planner and streaming migration compiler.
 pub struct SessionFormatChain {
     current_version: u64,
-    migrations: Vec<Arc<dyn SessionFormatMigration>>,
+    migrations: Vec<DeclaredMigration>,
     restore_current_header: SessionFormatHeaderRestorer,
+}
+
+/// A migration with its declaration read once at chain construction (the source copies the
+/// declaration there); later calls never consult `name`, `from_version` or `to_version` again.
+#[derive(Clone)]
+struct DeclaredMigration {
+    migration: Arc<dyn SessionFormatMigration>,
+    name: String,
+    from_version: u64,
+    to_version: u64,
+}
+
+impl DeclaredMigration {
+    fn new(migration: Arc<dyn SessionFormatMigration>) -> Self {
+        Self {
+            name: migration.name().to_owned(),
+            from_version: migration.from_version(),
+            to_version: migration.to_version(),
+            migration,
+        }
+    }
 }
 
 impl SessionFormatChain {
@@ -61,25 +82,24 @@ impl SessionFormatChain {
             &Value::from(options.current_version),
             "current Session format version",
         )?;
-        let mut by_from: IndexMap<u64, Arc<dyn SessionFormatMigration>> = IndexMap::new();
+        let mut by_from: IndexMap<u64, DeclaredMigration> = IndexMap::new();
         let mut names: IndexSet<String> = IndexSet::new();
         for candidate in options.migrations {
-            let migration = define_session_format_migration(candidate)?;
-            if by_from.contains_key(&migration.from_version()) {
+            let migration = DeclaredMigration::new(define_session_format_migration(candidate)?);
+            if by_from.contains_key(&migration.from_version) {
                 return Err(SessionFormatError::new(format!(
                     "Session migration v{}->v{} is duplicated",
-                    migration.from_version(),
-                    migration.to_version()
+                    migration.from_version, migration.to_version
                 )));
             }
-            if names.contains(migration.name()) {
+            if names.contains(&migration.name) {
                 return Err(SessionFormatError::new(format!(
                     "Session migration name {} is duplicated",
-                    json_string(migration.name())
+                    json_string(&migration.name)
                 )));
             }
-            names.insert(migration.name().to_owned());
-            by_from.insert(migration.from_version(), migration);
+            names.insert(migration.name.clone());
+            by_from.insert(migration.from_version, migration);
         }
         let mut ordered = Vec::new();
         for version in 0..current_version {
@@ -89,7 +109,7 @@ impl SessionFormatChain {
                     version + 1
                 )));
             };
-            ordered.push(Arc::clone(migration));
+            ordered.push(migration.clone());
         }
         if by_from.len() != ordered.len() {
             // `by_from` holds more entries than versions 0..current, so one key is >= current.
@@ -113,10 +133,7 @@ impl SessionFormatChain {
         self.current_version
     }
 
-    fn plan(
-        &self,
-        from_version: &Value,
-    ) -> Result<&[Arc<dyn SessionFormatMigration>], SessionFormatError> {
+    fn plan(&self, from_version: &Value) -> Result<&[DeclaredMigration], SessionFormatError> {
         let from = session_format_version_labeled(from_version, "stored Session format version")?;
         if from > self.current_version {
             return Err(SessionFormatError::unsupported_migration(format!(
@@ -144,8 +161,9 @@ impl SessionFormatChain {
         let mut stages: Vec<CompiledMigrationStage> = Vec::new();
         let plan = self.plan(header.get("version").unwrap_or(&Value::Null))?;
         for (index, migration) in plan.iter().enumerate() {
-            let target_header = advance_header(migration.as_ref(), &header)?;
+            let target_header = advance_header(migration, &header)?;
             let stage = migration
+                .migration
                 .create_stage(SessionFormatMigrationStageInput {
                     source_header: &header,
                     target_header: &target_header,
@@ -156,11 +174,11 @@ impl SessionFormatChain {
                         SessionFormatSourceKind::Transformed
                     },
                 })
-                .map_err(|error| unsupported_refusal(migration.as_ref(), error, "Session"))?;
+                .map_err(|error| unsupported_refusal(migration, error, "Session"))?;
             header = target_header;
             inherited_event_count = stage.header_inherited_event_count();
             stages.push(CompiledMigrationStage {
-                migration: Arc::clone(migration),
+                migration: migration.clone(),
                 stage,
             });
         }
@@ -179,7 +197,7 @@ impl SessionFormatChain {
     ) -> Result<SessionFormatHeader, SessionFormatError> {
         let mut current = snapshot_session_format_header_labeled(source, "stored Session header")?;
         for migration in self.plan(current.get("version").unwrap_or(&Value::Null))? {
-            current = advance_header(migration.as_ref(), &current)?;
+            current = advance_header(migration, &current)?;
         }
         let restored = (self.restore_current_header)(current)?;
         let current = snapshot_session_format_header_labeled(
@@ -198,30 +216,31 @@ impl SessionFormatChain {
 }
 
 fn advance_header(
-    migration: &dyn SessionFormatMigration,
+    migration: &DeclaredMigration,
     source: &SessionFormatHeader,
 ) -> Result<SessionFormatHeader, SessionFormatError> {
-    let name = migration.name();
+    let name = migration.name.as_str();
     let target = snapshot_session_format_header_labeled(source, &format!("{name} header input"))
-        .and_then(|input| migration.migrate_header(input))
+        .and_then(|input| migration.migration.migrate_header(input))
         .map_err(|error| unsupported_refusal(migration, error, "Session header"))?;
     let current =
         snapshot_session_format_header_labeled(&target, &format!("{name} header output"))?;
     let version = inspect_header_version(&current)?;
-    if version != migration.to_version() {
+    if version != migration.to_version {
         return Err(SessionFormatError::new(format!(
             "{name} header returned v{version}; expected v{}",
-            migration.to_version()
+            migration.to_version
         )));
     }
     migration
+        .migration
         .validate_target_header(&current)
         .map_err(|error| unsupported_refusal(migration, error, "Session header"))?;
     Ok(current)
 }
 
 struct CompiledMigrationStage {
-    migration: Arc<dyn SessionFormatMigration>,
+    migration: DeclaredMigration,
     stage: Box<dyn SessionFormatMigrationStage>,
 }
 
@@ -243,7 +262,7 @@ impl<O: SessionFormatMigrationContext> SessionFormatMigrationContext for Downstr
         entry
             .stage
             .transform_event(event, &mut next)
-            .map_err(|error| unsupported_refusal(entry.migration.as_ref(), error, "Session"))
+            .map_err(|error| unsupported_refusal(&entry.migration, error, "Session"))
     }
 
     fn emit_run(&mut self, run: Box<dyn SessionFormatEventRun>) -> Result<(), SessionFormatError> {
@@ -257,7 +276,7 @@ impl<O: SessionFormatMigrationContext> SessionFormatMigrationContext for Downstr
         entry
             .stage
             .transform_run(run, &mut next)
-            .map_err(|error| unsupported_refusal(entry.migration.as_ref(), error, "Session"))
+            .map_err(|error| unsupported_refusal(&entry.migration, error, "Session"))
     }
 }
 
@@ -298,13 +317,13 @@ impl<O: SessionFormatMigrationContext> SessionFormatMigrationStream<O> {
             let target_cut = entry
                 .stage
                 .finish(&mut next)
-                .map_err(|error| unsupported_refusal(entry.migration.as_ref(), error, "Session"))?;
+                .map_err(|error| unsupported_refusal(&entry.migration, error, "Session"))?;
             if let Some(declared) = entry.stage.header_inherited_event_count()
                 && declared != target_cut
             {
                 return Err(SessionFormatError::new(format!(
                     "{} changed its predeclared inherited cut",
-                    entry.migration.name()
+                    entry.migration.name
                 )));
             }
             inherited_event_count = Some(target_cut);
@@ -337,7 +356,7 @@ impl<O: SessionFormatMigrationContext> SessionFormatMigrationContext
 }
 
 fn unsupported_refusal(
-    migration: &dyn SessionFormatMigration,
+    migration: &DeclaredMigration,
     error: SessionFormatError,
     subject: &str,
 ) -> SessionFormatError {
@@ -348,8 +367,7 @@ fn unsupported_refusal(
     SessionFormatError::UnsupportedMigration {
         message: format!(
             "{} refuses this format v{} {subject}: {detail}",
-            migration.name(),
-            migration.from_version()
+            migration.name, migration.from_version
         ),
         cause: Some(Box::new(error)),
     }

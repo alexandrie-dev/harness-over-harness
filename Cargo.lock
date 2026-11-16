@@ -236,6 +236,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-format-v0-to-v1"
+version = "0.1.0"
+dependencies = [
+ "hoh-session-format",
+ "hoh-util-time",
+ "hoh-util-values",
+ "indexmap",
+ "serde_json",
+]
+
+[[package]]
 name = "hoh-timeout"
 version = "0.1.0"
 dependencies = [

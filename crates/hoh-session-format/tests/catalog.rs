@@ -692,3 +692,102 @@ fn restore_header_is_available_before_body_decoding() {
         .expect("restore");
     assert_eq!(direct.header(), &header_at(1));
 }
+
+struct MutatingDecoder {
+    header: SessionFormatHeader,
+}
+
+impl SessionFormatArtifactDecoder for MutatingDecoder {
+    fn header(&self) -> &SessionFormatHeader {
+        &self.header
+    }
+    fn header_inherited_event_count(&self) -> Option<u64> {
+        Some(0)
+    }
+    fn decode_row(&mut self, _row_value: Value, _context: Ctx<'_>) -> Res<()> {
+        self.header.insert("id".to_owned(), json!("after"));
+        Ok(())
+    }
+    fn finish(&mut self, _context: Ctx<'_>) -> Res<u64> {
+        Ok(0)
+    }
+}
+
+#[test]
+fn current_restore_takes_the_decoder_header_as_changed_while_decoding() {
+    let mutating = TestCodec {
+        make_decoder: Arc::new(|header_value| {
+            Ok(Box::new(MutatingDecoder {
+                header: header_value.as_object().cloned().expect("header object"),
+            }))
+        }),
+        ..codec(1, 0)
+    };
+    let mut opts = options(edge(), 1, codec(0, 0), false, identity_header());
+    opts.codecs = vec![Arc::new(codec(0, 0)), Arc::new(mutating)];
+    opts.restore_current = Arc::new(Ok);
+    let current = create_session_format_catalog(opts).expect("catalog");
+    let mut header = header_at(1);
+    header.insert("id".to_owned(), json!("before"));
+    let mut restore = current
+        .create_restore(&Value::Object(header), strict_current())
+        .expect("restore");
+    assert_eq!(restore.header()["id"], json!("before"));
+    restore.decode_row(json!({})).expect("row");
+    assert_eq!(
+        restore.finish().expect("finish").header["id"],
+        json!("after")
+    );
+}
+
+#[test]
+fn restorer_version_diagnostics_print_the_value_like_javascript() {
+    for (returned, text) in [
+        (Some(json!({})), "[object Object]"),
+        (Some(json!([1, 2])), "1,2"),
+        (Some(json!("x")), "x"),
+        (Some(json!(2.0)), "2"),
+        (None, "undefined"),
+    ] {
+        let mut opts = options(edge(), 1, codec(0, 0), false, identity_header());
+        opts.restore_current = Arc::new(move |mut artifact| {
+            match &returned {
+                Some(value) => artifact.header.insert("version".to_owned(), value.clone()),
+                None => artifact.header.remove("version"),
+            };
+            Ok(artifact)
+        });
+        let restore = create_session_format_catalog(opts)
+            .expect("catalog")
+            .create_restore(&Value::Object(old_header()), strict_current())
+            .expect("restore");
+        assert_eq!(
+            error_of(restore.finish()).to_string(),
+            format!("current Session restorer returned v{text}; expected v1")
+        );
+    }
+}
+
+#[test]
+fn restorer_returning_negative_zero_version_is_rejected_unlike_javascript() {
+    // Documented difference: JavaScript accepts `-0 === 0`.
+    let mut opts = options(edge(), 1, codec(0, 0), false, identity_header());
+    opts.current_version = 0;
+    opts.migrations = vec![];
+    opts.codecs = vec![Arc::new(codec(0, 0))];
+    opts.restore_current = Arc::new(|mut artifact| {
+        artifact.header.insert(
+            "version".to_owned(),
+            Value::Number(serde_json::Number::from_f64(-0.0).expect("finite")),
+        );
+        Ok(artifact)
+    });
+    let restore = create_session_format_catalog(opts)
+        .expect("catalog")
+        .create_restore(&Value::Object(old_header()), strict_current())
+        .expect("restore");
+    assert_eq!(
+        error_of(restore.finish()).to_string(),
+        "current Session restorer returned v0; expected v0"
+    );
+}

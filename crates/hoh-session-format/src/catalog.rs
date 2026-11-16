@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use hoh_util_values::js_string;
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -203,7 +204,6 @@ impl SessionFormatCatalog {
         if stored_version == current_version {
             return Ok(SessionFormatRestore {
                 kind: RestoreKind::Current(CurrentSessionFormatRestore {
-                    header: decoder.header().clone(),
                     decoder,
                     source_inherited_event_count: source_cut,
                     restore_artifact: match options.validation {
@@ -254,7 +254,7 @@ impl SessionFormatRestore {
     /// Current logical header available before body decoding.
     pub fn header(&self) -> &SessionFormatHeader {
         match &self.kind {
-            RestoreKind::Current(restore) => &restore.header,
+            RestoreKind::Current(restore) => restore.decoder.header(),
             RestoreKind::Migrating(restore) => &restore.header,
         }
     }
@@ -277,7 +277,6 @@ impl SessionFormatRestore {
 }
 
 struct CurrentSessionFormatRestore {
-    header: SessionFormatHeader,
     decoder: Box<dyn SessionFormatArtifactDecoder>,
     source_inherited_event_count: Option<u64>,
     /// `None` is the identity restorer of physical-only validation.
@@ -297,8 +296,9 @@ impl CurrentSessionFormatRestore {
             &mut self.collector,
             self.source_inherited_event_count,
         )?;
+        // The source's artifact holds the decoder's own header object: take its final state.
         let artifact = SessionFormatArtifact {
-            header: self.header,
+            header: self.decoder.header().clone(),
             inherited_event_count,
             events: self.collector.values,
         };
@@ -385,26 +385,10 @@ fn restore_current_version(
     if !matches_current {
         return Err(SessionFormatError::new(format!(
             "current Session restorer returned v{}; expected v{current_version}",
-            js_display(version)
+            version.map_or_else(|| "undefined".to_owned(), js_string)
         )));
     }
     Ok(artifact)
-}
-
-/// `${value}` of a JavaScript number-or-undefined header member.
-fn js_display(value: Option<&Value>) -> String {
-    match value {
-        None => "undefined".to_owned(),
-        Some(Value::Null) => "null".to_owned(),
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Number(number)) => match number.as_f64() {
-            Some(float) if number.is_f64() && float.fract() == 0.0 && float.abs() < 1e21 => {
-                format!("{float:.0}")
-            }
-            _ => number.to_string(),
-        },
-        Some(other @ (Value::Bool(_) | Value::Array(_) | Value::Object(_))) => other.to_string(),
-    }
 }
 
 fn malformed(

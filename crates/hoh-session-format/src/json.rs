@@ -5,7 +5,7 @@ use crate::error::SessionFormatError;
 use crate::types::{SessionFormatHeader, SessionFormatJsonObject, SessionFormatJsonValue};
 
 /// `Number.MAX_SAFE_INTEGER`.
-pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+pub(crate) const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 /// Test whether a value is a non-null, non-array object.
 pub fn is_session_format_json_object(value: &Value) -> bool {
@@ -98,7 +98,9 @@ pub fn inspect_session_format_version(header_value: &Value) -> Result<u64, Sessi
 }
 
 /// [`inspect_session_format_version`] for a value already known to be an object.
-pub fn inspect_header_version(header: &SessionFormatJsonObject) -> Result<u64, SessionFormatError> {
+pub(crate) fn inspect_header_version(
+    header: &SessionFormatJsonObject,
+) -> Result<u64, SessionFormatError> {
     session_format_version(header.get("version").unwrap_or(&Value::Null))
 }
 
