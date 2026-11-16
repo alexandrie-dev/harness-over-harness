@@ -406,3 +406,4 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 9	skip	python/sdk-runtime	dsh-python-runtime-closure	-	339	0	-	
 9	drop	vendor/hmr	@deepseek-ai/cordis-plugin-hmr	-	464	0	-	замена кода на лету не переносится
 9	skip	website	@deepseek-ai/website	-	0	1520	-	
+1	own	refs/jsdiff (v9.0.0)	diff	hoh-jsdiff	1421	0	writing:m1	общий перенос structuredPatch из jsdiff 9.0.0 (BSD-3-Clause); в dsh это npm-библиотека, не пакет

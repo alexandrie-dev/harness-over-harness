@@ -267,6 +267,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-jsdiff"
+version = "0.1.0"
+
+[[package]]
 name = "hoh-kernel"
 version = "0.1.0"
 dependencies = [
@@ -286,6 +290,7 @@ dependencies = [
 name = "hoh-kernel-macros"
 version = "0.1.0"
 dependencies = [
+ "hoh-kernel",
  "proc-macro2",
  "quote",
  "syn",
