@@ -18,8 +18,6 @@ pub struct AnonymousUserIdOptions<'a> {
 pub enum AnonymousUserIdError {
     #[error(transparent)]
     Home(#[from] io::Error),
-    #[error("{0}")]
-    Random(String),
 }
 /// Keep one instance in the process context and share it with all consumers.
 /// A mutex preserves the source's indivisible synchronous read/create/memoize sequence.
@@ -46,6 +44,7 @@ fn read_persisted_id(file: &Path) -> Option<AnonymousUserId> {
 }
 
 impl AnonymousUserIdStore {
+    /// Performs blocking file I/O under the memo lock; async callers must use `spawn_blocking`.
     pub fn get_or_create_anonymous_user_id(
         &self,
         options: AnonymousUserIdOptions<'_>,
@@ -62,11 +61,7 @@ impl AnonymousUserIdStore {
         } else {
             let created: AnonymousUserId = match options.random_uuid {
                 Some(generate) => generate().into(),
-                None => String::from(
-                    hoh_util_crypto::random_uuid()
-                        .map_err(|e| AnonymousUserIdError::Random(e.to_string()))?,
-                )
-                .into(),
+                None => String::from(hoh_util_crypto::random_uuid()).into(),
             };
             let persisted = (|| -> io::Result<()> {
                 if let Some(parent) = file.parent() {

@@ -10,4 +10,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+
+[dev-dependencies]
 thiserror.workspace = true

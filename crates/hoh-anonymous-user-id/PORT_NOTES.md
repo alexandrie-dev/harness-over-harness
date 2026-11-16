@@ -10,10 +10,10 @@
 
 ## Отличия от образца
 - Module-global memo перенесён в дополнительный публичный AnonymousUserIdStore (Default), принадлежащий контексту, по запрету глобального изменяемого состояния (раздел 6). Все потребители процесса должны разделять один экземпляр. get_or_create_anonymous_user_id принимает &store, метод с тем же именем также доступен.
-- Mutex удерживает синхронный read/create/reread/overwrite/memoize как один шаг, как в однопоточном JS. Дисковый I/O остаётся синхронным, как у boot-time исходника; это библиотека, не plugin.
+- Mutex удерживает синхронный read/create/reread/overwrite/memoize как один шаг, как в однопоточном JS. Функция выполняет блокирующий файловый I/O под mutex, потому что исходник синхронный. Async-вызывающий код обязан вызывать её через spawn_blocking; это библиотека, не plugin.
 - Options содержит env:Option<&HashMap<...>> и random_uuid:Option<&dyn Fn()->String>. None читает process environment/генерирует через hoh-util-crypto. Идентификатор — branded string newtype, format файла, регистр persisted UUID и ECMAScript trim сохранены.
-- Дополнительный публичный AnonymousUserIdError (Home/Random) представляет ошибки разрешения пути и генерации через Result; ошибки persistence по-прежнему подавляются best-effort.
-- Все 9 исходных it сохранены. Проверка process.env запускает отдельный test executable с временным DSH_HOME: helper process_environment_child помечен ignored для обычного прохода, но запускается и проверяется родительским тестом. Изменение окружения процесса не требуется.
+- Дополнительный публичный AnonymousUserIdError::Home представляет ошибки разрешения пути через Result; ошибки persistence по-прежнему подавляются best-effort. random_uuid возвращает Uuid; недоступность OS RNG считается нарушением инварианта по решению ведущего, а не вариантом Random.
+- Все 9 исходных it сохранены. Проверка process.env запускает отдельный test executable с временным DSH_HOME и marker HOH_ANONYMOUS_USER_ID_CHILD=1: helper process_environment_child помечен ignored для обычного прохода, но запускается и проверяется родительским тестом. Без marker helper сразу возвращает управление, в том числе при cargo test -- --ignored; отдельный тест подтверждает отсутствие записи без marker. Изменение окружения текущего процесса не требуется.
 
 ## Не перенесено
 Глобальная изменяемая Map как механизм заменена owner-scoped store по разделу 6. Каталога locale нет.

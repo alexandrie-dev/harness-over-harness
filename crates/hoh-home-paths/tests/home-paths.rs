@@ -243,3 +243,160 @@ async fn canonicalizes_watcher_ancestor_preserving_missing_suffix() {
         std::io::ErrorKind::NotADirectory
     );
 }
+
+#[test]
+fn ignores_empty_segments_when_preserving_trailing_separator() {
+    let path = dsh_home_path(&["b/", ""], Some(&env(DSH_HOME_ENV, "/a"))).unwrap();
+    #[cfg(unix)]
+    assert_eq!(path.as_os_str(), "/a/b/");
+    #[cfg(windows)]
+    assert!(path.as_os_str().to_string_lossy().ends_with("a\\b\\"));
+}
+
+#[test]
+fn displays_compare_exact_spelling_including_trailing_separators() {
+    let dsh = resolve_dsh_home(None, Some(&HashMap::new())).unwrap();
+    let agents = resolve_agents_home(None, Some(&HashMap::new())).unwrap();
+    let mut trailing = dsh.as_os_str().to_os_string();
+    trailing.push(std::path::MAIN_SEPARATOR_STR);
+    assert_eq!(dsh_home_display(Path::new(&trailing)).unwrap(), "$DSH_HOME");
+    let mut trailing = agents.as_os_str().to_os_string();
+    trailing.push(std::path::MAIN_SEPARATOR_STR);
+    assert_eq!(
+        agents_home_display(Path::new(&trailing)).unwrap(),
+        "$DSH_AGENTS_HOME"
+    );
+}
+
+#[test]
+fn explicit_empty_configured_path_resolves_to_current_directory() {
+    let e = env(DSH_HOME_ENV, "/ignored");
+    assert_eq!(
+        resolve_dsh_home(Some(""), Some(&e)).unwrap(),
+        std::env::current_dir().unwrap()
+    );
+    let e = env(AGENTS_HOME_ENV, "/ignored");
+    assert_eq!(
+        resolve_agents_home(Some(""), Some(&e)).unwrap(),
+        std::env::current_dir().unwrap()
+    );
+}
+
+fn controlled_environment_child(case: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "home_environment_child", "--ignored"])
+        .env("HOH_HOME_PATHS_CHILD_CASE", case)
+        .env("HOH_HOME_PATHS_TEST_ROOT", root.path())
+        .env_remove(DSH_HOME_ENV)
+        .env_remove(AGENTS_HOME_ENV);
+    match case {
+        "empty" => {
+            child.env("HOME", "");
+        }
+        "normalized" => {
+            child.env("HOME", format!("{}/home//u", root.path().display()));
+        }
+        "env" => {
+            child
+                .env("HOME", root.path().join("home"))
+                .env(DSH_HOME_ENV, root.path().join("dsh"))
+                .env(AGENTS_HOME_ENV, root.path().join("agents"));
+        }
+        "tilde" => {
+            child.env("HOME", root.path().join("home"));
+        }
+        _ => panic!("unknown child case"),
+    }
+    #[cfg(windows)]
+    child.env("USERPROFILE", root.path().join("home"));
+    let output = child.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}
+#[cfg(unix)]
+#[test]
+fn normalizes_default_homes_from_environment() {
+    controlled_environment_child("normalized");
+}
+#[cfg(unix)]
+#[test]
+fn preserves_explicitly_empty_os_home() {
+    controlled_environment_child("empty");
+}
+#[test]
+fn reads_none_environment_through_controlled_child() {
+    controlled_environment_child("env");
+}
+#[test]
+fn expands_tilde_with_empty_rest() {
+    controlled_environment_child("tilde");
+}
+
+#[test]
+#[ignore = "invoked by parent tests with a controlled environment"]
+fn home_environment_child() {
+    let Ok(case) = std::env::var("HOH_HOME_PATHS_CHILD_CASE") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(std::env::var_os("HOH_HOME_PATHS_TEST_ROOT").unwrap());
+    match case.as_str() {
+        "normalized" => {
+            assert_eq!(
+                default_dsh_home().unwrap().as_os_str(),
+                root.join("home/u/.dsh").as_os_str()
+            );
+            assert_eq!(
+                default_agents_home().unwrap().as_os_str(),
+                root.join("home/u/.agents").as_os_str()
+            );
+        }
+        "empty" => {
+            assert_eq!(expand_home_path("~").unwrap().as_os_str(), "");
+            for value in ["~/", "~\\"] {
+                assert_eq!(expand_home_path(value).unwrap().as_os_str(), ".");
+            }
+            assert_eq!(default_dsh_home().unwrap().as_os_str(), ".dsh");
+            assert_eq!(default_agents_home().unwrap().as_os_str(), ".agents");
+            assert_eq!(
+                resolve_dsh_home(None, None).unwrap(),
+                std::env::current_dir().unwrap().join(".dsh")
+            );
+            assert_eq!(
+                resolve_agents_home(None, None).unwrap(),
+                std::env::current_dir().unwrap().join(".agents")
+            );
+        }
+        "env" => {
+            assert_eq!(resolve_dsh_home(None, None).unwrap(), root.join("dsh"));
+            assert_eq!(
+                resolve_agents_home(None, None).unwrap(),
+                root.join("agents")
+            );
+            assert_eq!(
+                dsh_home_path(&["owner"], None).unwrap(),
+                root.join("dsh/owner")
+            );
+            assert_eq!(
+                dsh_cache_path(None, &["models"], None).unwrap(),
+                root.join("dsh/cache/models")
+            );
+            assert_eq!(
+                dsh_path(DshHomeCategory::State, &["logs"], None).unwrap(),
+                root.join("dsh/state/logs")
+            );
+        }
+        "tilde" => {
+            for value in ["~/", "~\\"] {
+                assert_eq!(expand_home_path(value).unwrap(), root.join("home"));
+            }
+        }
+        _ => panic!("unknown child case"),
+    }
+}

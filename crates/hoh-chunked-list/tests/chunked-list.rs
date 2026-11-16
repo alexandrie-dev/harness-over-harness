@@ -2,7 +2,7 @@ use hoh_chunked_list::*;
 use serde_json::json;
 use std::sync::Arc;
 
-fn contents(head: &ChunkedList<i64>) -> Vec<i64> {
+fn contents(head: &Arc<ChunkedList<i64>>) -> Vec<i64> {
     iterate_chunked_list(Some(head)).copied().collect()
 }
 #[test]
@@ -64,4 +64,72 @@ fn rejects_every_invalid_checkpoint() {
         assert!(chunked_list_schema::<i64>(json!({"values":[0],"previous":invalid})).is_err());
     }
     assert!(chunked_list_schema::<i64>(json!({"values":[0],"previous":null})).is_err());
+}
+
+#[test]
+fn rejects_non_objects_at_the_root_and_every_previous_level() {
+    for invalid in [
+        json!([[0]]),
+        json!([ [0], {"values":[1]} ]),
+        json!(null),
+        json!(true),
+        json!(7),
+        json!("chunk"),
+    ] {
+        for depth in 0..4 {
+            let mut checkpoint = invalid.clone();
+            for _ in 0..depth {
+                checkpoint = json!({"values":[0],"previous":checkpoint});
+            }
+            assert!(chunked_list_schema::<i64>(checkpoint.clone()).is_err());
+            assert!(serde_json::from_value::<ChunkedList<i64>>(checkpoint).is_err());
+        }
+    }
+}
+
+#[test]
+fn validates_restores_iterates_and_drops_two_hundred_thousand_values() {
+    let mut head = None;
+    for value in 0..200_000u64 {
+        head = Some(append_chunked_list(head.as_ref(), value));
+    }
+    let mut chunks = Vec::new();
+    let mut chunk = head.as_ref();
+    while let Some(node) = chunk {
+        chunks.push(node);
+        chunk = node.previous();
+    }
+    let mut checkpoint = None;
+    for chunk in chunks.into_iter().rev() {
+        let mut object = serde_json::Map::new();
+        object.insert(
+            "values".into(),
+            serde_json::Value::Array(chunk.values().iter().map(|value| json!(**value)).collect()),
+        );
+        if let Some(previous) = checkpoint {
+            object.insert("previous".into(), previous);
+        }
+        checkpoint = Some(serde_json::Value::Object(object));
+    }
+    let restored = chunked_list_schema::<u64>(checkpoint.unwrap()).unwrap();
+    assert!(iterate_chunked_list(head.as_ref()).copied().eq(0..200_000));
+    assert!(
+        iterate_chunked_list(Some(&restored))
+            .copied()
+            .eq(0..200_000)
+    );
+    drop(head);
+    drop(restored);
+}
+
+#[test]
+fn rejects_a_deep_invalid_suffix_and_drops_it_iteratively() {
+    let mut checkpoint = json!([[0]]);
+    for _ in 0..3125 {
+        let mut object = serde_json::Map::new();
+        object.insert("values".into(), json!([0]));
+        object.insert("previous".into(), checkpoint);
+        checkpoint = serde_json::Value::Object(object);
+    }
+    assert!(chunked_list_schema::<u64>(checkpoint).is_err());
 }

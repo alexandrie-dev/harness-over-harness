@@ -1,5 +1,5 @@
 //! Atomic replacement and exclusive-create writer coordination.
-use hoh_error::{CodedError, HarnessError};
+use hoh_error::{BoxError, HarnessError};
 use sha2::{Digest, Sha256};
 use std::{
     future::Future,
@@ -24,50 +24,43 @@ pub struct FileLockOptions {
     pub process_exited: Option<Arc<dyn Fn(u32) -> bool + Send + Sync>>,
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("{error}")]
-pub struct FileLockError {
-    pub lock_path: PathBuf,
-    pub error: HarnessError,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileLockErrorCode {
+    FileLockTimeout,
 }
-impl FileLockError {
-    pub fn new(lock_path: PathBuf) -> Self {
-        Self {
-            error: HarnessError::new(
-                format!(
-                    "atomic-write: timed out waiting for the writer lock at {}",
-                    lock_path.display()
-                ),
-                "FILE_LOCK_TIMEOUT",
-            )
-            .with_name("FileLockError"),
-            lock_path,
+impl FileLockErrorCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FileLockTimeout => "FILE_LOCK_TIMEOUT",
         }
     }
 }
-impl std::ops::Deref for FileLockError {
-    type Target = HarnessError;
-    fn deref(&self) -> &HarnessError {
-        &self.error
-    }
+#[derive(Clone, Debug)]
+pub struct FileLockErrorDetails {
+    pub lock_path: PathBuf,
 }
-impl CodedError for FileLockError {
-    fn harness_error(&self) -> &HarnessError {
-        &self.error
+pub struct FileLockError;
+impl FileLockError {
+    pub const NAME: &str = "FileLockError";
+    // PORTING.md §7 requires subclass constructor namespaces returning HarnessError.
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(lock_path: PathBuf) -> HarnessError {
+        HarnessError::named(
+            Self::NAME,
+            format!(
+                "atomic-write: timed out waiting for the writer lock at {}",
+                lock_path.display()
+            ),
+            FileLockErrorCode::FileLockTimeout.as_str(),
+        )
+        .with_detail(FileLockErrorDetails { lock_path })
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtomicWriteError {
-    #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error(transparent)]
-    Lock(#[from] FileLockError),
     #[error("The operation was aborted")]
     Aborted,
-    /// Preserve an operation's crate-local error and its standard cause chain.
-    #[error("{0}")]
-    Operation(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 trait Runtime {
@@ -289,14 +282,14 @@ async fn take_over_exited_lock(
     let _ = runtime.remove(&claim).await;
     result
 }
-fn check_signal(options: &FileLockOptions) -> Result<(), AtomicWriteError> {
+fn check_signal(options: &FileLockOptions) -> Result<(), BoxError> {
     if options.signal.as_ref().is_some_and(|s| *s.borrow()) {
-        Err(AtomicWriteError::Aborted)
+        Err(AtomicWriteError::Aborted.into())
     } else {
         Ok(())
     }
 }
-async fn wait(delay: u64, options: &FileLockOptions) -> Result<(), AtomicWriteError> {
+async fn wait(delay: u64, options: &FileLockOptions) -> Result<(), BoxError> {
     let cancelled = async {
         if let Some(mut signal) = options.signal.clone()
             && signal.wait_for(|aborted| *aborted).await.is_ok()
@@ -307,22 +300,22 @@ async fn wait(delay: u64, options: &FileLockOptions) -> Result<(), AtomicWriteEr
     };
     tokio::select! {
         () = tokio::time::sleep(Duration::from_millis(delay)) => Ok(()),
-        () = cancelled => Err(AtomicWriteError::Aborted),
+        () = cancelled => Err(AtomicWriteError::Aborted.into()),
     }
 }
-pub async fn with_file_lock<T, F: Future<Output = Result<T, AtomicWriteError>>>(
+pub async fn with_file_lock<T, F: Future<Output = Result<T, BoxError>>>(
     filename: impl AsRef<Path>,
     operation: impl FnOnce() -> F,
     options: FileLockOptions,
-) -> Result<T, AtomicWriteError> {
+) -> Result<T, BoxError> {
     with_file_lock_with(&SystemRuntime, filename.as_ref(), operation, options).await
 }
-async fn with_file_lock_with<T, F: Future<Output = Result<T, AtomicWriteError>>>(
+async fn with_file_lock_with<T, F: Future<Output = Result<T, BoxError>>>(
     runtime: &impl Runtime,
     filename: &Path,
     operation: impl FnOnce() -> F,
     options: FileLockOptions,
-) -> Result<T, AtomicWriteError> {
+) -> Result<T, BoxError> {
     let lock_path = sibling(filename, ".lock");
     let deadline = Instant::now() + Duration::from_millis(options.wait_ms.unwrap_or(2000));
     let mut delay = 20;

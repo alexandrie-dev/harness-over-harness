@@ -11,8 +11,8 @@
 ## Отличия от образца
 - bytesToBase64 → bytes_to_base64 использует base64 STANDARD с padding. randomUUID → random_uuid использует getrandom и те же pinned биты версии/варианта и lowercase hex.
 - Uuid — прозрачный строковый newtype через hoh-brand вместо TS template-literal типа; wire-значение неизменно. Новых функций нет.
-- random_uuid возвращает Result<Uuid, getrandom::Error>: отказ системного генератора становится Err вместо JS exception.
-- Тест insecure-origin сохранён как проверка minting без платформенного UUID API: в Rust ambient crypto.randomUUID отсутствует.
+- random_uuid возвращает Uuid. По решению ведущего доступность криптографического OS RNG — инвариант; отказ getrandom вызывает panic через expect с однострочным объяснением инварианта.
+- Дублирующий shape-тест mints_without_platform_random_uuid заменён unit-тестом приватного форматирования bytes: на байтах 0x00, 0xff и последовательных байтах проверены pinned version/variant bits и сохранение остальных битов. Rust не имеет ambient crypto.randomUUID, поэтому механизм подмены globalThis не переносится. Остальные исходные UUID/base64-тесты остаются в tests/uuid.rs.
 
 ## Не перенесено
 Подмена браузерного globalThis не переносится как механизм; смысл сценария сохранён. Каталога locale нет.

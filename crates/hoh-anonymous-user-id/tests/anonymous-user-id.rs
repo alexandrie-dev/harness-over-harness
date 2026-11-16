@@ -114,6 +114,7 @@ fn reads_process_environment_by_default() {
     let result = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "process_environment_child", "--ignored"])
         .env("DSH_HOME", d.path())
+        .env("HOH_ANONYMOUS_USER_ID_CHILD", "1")
         .output()
         .unwrap();
     assert!(
@@ -126,6 +127,10 @@ fn reads_process_environment_by_default() {
 #[test]
 #[ignore = "invoked only by reads_process_environment_by_default with an isolated environment"]
 fn process_environment_child() {
+    if std::env::var_os("HOH_ANONYMOUS_USER_ID_CHILD").as_deref() != Some(std::ffi::OsStr::new("1"))
+    {
+        return;
+    }
     let id = get_or_create_anonymous_user_id(
         &AnonymousUserIdStore::default(),
         AnonymousUserIdOptions::default(),
@@ -136,4 +141,18 @@ fn process_environment_child() {
         fs::read_to_string(home.join(ANONYMOUS_USER_ID_FILE_NAME)).unwrap(),
         format!("{id}\n")
     );
+}
+
+#[test]
+fn ignored_helper_without_parent_marker_does_not_write() {
+    let d = tempfile::tempdir().unwrap();
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "process_environment_child", "--ignored"])
+        .env("DSH_HOME", d.path())
+        .env_remove("HOH_ANONYMOUS_USER_ID_CHILD")
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+    assert!(!d.path().join(ANONYMOUS_USER_ID_FILE_NAME).exists());
 }

@@ -13,6 +13,10 @@ pub const DEFAULT_AGENTS_HOME_DISPLAY: &str = "~/.agents";
 pub const AGENTS_HOME_ENV: &str = "DSH_AGENTS_HOME";
 
 fn home() -> io::Result<PathBuf> {
+    #[cfg(unix)]
+    if let Some(home) = std::env::var_os("HOME") {
+        return Ok(home.into());
+    }
     std::env::home_dir()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OS home directory is unavailable"))
 }
@@ -48,12 +52,16 @@ fn resolve(path: &Path) -> io::Result<PathBuf> {
 fn join(base: &Path, segments: &[&str]) -> PathBuf {
     let mut joined = base.as_os_str().to_os_string();
     for segment in segments.iter().filter(|s| !s.is_empty()) {
-        joined.push(std::path::MAIN_SEPARATOR_STR);
+        if !joined.is_empty() {
+            joined.push(std::path::MAIN_SEPARATOR_STR);
+        }
         joined.push(segment);
     }
-    let trailing = segments
-        .last()
-        .is_some_and(|s| s.ends_with(std::path::MAIN_SEPARATOR));
+    let separator = |c| c == '/' || cfg!(windows) && c == '\\';
+    let trailing = segments.iter().rev().find(|s| !s.is_empty()).map_or_else(
+        || base.as_os_str().to_string_lossy().ends_with(separator),
+        |s| s.ends_with(separator),
+    );
     let mut path = normalize(Path::new(&joined));
     if trailing {
         path.push("");
@@ -61,10 +69,10 @@ fn join(base: &Path, segments: &[&str]) -> PathBuf {
     path
 }
 pub fn default_dsh_home() -> io::Result<PathBuf> {
-    Ok(home()?.join(DSH_HOME_DIR_NAME))
+    Ok(join(&home()?, &[DSH_HOME_DIR_NAME]))
 }
 pub fn default_agents_home() -> io::Result<PathBuf> {
-    Ok(home()?.join(AGENTS_HOME_DIR_NAME))
+    Ok(join(&home()?, &[AGENTS_HOME_DIR_NAME]))
 }
 pub fn expand_home_path(path: &str) -> io::Result<PathBuf> {
     if path == "~" {
@@ -109,18 +117,22 @@ pub fn resolve_agents_home(
     resolve_root(configured, env, AGENTS_HOME_ENV, default_agents_home)
 }
 pub fn dsh_home_display(resolved_home: &Path) -> io::Result<&'static str> {
-    Ok(if resolved_home == resolve(&default_dsh_home()?)? {
-        DEFAULT_DSH_HOME_DISPLAY
-    } else {
-        "$DSH_HOME"
-    })
+    Ok(
+        if resolved_home.as_os_str() == resolve(&default_dsh_home()?)?.as_os_str() {
+            DEFAULT_DSH_HOME_DISPLAY
+        } else {
+            "$DSH_HOME"
+        },
+    )
 }
 pub fn agents_home_display(resolved_home: &Path) -> io::Result<&'static str> {
-    Ok(if resolved_home == resolve(&default_agents_home()?)? {
-        DEFAULT_AGENTS_HOME_DISPLAY
-    } else {
-        "$DSH_AGENTS_HOME"
-    })
+    Ok(
+        if resolved_home.as_os_str() == resolve(&default_agents_home()?)?.as_os_str() {
+            DEFAULT_AGENTS_HOME_DISPLAY
+        } else {
+            "$DSH_AGENTS_HOME"
+        },
+    )
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -189,14 +201,36 @@ pub fn dsh_cache_path(
     )
 }
 pub async fn canonicalize_watch_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
-    let mut current = resolve(path.as_ref())?;
+    canonicalize_watch_path_with(path.as_ref(), tokio::fs::canonicalize, |path| async move {
+        let directory = tokio::fs::read_dir(path).await?;
+        drop(directory);
+        Ok(())
+    })
+    .await
+}
+
+async fn canonicalize_watch_path_with<R, D>(
+    path: &Path,
+    mut realpath: impl FnMut(PathBuf) -> R,
+    mut opendir: impl FnMut(PathBuf) -> D,
+) -> io::Result<PathBuf>
+where
+    R: std::future::Future<Output = io::Result<PathBuf>>,
+    D: std::future::Future<Output = io::Result<()>>,
+{
+    let mut current = resolve(path)?;
     let mut missing = Vec::new();
     loop {
-        match tokio::fs::canonicalize(&current).await {
+        let probe = async {
+            let canonical = realpath(current.clone()).await?;
+            if !missing.is_empty() {
+                opendir(canonical.clone()).await?;
+            }
+            Ok::<_, io::Error>(canonical)
+        }
+        .await;
+        match probe {
             Ok(mut canonical) => {
-                if !missing.is_empty() {
-                    let _directory = tokio::fs::read_dir(&canonical).await?;
-                }
                 for part in missing.into_iter().rev() {
                     canonical.push(part);
                 }
@@ -213,5 +247,48 @@ pub async fn canonicalize_watch_path(path: impl AsRef<Path>) -> io::Result<PathB
             }
             Err(error) => return Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::Cell, future::ready};
+
+    #[tokio::test]
+    async fn climbs_when_opendir_reports_enoent_after_realpath_succeeds() {
+        let root = tempfile::tempdir().unwrap();
+        let watch = root.path().join("watch");
+        let ancestor = watch.join("root");
+        let canonical = root.path().join("canonical");
+        let attempts = Cell::new(0);
+        let result = canonicalize_watch_path_with(
+            &ancestor.join("missing"),
+            |path| {
+                ready(if path == ancestor.join("missing") {
+                    Err(io::ErrorKind::NotFound.into())
+                } else if path == ancestor {
+                    Ok(canonical.join("root"))
+                } else {
+                    assert_eq!(path, watch);
+                    Ok(canonical.clone())
+                })
+            },
+            |path| {
+                let attempt = attempts.get();
+                attempts.set(attempt + 1);
+                ready(if attempt == 0 {
+                    assert_eq!(path, canonical.join("root"));
+                    Err(io::ErrorKind::NotFound.into())
+                } else {
+                    assert_eq!(path, canonical);
+                    Ok(())
+                })
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(attempts.get(), 2);
+        assert_eq!(result, canonical.join("root/missing"));
     }
 }

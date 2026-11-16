@@ -155,21 +155,26 @@ async fn assert_timeout(fake: &Fake, target: &Path, text: &str) {
     )
     .await
     .unwrap_err();
-    let AtomicWriteError::Lock(err) = err else {
-        panic!("expected FileLockError")
-    };
+    let err = HarnessError::of(err.as_ref()).unwrap();
     assert!(
         err.to_string()
             .contains("timed out waiting for the writer lock")
     );
-    assert_eq!(err.name, "FileLockError");
-    assert_eq!(err.code, "FILE_LOCK_TIMEOUT");
-    assert_eq!(err.lock_path, sibling(target, ".lock"));
+    assert_eq!(err.name(), "FileLockError");
+    assert!(err.is_named(FileLockError::NAME));
+    assert_eq!(err.code(), "FILE_LOCK_TIMEOUT");
+    let detail = err.detail::<FileLockErrorDetails>().unwrap();
+    assert_eq!(detail.lock_path, sibling(target, ".lock"));
     assert!(!called.get());
     assert_eq!(
-        read_lock_record(&err.lock_path).await.as_deref(),
+        read_lock_record(&detail.lock_path).await.as_deref(),
         Some(text)
     );
+}
+fn is_lock_timeout(error: &BoxError) -> bool {
+    HarnessError::of(error.as_ref()).is_some_and(|error| {
+        error.is_named(FileLockError::NAME) && error.code() == "FILE_LOCK_TIMEOUT"
+    })
 }
 #[tokio::test]
 async fn preserves_non_utf8_binary_content() {
@@ -381,14 +386,20 @@ async fn cancels_waiter_without_releasing_holder() {
         tx.send(true).unwrap();
     };
     let (result, ()) = tokio::join!(waiter, cancel);
-    assert!(matches!(result, Err(AtomicWriteError::Aborted)));
+    assert!(matches!(
+        result.unwrap_err().downcast_ref::<AtomicWriteError>(),
+        Some(AtomicWriteError::Aborted)
+    ));
     assert_eq!(
         read_lock_record(&sibling(&p, ".lock")).await.unwrap(),
         record(std::process::id())
     );
     assert!(matches!(
-        with_file_lock(&p, || async { Ok(()) }, options).await,
-        Err(AtomicWriteError::Aborted)
+        with_file_lock(&p, || async { Ok(()) }, options)
+            .await
+            .unwrap_err()
+            .downcast_ref::<AtomicWriteError>(),
+        Some(AtomicWriteError::Aborted)
     ));
     release_tx.send(()).unwrap();
     holder.await.unwrap();
@@ -437,7 +448,12 @@ async fn preserves_persistent_eperm_without_lock_on_both_platforms() {
             options(2000),
         )
         .await;
-        assert!(matches!(result,Err(AtomicWriteError::Io(e)) if permission(&e)));
+        assert!(
+            result
+                .unwrap_err()
+                .downcast_ref::<io::Error>()
+                .is_some_and(permission)
+        );
     }
 }
 #[tokio::test(start_paused = true)]
@@ -463,7 +479,7 @@ async fn acquires_windows_lock_released_before_probe() {
 async fn rejects_invalid_parent_before_running_operation() {
     let (_d, p) = setup();
     tokio::fs::write(&p, "occupied").await.unwrap();
-    assert!(matches!(
+    assert!(
         with_file_lock(
             p.join("document"),
             || async {
@@ -473,9 +489,10 @@ async fn rejects_invalid_parent_before_running_operation() {
             },
             options(0)
         )
-        .await,
-        Err(AtomicWriteError::Io(_))
-    ));
+        .await
+        .unwrap_err()
+        .is::<io::Error>()
+    );
 }
 #[tokio::test]
 async fn takes_over_exited_holder() {
@@ -595,9 +612,10 @@ async fn waits_when_exited_lock_cannot_be_removed() {
 async fn waits_for_lock_it_cannot_read() {
     let (_d, p) = setup();
     tokio::fs::create_dir(sibling(&p, ".lock")).await.unwrap();
-    assert!(matches!(
-        with_file_lock(&p, || async { Ok(()) }, options(50)).await,
-        Err(AtomicWriteError::Lock(_))
+    assert!(is_lock_timeout(
+        &with_file_lock(&p, || async { Ok(()) }, options(50))
+            .await
+            .unwrap_err()
     ));
 }
 #[tokio::test(start_paused = true)]
@@ -622,9 +640,10 @@ async fn keeps_lock_another_contender_acquired_during_claim() {
     held(&p, &record(EXITED_PID)).await;
     let fake = Fake::default();
     fake.0.lock().unwrap().after_claim = Some(record(std::process::id()));
-    assert!(matches!(
-        with_file_lock_with(&fake, &p, || async { Ok(()) }, options(50)).await,
-        Err(AtomicWriteError::Lock(_))
+    assert!(is_lock_timeout(
+        &with_file_lock_with(&fake, &p, || async { Ok(()) }, options(50))
+            .await
+            .unwrap_err()
     ));
     assert_eq!(
         read_lock_record(&sibling(&p, ".lock")).await.unwrap(),
@@ -655,7 +674,20 @@ async fn surfaces_claim_failure_other_than_contention() {
     let fake = Fake::default();
     fake.0.lock().unwrap().claim_failure = Some(io::ErrorKind::Other);
     assert!(
-        matches!(with_file_lock_with(&fake,&p,||async {panic!("operation ran");#[allow(unreachable_code)] Ok(())},options(2000)).await,Err(AtomicWriteError::Io(e)) if e.kind()==io::ErrorKind::Other)
+        with_file_lock_with(
+            &fake,
+            &p,
+            || async {
+                panic!("operation ran");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+            options(2000)
+        )
+        .await
+        .unwrap_err()
+        .downcast_ref::<io::Error>()
+        .is_some_and(|e| e.kind() == io::ErrorKind::Other)
     );
 }
 #[tokio::test]
@@ -676,9 +708,10 @@ async fn waits_for_caller_stated_limit_instead_of_default() {
     let (_d, p) = setup();
     held(&p, &record(std::process::id())).await;
     let start = Instant::now();
-    assert!(matches!(
-        with_file_lock(&p, || async { Ok("impatient") }, options(50)).await,
-        Err(AtomicWriteError::Lock(_))
+    assert!(is_lock_timeout(
+        &with_file_lock(&p, || async { Ok("impatient") }, options(50))
+            .await
+            .unwrap_err()
     ));
     assert!(start.elapsed() < Duration::from_millis(1000));
     let release = async {
@@ -694,23 +727,16 @@ async fn waits_for_caller_stated_limit_instead_of_default() {
 #[tokio::test]
 async fn preserves_operation_error_and_releases_lock_on_failure() {
     let (_d, p) = setup();
-    let result: Result<(), AtomicWriteError> = with_file_lock(
+    let result: Result<(), BoxError> = with_file_lock(
         &p,
-        || async {
-            Err(AtomicWriteError::Operation(Box::new(HarnessError::new(
-                "operation failed",
-                "OPERATION_FAILED",
-            ))))
-        },
+        || async { Err(HarnessError::new("operation failed", "OPERATION_FAILED").into()) },
         FileLockOptions::default(),
     )
     .await;
-    let AtomicWriteError::Operation(error) = result.unwrap_err() else {
-        panic!("operation error was replaced")
-    };
-    let original = error.downcast_ref::<HarnessError>().unwrap();
-    assert_eq!(original.code, "OPERATION_FAILED");
-    assert_eq!(original.message, "operation failed");
+    let error = result.unwrap_err();
+    let original = HarnessError::of(error.as_ref()).unwrap();
+    assert_eq!(original.code(), "OPERATION_FAILED");
+    assert_eq!(original.message(), "operation failed");
     assert_eq!(
         tokio::fs::metadata(sibling(&p, ".lock"))
             .await

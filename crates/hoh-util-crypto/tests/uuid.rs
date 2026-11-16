@@ -8,23 +8,15 @@ fn shape(value: &str) -> bool {
 #[test]
 fn emits_rfc_9562_v4_ids() {
     for _ in 0..64 {
-        assert!(shape(random_uuid().unwrap().as_ref()));
+        assert!(shape(random_uuid().as_ref()));
     }
 }
 #[test]
 fn emits_distinct_ids_across_calls() {
     assert_eq!(
-        (0..64)
-            .map(|_| random_uuid().unwrap())
-            .collect::<HashSet<_>>()
-            .len(),
+        (0..64).map(|_| random_uuid()).collect::<HashSet<_>>().len(),
         64
     );
-}
-#[test]
-fn mints_without_platform_random_uuid() {
-    // Rust has no ambient randomUUID API; the production function uses getrandom directly.
-    assert!(shape(random_uuid().unwrap().as_ref()));
 }
 #[test]
 fn encodes_empty_binary_and_multi_chunk_arrays() {
