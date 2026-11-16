@@ -10,6 +10,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 0	kernel	vendor/logger-console	@deepseek-ai/cordis-plugin-logger-console	hoh-kernel	145	0	todo	
 0	kernel	vendor/schemastery	@deepseek-ai/schemastery	hoh-kernel	962	0	todo	
 0	kernel	vendor/timer	@deepseek-ai/cordis-plugin-timer	hoh-kernel	153	0	todo	
+1	port	apps/cli	@deepseek-ai/dsh	apps/hoh	1070	20216	todo	становится apps/hoh
 1	port	native/system/packages/entry	@deepseek-ai/node-addon-system	hoh-node-addon-system	646	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
 1	port	packages/attachment/attachment	@deepseek-ai/dsh-attachment	hoh-attachment	710	476	todo	
 1	port	packages/attachment/attachment-local	@deepseek-ai/dsh-attachment-local	hoh-attachment-local	1559	1810	todo	
@@ -90,16 +91,13 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/subagent/subagent	@deepseek-ai/dsh-subagent	hoh-subagent	5057	11365	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/subprocess/subprocess	@deepseek-ai/dsh-subprocess	hoh-subprocess	576	334	todo	
 1	port	packages/subprocess/subprocess-local	@deepseek-ai/dsh-subprocess-local	hoh-subprocess-local	5104	8920	todo	
-1	port	packages/subprocess/win32-process	@deepseek-ai/dsh-win32-process	hoh-win32-process	1195	1252	todo	
 1	port	packages/terminal/terminal	@deepseek-ai/dsh-terminal	hoh-terminal	694	634	todo	
 1	port	packages/terminal/terminal-bash	@deepseek-ai/dsh-terminal-bash	hoh-terminal-bash	1369	3391	todo	
 1	infra	packages/test-support/agent-loop-testkit	@deepseek-ai/dsh-agent-loop-testkit	hoh-agent-loop-testkit	211	174	todo	нужное переносится в hoh-conformance и тестовые помощники; зависит от: dsh-tool-executor-ptc=redesign
-1	infra	packages/test-support/client-runtime	@deepseek-ai/dsh-client-test-runtime	hoh-client-test-runtime	3147	2625	todo	нужное переносится в hoh-conformance и тестовые помощники; зависит от: dsh-api-gateway=skip, dsh-api-session-controller=skip, dsh-api-workspace-controller=skip, dsh-client-connection=skip, dsh-client-hmr=skip, dsh-client-modules=skip, dsh-client-store=skip, dsh-client-ui-chat=skip, dsh-client-ui-context-menu=skip, dsh-client-ui-conversation=skip, dsh-client-ui-renderer=skip, dsh-client-ui-session-status=skip, dsh-client-ui-session=skip, dsh-client-ui-settings=skip, dsh-client-ui-slots=skip, dsh-client-web=skip, dsh-typert-protocol=skip
-1	infra	packages/test-support/llm-mock-server	@deepseek-ai/dsh-llm-mock-server	hoh-llm-mock-server	1018	489	todo	нужное переносится в hoh-conformance и тестовые помощники
-1	infra	packages/test-support/llm-replay	@deepseek-ai/dsh-llm-replay	hoh-llm-replay	1212	2528	todo	нужное переносится в hoh-conformance и тестовые помощники
+1	infra	packages/test-support/llm-mock-server	@deepseek-ai/dsh-llm-mock-server	hoh-conformance	1018	489	todo	мок сервера модели: внутрь hoh-conformance
+1	infra	packages/test-support/llm-replay	@deepseek-ai/dsh-llm-replay	hoh-conformance	1212	2528	todo	воспроизведение потока модели: внутрь hoh-conformance
 1	infra	packages/test-support/loader-smoke	@deepseek-ai/dsh-loader-smoke	hoh-loader-smoke	375	742	todo	нужное переносится в hoh-conformance и тестовые помощники
-1	infra	packages/test-support/remote-mock	@deepseek-ai/dsh-remote-mock	hoh-remote-mock	929	910	todo	нужное переносится в hoh-conformance и тестовые помощники; зависит от: dsh-typert-protocol=skip
-1	infra	packages/test-support/session-snapshot	@deepseek-ai/dsh-session-snapshot	hoh-session-snapshot	4819	6449	todo	нужное переносится в hoh-conformance и тестовые помощники
+1	infra	packages/test-support/session-snapshot	@deepseek-ai/dsh-session-snapshot	hoh-conformance	4819	6449	todo	прогон сценариев: внутрь hoh-conformance
 1	infra	packages/test-support/tool-testkit	@deepseek-ai/dsh-tool-testkit	hoh-tool-testkit	92	42	todo	нужное переносится в hoh-conformance и тестовые помощники
 1	port	packages/todo/tool-todo	@deepseek-ai/dsh-tool-todo	hoh-tool-todo	271	683	todo	
 1	port	packages/util/atomic-write	@deepseek-ai/dsh-atomic-write	hoh-atomic-write	293	513	todo	
@@ -171,7 +169,6 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	todo	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
 2	port	packages/web/web-fetch-http	@deepseek-ai/dsh-web-fetch-http	hoh-web-fetch-http	601	853	todo	
 2	port	packages/web/web-search-deepseek	@deepseek-ai/dsh-web-search-deepseek	hoh-web-search-deepseek	696	1322	todo	зависит от: dsh-deepseek-account=later
-3	port	apps/cli	@deepseek-ai/dsh	apps/hoh	1070	20216	todo	становится apps/hoh
 3	port	native/system	@deepseek-ai/node-addon-system-workspace	hoh-node-addon-system-workspace	0	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
 3	port	native/system/packages/darwin-arm64	@deepseek-ai/node-addon-system-darwin-arm64	hoh-node-addon-system-darwin-arm64	0	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
 3	port	native/system/packages/darwin-x64	@deepseek-ai/node-addon-system-darwin-x64	hoh-node-addon-system-darwin-x64	0	0	todo	нативные помощники песочницы, внутрь hoh-sandbox-local
@@ -213,6 +210,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 5	windows	packages/shell/pwsh-sandbox	@deepseek-ai/dsh-pwsh-sandbox	hoh-pwsh-sandbox	320	717	todo	этап Windows
 5	windows	packages/shell/tool-pwsh	@deepseek-ai/dsh-tool-pwsh	hoh-tool-pwsh	945	2458	todo	этап Windows
 5	windows	packages/shell/tool-pwsh-persistent	@deepseek-ai/dsh-tool-pwsh-persistent	hoh-tool-pwsh-persistent	500	1624	todo	этап Windows
+5	windows	packages/subprocess/win32-process	@deepseek-ai/dsh-win32-process	hoh-win32-process	1195	1252	todo	этап Windows
 9	skip	apps/desktop	@deepseek-ai/dsh-desktop	-	11581	34808	-	их окно и публикация
 9	skip	apps/desktop-host	@deepseek-ai/dsh-desktop-host	-	614	612	-	их окно и публикация
 9	skip	apps/desktop-publisher	@deepseek-ai/dsh-desktop-publisher	-	2142	1673	-	их окно и публикация
@@ -396,6 +394,8 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 9	after-v1	packages/subagent/subagent-claude-code	@deepseek-ai/dsh-subagent-claude-code	-	893	2975	-	чужие харнессы внутри HoH
 9	after-v1	packages/subagent/subagent-codex	@deepseek-ai/dsh-subagent-codex	-	1280	3963	-	чужие харнессы внутри HoH
 9	after-v1	packages/subagent/subagent-dsh-sdk	@deepseek-ai/dsh-subagent-dsh-sdk	-	561	1644	-	чужие харнессы внутри HoH
+9	skip	packages/test-support/client-runtime	@deepseek-ai/dsh-client-test-runtime	-	3147	2625	-	тестовая среда их браузерного окна
+9	skip	packages/test-support/remote-mock	@deepseek-ai/dsh-remote-mock	-	929	910	-	мок транспорта их окна
 9	skip	packages/typert/generator	@deepseek-ai/dsh-typert-generator	-	7598	14383	-	их браузерный интерфейс и его транспорт
 9	skip	packages/typert/loader	@deepseek-ai/dsh-typert-loader	-	507	849	-	их браузерный интерфейс и его транспорт
 9	skip	packages/typert/protocol	@deepseek-ai/dsh-typert-protocol	-	1804	1137	-	их браузерный интерфейс и его транспорт
