@@ -11,3 +11,9 @@ workspace = true
 
 [dependencies]
 hoh-package-manifest = { path = "../hoh-package-manifest" }
+indexmap.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+hoh-util-values = { path = "../hoh-util-values" }
+serde_json.workspace = true

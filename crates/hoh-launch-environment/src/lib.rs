@@ -1,7 +1,7 @@
 //! Port of @deepseek-ai/dsh-launch-environment (packages/util/launch-environment).
 //! Immutable launch-time environment values, resolved in canonical trust order.
 
-use std::sync::Arc;
+use std::{ffi::OsString, sync::Arc};
 
 use hoh_kernel::Context;
 use indexmap::IndexMap;
@@ -133,12 +133,21 @@ pub fn launch_environment_of(ctx: &Context) -> LaunchEnvironmentSnapshot {
     if let Some(environment) = ctx.get::<LaunchEnvironment>() {
         return (*environment).clone();
     }
-    create_launch_environment_snapshot(&[LaunchEnvironmentLayerInput {
+    create_launch_environment_snapshot(&[create_inherited_environment_layer(std::env::vars_os())])
+}
+
+/// Build the inherited layer from native names and values, without reading or
+/// changing the process environment. Lossy-name collisions keep the last value.
+pub fn create_inherited_environment_layer(
+    inherited: impl IntoIterator<Item = (OsString, OsString)>,
+) -> LaunchEnvironmentLayerInput {
+    LaunchEnvironmentLayerInput {
         source: LaunchEnvironmentSource::Process,
         path: None,
         // Node exposes environment names and values as strings. Decode native
         // non-Unicode values lossily instead of panicking as std::env::vars does.
-        values: std::env::vars_os()
+        values: inherited
+            .into_iter()
             .map(|(name, value)| {
                 (
                     name.to_string_lossy().into_owned(),
@@ -146,7 +155,7 @@ pub fn launch_environment_of(ctx: &Context) -> LaunchEnvironmentSnapshot {
                 )
             })
             .collect(),
-    }])
+    }
 }
 
 /// Only non-empty inherited SSH markers establish an SSH session.

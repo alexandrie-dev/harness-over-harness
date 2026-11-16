@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::{ffi::OsString, sync::Arc};
 
 use LaunchEnvironmentSource::{Process, ProjectEnv, UserEnv};
 use hoh_kernel::Kernel;
 use hoh_launch_environment::{
     DSH_LAUNCH_ENVIRONMENT_KEY, LaunchEnvironment, LaunchEnvironmentEntry,
     LaunchEnvironmentLayerInput, LaunchEnvironmentSnapshot, LaunchEnvironmentSource,
-    create_launch_environment_snapshot, launch_environment_of, launched_through_ssh,
+    create_inherited_environment_layer, create_launch_environment_snapshot, launch_environment_of,
+    launched_through_ssh,
 };
 
 fn layer(
@@ -184,19 +185,94 @@ async fn returns_the_launcher_snapshot_when_the_product_cli_provided_one() {
     kernel.shutdown().await;
 }
 
-#[tokio::test(start_paused = true)]
-async fn falls_back_to_the_inherited_environment_as_the_only_layer() {
-    let kernel = Kernel::start();
-    // Avoid process-global environment mutation (unsafe in edition 2024).
-    // Compare every inherited pair and provenance, not a fixture set_env.
-    let inherited: Vec<_> = std::env::vars().collect();
-    assert!(!inherited.is_empty());
-    let snapshot = launch_environment_of(&kernel.root());
-    for (name, value) in inherited {
-        assert_eq!(snapshot.get(&name), Some(entry(&value, Process, None)));
-        assert_eq!(snapshot.get_from(&name, &[ProjectEnv, UserEnv]), None);
+#[test]
+fn falls_back_to_the_inherited_environment_as_the_only_layer() {
+    let inherited = create_inherited_environment_layer([(
+        OsString::from("DSH_ENV_SPEC_FALLBACK"),
+        OsString::from("ambient"),
+    )]);
+    assert_eq!(inherited.source, Process);
+    assert_eq!(inherited.path, None);
+    let snapshot = create_launch_environment_snapshot(&[inherited]);
+    assert_eq!(
+        snapshot.get("DSH_ENV_SPEC_FALLBACK"),
+        Some(entry("ambient", Process, None))
+    );
+    assert_eq!(
+        snapshot.get_from("DSH_ENV_SPEC_FALLBACK", &[ProjectEnv, UserEnv]),
+        None
+    );
+}
+
+#[test]
+fn accepts_an_empty_inherited_environment() {
+    let inherited = create_inherited_environment_layer([]);
+    assert_eq!(inherited.source, Process);
+    assert_eq!(inherited.path, None);
+    assert!(inherited.values.is_empty());
+    let snapshot = create_launch_environment_snapshot(&[inherited]);
+    assert_eq!(snapshot.get("DSH_ENV_SPEC_FALLBACK"), None);
+    assert!(!launched_through_ssh(&snapshot));
+}
+
+#[cfg(unix)]
+#[test]
+fn decodes_non_utf8_inherited_names_and_values_lossily_without_panicking() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let name = OsString::from_vec(b"DSH_NAME_\xff".to_vec());
+    let value = OsString::from_vec(b"native-value-\xff".to_vec());
+    assert!(name.to_str().is_none());
+    assert!(value.to_str().is_none());
+    let expected_name = name.to_string_lossy().into_owned();
+    let expected_value = value.to_string_lossy().into_owned();
+    let inherited = create_inherited_environment_layer([(name, value)]);
+    assert_eq!(inherited.values.get(&expected_name), Some(&expected_value));
+    let snapshot = create_launch_environment_snapshot(&[inherited]);
+    assert_eq!(
+        snapshot.get(&expected_name),
+        Some(entry(&expected_value, Process, None))
+    );
+    assert_eq!(
+        snapshot.get_from(&expected_name, &[ProjectEnv, UserEnv]),
+        None
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn last_inherited_pair_wins_when_invalid_names_decode_to_the_same_string() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let first = OsString::from_vec(b"DSH_COLLISION_\xff".to_vec());
+    let second = OsString::from_vec(b"DSH_COLLISION_\xfe".to_vec());
+    assert_ne!(first, second);
+    let decoded_name = first.to_string_lossy().into_owned();
+    assert_eq!(decoded_name, second.to_string_lossy());
+    for (pairs, winner) in [
+        (
+            [
+                (first.clone(), OsString::from("first")),
+                (second.clone(), OsString::from("second")),
+            ],
+            "second",
+        ),
+        (
+            [
+                (second, OsString::from("second")),
+                (first, OsString::from("first")),
+            ],
+            "first",
+        ),
+    ] {
+        let inherited = create_inherited_environment_layer(pairs);
+        assert_eq!(inherited.values.len(), 1);
+        let snapshot = create_launch_environment_snapshot(&[inherited]);
+        assert_eq!(
+            snapshot.get(&decoded_name),
+            Some(entry(winner, Process, None))
+        );
     }
-    kernel.shutdown().await;
 }
 
 #[test]

@@ -1,10 +1,9 @@
 //! Shared backend contract, imported by backend crates with #[path = ...].
-//! No backend is supplied by the hub itself. Rust JSON values cannot contain
-//! the throwing `toJSON` objects in the two JavaScript serialization cases.
-use hoh_error::HarnessError;
-use hoh_storage::{KvUnitDescriptor, StorageBackend};
+//! Instantiate with run_kv_backend_contract!(contract_module, harness_constructor).
+//! Undeclared-table rejection substitutes for JavaScript's throwing toJSON.
+use hoh_storage::{KvUnitDescriptor, StorageBackend, StorageError};
 use serde_json::{Value, json};
-use std::{future::Future, sync::Arc};
+use std::sync::Arc;
 
 pub struct KvBackendContractHarness {
     pub backend: Arc<dyn StorageBackend>,
@@ -12,7 +11,7 @@ pub struct KvBackendContractHarness {
         Box<dyn Fn() -> hoh_storage::BackendFuture<'static, Arc<dyn StorageBackend>> + Send + Sync>,
 }
 
-fn descriptor() -> KvUnitDescriptor {
+pub(crate) fn descriptor() -> KvUnitDescriptor {
     KvUnitDescriptor {
         name: "contract_unit".into(),
         version: 3,
@@ -27,8 +26,10 @@ fn tables(value: impl serde::Serialize) -> Value {
     serde_json::to_value(value).unwrap()
 }
 
-fn storage_error<'a>(error: &'a (dyn std::error::Error + 'static)) -> &'a HarnessError {
-    HarnessError::of(error).expect("backend failure must be the shared HarnessError")
+pub(crate) fn storage_error<'a>(error: &'a (dyn std::error::Error + 'static)) -> &'a StorageError {
+    error
+        .downcast_ref::<StorageError>()
+        .expect("backend failure must be StorageError")
 }
 
 pub async fn opens_a_missing_unit_as_empty_and_serves_load_all_immediately(
@@ -247,8 +248,64 @@ pub async fn keeps_the_older_stamp_for_a_no_op(h: KvBackendContractHarness, oper
     unchanged.close().await.unwrap();
 }
 
-/// The mutation/stamp portion of the source case; throwing toJSON preamble is
-/// excluded because Value is already serialized data (see PORT_NOTES).
+/// Substitute rejection for a throwing toJSON: every backend must reject a
+/// table absent from the descriptor, without changing the snapshot or stamp.
+pub async fn restores_the_open_snapshot_after_serialization_failure_and_retries_on_the_same_unit(
+    h: KvBackendContractHarness,
+) {
+    h.backend
+        .kv()
+        .unwrap()
+        .open(descriptor())
+        .await
+        .unwrap()
+        .put_record("alpha", "saved", json!({"v":1}))
+        .await
+        .unwrap();
+    h.backend.close().await.unwrap();
+
+    let mut current = descriptor();
+    current.version = 4;
+    current.compatible_versions = Some(vec![3]);
+    let writer = (h.reopen)().await.unwrap();
+    let unit = writer.kv().unwrap().open(current.clone()).await.unwrap();
+    let snapshot_before_failure = unit.load_all().await.unwrap();
+    assert!(
+        unit.put_record("undeclared_table", "broken", json!({"v":0}))
+            .await
+            .is_err(),
+        "a backend must reject writes to an undeclared table"
+    );
+    let snapshot_after_failure = unit.load_all().await.unwrap();
+    assert_eq!(snapshot_after_failure, snapshot_before_failure);
+    assert_eq!(
+        tables(&snapshot_after_failure.tables["alpha"]),
+        json!({"saved":{"v":1}})
+    );
+    unit.put_record("alpha", "retry", json!({"v":2}))
+        .await
+        .unwrap();
+    writer.close().await.unwrap();
+
+    let restarted = (h.reopen)().await.unwrap();
+    assert_eq!(
+        tables(
+            &restarted
+                .kv()
+                .unwrap()
+                .open(current)
+                .await
+                .unwrap()
+                .load_all()
+                .await
+                .unwrap()
+                .tables["alpha"]
+        ),
+        json!({"saved":{"v":1},"retry":{"v":2}})
+    );
+    restarted.close().await.unwrap();
+}
+
 pub async fn commits_the_current_stamp_with_its_data(h: KvBackendContractHarness, operation: &str) {
     let unit = h.backend.kv().unwrap().open(descriptor()).await.unwrap();
     unit.put_record("alpha", "k", json!({"v":1})).await.unwrap();
@@ -268,10 +325,44 @@ pub async fn commits_the_current_stamp_with_its_data(h: KvBackendContractHarness
         .await
         .unwrap();
     h.backend.close().await.unwrap();
-    let retry = (h.reopen)().await.unwrap();
     let mut current = descriptor();
     current.version = 4;
     current.compatible_versions = Some(vec![3]);
+    let writer = (h.reopen)().await.unwrap();
+    let unit = writer.kv().unwrap().open(current.clone()).await.unwrap();
+    let snapshot_before_failure = unit.load_all().await.unwrap();
+    assert!(
+        unit.put_record("undeclared_table", "k", json!({"v":0}))
+            .await
+            .is_err(),
+        "a backend must reject writes to an undeclared table"
+    );
+    let snapshot_after_failure = unit.load_all().await.unwrap();
+    assert_eq!(snapshot_after_failure, snapshot_before_failure);
+    assert_eq!(
+        tables(&snapshot_after_failure.tables["alpha"]),
+        json!({"k":{"v":1}})
+    );
+    writer.close().await.unwrap();
+    let after_failure = (h.reopen)().await.unwrap();
+    assert_eq!(
+        tables(
+            &after_failure
+                .kv()
+                .unwrap()
+                .open(descriptor())
+                .await
+                .unwrap()
+                .load_all()
+                .await
+                .unwrap()
+                .tables["alpha"]
+        ),
+        json!({"k":{"v":1}})
+    );
+    after_failure.close().await.unwrap();
+
+    let retry = (h.reopen)().await.unwrap();
     let writable = retry.kv().unwrap().open(current.clone()).await.unwrap();
     writable.delete_record("alpha", "missing").await.unwrap();
     writable.delete_records("alpha", &[]).await.unwrap();
@@ -432,89 +523,84 @@ pub async fn rejects_operations_after_unit_close_and_close_is_idempotent(
     h.backend.close().await.unwrap();
 }
 
-pub async fn run_kv_backend_contract<F, Fut>(create: F)
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = KvBackendContractHarness>,
-{
-    opens_a_missing_unit_as_empty_and_serves_load_all_immediately(create().await).await;
-    round_trips_records_and_global_durably_across_reopen(create().await).await;
-    put_record_overwrites_and_delete_record_is_idempotent(create().await).await;
-    delete_records_removes_the_whole_batch_durably_and_is_idempotent(create().await).await;
-    for version in [2, 4] {
-        rejects_version_on_reopen_without_touching_the_data(create().await, version).await;
-    }
-    reads_an_accepted_older_version_without_changing_its_stamp_or_records(create().await).await;
-    for operation in ["deleteRecord", "deleteRecords", "emptyBatch"] {
-        keeps_the_older_stamp_for_a_no_op(create().await, operation).await;
-    }
-    for operation in ["putRecord", "deleteRecord", "deleteRecords", "setGlobal"] {
-        commits_the_current_stamp_with_its_data(create().await, operation).await;
-    }
-    for write_v2 in [false, true] {
-        reads_historical_values_through(create().await, write_v2).await;
-    }
-    rejects_operations_after_unit_close_and_close_is_idempotent(create().await).await;
+/// Register independent tests, including every parameterized source variant.
+#[allow(unused_macros)] // This shared file also compiles as its own test target.
+macro_rules! run_kv_backend_contract {
+    ($contract:ident, $create:path) => {
+        #[tokio::test]
+        async fn opens_a_missing_unit_as_empty_and_serves_load_all_immediately() {
+            $contract::opens_a_missing_unit_as_empty_and_serves_load_all_immediately($create().await).await;
+        }
+        #[tokio::test]
+        async fn round_trips_records_and_global_durably_across_reopen() {
+            $contract::round_trips_records_and_global_durably_across_reopen($create().await).await;
+        }
+        #[tokio::test]
+        async fn put_record_overwrites_and_delete_record_is_idempotent() {
+            $contract::put_record_overwrites_and_delete_record_is_idempotent($create().await).await;
+        }
+        #[tokio::test]
+        async fn delete_records_removes_the_whole_batch_durably_and_is_idempotent() {
+            $contract::delete_records_removes_the_whole_batch_durably_and_is_idempotent($create().await).await;
+        }
+        #[tokio::test]
+        async fn rejects_version_2_on_reopen_without_touching_the_data() {
+            $contract::rejects_version_on_reopen_without_touching_the_data($create().await, 2).await;
+        }
+        #[tokio::test]
+        async fn rejects_version_4_on_reopen_without_touching_the_data() {
+            $contract::rejects_version_on_reopen_without_touching_the_data($create().await, 4).await;
+        }
+        #[tokio::test]
+        async fn reads_an_accepted_older_version_without_changing_its_stamp_or_records() {
+            $contract::reads_an_accepted_older_version_without_changing_its_stamp_or_records($create().await).await;
+        }
+        #[tokio::test]
+        async fn keeps_the_older_stamp_for_a_no_op_delete_record() {
+            $contract::keeps_the_older_stamp_for_a_no_op($create().await, "deleteRecord").await;
+        }
+        #[tokio::test]
+        async fn keeps_the_older_stamp_for_a_no_op_delete_records() {
+            $contract::keeps_the_older_stamp_for_a_no_op($create().await, "deleteRecords").await;
+        }
+        #[tokio::test]
+        async fn keeps_the_older_stamp_for_a_no_op_empty_batch() {
+            $contract::keeps_the_older_stamp_for_a_no_op($create().await, "emptyBatch").await;
+        }
+        #[tokio::test]
+        async fn restores_the_open_snapshot_after_serialization_failure_and_retries_on_the_same_unit() {
+            $contract::restores_the_open_snapshot_after_serialization_failure_and_retries_on_the_same_unit($create().await).await;
+        }
+        #[tokio::test]
+        async fn put_record_commits_the_current_stamp_with_its_data() {
+            $contract::commits_the_current_stamp_with_its_data($create().await, "putRecord").await;
+        }
+        #[tokio::test]
+        async fn delete_record_commits_the_current_stamp_with_its_data() {
+            $contract::commits_the_current_stamp_with_its_data($create().await, "deleteRecord").await;
+        }
+        #[tokio::test]
+        async fn delete_records_commits_the_current_stamp_with_its_data() {
+            $contract::commits_the_current_stamp_with_its_data($create().await, "deleteRecords").await;
+        }
+        #[tokio::test]
+        async fn set_global_commits_the_current_stamp_with_its_data() {
+            $contract::commits_the_current_stamp_with_its_data($create().await, "setGlobal").await;
+        }
+        #[tokio::test]
+        async fn reads_historical_values_through_v1_to_v3() {
+            $contract::reads_historical_values_through($create().await, false).await;
+        }
+        #[tokio::test]
+        async fn reads_historical_values_through_v1_to_v2_to_v3() {
+            $contract::reads_historical_values_through($create().await, true).await;
+        }
+        #[tokio::test]
+        async fn rejects_operations_after_unit_close_and_close_is_idempotent() {
+            $contract::rejects_operations_after_unit_close_and_close_is_idempotent($create().await).await;
+        }
+    };
 }
 
-#[test]
-fn contract_descriptor_preserves_source_fields_and_optional_defaults() {
-    let descriptor = descriptor();
-    let value = tables(&descriptor);
-    assert_eq!(
-        value,
-        json!({
-            "name": "contract_unit", "version": 3,
-            "tables": ["alpha", "beta"], "hasGlobal": true
-        })
-    );
-    assert_eq!(
-        value
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["name", "version", "tables", "hasGlobal"]
-    );
-    let restored: KvUnitDescriptor = serde_json::from_value(value).unwrap();
-    assert_eq!(restored, descriptor);
-    assert!(restored.layout.is_none());
-    assert!(restored.compatible_versions.is_none());
-}
-
-#[tokio::test]
-async fn contract_error_checks_recognize_backend_future_failures() {
-    use hoh_error::{BoxError, SharedError};
-    use hoh_storage::{BackendFuture, StorageError, StorageErrorCode};
-
-    // Exercise the same failure extraction used by the version/closed scenarios
-    // through their actual async result type, without inventing a KV backend.
-    for code in [StorageErrorCode::VersionMismatch, StorageErrorCode::Closed] {
-        let result: BackendFuture<'_, ()> = Box::pin(async move {
-            Err(StorageError::new(code, "backend diagnostic")
-                .with_cause(std::io::Error::other("medium failure"))
-                .into())
-        });
-        let boxed = result.await.unwrap_err();
-        let error = storage_error(boxed.as_ref());
-        assert!(error.is_named(StorageError::NAME));
-        assert_eq!(error.name(), "StorageError");
-        assert_eq!(error.code(), code.as_str());
-        assert_eq!(error.message(), "backend diagnostic");
-        assert_eq!(
-            std::error::Error::source(error).unwrap().to_string(),
-            "medium failure"
-        );
-
-        let shared = SharedError::new(boxed);
-        let clone = shared.clone();
-        let forwarded: BoxError = Box::new(clone);
-        assert_eq!(storage_error(forwarded.as_ref()).code(), code.as_str());
-        assert!(storage_error(forwarded.as_ref()).is_named(StorageError::NAME));
-        assert!(std::ptr::eq(
-            storage_error(&shared),
-            storage_error(forwarded.as_ref())
-        ));
-    }
-}
+#[allow(unused_imports)] // Only consumers instantiate the shared macro.
+pub(crate) use run_kv_backend_contract;

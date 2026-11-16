@@ -358,6 +358,47 @@ async fn rejects_invalid_field_names_and_omits_a_failing_field_warning_once() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn warns_once_with_the_error_display_and_its_complete_cause_chain_in_one_message() {
+    let (kernel, ctx) = harness().await;
+    let registry = ctx.get::<DeepSeekLlmApiExtensions>().unwrap();
+    let failure = SharedError::new(
+        hoh_error::HarnessError::new("prepare failed", "PREPARE").with_cause(
+            hoh_error::HarnessError::new("could not read input", "READ")
+                .with_cause("permission denied"),
+        ),
+    );
+    registry
+        .register::<Value, _>(&ctx, "test_alpha", move |_| {
+            let failure = failure.clone();
+            async move { Err::<Option<PreparedDeepSeekLlmApiExtension>, BoxError>(failure.into()) }
+        })
+        .unwrap();
+    for _ in 0..2 {
+        assert!(
+            registry
+                .prepare(request())
+                .await
+                .unwrap()
+                .fields()
+                .is_empty()
+        );
+    }
+    let warnings: Vec<_> = ctx
+        .logger()
+        .buffer()
+        .into_iter()
+        .filter(|record| record.level == Level::Warn)
+        .collect();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].name.as_ref(), "deepseekLlmApiExtensions");
+    assert_eq!(
+        warnings[0].message,
+        "deepseek-llm-api-extensions: omitting field \"test_alpha\" from this request because its preparation failed: prepare failed: could not read input: permission denied"
+    );
+    kernel.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn stops_waiting_for_a_provider_that_ignores_request_cancellation() {
     let (kernel, ctx) = harness().await;
     let registry = ctx.get::<DeepSeekLlmApiExtensions>().unwrap();

@@ -128,7 +128,7 @@ fn preserves_diagnostic_name_order_and_error_cause() {
 }
 
 #[test]
-fn routes_hub_failures_as_shared_harness_errors() {
+fn routes_hub_failures_as_storage_errors_distinct_from_harness_errors() {
     let storage = StorageService::new();
     let _unregister = storage.backend.register("json", fake_backend()).unwrap();
     let _unmount = storage.mount("domain", Arc::new(())).unwrap();
@@ -153,12 +153,9 @@ fn routes_hub_failures_as_shared_harness_errors() {
     ];
     for (error, code) in errors {
         let boxed: BoxError = Box::new(error);
-        let shared = HarnessError::of(boxed.as_ref()).unwrap();
-        assert!(shared.is_named(StorageError::NAME));
-        assert_eq!(shared.code(), code);
-        assert!(std::ptr::eq(
-            shared,
-            boxed.downcast_ref::<HarnessError>().unwrap()
-        ));
+        assert!(HarnessError::of(boxed.as_ref()).is_none());
+        let storage = boxed.downcast_ref::<StorageError>().unwrap();
+        assert_eq!(storage.name(), StorageError::NAME);
+        assert_eq!(storage.code(), code);
     }
 }

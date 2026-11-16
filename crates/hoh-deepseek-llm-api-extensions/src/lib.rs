@@ -31,6 +31,20 @@ fn quote_field(field: &str) -> String {
     hoh_util_values::js_json_stringify(&DeepSeekLlmApiJson::String(field.into()))
 }
 
+struct ErrorChain<'a>(&'a (dyn std::error::Error + 'static));
+
+impl std::fmt::Display for ErrorChain<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)?;
+        let mut cause = self.0.source();
+        while let Some(error) = cause {
+            write!(f, ": {error}")?;
+            cause = error.source();
+        }
+        Ok(())
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
@@ -177,8 +191,8 @@ impl DeepSeekLlmApiExtensionRegistry {
                     Err(error) => {
                         let warn = !request.signal.aborted() && lock(&state).warned_fields.insert(field.clone());
                         if warn {
-                            // Native kernel logging cannot retain the source format/error pair (PORT_NOTES §2).
-                            logger.warn(format_args!("deepseek-llm-api-extensions: omitting field {} from this request because its preparation failed: {error}", quote_field(&field)));
+                            // Diagnostic formatting at the call site follows docs/kernel.md §7.
+                            logger.warn(format_args!("deepseek-llm-api-extensions: omitting field {} from this request because its preparation failed: {}", quote_field(&field), ErrorChain(error.as_ref())));
                         }
                         None
                     }
