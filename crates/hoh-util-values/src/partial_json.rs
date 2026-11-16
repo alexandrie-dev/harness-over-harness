@@ -301,7 +301,7 @@ fn normalize_numbers(value: &mut Value) {
 }
 
 /// A canonical array index: the keys JavaScript lists first, ascending.
-fn array_index(key: &str) -> Option<u32> {
+pub(crate) fn array_index(key: &str) -> Option<u32> {
     let canonical =
         key == "0" || (!key.starts_with('0') && key.bytes().all(|byte| byte.is_ascii_digit()));
     if !canonical || key.is_empty() {
