@@ -28,7 +28,7 @@ A4. **Source tests over the specification** for an ordinary `emit` that lets a l
     while loading (6): accepted; the lead amends R40, R42 and R26 in `docs/kernel.md`. Keep the kernel's own
     events isolated as they are.
 A5. **Added items**: `Listen::on_update`, public `ConsoleConfig`, `Volatile: Default` and `Fiber::retain_raw_config`
-    are accepted. `View` must not be constructible outside the kernel (finding D6).
+    are accepted. `View` must not be constructible outside the kernel (finding D2).
 A6. **Aggregate errors** are flattened at the typed boundary, as you did. Accepted.
 A7. **Console time** is printed in the local time zone, as the source does (`vendor/logger-console/src/shared.ts:79`
     formats with `Time.template`, which reads the local clock): use `jiff`. The formatting function takes the
@@ -184,7 +184,7 @@ D1. **bug — generated code is not hygienic.** The expansion writes `Result<(),
     has one of those names: give generated identifiers names a caller cannot collide with, and add a pass
     case for a plugin function called `config`.
 
-D6. **`View`**: `View::default().service::<K>()` and `Inject::resolve(&View::default())` panic through the
+D2. **`View`**: `View::default().service::<K>()` and `Inject::resolve(&View::default())` panic through the
     `expect` at `hoh-kernel/src/lib.rs:105-118`, and `View::default` is public. Make an empty `View`
     impossible to construct outside the kernel, so that the `expect` rests on a real invariant.
 
