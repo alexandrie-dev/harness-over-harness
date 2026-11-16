@@ -33,7 +33,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-Cordis — https://github.com/cordiverse/cordis
+OpenAI Codex — https://github.com/openai/codex (rust-v0.158.0, codex-rs/apply-patch)
+
+crates/hoh-fs-patch is a Rust translation of the DeepSeek Harness package
+packages/fs/fs-patch, which itself adapts patch parsing and text updates from
+OpenAI Codex. Those portions are Copyright 2025 OpenAI and remain under the
+Apache License, Version 2.0. The full license text and the original statement
+of modifications are kept in crates/hoh-fs-patch/LICENSE. Changes made here:
+translation from TypeScript to Rust.
+
+------------------------------------------------------------------------------
+Cordis and its companion packages (cosmokit, schemastery, loader, include,
+group, timer, logger-console) — https://github.com/cordiverse/cordis
 
 MIT License
 
