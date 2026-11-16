@@ -1,0 +1,13 @@
+[package]
+name = "hoh-official-bundles"
+description = "Port of @deepseek-ai/dsh-official-bundles (packages/util/official-bundles)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-package-manifest = { path = "../hoh-package-manifest" }

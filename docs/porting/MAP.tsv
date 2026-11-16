@@ -113,7 +113,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/launch-environment	@deepseek-ai/dsh-launch-environment	hoh-launch-environment	137	87	review	
 9	drop	packages/util/lazy-require	@deepseek-ai/dsh-lazy-require	-	24	29	-	ленивая загрузка модуля Node (createRequire с кэшем): в Rust зависимости связываются при сборке, потребители обращаются к crate напрямую
 1	port	packages/util/native-command	@deepseek-ai/dsh-native-command	hoh-native-command	1052	978	review	
-1	port	packages/util/official-bundles	@deepseek-ai/dsh-official-bundles	hoh-official-bundles	213	32	todo	
+1	port	packages/util/official-bundles	@deepseek-ai/dsh-official-bundles	hoh-official-bundles	213	32	writing:w3	
 1	port	packages/util/output-retention	@deepseek-ai/dsh-output-retention	hoh-output-retention	460	409	done	
 1	port	packages/util/package-manifest	@deepseek-ai/dsh-package-manifest	hoh-package-manifest	167	0	done	
 1	port	packages/util/time	@deepseek-ai/dsh-util-time	hoh-util-time	1708	1250	done	
