@@ -1,41 +1,15 @@
 #![allow(dead_code)]
+pub use hoh_error::SharedError;
 use hoh_native_command::{PathOpenerInternals, host_environment::Environment, runner::*};
+pub use hoh_timeout::{AbortController, AbortSignal};
 use std::sync::{Arc, Mutex};
-use tokio::sync::watch;
-
-pub struct Signal {
-    state: watch::Sender<Option<String>>,
+pub fn signal() -> AbortSignal {
+    AbortController::new().signal()
 }
-impl Default for Signal {
-    fn default() -> Self {
-        Self {
-            state: watch::channel(None).0,
-        }
-    }
-}
-impl Signal {
-    pub fn abort(&self, reason: &str) {
-        self.state.send_replace(Some(reason.into()));
-    }
-}
-impl CommandSignal for Signal {
-    fn throw_if_aborted(&self) -> Result<(), NativeCommandError> {
-        match self.state.borrow().clone() {
-            Some(reason) => Err(NativeCommandError::message(reason)),
-            None => Ok(()),
-        }
-    }
-    fn cancelled(&self) -> CommandFuture<'_, NativeCommandError> {
-        let mut rx = self.state.subscribe();
-        Box::pin(async move {
-            loop {
-                if let Some(reason) = rx.borrow_and_update().clone() {
-                    return NativeCommandError::message(reason);
-                }
-                rx.changed().await.unwrap();
-            }
-        })
-    }
+pub fn detail(error: &SharedError) -> &NativeCommandError {
+    error
+        .downcast_ref::<NativeCommandError>()
+        .expect("native command error")
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Call {
@@ -43,33 +17,36 @@ pub struct Call {
     pub args: Vec<String>,
     pub window: Window,
 }
-type Handler = dyn Fn(&str, &[String], &dyn CommandSignal, Window) -> Result<CommandOutput, NativeCommandError>
+type Handler = dyn Fn(&str, &[String], &AbortSignal, Window) -> Result<CommandOutput, SharedError>
     + Send
     + Sync;
 pub struct Mock {
     pub calls: Mutex<Vec<Call>>,
+    pub signals: Mutex<Vec<usize>>,
     pub handler: Arc<Handler>,
 }
 impl Mock {
     pub fn new(
-        handler: impl Fn(
-            &str,
-            &[String],
-            &dyn CommandSignal,
-            Window,
-        ) -> Result<CommandOutput, NativeCommandError>
+        handler: impl Fn(&str, &[String], &AbortSignal, Window) -> Result<CommandOutput, SharedError>
         + Send
         + Sync
         + 'static,
     ) -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
+            signals: Mutex::new(Vec::new()),
             handler: Arc::new(handler),
         }
     }
     pub fn output(stdout: &str) -> Self {
         let stdout = stdout.to_owned();
         Self::new(move |_, _, _, _| Ok(output(&stdout)))
+    }
+    pub fn assert_signals(&self, original: &AbortSignal) {
+        let expected = std::ptr::from_ref(original) as usize;
+        let signals = self.signals.lock().unwrap();
+        assert!(!signals.is_empty());
+        assert!(signals.iter().all(|actual| *actual == expected));
     }
     pub fn calls(&self) -> Vec<Call> {
         self.calls.lock().unwrap().clone()
@@ -80,10 +57,14 @@ impl NativeCommandRunner for Mock {
         &'a self,
         command: &'a str,
         args: &'a [String],
-        signal: &'a dyn CommandSignal,
+        signal: &'a AbortSignal,
         window: Window,
-    ) -> CommandFuture<'a, Result<CommandOutput, NativeCommandError>> {
+    ) -> CommandFuture<'a, Result<CommandOutput, SharedError>> {
         Box::pin(async move {
+            self.signals
+                .lock()
+                .unwrap()
+                .push(std::ptr::from_ref(signal) as usize);
             self.calls.lock().unwrap().push(call(
                 command,
                 args.iter()
@@ -123,9 +104,10 @@ pub fn call(command: &str, args: &[&str], window: Window) -> Call {
         window,
     }
 }
-pub fn exit(code: i32) -> NativeCommandError {
+pub fn exit(code: i32) -> SharedError {
     NativeCommandError {
         code: Some(CommandCode::Exit(code)),
         ..NativeCommandError::message("launch failed")
     }
+    .into()
 }

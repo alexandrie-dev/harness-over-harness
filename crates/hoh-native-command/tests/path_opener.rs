@@ -5,25 +5,24 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn opens_with_macos_open_1() {
+    let request = signal();
     let run = Mock::output("");
-    open_native_path(
-        "/Users/test/file.txt",
-        &Signal::default(),
-        &facts("darwin", &run),
-    )
-    .await
-    .unwrap();
+    open_native_path("/Users/test/file.txt", &request, &facts("darwin", &run))
+        .await
+        .unwrap();
     assert_eq!(
         run.calls(),
         [call("open", &["/Users/test/file.txt"], Window::Hidden)]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn bypasses_macos_file_associations_for_text_documents() {
+    let request = signal();
     let run = Mock::output("");
     open_native_text_file(
         "/Users/test/settings.yaml",
-        &Signal::default(),
+        &request,
         &facts("darwin", &run),
     )
     .await
@@ -36,24 +35,24 @@ async fn bypasses_macos_file_associations_for_text_documents() {
             Window::Hidden
         )]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn uses_the_linux_desktop_association_for_text_documents() {
+    let request = signal();
     let run = Mock::output("");
-    open_native_text_file(
-        "/tmp/settings.yaml",
-        &Signal::default(),
-        &facts("linux", &run),
-    )
-    .await
-    .unwrap();
+    open_native_text_file("/tmp/settings.yaml", &request, &facts("linux", &run))
+        .await
+        .unwrap();
     assert_eq!(
         run.calls(),
         [call("xdg-open", &["/tmp/settings.yaml"], Window::Hidden)]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn hands_wsl_text_documents_to_the_windows_desktop_from_each_marker() {
+    let request = signal();
     for (markers, release) in [
         (env(&[("WSL_DISTRO_NAME", "Ubuntu")]), "generic"),
         (env(&[("WSL_INTEROP", "/run/WSL/123_interop")]), "generic"),
@@ -63,7 +62,7 @@ async fn hands_wsl_text_documents_to_the_windows_desktop_from_each_marker() {
         let mut f = facts("linux", &run);
         f.env = Some(markers);
         f.os_release = Some(release.into());
-        open_native_text_file("/home/test user/settings.yaml", &Signal::default(), &f)
+        open_native_text_file("/home/test user/settings.yaml", &request, &f)
             .await
             .unwrap();
         assert_eq!(
@@ -81,43 +80,51 @@ async fn hands_wsl_text_documents_to_the_windows_desktop_from_each_marker() {
                 )
             ]
         );
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn rejects_an_empty_wsl_path_translation_before_invoking_windows() {
+    let request = signal();
     let run = Mock::output("\r\n");
     let mut f = facts("linux", &run);
     f.os_release = Some("microsoft".into());
     assert_eq!(
-        open_native_text_file("/file", &Signal::default(), &f)
+        open_native_text_file("/file", &request, &f)
             .await
             .unwrap_err()
-            .message,
+            .to_string(),
         "wslpath returned no Windows path"
     );
     assert_eq!(run.calls().len(), 1);
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn does_not_invoke_windows_when_the_request_aborts_during_wsl_path_translation() {
-    let abort = Arc::new(Signal::default());
-    let held = abort.clone();
+    let controller = Arc::new(AbortController::new());
+    let held = controller.clone();
+    let reason = SharedError::new(std::io::Error::other("closed"));
+    let thrown = reason.clone();
     let run = Mock::new(move |_, _, _, _| {
-        held.abort("closed");
+        held.abort_with(thrown.clone());
         Ok(output("C:\\file\n"))
     });
     let mut f = facts("linux", &run);
     f.os_release = Some("microsoft".into());
+    let request = controller.signal();
+    let error = open_native_text_file("/file", &request, &f)
+        .await
+        .unwrap_err();
+    assert!(error.ptr_eq(&reason));
     assert_eq!(
-        open_native_text_file("/file", &*abort, &f)
-            .await
-            .unwrap_err()
-            .message,
-        "closed"
+        run.calls(),
+        [call("wslpath", &["-w", "/file"], Window::Hidden)]
     );
-    assert_eq!(run.calls().len(), 1);
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn opens_each_path_through_the_one_encoded_explorer_target() {
+    let request = signal();
     for (path, target) in [
         (
             "C:\\work\\o'reilly, & 100%.txt",
@@ -148,19 +155,21 @@ async fn opens_each_path_through_the_one_encoded_explorer_target() {
         ),
     ] {
         let run = Mock::output("");
-        open_native_path(path, &Signal::default(), &facts("win32", &run))
+        open_native_path(path, &request, &facts("win32", &run))
             .await
             .unwrap();
         assert_eq!(
             run.calls(),
             [call("explorer.exe", &[target], Window::Visible)]
         );
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn encodes_a_separator_terminated_drive_root_as_the_hosting_platform_resolves_it() {
+    let request = signal();
     let run = Mock::output("");
-    open_native_path("C:\\", &Signal::default(), &facts("win32", &run))
+    open_native_path("C:\\", &request, &facts("win32", &run))
         .await
         .unwrap();
     assert_eq!(
@@ -175,17 +184,15 @@ async fn encodes_a_separator_terminated_drive_root_as_the_hosting_platform_resol
             Window::Visible
         )]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn encodes_a_directory_target_the_same_way_it_encodes_a_file_target() {
+    let request = signal();
     let run = Mock::output("");
-    open_native_associated_path(
-        "C:\\work\\dir,comma",
-        &Signal::default(),
-        &facts("win32", &run),
-    )
-    .await
-    .unwrap();
+    open_native_associated_path("C:\\work\\dir,comma", &request, &facts("win32", &run))
+        .await
+        .unwrap();
     assert_eq!(
         run.calls(),
         [call(
@@ -194,17 +201,15 @@ async fn encodes_a_directory_target_the_same_way_it_encodes_a_file_target() {
             Window::Visible
         )]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn uses_the_windows_desktop_association_for_text_documents() {
+    let request = signal();
     let run = Mock::output("");
-    open_native_text_file(
-        "C:\\work\\settings.yaml",
-        &Signal::default(),
-        &facts("win32", &run),
-    )
-    .await
-    .unwrap();
+    open_native_text_file("C:\\work\\settings.yaml", &request, &facts("win32", &run))
+        .await
+        .unwrap();
     assert_eq!(
         run.calls(),
         [call(
@@ -213,35 +218,41 @@ async fn uses_the_windows_desktop_association_for_text_documents() {
             Window::Visible
         )]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn opens_with_linux_xdg_open() {
+    let request = signal();
     let run = Mock::output("");
-    open_native_path("/tmp/a.txt", &Signal::default(), &facts("linux", &run))
+    open_native_path("/tmp/a.txt", &request, &facts("linux", &run))
         .await
         .unwrap();
     assert_eq!(
         run.calls(),
         [call("xdg-open", &["/tmp/a.txt"], Window::Hidden)]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn rejects_unsupported_platforms() {
+    let request = signal();
     let run = Mock::output("");
     assert_eq!(
-        open_native_path("/x", &Signal::default(), &facts("freebsd", &run))
+        open_native_path("/x", &request, &facts("freebsd", &run))
             .await
             .unwrap_err()
-            .message,
+            .to_string(),
         "native path opener is unsupported on freebsd"
     );
+    assert!(run.calls().is_empty());
 }
 #[tokio::test]
 async fn uses_the_current_process_platform_when_no_platform_override_is_supplied() {
+    let request = signal();
     let run = Mock::output("");
     let mut f = facts("linux", &run);
     f.platform = None;
-    open_native_path("/tmp/platform-default.txt", &Signal::default(), &f)
+    open_native_path("/tmp/platform-default.txt", &request, &f)
         .await
         .unwrap();
     assert_eq!(
@@ -252,16 +263,18 @@ async fn uses_the_current_process_platform_when_no_platform_override_is_supplied
             _ => "open",
         }
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn samples_ambient_wsl_markers_and_kernel_release_when_no_fact_overrides_are_supplied() {
+    let request = signal();
     let run = Mock::output("C:\\settings.yaml\n");
     let f = PathOpenerInternals {
         platform: Some("linux".into()),
         run: Some(&run),
         ..Default::default()
     };
-    open_native_path("/tmp/ambient-facts.yaml", &Signal::default(), &f)
+    open_native_path("/tmp/ambient-facts.yaml", &request, &f)
         .await
         .unwrap();
     let wsl = is_wsl(&HostEnvironmentFacts {
@@ -272,58 +285,106 @@ async fn samples_ambient_wsl_markers_and_kernel_release_when_no_fact_overrides_a
         run.calls()[0].command,
         if wsl { "wslpath" } else { "xdg-open" }
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn keeps_explorer_windows_visible_through_each_adapter() {
+    let request = signal();
     for reveal in [false, true] {
         let run = Mock::output("");
         let f = facts("win32", &run);
-        let signal = Signal::default();
+        let request = signal();
         if reveal {
-            reveal_native_path("C:\\work\\report.txt", &signal, &f)
+            reveal_native_path("C:\\work\\report.txt", &request, &f)
                 .await
                 .unwrap();
         } else {
-            open_native_path("C:\\work\\report.txt", &signal, &f)
+            open_native_path("C:\\work\\report.txt", &request, &f)
                 .await
                 .unwrap();
         }
-        assert_eq!(run.calls()[0].window, Window::Visible);
+        let args = if reveal {
+            vec!["/select,", "file:///C:/work/report.txt"]
+        } else {
+            vec!["file:///C:/work/report.txt"]
+        };
+        assert_eq!(run.calls(), [call("explorer.exe", &args, Window::Visible)]);
+        run.assert_signals(&request);
+    }
+    #[cfg(unix)]
+    for window in [Window::Hidden, Window::Visible] {
+        let output = SystemCommandRunner
+            .run(
+                "/bin/sh",
+                &["-c".into(), "printf 'visible✓'".into()],
+                &request,
+                window,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            output,
+            CommandOutput {
+                stdout: "visible✓".into(),
+                stderr: String::new()
+            }
+        );
     }
 }
 #[tokio::test]
 async fn runs_the_command_adapter_without_a_shell_and_preserves_command_failures() {
-    let run = Mock::new(|_, _, _, _| {
-        let mut error = exit(1);
-        error.message = "open failed".into();
-        error.stdout = "partial output".into();
-        error.stderr = "failure details".into();
-        error.cause = Some(Box::new(std::io::Error::other("open failed")));
-        Err(error)
-    });
-    let error = open_native_path(
-        "/tmp/missing.txt",
-        &Signal::default(),
-        &facts("darwin", &run),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(
-        run.calls(),
-        [call("open", &["/tmp/missing.txt"], Window::Hidden)]
-    );
-    assert_eq!(error.message, "open failed");
-    assert_eq!(error.code, Some(CommandCode::Exit(1)));
-    assert_eq!(error.stdout, "partial output");
-    assert_eq!(error.stderr, "failure details");
-    assert!(error.cause.is_some());
+    #[cfg(unix)]
+    {
+        let request = signal();
+        let text = "spaces ' quotes $ and ✓; $(touch nope)";
+        let result = SystemCommandRunner
+            .run(
+                "/bin/sh",
+                &[
+                    "-c".into(),
+                    "printf '%s' \"$1\"; printf err >&2".into(),
+                    "fixture".into(),
+                    text.into(),
+                ],
+                &request,
+                Window::Hidden,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            CommandOutput {
+                stdout: text.into(),
+                stderr: "err".into()
+            }
+        );
+        let error = SystemCommandRunner
+            .run(
+                "/bin/sh",
+                &[
+                    "-c".into(),
+                    "printf 'partial output'; printf 'failure details' >&2; exit 1".into(),
+                ],
+                &request,
+                Window::Hidden,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(detail(&error).code, Some(CommandCode::Exit(1)));
+        assert_eq!(detail(&error).stdout.as_deref(), Some("partial output"));
+        assert_eq!(detail(&error).stderr.as_deref(), Some("failure details"));
+        let message = "Command failed: /bin/sh -c printf 'partial output'; printf 'failure details' >&2; exit 1\nfailure details";
+        assert_eq!(error.to_string(), message);
+        assert_eq!(detail(&error).cause.as_ref().unwrap().to_string(), message);
+    }
 }
 
 const LS_PLIST: &str = "{ LSHandlers = ( { LSHandlerPreferredVersions = { LSHandlerRoleAll = \"-\"; }; LSHandlerRoleAll = \"com.google.chrome\"; LSHandlerURLScheme = https; } ); }";
 #[tokio::test]
 async fn opens_a_page_with_the_default_browser_rather_than_the_html_handler_on_darwin() {
+    let request = signal();
     let run = Mock::output(LS_PLIST);
-    open_native_path("/w/page.html", &Signal::default(), &facts("darwin", &run))
+    open_native_path("/w/page.html", &request, &facts("darwin", &run))
         .await
         .unwrap();
     assert_eq!(
@@ -344,69 +405,97 @@ async fn opens_a_page_with_the_default_browser_rather_than_the_html_handler_on_d
             )
         ]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn leaves_every_other_document_to_the_default_application() {
+    let request = signal();
     let run = Mock::output("");
-    open_native_path("/w/report.md", &Signal::default(), &facts("darwin", &run))
+    open_native_path("/w/report.md", &request, &facts("darwin", &run))
         .await
         .unwrap();
     assert_eq!(
         run.calls(),
         [call("open", &["/w/report.md"], Window::Hidden)]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn falls_back_to_the_default_application_when_no_browser_can_be_named() {
     for throws in [true, false] {
         let run = Mock::new(move |command, _, _, _| {
             if throws && command == "defaults" {
-                Err(NativeCommandError::message("domain not found"))
+                Err(NativeCommandError::message("domain not found").into())
             } else {
                 Ok(output("{ LSHandlers = ( ); }"))
             }
         });
-        open_native_path("/w/page.html", &Signal::default(), &facts("darwin", &run))
+        let request = signal();
+        open_native_path("/w/page.html", &request, &facts("darwin", &run))
             .await
             .unwrap();
         assert_eq!(
-            run.calls()[1],
-            call("open", &["/w/page.html"], Window::Hidden)
+            run.calls(),
+            [
+                call(
+                    "defaults",
+                    &[
+                        "read",
+                        "com.apple.LaunchServices/com.apple.launchservices.secure"
+                    ],
+                    Window::Hidden
+                ),
+                call("open", &["/w/page.html"], Window::Hidden)
+            ]
         );
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn honors_browser_on_linux_and_leaves_windows_to_its_association() {
-    for (platform, browser, expected) in [
-        ("linux", "firefox", "firefox"),
-        ("linux", "", "xdg-open"),
-        ("win32", "firefox", "explorer.exe"),
+    for (platform, browser, command, argument) in [
+        ("linux", Some("firefox"), "firefox", "/w/page.html"),
+        ("linux", None, "xdg-open", "/w/page.html"),
+        ("win32", None, "explorer.exe", "file:///C:/w/page.html"),
     ] {
         let run = Mock::output("");
         let mut f = facts(platform, &run);
-        f.env = Some(env(&[("BROWSER", browser)]));
+        f.env = Some(browser.map(|b| env(&[("BROWSER", b)])).unwrap_or_default());
+        let request = signal();
         open_native_path(
             if platform == "win32" {
                 "C:\\w\\page.html"
             } else {
                 "/w/page.html"
             },
-            &Signal::default(),
+            &request,
             &f,
         )
         .await
         .unwrap();
-        assert_eq!(run.calls()[0].command, expected);
-        assert_eq!(run.calls().len(), 1);
+        assert_eq!(
+            run.calls(),
+            [call(
+                command,
+                &[argument],
+                if platform == "win32" {
+                    Window::Visible
+                } else {
+                    Window::Hidden
+                }
+            )]
+        );
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn hands_browser_renderable_wsl_paths_to_the_windows_desktop() {
+    let request = signal();
     let run = Mock::output("C:\\workspace\\page.html\n");
     let mut f = facts("linux", &run);
     f.os_release = Some("microsoft".into());
     f.env = Some(env(&[("BROWSER", "firefox")]));
-    open_native_path("/home/test/page.html", &Signal::default(), &f)
+    open_native_path("/home/test/page.html", &request, &f)
         .await
         .unwrap();
     assert_eq!(
@@ -420,6 +509,7 @@ async fn hands_browser_renderable_wsl_paths_to_the_windows_desktop() {
             )
         ]
     );
+    run.assert_signals(&request);
 }
 #[test]
 fn always_answers_yes_where_the_desktop_is_part_of_the_platform() {
@@ -477,6 +567,7 @@ fn samples_the_ambient_platform_when_none_is_named() {
 }
 #[tokio::test]
 async fn reveals_through_each_platform_without_opening_the_file_association() {
+    let request = signal();
     for (platform, manager, path, cmd, args) in [
         (
             "darwin",
@@ -503,9 +594,7 @@ async fn reveals_through_each_platform_without_opening_the_file_association() {
         let run = Mock::output("");
         let f = facts(platform, &run);
         assert_eq!(native_file_manager(&f), Some(manager));
-        reveal_native_path(path, &Signal::default(), &f)
-            .await
-            .unwrap();
+        reveal_native_path(path, &request, &f).await.unwrap();
         assert_eq!(
             run.calls(),
             [call(
@@ -518,15 +607,17 @@ async fn reveals_through_each_platform_without_opening_the_file_association() {
                 }
             )]
         );
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn selects_a_translated_wsl_path_in_explorer_and_never_starts_a_linux_file_manager() {
+    let request = signal();
     let run = Mock::output("C:\\work\\报告.txt\r\n");
     let mut f = facts("linux", &run);
     f.env = Some(env(&[("WSL_DISTRO_NAME", "Ubuntu")]));
     assert_eq!(native_file_manager(&f), Some(NativeFileManager::Explorer));
-    reveal_native_path("/mnt/c/work/报告.txt", &Signal::default(), &f)
+    reveal_native_path("/mnt/c/work/报告.txt", &request, &f)
         .await
         .unwrap();
     assert_eq!(
@@ -540,88 +631,111 @@ async fn selects_a_translated_wsl_path_in_explorer_and_never_starts_a_linux_file
             )
         ]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn refuses_empty_wsl_translations_and_cancelled_translation_without_launching_explorer() {
+    let request = signal();
     let run = Mock::output("");
     let mut f = facts("linux", &run);
     f.os_release = Some("microsoft".into());
-    assert!(
-        reveal_native_path("/file", &Signal::default(), &f)
+    assert_eq!(
+        reveal_native_path("/file", &request, &f)
             .await
             .unwrap_err()
-            .message
-            .contains("no Windows path")
+            .to_string(),
+        "wslpath returned no Windows path"
     );
-    let abort = Arc::new(Signal::default());
-    let held = abort.clone();
+    let controller = Arc::new(AbortController::new());
+    let held = controller.clone();
+    let reason = SharedError::new(std::io::Error::other("stopped"));
+    let thrown = reason.clone();
     let run = Mock::new(move |_, _, _, _| {
-        held.abort("stopped");
+        held.abort_with(thrown.clone());
         Ok(output("C:\\file"))
     });
     f.run = Some(&run);
+    let request = controller.signal();
+    let error = reveal_native_path("/file", &request, &f).await.unwrap_err();
+    assert!(error.ptr_eq(&reason));
     assert_eq!(
-        reveal_native_path("/file", &*abort, &f)
-            .await
-            .unwrap_err()
-            .message,
-        "stopped"
+        run.calls(),
+        [call("wslpath", &["-w", "/file"], Window::Hidden)]
     );
-    assert!(run.calls().iter().all(|c| c.command == "wslpath"));
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn rejects_unsupported_platforms_cancellation_and_launcher_errors() {
-    let run = Mock::new(|_, _, _, _| Err(NativeCommandError::message("desktop failed")));
+    let request = signal();
+    let failure = SharedError::new(NativeCommandError::message("desktop failed"));
+    let held = failure.clone();
+    let run = Mock::new(move |_, _, _, _| Err(held.clone()));
     assert_eq!(native_file_manager(&facts("aix", &run)), None);
-    assert!(
-        reveal_native_path("/file", &Signal::default(), &facts("aix", &run))
-            .await
-            .unwrap_err()
-            .message
-            .contains("unsupported")
-    );
-    let abort = Signal::default();
-    abort.abort("cancelled");
     assert_eq!(
-        reveal_native_path("/file", &abort, &facts("linux", &run))
+        reveal_native_path("/file", &request, &facts("aix", &run))
             .await
             .unwrap_err()
-            .message,
-        "cancelled"
+            .to_string(),
+        "native file manager is unsupported on aix"
+    );
+    let controller = AbortController::new();
+    let reason = SharedError::new(std::io::Error::other("cancelled"));
+    controller.abort_with(reason.clone());
+    assert!(
+        reveal_native_path("/file", &controller.signal(), &facts("linux", &run))
+            .await
+            .unwrap_err()
+            .ptr_eq(&reason)
     );
     assert!(run.calls().is_empty());
-    assert_eq!(
-        reveal_native_path("/file", &Signal::default(), &facts("darwin", &run))
+    assert!(
+        reveal_native_path("/file", &request, &facts("darwin", &run))
             .await
             .unwrap_err()
-            .message,
-        "desktop failed"
+            .ptr_eq(&failure)
     );
     assert_eq!(
         native_file_manager(&facts("linux", &run)),
         Some(NativeFileManager::Directory)
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn uses_the_native_runner_for_a_file_manager_handoff_when_none_is_injected() {
-    // Real default runner lookup, cancelled before any desktop command is launched.
-    let signal = Signal::default();
-    signal.abort("closed");
-    assert_eq!(
-        reveal_native_path("/tmp/report.txt", &signal, &Default::default())
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        for command in ["xdg-open", "explorer.exe", "open"] {
+            let file = root.path().join(command);
+            tokio::fs::write(&file, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HOH_DEFAULT_RUNNER_MARKER\"\ncase \"$0\" in */open) printf 'out✓'; printf err >&2; exit 3;; esac\n").await.unwrap();
+            tokio::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700))
+                .await
+                .unwrap();
+        }
+        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "default_runner_probe", "--nocapture"])
+            .env("PATH", root.path())
+            .env("HOH_DEFAULT_RUNNER_MARKER", root.path().join("marker"))
+            .output()
             .await
-            .unwrap_err()
-            .message,
-        "closed"
-    );
-    let run = Mock::output("");
-    reveal_native_path("/tmp/report.txt", &Signal::default(), &facts("linux", &run))
-        .await
-        .unwrap();
-    assert!(!run.calls().is_empty());
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output
+                .stdout
+                .windows(b"default_runner_probe".len())
+                .any(|s| s == b"default_runner_probe")
+        );
+    }
 }
 #[tokio::test]
 async fn accepts_explorer_delegate_exit_1_through_the_runner_on_each_platform() {
+    let request = signal();
     for platform in ["win32", "linux"] {
         let run = Mock::new(|cmd, _, _, _| {
             if cmd == "wslpath" {
@@ -638,54 +752,57 @@ async fn accepts_explorer_delegate_exit_1_through_the_runner_on_each_platform() 
             } else {
                 "/mnt/c/work/report.txt"
             },
-            &Signal::default(),
+            &request,
             &f,
         )
         .await
         .unwrap();
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn preserves_each_explorer_failure() {
+    let request = signal();
     for code in [
         Some(CommandCode::Exit(2)),
         Some(CommandCode::Name("ENOENT".into())),
         None,
     ] {
-        let held = code.clone();
-        let run = Mock::new(move |_, _, _, _| {
-            Err(NativeCommandError {
-                code: held.clone(),
-                ..NativeCommandError::message("launch failed")
-            })
+        let failure = SharedError::new(NativeCommandError {
+            code: code.clone(),
+            ..NativeCommandError::message("launch failed")
         });
-        assert_eq!(
-            reveal_native_path("C:\\file.txt", &Signal::default(), &facts("win32", &run))
-                .await
-                .unwrap_err()
-                .code,
-            code
-        );
+        let held = failure.clone();
+        let run = Mock::new(move |_, _, _, _| Err(held.clone()));
+        let error = reveal_native_path("C:\\file.txt", &request, &facts("win32", &run))
+            .await
+            .unwrap_err();
+        assert!(error.ptr_eq(&failure));
+        assert_eq!(detail(&error).code, code);
     }
 }
 #[tokio::test]
 async fn preserves_cancellation_even_when_explorer_returns_delegate_exit_1() {
-    let abort = Arc::new(Signal::default());
-    let held = abort.clone();
+    let controller = Arc::new(AbortController::new());
+    let held = controller.clone();
+    let reason = SharedError::new(std::io::Error::other("cancelled"));
+    let thrown = reason.clone();
     let run = Mock::new(move |_, _, _, _| {
-        held.abort("cancelled");
+        held.abort_with(thrown.clone());
         Err(exit(1))
     });
-    assert_eq!(
-        reveal_native_path("C:\\file.txt", &*abort, &facts("win32", &run))
+    let request = controller.signal();
+    assert!(
+        reveal_native_path("C:\\file.txt", &request, &facts("win32", &run))
             .await
             .unwrap_err()
-            .message,
-        "cancelled"
+            .ptr_eq(&reason)
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn accepts_the_explorer_delegate_exit_1_when_opening_on_each_platform() {
+    let request = signal();
     for platform in ["win32", "linux"] {
         let run = Mock::new(|cmd, _, _, _| {
             if cmd == "wslpath" {
@@ -702,26 +819,29 @@ async fn accepts_the_explorer_delegate_exit_1_when_opening_on_each_platform() {
             } else {
                 "/mnt/c/work/settings.yaml"
             },
-            &Signal::default(),
+            &request,
             &f,
         )
         .await
         .unwrap();
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn preserves_a_non_delegate_explorer_failure_when_opening() {
-    let run = Mock::new(|_, _, _, _| Err(exit(2)));
-    assert_eq!(
-        open_native_path("C:\\file.txt", &Signal::default(), &facts("win32", &run))
-            .await
-            .unwrap_err()
-            .code,
-        Some(CommandCode::Exit(2))
-    );
+    let failure = exit(2);
+    let held = failure.clone();
+    let run = Mock::new(move |_, _, _, _| Err(held.clone()));
+    let request = signal();
+    let error = open_native_path("C:\\file.txt", &request, &facts("win32", &run))
+        .await
+        .unwrap_err();
+    assert!(error.ptr_eq(&failure));
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn preserves_special_characters_in_each_explorer_target() {
+    let request = signal();
     for (path, target) in [
         (
             "C:\\my files\\报告,#%.txt",
@@ -733,24 +853,26 @@ async fn preserves_special_characters_in_each_explorer_target() {
         ),
     ] {
         let run = Mock::output("");
-        reveal_native_path(path, &Signal::default(), &facts("win32", &run))
+        reveal_native_path(path, &request, &facts("win32", &run))
             .await
             .unwrap();
         assert_eq!(
             run.calls(),
             [call("explorer.exe", &["/select,", target], Window::Visible)]
         );
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn uses_the_file_association_for_each_extension_despite_a_configured_browser() {
+    let request = signal();
     for extension in [".html", ".svg"] {
         for platform in ["darwin", "linux"] {
             let run = Mock::output("browser bundle");
             let mut f = facts(platform, &run);
             f.env = Some(env(&[("BROWSER", "custom-browser")]));
             let path = format!("/work/report{extension}");
-            open_native_associated_path(&path, &Signal::default(), &f)
+            open_native_associated_path(&path, &request, &f)
                 .await
                 .unwrap();
             assert_eq!(
@@ -767,4 +889,64 @@ async fn uses_the_file_association_for_each_extension_despite_a_configured_brows
             );
         }
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn default_runner_probe() {
+    let Some(marker) = std::env::var_os("HOH_DEFAULT_RUNNER_MARKER") else {
+        return;
+    };
+    let request = signal();
+    let linux = PathOpenerInternals {
+        platform: Some("linux".into()),
+        os_release: Some("generic".into()),
+        env: Some(env(&[])),
+        run: None,
+    };
+    reveal_native_path("/tmp/a $b; report.txt", &request, &linux)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read_to_string(&marker).await.unwrap(), "/tmp\n");
+    let windows = PathOpenerInternals {
+        platform: Some("win32".into()),
+        ..Default::default()
+    };
+    for reveal in [false, true] {
+        if reveal {
+            reveal_native_path("C:\\work\\report.txt", &request, &windows)
+                .await
+                .unwrap();
+        } else {
+            open_native_path("C:\\work\\report.txt", &request, &windows)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            tokio::fs::read_to_string(&marker).await.unwrap(),
+            if reveal {
+                "/select,\nfile:///C:/work/report.txt\n"
+            } else {
+                "file:///C:/work/report.txt\n"
+            }
+        );
+    }
+    let mac = PathOpenerInternals {
+        platform: Some("darwin".into()),
+        ..Default::default()
+    };
+    let literal = "/tmp/spaces ' quotes $; report✓.txt";
+    let failure = open_native_path(literal, &request, &mac).await.unwrap_err();
+    assert_eq!(
+        tokio::fs::read_to_string(&marker).await.unwrap(),
+        format!("{literal}\n")
+    );
+    assert_eq!(detail(&failure).stdout.as_deref(), Some("out✓"));
+    assert_eq!(detail(&failure).stderr.as_deref(), Some("err"));
+    assert_eq!(detail(&failure).code, Some(CommandCode::Exit(3)));
+    assert_eq!(
+        failure.to_string(),
+        format!("Command failed: open {literal}\nerr")
+    );
+    assert!(detail(&failure).cause.is_some());
 }

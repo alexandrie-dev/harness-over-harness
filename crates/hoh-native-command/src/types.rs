@@ -1,4 +1,5 @@
 use crate::runner::NativeCommandError;
+use hoh_error::SharedError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,14 +13,18 @@ pub struct NativeFileApplication {
 
 pub fn parse_native_file_applications(
     value: &Value,
-) -> Result<Vec<NativeFileApplication>, NativeCommandError> {
+) -> Result<Vec<NativeFileApplication>, SharedError> {
     let entries = value
         .as_array()
         .ok_or_else(|| NativeCommandError::message("Invalid native application list"))?;
     entries
         .iter()
         .map(|entry| {
-            let invalid = || NativeCommandError::message("Invalid native application entry");
+            let invalid = || {
+                SharedError::new(NativeCommandError::message(
+                    "Invalid native application entry",
+                ))
+            };
             let id = entry
                 .get("id")
                 .and_then(Value::as_str)

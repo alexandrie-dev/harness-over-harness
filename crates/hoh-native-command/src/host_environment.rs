@@ -2,6 +2,25 @@ use indexmap::IndexMap;
 
 pub type Environment = IndexMap<String, String>;
 
+/// Convert injectable OS environment entries as Node decodes process.env.
+pub fn environment_from_os(
+    entries: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Environment {
+    entries
+        .into_iter()
+        .map(|(key, value)| {
+            (
+                key.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect()
+}
+
+pub(crate) fn ambient_environment() -> Environment {
+    environment_from_os(std::env::vars_os())
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct HostEnvironmentFacts {
     pub platform: Option<String>,
@@ -46,7 +65,7 @@ pub fn is_wsl(facts: &HostEnvironmentFacts) -> bool {
     let env = match &facts.env {
         Some(env) => env,
         None => {
-            ambient = std::env::vars().collect();
+            ambient = ambient_environment();
             &ambient
         }
     };

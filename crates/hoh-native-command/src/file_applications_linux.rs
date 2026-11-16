@@ -2,44 +2,64 @@ use crate::{
     desktop_entry::*, host_environment::Environment, runner::*, types::NativeFileApplication,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
+use hoh_error::SharedError;
+use hoh_timeout::AbortSignal;
+use hoh_util_values::{JS_WHITE_SPACE_SET, js_trim};
+use hoh_util_workspace_path::node_path;
 use indexmap::IndexSet;
-use std::path::{Path, PathBuf};
+use regex::Regex;
 
-async fn desktop_file(root: &Path, id: &str) -> Option<PathBuf> {
+async fn desktop_file(root: &str, id: &str) -> Option<String> {
+    let cwd = std::env::current_dir().ok()?.to_string_lossy().into_owned();
     let mut stack = vec![root.to_owned()];
     while let Some(directory) = stack.pop() {
         let Ok(mut reader) = tokio::fs::read_dir(&directory).await else {
             continue;
         };
-        let mut directories = Vec::new();
+        let mut entries = Vec::new();
         while let Ok(Some(entry)) = reader.next_entry().await {
             let Ok(kind) = entry.file_type().await else {
                 continue;
             };
-            let path = entry.path();
-            if kind.is_dir() {
-                directories.push(path);
-            } else if path
-                .strip_prefix(root)
-                .ok()?
-                .to_string_lossy()
-                .replace(std::path::MAIN_SEPARATOR, "-")
-                == id
-            {
-                return Some(path);
+            entries.push((entry.file_name(), kind.is_dir()));
+        }
+        #[cfg(unix)]
+        entries.sort_by(|(a, _), (b, _)| {
+            use std::os::unix::ffi::OsStrExt;
+            a.as_bytes().cmp(b.as_bytes())
+        });
+        #[cfg(not(unix))]
+        entries.sort_by(|(a, _), (b, _)| {
+            a.to_string_lossy()
+                .as_bytes()
+                .cmp(b.to_string_lossy().as_bytes())
+        });
+        // Node scans the complete sorted list for files before descending into directories.
+        for (name, directory_entry) in &entries {
+            if !directory_entry {
+                let path = node_path::join(&[&directory, &name.to_string_lossy()]);
+                if node_path::relative(&cwd, root, &path).replace('/', "-") == id {
+                    return Some(path);
+                }
             }
         }
-        stack.extend(directories.into_iter().rev());
+        stack.extend(
+            entries
+                .into_iter()
+                .rev()
+                .filter(|(_, is_dir)| *is_dir)
+                .map(|(name, _)| node_path::join(&[&directory, &name.to_string_lossy()])),
+        );
     }
     None
 }
 
 pub async fn linux_file_applications(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     run: &dyn NativeCommandRunner,
     env: &Environment,
-) -> Result<Vec<NativeFileApplication>, NativeCommandError> {
+) -> Result<Vec<NativeFileApplication>, SharedError> {
     let info = run
         .run(
             "gio",
@@ -53,10 +73,15 @@ pub async fn linux_file_applications(
             Window::Hidden,
         )
         .await?;
-    let mime = info
-        .stdout
-        .split_once("standard::content-type:")
-        .and_then(|(_, rest)| rest.split_whitespace().next())
+    // Fixed source expressions; the shared class is JavaScript's \s, not regex's Unicode \s.
+    let content_type = Regex::new(&format!(
+        r"standard::content-type:[{JS_WHITE_SPACE_SET}]*([^{JS_WHITE_SPACE_SET}]+)"
+    ))
+    .expect("fixed regex");
+    let mime = content_type
+        .captures(&info.stdout)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str())
         .ok_or_else(|| NativeCommandError::message("GIO did not identify the file content type"))?;
     let result = run
         .run(
@@ -66,21 +91,30 @@ pub async fn linux_file_applications(
             Window::Hidden,
         )
         .await?;
-    let preferred = result.stdout.lines().find_map(|line| {
-        if !line.starts_with("Default application") {
-            return None;
-        }
-        let (_, rest) = line.split_once(':')?;
-        let rest = rest.trim();
-        rest.ends_with(".desktop").then_some(rest.to_owned())
-    });
+    let dot = r"[^\n\r\u{2028}\u{2029}]";
+    let line_boundary = r"[\r\u{2028}\u{2029}]";
+    // JavaScript's multiline anchors also see CR, U+2028 and U+2029 as line boundaries.
+    let preferred_pattern = Regex::new(&format!(r"(?m)(?:^|{line_boundary})Default application{dot}*:[{JS_WHITE_SPACE_SET}]*({dot}+\.desktop)[{JS_WHITE_SPACE_SET}]*(?:$|{line_boundary})")).expect("fixed regex");
+    let registered_pattern = Regex::new(&format!(
+        r"^[{JS_WHITE_SPACE_SET}]+{dot}*\.desktop[{JS_WHITE_SPACE_SET}]*$"
+    ))
+    .expect("fixed regex");
+    let preferred = preferred_pattern
+        .captures(&result.stdout)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_owned());
     let mut ids = IndexSet::new();
     if let Some(preferred) = &preferred {
         ids.insert(preferred.clone());
     }
-    for line in result.stdout.lines() {
-        if line.starts_with(char::is_whitespace) && line.trim().ends_with(".desktop") {
-            ids.insert(line.trim().to_owned());
+    // Source split(/\r?\n/) has no special treatment for other JavaScript line terminators.
+    for line in result
+        .stdout
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+    {
+        if registered_pattern.is_match(line) {
+            ids.insert(js_trim(line).to_owned());
         }
     }
     #[allow(deprecated)]
@@ -106,7 +140,7 @@ pub async fn linux_file_applications(
         signal.throw_if_aborted()?;
         let mut entry_path = None;
         for directory in &directories {
-            entry_path = desktop_file(&Path::new(directory).join("applications"), &id).await;
+            entry_path = desktop_file(&node_path::join(&[directory, "applications"]), &id).await;
             if entry_path.is_some() {
                 break;
             }
@@ -115,7 +149,9 @@ pub async fn linux_file_applications(
             continue;
         };
         let fields = desktop_entry_fields(&String::from_utf8_lossy(
-            &tokio::fs::read(&entry_path).await?,
+            &tokio::fs::read(&entry_path)
+                .await
+                .map_err(|e| NativeCommandError::fs(e, "open", Some(&entry_path)))?,
         ));
         let name = fields
             .get(&format!("Name[{locale}]"))
@@ -132,7 +168,7 @@ pub async fn linux_file_applications(
             None => None,
         };
         applications.push(NativeFileApplication {
-            id: entry_path.to_string_lossy().into_owned(),
+            id: entry_path,
             name: name.clone(),
             default: preferred.as_ref() == Some(&id),
             icon: icon.map(|icon| {

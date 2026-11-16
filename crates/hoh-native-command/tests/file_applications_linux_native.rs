@@ -12,9 +12,9 @@ impl NativeCommandRunner for GioRunner {
         &'a self,
         command: &'a str,
         args: &'a [String],
-        signal: &'a dyn CommandSignal,
+        signal: &'a AbortSignal,
         _window: Window,
-    ) -> CommandFuture<'a, Result<CommandOutput, NativeCommandError>> {
+    ) -> CommandFuture<'a, Result<CommandOutput, SharedError>> {
         Box::pin(async move {
             signal.throw_if_aborted()?;
             let result = tokio::process::Command::new(command)
@@ -22,11 +22,12 @@ impl NativeCommandRunner for GioRunner {
                 .envs(&self.env)
                 .kill_on_drop(true)
                 .output()
-                .await?;
+                .await
+                .map_err(SharedError::new)?;
             if !result.status.success() {
-                return Err(NativeCommandError::message(String::from_utf8_lossy(
-                    &result.stderr,
-                )));
+                return Err(
+                    NativeCommandError::message(String::from_utf8_lossy(&result.stderr)).into(),
+                );
             }
             Ok(CommandOutput {
                 stdout: String::from_utf8_lossy(&result.stdout).into_owned(),
@@ -94,7 +95,8 @@ async fn queries_and_launches_an_installed_linux_desktop_entry_through_gio() {
     )
     .await
     .unwrap();
-    let mut environment: Environment = std::env::vars().collect();
+    let mut environment: Environment =
+        hoh_native_command::host_environment::environment_from_os(std::env::vars_os());
     for (key, value) in [
         ("XDG_DATA_HOME", &data),
         ("XDG_DATA_DIRS", &empty),
@@ -109,7 +111,7 @@ async fn queries_and_launches_an_installed_linux_desktop_entry_through_gio() {
     };
     let mut facts = facts("linux", &run);
     facts.env = Some(environment);
-    let signal = Signal::default();
+    let signal = signal();
     let apps = native_file_applications(path.to_str().unwrap(), &signal, &facts)
         .await
         .unwrap();

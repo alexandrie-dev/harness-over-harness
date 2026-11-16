@@ -62,11 +62,12 @@ fn internals(f: &Fixture, locale: bool) -> PathOpenerInternals<'_> {
 async fn deduplicates_gio_handlers_resolves_nested_ids_localizes_names_and_reuses_desktop_artwork()
 {
     let f = fixture().await;
-    let signal = Signal::default();
+    let signal = signal();
     let facts = internals(&f, true);
     let apps = native_file_applications("/file.mp3", &signal, &facts)
         .await
         .unwrap();
+    f.run.assert_signals(&signal);
     assert_eq!(apps.len(), 2);
     assert_eq!(
         apps[0].id,
@@ -102,6 +103,7 @@ async fn deduplicates_gio_handlers_resolves_nested_ids_localizes_names_and_reuse
     open_native_file_application("/file.mp3", &apps[0].id, &signal, &facts)
         .await
         .unwrap();
+    f.run.assert_signals(&signal);
     assert_eq!(
         f.run.calls().last().unwrap(),
         &call("gio", &["launch", &apps[0].id, "/file.mp3"], Window::Hidden)
@@ -110,7 +112,7 @@ async fn deduplicates_gio_handlers_resolves_nested_ids_localizes_names_and_reuse
         open_native_file_application("/file.mp3", "/unregistered.desktop", &signal, &facts)
             .await
             .unwrap_err()
-            .message
+            .to_string()
             .contains("not registered")
     );
     assert_eq!(
@@ -147,7 +149,7 @@ async fn keeps_nondefault_applications_when_the_desktop_has_no_default_and_omits
     )
     .await
     .unwrap();
-    let apps = native_file_applications("/file.mp3", &Signal::default(), &internals(&f, true))
+    let apps = native_file_applications("/file.mp3", &signal(), &internals(&f, true))
         .await
         .unwrap();
     assert_eq!(
@@ -170,10 +172,10 @@ async fn rejects_missing_content_type_metadata_instead_of_fabricating_associatio
     let f = fixture().await;
     f.mode.store(2, Ordering::SeqCst);
     assert!(
-        native_file_applications("/file.mp3", &Signal::default(), &internals(&f, true))
+        native_file_applications("/file.mp3", &signal(), &internals(&f, true))
             .await
             .unwrap_err()
-            .message
+            .to_string()
             .contains("content type")
     );
 }
@@ -192,7 +194,7 @@ async fn tolerates_absent_desktop_roots_and_directory_shaped_icon_paths_without_
         "XDG_DATA_DIRS".into(),
         f.root.path().join("absent").to_string_lossy().into_owned(),
     );
-    let apps = native_file_applications("/file.mp3", &Signal::default(), &facts)
+    let apps = native_file_applications("/file.mp3", &signal(), &facts)
         .await
         .unwrap();
     assert_eq!(apps[0].name, "Player");

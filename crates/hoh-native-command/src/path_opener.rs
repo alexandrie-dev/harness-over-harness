@@ -2,8 +2,10 @@ use crate::{
     host_environment::{self, Environment, HostEnvironmentFacts, is_wsl},
     runner::*,
 };
+use hoh_error::SharedError;
+use hoh_timeout::AbortSignal;
+use hoh_util_workspace_path::node_path;
 use regex::Regex;
-use std::path::Path;
 
 pub use crate::runner::NativeCommandRunner as PathOpenerRunner;
 #[derive(Default)]
@@ -22,7 +24,7 @@ impl PathOpenerInternals<'_> {
     pub(crate) fn environment(&self) -> Environment {
         self.env
             .clone()
-            .unwrap_or_else(|| std::env::vars().collect())
+            .unwrap_or_else(host_environment::ambient_environment)
     }
     fn wsl(&self) -> bool {
         is_wsl(&HostEnvironmentFacts {
@@ -69,11 +71,20 @@ pub fn can_open_native_path(internals: &PathOpenerInternals<'_>) -> bool {
 }
 
 fn mac_bundle_for_https(plist: &str) -> Option<String> {
+    let whitespace = |pattern: &str| {
+        pattern.replace(r"\s", &format!("[{}]", hoh_util_values::JS_WHITE_SPACE_SET))
+    };
     // These fixed expressions are valid; no user expression is compiled.
-    let nested = Regex::new(r"LSHandlerPreferredVersions\s*=\s*\{[^}]*\};").expect("fixed regex");
-    let block =
-        Regex::new(r#"\{[^{}]*LSHandlerURLScheme\s*=\s*"?https"?;[^{}]*\}"#).expect("fixed regex");
-    let role = Regex::new(r#"LSHandlerRoleAll\s*=\s*"?([a-zA-Z0-9_.-]+)"?;"#).expect("fixed regex");
+    let nested = Regex::new(&whitespace(r"LSHandlerPreferredVersions\s*=\s*\{[^}]*\};"))
+        .expect("fixed regex");
+    let block = Regex::new(&whitespace(
+        r#"\{[^{}]*LSHandlerURLScheme\s*=\s*"?https"?;[^{}]*\}"#,
+    ))
+    .expect("fixed regex");
+    let role = Regex::new(&whitespace(
+        r#"LSHandlerRoleAll\s*=\s*"?([a-zA-Z0-9_.-]+)"?;"#,
+    ))
+    .expect("fixed regex");
     let stripped = nested.replace_all(plist, "");
     let found = block.find(&stripped)?;
     Some(role.captures(found.as_str())?.get(1)?.as_str().to_owned())
@@ -89,7 +100,10 @@ fn explorer_target(path: &str) -> String {
     let trailing = path.ends_with('/');
     let (prefix, rest) = if let Some(unc) = path.strip_prefix("//") {
         let (server, rest) = unc.split_once('/').unwrap_or((unc, ""));
-        (format!("file://{server}/"), rest.to_owned())
+        (
+            format!("file://{}/", server.to_ascii_lowercase()),
+            rest.to_owned(),
+        )
     } else if path.as_bytes().get(1) == Some(&b':') {
         ("file:///".into(), path.clone())
     } else {
@@ -103,11 +117,14 @@ fn explorer_target(path: &str) -> String {
         )
     };
     let mut parts = Vec::new();
+    let drive = rest.as_bytes().get(1) == Some(&b':');
     for part in rest.split('/') {
         match part {
             "" | "." => {}
             ".." => {
-                parts.pop();
+                if parts.len() > usize::from(drive) {
+                    parts.pop();
+                }
             }
             _ => parts.push(part),
         }
@@ -130,7 +147,12 @@ fn explorer_target(path: &str) -> String {
             '?' => encoded.push_str("%3F"),
             ',' => encoded.push_str("%2C"),
             '=' => encoded.push_str("%3D"),
-            c if c.is_ascii_control() => {
+            c if c.is_ascii_control()
+                || matches!(
+                    c,
+                    '"' | '<' | '>' | '[' | ']' | '^' | '`' | '{' | '|' | '}' | '~'
+                ) =>
+            {
                 use std::fmt::Write;
                 let _ = write!(encoded, "%{:02X}", c as u32);
             }
@@ -142,12 +164,16 @@ fn explorer_target(path: &str) -> String {
 
 async fn run_explorer(
     args: &[String],
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     run: &dyn NativeCommandRunner,
-) -> Result<(), NativeCommandError> {
+) -> Result<(), SharedError> {
     if let Err(error) = run.run("explorer.exe", args, signal, Window::Visible).await {
         signal.throw_if_aborted()?;
-        if error.code != Some(CommandCode::Exit(1)) {
+        if error
+            .downcast_ref::<NativeCommandError>()
+            .and_then(|e| e.code.as_ref())
+            != Some(&CommandCode::Exit(1))
+        {
             return Err(error);
         }
     }
@@ -155,9 +181,9 @@ async fn run_explorer(
 }
 pub(crate) async fn translated_path(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     run: &dyn NativeCommandRunner,
-) -> Result<String, NativeCommandError> {
+) -> Result<String, SharedError> {
     let result = run
         .run(
             "wslpath",
@@ -169,9 +195,7 @@ pub(crate) async fn translated_path(
     signal.throw_if_aborted()?;
     let path = result.stdout.trim_end_matches(['\r', '\n']);
     if path.is_empty() {
-        return Err(NativeCommandError::message(
-            "wslpath returned no Windows path",
-        ));
+        return Err(NativeCommandError::message("wslpath returned no Windows path").into());
     }
     Ok(path.into())
 }
@@ -184,21 +208,17 @@ enum PathOpenIntent {
 }
 async fn open_native_path_with_intent(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     intent: PathOpenIntent,
     internals: &PathOpenerInternals<'_>,
-) -> Result<(), NativeCommandError> {
+) -> Result<(), SharedError> {
     let platform = internals.platform();
     let run = internals.runner();
     let wsl = platform == "linux" && internals.wsl();
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_lowercase();
+    let extension = node_path::extname(path).to_lowercase();
     if !wsl
         && intent == PathOpenIntent::Default
-        && ["html", "htm", "xhtml", "svg"].contains(&extension.as_str())
+        && [".html", ".htm", ".xhtml", ".svg"].contains(&extension.as_str())
     {
         if platform == "darwin" {
             if let Ok(output) = run
@@ -259,37 +279,38 @@ async fn open_native_path_with_intent(
         _ => {
             return Err(NativeCommandError::message(format!(
                 "native path opener is unsupported on {platform}"
-            )));
+            ))
+            .into());
         }
     }
     Ok(())
 }
 pub async fn open_native_path(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     internals: &PathOpenerInternals<'_>,
-) -> Result<(), NativeCommandError> {
+) -> Result<(), SharedError> {
     open_native_path_with_intent(path, signal, PathOpenIntent::Default, internals).await
 }
 pub async fn open_native_associated_path(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     internals: &PathOpenerInternals<'_>,
-) -> Result<(), NativeCommandError> {
+) -> Result<(), SharedError> {
     open_native_path_with_intent(path, signal, PathOpenIntent::Association, internals).await
 }
 pub async fn open_native_text_file(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     internals: &PathOpenerInternals<'_>,
-) -> Result<(), NativeCommandError> {
+) -> Result<(), SharedError> {
     open_native_path_with_intent(path, signal, PathOpenIntent::TextEditor, internals).await
 }
 pub async fn reveal_native_path(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     internals: &PathOpenerInternals<'_>,
-) -> Result<(), NativeCommandError> {
+) -> Result<(), SharedError> {
     signal.throw_if_aborted()?;
     let run = internals.runner();
     match native_file_manager(internals) {
@@ -306,23 +327,16 @@ pub async fn reveal_native_path(
             run_explorer(&["/select,".into(), explorer_target(&path)], signal, run).await?;
         }
         Some(NativeFileManager::Directory) => {
-            let parent = Path::new(path)
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
-            run.run(
-                "xdg-open",
-                &[parent.to_string_lossy().into_owned()],
-                signal,
-                Window::Hidden,
-            )
-            .await?;
+            let parent = node_path::dirname(path);
+            run.run("xdg-open", &[parent], signal, Window::Hidden)
+                .await?;
         }
         None => {
             return Err(NativeCommandError::message(format!(
                 "native file manager is unsupported on {}",
                 internals.platform()
-            )));
+            ))
+            .into());
         }
     }
     Ok(())

@@ -592,6 +592,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-llm"
+version = "0.1.0"
+dependencies = [
+ "hoh-attachment",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-package-manifest",
+ "hoh-timeout",
+ "hoh-util-crypto",
+ "hoh-util-values",
+]
+
+[[package]]
 name = "hoh-loader"
 version = "0.1.0"
 dependencies = [
@@ -614,6 +628,10 @@ name = "hoh-native-command"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "hoh-error",
+ "hoh-timeout",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
  "indexmap",
  "regex",
  "rustix",
@@ -631,6 +649,17 @@ dependencies = [
  "landlock",
  "rustix",
  "tempfile",
+]
+
+[[package]]
+name = "hoh-official-bundles"
+version = "0.1.0"
+dependencies = [
+ "hoh-package-manifest",
+ "hoh-util-values",
+ "indexmap",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -692,7 +721,16 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "hoh-storage-domain"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
+ "hoh-storage",
 ]
 
 [[package]]

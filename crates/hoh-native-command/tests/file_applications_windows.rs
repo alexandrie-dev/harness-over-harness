@@ -20,7 +20,7 @@ async fn script(text: &str) {
             "-EncodedCommand".into(),
             STANDARD.encode(utf16),
         ],
-        &Signal::default(),
+        &signal(),
         Window::Hidden,
     )
     .await
@@ -82,7 +82,7 @@ async fn queries_and_invokes_a_registered_windows_handler_through_the_system_she
     run_native_command(
         executable.to_str().unwrap(),
         &[path.to_string_lossy().into_owned()],
-        &Signal::default(),
+        &signal(),
         Window::Hidden,
     )
     .await
@@ -104,7 +104,7 @@ async fn queries_and_invokes_a_registered_windows_handler_through_the_system_she
         ref app_name,
     } = registration;
     script(&format!("$ErrorActionPreference = 'Stop'\n$root = [Microsoft.Win32.Registry]::CurrentUser\n$key = $root.CreateSubKey('Software\\Classes\\{extension}')\n$key.SetValue('', '{prog_id}'); $key.Dispose()\n$key = $root.CreateSubKey('Software\\Classes\\{extension}\\OpenWithProgids')\n$key.SetValue('{prog_id}', ''); $key.Dispose()\n$key = $root.CreateSubKey('Software\\Classes\\{prog_id}\\shell\\open\\command')\n$key.SetValue('', {command}); $key.Dispose()\n$key = $root.CreateSubKey('Software\\Classes\\Applications\\{app_name}\\shell\\open\\command')\n$key.SetValue('', {command}); $key.Dispose()\n$key = $root.CreateSubKey('Software\\Classes\\Applications\\{app_name}\\SupportedTypes')\n$key.SetValue('{extension}', ''); $key.Dispose()\n")).await;
-    let signal = Signal::default();
+    let signal = signal();
     let applications =
         native_file_applications(path.to_str().unwrap(), &signal, &Default::default())
             .await
@@ -159,7 +159,7 @@ async fn queries_and_invokes_a_registered_windows_handler_through_the_system_she
             .await;
             match result {
                 Ok(_) => break,
-                Err(error) if error.code == Some(CommandCode::Exit(1)) => {
+                Err(error) if detail(&error).code == Some(CommandCode::Exit(1)) => {
                     tokio::task::yield_now().await
                 }
                 Err(error) => panic!("{error}"),

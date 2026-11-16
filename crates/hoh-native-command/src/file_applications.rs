@@ -2,6 +2,8 @@ use crate::{
     file_applications_linux::linux_file_applications,
     file_applications_windows::windows_file_applications, path_opener::*, runner::*, types::*,
 };
+use hoh_error::SharedError;
+use hoh_timeout::AbortSignal;
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -10,13 +12,11 @@ struct MacApplication {
     bundle: Option<String>,
     version: Option<String>,
 }
-fn mac_field(value: Option<&Value>) -> Result<Option<String>, NativeCommandError> {
+fn mac_field(value: Option<&Value>) -> Result<Option<String>, SharedError> {
     match value {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok((!s.is_empty()).then(|| s.clone())),
-        _ => Err(NativeCommandError::message(
-            "Invalid native application entry",
-        )),
+        _ => Err(NativeCommandError::message("Invalid native application entry").into()),
     }
 }
 fn compare_versions(left: Option<&str>, right: Option<&str>) -> std::cmp::Ordering {
@@ -41,7 +41,7 @@ fn compare_versions(left: Option<&str>, right: Option<&str>) -> std::cmp::Orderi
     }
 }
 fn version_number(text: &str) -> f64 {
-    let text = text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let text = hoh_util_values::js_trim(text);
     match text {
         "Infinity" | "+Infinity" => return f64::INFINITY,
         "-Infinity" => return f64::NEG_INFINITY,
@@ -74,9 +74,9 @@ fn version_number(text: &str) -> f64 {
 }
 async fn desktop_target(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     internals: &PathOpenerInternals<'_>,
-) -> Result<(String, String), NativeCommandError> {
+) -> Result<(String, String), SharedError> {
     signal.throw_if_aborted()?;
     if internals.platform() == "linux"
         && native_file_manager(internals) == Some(NativeFileManager::Explorer)
@@ -90,10 +90,10 @@ async fn desktop_target(
 }
 async fn query_file_applications(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     internals: &PathOpenerInternals<'_>,
     display: bool,
-) -> Result<Vec<NativeFileApplication>, NativeCommandError> {
+) -> Result<Vec<NativeFileApplication>, SharedError> {
     signal.throw_if_aborted()?;
     let (platform, target) = desktop_target(path, signal, internals).await?;
     let run = internals.runner();
@@ -118,8 +118,8 @@ async fn query_file_applications(
                 Window::Hidden,
             )
             .await?;
-        let value: Value = serde_json::from_str(&output.stdout)
-            .map_err(|e| NativeCommandError::message(e.to_string()))?;
+        let value: Value =
+            hoh_util_values::js_json_parse(&output.stdout).map_err(SharedError::new)?;
         let base = parse_native_file_applications(&value)?;
         // The parser above established an array, one entry for each base application.
         let entries = value.as_array().expect("validated array");
@@ -160,23 +160,22 @@ async fn query_file_applications(
         return Ok(Vec::new());
     }
     let output = windows_file_applications(&target, None, signal, run).await?;
-    let value =
-        serde_json::from_str(&output).map_err(|e| NativeCommandError::message(e.to_string()))?;
+    let value = hoh_util_values::js_json_parse(&output).map_err(SharedError::new)?;
     parse_native_file_applications(&value)
 }
 pub async fn native_file_applications(
     path: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     internals: &PathOpenerInternals<'_>,
-) -> Result<Vec<NativeFileApplication>, NativeCommandError> {
+) -> Result<Vec<NativeFileApplication>, SharedError> {
     query_file_applications(path, signal, internals, true).await
 }
 pub async fn open_native_file_application(
     path: &str,
     application: &str,
-    signal: &dyn CommandSignal,
+    signal: &AbortSignal,
     internals: &PathOpenerInternals<'_>,
-) -> Result<(), NativeCommandError> {
+) -> Result<(), SharedError> {
     let (platform, target) = desktop_target(path, signal, internals).await?;
     let run = internals.runner();
     if platform == "win32" {
@@ -185,9 +184,9 @@ pub async fn open_native_file_application(
     }
     let apps = query_file_applications(path, signal, internals, false).await?;
     if !apps.iter().any(|a| a.id == application) {
-        return Err(NativeCommandError::message(
-            "Application is not registered for this file",
-        ));
+        return Err(
+            NativeCommandError::message("Application is not registered for this file").into(),
+        );
     }
     if platform == "linux" {
         run.run(

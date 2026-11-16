@@ -8,13 +8,21 @@ fn application() -> Value {
     json!({"id":"/Applications/Music.app","name":"Music","default":true,"icon":null})
 }
 fn copy(id: &str, name: &str, bundle: Option<&str>, version: Option<&str>, default: bool) -> Value {
-    json!({"id":id,"name":name,"default":default,"icon":null,"bundle":bundle,"version":version})
+    let mut value = json!({"id":id,"name":name,"default":default,"icon":null});
+    if let Some(bundle) = bundle {
+        value["bundle"] = json!(bundle);
+    }
+    if let Some(version) = version {
+        value["version"] = json!(version);
+    }
+    value
 }
 #[tokio::test]
 async fn passes_file_paths_as_arguments_and_preserves_the_desktop_default() {
+    let request = signal();
     let run = Mock::output(&json!([application()]).to_string());
     let path = "/tmp/中文 $(touch nope).mp3";
-    let apps = native_file_applications(path, &Signal::default(), &facts("darwin", &run))
+    let apps = native_file_applications(path, &request, &facts("darwin", &run))
         .await
         .unwrap();
     assert_eq!(serde_json::to_value(apps).unwrap(), json!([application()]));
@@ -23,15 +31,19 @@ async fn passes_file_paths_as_arguments_and_preserves_the_desktop_default() {
     assert_eq!(&calls[0].args[..3], ["-l", "JavaScript", "-e"]);
     assert_eq!(&calls[0].args[4..], [path, "icons"]);
     assert_eq!(calls[0].window, Window::Hidden);
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn rejects_each_malformed_native_output() {
+    let request = signal();
     for stdout in ["{}".to_owned(),"[null]".into(),"[{\"id\":1}]".into(),"[{\"id\":\"/a.app\",\"default\":false,\"icon\":null,\"bundle\":\"b\"}]".into(),"[{\"id\":\"/a.app\",\"name\":\"A\",\"default\":false,\"icon\":null,\"bundle\":5}]".into(),json!([{ "icon":"javascript:alert(1)","id":"/Applications/Music.app","name":"Music","default":true }]).to_string()]{
-        let run=Mock::output(&stdout);assert!(native_file_applications("/file.mp3",&Signal::default(),&facts("darwin",&run)).await.is_err());
+        let run=Mock::output(&stdout);assert!(native_file_applications("/file.mp3",&request,&facts("darwin",&run)).await.is_err());
+        run.assert_signals(&request);
     }
 }
 #[tokio::test]
 async fn collapses_duplicate_copies_of_one_application_to_its_default_or_newest_install() {
+    let request = signal();
     let values = vec![
         copy(
             "/Applications/Quark.app",
@@ -90,10 +102,10 @@ async fn collapses_duplicate_copies_of_one_application_to_its_default_or_newest_
             true,
         ),
         copy("/script-a.app", "Script", None, None, false),
-        copy("/script-b.app", "Script", None, None, false),
+        json!({"id":"/script-b.app","name":"Script","default":false,"icon":null,"bundle":null,"version":null}),
     ];
     let run = Mock::output(&json!(values).to_string());
-    let apps = native_file_applications("/file.txt", &Signal::default(), &facts("darwin", &run))
+    let apps = native_file_applications("/file.txt", &request, &facts("darwin", &run))
         .await
         .unwrap();
     assert_eq!(
@@ -113,9 +125,11 @@ async fn collapses_duplicate_copies_of_one_application_to_its_default_or_newest_
         assert!(app.get("bundle").is_none());
         assert!(app.get("version").is_none());
     }
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn keeps_the_first_copy_on_version_ties_and_prefers_any_version_over_none() {
+    let request = signal();
     let mut values = Vec::new();
     for (id, bundle, version) in [
         ("/a/H.app", "h", Some("1.0")),
@@ -130,16 +144,18 @@ async fn keeps_the_first_copy_on_version_ties_and_prefers_any_version_over_none(
         values.push(copy(id, bundle, Some(bundle), version, false));
     }
     let run = Mock::output(&json!(values).to_string());
-    let apps = native_file_applications("/file.txt", &Signal::default(), &facts("darwin", &run))
+    let apps = native_file_applications("/file.txt", &request, &facts("darwin", &run))
         .await
         .unwrap();
     assert_eq!(
         apps.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
         ["/a/H.app", "/a/N.app", "/b/V.app", "/a/W.app"]
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn rejects_a_malformed_copy_even_when_deduplication_would_discard_it() {
+    let request = signal();
     let mut invalid = copy(
         "/updates/Music.app",
         "Music",
@@ -162,19 +178,20 @@ async fn rejects_a_malformed_copy_even_when_deduplication_would_discard_it() {
         .to_string(),
     );
     assert_eq!(
-        native_file_applications("/file.mp3", &Signal::default(), &facts("darwin", &run))
+        native_file_applications("/file.mp3", &request, &facts("darwin", &run))
             .await
             .unwrap_err()
-            .message,
+            .to_string(),
         "Invalid native application entry"
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn launches_only_a_currently_registered_application_with_argv() {
     let run = Mock::output(&json!([application()]).to_string());
     let f = facts("darwin", &run);
-    let signal = Signal::default();
-    open_native_file_application("/file.mp3", "/Applications/Music.app", &signal, &f)
+    let request = signal();
+    open_native_file_application("/file.mp3", "/Applications/Music.app", &request, &f)
         .await
         .unwrap();
     assert_eq!(run.calls()[0].args.last().unwrap(), "handlers");
@@ -186,15 +203,17 @@ async fn launches_only_a_currently_registered_application_with_argv() {
             Window::Hidden
         )
     );
+    run.assert_signals(&request);
     run.calls.lock().unwrap().clear();
     assert!(
-        open_native_file_application("/file.mp3", "/arbitrary.app", &signal, &f)
+        open_native_file_application("/file.mp3", "/arbitrary.app", &request, &f)
             .await
             .unwrap_err()
-            .message
+            .to_string()
             .contains("not registered")
     );
     assert_eq!(run.calls().len(), 1);
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn launches_a_registered_copy_that_deduplication_collapses_out_of_the_display_list() {
@@ -218,13 +237,13 @@ async fn launches_a_registered_copy_that_deduplication_collapses_out_of_the_disp
         .to_string(),
     );
     let f = facts("darwin", &run);
-    let signal = Signal::default();
-    let shown = native_file_applications("/file.mp3", &signal, &f)
+    let request = signal();
+    let shown = native_file_applications("/file.mp3", &request, &f)
         .await
         .unwrap();
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0].id, "/Applications/Music.app");
-    open_native_file_application("/file.mp3", "/updates/Music.app", &signal, &f)
+    open_native_file_application("/file.mp3", "/updates/Music.app", &request, &f)
         .await
         .unwrap();
     assert_eq!(
@@ -238,17 +257,19 @@ async fn launches_a_registered_copy_that_deduplication_collapses_out_of_the_disp
 }
 #[tokio::test]
 async fn does_not_query_after_cancellation_or_on_unsupported_platforms() {
+    let request = signal();
     let run = Mock::output("");
     assert!(
-        native_file_applications("/file.mp3", &Signal::default(), &facts("freebsd", &run))
+        native_file_applications("/file.mp3", &request, &facts("freebsd", &run))
             .await
             .unwrap()
             .is_empty()
     );
-    let signal = Signal::default();
-    signal.abort("closed");
+    let controller = AbortController::new();
+    controller.abort();
+    let request = controller.signal();
     assert!(
-        native_file_applications("/file.mp3", &signal, &facts("darwin", &run))
+        native_file_applications("/file.mp3", &request, &facts("darwin", &run))
             .await
             .is_err()
     );
@@ -256,6 +277,7 @@ async fn does_not_query_after_cancellation_or_on_unsupported_platforms() {
 }
 #[tokio::test]
 async fn uses_the_production_command_adapter_and_current_platform_when_no_override_is_supplied() {
+    let request = signal();
     let run = Mock::new(|cmd, _, _, _| {
         Ok(output(if cmd == "gio" {
             "standard::content-type: audio/mpeg"
@@ -271,20 +293,20 @@ async fn uses_the_production_command_adapter_and_current_platform_when_no_overri
         env: Some(env(&[])),
         ..Default::default()
     };
-    let apps = native_file_applications("/file.mp3", &Signal::default(), &f)
+    let apps = native_file_applications("/file.mp3", &request, &f)
         .await
         .unwrap();
     assert_eq!(apps.len(), if cfg!(target_os = "linux") { 0 } else { 1 });
     open_native_file_application(
         "/file.mp3",
         "/Applications/Music.app",
-        &Signal::default(),
+        &request,
         &facts("darwin", &run),
     )
     .await
     .unwrap();
     assert_eq!(run.calls().last().unwrap().command, "open");
-    assert!(PathOpenerInternals::default().run.is_none());
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn encodes_windows_query_and_invocation_data_separately_from_native_adapter_source() {
@@ -297,13 +319,14 @@ async fn encodes_windows_query_and_invocation_data_separately_from_native_adapte
             .push(std::fs::read_to_string(args.last().unwrap()).unwrap());
         Ok(output(&json!([application()]).to_string()))
     });
-    let signal = Signal::default();
+    let request = signal();
     let f = facts("win32", &run);
-    let apps = native_file_applications(path, &signal, &f).await.unwrap();
+    let apps = native_file_applications(path, &request, &f).await.unwrap();
     assert_eq!(serde_json::to_value(apps).unwrap(), json!([application()]));
-    open_native_file_application(path, "/Applications/Music.app", &signal, &f)
+    open_native_file_application(path, "/Applications/Music.app", &request, &f)
         .await
         .unwrap();
+    run.assert_signals(&request);
     let scripts = scripts.lock().unwrap();
     assert!(scripts[0].contains(&STANDARD.encode(path)));
     assert!(!scripts[0].contains(path));
@@ -336,7 +359,7 @@ async fn keeps_the_complete_windows_command_line_below_the_create_process_limit_
         format!("C:\\work\\{}.txt", "测".repeat(3000)),
     ];
     for path in &paths {
-        native_file_applications(path, &Signal::default(), &facts("win32", &run))
+        native_file_applications(path, &signal(), &facts("win32", &run))
             .await
             .unwrap();
     }
@@ -353,6 +376,7 @@ async fn keeps_the_complete_windows_command_line_below_the_create_process_limit_
 }
 #[tokio::test]
 async fn uses_the_windows_desktop_for_wsl_paths_and_rejects_an_empty_translation() {
+    let request = signal();
     let run = Mock::new(|cmd, _, _, _| {
         Ok(output(if cmd == "wslpath" {
             "C:\\音频.mp3\n"
@@ -362,18 +386,13 @@ async fn uses_the_windows_desktop_for_wsl_paths_and_rejects_an_empty_translation
     });
     let mut f = facts("linux", &run);
     f.os_release = Some("microsoft".into());
-    let apps = native_file_applications("/mnt/c/音频.mp3", &Signal::default(), &f)
+    let apps = native_file_applications("/mnt/c/音频.mp3", &request, &f)
         .await
         .unwrap();
     assert_eq!(serde_json::to_value(apps).unwrap(), json!([application()]));
-    open_native_file_application(
-        "/mnt/c/音频.mp3",
-        "/Applications/Music.app",
-        &Signal::default(),
-        &f,
-    )
-    .await
-    .unwrap();
+    open_native_file_application("/mnt/c/音频.mp3", "/Applications/Music.app", &request, &f)
+        .await
+        .unwrap();
     assert!(
         run.calls()
             .contains(&call("wslpath", &["-w", "/mnt/c/音频.mp3"], Window::Hidden))
@@ -381,15 +400,17 @@ async fn uses_the_windows_desktop_for_wsl_paths_and_rejects_an_empty_translation
     let empty = Mock::output("");
     f.run = Some(&empty);
     assert!(
-        native_file_applications("/a", &Signal::default(), &f)
+        native_file_applications("/a", &request, &f)
             .await
             .unwrap_err()
-            .message
+            .to_string()
             .contains("no Windows path")
     );
+    run.assert_signals(&request);
 }
 #[tokio::test]
 async fn uses_production_environment_and_runner_defaults_for_linux_and_wsl() {
+    let request = signal();
     let run = Mock::new(|cmd, _, _, _| {
         Ok(output(match cmd {
             "gio" => "standard::content-type: audio/mpeg",
@@ -407,7 +428,7 @@ async fn uses_production_environment_and_runner_defaults_for_linux_and_wsl() {
         ..Default::default()
     };
     assert!(
-        native_file_applications("/file.mp3", &Signal::default(), &f)
+        native_file_applications("/file.mp3", &request, &f)
             .await
             .unwrap()
             .is_empty()
@@ -415,10 +436,11 @@ async fn uses_production_environment_and_runner_defaults_for_linux_and_wsl() {
     let mut f = facts("linux", &run);
     f.os_release = Some("microsoft".into());
     assert_eq!(
-        native_file_applications("/file.mp3", &Signal::default(), &f)
+        native_file_applications("/file.mp3", &request, &f)
             .await
             .unwrap()
             .len(),
         1
     );
+    run.assert_signals(&request);
 }

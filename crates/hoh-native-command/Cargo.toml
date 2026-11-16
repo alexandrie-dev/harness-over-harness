@@ -10,6 +10,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-error = { path = "../hoh-error" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
 base64.workspace = true
 indexmap.workspace = true
 regex.workspace = true
