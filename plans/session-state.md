@@ -40,10 +40,22 @@ dsh на коммите `39163dd30f703a79079e2d2446545cff3c453738`, cordis на 
 Сделано на этапе 0 ведущим (2026-11-16): каркас workspace (`Cargo.toml`, `rust-toolchain.toml` 1.97.1, `.cargo/config.toml`,
 `.gitignore`, `NOTICE`), `docs/porting/PORTING.md`, `scripts/port-status.sh`. Опись уточнена: `apps/cli` → этап 1,
 `subprocess/win32-process` → этап 5, `test-support/client-runtime` и `remote-mock` → не переводим, три тестовых пакета
-воспроизведения → внутрь `hoh-conformance`; итог к переносу 212 пакетов, 167,7 тыс. строк образца и 304,8 тыс. строк тестов.
+воспроизведения → внутрь `hoh-conformance`; профили `sdk-minimal` → этап 1 и `base` → этап 2; пять пустых нативных пакетов
+убраны; итог к переносу 207 пакетов, 167,7 тыс. строк образца и 304,8 тыс. строк тестов (коммит `caeffb6`).
 Расхождение 407 против 420 разобрано: 13 лишних — тестовые фикстуры (`apps/web/tests/fixtures`, `typert/generator/tests/fixtures`).
 Решение по Typert: около 20 пакетов рантайма помечают методы `@Remote` для окна dsh; пометка не переносится, метод остаётся
 публичным со строкой `/// Remote: <namespace>.<method>` (PORTING.md, раздел 8).
+Заметки ведущего к организации переноса (2026-11-16):
+- Граф зависимостей переносимых пакетов — без циклов, кроме тройки ядра (cordis, include, loader), которая сливается в наши два crate.
+- Этап 1 глубокий: 17 уровней зависимостей, самый широкий — 22 пакета. Если идти строго уровнями, это 17 последовательных кругов.
+  Вариант ускорения на решение ведущего после готовности ядра: сначала по порядку зависимостей написать публичные типы и сигнатуры
+  всех crates этапа, затем тела писать параллельно по всем уровням.
+- `boot/app-boot` (этап 0) зависит от шести пакетов `util` этапа 1 (`atomic-write`, `home-paths`, `launch-environment`,
+  `native-command`, `official-bundles`, `package-manifest`): какие из них нужны загрузчику без npm, решить по `docs/kernel.md`.
+- Каждому параллельному писателю — свой `CARGO_TARGET_DIR` на `/mnt/toshiba/alexandrie/hoh/`, иначе сборки ждут друг друга.
+- Codex: вход выполнен (ChatGPT), модель по умолчанию `gpt-6.1-sol`; образец вызова — `starter-kit/scripts/codex-review.sh`
+  (`codex exec -s read-only … --ephemeral`, для писателя `-s workspace-write`).
+
 Осталось на этапе 0: принять `docs/kernel.md` и описание прогона сценариев, дополнить `DEPS.md` библиотеками этапа 1,
 затем ядро, макросы, загрузчик, `hoh-conformance`, `scripts/verify.sh`. Замены сторонних библиотек образца, требующие
 решения на этапе 1: `sharp` (libvips, LGPL — не берём, нужен crate `image`), `node-pty` и `@xterm/headless` (вид экрана
