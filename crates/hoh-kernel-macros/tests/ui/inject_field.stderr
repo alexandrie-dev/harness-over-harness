@@ -1,0 +1,5 @@
+error: Inject field must have type Service<K>
+ --> tests/ui/inject_field.rs:3:24
+  |
+3 | struct Deps { invalid: String }
+  |                        ^^^^^^

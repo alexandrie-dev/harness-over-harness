@@ -1,0 +1,5 @@
+error[E0451]: field `value` of struct `Service` is private
+ --> tests/ui/service_private.rs:4:38
+  |
+4 | fn main() { let _ = Service::<Key> { value: Arc::new(1) }; }
+  |                                      ^^^^^ private field

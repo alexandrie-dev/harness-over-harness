@@ -1,0 +1,15 @@
+error[E0382]: use of moved value: `next`
+ --> tests/ui/next_twice.rs:4:13
+  |
+2 | async fn invalid(next: Next<()>) {
+  |                  ---- move occurs because `next` has type `Next<()>`, which does not implement the `Copy` trait
+3 |     let _ = next.run().await;
+  |                  ----- `next` moved due to this method call
+4 |     let _ = next.run().await;
+  |             ^^^^ value used here after move
+  |
+note: `Next::<R>::run` takes ownership of the receiver `self`, which moves `next`
+ --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+  |
+  |     pub fn run(self) -> impl Future<Output = Result<R, Error>> + Send + 'static {
+  |                ^^^^

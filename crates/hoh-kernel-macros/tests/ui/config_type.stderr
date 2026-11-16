@@ -1,0 +1,13 @@
+error: plugin config parameter must have type Cfg<C>
+ --> tests/ui/config_type.rs:3:38
+  |
+3 | async fn apply(ctx: Context, config: String) -> Result<(), Error> { Ok(()) }
+  |                                      ^^^^^^
+
+warning: unused imports: `Context` and `Error`
+ --> tests/ui/config_type.rs:1:26
+  |
+1 | use hoh_kernel::{plugin, Context, Error};
+  |                          ^^^^^^^  ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

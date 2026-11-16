@@ -1,0 +1,18 @@
+error[E0271]: type mismatch resolving `<E as Event>::Mode == Emit`
+ --> tests/ui/event_mode.rs:4:38
+  |
+4 | fn invalid(ctx: &Context) { ctx.emit(&E); }
+  |                                 ---- ^^ type mismatch resolving `<E as Event>::Mode == Emit`
+  |                                 |
+  |                                 required by a bound introduced by this call
+  |
+note: expected this to be `hoh_kernel::Emit`
+ --> tests/ui/event_mode.rs:3:24
+  |
+3 | event!(E = "parallel", Parallel);
+  |                        ^^^^^^^^
+note: required by a bound in `hoh_kernel::events::<impl hoh_kernel::Context>::emit`
+ --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+  |
+  |     pub fn emit<E: Event<Mode = Emit>>(&self, event: &E) {
+  |                          ^^^^^^^^^^^ required by this bound in `hoh_kernel::events::<impl Context>::emit`

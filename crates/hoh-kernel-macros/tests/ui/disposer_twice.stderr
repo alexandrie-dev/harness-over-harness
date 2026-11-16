@@ -1,0 +1,15 @@
+error[E0382]: use of moved value: `disposer`
+ --> tests/ui/disposer_twice.rs:4:5
+  |
+2 | async fn invalid(disposer: Disposer) {
+  |                  -------- move occurs because `disposer` has type `Disposer`, which does not implement the `Copy` trait
+3 |     disposer.dispose().await;
+  |              --------- `disposer` moved due to this method call
+4 |     disposer.dispose().await;
+  |     ^^^^^^^^ value used here after move
+  |
+note: `Disposer::dispose` takes ownership of the receiver `self`, which moves `disposer`
+ --> $WORKSPACE/crates/hoh-kernel/src/effects.rs
+  |
+  |     pub fn dispose(self) -> impl Future<Output = ()> + Send + 'static {
+  |                    ^^^^

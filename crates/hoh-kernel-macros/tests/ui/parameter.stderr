@@ -1,0 +1,13 @@
+error: plugin parameter must be named ctx, deps, or config
+ --> tests/ui/parameter.rs:3:30
+  |
+3 | async fn apply(ctx: Context, wrong: ()) -> Result<(), Error> { Ok(()) }
+  |                              ^^^^^
+
+warning: unused imports: `Context` and `Error`
+ --> tests/ui/parameter.rs:1:26
+  |
+1 | use hoh_kernel::{plugin, Context, Error};
+  |                          ^^^^^^^  ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

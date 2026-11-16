@@ -19,3 +19,4 @@ syn.workspace = true
 
 [dev-dependencies]
 trybuild.workspace = true
+hoh-kernel = { path = "../hoh-kernel" }

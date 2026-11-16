@@ -1,0 +1,5 @@
+error[E0609]: no field `foo` on type `hoh_kernel::Context`
+ --> tests/ui/access_error.rs:2:36
+  |
+2 | fn invalid(mut ctx: Context) { ctx.foo = 0; }
+  |                                    ^^^ unknown field

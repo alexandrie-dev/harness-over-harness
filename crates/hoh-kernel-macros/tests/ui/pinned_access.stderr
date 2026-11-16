@@ -1,0 +1,5 @@
+error[E0609]: no field `foo` on type `hoh_kernel::Context`
+ --> tests/ui/pinned_access.rs:4:20
+  |
+4 |     let _ = pinned.foo;
+  |                    ^^^ unknown field
