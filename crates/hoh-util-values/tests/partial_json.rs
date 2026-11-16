@@ -513,9 +513,12 @@ fn distinguishes_a_streaming_view_from_a_sealed_view_of_the_same_text_even_thoug
     let mut sealed = PartialArguments::from_text(text);
     let mut streaming = streamed_owned(&slices(text, seeded_sizes(3)));
     assert!(streaming != sealed);
-    let mut answers = snapshot_of(&mut streaming);
-    answers.closed = sealed.closed();
-    assert_eq!(answers, snapshot_of(&mut sealed));
+    let answers = snapshot_of(&mut streaming);
+    let expected = ViewSnapshot {
+        closed: sealed.closed(),
+        ..answers.clone()
+    };
+    assert_eq!(expected, snapshot_of(&mut sealed));
     assert!(answers.closed);
 }
 
@@ -1396,12 +1399,22 @@ fn tracks_a_write_call_streamed_in_3_character_slices_exactly_as_an_independent_
         }
     );
 
-    // Three characters per slice (the source cuts three UTF-16 units; a Rust fragment cannot split a pair).
-    let characters: Vec<char> = text.chars().collect();
-    let chunks: Vec<String> = characters
-        .chunks(3)
-        .map(|slice| slice.iter().collect())
-        .collect();
+    // The source (spec line 1086) cuts every three UTF-16 units. A fragment is a `&str`, so a cut that
+    // would fall inside the surrogate pair of an emoji moves to the nearest representable cut, after the pair.
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut units = 0;
+    for character in text.chars() {
+        current.push(character);
+        units += character.len_utf16();
+        if units >= 3 {
+            chunks.push(std::mem::take(&mut current));
+            units = 0;
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
     let mut reported = 0;
     let mut previous_length = 0;
     for chunk in &chunks {
@@ -1616,4 +1629,39 @@ fn stops_at_the_first_invalid_character_of_a_fragment_and_ignores_the_rest_of_it
     assert!(view.invalid());
     assert!(view.keys().is_empty());
     assert!(!view.has("file_path"));
+}
+
+#[test]
+fn orders_integer_like_keys_ascending_before_the_other_keys_as_javascript_does() {
+    let mut object = serde_json::Map::new();
+    for key in ["b", "2", "1", "a", "01"] {
+        object.insert(key.to_owned(), json!(0));
+    }
+    let mut view = PartialArguments::from_object(&json!({"o": Value::Object(object)}));
+    assert_eq!(view.keys(), ["o"]);
+    let nested = view.value("o").unwrap();
+    let keys: Vec<&String> = nested.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["1", "2", "b", "a", "01"]);
+
+    let mut top = serde_json::Map::new();
+    top.insert("2".to_owned(), json!(0));
+    top.insert("1".to_owned(), json!(0));
+    assert_eq!(
+        PartialArguments::from_object(&Value::Object(top)).keys(),
+        ["1", "2"]
+    );
+
+    let mut parsed = streamed(&[r#"{"o":{"2":0,"1":0}}"#]);
+    assert_eq!(
+        serde_json::to_string(&parsed.value("o").unwrap()).unwrap(),
+        r#"{"1":0,"2":0}"#
+    );
+}
+
+#[test]
+fn keeps_a_nan_step_as_nan_so_its_length_read_never_reports_a_change() {
+    let mut view = PartialArguments::new();
+    append(&mut view, r#"{"x":""#);
+    assert_eq!(len_step(&mut view, "x", f64::NAN), Some(0));
+    assert!(!append_and_refresh(&mut view, "a"));
 }

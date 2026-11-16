@@ -300,11 +300,38 @@ fn normalize_numbers(value: &mut Value) {
     }
 }
 
+/// A canonical array index: the keys JavaScript lists first, ascending.
+fn array_index(key: &str) -> Option<u32> {
+    let canonical =
+        key == "0" || (!key.starts_with('0') && key.bytes().all(|byte| byte.is_ascii_digit()));
+    if !canonical || key.is_empty() {
+        return None;
+    }
+    key.parse::<u32>().ok().filter(|index| *index != u32::MAX)
+}
+
+/// JavaScript lists integer-like keys of an object ascending before the other keys.
+fn order_keys_like_js(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.values_mut().for_each(order_keys_like_js);
+            if map.keys().any(|key| array_index(key).is_some()) {
+                let mut entries: Vec<(String, Value)> = std::mem::take(map).into_iter().collect();
+                entries.sort_by_key(|(key, _)| array_index(key).map_or((1, 0), |index| (0, index)));
+                map.extend(entries);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(order_keys_like_js),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
 /// `JSON.parse` of a slice of the source text; `None` where it throws.
 fn parse_json(units: &[u16]) -> Option<Value> {
     let text = String::from_utf16(units).ok()?;
     let mut value: Value = serde_json::from_str(&text).ok()?;
     normalize_numbers(&mut value);
+    order_keys_like_js(&mut value);
     Some(value)
 }
 
@@ -395,8 +422,10 @@ impl PartialArguments {
     /// View an already parsed argument payload; a non-object payload has no fields.
     pub fn from_object(value: &Value) -> Self {
         let mut view = Self::new();
-        view.object = Some(match value {
-            Value::Object(map) => map.clone(),
+        let mut ordered = value.clone();
+        order_keys_like_js(&mut ordered);
+        view.object = Some(match ordered {
+            Value::Object(map) => map,
             _ => Map::new(),
         });
         view.sealed = true;
@@ -542,7 +571,13 @@ impl PartialArguments {
 
     /// Decoded UTF-16 length of the string field so far; `None` when absent or not a string.
     pub fn string_length(&mut self, key: &str, options: LengthReadOptions) -> Option<usize> {
-        let step = options.step.unwrap_or(1.0).floor().max(1.0);
+        let floored = options.step.unwrap_or(1.0).floor();
+        // `Math.max(1, step)` keeps NaN; `f64::max` would replace it with 1.
+        let step = if floored.is_nan() {
+            floored
+        } else {
+            floored.max(1.0)
+        };
         let offset = options.offset.unwrap_or(0.0);
         self.observe(ReadSpec::Length {
             key: key.to_owned(),
