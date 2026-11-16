@@ -11,3 +11,15 @@ workspace = true
 
 [dependencies]
 hoh-kernel = { path = "../hoh-kernel" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-error = { path = "../hoh-error" }
+hoh-util-values = { path = "../hoh-util-values" }
+futures-util.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

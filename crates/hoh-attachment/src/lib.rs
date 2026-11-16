@@ -122,10 +122,12 @@ pub trait AttachmentStore: Send + Sync + 'static {
             } else {
                 admit_encoded_images(self, &encoded).await?
             };
+            let reference_count = refs.len();
+            let image_count = encoded.len();
             let mut next = refs.into_iter();
             Ok(content
                 .iter()
-                .map(|part| match part {
+                .map(|part| Ok(match part {
                     AttachmentAdmissionPart::Text { text } => {
                         AdmittedPromptContentPart::Text { text: text.clone() }
                     }
@@ -140,15 +142,15 @@ pub trait AttachmentStore: Send + Sync + 'static {
                         }
                     }
                     AttachmentAdmissionPart::EncodedImage { .. } => {
-                        // The save_images contract returns one reference for each encoded input.
                         AdmittedPromptContentPart::Image {
-                            attachment: next
-                                .next()
-                                .expect("one stored reference per encoded image"),
+                            attachment: next.next().ok_or_else(|| AttachmentError::new(
+                                format!("Attachment store returned {reference_count} image references for {image_count} images."),
+                                AttachmentErrorCode::AttachmentWriteFailed,
+                            ))?,
                         }
                     }
-                })
-                .collect())
+                }))
+                .collect::<Result<_, HarnessError>>()?)
         })
     }
 

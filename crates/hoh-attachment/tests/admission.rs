@@ -11,6 +11,7 @@ struct DelegationStore {
     image_batches: Mutex<Vec<Vec<SaveImageAttachment>>>,
     file_inputs: Mutex<Vec<SaveFileAttachment>>,
     rejected: Option<SharedError>,
+    image_refs: Option<Vec<ImageAttachmentRef>>,
 }
 
 impl DelegationStore {
@@ -27,6 +28,7 @@ impl DelegationStore {
             image_batches: Mutex::new(Vec::new()),
             file_inputs: Mutex::new(Vec::new()),
             rejected: None,
+            image_refs: None,
         }
     }
 }
@@ -66,6 +68,9 @@ impl AttachmentStore for DelegationStore {
             self.image_batches.lock().unwrap().push(inputs.to_vec());
             if let Some(error) = &self.rejected {
                 return Err(Box::new(error.clone()) as BoxError);
+            }
+            if let Some(refs) = &self.image_refs {
+                return Ok(refs.clone());
             }
             Ok(inputs
                 .iter()
@@ -145,6 +150,56 @@ fn assert_code(error: &BoxError, code: &str) {
     let error = HarnessError::of(error.as_ref()).unwrap();
     assert_eq!(error.name(), "AttachmentError");
     assert_eq!(error.code(), code);
+}
+
+#[tokio::test]
+async fn rejects_short_image_reference_batches() {
+    let mut store = DelegationStore::new();
+    store.image_refs = Some(vec![]);
+
+    let error = store
+        .admit_prompt_content(&[encoded("AQ==")])
+        .await
+        .unwrap_err();
+    assert_code(&error, "ATTACHMENT_WRITE_FAILED");
+    assert_eq!(
+        error.to_string(),
+        "Attachment store returned 0 image references for 1 images."
+    );
+
+    store.limits.max_images_per_message = 3;
+    store.image_refs = Some(vec![stored_ref()]);
+    let error = store
+        .admit_prompt_content(&[encoded("AQ=="), stored(1), encoded("Ag==")])
+        .await
+        .unwrap_err();
+    assert_code(&error, "ATTACHMENT_WRITE_FAILED");
+    assert_eq!(
+        error.to_string(),
+        "Attachment store returned 1 image references for 2 images."
+    );
+}
+
+#[tokio::test]
+async fn ignores_extra_image_references() {
+    let mut store = DelegationStore::new();
+    store.image_refs = Some(vec![
+        stored_ref(),
+        ImageAttachmentRef {
+            attachment_id: "extra-1".into(),
+            ..stored_ref()
+        },
+    ]);
+    let admitted = store
+        .admit_prompt_content(&[encoded("AQ==")])
+        .await
+        .unwrap();
+    assert_eq!(
+        admitted,
+        vec![AdmittedPromptContentPart::Image {
+            attachment: stored_ref(),
+        }]
+    );
 }
 
 #[tokio::test]
