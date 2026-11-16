@@ -26,6 +26,8 @@ pub enum Dispatch {
     Waterfall,
 }
 pub struct Emit;
+/// Per-listener contained, synchronous notification with optional asynchronous listeners.
+pub struct Contained;
 pub struct Parallel;
 pub struct Serial<R>(PhantomData<fn() -> R>);
 pub struct Bail<R>(PhantomData<fn() -> R>);
@@ -39,6 +41,7 @@ macro_rules! mode {
     };
 }
 mode!(Emit, Emit);
+mode!(Contained, Emit);
 mode!(Parallel, Parallel);
 impl<R: 'static> sealed::Sealed for Serial<R> {}
 impl<R: 'static> Mode for Serial<R> {
@@ -74,10 +77,14 @@ type SyncHandler = dyn Fn(&(dyn Any + Send + Sync)) -> Option<Out> + Send + Sync
 type AsyncHandler =
     dyn Fn(Value, Next<Option<Out>>) -> Task<Result<Option<Out>, Error>> + Send + Sync;
 type DispatchHandler = dyn Fn(Dispatch, &'static str, &(dyn Any + Send + Sync)) + Send + Sync;
+type ContainedHandler = dyn Fn(&(dyn Any + Send + Sync)) -> Result<(), Error> + Send + Sync;
+type ContainedAsyncHandler = dyn Fn(Value) -> Task<Result<(), Error>> + Send + Sync;
 pub(crate) enum Callback {
     Sync(Box<SyncHandler>),
     Async(Box<AsyncHandler>),
     Dispatch(Box<DispatchHandler>),
+    Contained(Box<ContainedHandler>),
+    ContainedAsync(Box<ContainedAsyncHandler>),
 }
 pub(crate) struct Listener {
     ctx: Context,
@@ -108,7 +115,156 @@ pub struct Listen<'a> {
     prepend: bool,
     global: bool,
 }
+#[derive(Debug)]
+pub enum ListenerFailure {
+    Threw(Error),
+    Rejected(Error),
+}
+struct ContainedCompletion {
+    effect: std::sync::Weak<effects::Effect>,
+    done: Option<tokio::sync::oneshot::Sender<()>>,
+}
+impl Drop for ContainedCompletion {
+    fn drop(&mut self) {
+        if let Some(effect) = self.effect.upgrade() {
+            effect.retire_child();
+        }
+        if let Some(done) = self.done.take() {
+            let _ = done.send(());
+        }
+    }
+}
+/// A fixed set of callbacks, captured before the emitter changes its state.
+pub struct Callbacks<E: Event<Mode = Contained>> {
+    event: Arc<E>,
+    listeners: Vec<Arc<Listener>>,
+    log: Logger,
+}
+impl<E: Event<Mode = Contained>> Callbacks<E> {
+    pub fn len(&self) -> usize {
+        self.listeners.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.listeners.is_empty()
+    }
+    pub fn invoke(self, report: impl Fn(ListenerFailure) + Send + Sync + 'static) {
+        let report = Arc::new(report);
+        for listener in self.listeners {
+            match &listener.callback {
+                Callback::Contained(f) => {
+                    let failure =
+                        match std::panic::catch_unwind(AssertUnwindSafe(|| f(self.event.as_ref())))
+                        {
+                            Ok(Ok(())) => None,
+                            Ok(Err(error)) => Some(error),
+                            Err(_) => Some("event listener panicked".into()),
+                        };
+                    if let Some(error) = failure {
+                        report_failure(&*report, ListenerFailure::Threw(error), &self.log);
+                    }
+                }
+                Callback::ContainedAsync(f) => {
+                    let token = listener.ctx.token();
+                    if token.is_cancelled() {
+                        continue;
+                    }
+                    if tokio::runtime::Handle::try_current().is_err() {
+                        report_failure(
+                            &*report,
+                            ListenerFailure::Rejected(
+                                "asynchronous listener requires a tokio runtime".into(),
+                            ),
+                            &self.log,
+                        );
+                        continue;
+                    }
+                    let Ok(disposer) = listener.ctx.reserve_effect("contained listener") else {
+                        continue;
+                    };
+                    let (done, finished) = tokio::sync::oneshot::channel();
+                    disposer.effect.add(Undo::future(move || async move {
+                        let _ = finished.await;
+                        Ok(())
+                    }));
+                    disposer.effect.finish_setup();
+                    let completion = ContainedCompletion {
+                        effect: Arc::downgrade(&disposer.effect),
+                        done: Some(done),
+                    };
+                    let future = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        f(self.event.clone())
+                    })) {
+                        Ok(future) => future,
+                        Err(_) => {
+                            report_failure(
+                                &*report,
+                                ListenerFailure::Rejected("event listener panicked".into()),
+                                &self.log,
+                            );
+                            continue;
+                        }
+                    };
+                    let report = report.clone();
+                    let log = self.log.clone();
+                    fiber::spawn_for(listener.ctx.data.ancestry.clone(), async move {
+                        let _completion = completion;
+                        let result = tokio::select! {biased;_=token.cancelled()=>return,result=AssertUnwindSafe(future).catch_unwind()=>result};
+                        let error = match result {
+                            Ok(Ok(())) => return,
+                            Ok(Err(error)) => error,
+                            Err(_) => "event listener panicked".into(),
+                        };
+                        report_failure(&*report, ListenerFailure::Rejected(error), &log);
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+}
+fn report_failure(
+    report: &(impl Fn(ListenerFailure) + ?Sized),
+    failure: ListenerFailure,
+    log: &Logger,
+) {
+    if std::panic::catch_unwind(AssertUnwindSafe(|| report(failure))).is_err() {
+        log.error("contained listener failure reporter panicked");
+    }
+}
 impl<'a> Listen<'a> {
+    pub fn on_contained<E>(
+        self,
+        f: impl Fn(&E) -> Result<(), Error> + Send + Sync + 'static,
+    ) -> Result<Disposer, KernelError>
+    where
+        E: Event<Mode = Contained>,
+    {
+        self.register(
+            Some(TypeId::of::<E>()),
+            Callback::Contained(Box::new(move |event| {
+                let event = event
+                    .downcast_ref::<E>()
+                    .ok_or_else(|| Error::from("event type mismatch"))?;
+                f(event)
+            })),
+        )
+    }
+    pub fn on_contained_async<E, Fut>(
+        self,
+        f: impl Fn(Arc<E>) -> Fut + Send + Sync + 'static,
+    ) -> Result<Disposer, KernelError>
+    where
+        E: Event<Mode = Contained>,
+        Fut: Future<Output = Result<(), Error>> + Send + 'static,
+    {
+        self.register(
+            Some(TypeId::of::<E>()),
+            Callback::ContainedAsync(Box::new(move |event| match event.downcast::<E>() {
+                Ok(event) => Box::pin(f(event)),
+                Err(_) => Box::pin(async { Err("event type mismatch".into()) }),
+            })),
+        )
+    }
     pub fn on_update<C, Fut>(
         self,
         handler: impl Fn(Arc<C>, Next<()>) -> Fut + Send + Sync + 'static,
@@ -147,20 +303,25 @@ impl<'a> Listen<'a> {
             write(&self.ctx.inner.bus.dispatch).push(listener.clone());
         }
         let inner = Arc::downgrade(&self.ctx.inner);
+        let listener = Arc::downgrade(&listener);
         disposer.effect.add(Undo::sync(move || {
+            // Keep user callback captures alive until the bus locks have been released.
+            let keepalive = listener.upgrade();
             if let Some(inner) = inner.upgrade() {
                 if let Some(key) = key {
                     let mut bus = write(&inner.bus.listeners);
                     if let Some(list) = bus.get_mut(&key) {
-                        list.retain(|l| !Arc::ptr_eq(l, &listener));
+                        list.retain(|l| !std::ptr::eq(l.as_ref(), listener.as_ptr()));
                         if list.is_empty() {
                             bus.remove(&key);
                         }
                     }
                 } else {
-                    write(&inner.bus.dispatch).retain(|l| !Arc::ptr_eq(l, &listener));
+                    write(&inner.bus.dispatch)
+                        .retain(|l| !std::ptr::eq(l.as_ref(), listener.as_ptr()));
                 }
             }
+            drop(keepalive);
         }));
         disposer.effect.finish_setup();
         Ok(disposer)
@@ -306,6 +467,38 @@ fn chain(
     }
 }
 impl Context {
+    pub fn on_contained<E>(
+        &self,
+        f: impl Fn(&E) -> Result<(), Error> + Send + Sync + 'static,
+    ) -> Result<Disposer, KernelError>
+    where
+        E: Event<Mode = Contained>,
+    {
+        self.listen().on_contained::<E>(f)
+    }
+    pub fn on_contained_async<E, Fut>(
+        &self,
+        f: impl Fn(Arc<E>) -> Fut + Send + Sync + 'static,
+    ) -> Result<Disposer, KernelError>
+    where
+        E: Event<Mode = Contained>,
+        Fut: Future<Output = Result<(), Error>> + Send + 'static,
+    {
+        self.listen().on_contained_async::<E, Fut>(f)
+    }
+    pub fn dispatch<E: Event<Mode = Contained>>(&self, event: impl Into<Arc<E>>) -> Callbacks<E> {
+        let event = event.into();
+        let listeners = self
+            .resolve(event.as_ref())
+            .into_iter()
+            .filter(|l| l.alive())
+            .collect();
+        Callbacks {
+            event,
+            listeners,
+            log: self.logger(),
+        }
+    }
     pub fn listen(&self) -> Listen<'_> {
         Listen {
             ctx: self,
@@ -368,7 +561,7 @@ impl Context {
         self.listen()
             .register(None, Callback::Dispatch(Box::new(f)))
     }
-    fn dispatch<E: Event>(&self, event: &E) -> Vec<Arc<Listener>> {
+    fn resolve<E: Event>(&self, event: &E) -> Vec<Arc<Listener>> {
         if !E::NAME.starts_with("internal/") {
             let observers = read(&self.inner.bus.dispatch).clone();
             for l in observers {
@@ -407,7 +600,7 @@ impl Context {
             .collect()
     }
     pub fn emit<E: Event<Mode = Emit>>(&self, event: &E) {
-        for l in self.dispatch(event) {
+        for l in self.resolve(event) {
             if l.alive()
                 && let Callback::Sync(f) = &l.callback
             {
@@ -429,7 +622,7 @@ impl Context {
         E: Event<Mode = Bail<R>>,
         R: Send + 'static,
     {
-        for l in self.dispatch(event) {
+        for l in self.resolve(event) {
             if l.alive()
                 && let Callback::Sync(f) = &l.callback
                 && let Some(r) = f(event).and_then(|r| r.downcast::<R>().ok())
@@ -444,7 +637,7 @@ impl Context {
         event: impl Into<Arc<E>>,
     ) -> impl Future<Output = Result<(), KernelError>> + Send + 'static {
         let event = event.into();
-        let list = self.dispatch(event.as_ref());
+        let list = self.resolve(event.as_ref());
         let (tx, rx) = tokio::sync::oneshot::channel();
         fiber::spawn_inherited(async move {
             let mut tasks = FuturesOrdered::new();
@@ -495,7 +688,7 @@ impl Context {
         R: Send + 'static,
     {
         let event = event.into();
-        let list = self.dispatch(event.as_ref());
+        let list = self.resolve(event.as_ref());
         let task = fiber::spawn_inherited(async move {
             for l in list {
                 if l.alive()
@@ -520,7 +713,7 @@ impl Context {
         Fut: Future<Output = Result<R, Error>> + Send + 'static,
     {
         let event = event.into();
-        let list = Arc::new(self.dispatch(event.as_ref()));
+        let list = Arc::new(self.resolve(event.as_ref()));
         let tail_event = event.clone();
         let tail = Next {
             call: Box::new(move || {

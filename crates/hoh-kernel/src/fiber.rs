@@ -203,12 +203,25 @@ pub(crate) struct FiberData {
     pub(crate) ancestry: Vec<u32>,
     parent_effect: Weak<effects::Effect>,
 }
+impl FiberData {
+    pub(crate) fn declares(&self, name: &str) -> bool {
+        self.def.deps.iter().any(|dep| dep.name == name)
+            || self.inject.iter().any(|dep| dep.as_ref() == name)
+    }
+}
 #[derive(Clone)]
 pub struct Fiber {
     pub(crate) inner: Arc<Shared>,
     pub(crate) data: Arc<FiberData>,
 }
 impl Fiber {
+    /// The exact parent-owned child effect, suitable for adoption by an ordered composite.
+    pub fn disposer(&self) -> Option<Disposer> {
+        self.data
+            .parent_effect
+            .upgrade()
+            .map(|effect| Disposer { effect })
+    }
     pub fn uid(&self) -> u32 {
         self.data.uid
     }
@@ -501,6 +514,22 @@ impl Context {
         raw: Json,
         options: PluginOptions,
     ) -> Result<Fiber, KernelError> {
+        self.create_context(def, raw, options, false)
+            .map(|ctx| ctx.fiber())
+    }
+    /// A synchronously usable, named child context backed by a no-op plugin.
+    pub fn child(&self, name: &'static str) -> Result<Context, KernelError> {
+        let mut def = PluginDef::of::<Empty>();
+        def.name = name;
+        self.create_context(def, Json::Null, PluginOptions::default(), true)
+    }
+    fn create_context(
+        &self,
+        def: PluginDef,
+        raw: Json,
+        options: PluginOptions,
+        eager: bool,
+    ) -> Result<Context, KernelError> {
         let disposer = self.reserve_effect("ctx.plugin()")?;
         let uid = self.inner.next_uid.fetch_add(1, Ordering::Relaxed);
         let mut ancestry = self.data.ancestry.clone();
@@ -533,17 +562,49 @@ impl Context {
             inner: self.inner.clone(),
             data,
         };
+        let activation = effects::Activation::new(View::empty());
+        if !eager {
+            activation.close();
+        }
+        let ctx = self.child_context(fiber.data.clone(), activation, eager);
         let child = fiber.clone();
         disposer.effect.add(Undo::future(move || async move {
             child.dispose().await;
             Ok(())
         }));
-        disposer.effect.finish_setup();
-        self.inner
+        if eager {
+            let registered = {
+                let mut contexts = write(&self.inner.contexts);
+                if self.inner.closed.load(Ordering::Acquire) {
+                    false
+                } else {
+                    contexts.insert(uid, ctx.clone());
+                    true
+                }
+            };
+            if !registered {
+                disposer.effect.finish_setup();
+                disposer.effect.begin();
+                ctx.activation.close();
+                ctx.activation.abandon();
+                return Err(KernelError::Closed);
+            }
+        }
+        let sent = self
+            .inner
             .tx
-            .send(Command::Create(fiber.clone(), self.clone()))
-            .map_err(|_| KernelError::Closed)?;
-        Ok(fiber)
+            .send(Command::Create(ctx.clone(), self.clone(), eager));
+        disposer.effect.finish_setup();
+        if sent.is_err() {
+            if eager {
+                write(&self.inner.contexts).remove(&uid);
+                ctx.activation.close();
+                ctx.activation.abandon();
+            }
+            disposer.effect.begin();
+            return Err(KernelError::Closed);
+        }
+        Ok(ctx)
     }
 }
 pub(crate) enum Settlement {
@@ -555,7 +616,7 @@ pub(crate) enum Command {
     Fault,
     #[cfg(test)]
     TypeScans(Reply<usize>),
-    Create(Fiber, Context),
+    Create(Context, Context, bool),
     Start(u32, u64),
     Loaded(u32, u64, Result<(), Error>),
     Unloaded(u32),
@@ -604,7 +665,8 @@ struct Node {
     waiters: Vec<Reply<Result<(), KernelError>>>,
     dispose_waiters: Vec<Reply<()>>,
     retired: Vec<ReferenceProbe>,
-    committed: View,
+    committed: Arc<RwLock<View>>,
+    preactivated: bool,
 }
 impl Node {
     fn root(ctx: Context) -> Self {
@@ -624,7 +686,8 @@ impl Node {
             waiters: vec![],
             dispose_waiters: vec![],
             retired: vec![],
-            committed: View::empty(),
+            committed: Arc::new(RwLock::new(View::empty())),
+            preactivated: false,
         }
     }
     fn state(&self) -> FiberState {
@@ -693,26 +756,32 @@ impl Actor {
             Command::Fault => {
                 panic!("injected actor fault");
             }
-            Command::Create(fiber, parent) => {
-                let ctx = parent.activation_context(
-                    fiber.data.clone(),
-                    effects::Activation::new(View::empty()),
-                );
-                ctx.activation.close();
+            Command::Create(ctx, parent, eager) => {
+                let fiber = ctx.fiber();
                 let mut node = Node::root(ctx.clone());
+                node.preactivated = eager;
+                if eager {
+                    *write(&ctx.activation.committed) = Arc::downgrade(&node.committed);
+                }
                 node.target = None;
                 node.loaded = None;
                 if parent.ensure_active().is_err() {
                     write(&fiber.data.state).disposed = true;
-                    write(&fiber.data.state).state = FiberState::Disposed;
-                    if let Some(effect) = fiber.data.parent_effect.upgrade() {
-                        effect.retire_child();
+                    ctx.activation.close();
+                    if !eager {
+                        write(&fiber.data.state).state = FiberState::Disposed;
+                        if let Some(effect) = fiber.data.parent_effect.upgrade() {
+                            effect.retire_child();
+                        }
+                        return;
                     }
-                    return;
                 }
                 write(&self.shared.contexts).insert(fiber.uid(), ctx.clone());
                 self.nodes.insert(fiber.uid(), node);
-                ctx.emit(&InternalPlugin { fiber });
+                let disposed = read(&ctx.data.state).disposed;
+                if !disposed {
+                    ctx.emit(&InternalPlugin { fiber });
+                }
             }
             Command::Start(uid, generation) => self.start(uid, generation),
             Command::Loaded(uid, generation, result) => self.loaded(uid, generation, result),
@@ -720,8 +789,9 @@ impl Actor {
                 let Some(node) = self.nodes.get_mut(&uid) else {
                     return;
                 };
-                let bindings = std::mem::replace(&mut node.committed, View::empty());
-                for p in bindings.values.values() {
+                let bindings =
+                    std::mem::replace(&mut node.committed, Arc::new(RwLock::new(View::empty())));
+                for p in read(&bindings).values.values() {
                     lock(&p.dependents).shift_remove(&uid);
                 }
                 drop(bindings);
@@ -1058,6 +1128,12 @@ impl Actor {
                     node.ctx.activation.close();
                 }
                 match node.state() {
+                    FiberState::Pending if node.preactivated && node.disposed() => {
+                        node.preactivated = false;
+                        node.ctx.activation.close();
+                        self.status(uid, FiberState::Unloading);
+                        changed = true;
+                    }
                     FiberState::Pending if node.target.is_some() => {
                         node.generation += 1;
                         node.loaded = node.target.clone();
@@ -1067,8 +1143,15 @@ impl Actor {
                                 lock(&p.dependents).insert(uid);
                             }
                         }
-                        let activation = effects::Activation::new(view);
-                        node.committed = read(&activation.view).clone();
+                        let activation = if node.preactivated {
+                            node.preactivated = false;
+                            *write(&node.ctx.activation.view) = view;
+                            node.ctx.activation.clone()
+                        } else {
+                            effects::Activation::new(view)
+                        };
+                        node.committed = Arc::new(RwLock::new(read(&activation.view).clone()));
+                        *write(&activation.committed) = Arc::downgrade(&node.committed);
                         node.ctx = node
                             .ctx
                             .activation_context(node.ctx.data.clone(), activation);
@@ -1207,7 +1290,7 @@ impl Actor {
                 *write(&node.ctx.activation.cfg) = typed;
                 let ctx = node.ctx.clone();
                 let apply = ctx.data.def.apply.clone();
-                let view = node.committed.clone();
+                let view = read(&node.committed).clone();
                 let cfg = ctx.activation.cfg.clone();
                 let tx = self.shared.tx.clone();
                 let ancestry = ctx.data.ancestry.clone();
@@ -1436,6 +1519,10 @@ impl Drop for Actor {
         }
         self.shared.bus.clear();
         let contexts = std::mem::take(&mut *write(&self.shared.contexts));
+        for ctx in contexts.values() {
+            ctx.activation.close();
+            ctx.activation.abandon();
+        }
         let published = std::mem::take(&mut *write(&self.shared.published));
         let own = std::mem::take(&mut *write(&self.shared.own_published));
         drop(contexts);

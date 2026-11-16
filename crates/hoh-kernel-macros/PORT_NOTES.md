@@ -2,7 +2,7 @@
 
 ## Файлы
 
-`src/lib.rs`: `#[derive(Inject)]`, `#[plugin]`. Двенадцать compile-fail фикстур и две pass-фикстуры (полный, минимальный и переставленный набор параметров; гигиена) в `tests/ui` и `tests/pass`.
+`src/lib.rs`: `#[derive(Inject)]`, `#[plugin]`. Тринадцать compile-fail фикстур и две pass-фикстуры (полный, минимальный и переставленный набор параметров; гигиена) в `tests/ui` и `tests/pass`.
 
 ## Отличия от спецификации
 
@@ -31,10 +31,12 @@ Trybuild запускается обычным `#[test]`: проверяется
 
 ## Проверки
 
+Четвёртый раунд ext: реализация макросов не менялась; Mode=Contained поддерживается существующим event!. Добавлена compile-fail fixture contained_modes: запрещены emit/bail/parallel/serial/waterfall/on для Contained и dispatch для Emit. Всего 13 compile-fail и 2 pass fixtures; старые cases не менялись. Публичные additions и переносимые правила R63–R70 описаны в ../hoh-kernel/PORT_NOTES.md, секция «Четвёртый круг: добавленный API».
+
 Третий раунд fix2: реализация макросов не менялась; новые проверки касаются kernel. В ../hoh-kernel/PORT_NOTES.md записаны точный WORDS ledger, partly disputed legacy R48 constraints, исправления уведомлений/replies/optional integers/inspection/settled и lifetime шагов chain: запущенная task продолжает работу после Drop caller future. Устоявшийся fiber не выдаёт SelfWait из settled(). Прежние 12 UI и 2 pass fixtures сохранены.
 
-`CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-k1`:
+`CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-k1`:
 
-- `cargo test -p hoh-kernel-macros`: 1 passed; 0 failed, включая 12 compile-fail и 2 pass fixtures; unit/doc tests 0/0.
+- `cargo test -p hoh-kernel-macros`: 1 passed; 0 failed, включая 13 compile-fail и 2 pass fixtures; unit/doc tests 0/0.
 - `cargo clippy -p hoh-kernel -p hoh-kernel-macros --all-targets -- -D warnings`: exit 0.
 - `cargo fmt -p hoh-kernel -p hoh-kernel-macros -- --check`: exit 0.

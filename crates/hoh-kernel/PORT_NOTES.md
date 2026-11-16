@@ -340,11 +340,153 @@ Removed: **contains, minContains, maxContains, if, then, else, dependentRequired
 
 Witness unevaluatedProperties использует derived deny_unknown_fields + flattened tagged enum: схема действительно выдаётся schemars и проверяется напрямую (valid и extra-field invalid). Сам serde предупреждает об ограничении сочетания flatten/deny_unknown_fields; из этого witness не заявляется successful typed loading. Обычный flattened struct и strict struct по-прежнему загружаются отдельными прежними тестами.
 
+## Четвёртый круг: добавленный API
+
+Все пути исходников ниже относительно `/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness/`, если явно не указан upstream Cordis. Эта секция предназначена для переноса в docs/kernel.md. Два потребителя, hoh-scope и hoh-credentials, только прочитаны; их код не менялся. Все существовавшие тесты сохранены без изменений.
+
+### Публичные сигнатуры
+
+```rust
+pub struct Contained; // Event::Mode; Mode::DISPATCH == Dispatch::Emit
+pub enum ListenerFailure { Threw(Error), Rejected(Error) }
+pub struct Callbacks<E: Event<Mode = Contained>>; // opaque
+
+impl Listen<'_> {
+    pub fn on_contained<E>(self,
+        f: impl Fn(&E) -> Result<(), Error> + Send + Sync + 'static,
+    ) -> Result<Disposer, KernelError> where E: Event<Mode = Contained>;
+    pub fn on_contained_async<E, Fut>(self,
+        f: impl Fn(Arc<E>) -> Fut + Send + Sync + 'static,
+    ) -> Result<Disposer, KernelError>
+    where E: Event<Mode = Contained>, Fut: Future<Output = Result<(), Error>> + Send + 'static;
+}
+impl Context {
+    pub fn on_contained<E>(&self,
+        f: impl Fn(&E) -> Result<(), Error> + Send + Sync + 'static,
+    ) -> Result<Disposer, KernelError> where E: Event<Mode = Contained>;
+    pub fn on_contained_async<E, Fut>(&self,
+        f: impl Fn(Arc<E>) -> Fut + Send + Sync + 'static,
+    ) -> Result<Disposer, KernelError>
+    where E: Event<Mode = Contained>, Fut: Future<Output = Result<(), Error>> + Send + 'static;
+    pub fn dispatch<E: Event<Mode = Contained>>(&self, event: impl Into<Arc<E>>) -> Callbacks<E>;
+    pub fn child(&self, name: &'static str) -> Result<Context, KernelError>;
+    pub fn matches_filter(&self, listener: &Context) -> bool;
+    pub fn and_filter(&self, filter: impl Fn(&Context) -> bool + Send + Sync + 'static) -> Self;
+}
+impl<E: Event<Mode = Contained>> Callbacks<E> {
+    pub fn len(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
+    pub fn invoke(self, report: impl Fn(ListenerFailure) + Send + Sync + 'static);
+}
+impl Fiber {
+    pub fn disposer(&self) -> Option<Disposer>;
+}
+```
+
+Новые items не заменяют прежние on/emit и пять режимов. Реализация proc macros не менялась: event! уже принимает тип Mode. Для Contained обычные emit/bail/parallel/serial/waterfall/on не компилируются; dispatch не компилируется для остальных режимов. В trybuild добавлен contained_modes (семь отрицательных вызовов).
+
+### Дополнительные правила
+
+**R63. Снимок Contained.** dispatch фиксирует живые на момент разрешения слушатели в исходном порядке с prepend, global и фильтром dispatch-контекста; global обходит фильтр. on_dispatch получает Dispatch::Emit во время dispatch, до вызова слушателей; для internal/* сохраняется прежнее исключение. Добавленный позднее слушатель не входит в снимок; снятый позднее синхронный callback остаётся в нём. len/is_empty описывают этот снимок. Основание: vendor/cordis/src/events.ts:162–184 фильтрует hooks и копирует bound callbacks без последующей проверки removal. Это именно vendored DSH, а не более новый upstream: refs/cordis/packages/core/src/events.ts:97–105 уже проверяет hook.removed. Снимок удерживает callback до invoke/Drop.
+
+**R64. Синхронная изоляция.** Callbacks::invoke потребляет снимок, вызывает синхронные функции по очереди на задаче вызывающего и до следующего callback вызывает report(Threw(error)) при Err. Паника синхронного слушателя тоже Threw, с ошибкой `event listener panicked`. Остальные слушатели продолжают работу. Паника самого report изолируется и записывается в журнал ядра. Основание: packages/core/agent/src/dispatch.ts:125–135 и packages/core/tools/src/pipeline.ts:418–438 содержат отдельные per-callback try/catch; R61 задаёт границу Rust panic. Snapshot-before-commit следует packages/core/session/src/index.ts:895–907, :978–985.
+
+**R65. Асинхронный Contained.** on_contained_async регистрирует источник promise; вся его ошибка, включая панику future/factory, имеет вид Rejected. Factory вызывается по порядку на задаче invoke, future опрашивается отдельной задачей с ancestry именно fiber слушателя. Задача учитывается эффектом владельца, отменяется его token, при отмене ничего не сообщает; teardown ждёт Drop future. Успешная/закончившаяся задача удаляет собственную запись, поэтому вызовы не накапливают эффекты. report может вызываться из другой задачи и требует Send+Sync. Если invoke вызван без tokio runtime, asynchronous listener сообщает Rejected об отсутствии runtime; синхронные callbacks по-прежнему исполняются. Основание: packages/core/agent/src/dispatch.ts:129–134 различает returned-promise rejection и throw; владение/отмена — явное решение ext-stage0-k1 A с R17/R60. Обычный emit и его propagation panic не изменены.
+
+**R66. Синхронный дочерний контекст.** Context::child(name) создаёт именованный no-op fiber и сразу возвращает его Context: теги, realms, intercepts и filter унаследованы, эффекты принадлежат ребёнку. Контекст пригоден до первого await, когда state ещё Pending; первый переход в Loading/Active использует ту же активацию, поэтому ранние регистрации не теряются. Dispose до активации снимает ранние эффекты; гонка с dispose родителя тоже дожидается их. При отказе actor закрывает и освобождает в том числе детей с ещё не обработанной Create-командой. После unload старый Context не принимает эффекты; restart подчиняется R17. Обычный plugin/inject с ещё не разрешёнными Deps по-прежнему не выдаёт активный pending Context. Основание: packages/core/scope/src/index.ts:136–147; vendor/cordis/src/fiber.ts:270 и :305–323 явно обрабатывает pre-activation effects. Специализированный no-op child выбран вместо ослабления инвариантов всех pending plugins.
+
+**R67. Точный disposer и покой.** Fiber::disposer выдаёт handle того же родительского эффекта ctx.plugin(), а не новую обёртку. Повторно полученные handles указывают на одну запись; root или уже освобождённая запись дают None. Undo::from(handle) и передача его в Undos::push используют существующее adoption: ребёнок перестаёт быть независимым sibling в списке родителя и занимает точное место ordered composite. У Disposer сохраняется consuming dispose(self). Уже существующий Fiber::dispose() можно вызывать многократно; все вызовы ждут полного R10 teardown, даже если raw disposer уже начал его. Отдельный quiesce API не нужен. Основание: packages/core/scope/src/index.ts:115–118, :143–145; vendor/cordis/src/fiber.ts:294–326. Проверяется порядок асинхронных inner → scope → outer, а не только синхронный call log.
+
+**R68. Значение listener-контекста.** Нового API для B.3 не требуется: with_tag<T: Send+Sync+'static>(&self, value:T)->Context и tag<T: Send+Sync+'static>(&self)->Option<Arc<T>> уже реализуют ближайшую типизированную метку. Дочерние contexts наследуют её, with_tag того же типа затеняет только производный контекст. Bus хранит Context регистрации; filter получает именно его, а не контекст отправителя. Основание: packages/core/scope/src/index.ts:139–140, :150–151, :174–175; vendor/cordis/src/events.ts:162–173 (hook.ctx).
+
+**R69. Композиция фильтра.** matches_filter(listener) вызывает существующий predicate контекста, либо возвращает true без фильтра; это позволяет переносчику сохранить фильтр другого base Context. and_filter возвращает производный Context: сначала вызывается прежний filter, false прекращает проверку, затем дополнительный filter. with_filter сохраняет прежнюю семантику полной замены. Иммутабельные копии и global bypass сохранены. В Rust захваченный receiver находится в closure; bus изолирует паники фильтра как раньше. Основание: packages/core/scope/src/index.ts:170–183, особенно :173 baseFilter.call(base, ctx), vendor/cordis/src/events.ts:170–171.
+
+**R70. Путь сервисов scope.** Новый child и его потомки при чтении сервисов наследуют путь создателя: собственная provision → committed view ближайшего объявляющего fiber → предки. Совпадение realm обязательно; явная isolation-граница прерывает проход. Объявление без доступной committed записи также останавливает проход; публичный get сохраняет общий необязательный fallback R36. При teardown child ещё читает удержанную creator binding, пока actor не отпустил её после cleanup; право регистрировать эффекты закрывается немедленно. После удаления child его сохранённый Context не удерживает и не читает старые значения. Путь состоит из плоского списка Weak, Node держит committed view только до R10 release; рекурсивного Drop цепочки нет. Прежние contexts, полученные обычным plugin/inject вне нового child, сохраняют прежнюю семантику get и R17. Основание: packages/core/scope/src/index.ts:127–140; vendor/cordis/src/reflect.ts:145–165 locate идёт по fiber parents и committed, :156–158 уважает isolation; vendor/cordis/src/fiber.ts:734–759 удерживает committed до окончания всех cleanup.
+
+### Примеры A и B.1–B.5
+
+A — разделить snapshot, изменение состояния и fan-out; сообщения определяет эмиттер:
+
+```rust
+struct Updated;
+event!(Updated = "credentials/updated", Contained);
+ctx.on_contained::<Updated>(|_| Ok(()))?;
+ctx.on_contained_async::<Updated, _>(|_| async { Ok(()) })?;
+let callbacks = ctx.dispatch(Updated);
+// Commit состояния эмиттера здесь, до любого observer.
+let log = ctx.logger();
+callbacks.invoke(move |failure| match failure {
+    ListenerFailure::Threw(error) => log.warn(format_args!("listener threw: {error}")),
+    ListenerFailure::Rejected(error) => log.warn(format_args!("listener rejected: {error}")),
+});
+```
+
+B.1 — синхронное mint, без handoff и oneshot:
+
+```rust
+let scoped = ctx.child("scope")?;
+scoped.on::<Ping>(|_| {})?; // уже принадлежит ребёнку, до settled
+let fiber = scoped.fiber();
+```
+
+B.2 — точное adoption и повторное ожидание:
+
+```rust
+let scoped = ctx.child("scope")?;
+let fiber = scoped.fiber();
+let raw = fiber.disposer().ok_or(KernelError::Inactive)?;
+ctx.try_effect::<KernelError>("scope composite", |undos| undos.push(raw))?;
+fiber.dispose().await; // полный teardown, даже если raw уже вызван
+fiber.dispose().await; // тот же завершённый покой
+```
+
+B.3 — метка считывается из listener context:
+
+```rust
+struct ScopeTag(u64); // приватный тип пакета hoh-scope
+let scoped = ctx.child("scope")?.with_tag(ScopeTag(7));
+scoped.on_contained::<Updated>(|_| Ok(()))?;
+ctx.with_filter(|listener| listener.tag::<ScopeTag>().is_none_or(|tag| tag.0 == 7))
+    .dispatch(Updated).invoke(|_| {});
+```
+
+B.4 — фильтр того же Context или отдельного base:
+
+```rust
+let routed = base_context.and_filter(move |listener| admits_scope(listener));
+// В scope_target base может отличаться от ctx отправителя:
+let base = base_context.clone();
+let routed = ctx.with_filter(move |listener| {
+    base.matches_filter(listener) && admits_scope(listener)
+});
+```
+
+B.5 — чтение зафиксированной зависимости создателя при cleanup:
+
+```rust
+// ctx принадлежит fiber, который объявил Resource в Deps.
+let scoped = ctx.child("scope")?;
+let reader = scoped.clone();
+scoped.effect("read on cleanup", move || Undo::future(move || async move {
+    let resource = reader.get::<Resource>().ok_or(KernelError::Inactive)?;
+    use_resource(&resource);
+    Ok(())
+}))?;
+```
+
+### Receiver/carrier и границы адаптации тестов
+
+В поддерживаемых agent/tools/session receiver служит фильтром, а реальный subject передаётся payload: packages/core/agent/src/dispatch.ts:113–125 добавляет agent в fused payload; packages/core/tools/src/pipeline.ts:426–429 передаёт exec/result; packages/core/session/src/index.ts:895–899 передаёт session/event. Они не читают carrier key внутри listener, поэтому нового receiver/key API здесь нет и событие не обязано дублировать receiver key. Единственное найденное production-чтение carrierKeyOf(this) — packages/api/remotes/src/index.ts:60–69: это Typert remote transport, исключённый PORTING §8; в рамках поддерживаемых consumers оно не требует расширять Event trait.
+
+Два [U] dispatch case names добавлены в tests/contained.rs. **Различие источников явно сохранено:** deprecated_dispatch_returns_bound_callbacks_that_respect_later_removal проверяет vendored frozen callback — снятый после snapshot sync callback исполняется, новый dispatch его уже не видит. Более новый [U] ожидает пропуск, но vendor/cordis/src/events.ts:170–184 этого guard не содержит. deprecated_waterfall_dispatch_continues_past_a_removed_callback проверяет snapshot/removed/next через существующий typed waterfall: новый dispatch контрактно доступен только Contained, поэтому дословный raw waterfall dispatch не представим. Обычный waterfall по-прежнему пропускает снятый listener, как до этого раунда. Не заявляется, что исходные bail-return/JS this/Symbol assertions можно выразить Callbacks::invoke()->().
+
+Дополнительные тесты: девять contained cases (ошибки/паники, порядок, snapshot/filter/global/prepend, отмена и ancestry), девять scoped_context cases (sync ownership, pre-activation teardown, async ordered adoption, quiescence, base-filter/tag/realm/intercept, service release через Weak). Три unit cases проверяют точность Arc disposer, pre-Create actor failure и отсутствие накопления после 1 000 async invocations. Существующие 241 tests не изменены. Новый private failure test сначала воспроизвёл отсутствие cancel и удержание callback cycle; eager children теперь учитываются до Create, а registry undo использует Weak listener и держит временный strong handle вне bus locks во время снятия.
+
 ## Проверки
 
-Все команды: `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-k1`.
+Все команды: `CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-k1`.
 
-- `cargo test -p hoh-kernel`: 241 passed; 0 failed; 1 ignored (сумма итоговых строк 23 test binaries; doc-tests 0/0). Ignored — только C14 subprocess helper, фактически исполненный wrapper test на 2 МиБ.
-- `cargo test -p hoh-kernel-macros`: 1 passed; 0 failed (12 compile-fail + 2 pass trybuild fixtures; doc-tests 0/0).
+- `cargo test -p hoh-kernel`: 262 passed; 0 failed; 1 ignored (сумма итоговых строк 25 test binaries; doc-tests 0/0). Ignored — только C14 subprocess helper, фактически исполненный wrapper test на 2 МиБ.
+- `cargo test -p hoh-kernel-macros`: 1 passed; 0 failed (13 compile-fail + 2 pass trybuild fixtures; doc-tests 0/0).
 - `cargo clippy -p hoh-kernel -p hoh-kernel-macros --all-targets -- -D warnings`: exit 0.
 - `cargo fmt -p hoh-kernel -p hoh-kernel-macros -- --check`: exit 0.

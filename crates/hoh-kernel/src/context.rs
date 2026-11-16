@@ -3,6 +3,13 @@ use std::{any::TypeId, collections::HashMap, sync::atomic::Ordering, time::Durat
 use tokio_util::sync::CancellationToken;
 type Filter = Arc<dyn Fn(&Context) -> bool + Send + Sync>;
 #[derive(Clone)]
+struct ServiceAncestor {
+    data: std::sync::Weak<fiber::FiberData>,
+    activation: std::sync::Weak<effects::Activation>,
+    realms: Arc<HashMap<String, Realm>>,
+    barriers: Arc<indexmap::IndexSet<String>>,
+}
+#[derive(Clone)]
 pub struct Context {
     pub(crate) inner: Arc<fiber::Shared>,
     pub(crate) data: Arc<fiber::FiberData>,
@@ -11,6 +18,9 @@ pub struct Context {
     intercepts: Arc<HashMap<String, serde_json::Value>>,
     tags: Arc<HashMap<TypeId, Value>>,
     pub(crate) filter: Option<Filter>,
+    ancestors: Arc<Vec<ServiceAncestor>>,
+    barriers: Arc<indexmap::IndexSet<String>>,
+    scoped: bool,
 }
 impl Context {
     pub(crate) fn base(
@@ -26,6 +36,9 @@ impl Context {
             intercepts: Arc::default(),
             tags: Arc::default(),
             filter: None,
+            ancestors: Arc::default(),
+            barriers: Arc::default(),
+            scoped: false,
         }
     }
     pub(crate) fn activation_context(
@@ -36,6 +49,26 @@ impl Context {
         let mut ctx = self.clone();
         ctx.data = data;
         ctx.activation = activation;
+        ctx
+    }
+    pub(crate) fn child_context(
+        &self,
+        data: Arc<fiber::FiberData>,
+        activation: Arc<effects::Activation>,
+        scoped: bool,
+    ) -> Self {
+        let mut ctx = self.activation_context(data, activation);
+        let mut ancestors = Vec::with_capacity(self.ancestors.len() + 1);
+        ancestors.push(ServiceAncestor {
+            data: Arc::downgrade(&self.data),
+            activation: Arc::downgrade(&self.activation),
+            realms: self.realms.clone(),
+            barriers: self.barriers.clone(),
+        });
+        ancestors.extend(self.ancestors.iter().cloned());
+        ctx.ancestors = Arc::new(ancestors);
+        ctx.barriers = Arc::default();
+        ctx.scoped |= scoped;
         ctx
     }
     pub fn fiber(&self) -> Fiber {
@@ -141,6 +174,7 @@ impl Context {
     pub fn isolate(&self, service: &str, realm: Realm) -> Self {
         let mut ctx = self.clone();
         Arc::make_mut(&mut ctx.realms).insert(service.into(), realm);
+        Arc::make_mut(&mut ctx.barriers).insert(service.into());
         ctx
     }
     pub fn intercept(&self, service: &str, options: serde_json::Value) -> Self {
@@ -186,6 +220,17 @@ impl Context {
         ctx.filter = Some(Arc::new(filter));
         ctx
     }
+    /// Evaluate the existing dispatch predicate against a listener's context.
+    pub fn matches_filter(&self, listener: &Context) -> bool {
+        self.filter.as_ref().is_none_or(|filter| filter(listener))
+    }
+    /// Preserve the current filter, calling it before the added predicate.
+    pub fn and_filter(&self, filter: impl Fn(&Context) -> bool + Send + Sync + 'static) -> Self {
+        let base = self.filter.clone();
+        self.with_filter(move |listener| {
+            base.as_ref().is_none_or(|base| base(listener)) && filter(listener)
+        })
+    }
     pub fn get<K: ServiceKey>(&self) -> Option<Service<K>> {
         let p = self.binding(K::NAME)?;
         if p.key != TypeId::of::<K>() {
@@ -196,9 +241,15 @@ impl Context {
         })
     }
     fn binding(&self, name: &str) -> Option<Arc<fiber::Provision>> {
-        if self.ensure_active().is_err() {
-            return None;
-        }
+        let inactive = self.ensure_active().is_err();
+        let retained = if inactive {
+            if !self.scoped || self.inner.closed.load(Ordering::Acquire) {
+                return None;
+            }
+            Some(read(&self.activation.committed).upgrade()?)
+        } else {
+            None
+        };
         let key = (Arc::<str>::from(name), self.realm_of(name));
         if let Some(p) = read(&self.inner.own_published)
             .get(&key)
@@ -206,8 +257,47 @@ impl Context {
         {
             return Some(p.clone());
         }
-        if let Some(p) = read(&self.activation.view).values.get(&key) {
+        let through_view = !self.scoped || !self.barriers.contains(name);
+        if through_view && let Some(p) = read(&self.activation.view).values.get(&key) {
             return Some(p.clone());
+        }
+        if through_view
+            && let Some(retained) = retained
+            && let Some(p) = read(&retained).values.get(&key)
+        {
+            return Some(p.clone());
+        }
+        if self.scoped && !self.barriers.contains(name) {
+            for ancestor in self.ancestors.iter() {
+                if ancestor.realms.get(name).copied().unwrap_or(Realm::ROOT) != key.1 {
+                    break;
+                }
+                let Some(data) = ancestor.data.upgrade() else {
+                    break;
+                };
+                if let Some(p) = read(&self.inner.own_published)
+                    .get(&key)
+                    .filter(|p| p.owner() == data.uid && !p.withdrawn())
+                {
+                    return Some(p.clone());
+                }
+                if ancestor.barriers.contains(name) {
+                    break;
+                }
+                if let Some(activation) = ancestor.activation.upgrade() {
+                    if let Some(p) = read(&activation.view).values.get(&key) {
+                        return Some(p.clone());
+                    }
+                    if let Some(view) = read(&activation.committed).upgrade()
+                        && let Some(p) = read(&view).values.get(&key)
+                    {
+                        return Some(p.clone());
+                    }
+                }
+                if data.declares(name) {
+                    break;
+                }
+            }
         }
         read(&self.inner.published).get(&key).cloned()
     }

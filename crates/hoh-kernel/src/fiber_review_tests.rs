@@ -1,5 +1,37 @@
 use super::*;
 #[tokio::test(start_paused = true)]
+async fn preactivation_child_is_closed_and_released_on_actor_failure() {
+    struct Ping;
+    event!(Ping = "early-child", Emit);
+    let k = Kernel::start();
+    k.inner.tx.send(Command::Fault).unwrap();
+    let child = k.root().child("scope").unwrap();
+    let value = Arc::new(());
+    let weak = Arc::downgrade(&value);
+    child
+        .on::<Ping>(move |_| {
+            let _ = &value;
+        })
+        .unwrap();
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
+    assert!(child.token().is_cancelled());
+    assert!(matches!(child.ensure_active(), Err(KernelError::Closed)));
+    assert!(weak.upgrade().is_none());
+}
+#[tokio::test(start_paused = true)]
+async fn child_disposer_handles_share_the_exact_parent_record() {
+    let k = Kernel::start();
+    assert!(k.root().fiber().disposer().is_none());
+    let child = k.root().child("scope").unwrap();
+    let a = child.fiber().disposer().unwrap();
+    let b = child.fiber().disposer().unwrap();
+    assert!(Arc::ptr_eq(&a.effect, &b.effect));
+    child.fiber().dispose().await;
+    k.shutdown().await;
+}
+#[tokio::test(start_paused = true)]
 async fn ready_replies_survive_shutdown() {
     let k = Kernel::start();
     let f = k

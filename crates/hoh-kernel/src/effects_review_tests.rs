@@ -1,4 +1,32 @@
 use super::*;
+#[tokio::test(start_paused = true)]
+async fn completed_contained_tasks_release_their_owner_records() {
+    struct Notice;
+    event!(Notice = "contained/records", Contained);
+    let k = Kernel::start();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let n = count.clone();
+    k.root()
+        .on_contained_async::<Notice, _>(move |_| {
+            let n = n.clone();
+            async move {
+                n.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        })
+        .unwrap();
+    for _ in 0..1000 {
+        k.root()
+            .dispatch(Notice)
+            .invoke(|failure| panic!("unexpected {failure:?}"));
+    }
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 1000);
+    assert_eq!(lock(&k.root().activation.effects).effects.len(), 1);
+    k.shutdown().await;
+}
 use std::sync::atomic::AtomicUsize;
 struct RaceEvent;
 event!(RaceEvent = "review/race", Emit);

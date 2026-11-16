@@ -313,6 +313,7 @@ pub(crate) struct Activation {
     pub(crate) effects: Mutex<ActivationData>,
     pub(crate) token: tokio_util::sync::CancellationToken,
     pub(crate) view: RwLock<View>,
+    pub(crate) committed: RwLock<std::sync::Weak<RwLock<View>>>,
     pub(crate) cfg: Arc<RwLock<Value>>,
 }
 pub(crate) struct ActivationData {
@@ -332,6 +333,7 @@ impl Activation {
             }),
             token: tokio_util::sync::CancellationToken::new(),
             view: RwLock::new(view),
+            committed: RwLock::default(),
             cfg: Arc::new(RwLock::new(Arc::new(()))),
         })
     }

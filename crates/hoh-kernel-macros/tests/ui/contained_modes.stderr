@@ -1,0 +1,140 @@
+error[E0271]: type mismatch resolving `<Notice as Event>::Mode == Emit`
+ --> tests/ui/contained_modes.rs:7:14
+  |
+7 |     ctx.emit(&Notice);
+  |         ---- ^^^^^^^ type mismatch resolving `<Notice as Event>::Mode == Emit`
+  |         |
+  |         required by a bound introduced by this call
+  |
+note: expected this to be `hoh_kernel::Emit`
+ --> tests/ui/contained_modes.rs:3:27
+  |
+3 | event!(Notice = "notice", Contained);
+  |                           ^^^^^^^^^
+note: required by a bound in `hoh_kernel::events::<impl hoh_kernel::Context>::emit`
+ --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+  |
+  |     pub fn emit<E: Event<Mode = Emit>>(&self, event: &E) {
+  |                          ^^^^^^^^^^^ required by this bound in `hoh_kernel::events::<impl Context>::emit`
+
+error[E0271]: type mismatch resolving `<Notice as Event>::Mode == Bail<u32>`
+ --> tests/ui/contained_modes.rs:8:37
+  |
+8 |     let _ = ctx.bail::<Notice, u32>(&Notice);
+  |                 ----                ^^^^^^^ type mismatch resolving `<Notice as Event>::Mode == Bail<u32>`
+  |                 |
+  |                 required by a bound introduced by this call
+  |
+note: expected this to be `hoh_kernel::Bail<u32>`
+ --> tests/ui/contained_modes.rs:3:27
+  |
+3 | event!(Notice = "notice", Contained);
+  |                           ^^^^^^^^^
+  = note: expected struct `hoh_kernel::Bail<u32>`
+             found struct `Contained`
+note: required by a bound in `hoh_kernel::events::<impl hoh_kernel::Context>::bail`
+ --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+  |
+  |     pub fn bail<E, R>(&self, event: &E) -> Option<R>
+  |            ---- required by a bound in this associated function
+  |     where
+  |         E: Event<Mode = Bail<R>>,
+  |                  ^^^^^^^^^^^^^^ required by this bound in `hoh_kernel::events::<impl Context>::bail`
+
+error[E0271]: type mismatch resolving `<Notice as Event>::Mode == Parallel`
+ --> tests/ui/contained_modes.rs:9:17
+  |
+9 |     let _ = ctx.parallel(Notice);
+  |                 ^^^^^^^^ type mismatch resolving `<Notice as Event>::Mode == Parallel`
+  |
+note: expected this to be `hoh_kernel::Parallel`
+ --> tests/ui/contained_modes.rs:3:27
+  |
+3 | event!(Notice = "notice", Contained);
+  |                           ^^^^^^^^^
+note: required by a bound in `hoh_kernel::events::<impl hoh_kernel::Context>::parallel`
+ --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+  |
+  |     pub fn parallel<E: Event<Mode = Parallel>>(
+  |                              ^^^^^^^^^^^^^^^ required by this bound in `hoh_kernel::events::<impl Context>::parallel`
+
+error[E0271]: type mismatch resolving `<Notice as Event>::Mode == Serial<u32>`
+  --> tests/ui/contained_modes.rs:10:26
+   |
+10 |     let _ = ctx.serial::<Notice, u32>(Notice);
+   |                          ^^^^^^ type mismatch resolving `<Notice as Event>::Mode == Serial<u32>`
+   |
+note: expected this to be `hoh_kernel::Serial<u32>`
+  --> tests/ui/contained_modes.rs:3:27
+   |
+ 3 | event!(Notice = "notice", Contained);
+   |                           ^^^^^^^^^
+   = note: expected struct `hoh_kernel::Serial<u32>`
+              found struct `Contained`
+note: required by a bound in `hoh_kernel::events::<impl hoh_kernel::Context>::serial`
+  --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+   |
+   |     pub fn serial<E, R>(
+   |            ------ required by a bound in this associated function
+...
+   |         E: Event<Mode = Serial<R>>,
+   |                  ^^^^^^^^^^^^^^^^ required by this bound in `hoh_kernel::events::<impl Context>::serial`
+
+error[E0271]: type mismatch resolving `<Notice as Event>::Mode == Waterfall<u32>`
+  --> tests/ui/contained_modes.rs:11:29
+   |
+11 |     let _ = ctx.waterfall::<Notice, u32, _>(Notice, |_| async { Ok(1) });
+   |                             ^^^^^^ type mismatch resolving `<Notice as Event>::Mode == Waterfall<u32>`
+   |
+note: expected this to be `hoh_kernel::Waterfall<u32>`
+  --> tests/ui/contained_modes.rs:3:27
+   |
+ 3 | event!(Notice = "notice", Contained);
+   |                           ^^^^^^^^^
+   = note: expected struct `hoh_kernel::Waterfall<u32>`
+              found struct `Contained`
+note: required by a bound in `hoh_kernel::events::<impl hoh_kernel::Context>::waterfall`
+  --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+   |
+   |     pub fn waterfall<E, R, Fut>(
+   |            --------- required by a bound in this associated function
+...
+   |         E: Event<Mode = Waterfall<R>>,
+   |                  ^^^^^^^^^^^^^^^^^^^ required by this bound in `hoh_kernel::events::<impl Context>::waterfall`
+
+error[E0271]: type mismatch resolving `<Notice as Event>::Mode == Emit`
+  --> tests/ui/contained_modes.rs:12:22
+   |
+12 |     let _ = ctx.on::<Notice>(|_| {});
+   |                      ^^^^^^ type mismatch resolving `<Notice as Event>::Mode == Emit`
+   |
+note: expected this to be `hoh_kernel::Emit`
+  --> tests/ui/contained_modes.rs:3:27
+   |
+ 3 | event!(Notice = "notice", Contained);
+   |                           ^^^^^^^^^
+note: required by a bound in `hoh_kernel::events::<impl hoh_kernel::Context>::on`
+  --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+   |
+   |     pub fn on<E>(&self, f: impl Fn(&E) + Send + Sync + 'static) -> Result<Disposer, KernelError>
+   |            -- required by a bound in this associated function
+   |     where
+   |         E: Event<Mode = Emit>,
+   |                  ^^^^^^^^^^^ required by this bound in `hoh_kernel::events::<impl Context>::on`
+
+error[E0271]: type mismatch resolving `<Plain as Event>::Mode == Contained`
+  --> tests/ui/contained_modes.rs:13:17
+   |
+13 |     let _ = ctx.dispatch(Plain);
+   |                 ^^^^^^^^ type mismatch resolving `<Plain as Event>::Mode == Contained`
+   |
+note: expected this to be `Contained`
+  --> tests/ui/contained_modes.rs:5:25
+   |
+ 5 | event!(Plain = "plain", Emit);
+   |                         ^^^^
+note: required by a bound in `hoh_kernel::events::<impl hoh_kernel::Context>::dispatch`
+  --> $WORKSPACE/crates/hoh-kernel/src/events.rs
+   |
+   |     pub fn dispatch<E: Event<Mode = Contained>>(&self, event: impl Into<Arc<E>>) -> Callbacks<E> {
+   |                              ^^^^^^^^^^^^^^^^ required by this bound in `hoh_kernel::events::<impl Context>::dispatch`
