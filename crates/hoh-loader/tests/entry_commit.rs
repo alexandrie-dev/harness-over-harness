@@ -113,11 +113,12 @@ fn composed_ids_share_one_domain_across_base_and_independently_parsed_patch_file
         file,
     )
     .unwrap();
-    let b = parse_patches("- insert: [{name: p}]", file).unwrap(); // deliberately the same generated id as a
+    let b = parse_patches("- insert: [{name: p}]", file).unwrap();
     assert_eq!(
         a[0].insert.as_ref().unwrap()[0].id,
         b[0].insert.as_ref().unwrap()[0].id
     );
+    assert!(a[0].insert.as_ref().unwrap()[0].id.is_empty()); // Parsing preserves anonymous rows.
     let layers = [
         Layer {
             source: LayerSource::Launcher("a"),
@@ -155,13 +156,158 @@ fn composed_ids_share_one_domain_across_base_and_independently_parsed_patch_file
 }
 
 #[test]
-fn collision_repair_preserves_the_source_patch_index_until_materialization() {
+fn duplicate_explicit_ids_are_preserved_and_the_source_index_targets_the_last_row() {
     let base = entries("- id: duplicate\n  name: original\n  config: {v: base}\n");
     let patches = patches(
         "- insert: [{id: duplicate, name: inserted}]\n- id: duplicate\n  name: inserted\n  config: {v: changed}\n",
     );
     let result = apply_patches(&base, &patches, &mut |w| panic!("{w}"));
-    assert_ne!(result[0].id, result[1].id);
+    assert_eq!(result[0].id, "duplicate");
+    assert_eq!(result[1].id, "duplicate");
     assert_eq!(result[0].config, json!({"v":"base"}));
     assert_eq!(result[1].config, json!({"v":"changed"}));
+}
+
+#[test]
+fn anonymous_base_rows_keep_ids_and_origins_when_layers_insert_before_them() {
+    let mut base = entries(
+        "- id: before_root\n  name: cordis:group\n  group: true\n  config: []\n- name: base_root\n- id: g\n  name: cordis:group\n  group: true\n  config:\n    - id: before_child\n      name: cordis:group\n      group: true\n      config: []\n    - name: base_child\n",
+    );
+    base[1].id.clear();
+    base[2].config[1]["id"] = json!("");
+    let mut inserted = layer(
+        "insert",
+        "- id: before_root\n  insert: [{name: inserted_root}]\n- id: before_child\n  insert: [{name: inserted_child}]\n",
+    );
+    for patch in &mut inserted.patches {
+        for row in patch.insert.iter_mut().flatten() {
+            row.id.clear();
+        }
+    }
+    fn id(rows: &serde_json::Value, name: &str) -> Option<String> {
+        for row in rows.as_array()? {
+            if row["name"] == json!(name) {
+                return row["id"].as_str().map(str::to_owned);
+            }
+            if row["group"] == json!(true)
+                && let Some(found) = id(&row["config"], name)
+            {
+                return Some(found);
+            }
+        }
+        None
+    }
+    let before = compose(&base, &[], &mut |w| panic!("{w}"));
+    let after = compose(&base, std::slice::from_ref(&inserted), &mut |w| {
+        panic!("{w}")
+    });
+    let later = compose(
+        &base,
+        &[inserted, layer("later", "- id: g\n  disabled: true\n")],
+        &mut |w| panic!("{w}"),
+    );
+    for name in ["base_root", "base_child"] {
+        let original = id(&json_rows(&before.entries), name).unwrap();
+        assert_eq!(
+            id(&json_rows(&after.entries), name).unwrap(),
+            original,
+            "{name} shifted between snapshots"
+        );
+        assert_eq!(id(&json_rows(&later.entries), name).unwrap(), original);
+        assert_eq!(after.origins[&original].created_by, "base");
+        assert_eq!(later.origins[&original].created_by, "base");
+    }
+    for name in ["inserted_root", "inserted_child"] {
+        let added = id(&json_rows(&after.entries), name).unwrap();
+        assert_eq!(after.origins[&added].created_by, "insert");
+        assert_eq!(id(&json_rows(&later.entries), name).unwrap(), added);
+        assert_eq!(later.origins[&added].created_by, "insert");
+    }
+}
+
+#[test]
+fn generated_ids_reserve_all_explicit_ids_without_changing_explicit_duplicates() {
+    let base = entries(
+        "- id: '00000001'\n  name: first\n- id: '00000001'\n  name: second\n- name: anonymous_base\n",
+    );
+    let layers = [
+        layer(
+            "one",
+            "- insert: [{id: '00000002', name: explicit}, {name: anonymous_insert}]",
+        ),
+        layer(
+            "two",
+            "- insert: [{id: '00000002', name: duplicate}, {name: anonymous_later}]",
+        ),
+    ];
+    let composed = compose(&base, &layers, &mut |w| panic!("{w}"));
+    assert_eq!(composed.entries[0].id, "00000001");
+    assert_eq!(composed.entries[1].id, "00000001");
+    assert_eq!(composed.entries[3].id, "00000002");
+    assert_eq!(composed.entries[5].id, "00000002");
+    let mut used = std::collections::HashSet::from(["00000001".to_owned(), "00000002".to_owned()]);
+    for index in [2, 4, 6] {
+        assert_eq!(composed.entries[index].id.len(), 8);
+        assert!(used.insert(composed.entries[index].id.clone()));
+    }
+    assert!(base[2].id.is_empty());
+}
+#[test]
+fn falsy_patch_controls_are_absent_and_truthy_numeric_ids_are_not_string_keys() {
+    let base = entries("- id: '5'\n  name: p\n  config: {v: original}\n");
+    let patches = patches(
+        "- {id: 0, config: {}}\n- {id: false, config: {}}\n- {insert: false, config: {}}\n- {id: 5, config: {v: changed}}\n- {id: '', insert: 0, config: {}}\n- {id: null, insert: '', config: {}}\n",
+    );
+    for index in [0, 1, 2, 4, 5] {
+        assert!(patches[index].id.is_none());
+        assert!(patches[index].insert.is_none());
+    }
+    assert_eq!(patches[3].id, Some(json!(5)));
+    let mut warnings = Vec::new();
+    let output = apply_patches(&base, &patches, &mut |w| warnings.push(w));
+    let required = "patch: id is required for non-insert patches";
+    assert_eq!(
+        warnings,
+        [
+            required,
+            required,
+            required,
+            "patch: entry 5 not found",
+            required,
+            required
+        ]
+    );
+    assert_eq!(output, base);
+    let mut warnings = Vec::new();
+    let layers = [Layer {
+        source: LayerSource::Launcher("numeric"),
+        file: None,
+        patches: patches.clone(),
+    }];
+    compose(&base, &layers, &mut |w| warnings.push(w));
+    assert_eq!(warnings[3], "[numeric] patch: entry 5 not found");
+    let string_patch = patches_single_string_id();
+    assert_eq!(
+        apply_patches(&base, &string_patch, &mut |w| panic!("{w}"))[0].config,
+        json!({"v":"changed"})
+    );
+    fn patches_single_string_id() -> Vec<Patch> {
+        support::patches("- {id: '5', config: {v: changed}}")
+    }
+}
+#[test]
+fn anonymous_group_replacements_keep_their_creation_ids_across_prefixes() {
+    let base = entries(
+        "- id: earlier\n  name: cordis:group\n  group: true\n  config: []\n- id: g\n  name: cordis:group\n  group: true\n  config: []\n",
+    );
+    let first = layer("replacement", "- id: g\n  config: [{name: created}]\n");
+    let second = layer(
+        "insertion",
+        "- id: earlier\n  insert: [{name: before_created}]\n",
+    );
+    let before = compose(&base, std::slice::from_ref(&first), &mut |w| panic!("{w}"));
+    let after = compose(&base, &[first, second], &mut |w| panic!("{w}"));
+    let id = before.entries[1].config[0]["id"].as_str().unwrap();
+    assert_eq!(after.entries[1].config[0]["id"], json!(id));
+    assert_eq!(after.origins[id].created_by, "replacement");
 }

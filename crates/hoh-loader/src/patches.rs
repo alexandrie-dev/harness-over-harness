@@ -8,11 +8,21 @@ type Row = Rc<RefCell<TreeRow>>;
 struct TreeRow {
     value: Value,
     children: Option<Vec<Row>>,
+    config_site: String,
 }
-fn build(value: Value, index: &mut IndexMap<String, Row>, indexed: bool) -> Row {
+fn build(
+    mut value: Value,
+    index: &mut IndexMap<String, Row>,
+    indexed: bool,
+    pool: &mut IdPool,
+    site: &str,
+) -> Row {
+    pool.value_id(&mut value, site);
+    let config_site = format!("{site}/config");
     let row = Rc::new(RefCell::new(TreeRow {
         value: value.clone(),
         children: None,
+        config_site: config_site.clone(),
     }));
     if indexed
         && let Some(id) = value
@@ -25,7 +35,16 @@ fn build(value: Value, index: &mut IndexMap<String, Row>, indexed: bool) -> Row 
     let children = if value.get("group") == Some(&json!(true)) {
         value.get("config").and_then(Value::as_array).map(|rows| {
             rows.iter()
-                .map(|v| build(v.clone(), index, indexed))
+                .enumerate()
+                .map(|(i, v)| {
+                    build(
+                        v.clone(),
+                        index,
+                        indexed,
+                        pool,
+                        &format!("{config_site}/{i}"),
+                    )
+                })
                 .collect()
         })
     } else {
@@ -42,11 +61,11 @@ fn snapshot(row: &Row) -> Value {
     }
     value
 }
-fn argument(text: &str, quoted: bool) -> String {
+fn argument(value: &Value, quoted: bool) -> String {
     if quoted {
-        hoh_util_values::js_json_stringify(&Value::String(text.into()))
+        hoh_util_values::js_json_stringify(value)
     } else {
-        text.into()
+        hoh_util_values::js_string(value)
     }
 }
 fn run(
@@ -54,18 +73,27 @@ fn run(
     patches: &[Patch],
     warn: &mut dyn FnMut(String),
     quoted: bool,
-    reserved: &IndexSet<String>,
+    pool: &mut IdPool,
 ) -> Vec<Entry> {
     let mut index = IndexMap::new();
     let mut roots = base
         .iter()
-        .map(|row| build(entry_value(row), &mut index, true))
+        .enumerate()
+        .map(|(i, row)| {
+            build(
+                entry_value(row),
+                &mut index,
+                true,
+                pool,
+                &format!("base/{i}"),
+            )
+        })
         .collect::<Vec<_>>();
-    for patch in patches {
-        let id = patch.id.as_deref().filter(|id| !id.is_empty());
+    for (patch_index, patch) in patches.iter().enumerate() {
+        let id = patch.id.as_ref().filter(|id| crate::is_truthy(id));
         if let Some(insert) = &patch.insert {
             let target = if let Some(id) = id {
-                let Some(target) = index.get(id).cloned() else {
+                let Some(target) = id.as_str().and_then(|id| index.get(id)).cloned() else {
                     warn(format!(
                         "patch insert: entry {} not found",
                         argument(id, quoted)
@@ -85,7 +113,16 @@ fn run(
             };
             let inserted = insert
                 .iter()
-                .map(|row| build(entry_value(row), &mut index, true))
+                .enumerate()
+                .map(|(i, row)| {
+                    build(
+                        entry_value(row),
+                        &mut index,
+                        true,
+                        pool,
+                        &format!("patch/{patch_index}/insert/{i}"),
+                    )
+                })
                 .collect::<Vec<_>>();
             if let Some(target) = target {
                 let mut target = target.borrow_mut();
@@ -97,7 +134,16 @@ fn run(
                             .and_then(Value::as_array)
                             .map(|rows| {
                                 rows.iter()
-                                    .map(|v| build(v.clone(), &mut index, false))
+                                    .enumerate()
+                                    .map(|(i, v)| {
+                                        build(
+                                            v.clone(),
+                                            &mut index,
+                                            false,
+                                            pool,
+                                            &format!("{}/{i}", target.config_site),
+                                        )
+                                    })
                                     .collect()
                             })
                             .unwrap_or_default(),
@@ -115,7 +161,7 @@ fn run(
             warn("patch: id is required for non-insert patches".into());
             continue;
         };
-        let Some(target) = index.get(id) else {
+        let Some(target) = id.as_str().and_then(|id| index.get(id)) else {
             warn(format!("patch: entry {} not found", argument(id, quoted)));
             continue;
         };
@@ -132,8 +178,8 @@ fn run(
             warn(format!(
                 "patch: name mismatch for {} (expected {}, got {}), skipping",
                 argument(id, quoted),
-                argument(name, quoted),
-                argument(assertion, quoted)
+                argument(&Value::String(name.into()), quoted),
+                argument(&Value::String(assertion.clone()), quoted)
             ));
             continue;
         }
@@ -152,28 +198,35 @@ fn run(
         }
         // Parsed patches already have valid types; check programmatically constructed patches too.
         if let Err(error) = serde_json::from_value::<Entry>(candidate.clone()) {
-            warn(format!("patch: invalid fields for {id}: {error}, skipping"));
+            warn(format!(
+                "patch: invalid fields for {}: {error}, skipping",
+                argument(id, quoted)
+            ));
             continue;
         }
+        let config_site = if patch.set.contains_key("config") {
+            format!("patch/{patch_index}/config")
+        } else {
+            target.config_site.clone()
+        };
+        if candidate.get("group") == Some(&Value::Bool(true))
+            && let Some(config) = candidate.get_mut("config")
+        {
+            pool.value(config, &config_site);
+        }
         target.value = candidate;
+        target.config_site = config_site;
         if patch.set.contains_key("config") {
             target.children = None;
         }
     }
-    let mut result = roots
+    roots
         .iter()
         .map(|row| {
             // Roots start as typed Entry; validated updates and snapshots only replace arbitrary config.
             serde_json::from_value(snapshot(row)).expect("patch engine preserves Entry field types")
         })
-        .collect::<Vec<Entry>>();
-    let mut pool = IdPool {
-        reserved: reserved.clone(),
-        seen: IndexSet::new(),
-        next: 0,
-    };
-    pool.rows(&mut result);
-    result
+        .collect()
 }
 /// Apply all patches against one initial index; inserted descendants join that index.
 pub fn apply_patches(
@@ -181,14 +234,14 @@ pub fn apply_patches(
     patches: &[Patch],
     warn: &mut dyn FnMut(String),
 ) -> Vec<Entry> {
-    let reserved = IdPool::new(base, patches).reserved;
-    run(base, patches, warn, false, &reserved)
+    let mut pool = IdPool::new(base, patches);
+    run(base, patches, warn, false, &mut pool)
 }
 
 // One allocation domain for the base and every inserted subtree, including all later layers.
 struct IdPool {
     reserved: IndexSet<String>,
-    seen: IndexSet<String>,
+    assigned: IndexMap<String, String>,
     next: u32,
 }
 impl IdPool {
@@ -229,49 +282,52 @@ impl IdPool {
         }
         Self {
             reserved,
-            seen: IndexSet::new(),
+            assigned: IndexMap::new(),
             next: 0,
         }
     }
-    fn id(&mut self, id: &mut String) {
-        if !id.is_empty() && self.seen.insert(id.clone()) {
+    fn id(&mut self, site: &str, id: &mut String) {
+        if !id.is_empty() {
+            return;
+        }
+        if let Some(assigned) = self.assigned.get(site) {
+            *id = assigned.clone();
             return;
         }
         loop {
             self.next = self.next.wrapping_add(1);
             let fresh = format!("{:08x}", self.next);
             if self.reserved.insert(fresh.clone()) {
-                self.seen.insert(fresh.clone());
+                self.assigned.insert(site.into(), fresh.clone());
                 *id = fresh;
                 return;
             }
         }
     }
-    fn value(&mut self, value: &mut Value) {
-        if let Some(rows) = value.as_array_mut() {
-            for row in rows {
-                if let Some(map) = row.as_object_mut() {
-                    let mut id = map
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned();
-                    self.id(&mut id);
+    fn value_id(&mut self, value: &mut Value, site: &str) {
+        if let Some(map) = value.as_object_mut() {
+            match map.get_mut("id") {
+                Some(Value::String(id)) => self.id(site, id),
+                None => {
+                    let mut id = String::new();
+                    self.id(site, &mut id);
                     map.insert("id".into(), Value::String(id));
-                    if map.get("group") == Some(&Value::Bool(true))
-                        && let Some(config) = map.get_mut("config")
-                    {
-                        self.value(config);
-                    }
                 }
+                Some(_) => {} // Invalid row shapes are diagnosed by the row's owner, never rewritten.
             }
         }
     }
-    fn rows(&mut self, rows: &mut [Entry]) {
-        for row in rows {
-            self.id(&mut row.id);
-            if row.group {
-                self.value(&mut row.config);
+    fn value(&mut self, value: &mut Value, site: &str) {
+        if let Some(rows) = value.as_array_mut() {
+            for (i, row) in rows.iter_mut().enumerate() {
+                let row_site = format!("{site}/{i}");
+                self.value_id(row, &row_site);
+                if let Some(map) = row.as_object_mut()
+                    && map.get("group") == Some(&Value::Bool(true))
+                    && let Some(config) = map.get_mut("config")
+                {
+                    self.value(config, &format!("{row_site}/config"));
+                }
             }
         }
     }
@@ -309,9 +365,7 @@ pub fn compose(base: &[Entry], layers: &[Layer], warn: &mut dyn FnMut(String)) -
         .flat_map(|l| l.patches.iter().cloned())
         .collect::<Vec<_>>();
     let mut pool = IdPool::new(base, &patches);
-    let reserved = pool.reserved.clone();
-    let mut entries = base.to_vec();
-    pool.rows(&mut entries);
+    let mut entries = run(base, &[], &mut |_| {}, true, &mut pool);
     let mut previous = flatten(&entries);
     let mut origins: IndexMap<String, Origin> = previous
         .keys()
@@ -336,7 +390,7 @@ pub fn compose(base: &[Entry], layers: &[Layer], warn: &mut dyn FnMut(String)) -
             &patches[..count],
             &mut |w| warnings.push(w),
             true,
-            &reserved,
+            &mut pool,
         );
         for warning in &warnings[warnings_seen..] {
             warn(format!("[{label}] {warning}"));

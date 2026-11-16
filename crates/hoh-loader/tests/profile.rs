@@ -151,7 +151,7 @@ fn still_rejects_invalid_profile_manifests_and_user_patches() {
     let root = tempfile::tempdir().unwrap();
     let dir = write_profile(root.path(), &[]);
     let source = Source(vec![]);
-    for manifest in ["[]", "{broken", r#"{"dsh":{"profile":{"bundles":[1]}}}"#] {
+    for manifest in ["[]", "{broken", r#"{"dsh":{"profile":{"bundles":5}}}"#] {
         std::fs::write(dir.join("package.json"), manifest).unwrap();
         assert!(
             Profile::load(
@@ -439,4 +439,53 @@ fn absolute_bundle_segments_follow_node_join_instead_of_replacing_the_base() {
     );
     let result = compose(&[], &profile.layers, &mut |w| panic!("{w}"));
     assert_eq!(result.entries[0].name, "file:///bundles/b/layers/plugin.js");
+}
+
+#[test]
+fn skips_non_string_bundle_elements_with_the_source_reason_and_loads_valid_neighbors() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = write_profile(root.path(), &[]);
+    let manifest = dir.join("package.json");
+    std::fs::write(&manifest, r#"{"dsh":{"profile":{"bundles":["a",5,"b"]}}}"#).unwrap();
+    let saved = std::fs::read(&manifest).unwrap();
+    let source = Source(vec![
+        bundle("a", "- insert: [{id: a, name: p}]"),
+        bundle("b", "- insert: [{id: b, name: p}]"),
+    ]);
+    let profile = Profile::load(
+        &dir,
+        &source,
+        &root.path().join("home"),
+        &[],
+        &env(root.path()),
+    )
+    .unwrap();
+    assert_eq!(profile.layers.len(), 2);
+    assert!(matches!(&profile.layers[0].source,LayerSource::Bundle(name) if name=="a"));
+    assert!(matches!(&profile.layers[1].source,LayerSource::Bundle(name) if name=="b"));
+    assert_eq!(profile.skipped.len(), 1);
+    assert_eq!(profile.skipped[0].name, "5");
+    assert_eq!(
+        profile.skipped[0].reason,
+        "TypeError [ERR_INVALID_ARG_TYPE]: The \"request\" argument must be of type string. Received type number (5)"
+    );
+    let rows = compose(&[], &profile.layers, &mut |w| panic!("{w}")).entries;
+    assert_eq!(
+        rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    assert_eq!(std::fs::read(&manifest).unwrap(), saved);
+    std::fs::write(&manifest, r#"{"dsh":{"profile":{"bundles":[-0]}}}"#).unwrap();
+    let zero = Profile::load(
+        &dir,
+        &source,
+        &root.path().join("home"),
+        &[],
+        &env(root.path()),
+    )
+    .unwrap();
+    assert_eq!(
+        zero.skipped[0].reason,
+        "TypeError [ERR_INVALID_ARG_TYPE]: The \"request\" argument must be of type string. Received type number (-0)"
+    );
 }

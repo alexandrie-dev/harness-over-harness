@@ -43,7 +43,9 @@
   Передаваемые напрямую из Rust некорректные типы в `Patch::set` диагностируются отдельным предупреждением
   `patch: invalid fields for <id>: <serde error>, skipping`; строки никогда не исчезают молча.
 - `null` удаляет поле патча (L10); исходный applyPatches присваивал `null`.
-  `id: null`, `name: null`, `insert: null` означают отсутствие управления патчем; пустое name тоже falsy, как в образце.
+  Все falsy id/insert (null, false, 0, пустая строка) означают отсутствие управления патчем; пустое name тоже falsy.
+  Truthy нестроковый id не преобразуется в string: Map не находит numeric 5 даже при наличии строкового id "5";
+  предупреждение печатает исходное значение через js_string либо js_json_stringify для соответствующего sink.
 - Тела предупреждений зависят от sink, как в образце: apply_patches использует bare `%C` logger без цвета,
   compose — JSON-quoted аргументы dump (`js_json_stringify`). Compose добавляет `[<слой>]`; binName и stderr
   принадлежат вызывающему приложению, поскольку в чистой сигнатуре их нет. Точные ссылки приведены ниже.
@@ -54,16 +56,19 @@
 - Индекс патчей строится один раз на вызов. Вставки добавляют потомков в индекс; обычная замена config — нет.
   Старые удалённые из группы узлы остаются в индексе, как ссылки в образце. Для provenance используются
   prefix snapshots над исходным base, а не последовательные вызовы apply_patches над промежуточным деревом.
-- ID генерируются детерминированным локальным счётчиком с seed от имени файла и вида документа; восемь hex-символов,
-  с проверкой занятости в читаемом дереве. Общий patches::IdPool перед apply_patches/compose резервирует
-  base и ВСЕ вставки ВСЕХ файлов, включая будущие id для стабильных prefix snapshots.
-  Уникальные id выдаются при материализации результата в конце patches::run, в том числе детям,
-  введённым заменой config. До этого исходный индекс патчей сохраняет порядок/last-wins поведение образца;
-  исправление коллизии не перенаправляет патч на другого адресата. Глобального изменяемого состояния нет.
-  Поскольку Entry не хранит происхождение id, неоднозначные явно повторённые id исправляются тем же правилом:
-  первая строка сохраняет id, последующие получают свободные 8 hex; ссылки патчей на исходный id не меняются.
-  Отличие от образца — только уникальные id в итоговых данных даже для неоднозначного explicit duplicate;
-  во время самого алгоритма Map по-прежнему адресует последний duplicate. Уникальные explicit id не меняются.
+- Явный непустой id НИКОГДА не меняется, включая дубликаты: чистые функции сохраняют обе строки,
+  а индекс патчей адресует последнюю строку с этим id, как Map образца. Политика смонтированного дерева
+  для duplicate explicit id — **часть B**; origins остаётся заданной API картой по id, не по экземпляру строки.
+- parse_entries/parse_patches сохраняют анонимность (`Entry.id == ""` либо отсутствующий id вложенной строки).
+  Генерация перенесена в общую область apply_patches/compose: только так, не добавляя metadata в Entry и не
+  читая глобальное состояние, можно гарантировать уникальность generated id между независимо прочитанными файлами.
+  IdPool заранее резервирует explicit id из base, всех вставок и замен config, затем выдаёт восемь hex
+  только анонимным строкам. Каждый generated id уникален относительно ВСЕХ explicit/generated id этой композиции.
+- IdPool хранит выданный id по месту создания строки (base/индекс, patch/индекс/insert/индекс либо config/путь).
+  Он живёт весь вызов compose: базовые строки получают id до первого prefix snapshot, вставки/замены — при
+  первом появлении. При повторном построении префикса берётся тот же id из cache; обход изменённого документа
+  не перенумеровывает строки. Входные base/layers не изменяются. Владелец живого дерева сохраняет полученные
+  идентичности между отдельными вызовами/загрузками (часть B); cache чистого вызова не глобален.
 - Числа YAML читаются с JS double-округлением, JSON.parse также округляет числа как JS; целые значения,
   помещающиеся в целочисленный JSON, не превращаются в `1.0`. Для текста используются js_string/js_number_string.
 - Версии, npm resolution, проверки compatibility, исправление/создание manifest, удаление retired bundles,
@@ -93,6 +98,12 @@
   и диагностики. Если нужны реальные относительные модули, BundleSource должен передать физический dir.
 - Для WSL EvalEnv позволяет внедрить WSL_DISTRO_NAME/WSL_INTEROP, но не kernel release. Проверка строки
   osRelease на `microsoft` не делается; скрытого чтения ОС нет. Для полного случая образца нужно расширение EvalEnv.
+- `Patch.id` теперь `Option<Value>` вместо `Option<String>` из §2.9: required closure behavior нельзя
+  выразить исходной сигнатурой. Превращение numeric 5 в "5" ошибочно нашло бы строковой ключ Map, а Shape error
+  вместо warning также расходился бы с источником. Raw Value сохраняет тип и JS-печать. Это единственная
+  изменённая сигнатура; Entry и прочие поля Patch не расширялись, скрытых служебных ключей в set нет.
+  Для malformed bundle element диагностическое `SkippedBundle.name: String` — js_string исходного значения;
+  точный Node error находится в reason, сохранённый manifest не меняется.
 - `LoadError::Expr` хранит текст в `expression`, а не `source`: thiserror трактует поле `source` как Error,
   а текст выражения не реализует Error. Исходная причина находится в `reason`; файл, строка и столбец сохранены.
 - YAML имеет предел **128 развёрнутых уровней** и **100000 развёрнутых узлов** на документ.
@@ -102,9 +113,9 @@
   objects и не ограничивает их этим способом. Циклические aliases также отвергаются: Value ацикличен.
   Reader линейный по развёрнутому значению: проверка expressions
   смотрит структуру Node, validate_row пропускает config до отдельного прохода детей, материализация — один
-  раз на корневую строку; назначение id и anchoring изменяют config in place.
+  раз на корневую строку; anchoring изменяет config in place, назначение id происходит при композиции.
 - Рекурсивные выражения по-прежнему ограничены 128 уровнями. Дополнительно принимается максимум
-  **256 лексических токенов** (EOF не считается); 257-й токен — ExprError с его позицией. Ограничение действует
+  **1024 лексических токенов** (EOF не считается); 1025-й токен — ExprError с его позицией. Ограничение действует
   до создания AST и ограничивает также left-deep binary chains, Clone и Drop. Проверена цепочка 200000 термов.
   Это намеренное отличие от JS и дополнительное ограничение §5.5. Дерево скрыто за Expr::Parsed.
 - Telemetry opt-out в Profile::load определяет наличие строки по слоям над пустым profile root (как CLI образца).
@@ -142,20 +153,22 @@ PORTING.md §4 прочитаны. Ни 76 выражений каталога, 
     по новой таблице §5.5 (хотя полный JS даёт 2). Неверное ожидание строки удалено.
 11. Parentheses сохраняются в AST; unparenthesized ?? с ||/&& — positional parse error.
 12. Все цифры hex-escape проверяются is_ascii_hexdigit до from_str_radix, включая URI и surrogate suffix.
-13. Размер выражения ограничен 256 токенами до AST; большой chain возвращает позицию, а не overflow.
+13. Размер выражения ограничен 1024 токенами до AST; большой chain возвращает позицию, а не overflow.
 14. Win32 resolve сохраняет UNC device; cwd \\\\server\\share\\work и /x дают \\\\server\\share\\x.
     Win32 path helpers проверены с EvalEnv на Linux, **не запускались на Windows**.
 15. Manifest читает js_json_parse вместо serde_json::from_str; source `app-boot/src/profile.ts:557`.
 16. Отсутствующий/null dsh/profile/bundles дают пустой список, как `app-boot/src/profile.ts:685`.
     Не-object intermediate primitive даёт отсутствие свойства (JS boxing), а не отдельную shape error.
-    Неподходящий корень manifest и bundles неправильного типа по-прежнему отвергаются.
+    Неподходящий корень manifest и bundles, который не является массивом, по-прежнему отвергаются.
+    Нестроковый ЭЛЕМЕНТ массива теперь пропускается с per-bundle reason, а не отклоняет весь профиль (closure ниже).
 17. Telemetry opt-out смотрит только root .some, как `app-boot/src/profile-context.ts:82`.
 18. **Два sink:** `vendor/cordis/src/logger.ts:53` передаёт %C в Logger.color, `:79`/80 без цвета
     возвращает bare строку. `vendor/logger-console/src/index.ts:15` меняет только o/O, не C.
     В dump `app-boot/src/index.ts:682` заменяет %C через JSON.stringify — с кавычками и JSON escaping.
     apply_patches и compose используют соответственно эти два формата; tests закрепляют оба.
-19. Единственный IdPool резервирует base+все inserts до prefix snapshots; завершающий контроль run
-    охватывает config replacements. Нет mutable global, входные массивы не изменяются.
+19. Единственный IdPool резервирует explicit id из base/всех inserts/config replacements до prefix snapshots;
+    выдаёт id только анонимным строкам и кеширует по месту создания. Explicit duplicate не переписывается.
+    Нет mutable global, входные массивы не изменяются.
 20. `app-boot/src/profile.ts:702` склеивает файлы одного bundle, `:703` добавляет ОДИН ProfileLayer.
     `app-boot/src/index.ts:701` добавляет patchedBy один раз за layer, не за файл. Теперь Profile::load
     делает один Layer на bundle. Это не глобальный dedup строк: если caller намеренно повторит слои с
@@ -173,6 +186,32 @@ PORTING.md §4 прочитаны. Ни 76 выражений каталога, 
 `/mnt/toshiba/alexandrie/hoh/refs/js-yaml`, остальные source paths — относительно
 `/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness`. Пункт 4 не требует менять уже правильный отказ
 на undefined/null: он требует сверить callers и явно закрепить их поведение. Неверных пунктов задания нет.
+
+## Closure check: пять уточнений
+
+1. В `packages/boot/app-boot/src/profile.ts:690`/691 разрешение каждого элемента выполняется внутри try;
+   `:704`/705 записывает String(error) и продолжает. Нестроковое имя отвергает вызов
+   `createRequire(anchor).resolve.paths(packageName)` в `profile.ts:632`, с Node ERR_INVALID_ARG_TYPE для request.
+   Profile::load теперь пропускает только такой элемент. Для ["a",5,"b"] сохранены a/b и ровно одна причина:
+   `TypeError [ERR_INVALID_ARG_TYPE]: The "request" argument must be of type string. Received type number (5)`.
+   Также сохранена печать отрицательного нуля в Node reason. Это не добавляет npm resolution.
+2. `vendor/include/src/patch.ts:29`/31 и `:37`/39 генерируют id только при его отсутствии; explicit duplicate
+   не исправляется. Прежнее ожидание assert_ne удалено, обе строки сохраняют id "duplicate", поздний патч
+   по-прежнему меняет последнюю строку. Generated id проверяются отдельно на уникальность против всех явных
+   и ранее выданных id. Поведение смонтированного дерева с duplicate explicit id принадлежит части B.
+3. СНАЧАЛА добавлен regression с двумя anonymous base rows (root/внутри группы) и двумя вставками в группы,
+   стоящие перед ними в документе. На старом коде он упал: base_root сменил 00000001 на 00000002.
+   После cache по creation site сохраняются оба базовых id и created_by=base; новые строки сохраняют
+   created_by=insert и свои id в следующем prefix snapshot. Дополнительный regression покрывает config replacement.
+4. `vendor/include/src/patch.ts:65` проверяет truthiness insert, `:67` и `:86` — id; `:91` использует Map.get
+   без приведения типа, `:93` печатает not-found warning. Проверены id: 0, id: false, insert: false,
+   id: 5, а также empty string/нулевой insert: первые дают required-id warning, numeric 5 —
+   `patch: entry 5 not found` даже при наличии explicit string id "5". String "5" по-прежнему адресует строку.
+5. EXPR_MAX_TOKENS=1024: 1025-й токен возвращает positional error. Легальный includes со списком из 85 строк
+   читается, а chain из 200000 термов всё ещё отвергается до AST. Clone/Drop проверены на 512 термах.
+
+Все source paths этого раздела относительно read-only корня
+`/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness`. Образец не исполнялся.
 
 ## Часть B
 
@@ -302,12 +341,12 @@ exit 0
 cargo test -p hoh-loader
 ```
 
-Итог fix round по всем suites: **87 passed; 0 failed; 0 ignored** (11 unit + 76 integration).
+Итог closure round по всем suites: **93 passed; 0 failed; 0 ignored** (11 unit + 82 integration).
 Строки cargo test: unit `11 passed`; bundle_platform `5 passed`; config_dump `7 passed`;
-entry_commit `10 passed`; entry_yaml `18 passed`; expr `6 passed`; profile `15 passed`;
+entry_commit `14 passed`; entry_yaml `18 passed`; expr `7 passed`; profile `16 passed`;
 scalars `4 passed`; shipped_yaml `3 passed`; user_patches `8 passed`; в каждой строке `0 failed`.
 Оба обязательных остальных результата: clippy `Finished dev profile`, fmt --check — exit 0.
-Все 23 пункта fix brief обработаны, незавершённой работы fix round нет.
+Все 23 пункта fix brief и пять уточнений closure обработаны, незавершённой работы этого раунда нет.
 Модули учёта config_pattern/profile_sanitize и doctests содержат 0 исполняемых случаев.
 Все 621 YAML и три LICENSE дополнительно сравнены с образцом через read-only `cmp`: различий нет.
 

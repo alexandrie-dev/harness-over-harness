@@ -3,7 +3,7 @@ use hoh_util_values::js_string;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-const EXPR_MAX_TOKENS: usize = 256;
+const EXPR_MAX_TOKENS: usize = 1024;
 
 /// A parsed term of the closed configuration language (§5.5).
 #[derive(Clone, Debug)]
@@ -111,7 +111,7 @@ fn lex(source: &str) -> Result<Vec<Token>, ExprError> {
             return Err(error(
                 source,
                 i,
-                "expression size limit exceeded (256 tokens)",
+                "expression size limit exceeded (1024 tokens)",
             ));
         }
         let at = i;
@@ -584,13 +584,7 @@ fn number_value(number: f64) -> Value {
     crate::yaml::finite_number(number)
 }
 fn truthy(value: &Option<Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(v)) => *v,
-        Some(Value::Number(v)) => v.as_f64().is_some_and(|n| n != 0.0 && !n.is_nan()),
-        Some(Value::String(v)) => !v.is_empty(),
-        Some(Value::Array(_) | Value::Object(_)) => true,
-    }
+    value.as_ref().is_some_and(crate::is_truthy)
 }
 fn strict_equal(a: &Option<Value>, b: &Option<Value>) -> bool {
     match (a, b) {

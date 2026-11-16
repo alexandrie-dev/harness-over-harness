@@ -1,5 +1,5 @@
 use crate::{Entry, Expr, LoadError, Patch, expression};
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use saphyr_parser::{Event, Marker, Parser, ScalarStyle, Tag};
 use serde_json::{Value, json};
 use std::{collections::VecDeque, path::Path, rc::Rc};
@@ -471,77 +471,14 @@ pub(crate) fn entry_value(row: &Entry) -> Value {
     // Entry's fields are all infallibly JSON serializable.
     serde_json::to_value(row).unwrap_or(Value::Null)
 }
-fn collect_ids(value: &Value, used: &mut IndexSet<String>) {
-    if let Some(rows) = value.as_array() {
-        for row in rows {
-            if let Some(id) = row
-                .get("id")
-                .and_then(Value::as_str)
-                .filter(|id| !id.is_empty())
-            {
-                used.insert(id.into());
-            }
-            if row.get("group") == Some(&Value::Bool(true)) {
-                collect_ids(&row["config"], used);
-            }
-        }
-    }
-}
-pub(crate) fn assign_ids(rows: &mut [Entry], seed: &str) {
-    let mut used = IndexSet::new();
-    for row in rows.iter() {
-        if !row.id.is_empty() {
-            used.insert(row.id.clone());
-        }
-        if row.group {
-            collect_ids(&row.config, &mut used);
-        }
-    }
-    let mut next = seed.bytes().fold(0x811c9dc5u32, |hash, b| {
-        (hash ^ u32::from(b)).wrapping_mul(0x01000193)
-    });
-    fn fresh(used: &mut IndexSet<String>, next: &mut u32) -> String {
-        loop {
-            *next = next.wrapping_add(1);
-            let id = format!("{next:08x}");
-            if used.insert(id.clone()) {
-                return id;
-            }
-        }
-    }
-    fn walk(value: &mut Value, used: &mut IndexSet<String>, next: &mut u32) {
-        if let Some(rows) = value.as_array_mut() {
-            for row in rows {
-                if row
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_none_or(str::is_empty)
-                {
-                    row["id"] = Value::String(fresh(used, next));
-                }
-                if row.get("group") == Some(&Value::Bool(true)) {
-                    walk(&mut row["config"], used, next);
-                }
-            }
-        }
-    }
-    for row in rows {
-        if row.id.is_empty() {
-            row.id = fresh(&mut used, &mut next);
-        }
-        if row.group {
-            walk(&mut row.config, &mut used, &mut next);
-        }
-    }
-}
+/// Read rows, preserving explicit ids and leaving anonymous ids for the composition's shared pool.
 pub fn parse_entries(text: &str, file: &Path) -> Result<Vec<Entry>, LoadError> {
     let doc = document(text, file)?;
-    let mut rows = doc
+    let rows = doc
         .seq(file)?
         .iter()
         .map(|n| entry(n, file))
         .collect::<Result<Vec<_>, _>>()?;
-    assign_ids(&mut rows, &format!("entries:{}", file.display()));
     Ok(rows)
 }
 pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
@@ -551,17 +488,11 @@ pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
         let mut fields = node.map(file)?.clone();
         let id = fields
             .shift_remove("id")
-            .filter(|n| !matches!(n.kind, NodeKind::Scalar(Value::Null)))
-            .map(|n| {
-                n.value()
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| n.shape(file, "patch id must be a string"))
-            })
-            .transpose()?;
+            .map(|n| n.value())
+            .filter(crate::is_truthy);
         let name = fields
             .shift_remove("name")
-            .filter(|n| !matches!(n.kind, NodeKind::Scalar(Value::Null)))
+            .filter(|n| crate::is_truthy(&n.value()))
             .map(|n| {
                 n.value()
                     .as_str()
@@ -571,7 +502,7 @@ pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
             .transpose()?;
         let insert = fields
             .shift_remove("insert")
-            .filter(|n| !matches!(n.kind, NodeKind::Scalar(Value::Null)))
+            .filter(|n| crate::is_truthy(&n.value()))
             .map(|n| {
                 n.seq(file)?
                     .iter()
@@ -603,21 +534,10 @@ pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
             insert,
         });
     }
-    // Assign once for all insert blocks, so anonymous rows share one uniqueness domain.
-    let mut rows = patches
-        .iter()
-        .flat_map(|p| p.insert.iter().flatten().cloned())
-        .collect::<Vec<_>>();
-    assign_ids(&mut rows, &format!("patches:{}", file.display()));
-    let mut rows = rows.into_iter();
+    // Anonymous rows receive ids in the composition's shared identity domain, not per file.
     for patch in &mut patches {
-        if let Some(insert) = &mut patch.insert {
-            for row in insert {
-                if let Some(assigned) = rows.next() {
-                    *row = assigned;
-                    anchor(row, file)?;
-                }
-            }
+        for row in patch.insert.iter_mut().flatten() {
+            anchor(row, file)?;
         }
     }
     Ok(patches)

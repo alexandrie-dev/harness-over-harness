@@ -67,7 +67,8 @@ impl<'de> Deserialize<'de> for Isolate {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Patch {
-    pub id: Option<String>,
+    /// Raw selector: JavaScript Map keys distinguish numeric `5` from string `"5"`.
+    pub id: Option<Value>,
     pub name: Option<String>,
     pub set: IndexMap<String, Value>,
     pub insert: Option<Vec<Entry>>,
@@ -146,4 +147,14 @@ pub(crate) fn expression(value: &Value) -> Option<&str> {
     (map.len() == 1)
         .then(|| map.get("__jsExpr")?.as_str())
         .flatten()
+}
+
+pub(crate) fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0 && !n.is_nan()),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
 }

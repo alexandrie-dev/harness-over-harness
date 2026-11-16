@@ -92,27 +92,20 @@ impl Profile {
         }
         let names = match value.pointer("/dsh/profile/bundles") {
             None | Some(Value::Null) => Vec::new(),
-            Some(Value::Array(items)) => items
-                .iter()
-                .map(|v| {
-                    v.as_str().map(str::to_owned).ok_or_else(|| {
-                        shape(&manifest, "dsh.profile.bundles must be a list of strings")
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?,
+            Some(Value::Array(items)) => items.clone(),
             Some(_) => {
-                return Err(shape(
-                    &manifest,
-                    "dsh.profile.bundles must be a list of strings",
-                ));
+                return Err(shape(&manifest, "dsh.profile.bundles must be a list"));
             }
         };
         let mut layers = Vec::new();
         let mut skipped = Vec::new();
-        for name in names {
+        for raw_name in names {
             let loaded = (|| {
-                let bundle = bundles.bundle(&name)?;
-                platform(&bundle.platforms, env, &manifest)?;
+                let name = raw_name
+                    .as_str()
+                    .ok_or_else(|| invalid_bundle_name(&raw_name))?;
+                let bundle = bundles.bundle(name).map_err(|e| e.to_string())?;
+                platform(&bundle.platforms, env, &manifest).map_err(|e| e.to_string())?;
                 let mut patches = Vec::new();
                 let mut files = Vec::new();
                 for (file, text) in bundle.files {
@@ -125,22 +118,22 @@ impl Profile {
                             };
                             node_join(&bundle_dir, &file)
                         }
-                        None => node_join(&node_join(&dir.join(".hoh-bundles"), &name), &file),
+                        None => node_join(&node_join(&dir.join(".hoh-bundles"), name), &file),
                     };
-                    patches.extend(parse_patches(&text, &file)?);
+                    patches.extend(parse_patches(&text, &file).map_err(|e| e.to_string())?);
                     files.push(file);
                 }
-                Ok::<_, LoadError>(Layer {
-                    source: LayerSource::Bundle(name.clone()),
+                Ok::<_, String>(Layer {
+                    source: LayerSource::Bundle(name.into()),
                     file: if files.len() == 1 { files.pop() } else { None },
                     patches,
                 })
             })();
             match loaded {
                 Ok(loaded) => layers.push(loaded),
-                Err(error) => skipped.push(SkippedBundle {
-                    name,
-                    reason: error.to_string(),
+                Err(reason) => skipped.push(SkippedBundle {
+                    name: hoh_util_values::js_string(&raw_name),
+                    reason,
                 }),
             }
         }
@@ -196,6 +189,29 @@ impl Profile {
             skipped,
         })
     }
+}
+fn invalid_bundle_name(value: &Value) -> String {
+    let received = match value {
+        Value::Null => "null".into(),
+        Value::Bool(_) => format!("type boolean ({})", hoh_util_values::js_string(value)),
+        Value::Number(number) => {
+            let text = if number
+                .as_f64()
+                .is_some_and(|n| n == 0.0 && n.is_sign_negative())
+            {
+                "-0".into()
+            } else {
+                hoh_util_values::js_string(value)
+            };
+            format!("type number ({text})")
+        }
+        Value::Array(_) => "an instance of Array".into(),
+        Value::Object(_) => "an instance of Object".into(),
+        Value::String(_) => "type string".into(), // The caller only rejects non-string manifest elements.
+    };
+    format!(
+        "TypeError [ERR_INVALID_ARG_TYPE]: The \"request\" argument must be of type string. Received {received}"
+    )
 }
 fn node_join(base: &Path, part: &str) -> PathBuf {
     PathBuf::from(crate::expr::platform_join(

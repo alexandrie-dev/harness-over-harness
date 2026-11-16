@@ -111,9 +111,11 @@ fn merge_keys_remain_literal_and_quoted_scalars_remain_strings() {
 }
 #[test]
 fn assigns_eight_hexadecimal_ids_unique_across_nested_groups() {
-    let rows = entries(
+    let raw = entries(
         "- name: cordis:group\n  group: true\n  config:\n    - name: child\n- name: p\n- id: 'a:b'\n  name: p\n",
     );
+    assert!(raw[0].id.is_empty() && raw[1].id.is_empty());
+    let rows = compose(&raw, &[], &mut |_| {}).entries;
     let child = rows[0].config[0]["id"].as_str().unwrap();
     for id in [&rows[0].id, &rows[1].id, child] {
         assert_eq!(id.len(), 8);

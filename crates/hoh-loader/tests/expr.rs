@@ -88,8 +88,24 @@ fn escape_digits_are_strictly_hexadecimal() {
 fn long_chains_are_rejected_before_a_deep_tree_is_constructed() {
     let source = vec!["'a'"; 200_000].join("+");
     let error = Expr::parse(&source).unwrap_err();
-    assert_eq!(error.message, "expression size limit exceeded (256 tokens)");
-    assert_eq!(error.position, 512);
-    let accepted = Expr::parse(&vec!["'a'"; 128].join("+")).unwrap();
+    assert_eq!(
+        error.message,
+        "expression size limit exceeded (1024 tokens)"
+    );
+    assert_eq!(error.position, 2048);
+    let accepted = Expr::parse(&vec!["'a'"; 512].join("+")).unwrap();
     let _cloned = accepted.clone();
+}
+
+#[test]
+fn legitimate_long_includes_lists_fit_the_1024_token_budget() {
+    let items = (0..85)
+        .map(|i| format!("'value{i}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    Expr::parse(&format!("[{items}].includes('value84')")).unwrap();
+    Expr::parse(&format!(
+        "[{items}].includes(process.env.VALUE ?? 'fallback')"
+    ))
+    .unwrap();
 }
