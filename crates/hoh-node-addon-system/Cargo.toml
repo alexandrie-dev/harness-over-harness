@@ -1,0 +1,17 @@
+[package]
+name = "hoh-node-addon-system"
+description = "Landlock launcher and non-blocking flock (port of native/system of DeepSeek Harness)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+landlock.workspace = true
+rustix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
