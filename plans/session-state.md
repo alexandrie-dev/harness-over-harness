@@ -477,6 +477,33 @@ w6 (`by3wldd4p`), w3 (`biib1x2xh`). Ревью заново: часть B заг
 После шестого круга: `verify.sh hoh-kernel …` + `hoh-storage-domain hoh-credentials hoh-loader` → коммиты `done`; w2 по
 `fix-stage1-w2-scope.md`; w5 — метки эффектов в `hoh-deepseek-llm-api-extensions`; l1 — `cmdline` + `apps/hoh`.
 
+**Обновление 18.11, вечер. Ответы основателя о первой версии: `plans/vision-1118.md`** (пересказ для исполнителей —
+`plans/briefs/v1-requirements.md`). Главное: продукт для обычных людей, личный ассистент; в первой версии один свой
+движок (по образу dsh + улучшения для виртуального помощника), движок первым, окно после; из T3 Code нужны
+предпросмотр, расписание, вид и скорость; интерфейс создания виртуальных сотрудников; свои кнопки/команды, роли и
+правила, инструменты по просьбе; интерфейс можно на TypeScript при схеме защиты от supply-chain; просил грузить
+Claude, Codex и Kimi параллельно. **Открытый вопрос основателю (задан):** относится ли разрешение TypeScript
+(«можем просто копипастить») и к движку, то есть брать ли код dsh как есть вместо переноса на Rust.
+
+Состояние (коммиты `ab81102` … `1fe8b62`, `port-status`: 33 из 205):
+- done: `hoh-subprocess` (`c20a9ec`, 28 тестов).
+- ядро: шестой круг принят (`8eff340`, verify 628 прошло, 1 тест `hoh-scope` ждёт новый текст); k1 доделывает
+  остаток проверки закрытия пятого круга (`fix4-stage0-k1.md`, фон. `bb1d0ig1q`); после — проверка закрытия шестого
+  круга Sonnet, перенос «Четвёртого круга» в `docs/kernel.md`.
+- загрузчик B: круг исправлений по двум ревью, l1, фон. `bgn4r7654` (`fix-stage0-l1-loader-b.md`); затем verify,
+  `done`, задание `cmdline` + `apps/hoh` (туда же тесты app-boot #1–33).
+- `hoh-llm`: verify 213, ревью Sonnet сдано, круг исправлений w7 (сессия `01a1ec50-2ba4-7e42-8cd8-ff50dcd5d062`),
+  фон. `b0tu5mf9z` (`fix-stage1-w7-llm.md`).
+- `hoh-conformance`: verify 25, `/bin/false` → 242 fail, 0 ошибок; ревью Kimi сдано; круг исправлений cf1, фон.
+  `bgo51m8ri` (`fix-stage0-cf1-conformance.md`). Затем: `hoh-llm-replay`, сценарные проверки (19 headless, 41 SDK),
+  подключение в полный `verify.sh` и `port-status.sh`.
+- `hoh-attachment-local`: verify 94, на ревью Sonnet (delegate «Review hoh-attachment-local»).
+- `hoh-scope`: w2 круг исправлений, фон. `bn5giaqty`. `hoh-deepseek-llm-api-extensions`: w5 метки, фон. `b3p5vva2g`.
+- `hoh-storage-domain` (44 теста) и `hoh-credentials` (19): исправления сданы, ждут verify ведущего → `done`.
+- исследования под первую версию: основа окна — Codex, фон. `bfup38e9i` → `research/v1-ui-base.codex.md`;
+  защита от supply-chain — Sonnet (delegate) → `research/supply-chain-ts.md`; состав пакетов движка для первой
+  версии — Kimi, фон. `byjt92ebi` → `logs/research-engine-scope.kimi.md`. После них: `PLAN.md` второй редакции.
+
 Решения ведущего 18.11: (1) прогонщик не переписывает патчи сценариев, `!!js` вычисляет загрузчик, локальные
 подставки получают имя `local:<путь>` и пишутся по мере переноса пакетов, которые они изображают (до того сценарий
 падает с причиной) — так прогон считает честно уже на этапе 0; (2) результат прогона — `conformance/RESULTS.tsv`,
