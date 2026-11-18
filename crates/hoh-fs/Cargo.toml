@@ -1,0 +1,26 @@
+[package]
+name = "hoh-fs"
+description = "Port of @deepseek-ai/dsh-fs (packages/fs/fs)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-sandbox = { path = "../hoh-sandbox" }
+hoh-brand = { path = "../hoh-brand" }
+hoh-fs-patch = { path = "../hoh-fs-patch" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-error = { path = "../hoh-error" }
+hoh-timeout = { path = "../hoh-timeout" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+futures-util.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
