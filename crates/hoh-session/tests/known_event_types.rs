@@ -1,0 +1,80 @@
+use hoh_session::known_event_types::{KNOWN_SESSION_EVENT_TYPES, MESSAGE_PROJECTION_EVENT_TYPES};
+
+#[test]
+fn pins_both_generated_sets_to_the_source_catalog() {
+    // Source packages/core/session/src/known-event-types.ts @ 39163dd3: 63, not 64.
+    let expected = [
+        "agent-preset/selected",
+        "agent/inbox/spliced",
+        "approval/asked",
+        "approval/decided",
+        "approval/policy",
+        "assistant/attempt",
+        "assistant/message",
+        "command/done",
+        "command/run",
+        "compaction/end",
+        "compaction/prune",
+        "compaction/start",
+        "compaction/summary",
+        "deliverables/presented",
+        "developer/message",
+        "feedback/message-delete",
+        "feedback/message-put",
+        "feedback/record",
+        "goal/change",
+        "hook/invoked",
+        "hook/result",
+        "image/offload",
+        "job/registered",
+        "job/settled",
+        "llm/retry",
+        "llm/retry-started",
+        "model/selection",
+        "permission/preset",
+        "plan/mode",
+        "request/context",
+        "request/header",
+        "sandbox/mode",
+        "schedule/change",
+        "session-log-deepseek/delivery-accepted",
+        "session/end-seed",
+        "session/title",
+        "session/title-llm-request",
+        "step/end",
+        "step/start",
+        "subagent/catalog",
+        "subagent/descriptor",
+        "subagent/model-selection-policy",
+        "system/message",
+        "team/member",
+        "team/message/delivered",
+        "team/message/queued",
+        "team/mode",
+        "team/task",
+        "todo/write",
+        "tool-workflow/agent-end",
+        "tool-workflow/agent-start",
+        "tool-workflow/run-end",
+        "tool-workflow/run-start",
+        "tool/call",
+        "tool/ptc-dispatch",
+        "tool/ptc-dispatch-start",
+        "tool/result",
+        "turn/end",
+        "turn/start",
+        "user/message",
+        "web/deepseek-search-llm-request",
+        "working-directory/change",
+        "workspace/changes",
+    ];
+    assert_eq!(KNOWN_SESSION_EVENT_TYPES, expected);
+    assert_eq!(KNOWN_SESSION_EVENT_TYPES.len(), 63);
+    assert!(
+        KNOWN_SESSION_EVENT_TYPES
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+    );
+    assert_eq!(MESSAGE_PROJECTION_EVENT_TYPES, ["image/offload"]);
+    assert!(KNOWN_SESSION_EVENT_TYPES.contains(&"image/offload"));
+}

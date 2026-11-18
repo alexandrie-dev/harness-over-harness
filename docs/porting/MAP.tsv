@@ -27,7 +27,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/core/agent-default-model	@deepseek-ai/dsh-agent-default-model	hoh-agent-default-model	98	70	todo	
 1	port	packages/core/agent-loop	@deepseek-ai/dsh-agent-loop	hoh-agent-loop	2149	15523	todo	
 1	port	packages/core/scope	@deepseek-ai/dsh-scope	hoh-scope	471	511	done	
-1	port	packages/core/session	@deepseek-ai/dsh-session	hoh-session	3485	6855	writing:w8	
+1	port	packages/core/session	@deepseek-ai/dsh-session	hoh-session	3485	6855	done	
 1	port	packages/core/system-prompt	@deepseek-ai/dsh-system-prompt	hoh-system-prompt	699	1167	done	
 1	port	packages/core/tool-executor-native	@deepseek-ai/dsh-tool-executor-native	hoh-tool-executor-native	35	0	review	
 1	port	packages/core/tools	@deepseek-ai/dsh-tools	hoh-tools	3797	5419	review	
