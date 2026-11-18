@@ -12,7 +12,7 @@ use std::sync::Arc;
 pub use error::{
     SUBPROCESS_ERROR_CODES, SubprocessError, SubprocessErrorCode,
     SubprocessExecutableNotFoundError, SubprocessFailure, SubprocessForeignError,
-    subprocess_spawn_failure,
+    SubprocessSpawnRejection, subprocess_spawn_failure,
 };
 pub use types::*;
 
@@ -81,6 +81,10 @@ fn apply_overlay(environment: &mut SubprocessEnvironment, overlay: &SubprocessEn
 }
 
 /// Abstract provider contract. Providers own process creation, termination, collection and teardown.
+/// Disposal must terminate every still-running managed child and await their exit
+/// (source packages/subprocess/subprocess/src/index.ts:116–117).
+/// Providers reject native start failures with SubprocessSpawnRejection::new(error, spawned_file),
+/// using the actual file passed to Command::new so consumers retain the provider's diagnostic.
 /// Futures are returned synchronously so providers can initiate work before the first poll.
 pub trait SubprocessRuntime: Send + Sync + 'static {
     fn resolve_executable<'a>(

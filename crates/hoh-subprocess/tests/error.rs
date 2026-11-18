@@ -171,3 +171,68 @@ fn formats_native_start_failures_through_the_shared_node_helpers() {
         assert_cause(error, &original);
     }
 }
+
+#[cfg(unix)]
+fn provider_rejection(native: io::Error, spawned_file: &str) -> SharedError {
+    use std::error::Error;
+    let raw = native.raw_os_error();
+    let original_message = native.to_string();
+    let rejection = SubprocessSpawnRejection::new(native, spawned_file);
+    assert!(HarnessError::of(&rejection).is_none());
+    assert_eq!(rejection.code(), Some("ENOENT"));
+    assert_eq!(rejection.message(), format!("spawn {spawned_file} ENOENT"));
+    assert_eq!(rejection.to_string(), rejection.message());
+    let cause = rejection
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap();
+    assert_eq!(cause.raw_os_error(), raw);
+    assert_eq!(cause.to_string(), original_message);
+    SharedError::new(rejection)
+}
+
+#[cfg(unix)]
+#[test]
+fn preserves_the_spawned_absolute_file_when_the_reported_program_is_bash() {
+    let directory = tempfile::tempdir().unwrap();
+    let spawned_file = directory.path().join("nonexistent/bin/bash");
+    let spawned_file = spawned_file.to_str().unwrap();
+    let native = std::process::Command::new(spawned_file)
+        .spawn()
+        .unwrap_err();
+    assert_eq!(hoh_error::node_error_code(&native), Some("ENOENT"));
+    let original = provider_rejection(native, spawned_file);
+    let wrapped = classified(&original, "bash");
+    let error = HarnessError::of(wrapped.get_ref()).unwrap();
+    assert_eq!(error.code(), "SUBPROCESS_SPAWN_NOT_FOUND");
+    assert_eq!(
+        error.message(),
+        format!(
+            "cannot start \"bash\": the program or the working directory does not exist (spawn {spawned_file} ENOENT)"
+        )
+    );
+    assert_cause(error, &original);
+}
+
+#[cfg(unix)]
+#[test]
+fn preserves_the_existing_spawned_file_when_the_working_directory_is_missing() {
+    let directory = tempfile::tempdir().unwrap();
+    let spawned_file = "/bin/sh";
+    assert!(std::path::Path::new(spawned_file).is_file());
+    let native = std::process::Command::new(spawned_file)
+        .current_dir(directory.path().join("missing-working-directory"))
+        .spawn()
+        .unwrap_err();
+    assert_eq!(hoh_error::node_error_code(&native), Some("ENOENT"));
+    let original = provider_rejection(native, spawned_file);
+    let wrapped = classified(&original, "bash");
+    let error = HarnessError::of(wrapped.get_ref()).unwrap();
+    assert_eq!(error.code(), "SUBPROCESS_SPAWN_NOT_FOUND");
+    assert_eq!(
+        error.message(),
+        "cannot start \"bash\": the program or the working directory does not exist (spawn /bin/sh ENOENT)"
+    );
+    assert_cause(error, &original);
+}

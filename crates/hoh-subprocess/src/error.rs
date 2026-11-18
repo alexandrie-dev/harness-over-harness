@@ -89,6 +89,36 @@ pub enum SubprocessForeignError {
     Coded { message: String, code: Value },
 }
 
+/// Provider rejection for a native start failure, retaining the actual spawned file's diagnostic.
+/// This is an ordinary platform error, not a HarnessError; consumers classify it separately.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct SubprocessSpawnRejection {
+    message: String,
+    code: Option<&'static str>,
+    #[source]
+    cause: io::Error,
+}
+
+impl SubprocessSpawnRejection {
+    /// Build the Node-shaped message once from the file passed to Command::new, not a display name.
+    pub fn new(error: io::Error, spawned_file: &str) -> Self {
+        Self {
+            message: node_spawn_error_message(&error, spawned_file),
+            code: node_error_code(&error),
+            cause: error,
+        }
+    }
+
+    pub fn code(&self) -> Option<&'static str> {
+        self.code
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 /// Preserve the distinction between a thrown Error and a non-Error value, including identity.
 #[derive(Clone, Debug)]
 pub enum SubprocessFailure {
@@ -117,6 +147,9 @@ impl fmt::Display for SubprocessFailure {
     }
 }
 
+/// Classify a provider rejection while retaining its message and identity as the cause.
+/// Providers should use SubprocessSpawnRejection::new with the actual spawned file.
+/// For a bare io::Error only, the fallback approximates that file by `program`.
 pub fn subprocess_spawn_failure(error: SubprocessFailure, program: &str) -> SubprocessFailure {
     let SubprocessFailure::Error(original) = &error else {
         return error;
@@ -130,6 +163,11 @@ pub fn subprocess_spawn_failure(error: SubprocessFailure, program: &str) -> Subp
                 return error;
             };
             (code.to_owned(), message.clone())
+        } else if let Some(rejection) = original.downcast_ref::<SubprocessSpawnRejection>() {
+            let Some(code) = rejection.code() else {
+                return error;
+            };
+            (code.to_owned(), rejection.message().to_owned())
         } else if let Some(io) = original.downcast_ref::<io::Error>() {
             let Some(code) = node_error_code(io) else {
                 return error;

@@ -9,7 +9,7 @@
 | `src/index.ts` | `src/lib.rs` | Абстрактный runtime, сервис `subprocess`, scrub окружения и применение proxy overlay. |
 | `src/types.ts` | `src/types.rs` | Все исходные типы, поля, варианты stdio/сигналов/состояний, readers и методы handles. |
 | `tests/control.spec.ts` | `tests/control.rs` | Все 3 исходных случая с развёрнутым it.each. Дополнительно: отказ opener, сырые bytes/half-close на memory duplex и Unix socket. |
-| `tests/error.spec.ts` | `tests/error.rs` | Все 5 исходных случаев. Дополнительно: JS-кавычки имени программы и реальные ошибки старта ENOENT/EACCES/ENOTDIR. |
+| `tests/error.spec.ts` | `tests/error.rs` | Все 5 исходных случаев. Дополнительно: JS-кавычки имени программы, реальные ошибки старта ENOENT/EACCES/ENOTDIR, различие program/spawned_file и отсутствующий cwd при существующем файле. |
 | `tests/service.spec.ts` | `tests/service.rs` | Все 3 исходных случая: регистрация провайдера-плагина, duplicate-service, scrub. Дополнительно: весь terminal API и причина отмены. |
 | `tests/egress.spec.ts` | `tests/egress.rs` | Все 5 случаев; два сетевых случая запускают настоящий дочерний Rust fixture вместо Node. Дополнительно direct-слой поверх proxy. |
 | — | `tests/types.rs` | Дополнительные проверки JSON формы, порядка ключей, null/undefined и всех terminal signals. |
@@ -27,6 +27,8 @@ hoh-timeout и hoh-util-values. Остальные зависимости тол
    `provide_subprocess(&ctx, Arc::new(provider)).await?` (либо ctx.provide::<Subprocess>).
    Никаких нового plugin name/config/defaults нет. Kernel обеспечивает duplicate-service и владение
    provision; реальные процессы и их teardown, как в исходном абстрактном классе, принадлежат провайдеру.
+   При disposal провайдер обязан завершить все ещё работающие дочерние managed процессы и дождаться
+   их выхода (`src/index.ts:116–117` образца), а не только снять регистрацию сервиса.
    Context не добавляется к spawn: исходный seam не создаёт эффектов вызывающего; провайдеры владеют
    managed range своим lifetime. Событий исходный пакет не объявляет и не рассылает: Contained/dispatch
    из четвёртого/пятого круга kernel здесь не используется.
@@ -51,8 +53,13 @@ hoh-timeout и hoh-util-values. Остальные зависимости тол
    Это явное представление обычного JS Error с errno-полем; числовой/null code не классифицируется.
    SubprocessFailure различает SharedError, не-Error JSON value (Arc для identity) и Undefined;
    функция сохраняет их без преобразования, если исходник возвращает вход как есть.
-   Для std::io::Error, переданного как ошибка старта, errno/message получают через общие
-   node_error_code/node_spawn_error_message. Исходный io::Error сохраняется в cause через SharedError.
+   Провайдер отвергает запуск через `SubprocessSpawnRejection::new(io_error, spawned_file)`:
+   обычная Error хранит один раз построенный Node-shaped message с реальным запущенным файлом,
+   `code()` возвращает errno (или None для неизвестного), `message()` — исходную detail-строку,
+   стандартный Error::source — исходный io::Error. Общие node_error_code/node_spawn_error_message
+   вызываются в конструкторе. Классификатор берёт готовые code/message и сохраняет rejection в cause.
+   Bare std::io::Error остаётся fallback: файл приближённо берётся из program вызывающего;
+   провайдеры должны использовать конструктор, чтобы не потерять реальный spawned_file.
    Уже подготовленное сообщение платформы передаётся через SubprocessForeignError без переформатирования.
    JSON.stringify(program) выполняет hoh_util_values::js_json_stringify, не serde_json::to_string.
 5. Глобальное окружение и глобальная proxy installation не изменяются (PORTING §6).
@@ -89,6 +96,7 @@ hoh-timeout и hoh-util-values. Остальные зависимости тол
    SubprocessDone/subprocess_done, SubprocessLifecycle, SubprocessTerminalControl,
    SubprocessEnvironment, SubprocessSpill/ControlMode/Platform/TerminalActivityState,
    SubprocessForeignError, SubprocessFailure, SubprocessError::is,
+   SubprocessSpawnRejection с new/code/message (нативная ошибка старта с исходным файлом и cause),
    ControlChannelOptions и ControlChannelError. Их назначение и вызовы описаны выше.
 
 Прочитаны production imports переносимых пакетов. Не используются снаружи самого исходного пакета:
@@ -113,8 +121,14 @@ test harness и вызывается только двумя egress tests чер
 Проверка 2026-11-18, каждая cargo-команда с
 `CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w6`:
 
-- `cargo test -p hoh-subprocess --no-fail-fast`: 23 passed, 3 failed, 1 ignored.
-  control: 5 passed / 1 failed; error: 7 / 0; service: 4 / 0; egress: 4 / 2 / 1 ignored;
+- До исправления detail две новые регрессии (`cargo test -p hoh-subprocess --test error preserves_the_`)
+  дали `0 passed; 2 failed`: fallback подставлял program = bash вместо реального абсолютного пути.
+  После исправления они также проверяют errno/message rejection, сохранение native cause и identity
+  rejection в cause классифицированной ошибки.
+- Предыдущий полный прогон ведущего `scripts/verify.sh hoh-subprocess` вне sandbox:
+  **26 passed, 0 failed**, включая все три socket tests (до добавления двух новых регрессий).
+- `cargo test -p hoh-subprocess --no-fail-fast`: **25 passed, 3 failed, 1 ignored**, exit 101.
+  control: 5 passed / 1 failed; error: 9 / 0; service: 4 / 0; egress: 4 / 2 / 1 ignored;
   types: 3 / 0; unit и doc: 0 / 0. Все test binaries скомпилированы.
   Три отказа — `Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }`
   при создании socket, до проверки сетевого обмена. Для ведущего вне sandbox:
@@ -133,13 +147,10 @@ HTTP fixture слушает только 127.0.0.1:0, Unix fixture исполь�
 
 ## Вопросы ведущему
 
-Отсутствующих API нет. Есть расхождение общего `hoh_error::node_spawn_error_message` с уточнением
-задания: для EAGAIN/EMFILE/ENFILE helper сейчас пишет `spawn <command> <CODE>`, тогда как задание
-требует для всех кодов, кроме ENOENT/EACCES, `spawn <CODE>`. В subprocess сохранён обязательный вызов
-общего helper без локальной копии его логики; чужой crate не менялся. Это касается только входа
-`std::io::Error` с этими тремя errno; явный `SubprocessForeignError` сохраняет исходный message до байта.
-Нужна сверка/правка общего helper ведущим. Проверены реальные ENOENT/EACCES/ENOTDIR; редкие отказы
-ресурсов не провоцировались на общей машине.
+Нет. Вопрос о `hoh_error::node_spawn_error_message` закрыт решением ведущего: общий helper правилен
+и остаётся без изменений. Фикстура Node 22 измерила команду в сообщении ENOENT/EACCES и её отсутствие
+для ENOTDIR, что соответствует helper. EAGAIN/EMFILE/ENFILE самой фикстурой не измерялись;
+редкие отказы ресурсов не провоцировались на общей машине.
 
 Raw descriptor acquisition выполняется launcher/opener; из абстрактного subprocess seam не вводится
 собственная небезопасная platform binding.
