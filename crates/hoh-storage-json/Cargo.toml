@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+autotests = false
 
 [lints]
 workspace = true
@@ -12,3 +13,29 @@ workspace = true
 [dependencies]
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-storage = { path = "../hoh-storage" }
+hoh-error = { path = "../hoh-error" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+getrandom.workspace = true
+jiff.workspace = true
+futures-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix.workspace = true
+
+[[test]]
+name = "json_backend"
+path = "tests/json_backend.rs"
+
+[[test]]
+name = "atomic_failures"
+path = "tests/atomic_failures.rs"
