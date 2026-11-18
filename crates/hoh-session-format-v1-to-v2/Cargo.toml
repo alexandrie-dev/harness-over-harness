@@ -14,3 +14,10 @@ hoh-llm = { path = "../hoh-llm" }
 hoh-session-format = { path = "../hoh-session-format" }
 hoh-session-format-v0-to-v1 = { path = "../hoh-session-format-v0-to-v1" }
 hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+indexmap.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+regex.workspace = true
