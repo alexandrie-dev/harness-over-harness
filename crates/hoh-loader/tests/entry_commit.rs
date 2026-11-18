@@ -1,7 +1,52 @@
 mod support;
 use hoh_loader::*;
 use serde_json::json;
+use support::live::*;
 use support::*;
+
+#[tokio::test(start_paused = true)]
+async fn reports_assigned_ids_and_applied_options_for_create_update_move_and_remove() {
+    let world = World::new("[]").await;
+    let id = world
+        .loader
+        .create(
+            entries("- {name: noop, config: {value: 1}}\n").remove(0),
+            None,
+        )
+        .await
+        .unwrap();
+    world.loader.settled().await;
+    assert!(!id.is_empty());
+    let created = world.loader.resolve(&id).unwrap();
+    assert_eq!(created.options.id, id);
+    assert_eq!(created.options.config, serde_json::json!({"value":1}));
+    assert!(created.fiber.is_some());
+    world.loader.remove(&id).await.unwrap();
+    world.loader.settled().await;
+    assert!(world.loader.resolve(&id).is_none());
+    assert!(created.fiber.unwrap().is_disposed());
+    // move and journal reports are excluded by O4; raw options are inspected through EntryInfo.
+    world.close().await;
+}
+#[tokio::test(start_paused = true)]
+async fn mounts_explicit_ids_containing_the_separator_without_nested_path_resolution() {
+    let world = World::new("[]").await;
+    let id = world
+        .loader
+        .create(entries("- {id: 'a:b', name: noop}\n").remove(0), None)
+        .await
+        .unwrap();
+    assert_eq!(id, "a:b");
+    world.loader.settled().await;
+    assert!(world.loader.entries().iter().any(|e| {
+        e.id == "a:b"
+            && e.fiber
+                .as_ref()
+                .is_some_and(|f| f.state() == hoh_kernel::FiberState::Active)
+    }));
+    assert!(world.loader.resolve("a:b").is_none());
+    world.close().await;
+}
 #[test]
 fn detaches_file_entries_even_with_no_patches() {
     let base = entries("- id: x\n  name: p\n  config: {value: 1}\n");

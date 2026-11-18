@@ -11,7 +11,10 @@ workspace = true
 
 [dependencies]
 hoh-kernel = { path = "../hoh-kernel" }
+hoh-atomic-write = { path = "../hoh-atomic-write" }
 hoh-util-values = { path = "../hoh-util-values" }
+futures-util.workspace = true
+schemars.workspace = true
 indexmap.workspace = true
 saphyr-parser.workspace = true
 serde.workspace = true

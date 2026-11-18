@@ -1,6 +1,8 @@
 mod support;
 use hoh_loader::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use support::live::Noop;
 use support::*;
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dsh")
@@ -94,4 +96,174 @@ fn every_snapshot_entry_or_patch_document_reads_unchanged() {
         }
     }
     assert_eq!(checked, 244);
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_shipped_profile_composes_mounts_and_audits_cleanly() {
+    macro_rules! fact {
+        ($key:ident,$name:literal) => {
+            struct $key;
+            impl hoh_kernel::ServiceKey for $key {
+                type Value = serde_json::Value;
+                const NAME: &'static str = $name;
+                fn view(v: &Self::Value) -> Option<Self::Value> {
+                    Some(v.clone())
+                }
+            }
+        };
+    }
+    fact!(Headless, "headlessStartup");
+    fact!(Web, "webStartup");
+    fact!(Acp, "acpAppStartup");
+    fact!(Sdk, "sdkAppStartup");
+    fact!(Activation, "sdkSessionActivation");
+    fact!(Credentials, "credentials");
+    fact!(ProfileContext, "profileContext");
+    for (profile_name, folders) in [
+        ("acp", vec!["base", "acp-app"]),
+        ("web", vec!["base", "web-app"]),
+        ("headless", vec!["base", "headless"]),
+        ("sdk", vec!["base", "sdk-app"]),
+        ("sdk-minimal", vec!["sdk-minimal"]),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let names: Vec<_> = folders
+            .iter()
+            .map(|folder| format!("@deepseek-ai/dsh-{folder}"))
+            .collect();
+        let name_refs: Vec<_> = names.iter().map(String::as_str).collect();
+        let dir = write_profile(root.path(), &name_refs);
+        let bundles = folders
+            .iter()
+            .zip(&names)
+            .map(|(folder, name)| {
+                let bundle_dir = fixture().join("packages/bundle").join(folder);
+                let mut files = vec![(
+                    "cordis.patch.yml".into(),
+                    std::fs::read_to_string(bundle_dir.join("cordis.patch.yml")).unwrap(),
+                )];
+                if *folder == "web-app" {
+                    for preset in ["standard", "ptc", "minimal", "cordis"] {
+                        let file = format!("presets/{preset}.patch.yml");
+                        files.push((
+                            file.clone(),
+                            std::fs::read_to_string(bundle_dir.join(file)).unwrap(),
+                        ));
+                    }
+                }
+                Bundle {
+                    name: name.clone(),
+                    dir: Some(bundle_dir),
+                    platforms: None,
+                    files,
+                }
+            })
+            .collect();
+        let profile = Profile::load(
+            &dir,
+            &Source(bundles),
+            &root.path().join("home"),
+            &[],
+            &env(root.path()),
+        )
+        .unwrap();
+        assert!(profile.skipped.is_empty());
+        let composition = compose(&[], &profile.layers, &mut |warning| {
+            panic!("{profile_name}: {warning}")
+        });
+        let mut registry = PluginRegistry::default();
+        fn register(value: &serde_json::Value, registry: &mut PluginRegistry, root: &Path) {
+            match value {
+                serde_json::Value::Object(object) => {
+                    if let Some(name) = object.get("name").and_then(serde_json::Value::as_str)
+                        && !matches!(
+                            name,
+                            "cordis:group"
+                                | "cordis:include"
+                                | "@deepseek-ai/cordis-plugin-group"
+                                | "@deepseek-ai/cordis-plugin-include"
+                        )
+                    {
+                        registry
+                            .add::<Noop>(name)
+                            .resource_dir(name, root.join("resources"));
+                        if name == "@deepseek-ai/dsh-agent-preset" {
+                            registry.carrier(name);
+                        }
+                    }
+                    for child in object.values() {
+                        register(child, registry, root);
+                    }
+                }
+                serde_json::Value::Array(array) => {
+                    for child in array {
+                        register(child, registry, root);
+                    }
+                }
+                _ => {}
+            }
+        }
+        register(&json_rows(&composition.entries), &mut registry, root.path());
+        let base = root.path().join("cordis.yml");
+        std::fs::write(&base, "[]\n").unwrap();
+        let kernel = hoh_kernel::Kernel::start();
+        let ctx = kernel.root();
+        ctx.provide::<Headless>(Arc::new(serde_json::json!({})))
+            .await
+            .unwrap();
+        ctx.provide::<Web>(Arc::new(serde_json::json!({})))
+            .await
+            .unwrap();
+        ctx.provide::<Acp>(Arc::new(serde_json::json!({})))
+            .await
+            .unwrap();
+        ctx.provide::<Sdk>(Arc::new(serde_json::json!({})))
+            .await
+            .unwrap();
+        ctx.provide::<Activation>(Arc::new(serde_json::json!({})))
+            .await
+            .unwrap();
+        ctx.provide::<Credentials>(Arc::new(serde_json::json!({})))
+            .await
+            .unwrap();
+        ctx.provide::<ProfileContext>(Arc::new(serde_json::json!({"name":profile_name})))
+            .await
+            .unwrap();
+        let loader = boot(
+            &ctx,
+            BootOptions {
+                registry: Arc::new(registry),
+                base,
+                layers: profile.layers,
+                env: env(root.path()),
+            },
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{profile_name}: {error}"));
+        loader.settled().await;
+        let audit = loader.audit(&[]);
+        assert!(audit.missing.is_empty());
+        assert!(
+            audit.unresolved.is_empty(),
+            "{profile_name}: {:?}",
+            audit.unresolved
+        );
+        assert!(
+            audit.inactive.is_empty(),
+            "{profile_name}: {:?}",
+            audit
+                .inactive
+                .iter()
+                .map(|fiber| (&fiber.entry_id, &fiber.error, &fiber.missing))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !ctx.logger()
+                .buffer()
+                .iter()
+                .any(|record| record.message.contains("patch: ")
+                    || record.message.contains("patch insert:"))
+        );
+        kernel.shutdown().await;
+    }
 }

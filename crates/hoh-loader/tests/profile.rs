@@ -3,6 +3,188 @@ use hoh_loader::*;
 use serde_json::json;
 use support::*;
 #[test]
+fn joins_the_home_and_rejects_traversal_shaped_names() {
+    let home = tempfile::tempdir().unwrap();
+    assert_eq!(
+        resolve_profile_dir("tui", home.path()).unwrap(),
+        home.path().join("profiles/tui")
+    );
+    for name in ["", ".", "..", "a/b", "a\\b", "node_modules"] {
+        assert_eq!(
+            resolve_profile_dir(name, home.path())
+                .unwrap_err()
+                .to_string(),
+            format!(
+                "dsh: invalid profile name {}",
+                hoh_util_values::js_json_stringify(&json!(name))
+            )
+        );
+    }
+}
+#[test]
+fn creates_manifest_user_patch_layer_and_pnpm_workspace_once_never_overwriting() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = resolve_profile_dir("tui", home.path()).unwrap();
+    init_profile(&dir, &["base".into()]).unwrap();
+    let manifest = read_profile_manifest("t", &dir).unwrap();
+    assert_eq!(
+        manifest,
+        json!({"name":"dsh-profile-tui","private":true,"dependencies":{},"dsh":{"profile":{"bundles":["base"]}}})
+    );
+    let files: [(&str, String); 3] = ["package.json", "cordis.patch.yml", "pnpm-workspace.yaml"]
+        .map(|file| (file, std::fs::read_to_string(dir.join(file)).unwrap()));
+    assert!(
+        files[1].1.starts_with(
+            "# Your patch layer for this dsh profile, applied after every bundle layer:"
+        )
+    );
+    assert_eq!(
+        files[2].1,
+        "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n"
+    );
+    std::fs::write(dir.join("cordis.patch.yml"), "- id: x\n  config: {}\n").unwrap();
+    init_profile(&dir, &["other".into()]).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("package.json")).unwrap(),
+        files[0].1
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap(),
+        "- id: x\n  config: {}\n"
+    );
+}
+#[test]
+fn writes_and_reads_back_and_fails_loud_on_a_broken_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    write_profile_manifest(
+        dir.path(),
+        &json!({"name":"p","dsh":{"profile":{"bundles":["a"]}}}),
+    )
+    .unwrap();
+    assert_eq!(
+        read_profile_manifest("t", dir.path()).unwrap()["dsh"]["profile"]["bundles"],
+        json!(["a"])
+    );
+    std::fs::write(dir.path().join("package.json"), "[]").unwrap();
+    assert_eq!(
+        read_profile_manifest("t", dir.path())
+            .unwrap_err()
+            .to_string(),
+        format!(
+            "t: profile manifest {} must hold a JSON object",
+            dir.path().join("package.json").display()
+        )
+    );
+    assert!(
+        read_profile_manifest("t", &dir.path().join("nope"))
+            .unwrap_err()
+            .to_string()
+            .starts_with("t: failed to read profile manifest ")
+    );
+}
+#[test]
+fn auto_initializes_only_shipped_templates_and_fails_loud_otherwise() {
+    let home = tempfile::tempdir().unwrap();
+    let source = Source(vec![]);
+    let error =
+        load_profile("t", "custom", &source, home.path(), &[], &env(home.path())).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "t: profile \"custom\" does not exist; create it with 'dsh plugin --profile custom add <package>'"
+    );
+    load_profile("t", "web", &source, home.path(), &[], &env(home.path())).unwrap();
+    assert_eq!(
+        read_profile_manifest("t", &resolve_profile_dir("web", home.path()).unwrap()).unwrap()["dsh"]
+            ["profile"]["bundles"],
+        json!(["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"])
+    );
+}
+#[test]
+fn named_profile_discovery_resolves_a_relative_home_through_eval_env() {
+    let root = tempfile::tempdir().unwrap();
+    let relative = std::path::Path::new(root.path().file_name().unwrap());
+    let expected = root.path().join(relative).join("profiles/custom");
+    std::fs::create_dir_all(&expected).unwrap();
+    write_profile_manifest(&expected, &json!({"dsh":{"profile":{"bundles":[]}}})).unwrap();
+    let profile = load_profile(
+        "test",
+        "custom",
+        &Source(vec![]),
+        relative,
+        &[],
+        &env(root.path()),
+    )
+    .unwrap();
+    assert_eq!(profile.dir, expected);
+}
+#[test]
+fn normalizes_only_the_exact_installation_owned_headless_bundle_tuple() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = resolve_profile_dir("headless", home.path()).unwrap();
+    let stock = vec![
+        "@deepseek-ai/dsh-base".into(),
+        "@deepseek-ai/dsh-web-app".into(),
+        "@deepseek-ai/dsh-headless".into(),
+    ];
+    init_profile(&dir, &stock).unwrap();
+    load_profile(
+        "t",
+        "headless",
+        &Source(vec![]),
+        home.path(),
+        &[],
+        &env(home.path()),
+    )
+    .unwrap();
+    assert_eq!(
+        read_profile_manifest("t", &dir).unwrap()["dsh"]["profile"]["bundles"],
+        json!(["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"])
+    );
+    let custom = [stock, vec!["custom-bundle".into()]].concat();
+    write_profile_manifest(
+        &dir,
+        &json!({"private":true,"dsh":{"profile":{"bundles":custom}}}),
+    )
+    .unwrap();
+    let before = std::fs::read(dir.join("package.json")).unwrap();
+    load_profile(
+        "t",
+        "headless",
+        &Source(vec![]),
+        home.path(),
+        &[],
+        &env(home.path()),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(dir.join("package.json")).unwrap(), before);
+}
+#[test]
+fn removes_retired_bundles_and_keeps_the_rest_of_an_application_owned_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    for retired in [
+        "@deepseek-ai/dsh-experimental-schedule-bundle",
+        "@deepseek-ai/dsh-experimental-agent-team-profile",
+    ] {
+        write_profile_manifest(dir.path(),&json!({"dependencies":{"custom-bundle":"^1.0.0"},"custom":true,"dsh":{"profile":{"bundles":["base",retired,"custom-bundle"]}}})).unwrap();
+        let profile = Profile::load(
+            dir.path(),
+            &Source(vec![bundle("base", "[]"), bundle("custom-bundle", "[]")]),
+            &dir.path().join("home"),
+            &[],
+            &env(dir.path()),
+        )
+        .unwrap();
+        assert!(profile.skipped.is_empty());
+        let manifest = read_profile_manifest("t", dir.path()).unwrap();
+        assert_eq!(
+            manifest["dsh"]["profile"]["bundles"],
+            json!(["base", "custom-bundle"])
+        );
+        assert_eq!(manifest["dependencies"], json!({"custom-bundle":"^1.0.0"}));
+        assert_eq!(manifest["custom"], true);
+    }
+}
+#[test]
 fn loads_an_explicitly_owned_profile_directory_outside_cli_discovery() {
     let root = tempfile::tempdir().unwrap();
     let dir = write_profile(root.path(), &["a"]);

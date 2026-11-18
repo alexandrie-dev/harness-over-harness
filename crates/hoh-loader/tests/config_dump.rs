@@ -34,8 +34,8 @@ fn groups_contiguous_rows_with_the_same_origin_and_patches_under_one_separator()
     ));
     assert_eq!(dump.matches("# == ").count(), 2);
 }
-#[test]
-fn composes_all_layers_as_one_flattened_patch_list_exactly_like_boot() {
+#[tokio::test(start_paused = true)]
+async fn composes_all_layers_as_one_flattened_patch_list_exactly_like_boot() {
     let base = entries("- id: g\n  name: cordis:group\n  group: true\n  config: []\n");
     let layers = [
         layer(
@@ -60,6 +60,44 @@ fn composes_all_layers_as_one_flattened_patch_list_exactly_like_boot() {
         ),
         result.entries
     );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("base.yml");
+    std::fs::write(&file, json_rows(&base).to_string()).unwrap();
+    let kernel = hoh_kernel::Kernel::start();
+    let mut registry = PluginRegistry::default();
+    registry.add::<support::live::Noop>("p");
+    let loader = boot(
+        &kernel.root(),
+        BootOptions {
+            registry: std::sync::Arc::new(registry),
+            base: file,
+            layers: layers.to_vec(),
+            env: env(dir.path()),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(loader.dump(), render_dump(&result));
+    assert_eq!(
+        *loader
+            .resolve("include:child")
+            .unwrap()
+            .fiber
+            .unwrap()
+            .effective_config()
+            .unwrap(),
+        json!({"v":1})
+    );
+    let logged: Vec<_> = kernel
+        .root()
+        .logger()
+        .buffer()
+        .into_iter()
+        .filter(|record| record.message.contains("patch:"))
+        .map(|record| record.message)
+        .collect();
+    assert_eq!(logged, warnings);
+    kernel.shutdown().await;
 }
 #[test]
 fn reports_a_patch_whose_target_row_is_absent_through_warn_with_its_layer_label_and_keeps_composing()
@@ -80,11 +118,33 @@ fn reports_a_patch_whose_target_row_is_absent_through_warn_with_its_layer_label_
     );
     assert_eq!(result.entries[0].config, json!({"value":"patched"}));
 }
-#[test]
-fn fails_loud_on_an_unparsable_or_non_array_base_config() {
+#[tokio::test(start_paused = true)]
+async fn fails_loud_on_a_missing_unparsable_or_non_array_base_config() {
     for text in ["invalid: [unclosed\n", "id: not-a-list\n"] {
         assert!(parse_entries(text, std::path::Path::new("/base.yml")).is_err());
     }
+    let dir = tempfile::tempdir().unwrap();
+    let kernel = hoh_kernel::Kernel::start();
+    let file = dir.path().join("missing.yml");
+    let error = boot(
+        &kernel.root(),
+        BootOptions {
+            registry: std::sync::Arc::new(PluginRegistry::default()),
+            base: file.clone(),
+            layers: vec![],
+            env: env(dir.path()),
+        },
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(matches!(error, LoadError::Startup(_)));
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("config file not found: {}", file.display()))
+    );
+    kernel.shutdown().await;
 }
 #[test]
 fn nested_changes_have_origins_and_unchanged_patches_add_no_provenance() {

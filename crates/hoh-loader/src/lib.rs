@@ -1,13 +1,34 @@
 //! Loader of HoH: entries, groups, layered patches, recomposition (docs/kernel.md).
 
+pub mod config_editor;
+pub mod config_schema;
 mod expr;
+mod identity;
 mod patches;
 mod profile;
+mod profile_files;
+pub mod profile_sanitize;
+mod registry;
+mod runtime;
+pub mod startup_diagnostics;
 mod yaml;
+mod yaml_edit;
+
+pub use registry::PluginRegistry;
+pub use runtime::{
+    Audit, BootOptions, ConfigReload, EntryChange, EntryInfo, EntryStatus, Group, Loader,
+    LoaderKey, UpdateAction, boot,
+};
+pub use startup_diagnostics::{
+    StartupCompositionDiagnostic, StartupError, StartupPluginState, StartupServiceState,
+};
 
 pub use expr::{Expr, ExprError};
 pub use patches::{apply_patches, compose, render_dump};
 pub use profile::{Bundle, BundleSource, Profile, SkippedBundle};
+pub use profile_files::{
+    init_profile, load_profile, read_profile_manifest, resolve_profile_dir, write_profile_manifest,
+};
 pub use yaml::{parse_entries, parse_patches};
 
 use indexmap::IndexMap;
@@ -15,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{path::PathBuf, sync::Arc};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     #[serde(default)]
@@ -43,6 +64,14 @@ fn is_false(value: &bool) -> bool {
 pub enum Isolate {
     Private,
     Label(String),
+}
+impl schemars::JsonSchema for Isolate {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Isolate".into()
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({"anyOf":[{"const":true},{"type":"string"}]})
+    }
 }
 
 impl Serialize for Isolate {
@@ -111,6 +140,23 @@ pub struct EvalEnv {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
+    #[error("hoh: plugin tree failed to load: {0}")]
+    Boot(#[source] Box<LoadError>),
+    #[error("failed to {stage} config file {file}")]
+    ConfigFile {
+        stage: &'static str,
+        file: PathBuf,
+        #[source]
+        source: Box<LoadError>,
+    },
+    #[error(transparent)]
+    AtomicWrite(Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Startup(Box<startup_diagnostics::StartupError>),
+    #[error(transparent)]
+    Kernel(#[from] hoh_kernel::KernelError),
+    #[error("{0}")]
+    Runtime(String),
     #[error("{file}: {source}")]
     Io {
         file: PathBuf,

@@ -481,6 +481,9 @@ pub fn parse_entries(text: &str, file: &Path) -> Result<Vec<Entry>, LoadError> {
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
+pub(crate) fn parse_value(text: &str, file: &Path) -> Result<Value, LoadError> {
+    Ok(document(text, file)?.value())
+}
 pub fn parse_patches(text: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
     let doc = document(text, file)?;
     let mut patches = Vec::new();

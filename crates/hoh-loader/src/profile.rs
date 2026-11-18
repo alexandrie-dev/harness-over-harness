@@ -80,7 +80,7 @@ impl Profile {
             env.cwd.join(dir)
         };
         let manifest = dir.join("package.json");
-        let value: Value =
+        let mut value: Value =
             hoh_util_values::js_json_parse(&read(&manifest)?).map_err(|e| LoadError::Shape {
                 file: manifest.clone(),
                 line: 1,
@@ -90,6 +90,7 @@ impl Profile {
         if !value.is_object() {
             return Err(shape(&manifest, "profile manifest must hold a JSON object"));
         }
+        crate::profile_files::drop_retired(&dir, &mut value)?;
         let names = match value.pointer("/dsh/profile/bundles") {
             None | Some(Value::Null) => Vec::new(),
             Some(Value::Array(items)) => items.clone(),
