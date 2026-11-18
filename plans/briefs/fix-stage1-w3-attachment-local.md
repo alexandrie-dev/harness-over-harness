@@ -1,0 +1,9 @@
+hoh-attachment-local is handed in (91 tests by your report). The lead's answers to your three questions; one more piece of work, then the crate goes to independent review.
+
+(1) CMYK with an ICC profile: authorized. `zune-jpeg = "0.5.15"` and `zune-core = "0.5.3"` are now in `[workspace.dependencies]` of the root Cargo.toml (they were already downloaded as dependencies of `image`; nothing new is fetched). Add them to your manifest as `zune-jpeg.workspace = true`, `zune-core.workspace = true`, decode the four channels directly and convert CMYK → sRGB through `moxcms`, as the source's `toColourspace('srgb')` does for such a file. Tests: a CMYK JPEG with an embedded profile and one without (what does the source do then? follow it and cite the lines), compared against expected pixels within a stated tolerance; the passthrough rule must not change.
+
+(2) Key order of an image reference: no change, and not your crate's concern. The recorded logs of dsh contain both orders (`…"mediaType","bytes","width"…` in 50 references and `…"mediaType","width","height"…` in 97), because JavaScript keeps the order of construction of each producer; the scenario comparison works on parsed JSON values, where key order is not compared (crates/hoh-conformance/README.md 6.2). Record this in PORT_NOTES.md in place of the open question.
+
+(3) Scenarios whose images are re-encoded: keep your local list in the crate; the lead maps it into `conformance/EXPECTED.tsv` when those scenarios first run. Close the question in the notes with that sentence.
+
+Same boundaries (only crates/hoh-attachment-local), build directory /mnt/toshiba/alexandrie/hoh/target-w3, CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4. Your last message: the result line of each command (test, clippy, fmt) and one line per item, at most 150 words.

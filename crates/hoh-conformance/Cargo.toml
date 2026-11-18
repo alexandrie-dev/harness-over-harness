@@ -10,3 +10,25 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64.workspace = true
+jiff.workspace = true
+regex.workspace = true
+rustix.workspace = true
+saphyr-parser.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+hoh-session-format = { path = "../hoh-session-format" }
+hoh-session-format-v0-to-v1 = { path = "../hoh-session-format-v0-to-v1" }
+hoh-jsdiff = { path = "../hoh-jsdiff" }
+
+[[bin]]
+name = "hoh-conformance"
+path = "src/main.rs"
+
+[[bin]]
+name = "hoh-conformance-fake"
+path = "src/bin/fake.rs"
