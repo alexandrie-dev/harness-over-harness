@@ -1,0 +1,8 @@
+scope	condition	expected_difference	reason
+normalization	clean in-budget PNG/JPEG/WebP passthrough	none; compare exact bytes and sha256	No raster encoding is performed.
+normalization	JPEG re-encoding	encoded bytes, size, decoded pixels, attachmentId; a boundary budget may choose another quality	DEPS.md §5.5 decision 7: image JPEG codec replaces libvips/libjpeg; same 85/75/60 order and selection rule.
+normalization	WebP re-encoding including GIF first frame	encoded bytes, size, decoded pixels, attachmentId; a boundary budget may choose another quality	DEPS.md §5.5 decision 7: webp/libwebp build and input pixels differ from sharp; qualities 85/75/60 and effort 0 remain.
+normalization	resize or 16-bit/ICC conversion	pixel rounding and derived encoded bytes	image Lanczos3, sample conversion and moxcms replace libvips resampling and colour management; target geometry and sRGB requirement remain.
+normalization	CMYK/YCCK JPEG with embedded ICC or without ICC	CMS/YCCK pixel rounding and derived JPEG bytes	Raw four-channel zune decode followed by moxcms perceptual conversion; unprofiled input uses source Chemical proof forward LUTs, not naive CMYK multiplication. Pixel tests allow 3/255 before encoding and 6/255 after JPEG quality 85.
+request-image	in-budget source passthrough	none; compare exact bytes	The source data is returned without encoding or cache publication.
+request-image	JPEG/WebP re-encoding	encoded bytes, size and decoded pixels; a boundary budget may choose another quality	Same codec, resize and colour-management replacements as normalization; descriptor and variantId inputs keep source order and values.

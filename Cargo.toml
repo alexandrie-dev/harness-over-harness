@@ -41,6 +41,8 @@ tokio-util = "0.7.20"
 trybuild = "1.0.125"
 url = "2.5.8"
 webp = { version = "0.3.1", default-features = false }
+zune-core = "0.5.3"
+zune-jpeg = "0.5.15"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

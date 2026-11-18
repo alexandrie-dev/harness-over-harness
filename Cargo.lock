@@ -535,6 +535,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "webp",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -567,6 +569,22 @@ dependencies = [
 [[package]]
 name = "hoh-conformance"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "hoh-jsdiff",
+ "hoh-session-format",
+ "hoh-session-format-v0-to-v1",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "jiff",
+ "regex",
+ "rustix",
+ "saphyr-parser",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "hoh-credentials"
@@ -693,8 +711,9 @@ dependencies = [
 
 [[package]]
 name = "hoh-llm"
-version = "0.1.0"
+version = "0.2.2-rc.3"
 dependencies = [
+ "futures-util",
  "hoh-attachment",
  "hoh-brand",
  "hoh-error",
@@ -703,6 +722,13 @@ dependencies = [
  "hoh-timeout",
  "hoh-util-crypto",
  "hoh-util-values",
+ "indexmap",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -710,16 +736,14 @@ name = "hoh-loader"
 version = "0.1.0"
 dependencies = [
  "futures-util",
- "getrandom 0.4.3",
+ "hoh-atomic-write",
  "hoh-kernel",
  "hoh-util-values",
  "indexmap",
- "rustix",
  "saphyr-parser",
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "thiserror",
  "tokio",
@@ -845,6 +869,26 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "hoh-subprocess"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-error",
+ "hoh-http-proxy",
+ "hoh-kernel",
+ "hoh-timeout",
+ "hoh-util-values",
+ "indexmap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "url",
 ]
 
 [[package]]
