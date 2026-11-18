@@ -29,16 +29,18 @@ impl BlockAssembler {
     }
     pub fn push(&mut self, chunk: StreamChunk) {
         match chunk {
-            StreamChunk::BlockStart { index, block_type } => {
+            StreamChunk::BlockStart {
+                index, block_type, ..
+            } => {
                 self.ensure(index, &block_type);
             }
-            StreamChunk::TextDelta { index, text } => {
+            StreamChunk::TextDelta { index, text, .. } => {
                 let p = self.ensure(index, "text");
                 if p.block.is_none() {
                     p.text += &text;
                 }
             }
-            StreamChunk::ReasoningDelta { index, text } => {
+            StreamChunk::ReasoningDelta { index, text, .. } => {
                 let p = self.ensure(index, "reasoning");
                 if p.block.is_none() {
                     p.text += &text;
@@ -49,6 +51,7 @@ impl BlockAssembler {
                 id,
                 name,
                 arguments_delta,
+                ..
             } => {
                 let p = self.ensure(index, "tool-call");
                 if p.block.is_some() {
@@ -60,16 +63,17 @@ impl BlockAssembler {
                 }
                 p.tool_call_arguments += &arguments_delta;
             }
-            StreamChunk::BlockEnd { index, block } => {
+            StreamChunk::BlockEnd { index, block, .. } => {
                 let p = self.ensure(index, &block.r#type);
                 if p.block.is_none() {
                     p.block = Some(block);
                 }
             }
-            StreamChunk::Usage { usage } => self.usage = Some(usage),
+            StreamChunk::Usage { usage, .. } => self.usage = Some(usage),
             StreamChunk::Finish {
                 reason,
                 replay_state,
+                ..
             } => {
                 self.finish = Some(reason);
                 self.replay_state = replay_state;
@@ -121,6 +125,10 @@ impl BlockAssembler {
                         .filter_map(|(b, k)| k.then_some(b))
                         .collect(),
                 );
+                if kept.iter().any(|keep| !keep) {
+                    // Pruning builds a fresh {response, blocks} object in the source.
+                    envelope.wire = Default::default();
+                }
             }
             Some(envelope)
         });

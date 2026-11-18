@@ -8,9 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmFailure {
+crate::wire::lossless_struct!(LlmFailure, [Clone, Debug, PartialEq], [serde(rename_all = "camelCase")], {
     pub message: String,
     pub code: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,7 +19,7 @@ pub struct LlmFailure {
     pub request_id: Option<ProviderRequestId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offload_images: Option<u64>,
-}
+});
 impl LlmFailure {
     pub fn new(message: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
@@ -31,24 +29,25 @@ impl LlmFailure {
             provider_retry_after_ms: None,
             request_id: None,
             offload_images: None,
+            wire: Default::default(),
         }
     }
 }
 
-/// Declaration-merged content: the owner retains a tag and arbitrary ordered JSON.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContentBlock {
+// Declaration-merged content: the owner retains a tag and arbitrary ordered JSON.
+crate::wire::lossless_struct!(ContentBlock, [Clone, Debug, PartialEq], [], {
     #[serde(rename = "type")]
     pub r#type: String,
     #[serde(flatten)]
     pub data: Map<String, Value>,
-}
+});
 pub type ContentBlockType = String;
 impl ContentBlock {
     pub fn new(kind: impl Into<String>, data: Map<String, Value>) -> Self {
         Self {
             r#type: kind.into(),
             data,
+            wire: Default::default(),
         }
     }
     pub fn text(text: impl Into<String>) -> Self {
@@ -124,17 +123,17 @@ impl From<ImageBlock> for ContentBlock {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FinishReason {
+crate::wire::lossless_struct!(FinishReason, [Clone, Debug, PartialEq], [], {
     pub kind: String,
     #[serde(flatten)]
     pub data: Map<String, Value>,
-}
+});
 impl FinishReason {
     pub fn new(kind: impl Into<String>) -> Self {
         Self {
             kind: kind.into(),
             data: Map::new(),
+            wire: Default::default(),
         }
     }
     pub fn failed(kind: &str, failure: LlmFailure) -> Self {
@@ -145,15 +144,14 @@ impl FinishReason {
                 "failure".into(),
                 serde_json::to_value(failure).expect("failure is JSON"),
             )]),
+            wire: Default::default(),
         }
     }
     pub fn failure(&self) -> Option<LlmFailure> {
         serde_json::from_value(self.data.get("failure")?.clone()).ok()
     }
 }
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenUsage {
+crate::wire::lossless_struct!(TokenUsage, [Clone, Debug, Default, PartialEq], [serde(rename_all = "camelCase")], {
     pub input_tokens: u64,
     pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -164,7 +162,7 @@ pub struct TokenUsage {
     pub cache_write_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<u64>,
-}
+});
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmImageRequestPrice {
@@ -322,57 +320,219 @@ pub struct LlmResolvedModelInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning: Option<LlmModelReasoningInfo>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt_update: Option<SystemPromptUpdate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_update: Option<ToolUpdate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<LlmModelReasoningInfo>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReplayEnvelope {
+crate::wire::lossless_struct!(ReplayEnvelope, [Clone, Debug, PartialEq], [], {
     pub response: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocks: Option<Vec<Value>>,
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
-)]
+});
+#[derive(Clone, Debug, PartialEq)]
 pub enum StreamChunk {
     BlockStart {
         index: u64,
         block_type: ContentBlockType,
+        /// Original ordered JSON fields, if this chunk was decoded.
+        wire: crate::wire::JsonSnapshot,
     },
     TextDelta {
         index: u64,
         text: String,
+        /// Original ordered JSON fields, if this chunk was decoded.
+        wire: crate::wire::JsonSnapshot,
     },
     ReasoningDelta {
         index: u64,
         text: String,
+        /// Original ordered JSON fields, if this chunk was decoded.
+        wire: crate::wire::JsonSnapshot,
     },
     ToolCallDelta {
         index: u64,
         id: ToolCallId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         arguments_delta: String,
+        /// Original ordered JSON fields, if this chunk was decoded.
+        wire: crate::wire::JsonSnapshot,
     },
     BlockEnd {
         index: u64,
         block: ContentBlock,
+        /// Original ordered JSON fields, if this chunk was decoded.
+        wire: crate::wire::JsonSnapshot,
     },
     Usage {
         usage: TokenUsage,
+        /// Original ordered JSON fields, if this chunk was decoded.
+        wire: crate::wire::JsonSnapshot,
     },
     Finish {
         reason: FinishReason,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         replay_state: Option<ReplayEnvelope>,
+        /// Original ordered JSON fields, if this chunk was decoded.
+        wire: crate::wire::JsonSnapshot,
     },
 }
+const _: () = {
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(
+        tag = "type",
+        rename_all = "kebab-case",
+        rename_all_fields = "camelCase"
+    )]
+    enum Fields {
+        BlockStart {
+            index: u64,
+            block_type: ContentBlockType,
+        },
+        TextDelta {
+            index: u64,
+            text: String,
+        },
+        ReasoningDelta {
+            index: u64,
+            text: String,
+        },
+        ToolCallDelta {
+            index: u64,
+            id: ToolCallId,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            name: Option<String>,
+            arguments_delta: String,
+        },
+        BlockEnd {
+            index: u64,
+            block: ContentBlock,
+        },
+        Usage {
+            usage: TokenUsage,
+        },
+        Finish {
+            reason: FinishReason,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            replay_state: Option<ReplayEnvelope>,
+        },
+    }
+    impl Serialize for StreamChunk {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let (fields, wire) = match self {
+                Self::BlockStart {
+                    index,
+                    block_type,
+                    wire,
+                } => (
+                    Fields::BlockStart {
+                        index: *index,
+                        block_type: block_type.clone(),
+                    },
+                    wire,
+                ),
+                Self::TextDelta { index, text, wire } => (
+                    Fields::TextDelta {
+                        index: *index,
+                        text: text.clone(),
+                    },
+                    wire,
+                ),
+                Self::ReasoningDelta { index, text, wire } => (
+                    Fields::ReasoningDelta {
+                        index: *index,
+                        text: text.clone(),
+                    },
+                    wire,
+                ),
+                Self::ToolCallDelta {
+                    index,
+                    id,
+                    name,
+                    arguments_delta,
+                    wire,
+                } => (
+                    Fields::ToolCallDelta {
+                        index: *index,
+                        id: id.clone(),
+                        name: name.clone(),
+                        arguments_delta: arguments_delta.clone(),
+                    },
+                    wire,
+                ),
+                Self::BlockEnd { index, block, wire } => (
+                    Fields::BlockEnd {
+                        index: *index,
+                        block: block.clone(),
+                    },
+                    wire,
+                ),
+                Self::Usage { usage, wire } => (
+                    Fields::Usage {
+                        usage: usage.clone(),
+                    },
+                    wire,
+                ),
+                Self::Finish {
+                    reason,
+                    replay_state,
+                    wire,
+                } => (
+                    Fields::Finish {
+                        reason: reason.clone(),
+                        replay_state: replay_state.clone(),
+                    },
+                    wire,
+                ),
+            };
+            wire.merge(serde_json::to_value(fields).map_err(serde::ser::Error::custom)?)
+                .serialize(serializer)
+        }
+    }
+    impl<'de> Deserialize<'de> for StreamChunk {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let original = Value::deserialize(deserializer)?;
+            let fields: Fields =
+                serde_json::from_value(original.clone()).map_err(serde::de::Error::custom)?;
+            let baseline = serde_json::to_value(&fields).map_err(serde::de::Error::custom)?;
+            let wire = crate::wire::JsonSnapshot::capture(original, baseline);
+            Ok(match fields {
+                Fields::BlockStart { index, block_type } => Self::BlockStart {
+                    index,
+                    block_type,
+                    wire,
+                },
+                Fields::TextDelta { index, text } => Self::TextDelta { index, text, wire },
+                Fields::ReasoningDelta { index, text } => {
+                    Self::ReasoningDelta { index, text, wire }
+                }
+                Fields::ToolCallDelta {
+                    index,
+                    id,
+                    name,
+                    arguments_delta,
+                } => Self::ToolCallDelta {
+                    index,
+                    id,
+                    name,
+                    arguments_delta,
+                    wire,
+                },
+                Fields::BlockEnd { index, block } => Self::BlockEnd { index, block, wire },
+                Fields::Usage { usage } => Self::Usage { usage, wire },
+                Fields::Finish {
+                    reason,
+                    replay_state,
+                } => Self::Finish {
+                    reason,
+                    replay_state,
+                    wire,
+                },
+            })
+        }
+    }
+};
+
 impl StreamChunk {
     pub fn kind(&self) -> &'static str {
         match self {
@@ -389,17 +549,18 @@ impl StreamChunk {
         Self::Finish {
             reason,
             replay_state: None,
+            wire: Default::default(),
         }
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolSchema {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defer_loading: Option<bool>,
     pub name: String,
     pub description: String,
     pub parameters: Map<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_loading: Option<bool>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

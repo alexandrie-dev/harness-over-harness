@@ -190,12 +190,26 @@ fn rejects_unsafe_values_while_preserving_json_safe_empty_adapter_identities() {
     ] {
         a.push(timed(1, c)).unwrap();
     }
-    assert!(
-        a.snapshot()
-            .iter()
-            .all(|r| matches!(r, AssistantStreamRecord::Chunk { .. }))
+    assert_eq!(
+        value(a.snapshot()),
+        json!([
+            {"type":"chunk","time":1,"chunk":{"type":"tool-call-delta","index":0,"id":"","argumentsDelta":"{}"}},
+            {"type":"chunk","time":1,"chunk":{"type":"tool-call-delta","index":0,"id":"call","name":"","argumentsDelta":"{}"}}
+        ])
     );
-    assert_eq!(expand_assistant_stream(&a.snapshot()).unwrap().len(), 2);
+    assert_eq!(
+        value(
+            expand_assistant_stream(&a.snapshot())
+                .unwrap()
+                .into_iter()
+                .map(|t| t.chunk)
+                .collect::<Vec<_>>()
+        ),
+        json!([
+            {"type":"tool-call-delta","index":0,"id":"","argumentsDelta":"{}"},
+            {"type":"tool-call-delta","index":0,"id":"call","name":"","argumentsDelta":"{}"}
+        ])
+    );
 }
 #[test]
 fn rejects_malformed_compact_records() {
@@ -458,7 +472,16 @@ fn reader_stream() -> Vec<AssistantStreamRecord> {
             106,
             json!({"type":"block-end","index":0,"block":{"type":"reasoning","text":" think"}}),
         ),
-        run(108, vec![1, 1], vec!["\n", "ans", "wer"]),
+        raw(
+            107,
+            json!({"type":"block-start","index":1,"blockType":"text"}),
+        ),
+        AssistantStreamRecord::TextChunks {
+            time0: 108,
+            index: 1,
+            dt: vec![1, 1],
+            texts: vec!["\n".into(), "ans".into(), "wer".into()],
+        },
         raw(
             111,
             json!({"type":"block-end","index":1,"block":{"type":"text","text":"\nanswer"}}),
@@ -492,13 +515,68 @@ fn answers_first_token_visibility_text_and_usage_questions_from_records() {
         assistant_stream_chunks(&s, RawStreamChunkType::Usage).len(),
         2
     );
+    assert_eq!(
+        value(last_assistant_stream_chunk(&s, RawStreamChunkType::Finish)),
+        json!({"type":"finish","reason":{"kind":"stop"}})
+    );
+    assert_eq!(
+        value(last_assistant_stream_chunk(
+            &s,
+            RawStreamChunkType::BlockStart
+        )),
+        json!({"type":"block-start","index":1,"blockType":"text"})
+    );
+    assert_eq!(
+        value(assistant_stream_chunks(&s, RawStreamChunkType::BlockEnd))
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["index"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!(0), json!(1)]
+    );
+    assert_eq!(
+        value(assistant_stream_chunks(&s, RawStreamChunkType::Usage))
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["usage"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            json!({"inputTokens":10,"outputTokens":4}),
+            json!({"inputTokens":10,"outputTokens":9})
+        ]
+    );
     assert_eq!(join_assistant_stream_text(&s), "\nanswer");
 }
 #[test]
 fn reports_absence_on_empty_whitespace_only_and_tool_call_only_streams() {
     let s = vec![
+        raw(
+            1,
+            json!({"type":"block-start","index":0,"blockType":"tool-call"}),
+        ),
         tool_run(2, vec![1], vec!["", ""], Some("read")),
-        run(5, vec![1], vec![" ", "\t"]),
+        raw(
+            4,
+            json!({"type":"block-end","index":0,"block":{"type":"tool-call","id":"call","name":"read","arguments":""}}),
+        ),
+        AssistantStreamRecord::TextChunks {
+            time0: 5,
+            index: 1,
+            dt: vec![1],
+            texts: vec![" ".into(), "\t".into()],
+        },
+        AssistantStreamRecord::ReasoningChunks {
+            time0: 7,
+            index: 2,
+            dt: vec![],
+            texts: vec!["  ".into()],
+        },
+        raw(
+            8,
+            json!({"type":"block-end","index":1,"block":{"type":"text","text":" \t"}}),
+        ),
     ];
     for stream in [&[][..], &s] {
         assert!(!assistant_stream_has_visible_content(stream));
@@ -507,9 +585,9 @@ fn reports_absence_on_empty_whitespace_only_and_tool_call_only_streams() {
         assert!(assistant_stream_chunks(stream, RawStreamChunkType::Usage).is_empty());
     }
     assert_eq!(assistant_stream_first_token_time(&s), Some(2));
-    assert_eq!(assistant_stream_first_token_time(&[]), None);
     assert_eq!(join_assistant_stream_text(&s), " \t");
     assert_eq!(join_assistant_stream_text(&[]), "");
+    assert_eq!(assistant_stream_first_token_time(&[]), None);
 }
 #[test]
 fn reads_raw_text_deltas_and_empty_argument_tool_call_deltas_the_accumulator_kept_as_chunks() {
@@ -562,10 +640,12 @@ fn stops_at_the_first_qualifying_record() {
 fn assembles_the_same_blocks_usage_finish_and_replay_state_as_the_expanded_members() {
     let mut a = AssistantStreamAccumulator::new();
     let chunks = vec![
+        chunk(json!({"type":"block-start","index":0,"blockType":"reasoning"})),
         chunk(json!({"type":"reasoning-delta","index":0,"text":"th"})),
         chunk(json!({"type":"reasoning-delta","index":0,"text":"ink"})),
-        text("an"),
-        text("swer"),
+        chunk(json!({"type":"block-end","index":0,"block":{"type":"reasoning","text":"think"}})),
+        chunk(json!({"type":"text-delta","index":1,"text":"an"})),
+        chunk(json!({"type":"text-delta","index":1,"text":"swer"})),
         chunk(
             json!({"type":"tool-call-delta","index":2,"id":"call-1","name":"read","argumentsDelta":""}),
         ),
@@ -587,6 +667,12 @@ fn assembles_the_same_blocks_usage_finish_and_replay_state_as_the_expanded_membe
         .unwrap();
     }
     let s = a.snapshot();
+    assert_eq!(
+        s.iter()
+            .filter(|r| !matches!(r, AssistantStreamRecord::Chunk { .. }))
+            .count(),
+        4
+    );
     let mut expanded = BlockAssembler::new();
     for t in expand_assistant_stream(&s).unwrap() {
         expanded.push(t.chunk);
@@ -594,11 +680,27 @@ fn assembles_the_same_blocks_usage_finish_and_replay_state_as_the_expanded_membe
     let mut packed = BlockAssembler::new();
     assemble_assistant_stream(&s, &mut packed).unwrap();
     assert_eq!(packed.blocks().unwrap(), expanded.blocks().unwrap());
+    assert_eq!(
+        packed
+            .blocks()
+            .unwrap()
+            .iter()
+            .map(|b| b.r#type.as_str())
+            .collect::<Vec<_>>(),
+        vec!["reasoning", "text", "tool-call", "tool-call"]
+    );
+    assert_eq!(
+        value(packed.usage()),
+        json!({"inputTokens":3,"outputTokens":2})
+    );
+    assert_eq!(value(packed.finish()), json!({"kind":"tool-calls"}));
     assert_eq!(packed.usage(), expanded.usage());
     assert_eq!(packed.finish(), expanded.finish());
     assert_eq!(
         packed.replay_state().unwrap(),
         expanded.replay_state().unwrap()
     );
-    assemble_assistant_stream(&[], &mut packed).unwrap();
+    let mut reused = BlockAssembler::new();
+    assemble_assistant_stream(&[], &mut reused).unwrap();
+    assert_eq!(reused.blocks().unwrap(), Vec::<ContentBlock>::new());
 }

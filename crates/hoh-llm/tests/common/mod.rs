@@ -20,6 +20,7 @@ pub fn text(s: &str) -> StreamChunk {
     StreamChunk::TextDelta {
         index: 0,
         text: s.into(),
+        wire: Default::default(),
     }
 }
 pub fn script() -> Vec<StreamChunk> {

@@ -104,8 +104,8 @@ impl AssistantStreamAccumulator {
         let time = value.time;
         let mut packed = false;
         let new = match &value.chunk {
-            StreamChunk::TextDelta { index, text }
-            | StreamChunk::ReasoningDelta { index, text } => {
+            StreamChunk::TextDelta { index, text, .. }
+            | StreamChunk::ReasoningDelta { index, text, .. } => {
                 safe_index(*index, value.chunk.kind())?;
                 let reasoning = matches!(value.chunk, StreamChunk::ReasoningDelta { .. });
                 if let Some(previous) = self.records.last_mut() {
@@ -154,6 +154,7 @@ impl AssistantStreamAccumulator {
                 id,
                 name,
                 arguments_delta,
+                ..
             } => {
                 safe_index(*index, "tool-call-delta")?;
                 if id.as_str().is_empty() || name.as_deref() == Some("") {
@@ -399,7 +400,11 @@ pub fn expand_assistant_stream(
                 time0,
                 &dt,
                 texts,
-                |text| StreamChunk::TextDelta { index, text },
+                |text| StreamChunk::TextDelta {
+                    index,
+                    text,
+                    wire: Default::default(),
+                },
                 &mut chunks,
             ),
             AssistantStreamRecord::ReasoningChunks {
@@ -411,7 +416,11 @@ pub fn expand_assistant_stream(
                 time0,
                 &dt,
                 texts,
-                |text| StreamChunk::ReasoningDelta { index, text },
+                |text| StreamChunk::ReasoningDelta {
+                    index,
+                    text,
+                    wire: Default::default(),
+                },
                 &mut chunks,
             ),
             AssistantStreamRecord::ToolCallChunks {
@@ -430,6 +439,7 @@ pub fn expand_assistant_stream(
                     id: id.clone(),
                     name: name.clone(),
                     arguments_delta,
+                    wire: Default::default(),
                 },
                 &mut chunks,
             ),
@@ -645,11 +655,13 @@ pub fn assemble_assistant_stream(
             AssistantStreamRecord::TextChunks { index, texts, .. } => StreamChunk::TextDelta {
                 index: *index,
                 text: texts.join(""),
+                wire: Default::default(),
             },
             AssistantStreamRecord::ReasoningChunks { index, texts, .. } => {
                 StreamChunk::ReasoningDelta {
                     index: *index,
                     text: texts.join(""),
+                    wire: Default::default(),
                 }
             }
             AssistantStreamRecord::ToolCallChunks {
@@ -663,6 +675,7 @@ pub fn assemble_assistant_stream(
                 id: id.clone(),
                 name: name.clone(),
                 arguments_delta: args.join(""),
+                wire: Default::default(),
             },
         };
         assembler.push(chunk);

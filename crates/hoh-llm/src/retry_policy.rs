@@ -333,7 +333,97 @@ impl RetryPolicySchema {
     pub fn schema() -> Value {
         retry_policy_schema()
     }
-    pub fn validate(value: &Value) -> Result<ResolvedRetryPolicy, ValueError> {
-        resolve_retry_policy_value(Some(value), "retryPolicy")
+    pub fn validate(value: &Value) -> Result<Value, ValueError> {
+        // schemastery's nullable union has no default or required flag.
+        if value.is_null() {
+            return Ok(Value::Null);
+        }
+        schema_config(value).ok_or_else(|| {
+            let choices = RETRY_CODE_CHOICES.iter().map(|code| hoh_util_values::js_json_stringify(&json!(code))).collect::<Vec<_>>().join(" | ");
+            let backoff = "{ initialDelayMs?: number, maxDelayMs?: number, jitterRatio?: number }";
+            ValueError::Message(format!("expected {{ mode: \"normal\", maxRetries?: number, retryableCodes?: ({choices} | string)[], backoff?: {backoff} }} | {{ mode: \"always\", backoff?: {backoff} }} but got {}", hoh_util_values::js_json_stringify(value)))
+        })
     }
+}
+
+// Faithful subset of vendor/schemastery: object defaults, nullable fields,
+// field bounds, union selection, and unknown keys appended after known fields.
+fn schema_config(value: &Value) -> Option<Value> {
+    let input = value.as_object()?;
+    let mode = input.get("mode")?.as_str()?;
+    if mode != "normal" && mode != "always" {
+        return None;
+    }
+    let mut result = serde_json::Map::new();
+    result.insert("mode".into(), json!(mode));
+    if mode == "normal" {
+        let retries = input
+            .get("maxRetries")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .unwrap_or(json!(5));
+        let n = retries.as_f64()?;
+        if !(0.0..=9_007_199_254_740_991.0).contains(&n) || n.fract() != 0.0 {
+            return None;
+        }
+        result.insert("maxRetries".into(), retries);
+        let codes = input
+            .get("retryableCodes")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .unwrap_or(json!(DEFAULT_RETRYABLE_CODES));
+        let array = codes.as_array()?;
+        if array.is_empty()
+            || array
+                .iter()
+                .any(|v| !v.is_null() && v.as_str().is_none_or(str::is_empty))
+        {
+            return None;
+        }
+        result.insert("retryableCodes".into(), codes);
+    }
+    let empty = serde_json::Map::new();
+    let backoff = match input.get("backoff").filter(|v| !v.is_null()) {
+        Some(v) => v.as_object()?,
+        None => &empty,
+    };
+    let mut resolved = serde_json::Map::new();
+    for (key, default, min, max) in [
+        (
+            "initialDelayMs",
+            500.0,
+            f64::from_bits(1),
+            MAX_TIMER_DELAY_MS as f64,
+        ),
+        (
+            "maxDelayMs",
+            10_000.0,
+            f64::from_bits(1),
+            MAX_TIMER_DELAY_MS as f64,
+        ),
+        ("jitterRatio", 0.1, 0.0, 1.0),
+    ] {
+        let value = backoff
+            .get(key)
+            .filter(|v| !v.is_null())
+            .cloned()
+            .unwrap_or(json!(default));
+        let n = value.as_f64()?;
+        if !(min..=max).contains(&n) {
+            return None;
+        }
+        resolved.insert(key.into(), value);
+    }
+    for (key, value) in backoff {
+        if !resolved.contains_key(key) {
+            resolved.insert(key.clone(), value.clone());
+        }
+    }
+    result.insert("backoff".into(), Value::Object(resolved));
+    for (key, value) in input {
+        if !result.contains_key(key) {
+            result.insert(key.clone(), value.clone());
+        }
+    }
+    Some(Value::Object(result))
 }

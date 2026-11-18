@@ -31,7 +31,10 @@ pub fn normalize_llm_failure(value: &(dyn Error + 'static)) -> LlmFailure {
         && f.offload_images
             .is_none_or(|n| n > 0 && n <= 9_007_199_254_740_991)
     {
-        return f.clone();
+        let mut snapshot = f.clone();
+        // The source constructs a new object from validated facts, not a raw JSON copy.
+        snapshot.wire = Default::default();
+        return snapshot;
     }
     let message = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| value.to_string()))
         .ok()

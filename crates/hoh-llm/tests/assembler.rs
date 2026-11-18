@@ -141,7 +141,9 @@ fn replay_assembler(reason: &str, blocks: Option<Vec<Value>>, tool: bool) -> Blo
         replay_state: Some(ReplayEnvelope {
             response: json!({"responseId":"resp-1"}),
             blocks,
+            wire: Default::default(),
         }),
+        wire: Default::default(),
     });
     a
 }

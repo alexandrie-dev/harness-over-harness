@@ -129,7 +129,10 @@ fn declares_the_resolver_bound_in_the_schema() {
 #[test]
 fn accepts_the_smallest_values_inside_the_schema_bounds_and_still_defaults_the_codes() {
     let p=RetryPolicySchema::validate(&json!({"mode":"normal","retryableCodes":["X"],"backoff":{"initialDelayMs":f64::from_bits(1)}})).unwrap();
-    assert_eq!(value(p)["initialDelayMs"], json!(f64::from_bits(1)));
+    assert_eq!(
+        value(p)["backoff"]["initialDelayMs"],
+        json!(f64::from_bits(1))
+    );
     assert_eq!(
         value(RetryPolicySchema::validate(&json!({"mode":"normal"})).unwrap())["retryableCodes"],
         json!(DEFAULT_RETRYABLE_CODES)

@@ -367,55 +367,84 @@ async fn normalizes_an_unregistered_provider_to_a_terminal_failure() {
     assert!(f.message.contains("no adapter registered"));
     k.shutdown().await;
 }
+struct FailingIteration {
+    failure: HarnessError,
+    cleanup: Arc<AtomicUsize>,
+}
+impl LlmAdapter for FailingIteration {
+    fn stream(&self, _: GenerateOptions) -> Result<LlmStream, BoxError> {
+        let error = self.failure.clone();
+        let cleanup = self.cleanup.clone();
+        Ok(
+            LlmStream::new(futures_util::stream::once(async move { Err(error.into()) }))
+                .with_cleanup(move || {
+                    Box::pin(async move {
+                        cleanup.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                }),
+        )
+    }
+}
 #[tokio::test]
 async fn normalizes_a_throwing_iterator_result() {
-    let k = Kernel::start();
-    let c = k.root();
-    let r = LlmRuntime::new();
-    r.register_adapter(
-        &c,
-        vec!["route".into()],
-        Arc::new(ThrowingAdapter {
-            failure: LlmError::from_failure(
-                &LlmFailure::new("value getter failed", "RESULT_GETTER_FAILED"),
-                None,
-            )
-            .unwrap(),
-            iteration: true,
-        }),
-    )
-    .unwrap();
-    let out = collect(r.stream(&c, options())).await.unwrap();
-    assert_eq!(
-        value(out)[0]["reason"]["failure"]["code"],
-        "RESULT_GETTER_FAILED"
-    );
-    k.shutdown().await;
+    for field in ["done", "value"] {
+        let k = Kernel::start();
+        let c = k.root();
+        let r = LlmRuntime::new();
+        let cleanup = Arc::new(AtomicUsize::new(0));
+        let message = format!("{field} getter failed");
+        r.register_adapter(
+            &c,
+            vec!["route".into()],
+            Arc::new(FailingIteration {
+                failure: LlmError::from_failure(
+                    &LlmFailure::new(&message, "RESULT_GETTER_FAILED"),
+                    None,
+                )
+                .unwrap(),
+                cleanup: cleanup.clone(),
+            }),
+        )
+        .unwrap();
+        let out = collect(r.stream(&c, options())).await.unwrap();
+        assert_eq!(
+            value(out),
+            json!([{"type":"finish","reason":{"kind":"error","failure":{"message":message,"code":"RESULT_GETTER_FAILED"}}}])
+        );
+        tokio::task::yield_now().await;
+        assert_eq!(cleanup.load(Ordering::SeqCst), 0);
+        k.shutdown().await;
+        assert_eq!(cleanup.load(Ordering::SeqCst), 0);
+    }
 }
 #[tokio::test]
 async fn normalizes_synchronous_adapter_dispatch_failures() {
-    let k = Kernel::start();
-    let c = k.root();
-    let r = LlmRuntime::new();
-    r.register_adapter(
-        &c,
-        vec!["route".into()],
-        Arc::new(ThrowingAdapter {
-            failure: LlmError::from_failure(
-                &LlmFailure::new("dispatch failed", "BOUNDARY_FAILED"),
-                None,
-            )
-            .unwrap(),
-            iteration: false,
-        }),
-    )
-    .unwrap();
-    let out = collect(r.stream(&c, options())).await.unwrap();
-    assert_eq!(
-        value(out)[0]["reason"]["failure"]["code"],
-        "BOUNDARY_FAILED"
-    );
-    k.shutdown().await;
+    for boundary in ["dispatch", "iterator"] {
+        let k = Kernel::start();
+        let c = k.root();
+        let r = LlmRuntime::new();
+        let message = format!("{boundary} failed");
+        r.register_adapter(
+            &c,
+            vec!["route".into()],
+            Arc::new(ThrowingAdapter {
+                failure: LlmError::from_failure(
+                    &LlmFailure::new(&message, "BOUNDARY_FAILED"),
+                    None,
+                )
+                .unwrap(),
+                iteration: boundary == "iterator",
+            }),
+        )
+        .unwrap();
+        let out = collect(r.stream(&c, options())).await.unwrap();
+        assert_eq!(
+            value(out),
+            json!([{"type":"finish","reason":{"kind":"error","failure":{"message":message,"code":"BOUNDARY_FAILED"}}}])
+        );
+        k.shutdown().await;
+    }
 }
 #[tokio::test]
 async fn preserves_structured_llm_error_facts_in_the_terminal_failure() {
@@ -568,6 +597,13 @@ async fn unregisters_adapters_when_the_owning_fiber_is_disposed() {
     let k = Kernel::start();
     let c = k.root();
     let r = LlmRuntime::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    c.on_contained::<AdaptersUpdated>(move |_| {
+        count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    })
+    .unwrap();
     let child = c.child("adapter owner").unwrap();
     r.register_adapter(
         &child,
@@ -576,8 +612,10 @@ async fn unregisters_adapters_when_the_owning_fiber_is_disposed() {
     )
     .unwrap();
     assert_eq!(r.list_providers().len(), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     child.fiber().dispose().await;
     assert!(r.list_providers().is_empty());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
     k.shutdown().await;
 }
 #[tokio::test]

@@ -12,6 +12,7 @@ pub mod message;
 pub mod retry_policy;
 pub mod runtime;
 pub mod types;
+pub mod wire;
 pub use api_key::*;
 pub use assembler::BlockAssembler;
 pub use assistant_stream::*;

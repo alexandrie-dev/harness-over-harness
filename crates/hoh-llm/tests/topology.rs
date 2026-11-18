@@ -202,12 +202,21 @@ async fn withdraws_every_entry_when_the_registration_disposes() {
 #[tokio::test]
 async fn withdraws_entries_when_the_contributing_fiber_disposes() {
     let (k, c, r) = fresh();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    c.on_contained::<AdaptersUpdated>(move |_| {
+        count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    })
+    .unwrap();
     let child = c.child("directory owner").unwrap();
     r.register_configurable_providers(&child, vec![entry("openai")])
         .unwrap();
     assert_eq!(r.list_configurable_providers().len(), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     child.fiber().dispose().await;
     assert!(r.list_configurable_providers().is_empty());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
     k.shutdown().await;
 }
 #[tokio::test]

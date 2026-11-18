@@ -5,7 +5,7 @@
 | образец | перенос | состояние |
 | --- | --- | --- |
 | src/index.ts | src/lib.rs, src/runtime.rs, src/error.rs | реестр, подготовка вызова, discovery, адаптерная граница, сервис и события |
-| src/types.ts | src/types.rs | публичная модель данных и serde-имена |
+| src/types.ts | src/types.rs, src/wire.rs | публичная модель данных, serde-имена, lossless ordered snapshots |
 | src/brand.ts | src/brand.rs | пять newtype; общий SessionId реэкспортирован из hoh-brand::ids |
 | src/message.ts | src/message.rs | роли, происхождение, конструкторы, identity, bounded summary |
 | src/content.ts | src/content.rs | файлы, изображения, бюджеты, история инструментов |
@@ -29,6 +29,7 @@
 | tests/retry-policy.spec.ts | tests/retry_policy.rs | все 8 случаев; таблицы ошибок сохранены |
 | tests/service.spec.ts | tests/service.rs | все 71 случай; типово невозможные строки таблиц проверяют serde-отказ |
 | tests/topology.spec.ts | tests/topology.rs | все 18 случаев, включая contained sync/async failures |
+| review round | tests/review_fixes.rs | 13 регрессий: unfiltered dispatch/logger scope, ordered JSON, projection, order, cleanup, schema |
 | locale/*.json | locale/*.json | все 8 файлов побайтно; проверено diff -rq |
 | README.md, package.json | PORT_NOTES.md, Cargo.toml | прочитаны; дополнительные entry points соответствуют публичным Rust-модулям |
 
@@ -56,16 +57,22 @@
   и callbacks. Методы, создающие effects или использующие caller scope, принимают &Context
   (docs/kernel.md §7). Llm/LlmPlugin предоставляют сервис llm; дополнительные типы событий —
   AdaptersUpdated, ModelsUpdated, LlmStreamEvent. Исходные имена событий не изменены.
-- AdaptersUpdated использует именно Contained: ctx.dispatch(...).invoke(report), sync и async
+- AdaptersUpdated использует именно Contained: ctx.root().dispatch(...).invoke(report), sync и async
   listener errors получают два исходных warn. Commit закончен до уведомления, mutex освобождён,
-  поздние слушатели не теряются из-за раннего отказа. Обычный emit не эмулирует containment.
+  поздние слушатели не теряются из-за раннего отказа. Receiver filter registrant не применяется.
+  Оба warn принадлежат context сервиса: LlmPlugin вызывает LlmRuntime::with_context(&ctx).
+  Для standalone LlmRuntime::new()/default() используется root registrant. with_context —
+  дополнительный Rust-конструктор для явного service owner. Обычный emit не эмулирует containment.
 - LlmStream::Item = Result<StreamChunk, BoxError>. Ошибки подготовки, синхронного dispatch
   и polling адаптера становятся терминальным finish; ошибки middleware и потребителя остаются Err.
-  Асинхронный iterator.return выражен явным `stream.close().await`; Rust Drop не может ожидать
-  cleanup или вернуть его ошибку. Drop освобождает поток и futures; для наблюдения async cleanup
-  потребитель обязан вызвать close. После adapter iteration Err cleanup не вызывается, как в образце.
-  Middleware, самостоятельно строящее StreamExt::chain и подобные обёртки, само отвечает за
-  передачу async cleanup; обычное владение обеспечивает синхронное освобождение.
+  Явный `stream.close().await` ждёт iterator.return и возвращает cleanup error потребителю.
+  Drop незавершённого и незакрытого runtime stream передаёт cleanup в ctx.spawn владельца
+  вызова; отмена/выгрузка этого fiber отменяет задачу, а её ошибка попадает в kernel logger.
+  Drop не ждёт задачу. После полного исчерпания и adapter iteration Err cleanup не запускается;
+  close не дублируется Drop. Owner передаётся и уже опрошенным deferred streams из middleware.
+  Standalone LlmStream без runtime не знает owner: такой потребитель вызывает close().await.
+  Middleware, строящее произвольные StreamExt::chain и подобные обёртки, отвечает за
+  передачу awaited cleanup через with_cleanup; синхронное владение само передаёт Drop.
 - PreparedLlmCall привязывает metadata, policy и dispatch к одной adapter generation, имеет
   mutex для one-shot и отдельный captured config. Публичные snapshots можно менять как собственные
   Rust-значения, но изменение config не меняет скрытый captured config и приводит к
@@ -107,7 +114,10 @@
   Сообщения JSON для модели/журнала пишутся hoh_util_values::js_json_stringify после to_value.
   В тестах тот же codec уравнивает JS-числа 500 и 500.0, не меняя строк и полей.
 - bound_context_summary считает UTF-16. Если предел разрезает surrogate pair, Rust String сохраняет
-  только целый scalar перед многоточием; одиночный surrogate не представим. Другие строки не меняются.
+  только целый scalar перед многоточием; одиночный surrogate не представим. Конкретная
+  граница: notice summary содержит в JS lone surrogate на UTF-16 index 119;
+  Rust сохраняет только целый scalar перед ним. Это учтённое отличие, код не менялся.
+  Другие строки не меняются.
   Классификаторы provider failures учитывают UTF-16 длины, ASCII case folding, JS whitespace и четыре
   JS line terminators. error_chain обходит cause/aggregate итеративно, различает cycle и diamond,
   сдерживает панику чужого Display; AggregateError и error_chain_value — явные Rust-входы вместо
@@ -117,14 +127,20 @@
   с JS String coercion. Hostile Display содержит panic и даёт исходный fallback.
 - RetryPolicyConfig имеет serde enum и JsonSchema с исходными bounds/defaults и built-in choices
   плюс arbitrary non-empty string. RetryPolicySchema::{schema,validate}, retry_policy_schema и
-  resolve_retry_policy_value заменяют вызываемый объект schemastery; validate возвращает resolved
-  policy, не JS schema instance. normal/always и Resolved* aliases относятся к соответствующим
-  вариантам enum. DEFAULT_RETRYABLE_CODES дополнительно открыт для inspection/test.
-  Все исходные ручные сообщения resolveRetryPolicy сохранены в retry_policy.rs.
-- Зависимость zod указана в package.json образца, но в src нет ни импорта zod, ни parse/safeParse,
-  ни показанного пользователю zod failure. Поэтому таких текстов здесь нет для воспроизведения.
-  Schemastery runtime не переносится; serde + ручная проверка повторяют исходные сообщения
-  в retry_policy.rs, error.rs, runtime.rs, assistant_stream.rs; generics/механика schema заменены (§9).
+  resolve_retry_policy_value заменяют вызываемый объект schemastery. validate возвращает Value:
+  исходную configuration с defaults и вложенным backoff, сохраняет unknown keys, допускает null
+  union и nullable array members, не проверяет resolver-only duplicates/cross-field bounds.
+  Resolver отдельно возвращает плоскую ResolvedRetryPolicy и отвергает неизвестные ключи.
+  normal/always и Resolved* aliases относятся к соответствующим вариантам enum.
+  DEFAULT_RETRYABLE_CODES дополнительно открыт для inspection/test.
+- Имя z в retry-policy.ts — импорт @deepseek-ai/schemastery, а не библиотеки zod.
+  По §9/DEPS runtime схемы заменён serde и ручной проверкой. retry_policy.rs вручную
+  воспроизводит возвращаемый config и полный текст отказа union из vendor/schemastery:
+  `expected { mode: "normal", ... } | { mode: "always", ... } but got <JSON>`.
+  Текст включает все поля и built-in choices; вложенные branch errors поглощены union.
+  Отсутствующий/null input union возвращает null (для undefined Rust-вход — Value::Null).
+  Ручные resolver diagnostics и остальные сообщения сохранены в retry_policy.rs,
+  error.rs, runtime.rs, assistant_stream.rs. Прямых zod parse/safeParse в исходном src нет.
 - APP_IDENTITY — immutable static; User-Agent читает DSH_USER_AGENT_SUFFIX при каждом default-use,
   включая явный &APP_IDENTITY. launch_suffix_value открыт для чистой проверки без изменения
   глобального окружения тестового процесса. AppIdentity использует заимствованные строки;
@@ -143,6 +159,8 @@
 должны быть отключены патчем; попытка двойной регистрации даёт DUPLICATE_ADAPTER.
 Эффект принадлежит ctx плагина и автоматически освобождает все routes.
 
+Replay JSON разбирается через `serde_json::from_value::<StreamChunk>(value)?`: wire snapshot
+сохраняет provider extensions и их позиции; для новых literals wire = Default::default().
 ReplayAdapter читает скрипт, выбирает/закрепляет cursor по options.session_id (общий SessionId;
 отсутствие id — отдельная anonymous-сессия), purpose и порядку вызовов, затем возвращает
 `Ok(LlmStream::chunks(chunks))` с исходными границами deltas, usage и terminal finish.
@@ -171,10 +189,29 @@ MessageSourceMap и LlmRequestPurposeMap используются через mod
 TS-only map-механизмы. Непрямое использование типа через поле другого типа/метод сервиса не
 считается отсутствием этого поля или метода.
 
+### JSON после review
+
+StreamChunk (все семь вариантов), TokenUsage, ReplayEnvelope, LlmFailure, FinishReason и
+ContentBlock сохраняют исходные неизвестные поля и порядок всех ключей при serde round-trip.
+У них дополнительный публичный wire: wire::JsonSnapshot; для новых struct/variant literals
+передаётся Default::default(). Он хранит original и typed baseline; изменение известного поля
+обновляет его на исходной позиции, удаление известного optional field убирает его, новые поля
+добавляются в конец. Явный null без изменения сохраняется. PartialEq игнорирует порядок
+и сравнивает unknown values вместе с typed fields. JsonSnapshot/wire — дополнительные Rust API.
+TimedStreamChunk и AssistantStreamRecord::Chunk несут этот JSON дальше; raw record payload —
+Value, вложенные attachment/response/provider JSON остаются Value. Упаковка delta сохраняет
+только исходные поля compact protocol, как в TS. При prune envelope с удалённым tool-call
+исходник строит новый {response,blocks}, и extensions там намеренно исчезают.
+normalize_llm_failure и LlmError::from_failure строят новый объект только из known facts, в исходном
+порядке message,code,status,providerRetryAfterMs,requestId,offloadImages. Просто полученная
+failure JSON сохраняется losslessly. ToolSchema пишет name,description,parameters,deferLoading;
+LlmResolvedModelInfo пишет reasoning после systemPromptUpdate/toolUpdate.
+Projection images/files выбирает блок по type, а не успешности typed serde attachment.
+
 ## Не перенесено
 
 Из 213 именованных it/it.each definitions перенесено 205. it.each считается одной именованной
-группой; варианты таблиц выполняются циклами, а не теряются. Дополнительно есть 8 Rust regressions.
+группой; варианты таблиц выполняются циклами, а не теряются. Дополнительно есть 8 прежних Rust regressions и 13 случаев review_fixes.rs.
 Все 12 test files имеют пару. Восемь исключений механизмов, неприменимых в Rust (§8/10):
 
 1. adapter-failure: contains_hostile_non_error_coercion — Symbol.toPrimitive/hostile JS coercion
@@ -218,18 +255,21 @@ runtime invariants сохранены, shrinking отсутствует. Не в
 attachments запрашиваются через существующий Attachments. Без mapping выбирается исходный
 no-readable-path placeholder. Нужна интеграция этого callback с будущим fs provider либо общий
 структурный read-only face у владельца fs. Других недостающих зависимостей нет.
-Все известные различия Rust API описаны выше; асинхронное закрытие потока требует явного close.
+fileReadPath проверен отдельно: Cordis createTraceable подставляет use-site ctx в this.ctx;
+поэтому Rust file_request_text(&Context, ...) и adapter_stream используют caller context, а не
+registrant или root. Это сохраняет attachment/filesystem scope. Сценарии fromRequest, читающие
+`saved at "…"`, требуют настоящего пути от filesystem provider; placeholder не заменяет его.
+Все известные различия Rust API описаны выше.
 
 ## Проверки
 
 Все финальные Cargo-команды выполнены с
 `CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w7`.
 
-- `cargo build -p hoh-llm`: exit 0, `Finished dev profile … in 1m 08s`.
-- `cargo test -p hoh-llm`: exit 0, **213 passed; 0 failed; 0 ignored**,
-  сумма 12 integration binaries; unit/doc-tests — 0/0. Финальная сборка тестов: 38.70s.
+- `cargo test -p hoh-llm`: exit 0, **226 passed; 0 failed; 0 ignored**,
+  сумма 13 integration binaries; unit/doc-tests — 0/0.
 - `cargo clippy -p hoh-llm --all-targets -- -D warnings`: exit 0,
-  `Finished dev profile … in 22.47s`.
+  чисто, предупреждений нет.
 - `cargo fmt -p hoh-llm -- --check`: exit 0.
 - `diff -rq <source>/locale crates/hoh-llm/locale`: различий нет.
 - Поиск `todo!()` / `unimplemented!()` / TODO / stub в src и tests: совпадений нет.
@@ -249,12 +289,20 @@ no-readable-path placeholder. Нужна интеграция этого callbac
 | tests/message.rs | `test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` |
 | tests/properties.rs | `test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` |
 | tests/retry_policy.rs | `test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` |
+| tests/review_fixes.rs | `test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` |
 | tests/service.rs | `test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` |
 | tests/topology.rs | `test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` |
+
+В review round первые 6 regression tests упали до правки production-кода. Дополнительные
+регрессии сначала упали на rebuilt failure/pruned replay, исчерпанном deferred stream,
+уже опрошенном middleware stream и from_failure; затем исправлены. Исходные weakened
+assertions восстановлены: raw empty identities, reader/assemble/silent fixtures, обе таблицы
+service failures, отсутствие cleanup после iteration failure и события при fiber disposal.
+Clippy потребовал компактного хранения snapshots: immutable Arc вместо двух inline maps.
 
 Ранние проверки выявили и исправили различие 500/500.0 в тестовом сравнении JS JSON
 и предупреждения Clippy type_complexity/await_holding_lock/collapsible_if. Проверки не
 ослаблены: внешние JSON-строки используют общий JS codec; guards в тестах ограничены
 синхронным чтением snapshot. В чужих crates ошибок не было, правок чужого кода нет.
 Все обязательные проверки завершены; заглушек и незаконченного кода в crate нет.
-Интеграция будущего owning fs API и явное async close оговорены выше.
+Интеграция будущего owning fs API и правила awaited close / fiber-owned Drop оговорены выше.

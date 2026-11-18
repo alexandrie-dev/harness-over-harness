@@ -24,10 +24,12 @@ pub type LlmDispatch = Arc<dyn Fn(GenerateOptions) -> Result<LlmStream, BoxError
 type Cleanup = Box<dyn FnOnce() -> LlmFuture<'static, ()> + Send>;
 
 /// Fallible stream with explicit asynchronous iterator-return semantics.
-/// Drop releases the stream immediately; call close().await to observe asynchronous cleanup errors.
+/// Drop schedules unfinished cleanup on the owner fiber; close().await observes cleanup errors.
 pub struct LlmStream {
     state: StreamState,
     cleanup: Option<Cleanup>,
+    owner: Option<Context>,
+    complete: bool,
 }
 enum StreamState {
     Direct(BoxStream<'static, Result<StreamChunk, BoxError>>),
@@ -44,6 +46,8 @@ impl LlmStream {
         Self {
             state: StreamState::Direct(Box::pin(stream)),
             cleanup: None,
+            owner: None,
+            complete: false,
         }
     }
     pub fn chunks(chunks: impl IntoIterator<Item = StreamChunk>) -> Self {
@@ -71,7 +75,23 @@ impl LlmStream {
                 done: false,
             },
             cleanup: None,
+            owner: None,
+            complete: false,
         }
+    }
+    fn owned_by(mut self, ctx: &Context) -> Self {
+        let mut current = &mut self;
+        loop {
+            current.owner = Some(ctx.clone());
+            match &mut current.state {
+                StreamState::Deferred {
+                    active: Some(active),
+                    ..
+                } => current = active,
+                _ => break,
+            }
+        }
+        self
     }
     pub fn close(self) -> LlmFuture<'static, ()> {
         Box::pin(async move {
@@ -81,7 +101,11 @@ impl LlmStream {
                 if let Some(cleanup) = current.cleanup.take() {
                     cleanups.push(cleanup);
                 }
-                match current.state {
+                current.complete = true;
+                match std::mem::replace(
+                    &mut current.state,
+                    StreamState::Direct(Box::pin(futures_util::stream::empty())),
+                ) {
                     StreamState::Deferred {
                         active: Some(active),
                         ..
@@ -101,7 +125,13 @@ impl Stream for LlmStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
         match &mut this.state {
-            StreamState::Direct(stream) => stream.as_mut().poll_next(cx),
+            StreamState::Direct(stream) => {
+                let result = stream.as_mut().poll_next(cx);
+                if matches!(result, Poll::Ready(None | Some(Err(_)))) {
+                    this.complete = true;
+                }
+                result
+            }
             StreamState::Deferred {
                 future,
                 active,
@@ -110,16 +140,22 @@ impl Stream for LlmStream {
                 done,
             } => {
                 if *done {
+                    this.complete = true;
                     return Poll::Ready(None);
                 }
                 if let Some(future_inner) = future {
                     match future_inner.as_mut().poll(cx) {
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready(Ok(stream)) => {
+                            let stream = match &this.owner {
+                                Some(ctx) => stream.owned_by(ctx),
+                                None => stream,
+                            };
                             *active = Some(Box::new(stream));
                             *future = None;
                         }
                         Poll::Ready(Err(error)) => {
+                            this.complete = true;
                             *done = true;
                             *future = None;
                             return Poll::Ready(Some(if *boundary {
@@ -131,6 +167,7 @@ impl Stream for LlmStream {
                     }
                 }
                 let Some(stream) = active else {
+                    this.complete = true;
                     *done = true;
                     return Poll::Ready(None);
                 };
@@ -138,6 +175,7 @@ impl Stream for LlmStream {
                     Poll::Ready(Some(Err(error))) if *boundary => {
                         // An adapter iteration error is already completed: no iterator.return lookup.
                         *done = true;
+                        this.complete = true;
                         *active = None;
                         Poll::Ready(Some(Ok(adapter_failure_chunk(
                             error.as_ref(),
@@ -145,14 +183,37 @@ impl Stream for LlmStream {
                         ))))
                     }
                     Poll::Ready(None) => {
+                        this.complete = true;
                         *done = true;
                         *active = None;
                         Poll::Ready(None)
                     }
-                    other => other,
+                    other => {
+                        if matches!(other, Poll::Ready(Some(Err(_)))) {
+                            this.complete = true;
+                        }
+                        other
+                    }
                 }
             }
         }
+    }
+}
+impl Drop for LlmStream {
+    fn drop(&mut self) {
+        if self.complete {
+            return;
+        }
+        let (Some(owner), Some(cleanup)) = (self.owner.take(), self.cleanup.take()) else {
+            return;
+        };
+        let _ = owner.spawn("llm.stream.return()", move |cancel| async move {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Ok(()),
+                result = async move { cleanup().await } => result,
+            }
+        });
     }
 }
 pub struct PreparedAdapterCall {
@@ -291,14 +352,23 @@ struct Registry {
 #[derive(Clone, Default)]
 pub struct LlmRuntime {
     registry: Arc<Mutex<Registry>>,
+    context: Option<Context>,
 }
 impl LlmRuntime {
     pub fn new() -> Self {
         Self::default()
     }
-    fn emit_adapters_updated(ctx: &Context) {
+    /// Bind notifications and diagnostics to the runtime's service context.
+    pub fn with_context(ctx: &Context) -> Self {
+        Self {
+            context: Some(ctx.clone()),
+            ..Self::default()
+        }
+    }
+    fn emit_adapters_updated(&self, registrant: &Context) {
+        let ctx = self.context.clone().unwrap_or_else(|| registrant.root());
         let logger = ctx.logger();
-        ctx.dispatch(AdaptersUpdated).invoke(move |failure| {
+        ctx.root().dispatch(AdaptersUpdated).invoke(move |failure| {
             let error = match failure {
                 ListenerFailure::Threw(error) | ListenerFailure::Rejected(error) => error,
             };
@@ -336,7 +406,7 @@ impl LlmRuntime {
                     }
                     held.routes.clear();
                 }
-                Self::emit_adapters_updated(&notify);
+                runtime.emit_adapters_updated(&notify);
             }))?;
             Ok(())
         })?;
@@ -428,7 +498,7 @@ impl LlmRuntime {
                     .insert(registration.provider.id.clone(), registration);
             }
         }
-        Self::emit_adapters_updated(ctx);
+        self.emit_adapters_updated(ctx);
         Ok(())
     }
     /// Remote: llm.listProviders
@@ -469,7 +539,7 @@ impl LlmRuntime {
                         }
                         held.entries.clear();
                     }
-                    Self::emit_adapters_updated(&notify);
+                    runtime.emit_adapters_updated(&notify);
                 }))?;
                 Ok(())
             })?;
@@ -538,7 +608,7 @@ impl LlmRuntime {
             }
             held.entries = entries;
         }
-        Self::emit_adapters_updated(ctx);
+        self.emit_adapters_updated(ctx);
         Ok(())
     }
     /// Remote: llm.listConfigurableProviders
@@ -916,7 +986,7 @@ impl LlmRuntime {
             }
             Ok(runtime.adapter_stream(tail_ctx, options, prepared))
         });
-        LlmStream::deferred(Box::pin(waterfall), false, None)
+        LlmStream::deferred(Box::pin(waterfall), false, None).owned_by(ctx)
     }
 }
 fn check_signal(signal: Option<&AbortSignal>) -> Result<(), BoxError> {
@@ -1159,7 +1229,8 @@ impl hoh_kernel::Plugin for LlmPlugin {
         _deps: (),
         _config: hoh_kernel::Cfg<Self::Config>,
     ) -> Result<(), BoxError> {
-        ctx.provide::<Llm>(Arc::new(LlmRuntime::new())).await?;
+        ctx.provide::<Llm>(Arc::new(LlmRuntime::with_context(&ctx)))
+            .await?;
         Ok(())
     }
 }

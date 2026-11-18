@@ -121,6 +121,7 @@ impl LlmError {
         options: LlmErrorOptions,
     ) -> Result<HarnessError, ValueError> {
         let failure = LlmFailure {
+            wire: Default::default(),
             message: message.into(),
             code: code.as_str().into_owned(),
             status: options.status,
@@ -136,7 +137,10 @@ impl LlmError {
         cause: Option<hoh_error::SharedError>,
     ) -> Result<HarnessError, ValueError> {
         Self::validate(failure)?;
-        Ok(Self::make(failure.clone(), cause))
+        // fromFailure calls the constructor, which builds a fresh known-facts object.
+        let mut snapshot = failure.clone();
+        snapshot.wire = Default::default();
+        Ok(Self::make(snapshot, cause))
     }
     fn validate(f: &LlmFailure) -> Result<(), ValueError> {
         let text = if f.message.is_empty() {

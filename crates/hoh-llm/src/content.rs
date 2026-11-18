@@ -98,11 +98,19 @@ pub fn content_has_file(content: &[ContentBlock]) -> bool {
     content.iter().any(|b| b.r#type == "file")
 }
 pub fn file_handle_text(reference: &FileAttachmentRef, readonly_path: Option<&str>) -> String {
+    file_handle_parts(
+        &reference.name,
+        &reference.bytes.to_string(),
+        reference.attachment_id.as_str(),
+        readonly_path,
+    )
+}
+fn file_handle_parts(name: &str, bytes: &str, id: &str, readonly_path: Option<&str>) -> String {
     let identity = format!(
         "File {} ({} bytes, sha256:{})",
-        quoted(&reference.name),
-        reference.bytes,
-        digest(reference.attachment_id.as_str())
+        quoted(name),
+        bytes,
+        digest(id)
     );
     match readonly_path {
         None => format!(
@@ -144,12 +152,24 @@ pub fn project_files_to_text(
     resolve_path: impl Fn(&FileAttachmentRef) -> Option<String>,
 ) -> Cow<'_, [RequestMessage]> {
     project(messages, |b| {
-        b.file().map(|b| {
-            ContentBlock::text(file_handle_text(
-                &b.attachment,
-                resolve_path(&b.attachment).as_deref(),
-            ))
-        })
+        if b.r#type != "file" {
+            return None;
+        }
+        let attachment = &b.data["attachment"];
+        let path = b.file().and_then(|file| resolve_path(&file.attachment));
+        let name = attachment
+            .get("name")
+            .map_or_else(|| "undefined".into(), hoh_util_values::js_string);
+        let bytes = attachment
+            .get("bytes")
+            .map_or_else(|| "undefined".into(), hoh_util_values::js_string);
+        let id = attachment["attachmentId"].as_str().unwrap_or_default();
+        Some(ContentBlock::text(file_handle_parts(
+            &name,
+            &bytes,
+            id,
+            path.as_deref(),
+        )))
     })
 }
 pub fn project_offloaded_images(
@@ -164,8 +184,16 @@ pub fn project_offloaded_images(
 }
 pub fn project_images_for_text_model(messages: &[RequestMessage]) -> Cow<'_, [RequestMessage]> {
     project(messages, |b| {
-        b.image()
-            .map(|i| ContentBlock::text(text_only_image_text(&i.attachment)))
+        (b.r#type == "image").then(|| {
+            ContentBlock::text(format!(
+                "[image omitted because this model accepts text only; attachment sha256:{}]",
+                digest(
+                    b.data["attachment"]["attachmentId"]
+                        .as_str()
+                        .unwrap_or_default()
+                )
+            ))
+        })
     })
 }
 pub fn required_image_offload(
