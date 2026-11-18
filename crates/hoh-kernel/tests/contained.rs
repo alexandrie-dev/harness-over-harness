@@ -103,7 +103,13 @@ async fn reports_threw_before_next_call_and_rejected_from_async_task() {
     });
     assert_eq!(
         *lock(&log),
-        ["sync call", "threw: sync error", "async call", "success"]
+        [
+            "sync call",
+            "threw: sync error",
+            "async call",
+            "success",
+            "rejected: async error"
+        ]
     );
     turn().await;
     assert_eq!(lock(&log).last().unwrap(), "rejected: async error");

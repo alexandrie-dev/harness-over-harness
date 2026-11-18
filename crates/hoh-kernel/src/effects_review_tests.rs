@@ -1,5 +1,41 @@
 use super::*;
 #[tokio::test(start_paused = true)]
+async fn inline_completion_reserves_no_task_record() {
+    struct E;
+    event!(E = "inline-record", Contained);
+    let k = Kernel::start();
+    k.root()
+        .on_contained_async::<E, _>(|_| async { Ok(()) })
+        .unwrap();
+    k.root().dispatch(E).invoke(|_| {});
+    assert_eq!(lock(&k.root().activation.effects).effects.len(), 1);
+    k.shutdown().await;
+}
+#[tokio::test(start_paused = true)]
+async fn disposal_releases_a_hundred_pending_contained_tasks() {
+    struct E;
+    event!(E = "pending-record", Contained);
+    let k = Kernel::start();
+    let child = k.root().child("listener").unwrap();
+    let failures = Arc::new(Mutex::new(vec![]));
+    child
+        .on_contained_async::<E, _>(|_| async {
+            std::future::pending::<()>().await;
+            Ok(())
+        })
+        .unwrap();
+    for _ in 0..100 {
+        let f = failures.clone();
+        k.root().dispatch(E).invoke(move |e| lock(&f).push(e));
+    }
+    assert_eq!(lock(&child.activation.effects).effects.len(), 101);
+    child.fiber().dispose().await;
+    assert!(lock(&child.activation.effects).effects.is_empty());
+    assert!(lock(&k.root().activation.effects).effects.is_empty());
+    assert!(lock(&failures).is_empty());
+    k.shutdown().await;
+}
+#[tokio::test(start_paused = true)]
 async fn completed_contained_tasks_release_their_owner_records() {
     struct Notice;
     event!(Notice = "contained/records", Contained);

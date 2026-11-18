@@ -32,6 +32,7 @@ MIT LICENSE всех четырёх vendor пакетов совпадает д�
 10. Прежнее отклонение UTC устранено: ConsoleExporter использует местный пояс `jiff::tz::TimeZone::system()`. Форматирование получает пояс параметром; тесты передают UTC и фиксированный UTC+03. ts_ms — Unix milliseconds, привязанные к tokio Instant; пауза времени детерминирована.
 11. Trybuild — синхронный compile-only #[test], поскольку macros crate не имеет разрешённой зависимости tokio. Все проверки поведения — #[tokio::test(start_paused = true)].
 12. Volatile placement и повторная обёртка проверяются до проверки значения (в том числе при отсутствующем поле), по volatile-config source; JSON Schema несёт x-volatile и служебную x-volatile-invalid для повторной обёртки.
+13. Новый no-op `Context::child` держит открытую активацию в Pending (исключение из R17), поэтому dispose до старта проходит Pending → Unloading → Disposed, а не прямой переход R14. Так требует vendor/cordis/src/fiber.ts:305–323 для ранних эффектов. Пятый круг подтвердил существующее поведение тестом InternalStatus; подробности и границы исключения — R66 ниже.
 
 ## Отличия от образца
 
@@ -342,7 +343,7 @@ Witness unevaluatedProperties использует derived deny_unknown_fields +
 
 ## Четвёртый круг: добавленный API
 
-Все пути исходников ниже относительно `/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness/`, если явно не указан upstream Cordis. Эта секция предназначена для переноса в docs/kernel.md. Два потребителя, hoh-scope и hoh-credentials, только прочитаны; их код не менялся. Все существовавшие тесты сохранены без изменений.
+Все пути исходников ниже относительно `/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness/`, если явно не указан upstream Cordis. Эта секция обновлена пятым кругом и предназначена для переноса в docs/kernel.md. Два потребителя, hoh-scope и hoh-credentials, только прочитаны; их код не менялся. Единственное изменение прежнего теста перечислено ниже; остальные сохранены.
 
 ### Публичные сигнатуры
 
@@ -372,6 +373,20 @@ impl Context {
     pub fn child(&self, name: &'static str) -> Result<Context, KernelError>;
     pub fn matches_filter(&self, listener: &Context) -> bool;
     pub fn and_filter(&self, filter: impl Fn(&Context) -> bool + Send + Sync + 'static) -> Self;
+    pub fn effect(&self, label: impl Into<Arc<str>>,
+        setup: impl FnOnce() -> Undo,
+    ) -> Result<Disposer, KernelError>;
+    pub fn try_effect<E: From<KernelError>>(&self, label: impl Into<Arc<str>>,
+        setup: impl FnOnce(&Undos) -> Result<(), E>,
+    ) -> Result<Disposer, E>;
+    pub async fn effect_async<E, Fut>(&self, label: impl Into<Arc<str>>,
+        setup: impl FnOnce(Undos) -> Fut,
+    ) -> Result<Disposer, E>
+    where E: From<KernelError>, Fut: Future<Output = Result<(), E>> + Send;
+    pub fn spawn<Fut>(&self, label: impl Into<Arc<str>>,
+        task: impl FnOnce(CancellationToken) -> Fut + Send + 'static,
+    ) -> Result<Disposer, KernelError>
+    where Fut: Future<Output = Result<(), Error>> + Send + 'static;
 }
 impl<E: Event<Mode = Contained>> Callbacks<E> {
     pub fn len(&self) -> usize;
@@ -389,19 +404,21 @@ impl Fiber {
 
 **R63. Снимок Contained.** dispatch фиксирует живые на момент разрешения слушатели в исходном порядке с prepend, global и фильтром dispatch-контекста; global обходит фильтр. on_dispatch получает Dispatch::Emit во время dispatch, до вызова слушателей; для internal/* сохраняется прежнее исключение. Добавленный позднее слушатель не входит в снимок; снятый позднее синхронный callback остаётся в нём. len/is_empty описывают этот снимок. Основание: vendor/cordis/src/events.ts:162–184 фильтрует hooks и копирует bound callbacks без последующей проверки removal. Это именно vendored DSH, а не более новый upstream: refs/cordis/packages/core/src/events.ts:97–105 уже проверяет hook.removed. Снимок удерживает callback до invoke/Drop.
 
-**R64. Синхронная изоляция.** Callbacks::invoke потребляет снимок, вызывает синхронные функции по очереди на задаче вызывающего и до следующего callback вызывает report(Threw(error)) при Err. Паника синхронного слушателя тоже Threw, с ошибкой `event listener panicked`. Остальные слушатели продолжают работу. Паника самого report изолируется и записывается в журнал ядра. Основание: packages/core/agent/src/dispatch.ts:125–135 и packages/core/tools/src/pipeline.ts:418–438 содержат отдельные per-callback try/catch; R61 задаёт границу Rust panic. Snapshot-before-commit следует packages/core/session/src/index.ts:895–907, :978–985.
+**R64. Синхронная изоляция.** Callbacks::invoke потребляет снимок, вызывает синхронные функции по очереди на задаче вызывающего и до следующего callback вызывает report(Threw(error)) при Err. Паника синхронного слушателя тоже Threw: для payload типа &str или String текст ошибки — `event listener panicked: <text>`, для остальных — `event listener panicked`. То же сохранение payload действует для Rejected при панике async factory/future. Остальные слушатели продолжают работу. Паника самого report изолируется и записывается в журнал ядра. Основание: packages/core/agent/src/dispatch.ts:125–135 и packages/core/tools/src/pipeline.ts:418–438 содержат отдельные per-callback try/catch; R61 задаёт границу Rust panic. Snapshot-before-commit следует packages/core/session/src/index.ts:895–907, :978–985.
 
-**R65. Асинхронный Contained.** on_contained_async регистрирует источник promise; вся его ошибка, включая панику future/factory, имеет вид Rejected. Factory вызывается по порядку на задаче invoke, future опрашивается отдельной задачей с ancestry именно fiber слушателя. Задача учитывается эффектом владельца, отменяется его token, при отмене ничего не сообщает; teardown ждёт Drop future. Успешная/закончившаяся задача удаляет собственную запись, поэтому вызовы не накапливают эффекты. report может вызываться из другой задачи и требует Send+Sync. Если invoke вызван без tokio runtime, asynchronous listener сообщает Rejected об отсутствии runtime; синхронные callbacks по-прежнему исполняются. Основание: packages/core/agent/src/dispatch.ts:129–134 различает returned-promise rejection и throw; владение/отмена — явное решение ext-stage0-k1 A с R17/R60. Обычный emit и его propagation panic не изменены.
+**R65. Асинхронный Contained.** on_contained_async регистрирует источник promise; вся его ошибка, включая панику future/factory, имеет вид Rejected. Factory и ровно один первый poll future выполняются inline на потоке вызывающего invoke, до следующего callback; poll получает ancestry fiber слушателя. Ready(Ok) заканчивает вызов без задачи и записи эффекта. Ready(Err), паника factory и паника первого poll накапливаются и сообщаются как Rejected после всего snapshot loop, но до возврата invoke: rejection не вклинивается между слушателями. Только Pending передаётся отдельной задаче с ancestry слушателя. Она учитывается эффектом владельца, отменяется его token, при отмене ничего не сообщает; teardown ждёт Drop future. Завершившаяся задача удаляет собственную запись. Если fiber закрыт между dispatch и invoke, frozen factory и первый poll всё равно выполняются; Ready обрабатывается как выше, Pending немедленно уничтожается без задачи и сообщения. report может вызываться из другой задачи и требует Send+Sync. Отсутствие tokio runtime даёт Rejected только для Pending живого слушателя; Ready и синхронные callbacks работают без runtime. Основание: packages/core/session/src/index.ts:413 вызывает async prefix внутри callback; packages/core/agent/src/dispatch.ts:129–134 различает returned-promise rejection и throw. Граница одного inline poll и доставка ready rejection до возврата invoke — решение ext2-stage0-k1 §1; владение/отмена — ext-stage0-k1 A с R17/R60. Обычный emit и его propagation panic не изменены.
 
-**R66. Синхронный дочерний контекст.** Context::child(name) создаёт именованный no-op fiber и сразу возвращает его Context: теги, realms, intercepts и filter унаследованы, эффекты принадлежат ребёнку. Контекст пригоден до первого await, когда state ещё Pending; первый переход в Loading/Active использует ту же активацию, поэтому ранние регистрации не теряются. Dispose до активации снимает ранние эффекты; гонка с dispose родителя тоже дожидается их. При отказе actor закрывает и освобождает в том числе детей с ещё не обработанной Create-командой. После unload старый Context не принимает эффекты; restart подчиняется R17. Обычный plugin/inject с ещё не разрешёнными Deps по-прежнему не выдаёт активный pending Context. Основание: packages/core/scope/src/index.ts:136–147; vendor/cordis/src/fiber.ts:270 и :305–323 явно обрабатывает pre-activation effects. Специализированный no-op child выбран вместо ослабления инвариантов всех pending plugins.
+**R66. Синхронный дочерний контекст.** Context::child(name) создаёт именованный no-op fiber и сразу возвращает его Context: теги, realms, intercepts и filter унаследованы, эффекты принадлежат ребёнку. Контекст пригоден до первого await, когда state ещё Pending; первый переход в Loading/Active использует ту же активацию, поэтому ранние регистрации не теряются. Если dispose застал ребёнка Pending, наблюдатель видит Pending → Unloading, затем выполняются и ожидаются ранние cleanup, затем Unloading → Disposed. Это исключение из прямого Pending → Disposed в R14: уже есть работа для unload. Исключение из R17 касается открытой активации и регистрации эффектов в Pending; после unload старый Context закрыт, restart по-прежнему получает новую активацию. Гонка с dispose родителя тоже дожидается ранних эффектов. При отказе actor закрывает и освобождает детей с ещё не обработанной Create-командой. Обычный plugin/inject с ещё не разрешёнными Deps по-прежнему не выдаёт активный pending Context. Основание: packages/core/scope/src/index.ts:136–147; vendor/cordis/src/fiber.ts:305–313 явно вызывает _unload и сообщает UNLOADING для pre-activation work, :317–323 ждёт inertia и лишь затем обновляет cached state до DISPOSED (:602–614). Конструктор без блокировки родителем/observer может уже перейти в Loading (:334–346), поэтому тест Pending использует окно dispose родителя до обработки Create ребёнка. Пятый круг подтвердил существующее поведение, менять state machine не потребовалось.
 
 **R67. Точный disposer и покой.** Fiber::disposer выдаёт handle того же родительского эффекта ctx.plugin(), а не новую обёртку. Повторно полученные handles указывают на одну запись; root или уже освобождённая запись дают None. Undo::from(handle) и передача его в Undos::push используют существующее adoption: ребёнок перестаёт быть независимым sibling в списке родителя и занимает точное место ordered composite. У Disposer сохраняется consuming dispose(self). Уже существующий Fiber::dispose() можно вызывать многократно; все вызовы ждут полного R10 teardown, даже если raw disposer уже начал его. Отдельный quiesce API не нужен. Основание: packages/core/scope/src/index.ts:115–118, :143–145; vendor/cordis/src/fiber.ts:294–326. Проверяется порядок асинхронных inner → scope → outer, а не только синхронный call log.
+
+Все входы метки эффекта (effect, try_effect, effect_async, spawn) принимают impl Into<Arc<str>>, запись хранит Arc<str> и печатает исходную метку в cleanup diagnostics. String от format! не требует утечки памяти; строковые литералы и число generic-параметров для turbofish сохранены. Основание: packages/llm/deepseek-llm-api-extensions/src/index.ts:99 строит метку register из fieldName; ext2-stage0-k1 §2.
 
 **R68. Значение listener-контекста.** Нового API для B.3 не требуется: with_tag<T: Send+Sync+'static>(&self, value:T)->Context и tag<T: Send+Sync+'static>(&self)->Option<Arc<T>> уже реализуют ближайшую типизированную метку. Дочерние contexts наследуют её, with_tag того же типа затеняет только производный контекст. Bus хранит Context регистрации; filter получает именно его, а не контекст отправителя. Основание: packages/core/scope/src/index.ts:139–140, :150–151, :174–175; vendor/cordis/src/events.ts:162–173 (hook.ctx).
 
 **R69. Композиция фильтра.** matches_filter(listener) вызывает существующий predicate контекста, либо возвращает true без фильтра; это позволяет переносчику сохранить фильтр другого base Context. and_filter возвращает производный Context: сначала вызывается прежний filter, false прекращает проверку, затем дополнительный filter. with_filter сохраняет прежнюю семантику полной замены. Иммутабельные копии и global bypass сохранены. В Rust захваченный receiver находится в closure; bus изолирует паники фильтра как раньше. Основание: packages/core/scope/src/index.ts:170–183, особенно :173 baseFilter.call(base, ctx), vendor/cordis/src/events.ts:170–171.
 
-**R70. Путь сервисов scope.** Новый child и его потомки при чтении сервисов наследуют путь создателя: собственная provision → committed view ближайшего объявляющего fiber → предки. Совпадение realm обязательно; явная isolation-граница прерывает проход. Объявление без доступной committed записи также останавливает проход; публичный get сохраняет общий необязательный fallback R36. При teardown child ещё читает удержанную creator binding, пока actor не отпустил её после cleanup; право регистрировать эффекты закрывается немедленно. После удаления child его сохранённый Context не удерживает и не читает старые значения. Путь состоит из плоского списка Weak, Node держит committed view только до R10 release; рекурсивного Drop цепочки нет. Прежние contexts, полученные обычным plugin/inject вне нового child, сохраняют прежнюю семантику get и R17. Основание: packages/core/scope/src/index.ts:127–140; vendor/cordis/src/reflect.ts:145–165 locate идёт по fiber parents и committed, :156–158 уважает isolation; vendor/cordis/src/fiber.ts:734–759 удерживает committed до окончания всех cleanup.
+**R70. Путь сервисов scope.** Новый child и его потомки при чтении сервисов намеренно наследуют путь создателя: собственная provision → committed view ближайшего объявляющего fiber → предки. Это распространяется и на потомков scoped context: locate в vendor/cordis/src/reflect.ts:145–165 идёт по parents для каждого fiber, а не только по непосредственному scope. Совпадение realm обязательно; явная isolation-граница прерывает проход. Объявление без доступной committed записи также останавливает проход; публичный get сохраняет общий необязательный fallback R36. При teardown child ещё читает удержанную creator binding, пока actor не отпустил её после cleanup; право регистрировать эффекты закрывается немедленно. После удаления child его сохранённый Context не удерживает и не читает старые значения. Путь состоит из плоского списка Weak, Node держит committed view только до R10 release; рекурсивного Drop цепочки нет. Прежние contexts, полученные обычным plugin/inject вне нового child, сохраняют прежнюю семантику get и R17. Основание: packages/core/scope/src/index.ts:127–140; vendor/cordis/src/reflect.ts:145–165, :156–158 уважает isolation. Цитата vendor/cordis/src/fiber.ts:734–759 проверена: :735–740 ждёт dependents, :742–752 ждёт все disposable cleanup, :754–757 удаляет committed dependencies, :759 очищает committed.
 
 ### Примеры A и B.1–B.5
 
@@ -411,7 +428,11 @@ A — разделить snapshot, изменение состояния и fan-
 struct Updated;
 event!(Updated = "credentials/updated", Contained);
 ctx.on_contained::<Updated>(|_| Ok(()))?;
-ctx.on_contained_async::<Updated, _>(|_| async { Ok(()) })?;
+ctx.on_contained_async::<Updated, _>(|_| async {
+    // Этот prefix исполняется внутри invoke, до следующего listener.
+    observe_committed_state();
+    Ok(()) // Ready: отдельная задача и effect не создаются.
+})?;
 let callbacks = ctx.dispatch(Updated);
 // Commit состояния эмиттера здесь, до любого observer.
 let log = ctx.logger();
@@ -419,6 +440,7 @@ callbacks.invoke(move |failure| match failure {
     ListenerFailure::Threw(error) => log.warn(format_args!("listener threw: {error}")),
     ListenerFailure::Rejected(error) => log.warn(format_args!("listener rejected: {error}")),
 });
+// Ready rejection уже сообщён после остальных listeners, до этой строки.
 ```
 
 B.1 — синхронное mint, без handoff и oneshot:
@@ -482,11 +504,25 @@ scoped.effect("read on cleanup", move || Undo::future(move || async move {
 
 Дополнительные тесты: девять contained cases (ошибки/паники, порядок, snapshot/filter/global/prepend, отмена и ancestry), девять scoped_context cases (sync ownership, pre-activation teardown, async ordered adoption, quiescence, base-filter/tag/realm/intercept, service release через Weak). Три unit cases проверяют точность Arc disposer, pre-Create actor failure и отсутствие накопления после 1 000 async invocations. Существующие 241 tests не изменены. Новый private failure test сначала воспроизвёл отсутствие cancel и удержание callback cycle; eager children теперь учитываются до Create, а registry undo использует Weak listener и держит временный strong handle вне bus locks во время снятия.
 
+### Пятый круг: воспроизведение и закрытие ext2-stage0-k1
+
+1. `tests/ext2.rs::async_prefix_and_ready_rejection_run_inside_invoke` сначала получил `[A, C]` вместо `[A, B, C, rejected]` на прежней реализации; `disposed_snapshot_still_polls_async_prefix` получил только `[sync]`. Исправлен первый inline poll и отложенная до конца snapshot доставка ready rejection. Теперь второй тест также проверяет ready rejection уже закрытого listener. Unit `inline_completion_reserves_no_task_record` проверяет ровно одну оставшуюся запись регистрации слушателя.
+2. `dynamic_label_is_preserved_in_cleanup_diagnostics` сначала не собирался: String от format! не подходил к &'static str. После расширения всех четырёх публичных входов метки проверяется её точный текст в журнале cleanup. Старые literal/turbofish вызовы сохранены в прежних тестах.
+3. Гипотеза о неверном Pending → Unloading оспорена источником: fiber.ts:305–323 требует этот переход и cleanup до Disposed. `pending_child_uses_source_unloading_status_and_drains_early_effects` сохраняет живого root-наблюдателя, явно проверяет Pending до собственного child.dispose() и проверяет `[Pending->Unloading, cleanup, Unloading->Disposed]` без изменения state machine. Валидного красного теста для заявленного дефекта получить нельзя. Первоначальная проба через shutdown root теряла финальный status потому, что сам наблюдатель root уже снят; этот setup исправлен, его отказ не считается подтверждением дефекта. Исключения из R14/R17 и точные строки источника включены в R66.
+4. Unit `ancestor_barriers_and_realm_mismatch_stop_at_published_replacement` удерживает creator binding 1 в cleanup, публикует replacement 2 и проверяет plain=1, barrier=2, realm mismatch=2. Без каждого соответствующего break вернулось бы 1; это не прежнее слабое сравнение с None после withdrawal. Для независимой проверки realm guard тест меняет приватный ancestor realm без установки barrier (публичный isolate меняет оба). Unit `disposal_releases_a_hundred_pending_contained_tasks` проверяет 100 Pending задач, завершение dispose, пустые effect lists ребёнка/родителя и отсутствие сообщений при отмене. Non-root listener и factory panic покрыты `non_root_factory_and_future_panics_preserve_payloads`.
+5. Тот же тест различает Threw/Rejected, проверяет &str, String, fallback для другого payload и панику future после Pending. R64/R65/R66/R70 и пример A обновлены на месте. Цитата :270 убрана; :734–759 проверена по реальному порядку cleanup/release.
+
+Единственный изменённый прежний тест: `tests/contained.rs::reports_threw_before_next_call_and_rejected_from_async_task` — в ожидание сразу после invoke добавлен `rejected: async error`: по новому R65 ready rejection доставлен до возврата. Имя сохранено. Прежний `tests/scoped_context.rs` не менялся; сильные проверки добавлены отдельно. Других прежних тестов не изменено, новых неперенесённых случаев нет.
+
+Запись завершившегося Pending-вызова по-прежнему удаляется линейным detach из упорядоченного списка активации; изменения структуры ради необязательной оптимизации не делались. Ready больше не создаёт эту запись. Выбор динамического имени события остаётся работой потребителя. Нового API события или изменения macros нет.
+
 ## Проверки
 
 Все команды: `CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-k1`.
 
-- `cargo test -p hoh-kernel`: 262 passed; 0 failed; 1 ignored (сумма итоговых строк 25 test binaries; doc-tests 0/0). Ignored — только C14 subprocess helper, фактически исполненный wrapper test на 2 МиБ.
+- `cargo test -p hoh-kernel`: 270 passed; 0 failed; 1 ignored (повторный запуск после возобновления 2026-11-18, сумма итоговых строк 26 test binaries; doc-tests 0/0). Ignored — только C14 subprocess helper, фактически исполненный wrapper test на 2 МиБ.
 - `cargo test -p hoh-kernel-macros`: 1 passed; 0 failed (13 compile-fail + 2 pass trybuild fixtures; doc-tests 0/0).
 - `cargo clippy -p hoh-kernel -p hoh-kernel-macros --all-targets -- -D warnings`: exit 0.
 - `cargo fmt -p hoh-kernel -p hoh-kernel-macros -- --check`: exit 0.
+- `cargo check --workspace --all-targets`: exit 101 вне границ ядра. Последующий повтор остановился на `hoh-conformance`: объявлены, но ещё не созданы `src/main.rs` и `src/bin/fake.rs` (4 target resolution errors); после ожидания повтор с `--keep-going` подтвердил то же. Ранее полный `--keep-going` нашёл известный отсутствующий `hoh-attachment-local/tests/index.rs` (lib.rs:439) и две E0308 в `hoh-storage-domain/tests/domain.rs:468,491` (Result<Value, _> вместо Value). Последнее исправлено параллельным писателем: повторная проверка ниже проходит и этот crate. В раннем запуске у hoh-loader было предупреждение unused `entry` (runtime.rs:1100). Чужие crates этим писателем не менялись.
+- `cargo check --workspace --all-targets --exclude hoh-conformance --exclude hoh-attachment-local --keep-going`: exit 0, `Finished dev profile … in 28.26s`. Проверены все остальные targets, включая hoh-scope, hoh-credentials, hoh-storage-domain, hoh-llm и hoh-loader; ошибок совместимости с новым API нет.

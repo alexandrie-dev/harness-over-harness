@@ -149,6 +149,7 @@ impl<E: Event<Mode = Contained>> Callbacks<E> {
     }
     pub fn invoke(self, report: impl Fn(ListenerFailure) + Send + Sync + 'static) {
         let report = Arc::new(report);
+        let mut rejections = vec![];
         for listener in self.listeners {
             match &listener.callback {
                 Callback::Contained(f) => {
@@ -157,25 +158,47 @@ impl<E: Event<Mode = Contained>> Callbacks<E> {
                         {
                             Ok(Ok(())) => None,
                             Ok(Err(error)) => Some(error),
-                            Err(_) => Some("event listener panicked".into()),
+                            Err(payload) => Some(panic_error(payload)),
                         };
                     if let Some(error) = failure {
                         report_failure(&*report, ListenerFailure::Threw(error), &self.log);
                     }
                 }
                 Callback::ContainedAsync(f) => {
+                    let mut future = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        f(self.event.clone())
+                    })) {
+                        Ok(future) => future,
+                        Err(payload) => {
+                            rejections.push(panic_error(payload));
+                            continue;
+                        }
+                    };
+                    let polled = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        fiber::sync_scope(listener.ctx.data.ancestry.clone(), || {
+                            let mut context =
+                                std::task::Context::from_waker(std::task::Waker::noop());
+                            future.as_mut().poll(&mut context)
+                        })
+                    }));
+                    match polled {
+                        Ok(std::task::Poll::Ready(Ok(()))) => continue,
+                        Ok(std::task::Poll::Ready(Err(error))) => {
+                            rejections.push(error);
+                            continue;
+                        }
+                        Err(payload) => {
+                            rejections.push(panic_error(payload));
+                            continue;
+                        }
+                        Ok(std::task::Poll::Pending) => {}
+                    }
                     let token = listener.ctx.token();
                     if token.is_cancelled() {
                         continue;
                     }
                     if tokio::runtime::Handle::try_current().is_err() {
-                        report_failure(
-                            &*report,
-                            ListenerFailure::Rejected(
-                                "asynchronous listener requires a tokio runtime".into(),
-                            ),
-                            &self.log,
-                        );
+                        rejections.push("asynchronous listener requires a tokio runtime".into());
                         continue;
                     }
                     let Ok(disposer) = listener.ctx.reserve_effect("contained listener") else {
@@ -191,19 +214,6 @@ impl<E: Event<Mode = Contained>> Callbacks<E> {
                         effect: Arc::downgrade(&disposer.effect),
                         done: Some(done),
                     };
-                    let future = match std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        f(self.event.clone())
-                    })) {
-                        Ok(future) => future,
-                        Err(_) => {
-                            report_failure(
-                                &*report,
-                                ListenerFailure::Rejected("event listener panicked".into()),
-                                &self.log,
-                            );
-                            continue;
-                        }
-                    };
                     let report = report.clone();
                     let log = self.log.clone();
                     fiber::spawn_for(listener.ctx.data.ancestry.clone(), async move {
@@ -212,7 +222,7 @@ impl<E: Event<Mode = Contained>> Callbacks<E> {
                         let error = match result {
                             Ok(Ok(())) => return,
                             Ok(Err(error)) => error,
-                            Err(_) => "event listener panicked".into(),
+                            Err(payload) => panic_error(payload),
                         };
                         report_failure(&*report, ListenerFailure::Rejected(error), &log);
                     });
@@ -220,6 +230,20 @@ impl<E: Event<Mode = Contained>> Callbacks<E> {
                 _ => {}
             }
         }
+        for error in rejections {
+            report_failure(&*report, ListenerFailure::Rejected(error), &self.log);
+        }
+    }
+}
+
+fn panic_error(payload: Box<dyn Any + Send>) -> Error {
+    let text = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    match text {
+        Some(text) => format!("event listener panicked: {text}").into(),
+        None => "event listener panicked".into(),
     }
 }
 fn report_failure(

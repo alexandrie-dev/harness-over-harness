@@ -2,6 +2,69 @@ use crate::*;
 use std::{any::TypeId, collections::HashMap, sync::atomic::Ordering, time::Duration};
 use tokio_util::sync::CancellationToken;
 type Filter = Arc<dyn Fn(&Context) -> bool + Send + Sync>;
+#[cfg(test)]
+mod ext2_tests {
+    use super::*;
+    #[tokio::test(start_paused = true)]
+    async fn ancestor_barriers_and_realm_mismatch_stop_at_published_replacement() {
+        service!(Key:u32="ancestor-test");
+        #[derive(Inject)]
+        struct D {
+            _value: Service<Key>,
+        }
+        let k = Kernel::start();
+        let old = k.root().provide::<Key>(Arc::new(1)).await.unwrap();
+        let scopes = Arc::new(Mutex::new(None));
+        let out = scopes.clone();
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let g = gate.clone();
+        let owner = k
+            .root()
+            .inject(move |ctx, _: D| {
+                let out = out.clone();
+                let g = g.clone();
+                async move {
+                    let plain = ctx.child("plain")?;
+                    let barred = ctx.isolate(Key::NAME, Realm::ROOT).child("barred")?;
+                    for scope in [&plain, &barred] {
+                        let g = g.clone();
+                        scope.effect("hold", move || {
+                            Undo::future(move || async move {
+                                let _ = g.acquire().await;
+                                Ok(())
+                            })
+                        })?;
+                    }
+                    *lock(&out) = Some((plain, barred));
+                    Ok(())
+                }
+            })
+            .unwrap();
+        owner.settled().await.unwrap();
+        let (plain, barred) = lock(&scopes).clone().unwrap();
+        plain.fiber().settled().await.unwrap();
+        barred.fiber().settled().await.unwrap();
+        let withdrawn = old.dispose();
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+        k.root().provide::<Key>(Arc::new(2)).await.unwrap();
+        assert_eq!(*k.root().get::<Key>().unwrap(), 2);
+        assert_eq!(*plain.get::<Key>().unwrap(), 1);
+        assert_eq!(*barred.get::<Key>().unwrap(), 2);
+        // Exercise the independent realm guard; public isolate also installs a barrier.
+        let mut mismatched = plain.clone();
+        let mut ancestors = (*mismatched.ancestors).clone();
+        Arc::make_mut(&mut ancestors[0].realms).insert(Key::NAME.into(), Realm::new());
+        mismatched.ancestors = Arc::new(ancestors);
+        assert_eq!(*mismatched.get::<Key>().unwrap(), 2);
+        let disposed = owner.dispose();
+        gate.add_permits(2);
+        withdrawn.await;
+        disposed.await;
+        k.shutdown().await;
+    }
+}
 #[derive(Clone)]
 struct ServiceAncestor {
     data: std::sync::Weak<fiber::FiberData>,

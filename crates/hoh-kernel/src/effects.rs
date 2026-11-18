@@ -94,7 +94,7 @@ pub(crate) struct Effect {
     done: AtomicBool,
     state: Mutex<EffectData>,
     notify: Notify,
-    label: &'static str,
+    label: Arc<str>,
     log: Logger,
     owner: std::sync::Weak<Activation>,
     ancestry: Vec<u32>,
@@ -116,7 +116,7 @@ impl Effect {
         lock(&self.state).begin = Some(Box::new(f));
     }
     fn new(
-        label: &'static str,
+        label: impl Into<Arc<str>>,
         log: Logger,
         owner: std::sync::Weak<Activation>,
         ancestry: Vec<u32>,
@@ -132,7 +132,7 @@ impl Effect {
                 begin: None,
             }),
             notify: Notify::new(),
-            label,
+            label: label.into(),
             log,
             owner,
             ancestry,
@@ -364,7 +364,10 @@ impl Activation {
     }
 }
 impl Context {
-    pub(crate) fn reserve_effect(&self, label: &'static str) -> Result<Disposer, KernelError> {
+    pub(crate) fn reserve_effect(
+        &self,
+        label: impl Into<Arc<str>>,
+    ) -> Result<Disposer, KernelError> {
         if self.inner.closed.load(Ordering::Acquire) {
             return Err(KernelError::Closed);
         }
@@ -385,7 +388,7 @@ impl Context {
     }
     pub fn effect(
         &self,
-        label: &'static str,
+        label: impl Into<Arc<str>>,
         setup: impl FnOnce() -> Undo,
     ) -> Result<Disposer, KernelError> {
         let disposer = self.reserve_effect(label)?;
@@ -404,7 +407,7 @@ impl Context {
     }
     pub fn try_effect<E: From<KernelError>>(
         &self,
-        label: &'static str,
+        label: impl Into<Arc<str>>,
         setup: impl FnOnce(&Undos) -> Result<(), E>,
     ) -> Result<Disposer, E> {
         let disposer = self.reserve_effect(label)?;
@@ -427,7 +430,7 @@ impl Context {
     }
     pub async fn effect_async<E, Fut>(
         &self,
-        label: &'static str,
+        label: impl Into<Arc<str>>,
         setup: impl FnOnce(Undos) -> Fut,
     ) -> Result<Disposer, E>
     where
@@ -465,7 +468,7 @@ impl Context {
     }
     pub fn spawn<Fut>(
         &self,
-        label: &'static str,
+        label: impl Into<Arc<str>>,
         task: impl FnOnce(tokio_util::sync::CancellationToken) -> Fut + Send + 'static,
     ) -> Result<Disposer, KernelError>
     where
