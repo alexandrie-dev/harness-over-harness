@@ -1,0 +1,5 @@
+Your session was stopped on 17 November at 00:09 in the middle of crates/hoh-attachment-local (packages/attachment/attachment-local), before your report. Everything you wrote is still in the working tree, untouched; right now the crate does not build: src/lib.rs:439 includes tests/index.rs, which does not exist yet. Re-read plans/briefs/stage1-writer.md, check every source file and every source test file of the package against the tree, finish what is missing, and work until "Done when" of the brief holds; do not stop with a partial result and a plan.
+
+The kernel writer is finishing a fifth round in parallel (effect labels accept impl Into<Arc<str>>, string literals keep working). If a build fails inside a crate that is not yours, wait a minute and retry, up to three times; never touch it.
+
+Same boundaries and environment: only crates/hoh-attachment-local; CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w3. Your last message is the final report the brief describes (at most 400 words).
