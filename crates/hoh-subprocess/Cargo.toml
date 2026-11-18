@@ -13,3 +13,16 @@ workspace = true
 hoh-error = { path = "../hoh-error" }
 hoh-http-proxy = { path = "../hoh-http-proxy" }
 hoh-kernel = { path = "../hoh-kernel" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-util-values = { path = "../hoh-util-values" }
+futures-util.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+
+[dev-dependencies]
+reqwest.workspace = true
+url.workspace = true
+tempfile.workspace = true

@@ -463,6 +463,20 @@ llama.cpp) не установлено. Есть rustc 1.97 nightly, Node 20, Py
 | Ревью `hoh-scope` (Sonnet, только чтение) | `delegate_task`, задание `plans/briefs/review-hoh-scope.md` | running | разбор замечаний по исходнику → w2 (сессия `01a1e5d2-f840-7af0-b35f-f448aad0fe05`) → `done` |
 | Ревью `hoh-credentials` (Kimi, только чтение) | фон. `bz1hvabmo`, итог `logs/review-hoh-credentials.kimi.md` | running | разбор → w5 (сессия `01a1e5d3-da02-72c3-be89-fcb61ad9c9c0`) вместе с метками эффектов для `hoh-deepseek-llm-api-extensions` |
 
+**Обновление 18.11 14:50.** В 05:03 перезапуск сервера T3 снял все фоновые задачи (писатели оборваны без отчётов).
+Сданы до обрыва: ядро, пятый круг — `verify.sh` 413 тестов (ядро + 6 crates), коммит `ab81102`, пункт 3 писателя принят
+(`fiber.ts:303-323`); загрузчик, часть B — 228 тестов по отчёту писателя, свою копию atomic-write заменил на
+`hoh-atomic-write`, два пробела ядра (R54 подтверждён ведущим по `diff.ts:17-31`, L19); `hoh-storage-domain` — круг
+исправлений сдан (44 теста); `hoh-credentials` — ревью Kimi (пункт 1 подтверждён, пункт 2 отклонён проверкой на Node 20,
+пункты 3–4 в заметки), исправление сдано (19 тестов); ревью `hoh-scope` (Sonnet) — сдано, ошибка пункта 1 оказалась
+правилом ядра → шестой круг, остальное — задание `plans/briefs/fix-stage1-w2-scope.md` для w2 после шестого круга.
+Возобновлены в 14:47 заданием `plans/briefs/resume-continue.md` (фон. задачи): k1 шестой круг `plans/briefs/fix3-stage0-k1.md`
+(`bid5pix1q`), w7 `hoh-llm` (`bz6vbmigy`), cf1 прогонщик (сессия `01a1ec52-489f-7950-bfdf-b6ef2edc8d58`, `bbsjd63k3`),
+w6 (`by3wldd4p`), w3 (`biib1x2xh`). Ревью заново: часть B загрузчика — Sonnet (delegate «Review hoh-loader part B
+(read-only, 2)») и Kimi (`bi7omj731`); закрытие пятого круга ядра — Sonnet (delegate «Closure check: kernel round 5 (2)»).
+После шестого круга: `verify.sh hoh-kernel …` + `hoh-storage-domain hoh-credentials hoh-loader` → коммиты `done`; w2 по
+`fix-stage1-w2-scope.md`; w5 — метки эффектов в `hoh-deepseek-llm-api-extensions`; l1 — `cmdline` + `apps/hoh`.
+
 Решения ведущего 18.11: (1) прогонщик не переписывает патчи сценариев, `!!js` вычисляет загрузчик, локальные
 подставки получают имя `local:<путь>` и пишутся по мере переноса пакетов, которые они изображают (до того сценарий
 падает с причиной) — так прогон считает честно уже на этапе 0; (2) результат прогона — `conformance/RESULTS.tsv`,
