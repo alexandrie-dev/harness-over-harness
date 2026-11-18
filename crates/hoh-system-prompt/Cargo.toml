@@ -1,0 +1,15 @@
+[package]
+name = "hoh-system-prompt"
+description = "Port of @deepseek-ai/dsh-system-prompt (packages/core/system-prompt)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-scope = { path = "../hoh-scope" }
