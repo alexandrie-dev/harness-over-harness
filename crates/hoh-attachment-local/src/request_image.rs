@@ -4,7 +4,9 @@ use crate::{
         EncodedImage, IMAGE_ENCODING_QUALITIES, WEBP_ENCODING_EFFORT, encode_first_within_limit,
         encoding_ladder,
     },
-    image::{decode_srgb, detect_image, encoded_alpha_is_compatible, probe_image, resize_srgb},
+    image::{
+        decode_srgb, detect_image, encoded_alpha_is_compatible, probe_image, resize_for_target,
+    },
     store::create_private_directory,
     util::*,
 };
@@ -128,6 +130,9 @@ async fn write_cached(path: &str, data: &[u8]) -> Result<(), BoxError> {
         file.write_all(data)
             .await
             .map_err(|e| fs_error(e, "write", &temporary, None))?;
+        file.flush()
+            .await
+            .map_err(|e| fs_error(e, "write", &temporary, None))?;
         drop(file);
         tokio::fs::rename(&temporary, path)
             .await
@@ -177,24 +182,16 @@ pub async fn read_request_image_file(
         let target = *target;
         let prepared = tokio::task::spawn_blocking(move || {
             let pixels = decode_srgb(&data, false)?;
-            let dims = if reference.width >= reference.height {
-                hoh_attachment::long_edge_dimensions(
-                    reference.width,
-                    reference.height,
-                    target.width,
-                )
+            let (width, height) = if reference.width >= reference.height {
+                (Some(target.width), None)
             } else {
-                hoh_attachment::long_edge_dimensions(
-                    reference.width,
-                    reference.height,
-                    target.height,
-                )
+                (None, Some(target.height))
             };
-            Ok::<_, BoxError>(resize_srgb(
+            Ok::<_, BoxError>(resize_for_target(
                 pixels,
-                u32::try_from(dims.width)?,
-                u32::try_from(dims.height)?,
-                false,
+                width,
+                height,
+                reference.media_type,
             ))
         })
         .await??;

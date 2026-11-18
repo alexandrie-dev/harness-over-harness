@@ -3,7 +3,7 @@ use crate::{
     encoding::{encode_first_within_limit, encoding_ladder},
     image::{
         DetectedImage, attachment_failure, decode_srgb, detect_image, encoded_alpha_is_compatible,
-        resize_srgb,
+        resize_for_target,
     },
     util::error,
 };
@@ -75,13 +75,14 @@ pub async fn normalize_image(
             dimensions.height = ((dimensions.height as f64 * scale).floor() as u64).max(1);
         }
         let data = data.to_vec();
+        let media_type = detected.media_type;
         let prepared = tokio::task::spawn_blocking(move || {
             let pixels = decode_srgb(&data, true).map_err(std::io::Error::other)?;
-            Ok::<_, BoxError>(resize_srgb(
+            Ok::<_, BoxError>(resize_for_target(
                 pixels,
-                u32::try_from(dimensions.width)?,
-                u32::try_from(dimensions.height)?,
-                true,
+                Some(dimensions.width),
+                Some(dimensions.height),
+                media_type,
             ))
         })
         .await??;

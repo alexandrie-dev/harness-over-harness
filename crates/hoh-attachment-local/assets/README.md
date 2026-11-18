@@ -1,20 +1,28 @@
 # Default CMYK input profile
 
+The inside/without-enlargement resize calculations also reproduce Sharp 0.35.5
+`src/common.cc:1091–1153` (`ResolveShrink`). Its Apache-2.0 licence is copied
+unchanged in `sharp/LICENSE`; the CMYK profile's public-domain notice below is
+separate from this Sharp code attribution.
+
 `cmyk-input.icc.base64` contains the forward transforms of the **Chemical proof**
-profile built into libvips 8.18.7, distributed with `@img/sharp-libvips-linux-x64`
+profile (`libvips/colour/profiles/cmyk.icm`) built into libvips 8.18.7, distributed with `@img/sharp-libvips-linux-x64`
 1.3.4 and used by Sharp 0.35.5. The source archive and library were already in the
 local npm cache; nothing was fetched or executed.
 
 The profile's copyright tag explicitly releases the data into the public domain.
-Its exact text is copied in `CMYK_PROFILE_LICENSE.txt`. No libvips implementation
+Its exact text is copied from the `cprt` tag into `CMYK_PROFILE_LICENSE.txt`;
+libvips ships no separate licence file for this profile. Our asset is a derivative
+containing only the forward transform and its descriptive tags. No libvips implementation
 or library binary is included in this crate.
 
 The full original profile has 961,644 bytes and SHA-256
 `156e7c14f244cfc4ed83a755ca4803d80e15dd249b40fae82cb127d3902e15c7`.
 The stored input profile retains the original header and byte-identical `desc`,
 `cprt`, `wtpt`, `bkpt`, `A2B0`, `A2B1`, and `A2B2` tag payloads. The three forward
-tags reference the same original 53,754-byte LUT. Unused reverse transforms,
-gamut table and large characterization text are omitted; offsets, tag count and
+tags reference the same original 53,754-byte LUT. The removed tags are the three
+reverse transforms `B2A0`, `B2A1`, `B2A2`, the `gamt` gamut table, `clrt` colourant
+table, and characterization text `targ`, `DevD`, `CIED`; offsets, tag count and
 profile length are rebuilt, and the old profile ID is cleared. This does not
 alter any CMYK-to-PCS transform. The resulting profile has 54,224 bytes and SHA-256
 `92d1e4c5b1072b0e5b7c575c33a1cd36ef6ef311ce40ad917c01b110037a3ffe`.
@@ -24,6 +32,10 @@ The relevant Sharp 0.35.5 source is `src/pipeline.cc:374–397`:
 embedded profiles use `icc_transform` with `embedded=true` and perceptual intent;
 CMYK without a profile uses `input_profile="cmyk"`, also perceptual. See
 <https://github.com/lovell/sharp/blob/v0.35.5/src/pipeline.cc#L374-L397>.
+As established by the lead's exact-version source research,
+`icc_transform.c:555–563,691–735` rejects corrupt/non-CMYK input profiles and
+falls back to this built-in profile; `icc_transform.c:596–612` instead selects
+the embedded profile's header intent when its perceptual intent is unavailable.
 The attachment package always requests sRGB in `src/normalization.ts:80–83`.
 
 `tests/cmyk.rs` uses generated constant-channel JPEGs and two independent colour

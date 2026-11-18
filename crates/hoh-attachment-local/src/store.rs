@@ -243,6 +243,11 @@ async fn stage(
             bytes += chunk.len() as u64;
         }
         check(signal)?;
+        // Tokio sync_all discards pending write errors; flush must observe them.
+        handle
+            .flush()
+            .await
+            .map_err(|e| fs_error(e, "write", &temporary, None))?;
         handle
             .sync_all()
             .await

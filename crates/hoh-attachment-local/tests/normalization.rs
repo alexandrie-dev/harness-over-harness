@@ -142,6 +142,154 @@ async fn always_re_encodes_gif_as_a_single_still_frame() {
     assert_eq!((detected.width, detected.height), (6, 4));
     assert!(!detected.animated);
     assert!(!detected.carries_metadata);
+    assert_eq!(detected.depth, "uchar");
+    assert_eq!(detected.space, "srgb");
+}
+
+#[tokio::test]
+async fn review_sharp_inside_dimensions_and_recorded_original_dimensions() {
+    // Hand-derived from ResolveShrink, libvips JPEG floor-loaded axes and floor(x + .5).
+    // For 3000x2001 the policy bounds are the source's 2000x2000 square;
+    // initialDimensions supplies 2000x1334 inside that square.
+    for (width, height, cap, format, expected) in [
+        (4000, 3, 2000, ImageFormat::Png, (1333, 1)),
+        (4000, 3, 2000, ImageFormat::Jpeg, (2000, 1)),
+        (3000, 2001, 2000, ImageFormat::Png, (2000, 1334)),
+        (3000, 2001, 2000, ImageFormat::Jpeg, (2000, 1334)),
+        (3, 4000, 2000, ImageFormat::Png, (1, 1333)),
+        (3, 4000, 2000, ImageFormat::Jpeg, (1, 2000)),
+        (4000, 3000, 2000, ImageFormat::Png, (2000, 1500)),
+        (4000, 3000, 2000, ImageFormat::Jpeg, (2000, 1500)),
+        (99, 33, 11, ImageFormat::Png, (9, 3)),
+        (99, 33, 11, ImageFormat::Jpeg, (9, 3)),
+        (6, 4, 60, ImageFormat::Png, (6, 4)),
+        (6, 4, 60, ImageFormat::Jpeg, (6, 4)),
+        (17, 9, 2, ImageFormat::Png, (2, 1)),
+        (17, 9, 2, ImageFormat::Jpeg, (2, 1)),
+        // Shrink 8.9 selects 8, then halves to 4 because trunc(8.9)==8.
+        (267, 89, 32, ImageFormat::Png, (30, 10)),
+        (267, 89, 32, ImageFormat::Jpeg, (30, 10)),
+    ] {
+        let data = flat(width, height, format, false).await;
+        let input = hoh_attachment::SaveImageAttachment {
+            data,
+            media_type: if format == ImageFormat::Png {
+                ImageMediaType::Png
+            } else {
+                ImageMediaType::Jpeg
+            },
+            name: None,
+        };
+        if width == 3000 && height == 2001 {
+            let media_type = input.media_type;
+            let direct = tokio::task::spawn_blocking(move || {
+                crate::image::resize_for_target(
+                    DynamicImage::new_rgb8(width, height),
+                    Some(2000),
+                    Some(2000),
+                    media_type,
+                )
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                (direct.width(), direct.height()),
+                (2000, 1334),
+                "explicit source 2000x2000 box, {format:?}"
+            );
+        }
+        let mut admission = limits();
+        admission.max_image_bytes = 50 * 1024 * 1024;
+        admission.max_image_pixels = 64_000_000;
+        admission.max_image_dimension = 65_535;
+        let budget = NormalizationPolicy {
+            max_pixels: 64_000_000,
+            max_dimension: cap,
+            max_bytes: if cap > u64::from(width.max(height)) {
+                1
+            } else {
+                4 * 1024 * 1024
+            },
+        };
+        let prepared = crate::prepare_image_file(&input, &admission, &budget)
+            .await
+            .unwrap();
+        assert_eq!(
+            (prepared.r#ref.width, prepared.r#ref.height),
+            expected,
+            "{width}x{height}, cap {cap}, {format:?}"
+        );
+        assert_eq!(
+            prepared.r#ref.original_dimensions,
+            if expected == (u64::from(width), u64::from(height)) {
+                None
+            } else {
+                Some(hoh_attachment::ProjectedDimensions {
+                    width: width.into(),
+                    height: height.into(),
+                })
+            }
+        );
+        let verified = detect_image(&prepared.data, None).await.unwrap();
+        assert_eq!((verified.width, verified.height), expected);
+        assert_eq!(
+            prepared.r#ref.attachment_id.as_str(),
+            format!("sha256:{}", sha256(&prepared.data))
+        );
+    }
+}
+
+#[tokio::test]
+async fn review_autorotation_swaps_the_resize_target_before_shrink() {
+    let data = oriented(4000, 3, 6).await;
+    let facts = detect_image(&data, None).await.unwrap();
+    assert_eq!((facts.width, facts.height), (3, 4000));
+    let normalized = normalize_image(
+        &data,
+        &facts,
+        &NormalizationPolicy {
+            max_pixels: 64_000_000,
+            max_dimension: 2000,
+            ..policy()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!((normalized.width, normalized.height), (1, 2000));
+}
+
+#[tokio::test]
+async fn review_webp_scale_on_load_and_gif_plain_resize_dimensions() {
+    for (width, height, cap, format, expected) in [
+        // 4828 * (9/408) = 106.5: rint rounds to even, hence 106, not 107.
+        (4828, 408, 107, ImageFormat::WebP, (106, 9)),
+        (4000, 3, 2000, ImageFormat::WebP, (1333, 1)),
+        (3000, 2001, 2000, ImageFormat::WebP, (2000, 1334)),
+        (3, 4000, 2000, ImageFormat::WebP, (1, 1333)),
+        (4000, 3000, 2000, ImageFormat::WebP, (2000, 1500)),
+        (99, 33, 11, ImageFormat::WebP, (9, 3)),
+        (6, 4, 60, ImageFormat::WebP, (6, 4)),
+        (17, 9, 2, ImageFormat::WebP, (2, 1)),
+        (267, 89, 32, ImageFormat::WebP, (30, 10)),
+        // GIF does not reload at a scale: the same half tie rounds up at output.
+        (4828, 408, 107, ImageFormat::Gif, (107, 9)),
+    ] {
+        let data = flat(width, height, format, false).await;
+        let detected = detect_image(&data, None).await.unwrap();
+        let budget = NormalizationPolicy {
+            max_pixels: 64_000_000,
+            max_dimension: cap,
+            max_bytes: 1,
+        };
+        let prepared = normalize_image(&data, &detected, &budget).await.unwrap();
+        assert_eq!(
+            (prepared.width, prepared.height),
+            expected,
+            "{width}x{height}, cap {cap}, {format:?}"
+        );
+        let actual = detect_image(&prepared.data, None).await.unwrap();
+        assert_eq!((actual.width, actual.height), expected);
+    }
 }
 #[tokio::test]
 async fn keeps_a_transparent_source_on_the_webp_ladder() {

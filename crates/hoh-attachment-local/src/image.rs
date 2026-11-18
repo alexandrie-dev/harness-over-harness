@@ -61,6 +61,8 @@ fn inspect(
     limits: Option<DecodedImageLimits>,
     full: bool,
 ) -> Result<DetectedImage, BoxError> {
+    let compatible = jpeg_compatible_data(data);
+    let data = compatible.as_ref();
     let reader = reader(data)?;
     let format = reader.format();
     let mut decoder = reader.into_decoder().map_err(invalid)?;
@@ -139,6 +141,7 @@ struct ContainerFacts {
     metadata: bool,
     frames: u32,
     cmyk: bool,
+    adobe_transforms: Vec<usize>,
 }
 fn container_facts(data: &[u8], format: Option<ImageFormat>) -> ContainerFacts {
     let mut facts = ContainerFacts {
@@ -152,12 +155,12 @@ fn container_facts(data: &[u8], format: Option<ImageFormat>) -> ContainerFacts {
                 let length =
                     u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
                 let kind = &header[4..8];
-                facts.metadata |= matches!(kind, b"eXIf" | b"iCCP" | b"tEXt" | b"iTXt" | b"zTXt");
-                if kind == b"acTL"
-                    && let Some(bytes) = data.get(offset + 8..offset + 12)
-                {
-                    facts.frames = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                // libvips calls png_read_info/png_get_text, never png_read_end.
+                // libpng treats APNG control/frame chunks as unknown chunks.
+                if matches!(kind, b"IDAT" | b"IEND") {
+                    break;
                 }
+                facts.metadata |= matches!(kind, b"eXIf" | b"iCCP" | b"tEXt" | b"iTXt" | b"zTXt");
                 let Some(next) = offset.checked_add(length).and_then(|n| n.checked_add(12)) else {
                     break;
                 };
@@ -188,11 +191,17 @@ fn container_facts(data: &[u8], format: Option<ImageFormat>) -> ContainerFacts {
                 }
                 // EXIF, ICC and XMP are exposed by the decoder. Other APPn
                 // payloads (for example MPF) are not retained descriptive metadata.
-                facts.metadata |= marker == 0xfe
-                    || (marker == 0xed
-                        && data
-                            .get(offset + 2..offset + length)
-                            .is_some_and(|payload| payload.starts_with(b"Photoshop 3.0\0")));
+                // libvips retains APP13 only with >5 payload bytes starting Photo.
+                facts.metadata |= marker == 0xed
+                    && length > 7
+                    && data.get(offset + 2..offset + 7) == Some(b"Photo");
+                if marker == 0xee
+                    && length >= 14
+                    && data.get(offset + 2..offset + 7) == Some(b"Adobe")
+                    && data.get(offset + 13).is_some()
+                {
+                    facts.adobe_transforms.push(offset + 13);
+                }
                 if matches!(marker,0xc0..=0xc3|0xc5..=0xc7|0xc9..=0xcb|0xcd..=0xcf) {
                     facts.cmyk = data.get(offset + 7) == Some(&4);
                 }
@@ -265,7 +274,34 @@ fn container_facts(data: &[u8], format: Option<ImageFormat>) -> ContainerFacts {
     facts
 }
 
+fn jpeg_compatible_data(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if !data.starts_with(&[255, 216]) {
+        return std::borrow::Cow::Borrowed(data);
+    }
+    let facts = container_facts(data, Some(ImageFormat::Jpeg));
+    if !facts.cmyk
+        || !facts
+            .adobe_transforms
+            .iter()
+            .any(|&at| !matches!(data[at], 0 | 2))
+    {
+        return std::borrow::Cow::Borrowed(data);
+    }
+    // libjpeg treats every nonzero Adobe transform in a four-component JPEG
+    // as YCCK. zune instead treats 1 as YCbCr/CMYK and rejects unknown values.
+    // Adapt only decoder input; the caller's original bytes are never rewritten.
+    let mut compatible = data.to_vec();
+    for at in facts.adobe_transforms {
+        if compatible[at] != 0 {
+            compatible[at] = 2;
+        }
+    }
+    std::borrow::Cow::Owned(compatible)
+}
+
 pub(crate) fn decode_srgb(data: &[u8], orient: bool) -> Result<DynamicImage, BoxError> {
+    let compatible = jpeg_compatible_data(data);
+    let data = compatible.as_ref();
     let reader = reader(data)?;
     let format = reader.format();
     let mut decoder = reader.into_decoder().map_err(invalid)?;
@@ -369,9 +405,29 @@ fn decode_cmyk_srgb(data: &[u8], embedded: Option<&[u8]>) -> Result<DynamicImage
             );
         }
     }
-    let fallback;
-    let profile_bytes = if let Some(embedded) = embedded {
-        embedded
+    let make_transform = |source: &moxcms::ColorProfile| {
+        let intent = if source.lut_a_to_b_perceptual.is_some() {
+            moxcms::RenderingIntent::Perceptual
+        } else {
+            source.rendering_intent
+        };
+        source.create_transform_8bit(
+            // Four-component CMYK storage uses Layout::Rgba; K is not alpha.
+            moxcms::Layout::Rgba,
+            &moxcms::ColorProfile::new_srgb(),
+            moxcms::Layout::Rgb,
+            moxcms::TransformOptions {
+                rendering_intent: intent,
+                ..Default::default()
+            },
+        )
+    };
+    let embedded_transform = embedded
+        .and_then(|bytes| moxcms::ColorProfile::new_from_slice(bytes).ok())
+        .filter(|profile| profile.color_space == moxcms::DataColorSpace::Cmyk)
+        .and_then(|profile| make_transform(&profile).ok());
+    let transform = if let Some(transform) = embedded_transform {
+        transform
     } else {
         use base64::Engine;
         // Sharp 0.35.5 src/pipeline.cc:391-397 uses libvips' built-in "cmyk"
@@ -379,43 +435,85 @@ fn decode_cmyk_srgb(data: &[u8], embedded: Option<&[u8]>) -> Result<DynamicImage
         let encoded: String = include_str!("../assets/cmyk-input.icc.base64")
             .split_ascii_whitespace()
             .collect();
-        fallback = base64::engine::general_purpose::STANDARD.decode(encoded)?;
-        &fallback
+        let fallback = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+        make_transform(&moxcms::ColorProfile::new_from_slice(&fallback)?)?
     };
-    let source = moxcms::ColorProfile::new_from_slice(profile_bytes)?;
-    if source.color_space != moxcms::DataColorSpace::Cmyk {
-        return Err(
-            std::io::Error::other("JPEG ICC profile does not describe CMYK channels.").into(),
-        );
-    }
-    let transform = source.create_transform_8bit(
-        // moxcms uses Rgba as the storage layout for four CMYK components;
-        // the source profile, rather than this layout name, specifies their meaning.
-        moxcms::Layout::Rgba,
-        &moxcms::ColorProfile::new_srgb(),
-        moxcms::Layout::Rgb,
-        moxcms::TransformOptions {
-            rendering_intent: moxcms::RenderingIntent::Perceptual,
-            ..Default::default()
-        },
-    )?;
     let mut output = ::image::RgbImage::new(u32::try_from(width)?, u32::try_from(height)?);
     transform.transform(&ink, output.as_mut())?;
     Ok(DynamicImage::ImageRgb8(output))
 }
 
-pub(crate) fn resize_srgb(
-    pixels: DynamicImage,
+fn resolve_shrink(
     width: u32,
     height: u32,
-    inside: bool,
+    target_width: Option<u64>,
+    target_height: Option<u64>,
+) -> (f64, f64) {
+    let horizontal = target_width
+        .filter(|&v| v > 0)
+        .map_or(1.0, |target| f64::from(width) / target as f64);
+    let vertical = target_height
+        .filter(|&v| v > 0)
+        .map_or(1.0, |target| f64::from(height) / target as f64);
+    let shrink = horizontal.max(vertical).max(1.0);
+    (shrink.min(f64::from(width)), shrink.min(f64::from(height)))
+}
+
+pub(crate) fn resize_for_target(
+    mut pixels: DynamicImage,
+    target_width: Option<u64>,
+    target_height: Option<u64>,
+    media_type: ImageMediaType,
 ) -> DynamicImage {
-    let resize = |image: &DynamicImage| {
-        if inside {
-            image.resize(width, height, ::image::imageops::FilterType::Lanczos3)
+    let (horizontal, vertical) =
+        resolve_shrink(pixels.width(), pixels.height(), target_width, target_height);
+    if media_type == ImageMediaType::Jpeg {
+        let shrink = horizontal.min(vertical);
+        let mut scale = if shrink >= 8.0 {
+            8
+        } else if shrink >= 4.0 {
+            4
+        } else if shrink >= 2.0 {
+            2
         } else {
-            image.resize_exact(width, height, ::image::imageops::FilterType::Lanczos3)
+            1
+        };
+        // Sharp lowers the DCT shrink for the whole trunc(shrink)==scale interval.
+        if scale > 1 && shrink.trunc() == f64::from(scale) {
+            scale /= 2;
         }
+        if scale > 1 {
+            // libvips jpeg2vips.c:639-640 floors the loaded axes, even though
+            // libjpeg itself can produce ceil-rounded scaled IDCT dimensions.
+            let width = pixels.width() / scale;
+            let height = pixels.height() / scale;
+            // zune exposes full IDCT only. Emulate the exact loaded raster size
+            // with Lanczos; this changes pixels, not Sharp's subsequent geometry.
+            pixels = resize_srgb(pixels, width, height);
+        }
+    } else if media_type == ImageMediaType::Webp {
+        let shrink = horizontal.min(vertical);
+        if shrink > 1.0 {
+            let scale = 1.0 / shrink;
+            // libvips webp2vips.c:513-514 uses rint, i.e. half to even.
+            let width = (f64::from(pixels.width()) * scale).round_ties_even() as u32;
+            let height = (f64::from(pixels.height()) * scale).round_ties_even() as u32;
+            // Emulate the load geometry using the full decode; pixels can differ.
+            pixels = resize_srgb(pixels, width, height);
+        }
+    }
+    // These are already oriented axes. Swapping both source axes and target axes
+    // commutes with ResolveShrink and JPEG floor-loading (Sharp pipeline:195-199).
+    let (horizontal, vertical) =
+        resolve_shrink(pixels.width(), pixels.height(), target_width, target_height);
+    let width = (f64::from(pixels.width()) / horizontal + 0.5).floor() as u32;
+    let height = (f64::from(pixels.height()) / vertical + 0.5).floor() as u32;
+    resize_srgb(pixels, width, height)
+}
+
+pub(crate) fn resize_srgb(pixels: DynamicImage, width: u32, height: u32) -> DynamicImage {
+    let resize = |image: &DynamicImage| {
+        image.resize_exact(width, height, ::image::imageops::FilterType::Lanczos3)
     };
     if (pixels.width(), pixels.height()) == (width, height) {
         return pixels;

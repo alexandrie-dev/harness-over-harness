@@ -11,10 +11,15 @@ fn segment(out: &mut Vec<u8>, marker: u8, payload: &[u8]) {
 // Constant, quantization-free 8x8 blocks with four independently encoded channels.
 // Adobe CMYK stores inverted ink; YCCK stores Y/Cb/Cr and inverted K.
 fn jpeg(samples: [u8; 4], profile: Option<&[u8]>, ycck: bool) -> Vec<u8> {
+    jpeg_with_adobe(samples, profile, Some(if ycck { 2 } else { 0 }))
+}
+fn jpeg_with_adobe(samples: [u8; 4], profile: Option<&[u8]>, transform: Option<u8>) -> Vec<u8> {
     let mut out = vec![255, 216];
     let mut adobe = b"Adobe\0\x64\0\0\0\0\0".to_vec();
-    adobe[11] = if ycck { 2 } else { 0 };
-    segment(&mut out, 0xee, &adobe);
+    if let Some(transform) = transform {
+        adobe[11] = transform;
+        segment(&mut out, 0xee, &adobe);
+    }
     if let Some(profile) = profile {
         let chunks: Vec<_> = profile.chunks(65519).collect();
         for (index, chunk) in chunks.iter().enumerate() {
@@ -240,4 +245,106 @@ async fn converts_ycck_to_four_ink_channels_before_applying_the_profile() {
         true,
     )
     .await;
+}
+
+#[tokio::test]
+async fn review_four_component_jpeg_adobe_and_zune_conventions() {
+    use zune_core::{bytestream::ZCursor, colorspace::ColorSpace};
+    let profile = linear_cmyk_profile();
+    // Record zune's actual unadapted header results, separately from libjpeg's rules.
+    for (adobe, expected) in [
+        (None, Some(ColorSpace::CMYK)),
+        (Some(0), Some(ColorSpace::CMYK)),
+        (Some(2), Some(ColorSpace::YCCK)),
+        (Some(1), Some(ColorSpace::CMYK)),
+        (Some(3), None),
+    ] {
+        let data = jpeg_with_adobe([150, 100, 180, 223], Some(&profile), adobe);
+        let mut decoder = zune_jpeg::JpegDecoder::new(ZCursor::new(&data));
+        let header = decoder.decode_headers();
+        assert_eq!(header.is_ok(), expected.is_some(), "Adobe {adobe:?}");
+        if header.is_ok() {
+            assert_eq!(decoder.input_colorspace(), expected, "Adobe {adobe:?}");
+        }
+    }
+    for adobe in [None, Some(0), Some(2), Some(1), Some(3)] {
+        let ycck = adobe.is_some_and(|v| v != 0);
+        let samples = if ycck {
+            [150, 100, 180, 223]
+        } else {
+            [191, 127, 63, 223]
+        };
+        let expected = if ycck {
+            [93, 180, 193]
+        } else {
+            [212, 176, 128]
+        };
+        check_conversion(
+            jpeg_with_adobe(samples, Some(&profile), adobe),
+            expected,
+            true,
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn review_non_cmyk_and_corrupt_profiles_use_the_builtin_cmyk_fallback() {
+    let plain = jpeg([0, 255, 255, 255], None, false);
+    let baseline = normalize_image(
+        &plain,
+        &detect_image(&plain, None).await.unwrap(),
+        &policy(),
+    )
+    .await
+    .unwrap();
+    let rgb = moxcms::ColorProfile::new_srgb().encode().unwrap();
+    let mut empty = moxcms::ColorProfile::new_from_slice(&linear_cmyk_profile()).unwrap();
+    empty.lut_a_to_b_perceptual = None;
+    for profile in [
+        rgb,
+        b"corrupt ICC profile".to_vec(),
+        empty.encode().unwrap(),
+    ] {
+        let data = jpeg([0, 255, 255, 255], Some(&profile), false);
+        check_conversion(data.clone(), [0, 156, 228], true).await;
+        assert_eq!(
+            normalize_image(&data, &detect_image(&data, None).await.unwrap(), &policy())
+                .await
+                .unwrap(),
+            baseline
+        );
+    }
+}
+
+#[tokio::test]
+async fn review_cmyk_profile_without_perceptual_uses_its_header_intent() {
+    use moxcms::{LutStore, LutWarehouse, RenderingIntent};
+    let original = moxcms::ColorProfile::new_from_slice(&linear_cmyk_profile()).unwrap();
+    for (intent, expected) in [
+        (RenderingIntent::RelativeColorimetric, [212, 176, 128]),
+        (RenderingIntent::Saturation, [0, 0, 255]),
+    ] {
+        let mut profile = original.clone();
+        profile.lut_a_to_b_colorimetric = profile.lut_a_to_b_perceptual.take();
+        let mut blue = profile.lut_a_to_b_colorimetric.clone().unwrap();
+        if let LutWarehouse::Lut(ref mut lut) = blue {
+            lut.clut_table = LutStore::Store16(
+                [
+                    (0.1430804_f64 * 32768.).round() as u16,
+                    (0.0606169_f64 * 32768.).round() as u16,
+                    (0.7141733_f64 * 32768.).round() as u16,
+                ]
+                .repeat(16),
+            );
+        }
+        profile.lut_a_to_b_saturation = Some(blue);
+        profile.rendering_intent = intent;
+        check_conversion(
+            jpeg([191, 127, 63, 223], Some(&profile.encode().unwrap()), false),
+            expected,
+            true,
+        )
+        .await;
+    }
 }

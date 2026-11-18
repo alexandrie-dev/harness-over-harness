@@ -38,3 +38,11 @@ tokio.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix.workspace = true
+
+[[test]]
+name = "write_errors"
+path = "tests/write_errors.rs"
+harness = false

@@ -211,3 +211,52 @@ pub fn cmyk_jpeg() -> Vec<u8> {
     data.extend([0, 0, 255, 217]);
     data
 }
+
+pub fn png_chunk(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+    let mut out = (payload.len() as u32).to_be_bytes().to_vec();
+    out.extend(kind);
+    out.extend(payload);
+    let mut crc = !0u32;
+    for byte in &out[4..] {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(crc & 1));
+        }
+    }
+    out.extend((!crc).to_be_bytes());
+    out
+}
+pub fn png_offset(data: &[u8], kind: &[u8; 4]) -> usize {
+    let mut offset = 8;
+    while offset + 12 <= data.len() {
+        if &data[offset + 4..offset + 8] == kind {
+            return offset;
+        }
+        offset += u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap()) as usize + 12;
+    }
+    panic!("missing PNG chunk {kind:?}");
+}
+pub fn png_add_before(
+    mut data: Vec<u8>,
+    before: &[u8; 4],
+    kind: &[u8; 4],
+    payload: &[u8],
+) -> Vec<u8> {
+    let at = png_offset(&data, before);
+    data.splice(at..at, png_chunk(kind, payload));
+    data
+}
+pub fn zlib_stored(text: &[u8]) -> Vec<u8> {
+    let length = u16::try_from(text.len()).unwrap();
+    let mut data = vec![0x78, 0x01, 1];
+    data.extend(length.to_le_bytes());
+    data.extend((!length).to_le_bytes());
+    data.extend(text);
+    let (mut a, mut b) = (1u32, 0u32);
+    for byte in text {
+        a = (a + u32::from(*byte)) % 65521;
+        b = (b + a) % 65521;
+    }
+    data.extend(((b << 16) | a).to_be_bytes());
+    data
+}
