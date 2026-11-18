@@ -425,6 +425,25 @@ pub(crate) struct Shared {
 pub struct Kernel {
     inner: Arc<Shared>,
 }
+/// Read-only access to the registered provision store and its owner metadata.
+#[derive(Clone)]
+pub struct Reflect {
+    inner: Arc<Shared>,
+}
+impl Reflect {
+    /// Capture provisions and fibers together, at one committed actor turn.
+    /// The detached result includes isolated and inactive registered providers.
+    pub fn store(&self) -> impl Future<Output = Snapshot> + Send + 'static + use<> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.inner.tx.send(Command::Snapshot(tx));
+        async move {
+            rx.await.unwrap_or(Snapshot {
+                fibers: vec![],
+                provisions: vec![],
+            })
+        }
+    }
+}
 impl Kernel {
     pub fn start() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -490,14 +509,10 @@ impl Kernel {
         )
     }
     pub fn snapshot(&self) -> impl Future<Output = Snapshot> + Send + 'static {
-        let (tx, rx) = oneshot::channel();
-        let _ = self.inner.tx.send(Command::Snapshot(tx));
-        async move {
-            rx.await.unwrap_or(Snapshot {
-                fibers: vec![],
-                provisions: vec![],
-            })
+        Reflect {
+            inner: self.inner.clone(),
         }
+        .store()
     }
     pub fn shutdown(&self) -> impl Future<Output = ()> + Send + 'static {
         let (tx, rx) = oneshot::channel();
@@ -508,6 +523,13 @@ impl Kernel {
     }
 }
 impl Context {
+    /// Reflect over all registered provisions, independent of this context's realm/filter.
+    /// Use `realm_of(name)` to compare a provision's realm with the access site.
+    pub fn reflect(&self) -> Reflect {
+        Reflect {
+            inner: self.inner.clone(),
+        }
+    }
     pub(crate) fn create(
         &self,
         def: PluginDef,
@@ -1128,7 +1150,7 @@ impl Actor {
                     node.ctx.activation.close();
                 }
                 match node.state() {
-                    FiberState::Pending if node.preactivated && node.disposed() => {
+                    FiberState::Pending | FiberState::Failed if node.disposed() => {
                         node.preactivated = false;
                         node.ctx.activation.close();
                         self.status(uid, FiberState::Unloading);
@@ -1163,10 +1185,6 @@ impl Actor {
                     }
                     FiberState::Active if node.loaded != node.target => {
                         self.status(uid, FiberState::Unloading);
-                        changed = true;
-                    }
-                    FiberState::Pending | FiberState::Failed if node.disposed() => {
-                        self.status(uid, FiberState::Disposed);
                         changed = true;
                     }
                     FiberState::Failed if read(&node.ctx.data.state).error.is_none() => {

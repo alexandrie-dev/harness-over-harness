@@ -9,8 +9,11 @@ fn equal(a: Option<&Value>, b: Option<&Value>) -> bool {
     }
 }
 fn defaulted<'a>(s: &'a Value, v: Option<&'a Value>) -> Option<&'a Value> {
-    v.filter(|v| !(v.is_null() && (s["type"] == "object" || s["properties"].is_object())))
-        .or_else(|| s.get("default"))
+    v.filter(|v| !v.is_null()).or_else(|| s.get("default"))
+}
+fn record(v: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
+    v.and_then(Value::as_object)
+        .filter(|o| !o.contains_key("__jsExpr"))
 }
 fn recursive_reference(root: &Value, reference: &str) -> bool {
     let Some(start) = target(root, reference) else {
@@ -50,19 +53,9 @@ fn compare(
     if let Some(child) = nullable_choice(s) {
         return compare(root, child, a, b, refs);
     }
-    let (a, b) = (defaulted(s, a), defaulted(s, b));
-    if equal(a, b) {
-        return true;
-    }
-    if [a, b].into_iter().flatten().any(|v| {
-        v.as_object()
-            .is_some_and(|o| o.len() == 1 && o.contains_key("__jsExpr"))
-    }) {
-        return false;
-    }
     if let Some(r) = s["$ref"].as_str() {
         if refs.iter().any(|p| p == r) || recursive_reference(root, r) {
-            return false;
+            return equal(a, b);
         }
         if let Some(t) = target(root, r) {
             refs.push(r.into());
@@ -70,48 +63,34 @@ fn compare(
             refs.pop();
             return answer;
         }
-        return false;
+        return equal(a, b);
     }
-    if let Some(props) = s["properties"].as_object()
-        && [a, b]
-            .iter()
-            .all(|v| v.is_none_or(|v| v.is_object() || v.is_null()))
-    {
-        let mut keys: indexmap::IndexSet<&str> = props.keys().map(String::as_str).collect();
-        for obj in [a, b].into_iter().flatten().filter_map(Value::as_object) {
-            keys.extend(obj.keys().map(String::as_str));
-        }
-        return keys.into_iter().all(|key| {
-            compare(
-                root,
-                props.get(key).unwrap_or(&Value::Null),
-                a.and_then(|v| v.get(key)),
-                b.and_then(|v| v.get(key)),
-                refs,
-            )
-        });
-    }
-    if let (Some(Value::Array(a)), Some(Value::Array(b))) = (a, b) {
-        return a.len() == b.len()
-            && a.iter().zip(b).enumerate().all(|(i, (a, b))| {
-                compare(
-                    root,
-                    s["prefixItems"]
-                        .get(i)
-                        .or_else(|| s.get("items"))
-                        .unwrap_or(&Value::Null),
-                    Some(a),
-                    Some(b),
-                    refs,
-                )
-            });
-    }
-    for key in ["allOf", "anyOf", "oneOf"] {
-        if let Some(choices) = s[key].as_array() {
-            return choices.iter().all(|s| compare(root, s, a, b, refs));
-        }
-    }
-    false
+    let object = s.get("type").is_none_or(|t| {
+        t == "object"
+            || t.as_array()
+                .is_some_and(|a| a.iter().any(|t| t == "object"))
+    });
+    let Some(props) = s["properties"].as_object().filter(|_| object) else {
+        return equal(a, b);
+    };
+    let (a, b) = (defaulted(s, a), defaulted(s, b));
+    let (Some(left), Some(right)) = (record(a), record(b)) else {
+        return equal(a, b);
+    };
+    let keys: indexmap::IndexSet<&str> = left
+        .keys()
+        .chain(right.keys())
+        .map(String::as_str)
+        .collect();
+    keys.into_iter().all(|key| {
+        compare(
+            root,
+            props.get(key).unwrap_or(&Value::Null),
+            left.get(key),
+            right.get(key),
+            refs,
+        )
+    })
 }
 pub fn volatile_paths(s: &Value, a: &Value, b: &Value) -> Vec<String> {
     let mut out = vec![];

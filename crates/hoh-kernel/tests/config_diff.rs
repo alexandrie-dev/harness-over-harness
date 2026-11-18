@@ -12,7 +12,7 @@ async fn ignores_volatile_fields_in_frozen_raw_inputs_without_running_schema_cal
 }
 #[tokio::test(start_paused = true)]
 async fn ignores_absent_nested_and_whole_object_array_union_volatile_fields() {
-    let s = json!({"type":"object","properties":{"nested":{"type":"object","properties":{"value":{"type":"string","x-volatile":true}}},"block":{"type":"object","x-volatile":true},"list":{"type":"array","x-volatile":true},"choice":{"oneOf":[{"type":"string"},{"type":"number"}],"x-volatile":true}}});
+    let s = json!({"type":"object","properties":{"nested":{"type":"object","default":{},"properties":{"value":{"type":"string","x-volatile":true}}},"block":{"type":"object","x-volatile":true},"list":{"type":"array","x-volatile":true},"choice":{"oneOf":[{"type":"string"},{"type":"number"}],"x-volatile":true}}});
     let b = json!({"nested":{"value":"new"},"block":{"title":"new"},"list":["new"],"choice":1});
     assert!(equal(&s, &json!({}), &b));
     assert!(equal(&s, &b, &json!({})));
@@ -74,7 +74,7 @@ async fn compares_raw_values_strictly_without_a_schema() {
 async fn compares_recursive_schemas_conservatively_and_visits_shared_schema_nodes_at_each_path() {
     let s = json!({"$ref":"#/$defs/Tree","$defs":{"Tree":{"type":"object","properties":{"value":{"x-volatile":true},"child":{"$ref":"#/$defs/Tree"}}}}});
     assert!(!equal(&s, &json!({"value":"old"}), &json!({"value":"new"})));
-    let shared = json!({"type":"object","properties":{"value":{"x-volatile":true}}});
+    let shared = json!({"type":"object","default":{},"properties":{"value":{"x-volatile":true}}});
     let s = json!({"type":"object","properties":{"first":shared,"second":shared}});
     assert!(equal(
         &s,
@@ -84,7 +84,7 @@ async fn compares_recursive_schemas_conservatively_and_visits_shared_schema_node
 }
 #[tokio::test(start_paused = true)]
 async fn equates_absent_objects_with_defaults_while_preserving_ordinary_field_differences() {
-    let s = json!({"type":"object","properties":{"nested":{"type":"object","properties":{"fixed":{"type":"string"}},"default":{"fixed":"default"}}}});
+    let s = json!({"type":"object","default":{},"properties":{"nested":{"type":"object","properties":{"fixed":{"type":"string"}},"default":{"fixed":"default"}}}});
     assert!(equal(&s, &json!(null), &json!({})));
     assert!(equal(&s, &json!({}), &json!(null)));
     assert!(equal(
@@ -116,4 +116,19 @@ async fn compares_metadata_free_serialized_schema_nodes() {
         &json!({"nested":{"enabled":true}}),
         &json!({"nested":{"enabled":false}})
     ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn compares_unknown_fields_whose_names_match_object_prototype_properties() {
+    let schema = json!({"type":"object","properties":{"live":{"x-volatile":true}}});
+    for key in ["constructor", "toString", "__proto__"] {
+        let before = json!({key:"first","live":"old"});
+        assert!(before.get(key).is_some());
+        assert!(!equal(
+            &schema,
+            &before,
+            &json!({key:"second","live":"new"})
+        ));
+        assert!(equal(&schema, &before, &json!({key:"first","live":"new"})));
+    }
 }

@@ -13,7 +13,7 @@ type UndoAction = Box<dyn FnOnce() -> Task<Result<(), Error>> + Send>;
 #[must_use = "setup эффекта обязан вернуть обратное действие"]
 pub struct Undo {
     action: Option<UndoAction>,
-    sync: Option<Box<dyn FnOnce() + Send>>,
+    sync: Option<Box<dyn FnOnce() -> Result<(), Error> + Send>>,
     adopted: Option<Arc<Effect>>,
 }
 
@@ -32,6 +32,13 @@ impl Undo {
         }
     }
     pub fn sync(f: impl FnOnce() + Send + 'static) -> Self {
+        Self::try_sync(move || {
+            f();
+            Ok(())
+        })
+    }
+    /// A synchronous cleanup that can fail without unwinding.
+    pub fn try_sync(f: impl FnOnce() -> Result<(), Error> + Send + 'static) -> Self {
         Self {
             action: None,
             sync: Some(Box::new(f)),
@@ -50,7 +57,7 @@ impl Undo {
     }
     async fn run(mut self) -> Result<(), Error> {
         if let Some(sync) = self.sync.take() {
-            sync();
+            sync()?;
         }
         if let Some(effect) = self.adopted.take() {
             effect.begin();
@@ -61,21 +68,21 @@ impl Undo {
         }
         Ok(())
     }
-    fn run_sync(&mut self) -> bool {
+    fn run_sync(&mut self, propagate: bool) -> Result<bool, Error> {
         if let Some(effect) = &self.adopted {
-            effect.begin();
+            effect.begin_inner(propagate)?;
             if !effect.done.load(Ordering::Acquire) {
-                return false;
+                return Ok(false);
             }
             self.adopted = None;
         }
         if self.action.is_some() {
-            return false;
+            return Ok(false);
         }
         if let Some(sync) = self.sync.take() {
-            sync();
+            sync()?;
         }
-        true
+        Ok(true)
     }
 }
 impl From<Disposer> for Undo {
@@ -164,25 +171,39 @@ impl Effect {
             self.detach();
         }
     }
-    fn synchronous(&self, undos: &mut Vec<Undo>) {
+    fn synchronous(&self, undos: &mut Vec<Undo>, propagate: bool) -> Result<(), Error> {
         while let Some(mut undo) = undos.pop() {
-            match std::panic::catch_unwind(AssertUnwindSafe(|| {
-                fiber::sync_scope(self.ancestry.clone(), || undo.run_sync())
-            })) {
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                fiber::sync_scope(self.ancestry.clone(), || undo.run_sync(propagate))
+            }))
+            .unwrap_or_else(|payload| {
+                let text = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("cleanup panicked");
+                Err(Error::from(text))
+            });
+            match result {
                 Ok(true) => {}
                 Ok(false) => {
                     undos.push(undo);
                     break;
                 }
-                Err(_) => self
-                    .log
-                    .error(format_args!("effect \"{}\": cleanup panicked", self.label)),
+                Err(error) => {
+                    if propagate {
+                        return Err(error);
+                    }
+                    self.log
+                        .error(format_args!("effect \"{}\": {error}", self.label));
+                }
             }
         }
+        Ok(())
     }
     fn late(self: &Arc<Self>, undo: Undo) {
         let mut pending = vec![undo];
-        self.synchronous(&mut pending);
+        let _ = self.synchronous(&mut pending, false);
         if pending.is_empty() {
             return;
         }
@@ -212,9 +233,16 @@ impl Effect {
         }
     }
     pub(crate) fn begin(self: &Arc<Self>) {
+        let _ = self.begin_inner(false);
+    }
+    fn rollback(self: &Arc<Self>) -> Result<(), KernelError> {
+        self.begin_inner(true)
+            .map_err(|error| KernelError::Failed(Arc::new(error)))
+    }
+    fn begin_inner(self: &Arc<Self>, propagate: bool) -> Result<(), Error> {
         self.requested.store(true, Ordering::Release);
         if self.running.swap(true, Ordering::AcqRel) {
-            return;
+            return Ok(());
         }
         let begin = lock(&self.state).begin.take();
         if let Some(begin) = begin {
@@ -224,13 +252,20 @@ impl Effect {
             let mut state = lock(&self.state);
             state.ready.then(|| std::mem::take(&mut state.undos))
         };
-        let pending = pending.map(|mut undos| {
-            self.synchronous(&mut undos);
-            undos
-        });
+        let pending = match pending {
+            Some(mut undos) => {
+                if let Err(error) = self.synchronous(&mut undos, propagate) {
+                    drop(undos);
+                    self.complete();
+                    return Err(error);
+                }
+                Some(undos)
+            }
+            None => None,
+        };
         if pending.as_ref().is_some_and(Vec::is_empty) {
             self.complete();
-            return;
+            return Ok(());
         }
         if tokio::runtime::Handle::try_current().is_err() {
             self.log.error(format_args!(
@@ -240,7 +275,7 @@ impl Effect {
             let undos = std::mem::take(&mut lock(&self.state).undos);
             drop(undos);
             self.complete();
-            return;
+            return Ok(());
         }
         let effect = self.clone();
         fiber::spawn_for(self.ancestry.clone(), async move {
@@ -255,6 +290,7 @@ impl Effect {
             effect.cleanup(undos).await;
             effect.complete();
         });
+        Ok(())
     }
     pub(crate) async fn wait(&self) {
         loop {
@@ -419,11 +455,11 @@ impl Context {
         match result {
             Ok(Ok(())) => Ok(disposer),
             Ok(Err(error)) => {
-                disposer.effect.begin();
+                disposer.effect.rollback()?;
                 Err(error)
             }
             Err(_) => {
-                disposer.effect.begin();
+                disposer.effect.rollback()?;
                 Err(KernelError::Failed(Arc::new("effect setup panicked".into())).into())
             }
         }

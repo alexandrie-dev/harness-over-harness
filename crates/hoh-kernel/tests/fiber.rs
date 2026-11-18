@@ -214,14 +214,10 @@ async fn disposal_state(failed: bool, pending: bool) {
     .unwrap();
     let old = f.state();
     f.dispose().await;
-    let expected = if old == FiberState::Active {
-        vec![
-            (old, FiberState::Unloading),
-            (FiberState::Unloading, FiberState::Disposed),
-        ]
-    } else {
-        vec![(old, FiberState::Disposed)]
-    };
+    let expected = vec![
+        (old, FiberState::Unloading),
+        (FiberState::Unloading, FiberState::Disposed),
+    ];
     assert_eq!(*lock(&transitions), expected);
     assert!(f.is_disposed());
     k.shutdown().await;
