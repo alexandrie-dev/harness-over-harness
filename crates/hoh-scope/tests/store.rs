@@ -33,9 +33,9 @@ async fn mint(ctx: &Context, key: &ScopeKey) -> Scope {
     scope.ctx.fiber().settled().await.unwrap();
     scope
 }
-fn quiet(label: &'static str) -> EffectOptions {
+fn quiet(label: impl Into<Arc<str>>) -> EffectOptions {
     EffectOptions {
-        label,
+        label: label.into(),
         notify: false,
     }
 }
@@ -134,7 +134,7 @@ fn constructs_global_state_eagerly_while_reads_stay_non_creating_and_merge_named
 {
     let created = Arc::new(Mutex::new(Vec::new()));
     let c = created.clone();
-    let layers = ScopedLayers::new(
+    let layers = make_layers(
         move |scope| {
             c.lock().unwrap().push(scope.cloned());
             TestLayer::new(scope)
@@ -164,7 +164,7 @@ async fn uses_the_same_scoped_context_for_lazy_visibility_and_ownership_and_recl
     let created = Arc::new(Mutex::new(Vec::new()));
     let c = created.clone();
     let count = changed.clone();
-    let layers = ScopedLayers::new(
+    let layers = make_layers(
         move |selected| {
             c.lock().unwrap().push(selected.cloned());
             TestLayer::new(selected)
@@ -224,7 +224,7 @@ async fn runs_action_notification_undo_and_disposal_notification_in_order_with_c
     let ctx = kernel.root();
     let events = Arc::new(Mutex::new(Vec::new()));
     let e = events.clone();
-    let layers = ScopedLayers::new(TestLayer::new, move || e.lock().unwrap().push("notify"));
+    let layers = make_layers(TestLayer::new, move || e.lock().unwrap().push("notify"));
     let e = events.clone();
     let dispose = layers
         .effect(
@@ -259,7 +259,7 @@ async fn cleans_up_failed_factories_and_empty_failed_actions_without_discarding_
     let scope = mint(&kernel.root(), &key).await;
     let fail_factory = Arc::new(AtomicBool::new(true));
     let fail = fail_factory.clone();
-    let layers = ScopedLayers::try_new(
+    let layers = ScopedLayers::new(
         move |selected| {
             if selected.is_some() && fail.load(Ordering::SeqCst) {
                 return Err("factory failed".into());
@@ -312,7 +312,7 @@ async fn rolls_back_a_scoped_insertion_when_notification_throws() {
     let notifications = Arc::new(AtomicUsize::new(0));
     let e = events.clone();
     let n = notifications.clone();
-    let layers = ScopedLayers::try_new(
+    let layers = ScopedLayers::new(
         |selected| Ok(TestLayer::new(selected)),
         move || {
             e.lock().unwrap().push("notify");
@@ -345,51 +345,49 @@ async fn rolls_back_a_scoped_insertion_when_notification_throws() {
 
 #[tokio::test(start_paused = true)]
 async fn returns_the_exact_context_effect_disposer() {
-    use hoh_scope::store::RegistrationContext;
-    struct MockContext {
-        raw: Arc<()>,
-        labels: Mutex<Vec<&'static str>>,
-        logger: hoh_kernel::Logger,
-    }
-    impl RegistrationContext for MockContext {
-        type Disposer = Arc<()>;
-        fn scope_key(&self) -> Option<ScopeKey> {
-            None
-        }
-        fn logger(&self) -> hoh_kernel::Logger {
-            self.logger.clone()
-        }
-        fn try_effect(
-            &self,
-            label: &'static str,
-            _setup: impl FnOnce(&hoh_kernel::Undos) -> Result<(), Error>,
-        ) -> Result<Self::Disposer, Error> {
-            self.labels.lock().unwrap().push(label);
-            Ok(self.raw.clone())
-        }
-    }
     let kernel = Kernel::start();
-    let raw = Arc::new(());
-    let ctx = MockContext {
-        raw: raw.clone(),
-        labels: Mutex::new(Vec::new()),
-        logger: kernel.root().logger(),
-    };
-    let action_called = AtomicBool::new(false);
-    let layers = ScopedLayers::new(TestLayer::new, || {});
-    let returned = layers
+    let ctx = kernel.root().child("owner").unwrap();
+    let layers = make_layers(TestLayer::new, || {});
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let returned: hoh_kernel::Disposer = layers
         .effect(
             &ctx,
-            |_| {
-                action_called.store(true, Ordering::SeqCst);
-                Ok(EntryUndo::new(|| {}))
-            },
+            |layer| layer.named.insert("entry", 1),
             quiet("store.identity"),
         )
         .unwrap();
-    assert!(Arc::ptr_eq(&returned, &raw));
-    assert_eq!(*ctx.labels.lock().unwrap(), ["store.identity"]);
-    assert!(!action_called.load(Ordering::SeqCst));
+    assert_eq!(layers.global.named.get("entry"), Some(1));
+    ctx.try_effect::<Error>("composite", |undos| {
+        let l = layers.clone();
+        let o = order.clone();
+        undos.push(hoh_kernel::Undo::sync(move || {
+            assert!(l.global.is_empty());
+            o.lock().unwrap().push("outer");
+        }))?;
+        undos.push(returned)?;
+        let l = layers.clone();
+        let o = order.clone();
+        let entered = entered.clone();
+        let gate = gate.clone();
+        undos.push(hoh_kernel::Undo::future(move || async move {
+            entered.notify_one();
+            gate.notified().await;
+            assert_eq!(l.global.named.get("entry"), Some(1));
+            o.lock().unwrap().push("inner");
+            Ok(())
+        }))?;
+        Ok(())
+    })
+    .unwrap();
+    let dispose = ctx.fiber().dispose();
+    entered.notified().await;
+    assert_eq!(layers.global.named.get("entry"), Some(1));
+    gate.notify_one();
+    dispose.await;
+    assert_eq!(*order.lock().unwrap(), ["inner", "outer"]);
+    assert!(layers.global.is_empty());
     kernel.shutdown().await;
 }
 
@@ -397,7 +395,7 @@ async fn returns_the_exact_context_effect_disposer() {
 async fn merges_ancestor_layers_nearest_last_with_stable_name_order_and_live_rebinding() {
     let kernel = Kernel::start();
     let ctx = kernel.root();
-    let layers = ScopedLayers::new(TestLayer::new, || {});
+    let layers = make_layers(TestLayer::new, || {});
     let root_key = ScopeKey::new();
     let missing = ScopeKey::new();
     let child_key = ScopeKey::new();
@@ -504,7 +502,7 @@ fn live_keys_and_entries_skip_deletions_observe_reinsertions_and_stay_exhausted(
 async fn actions_can_reenter_the_registry() {
     let kernel = Kernel::start();
     let ctx = kernel.root();
-    let layers = ScopedLayers::new(TestLayer::new, || {});
+    let layers = make_layers(TestLayer::new, || {});
     let scope = mint(&ctx, &ScopeKey::new()).await;
     let nested = layers.clone();
     let outer = layers
@@ -541,7 +539,7 @@ async fn actions_can_reenter_the_registry() {
 async fn kernel_retains_the_effect_label_for_cleanup_diagnostics() {
     let kernel = Kernel::start();
     let ctx = kernel.root();
-    let layers = ScopedLayers::new(TestLayer::new, || {});
+    let layers = make_layers(TestLayer::new, || {});
     let dispose = layers
         .effect(
             &ctx,
@@ -552,7 +550,7 @@ async fn kernel_retains_the_effect_label_for_cleanup_diagnostics() {
     dispose.dispose().await;
     assert_eq!(
         ctx.logger().buffer().last().unwrap().message,
-        "effect \"store.label\": cleanup panicked"
+        "effect \"store.label\": test cleanup panic"
     );
     kernel.shutdown().await;
 }
@@ -563,7 +561,7 @@ async fn inactive_contexts_do_not_call_the_factory_or_action() {
     let scope = mint(&kernel.root(), &ScopeKey::new()).await;
     let created = Arc::new(AtomicUsize::new(0));
     let count = created.clone();
-    let layers = ScopedLayers::new(
+    let layers = make_layers(
         move |scope| {
             count.fetch_add(1, Ordering::SeqCst);
             TestLayer::new(scope)
@@ -593,7 +591,7 @@ async fn failed_cleanup_notification_keeps_the_removal_and_the_original_effect_l
     .unwrap();
     let count = Arc::new(AtomicUsize::new(0));
     let calls = count.clone();
-    let layers = ScopedLayers::try_new(
+    let layers = ScopedLayers::new(
         |key| Ok(TestLayer::new(key)),
         move || {
             if calls.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -608,7 +606,7 @@ async fn failed_cleanup_notification_keeps_the_removal_and_the_original_effect_l
         .effect(
             &scope.ctx,
             |layer| layer.named.insert("entry", 1),
-            EffectOptions::new("store.cleanup"),
+            EffectOptions::new(format!("store.{}", "cleanup")),
         )
         .unwrap();
     let key = scope_of(&scope.ctx).unwrap();
@@ -622,5 +620,94 @@ async fn failed_cleanup_notification_keeps_the_removal_and_the_original_effect_l
     );
     scope.dispose().await;
     assert_eq!(count.load(Ordering::SeqCst), 2);
+    kernel.shutdown().await;
+}
+
+fn make_layers(
+    factory: impl Fn(Option<&ScopeKey>) -> TestLayer + Send + Sync + 'static,
+    changed: impl Fn() + Send + Sync + 'static,
+) -> ScopedLayers<TestLayer> {
+    ScopedLayers::new(
+        move |key| Ok(factory(key)),
+        move || {
+            changed();
+            Ok(())
+        },
+    )
+    .unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn rollback_on_change_failure_replaces_the_initial_on_change_failure() {
+    let kernel = Kernel::start();
+    let scope = create_scope(&kernel.root(), ScopeKey::new(), Default::default()).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let layers = ScopedLayers::new(
+        |key| Ok(TestLayer::new(key)),
+        move || {
+            let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+            Err(format!("change failed #{n}").into())
+        },
+    )
+    .unwrap();
+    let error = layers
+        .effect(
+            &scope.ctx,
+            |l| l.named.insert("rollback", 1),
+            EffectOptions::new(format!("entry:{}", 1)),
+        )
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "change failed #2");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(layers.peek(scope_of(&scope.ctx).as_ref()).is_none());
+    scope.dispose().await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    kernel.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn layer_is_empty_may_read_its_own_registry_during_cleanup() {
+    struct Reentrant {
+        entries: AnonymousEntries<u32>,
+        key: Option<ScopeKey>,
+        registry: std::sync::Weak<Mutex<Option<ScopedLayers<Reentrant>>>>,
+    }
+    impl ScopeLayer for Reentrant {
+        fn is_empty(&self) -> bool {
+            if let Some(holder) = self.registry.upgrade()
+                && let Some(registry) = holder.lock().unwrap().as_ref()
+            {
+                let _ = registry.peek(self.key.as_ref());
+            }
+            self.entries.is_empty()
+        }
+    }
+    let kernel = Kernel::start();
+    let scope = create_scope(&kernel.root(), ScopeKey::new(), Default::default()).unwrap();
+    let holder = Arc::new(Mutex::new(None));
+    let registry = Arc::downgrade(&holder);
+    let layers = ScopedLayers::new(
+        move |key| {
+            Ok(Reentrant {
+                entries: AnonymousEntries::new(),
+                key: key.cloned(),
+                registry: registry.clone(),
+            })
+        },
+        || Ok(()),
+    )
+    .unwrap();
+    *holder.lock().unwrap() = Some(layers.clone());
+    layers
+        .effect(
+            &scope.ctx,
+            |l| Ok(l.entries.append(1)),
+            quiet("reentrant.empty"),
+        )
+        .unwrap();
+    scope.dispose().await;
+    assert!(layers.peek(scope_of(&scope.ctx).as_ref()).is_none());
     kernel.shutdown().await;
 }

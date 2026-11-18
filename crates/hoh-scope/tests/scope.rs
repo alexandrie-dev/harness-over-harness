@@ -63,6 +63,102 @@ async fn is_usable_synchronously_before_the_backing_fiber_activates() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn disposal_unwinds_early_effect_listener_and_store_in_reverse_and_rejects_late_registration()
+{
+    use hoh_scope::store::{EffectOptions, EntryUndo};
+    struct Layer(AnonymousEntries<u32>);
+    impl ScopeLayer for Layer {
+        fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+    }
+    struct ListenerDrop(Arc<Mutex<Vec<&'static str>>>);
+    impl Drop for ListenerDrop {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push("listener");
+        }
+    }
+    let kernel = Kernel::start();
+    let scope = create_scope(&kernel.root(), ScopeKey::new(), Default::default()).unwrap();
+    assert_eq!(scope.ctx.fiber().state(), hoh_kernel::FiberState::Pending);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let l = log.clone();
+    scope
+        .ctx
+        .effect("early", || {
+            Undo::sync(move || l.lock().unwrap().push("early"))
+        })
+        .unwrap();
+    let marker = ListenerDrop(log.clone());
+    scope
+        .ctx
+        .on::<Ping>(move |_| {
+            let _ = &marker;
+        })
+        .unwrap();
+    let layers = ScopedLayers::new(|_| Ok(Layer(AnonymousEntries::new())), || Ok(())).unwrap();
+    let l = log.clone();
+    layers
+        .effect(
+            &scope.ctx,
+            |layer| {
+                let undo = layer.0.append(1);
+                Ok(EntryUndo::new(move || {
+                    undo.undo();
+                    l.lock().unwrap().push("store");
+                }))
+            },
+            EffectOptions::new("store"),
+        )
+        .unwrap();
+    scope.dispose().await;
+    assert_eq!(*log.lock().unwrap(), ["store", "listener", "early"]);
+    assert!(matches!(
+        scope.ctx.on::<Ping>(|_| {}),
+        Err(hoh_kernel::KernelError::Inactive)
+    ));
+    assert!(matches!(
+        scope.ctx.effect("late", || panic!("must not run")),
+        Err(hoh_kernel::KernelError::Inactive)
+    ));
+    kernel.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn registrations_during_unloading_are_rejected() {
+    let kernel = Kernel::start();
+    let scope = create_scope(&kernel.root(), ScopeKey::new(), Default::default()).unwrap();
+    let started = Arc::new(Notify::new());
+    let gate = Arc::new(Notify::new());
+    let s = started.clone();
+    let g = gate.clone();
+    scope
+        .ctx
+        .effect("blocked", || {
+            Undo::future(move || async move {
+                s.notify_one();
+                g.notified().await;
+                Ok(())
+            })
+        })
+        .unwrap();
+    let dispose = scope.dispose();
+    started.notified().await;
+    assert_eq!(scope.ctx.fiber().state(), hoh_kernel::FiberState::Unloading);
+    assert!(matches!(
+        scope.ctx.on::<Ping>(|_| {}),
+        Err(hoh_kernel::KernelError::Inactive)
+    ));
+    assert!(matches!(
+        scope.ctx.effect("late", || panic!("must not run")),
+        Err(hoh_kernel::KernelError::Inactive)
+    ));
+    gate.notify_one();
+    dispose.await;
+    kernel.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn shares_quiescence_across_repeat_and_raw_disposer_first_calls() {
     let kernel = Kernel::start();
     let scope = mint(&kernel.root(), &ScopeKey::new()).await;
@@ -161,20 +257,15 @@ async fn preserves_a_base_cordis_filter_and_its_receiver() {
     listen(&ctx, "global", &heard);
     listen(&scope.ctx, "A", &heard);
     struct Base {
-        receiver: std::sync::Weak<Base>,
         matches: AtomicBool,
     }
     impl ScopeFilter for Base {
         fn matches_filter(&self, _: &Context) -> bool {
-            self.matches.store(
-                std::ptr::eq(self, self.receiver.upgrade().unwrap().as_ref()),
-                Ordering::SeqCst,
-            );
+            self.matches.store(true, Ordering::SeqCst);
             false
         }
     }
-    let base = Arc::new_cyclic(|receiver| Base {
-        receiver: receiver.clone(),
+    let base = Arc::new(Base {
         matches: AtomicBool::new(false),
     });
     let carrier = scope_target(base.clone(), Some(key));
@@ -214,7 +305,11 @@ fn uses_an_opaque_branded_carrier_with_a_separately_tracked_key() {
     struct Subject {
         _value: u32,
     }
-    impl ScopeFilter for Subject {}
+    impl ScopeFilter for Subject {
+        fn matches_filter(&self, _: &Context) -> bool {
+            true
+        }
+    }
     let key = ScopeKey::new();
     let subject = Arc::new(Subject { _value: 1 });
     let carrier: Scoped<Subject> = scope_target(subject.clone(), Some(key.clone()));

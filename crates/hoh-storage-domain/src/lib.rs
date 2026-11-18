@@ -15,7 +15,7 @@ pub use spec::{
 
 use hoh_error::{BoxError, SharedError};
 use hoh_kernel::{Cfg, Context, Inject, PluginDef, PluginOptions, Service, Undo, plugin, service};
-use hoh_storage::{Storage, storage_backend_service_key};
+use hoh_storage::{KvUnit, Storage, StorageBackend, storage_backend_service_key};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -100,38 +100,10 @@ impl DomainFacility {
         let (tx, rx) = tokio::sync::oneshot::channel();
         // As with a JS Promise, dropping the awaiting future does not cancel open.
         tokio::spawn(async move {
-            let result=async {
-                // The kv facet was checked immediately before starting this open.
-                let unit=backend.kv().expect("backend facets are immutable").open(descriptor_of(&spec)).await?;
-                let loaded=async {
-                    let snapshot=unit.load_all().await?;let mut tables=IndexMap::new();
-                    for (table,table_spec) in &spec.tables {
-                        let mut records=IndexMap::new();
-                        if let Some(saved)=snapshot.tables.get(table) {
-                            for key in js_keys(saved) {
-                                match parse_record(&spec.name,table,&key,|| (table_spec.parser)(&saved[&key])) {
-                                    Ok(value)=>{records.insert(key,value);},
-                                    Err(error)=>{
-                                        if spec.invalid_records!=Some(InvalidRecords::BackupAndSkip) {return Err(Box::new(error) as BoxError);}
-                                        let Some(backup)=unit.backup_record(table,&key) else {return Err(Box::new(error) as BoxError);};
-                                        let moved=backup.await?;
-                                        let cause=error.cause().map_or_else(||"undefined".into(),|cause|error::js_error_string(cause));
-                                        inner.ctx.logger().error(format!("domain '{}': stored record '{key}' in table '{table}' failed schema validation; moved to '{moved}' and treated as absent. Cause: {cause}",spec.name));
-                                    },
-                                }
-                            }
-                        }
-                        tables.insert(table.clone(),records);
-                    }
-                    let global=match &spec.global {None=>None,Some(global) if snapshot.global.is_null()=>Some(global.initial.clone()),Some(global)=>Some(parse_record(&spec.name,"","",||(global.parser)(&snapshot.global))?)};
-                    let owner=Arc::downgrade(&inner);let name=spec.name.clone();
-                    let domain=Domain::new(inner.ctx.clone(),&spec,unit.clone(),tables,global,move|| {
-                        if let Some(owner)=owner.upgrade() {let mut state=lock(&owner.state);state.domains.shift_remove(&name);state.reserved.shift_remove(&name);}
-                    });
-                    lock(&inner.state).domains.insert(spec.name.clone(),domain.clone());Ok(domain)
-                }.await;
-                match loaded {Ok(domain)=>Ok(domain),Err(error)=>{unit.close().await?;Err(error)}}
-            }.await.map_err(SharedError::new);
+            let result = inner
+                .open_domain(&spec, backend.as_ref())
+                .await
+                .map_err(SharedError::new);
             if result.is_err() {
                 lock(&inner.state).reserved.shift_remove(&spec.name);
             }
@@ -158,6 +130,97 @@ impl DomainFacility {
         })
     }
 }
+
+impl FacilityInner {
+    async fn open_domain(
+        self: &Arc<Self>,
+        spec: &DomainSpec,
+        backend: &dyn StorageBackend,
+    ) -> Result<Arc<Domain>, BoxError> {
+        // The kv facet was checked immediately before starting this open.
+        let unit = backend
+            .kv()
+            .expect("backend facets are immutable")
+            .open(descriptor_of(spec))
+            .await?;
+        match self.load_domain(spec, unit.clone()).await {
+            Ok(domain) => Ok(domain),
+            Err(error) => {
+                unit.close().await?;
+                Err(error)
+            }
+        }
+    }
+
+    async fn load_domain(
+        self: &Arc<Self>,
+        spec: &DomainSpec,
+        unit: Arc<dyn KvUnit>,
+    ) -> Result<Arc<Domain>, BoxError> {
+        let snapshot = unit.load_all().await?;
+        let mut tables = IndexMap::new();
+        for (table, table_spec) in &spec.tables {
+            let mut records = IndexMap::new();
+            if let Some(saved) = snapshot.tables.get(table) {
+                for key in js_keys(saved) {
+                    match parse_record(&spec.name, table, &key, || {
+                        (table_spec.parser)(&saved[&key])
+                    }) {
+                        Ok(value) => {
+                            records.insert(key, value);
+                        }
+                        Err(error) => {
+                            if spec.invalid_records != Some(InvalidRecords::BackupAndSkip) {
+                                return Err(Box::new(error));
+                            }
+                            let Some(backup) = unit.backup_record(table, &key) else {
+                                return Err(Box::new(error));
+                            };
+                            let moved = backup.await?;
+                            let cause = error.cause().map_or_else(
+                                || "undefined".into(),
+                                |cause| error::js_error_string(cause),
+                            );
+                            self.ctx.logger().error(format!(
+                                "domain '{}': stored record '{key}' in table '{table}' failed schema validation; moved to '{moved}' and treated as absent. Cause: {cause}",
+                                spec.name
+                            ));
+                        }
+                    }
+                }
+            }
+            tables.insert(table.clone(), records);
+        }
+        let global = match &spec.global {
+            None => None,
+            Some(global) if snapshot.global.is_null() => Some(global.initial.clone()),
+            Some(global) => Some(parse_record(&spec.name, "", "", || {
+                (global.parser)(&snapshot.global)
+            })?),
+        };
+        let owner = Arc::downgrade(self);
+        let name = spec.name.clone();
+        let domain = Domain::new(
+            self.ctx.clone(),
+            spec,
+            unit.clone(),
+            tables,
+            global,
+            move || {
+                if let Some(owner) = owner.upgrade() {
+                    let mut state = lock(&owner.state);
+                    state.domains.shift_remove(&name);
+                    state.reserved.shift_remove(&name);
+                }
+            },
+        );
+        lock(&self.state)
+            .domains
+            .insert(spec.name.clone(), domain.clone());
+        Ok(domain)
+    }
+}
+
 fn parse_record<T>(
     domain: &str,
     table: &str,

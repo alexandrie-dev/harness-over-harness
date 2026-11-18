@@ -6,8 +6,8 @@
 |---|---|---|
 | `src/index.ts` | `src/lib.rs` | все 13 собственных экспортов; синхронный scope, точный disposer, исходная композиция фильтра |
 | `src/store.ts` | `src/store.rs` | все 4 экспорта; живые таблицы, поколения, слияние, владение и откат эффектов |
-| `tests/scope.spec.ts` | `tests/scope.rs` | все 11 исходных случаев; ещё 7 собственных проверок |
-| `tests/store.spec.ts` | `tests/store.rs` | все 10 исходных случаев; ещё 6 собственных проверок |
+| `tests/scope.spec.ts` | `tests/scope.rs` | все 11 исходных случаев; дополнительные lifecycle-проверки |
+| `tests/store.spec.ts` | `tests/store.rs` | все 10 исходных случаев; дополнительные regression-проверки |
 | `README.md` | rustdoc API и эти заметки | прочитан, контракт учтён |
 
 У образца нет `locale/`, отдельного `LICENSE` или отдельно лицензированного фрагмента.
@@ -48,8 +48,8 @@ Adoption снимает самостоятельное владение child-ef
 
 `scope_target(base: Arc<T>, key: Option<ScopeKey>) -> Scoped<T>`, где `T: ScopeFilter`, сохраняет тип
 предмета без предоставления его полей. Trait `ScopeFilter` — типизированное свойство `Context.filter`:
-обычный предмет реализует пустой `impl ScopeFilter for Subject {}`, фильтрованный предмет переопределяет
-`matches_filter(&self, listener: &Context)`. `Context` реализует trait через свой существующий
+каждый предмет явно реализует `matches_filter(&self, listener: &Context)`; сервис передаёт свою
+isolation-проверку. Автоматического допуска по умолчанию нет. `Context` реализует trait через свой существующий
 `matches_filter`; `()` — предмет без фильтра; сам `Scoped<T>` тоже сохраняет свой фильтр как base.
 `Arc` сохраняет точный receiver вызова. При `carrier.context(&emitter).emit(&event)` сначала вызывается
 фильтр **base**, затем читается ближайшая scope-метка **listener** и его допуск по цепочке родителей.
@@ -65,6 +65,8 @@ Adoption снимает самостоятельное владение child-ef
 Идентификаторы `ScopeKey` — отдельные значения, сохраняющие тождество при `Clone`, вместо произвольного
 объекта JavaScript. Предмет хранит свой ключ отдельно; сравнение и Hash зависят только от неизменной
 идентичности. Родитель хранится в самом ключе, таблицы и переносчики не используют глобальные реестры.
+Удалённые слоты физически удаляются из IndexMap; монотонный id сохраняет позицию живого итератора.
+Тест 9 999 add/remove циклов с постоянной записью проверяет длину, capacity и продолжение итератора.
 Единственный static — разрешённый AtomicU64 выдачи уникальных id; предел 2^64 выдач — инвариант времени
 жизни процесса. Обход, проверка и освобождение неограниченных цепочек итеративны. Между потоками записи
 родителя и чтение цепочки проверяют согласованный снимок под блокировками с единым порядком.
@@ -88,27 +90,27 @@ compile-fail doctests вместо JS `in`/unknown/Symbol-проверок (§8 
 `ScopeLayer` — trait с `is_empty`. `ScopedLayers<L>::global: Arc<L>` создаётся сразу; `peek` никогда
 не создаёт overlay и не читает предков. `chain_layers` возвращает существующие слои дальних предков
 сначала; `merge` возвращает `IndexMap`, где ближайший слой выигрывает без перемещения позиции имени.
-`new` принимает неошибающиеся factory/onChange, `try_new` — callbacks с `Result`.
+Единственный `new` соответствует исходному constructor, принимает callbacks с `Result` и возвращает `Result`.
 `EffectOptions::new(label)` задаёт исходный `notify = true`; поле `notify: false` отключает оба уведомления.
 
 `ScopedLayers::effect(&ctx, action, options)` непосредственно возвращает disposer контекста:
 `Context` вызывает настоящий `try_effect`, действие возвращает `Result<EntryUndo, BoxError>`, undo
 собирается **до** onChange. Ошибка уведомления откатывает вставку; освобождается только полностью пустой
 агрегат слоя. Ошибки factory и action сохраняют исходный порядок и условия удаления слоя. Ошибка
-cleanup-уведомления оставляет удаление выполненным и логируется с исходной меткой эффекта.
+cleanup-уведомления оставляет удаление выполненным и передаётся ядру через Undo::try_sync.
+При двойном синхронном отказе onChange (#1) и rollback onChange (#2) вызывающий получает #2.
 Синхронные мутации атомарны между потоками; повторный вход того же потока из factory/action/onChange
 допускается, внутренние mutex не удерживаются при callbacks или await.
 
-Дополнительный trait `store::RegistrationContext` выражает структурный аргумент исходного `effect`.
-У него associated `Disposer`, методы `scope_key`, `logger`, `try_effect`; обычный `Context` реализует его
-прямой передачей в ядро. Это позволяет перенести исходный mock **без** запуска setup: проверяются точное
-тождество возвращённого значения, единственный label и невызванный action. В production вызывающий
-по-прежнему передаёт `&Context` и получает настоящий `hoh_kernel::Disposer`.
+RegistrationContext удалён: effect принимает только &Context и возвращает настоящий Disposer.
+Exact disposer проверен на реальном Context через adoption с асинхронным inner gate: пока inner
+заблокирован, запись ещё существует; после него outer уже не видит её.
+Обёртка, оставляющая исходный эффект самостоятельным sibling, эту проверку не проходит.
 
-Новые публичные символы помимо исходных экспортов: `ScopeError`, `ScopeFilter`,
-`store::{EntryUndo, EffectOptions, RegistrationContext, Values, Keys, Entries}` и их описанные методы.
-Стандартные `new`/`Default`/`Clone` заменяют конструкторы и копирование ссылок JS. `Clone` таблиц и
-слоёв разделяет исходное состояние, не копирует регистрации. Labels имеют тип `&'static str`, как у ядра.
+Новые публичные символы: ScopeError, ScopeFilter, Scoped::admits, Scoped::context,
+store::{EntryUndo, EffectOptions, Values, Keys, Entries} и их описанные методы.
+EffectOptions::new(label: impl Into<Arc<str>>) принимает динамические метки и хранит Arc<str>.
+Стандартные new/Default/Clone заменяют конструкторы и копирование ссылок JS; таблицы разделяют состояние.
 
 ### Ошибки и устранённые ограничения ядра
 
@@ -158,16 +160,34 @@ JS type/unknown/Symbol-assertions выражены типами и двумя co
 
 ## Вопросы ведущему
 
-Нет. Дополнительных API ядра не требуется; незавершённых частей переноса нет.
+Нет. Дополнительных API ядра не требуется; замечания независимого ревью исправлены.
 
 ## Проверки
 
 Команды из корня workspace, каждая с
 `CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w2`:
 
-- `cargo test -p hoh-scope`: scope — **18 passed; 0 failed**; store — **16 passed; 0 failed**;
-  doctests — **2 passed; 0 failed**; unit — 0/0. Всего **36 passed; 0 failed**.
+- `cargo test -p hoh-scope`: scope — **20 passed; 0 failed**; store — **18 passed; 0 failed**;
+  doctests — **2 passed; 0 failed**; unit — **1 passed; 0 failed**. Всего **41 passed; 0 failed**.
 - `cargo clippy -p hoh-scope --all-targets -- -D warnings`: exit 0.
 - `cargo fmt -p hoh-scope -- --check`: exit 0.
 
 Изменения ограничены `crates/hoh-scope`; source dsh и остальные crates только прочитаны.
+
+## Раунд независимого ревью (2026-11-18)
+
+1. Динамические labels принимаются через impl Into<Arc<str>>, включая String из format!.
+2. Двойной onChange с notify=true возвращает change failed #2; undo собран до уведомления.
+3. RegistrationContext и mock удалены; реальный Context проверяет точный Disposer. Остался один
+   fallible new, соответствующий исходному constructor.
+4. Cleanup вызывает layer.is_empty до scoped mutex; тест is_empty читает тот же реестр.
+5. Слоты уплотняются с сохранением порядка и стабильных id; добавлен bounded-storage test.
+6. ScopeFilter::matches_filter обязателен. Самосравнение receiver удалено; проверяются veto и доставка.
+7. Проверены Inactive после dispose и в Unloading, обратный порядок store → listener → early.
+8. Дополнительные намеренные отличия от source:
+   - create_scope может вернуть KernelError::Inactive после создания ребёнка, если родитель начал unload
+     между Context::child и Fiber::disposer; source не имеет этого межпоточного окна.
+   - после scope.dispose чтение через сохранённый scope.ctx возвращает None; source ещё возвращает
+     committed значение создателя. Это намеренный kernel R70, не незавершённость scope.
+   - прямое disposal cleanup-error логируется вместо возврата Err (kernel R22, Output=()).
+9. Panic diagnostic сохраняет payload: effect "store.label": test cleanup panic.

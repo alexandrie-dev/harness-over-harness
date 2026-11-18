@@ -148,14 +148,15 @@ pub struct DomainSpec {
     pub global: Option<ErasedGlobalSpec>,
 }
 fn natural(value: &Value) -> Option<u64> {
-    value.as_u64().or_else(|| {
-        value
-            .as_f64()
-            .filter(|n| {
-                n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= 9_007_199_254_740_992.0
-            })
-            .map(|n| n as u64)
-    })
+    const MAX_JSON_INTEGER: u64 = 1 << 53;
+    if let Some(number) = value.as_u64() {
+        // Do not round a rejected integer through f64 into the accepted range.
+        return (number <= MAX_JSON_INTEGER).then_some(number);
+    }
+    value
+        .as_f64()
+        .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= MAX_JSON_INTEGER as f64)
+        .map(|n| n as u64)
 }
 pub fn define_domain(spec: DomainSpecInput) -> Result<DomainSpec, BoxError> {
     let invalid = |message| -> BoxError { Box::new(PlainError(message)) };

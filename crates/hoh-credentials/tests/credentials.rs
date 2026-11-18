@@ -392,3 +392,74 @@ async fn record_notifications_follow_only_committed_replacements_and_deletions()
     assert!(warnings(&ctx).is_empty());
     kernel.shutdown().await;
 }
+
+#[tokio::test(start_paused = true)]
+async fn reference_notifications_ignore_the_provider_context_filter() {
+    let kernel = Kernel::start();
+    let root = kernel.root();
+    root.with_filter(|_| false)
+        .plugin::<memory::MemoryCredentialsPlugin>(json!({}))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let seen = events.clone();
+    root.on_contained::<CredentialsReferenceUpdated>(move |event| {
+        seen.lock().unwrap().push(event.reference.clone());
+        Ok(())
+    })
+    .unwrap();
+    let provider = root.get::<Credentials>().unwrap();
+    let reference = credential_ref("FILTERED_PROVIDER_KEY").unwrap();
+    provider.set(&reference, "committed").await.unwrap();
+    let resolved = provider.resolve(&reference).await.unwrap();
+    let received = events.lock().unwrap().clone();
+    kernel.shutdown().await;
+    assert_eq!(
+        resolved,
+        Some(ResolvedCredential {
+            value: "committed".into(),
+            source: "memory".into(),
+        })
+    );
+    assert_eq!(received.as_slice(), std::slice::from_ref(&reference));
+}
+
+#[tokio::test(start_paused = true)]
+async fn record_notifications_ignore_the_provider_context_filter() {
+    let kernel = Kernel::start();
+    let root = kernel.root();
+    root.with_filter(|_| false)
+        .plugin::<memory::MemoryCredentialsPlugin>(json!({}))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let seen = events.clone();
+    root.on_contained::<CredentialsRecordUpdated>(move |event| {
+        seen.lock().unwrap().push(event.key.clone());
+        Ok(())
+    })
+    .unwrap();
+    let provider = root.get::<Credentials>().unwrap();
+    let key = credential_key("filtered-provider", "record").unwrap();
+    let expected = CredentialRecord::Grant(GrantRecord {
+        payload: json!({"token":"committed"}),
+    });
+    let replacement = expected.clone();
+    let committed = provider
+        .modify_record(
+            &key,
+            Box::new(move |_| Box::pin(async move { Ok(Some(replacement)) })),
+        )
+        .await
+        .unwrap();
+    let stored = provider.read_record(&key).await.unwrap();
+    let received = events.lock().unwrap().clone();
+    kernel.shutdown().await;
+    assert_eq!(committed, Some(expected.clone()));
+    assert_eq!(stored, Some(expected));
+    assert_eq!(received.as_slice(), std::slice::from_ref(&key));
+}

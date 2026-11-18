@@ -133,7 +133,7 @@ impl DeepSeekLlmApiExtensionRegistry {
         T: Serialize + Send + 'static,
         P: DeepSeekLlmApiExtensionProvider<T>,
     {
-        if field.is_empty() || field.trim_matches(js_whitespace) != field {
+        if field.is_empty() || hoh_util_values::js_trim(field) != field {
             return Err(ExtensionError::InvalidField.into());
         }
         let state = self.state.clone();
@@ -142,8 +142,8 @@ impl DeepSeekLlmApiExtensionRegistry {
             provider: Arc::new(provider),
             marker: std::marker::PhantomData,
         });
-        // The exact dynamic label awaits owned labels in hoh-kernel (PORT_NOTES §1).
-        ctx.try_effect("deepseekLlmApiExtensions.register", move |undos| {
+        let label = format!("deepseekLlmApiExtensions.register({})", quote_field(&field));
+        ctx.try_effect(label, move |undos| {
             {
                 let mut state = lock(&state);
                 if state.providers.contains_key(&field) {
@@ -249,12 +249,4 @@ fn field_order(field: &str) -> (u8, u32) {
         Ok(index) if index != u32::MAX && index.to_string() == field => (0, index),
         _ => (1, 0),
     }
-}
-
-// ECMAScript WhiteSpace + LineTerminator: Rust's trim includes U+0085 and
-// excludes U+FEFF, so the ordinary str::trim would validate different fields.
-fn js_whitespace(c: char) -> bool {
-    matches!(c, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}'
-        | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}'
-        | '\u{205f}' | '\u{3000}' | '\u{feff}')
 }

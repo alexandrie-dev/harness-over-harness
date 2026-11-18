@@ -2,7 +2,7 @@
 
 use crate::{ScopeKey, lock, scope_chain_of, scope_of};
 use hoh_error::BoxError as Error;
-use hoh_kernel::{Context, Disposer, Logger, Undo, Undos};
+use hoh_kernel::{Context, Disposer, Undo};
 use indexmap::IndexMap;
 use std::{
     sync::{Arc, Condvar, Mutex},
@@ -31,16 +31,18 @@ impl From<EntryUndo> for Undo {
     }
 }
 
-type Slot<V> = Option<(Option<String>, V)>;
+type Slot<V> = (Option<String>, V);
 struct Generation<V> {
-    slots: Vec<Slot<V>>,
-    names: IndexMap<String, usize>,
+    slots: IndexMap<u64, Slot<V>>,
+    next_slot: u64,
+    names: IndexMap<String, u64>,
     count: usize,
 }
 impl<V> Default for Generation<V> {
     fn default() -> Self {
         Self {
-            slots: Vec::new(),
+            slots: IndexMap::new(),
+            next_slot: 0,
             names: IndexMap::new(),
             count: 0,
         }
@@ -75,11 +77,12 @@ impl<V: Send + 'static> Table<V> {
         {
             return Err(());
         }
-        let index = data.slots.len();
+        let index = data.next_slot;
+        data.next_slot += 1;
         if let Some(name) = &name {
             data.names.insert(name.clone(), index);
         }
-        data.slots.push(Some((name, value)));
+        data.slots.insert(index, (name, value));
         data.count += 1;
         drop(data);
         drop(current);
@@ -87,12 +90,19 @@ impl<V: Send + 'static> Table<V> {
         Ok(EntryUndo::new(move || {
             let mut current = lock(&table.current);
             let mut data = lock(&generation);
-            let removed = data.slots[index].take();
+            let removed = data.slots.shift_remove(&index);
             if let Some((name, _)) = &removed {
                 if let Some(name) = name {
                     data.names.shift_remove(name);
                 }
                 data.count -= 1;
+                let limit = data.count.max(16) * 4;
+                if data.slots.capacity() > limit {
+                    data.slots.shrink_to_fit();
+                }
+                if data.names.capacity() > limit {
+                    data.names.shrink_to_fit();
+                }
                 if data.count == 0 && Arc::ptr_eq(&current, &generation) {
                     *current = Arc::new(Mutex::new(Generation::default()));
                 }
@@ -117,7 +127,7 @@ impl<V: Send + 'static> Table<V> {
 
 struct Cursor<V> {
     generation: Arc<Mutex<Generation<V>>>,
-    index: usize,
+    index: u64,
     done: bool,
 }
 impl<V> Cursor<V> {
@@ -126,12 +136,11 @@ impl<V> Cursor<V> {
             return None;
         }
         let data = lock(&self.generation);
-        while self.index < data.slots.len() {
-            let index = self.index;
-            self.index += 1;
-            if let Some((name, value)) = &data.slots[index] {
-                return Some(pick(name, value));
-            }
+        if let Some((&index, (name, value))) =
+            data.slots.iter().find(|(index, _)| **index >= self.index)
+        {
+            self.index = index + 1;
+            return Some(pick(name, value));
         }
         self.done = true;
         None
@@ -199,7 +208,7 @@ impl<V: Send + 'static, E> NamedEntries<V, E> {
         let current = lock(&self.table.current);
         let data = lock(&current);
         let index = data.names.get(name)?;
-        data.slots[*index].as_ref().map(|(_, value)| value.clone())
+        data.slots.get(index).map(|(_, value)| value.clone())
     }
     pub fn has(&self, name: &str) -> bool {
         lock(&lock(&self.table.current)).names.contains_key(name)
@@ -267,45 +276,15 @@ pub trait ScopeLayer: Send + Sync + 'static {
     fn is_empty(&self) -> bool;
 }
 
-/// The structural context contract used by a registry registration.
-/// `Context` delegates directly to the kernel. The associated return type keeps
-/// the identity of a context's disposer, including contexts that defer setup.
-pub trait RegistrationContext {
-    type Disposer;
-    fn scope_key(&self) -> Option<ScopeKey>;
-    fn logger(&self) -> Logger;
-    fn try_effect(
-        &self,
-        label: &'static str,
-        setup: impl FnOnce(&Undos) -> Result<(), Error>,
-    ) -> Result<Self::Disposer, Error>;
-}
-impl RegistrationContext for Context {
-    type Disposer = Disposer;
-    fn scope_key(&self) -> Option<ScopeKey> {
-        scope_of(self)
-    }
-    fn logger(&self) -> Logger {
-        Context::logger(self)
-    }
-    fn try_effect(
-        &self,
-        label: &'static str,
-        setup: impl FnOnce(&Undos) -> Result<(), Error>,
-    ) -> Result<Disposer, Error> {
-        Context::try_effect(self, label, setup)
-    }
-}
-
 /// Effect label and change notification policy. Notification defaults to true.
 pub struct EffectOptions {
-    pub label: &'static str,
+    pub label: Arc<str>,
     pub notify: bool,
 }
 impl EffectOptions {
-    pub fn new(label: &'static str) -> Self {
+    pub fn new(label: impl Into<Arc<str>>) -> Self {
         Self {
-            label,
+            label: label.into(),
             notify: true,
         }
     }
@@ -368,26 +347,8 @@ impl<L> Clone for ScopedLayers<L> {
     }
 }
 impl<L: ScopeLayer> ScopedLayers<L> {
+    /// Source constructor; factory and notification failures remain ordinary errors.
     pub fn new(
-        create_layer: impl Fn(Option<&ScopeKey>) -> L + Send + Sync + 'static,
-        on_change: impl Fn() + Send + Sync + 'static,
-    ) -> Self {
-        let global = Arc::new(create_layer(None));
-        Self {
-            global,
-            inner: Arc::new(LayersInner {
-                mutation: MutationGate::default(),
-                scoped: Mutex::new(IndexMap::new()),
-                create_layer: Box::new(move |scope| Ok(create_layer(scope))),
-                on_change: Box::new(move || {
-                    on_change();
-                    Ok(())
-                }),
-            }),
-        }
-    }
-    /// Fallible source factories and notifications use this constructor.
-    pub fn try_new(
         create_layer: impl Fn(Option<&ScopeKey>) -> Result<L, Error> + Send + Sync + 'static,
         on_change: impl Fn() -> Result<(), Error> + Send + Sync + 'static,
     ) -> Result<Self, Error> {
@@ -434,13 +395,13 @@ impl<L: ScopeLayer> ScopedLayers<L> {
     /// Factory, mutation and notification form one synchronous transaction.
     /// Callbacks may reenter the registry on the same thread.
     /// The returned disposer is the exact one returned by `Context::try_effect`.
-    pub fn effect<C: RegistrationContext>(
+    pub fn effect(
         &self,
-        ctx: &C,
+        ctx: &Context,
         action: impl FnOnce(&L) -> Result<EntryUndo, Error>,
         options: EffectOptions,
-    ) -> Result<C::Disposer, Error> {
-        let scope = ctx.scope_key();
+    ) -> Result<Disposer, Error> {
+        let scope = scope_of(ctx);
         let _mutation = self.inner.mutation.enter();
         ctx.try_effect(options.label, |undos| {
             let (layer, undo) = {
@@ -469,26 +430,54 @@ impl<L: ScopeLayer> ScopedLayers<L> {
                 }
             };
             let inner = self.inner.clone();
-            let log = ctx.logger();
-            undos.push(Undo::sync(move || {
+            undos.push(Undo::try_sync(move || {
                 let _mutation = inner.mutation.enter();
                 undo.undo();
-                if let Some(key) = scope {
-                    let mut scoped = lock(&inner.scoped);
-                    if layer.is_empty() {
-                        scoped.shift_remove(&key);
-                    }
-                }
-                if options.notify
-                    && let Err(error) = (inner.on_change)()
+                if let Some(key) = scope
+                    && layer.is_empty()
                 {
-                    log.error(format_args!("effect \"{}\": {error}", options.label));
+                    lock(&inner.scoped).shift_remove(&key);
                 }
+                if options.notify {
+                    (inner.on_change)()?;
+                }
+                Ok(())
             }))?;
             if options.notify {
                 (self.inner.on_change)()?;
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    #[test]
+    fn persistent_tables_bound_storage_and_preserve_live_iteration_under_churn() {
+        let named = NamedEntries::new(|name| format!("duplicate: {name}"));
+        let anonymous = AnonymousEntries::new();
+        named.insert("keeper", 0).unwrap();
+        anonymous.append(0);
+        let mut names = named.values();
+        let mut values = anonymous.values();
+        assert_eq!(names.next(), Some(0));
+        assert_eq!(values.next(), Some(0));
+        for value in 1..10_000 {
+            named.insert("temporary", value).unwrap().undo();
+            anonymous.append(value).undo();
+            for table in [&named.table, &anonymous.table] {
+                let current = lock(&table.current);
+                let generation = lock(&current);
+                assert_eq!(generation.slots.len(), 1);
+                assert!(generation.slots.capacity() <= 64);
+                assert!(generation.names.capacity() <= 64);
+            }
+        }
+        named.insert("tail", 7).unwrap();
+        anonymous.append(7);
+        assert_eq!(names.collect::<Vec<_>>(), [7]);
+        assert_eq!(values.collect::<Vec<_>>(), [7]);
     }
 }

@@ -435,7 +435,7 @@ async fn serializes_concurrent_updates_on_one_key_without_losing_increments() {
     let jobs = (0..50)
         .map(|_| {
             table.update("counter".into(), |current| {
-                item("c", current["count"].as_i64().unwrap() + 1)
+                Ok(item("c", current["count"].as_i64().unwrap() + 1))
             })
         })
         .collect::<Vec<_>>();
@@ -446,6 +446,85 @@ async fn serializes_concurrent_updates_on_one_key_without_losing_increments() {
     );
     h.stop().await;
 }
+
+#[tokio::test]
+async fn fallible_update_preserves_the_callers_sentinel_without_writing_and_the_chain_continues() {
+    #[derive(Debug, thiserror::Error)]
+    #[error("workspace record unchanged (internal sentinel)")]
+    struct UnchangedSentinel;
+
+    let h = harness().await;
+    let domain = h.facility.open(spec()).await.unwrap();
+    let table = table(&domain);
+    table.put("a".into(), item("x", 1)).await.unwrap();
+    let record_before = table.get(&"a".into()).unwrap().unwrap();
+    let medium_before = h.backend.pool.state.lock().unwrap().media["demo"].clone();
+    let events_before = h.changes.lock().unwrap().len();
+    h.backend.pool.state.lock().unwrap().fail_next_writes = 1;
+    let sentinel = SharedError::new(UnchangedSentinel);
+    let thrown = sentinel.clone();
+    let returned = table
+        .update("a".into(), move |_| {
+            Err::<Value, hoh_error::BoxError>(thrown.into())
+        })
+        .await
+        .err()
+        .unwrap();
+
+    assert!(returned.ptr_eq(&sentinel));
+    assert!(returned.downcast_ref::<UnchangedSentinel>().is_some());
+    assert!(Arc::ptr_eq(
+        &record_before,
+        &table.get(&"a".into()).unwrap().unwrap()
+    ));
+    assert_eq!(*record_before, item("x", 1));
+    {
+        let state = h.backend.pool.state.lock().unwrap();
+        assert_eq!(state.media["demo"], medium_before);
+        assert_eq!(state.fail_next_writes, 1, "no backend write was attempted");
+    }
+    assert_eq!(h.changes.lock().unwrap().len(), events_before);
+
+    h.backend.pool.state.lock().unwrap().fail_next_writes = 0;
+    let next = table
+        .update("a".into(), |current| {
+            Ok(item("x", current["count"].as_i64().unwrap() + 1))
+        })
+        .await
+        .unwrap();
+    assert_eq!(*next, item("x", 2));
+    assert_eq!(*table.get(&"a".into()).unwrap().unwrap(), item("x", 2));
+    assert_eq!(
+        h.backend.pool.state.lock().unwrap().media["demo"].tables["items"]["a"],
+        item("x", 2)
+    );
+    assert_eq!(h.changes.lock().unwrap().len(), events_before + 1);
+    h.stop().await;
+}
+
+#[test]
+fn versions_use_the_same_two_to_the_53_bound_for_integer_and_float_json_numbers() {
+    for value in [
+        json!(9_007_199_254_740_993_u64),
+        json!(9_007_199_254_740_994_u64),
+        json!(9_007_199_254_740_994.0),
+    ] {
+        let mut input = spec_input();
+        input.version = value.clone();
+        assert!(define_domain(input).is_err(), "accepted version {value}");
+    }
+    for value in [
+        json!(9_007_199_254_740_991_u64),
+        json!(9_007_199_254_740_991.0),
+        json!(9_007_199_254_740_992_u64),
+        json!(9_007_199_254_740_992.0),
+    ] {
+        let mut input = spec_input();
+        input.version = value.clone();
+        assert!(define_domain(input).is_ok(), "rejected version {value}");
+    }
+}
+
 #[tokio::test]
 async fn update_rejects_a_missing_key_delete_reports_prior_existence() {
     let h = harness().await;
@@ -454,7 +533,7 @@ async fn update_rejects_a_missing_key_delete_reports_prior_existence() {
     assert_eq!(
         code(
             &table
-                .update("ghost".into(), Clone::clone)
+                .update("ghost".into(), |current| Ok(current.clone()))
                 .await
                 .err()
                 .unwrap()
@@ -560,7 +639,10 @@ async fn emits_domain_changed_per_durable_write_in_order_with_tombstones_and_glo
     let domain = h.facility.open(spec()).await.unwrap();
     let table = table(&domain);
     table.put("a".into(), item("x", 1)).await.unwrap();
-    table.update("a".into(), |_| item("x", 2)).await.unwrap();
+    table
+        .update("a".into(), |_| Ok(item("x", 2)))
+        .await
+        .unwrap();
     table.delete("a".into()).await.unwrap();
     table.delete("a".into()).await.unwrap();
     global(&domain).set(json!({"theme":"dark"})).await.unwrap();
@@ -593,7 +675,9 @@ async fn leaves_memory_untouched_and_emits_nothing_when_the_backend_rejects_a_wr
     for result in [
         table.put("a".into(), item("x", 99)).await,
         table
-            .update("a".into(), |c| item("x", c["count"].as_i64().unwrap() + 1))
+            .update("a".into(), |c| {
+                Ok(item("x", c["count"].as_i64().unwrap() + 1))
+            })
             .await
             .map(|_| ()),
         table.delete("a".into()).await.map(|_| ()),
@@ -607,7 +691,9 @@ async fn leaves_memory_untouched_and_emits_nothing_when_the_backend_rejects_a_wr
     );
     assert_eq!(h.changes.lock().unwrap().len(), seen);
     table
-        .update("a".into(), |c| item("x", c["count"].as_i64().unwrap() + 1))
+        .update("a".into(), |c| {
+            Ok(item("x", c["count"].as_i64().unwrap() + 1))
+        })
         .await
         .unwrap();
     assert_eq!(*table.get(&"a".into()).unwrap().unwrap(), item("x", 2));
@@ -1050,7 +1136,7 @@ async fn handles_and_values_keep_identity_and_iterators_remain_stable() {
     let snapshot = table.entries().unwrap();
     table.put("b".into(), item("new", 2)).await.unwrap();
     table
-        .update("a".into(), |_| item("replaced", 3))
+        .update("a".into(), |_| Ok(item("replaced", 3)))
         .await
         .unwrap();
     let entries = snapshot.collect::<Vec<_>>();

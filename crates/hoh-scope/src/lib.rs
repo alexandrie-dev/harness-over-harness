@@ -230,24 +230,28 @@ pub fn scope_of(ctx: &Context) -> Option<ScopeKey> {
 type Filter = Arc<dyn Fn(&Context) -> bool + Send + Sync>;
 
 /// The optional Cordis `Context.filter` property, expressed as a Rust method.
-/// Plain subjects use the default; subjects with a filter override it.
+/// Every subject explicitly implements its filter, including service isolation.
 pub trait ScopeFilter: Send + Sync + 'static {
-    fn matches_filter(&self, _listener: &Context) -> bool {
-        true
-    }
+    fn matches_filter(&self, listener: &Context) -> bool;
 }
 impl ScopeFilter for Context {
     fn matches_filter(&self, listener: &Context) -> bool {
         Context::matches_filter(self, listener)
     }
 }
-impl ScopeFilter for () {}
+impl ScopeFilter for () {
+    fn matches_filter(&self, _: &Context) -> bool {
+        true
+    }
+}
 
 /// An opaque, typed routing carrier. It contains no subject properties.
 ///
 /// ```compile_fail
 /// struct Subject { value: u32 }
-/// impl hoh_scope::ScopeFilter for Subject {}
+/// impl hoh_scope::ScopeFilter for Subject {
+///     fn matches_filter(&self, _: &hoh_kernel::Context) -> bool { true }
+/// }
 /// let carrier = hoh_scope::scope_target(std::sync::Arc::new(Subject { value: 1 }), None);
 /// carrier.value; // The subject is not exposed through the carrier.
 /// ```

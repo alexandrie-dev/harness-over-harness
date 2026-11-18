@@ -5,8 +5,9 @@ use std::sync::{
 
 use futures_util::FutureExt;
 use hoh_deepseek_llm_api_extensions::{
-    AcceptanceCallback, DeepSeekLlmApiExtensionRegistry, DeepSeekLlmApiExtensionRequest,
-    DeepSeekLlmApiExtensions, ExtensionError, PreparedDeepSeekLlmApiExtension,
+    AcceptanceCallback, DeepSeekLlmApiExtensionProvider, DeepSeekLlmApiExtensionRegistry,
+    DeepSeekLlmApiExtensionRequest, DeepSeekLlmApiExtensions, ExtensionError,
+    PreparedDeepSeekLlmApiExtension,
 };
 use hoh_error::{BoxError, SharedError};
 use hoh_kernel::{Context, Kernel, Level};
@@ -174,6 +175,8 @@ async fn rejects_duplicate_fields_and_releases_ownership_with_the_registering_fi
         })
         .err()
         .unwrap();
+    assert!(error.is::<ExtensionError>());
+    assert!(hoh_error::HarnessError::of(error.as_ref()).is_none());
     assert_eq!(
         error.to_string(),
         "deepseek-llm-api-extensions: field \"test_alpha\" is already registered"
@@ -266,6 +269,7 @@ async fn settles_every_acceptance_callback_before_reporting_one_or_several_failu
         ),
         other => panic!("expected aggregate, got {other:?}"),
     }
+    assert!(hoh_error::HarnessError::of(error.get_ref()).is_none());
     assert_eq!(later.load(Ordering::SeqCst), 1);
     assert!(error.ptr_eq(&prepared.accept().await.unwrap_err()));
     kernel.shutdown().await;
@@ -315,6 +319,8 @@ async fn rejects_invalid_field_names_and_omits_a_failing_field_warning_once() {
             })
             .err()
             .unwrap();
+        assert!(error.is::<ExtensionError>());
+        assert!(hoh_error::HarnessError::of(error.as_ref()).is_none());
         assert_eq!(
             error.to_string(),
             "deepseek-llm-api-extensions: field must be a non-blank trimmed string"
@@ -669,4 +675,43 @@ async fn enumerates_integer_fields_like_a_javascript_object_without_reordering_a
         ["z", "2", "1", "01", "4294967295", "a"]
     );
     kernel.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn registration_cleanup_diagnostics_preserve_the_json_quoted_field_label() {
+    struct FailingCleanup;
+    impl DeepSeekLlmApiExtensionProvider for FailingCleanup {
+        fn prepare(
+            &self,
+            _: Arc<DeepSeekLlmApiExtensionRequest>,
+        ) -> futures_util::future::BoxFuture<
+            'static,
+            Result<Option<PreparedDeepSeekLlmApiExtension>, BoxError>,
+        > {
+            std::future::ready(Ok(None)).boxed()
+        }
+    }
+    impl Drop for FailingCleanup {
+        fn drop(&mut self) {
+            // Test-only cleanup fault: the registration's own undo drops its provider.
+            panic!("cleanup failed");
+        }
+    }
+
+    let (kernel, ctx) = harness().await;
+    let registry = ctx.get::<DeepSeekLlmApiExtensions>().unwrap();
+    let field = "field\"\\\n💡";
+    let disposer = registry.register(&ctx, field, FailingCleanup).unwrap();
+    disposer.dispose().await;
+    let errors: Vec<_> = ctx
+        .logger()
+        .buffer()
+        .into_iter()
+        .filter(|record| record.level == Level::Error)
+        .map(|record| record.message)
+        .collect();
+    kernel.shutdown().await;
+
+    let label = r#"deepseekLlmApiExtensions.register("field\"\\\n💡")"#;
+    assert_eq!(errors, [format!("effect \"{label}\": cleanup failed")]);
 }

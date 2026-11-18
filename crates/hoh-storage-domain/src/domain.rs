@@ -376,10 +376,13 @@ where
             Ok(present.len() as u64)
         })
     }
+    /// Run the transform at this key's write-chain slot. Returning Err aborts
+    /// before serialization, durability, memory mutation, or event emission.
+    /// Return a cloned SharedError as BoxError to preserve sentinel identity.
     pub fn update(
         &self,
         key: K,
-        transform: impl FnOnce(&V) -> V + Send + 'static,
+        transform: impl FnOnce(&V) -> Result<V, BoxError> + Send + 'static,
     ) -> DomainFuture<Arc<V>> {
         let table = self.name.clone();
         let key = key.as_ref().to_owned();
@@ -399,7 +402,7 @@ where
             let current = current
                 .downcast::<V>()
                 .map_err(|_| crate::error::PlainError("incompatible Rust record type".into()))?;
-            let value = Arc::new(transform(&current));
+            let value = Arc::new(transform(&current)?);
             let json = serde_json::to_value(value.as_ref())?;
             inner.unit.put_record(&table, &key, json.clone()).await?;
             // Table handles are created only for the domain's immutable table set.

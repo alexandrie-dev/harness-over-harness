@@ -149,8 +149,8 @@ pub trait CredentialProvider: Send + Sync {
     fn delete_record<'a>(&'a self, key: &'a CredentialKey) -> CredentialFuture<'a, ()>;
 
     /// Notify reference observers only after a committed write or reload.
-    /// A failing listener never changes that operation's outcome. As with
-    /// Cordis's service context, ctx determines the notification's routing.
+    /// A failing listener never changes that operation's outcome. Notifications
+    /// are unfiltered; ctx supplies the provider's diagnostic logger.
     fn notify_updated(&self, ctx: &Context, reference: &CredentialRef) {
         fan_out(
             ctx,
@@ -175,7 +175,8 @@ pub trait CredentialProvider: Send + Sync {
 fn fan_out<E: Event<Mode = Contained>>(ctx: &Context, event: E, subject: &str) {
     let subject = subject.to_owned();
     let logger = ctx.logger();
-    ctx.dispatch(event).invoke(move |failure| {
+    // The source dispatch starts with the event name, so it has no receiver filter.
+    ctx.root().dispatch(event).invoke(move |failure| {
         let error = match failure {
             ListenerFailure::Threw(error) | ListenerFailure::Rejected(error) => error,
         };

@@ -26,12 +26,12 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/core/agent	@deepseek-ai/dsh-agent	hoh-agent	1791	1677	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/core/agent-default-model	@deepseek-ai/dsh-agent-default-model	hoh-agent-default-model	98	70	todo	
 1	port	packages/core/agent-loop	@deepseek-ai/dsh-agent-loop	hoh-agent-loop	2149	15523	todo	
-1	port	packages/core/scope	@deepseek-ai/dsh-scope	hoh-scope	471	511	review	
+1	port	packages/core/scope	@deepseek-ai/dsh-scope	hoh-scope	471	511	done	
 1	port	packages/core/session	@deepseek-ai/dsh-session	hoh-session	3485	6855	todo	
 1	port	packages/core/system-prompt	@deepseek-ai/dsh-system-prompt	hoh-system-prompt	699	1167	todo	
 1	port	packages/core/tool-executor-native	@deepseek-ai/dsh-tool-executor-native	hoh-tool-executor-native	35	0	todo	
 1	port	packages/core/tools	@deepseek-ai/dsh-tools	hoh-tools	3797	5419	todo	
-1	port	packages/credentials/credentials	@deepseek-ai/dsh-credentials	hoh-credentials	409	176	review	
+1	port	packages/credentials/credentials	@deepseek-ai/dsh-credentials	hoh-credentials	409	176	done	
 1	port	packages/deliverables/deliverable-file-references	@deepseek-ai/dsh-deliverable-file-references	hoh-deliverable-file-references	30	42	todo	
 1	port	packages/deliverables/tool-present	@deepseek-ai/dsh-tool-present	hoh-tool-present	127	282	todo	
 1	port	packages/document/office-kit	@deepseek-ai/dsh-office-kit	hoh-office-kit	1399	2071	todo	зависит от: dsh-typert-protocol=skip
@@ -88,7 +88,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/skill/skill-office	@deepseek-ai/dsh-skill-office	hoh-skill-office	141	1141	todo	
 1	port	packages/skill/tool-workspace-dependencies	@deepseek-ai/dsh-tool-workspace-dependencies	hoh-tool-workspace-dependencies	388	629	todo	
 1	port	packages/storage/storage	@deepseek-ai/dsh-storage	hoh-storage	364	346	done	
-1	port	packages/storage/storage-domain	@deepseek-ai/dsh-storage-domain	hoh-storage-domain	910	714	review	
+1	port	packages/storage/storage-domain	@deepseek-ai/dsh-storage-domain	hoh-storage-domain	910	714	done	
 1	port	packages/subagent/subagent	@deepseek-ai/dsh-subagent	hoh-subagent	5057	11365	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/subprocess/subprocess	@deepseek-ai/dsh-subprocess	hoh-subprocess	576	334	done	
 1	port	packages/subprocess/subprocess-local	@deepseek-ai/dsh-subprocess-local	hoh-subprocess-local	5104	8920	todo	
