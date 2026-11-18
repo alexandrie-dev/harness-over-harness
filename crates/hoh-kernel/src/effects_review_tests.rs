@@ -1,5 +1,187 @@
 use super::*;
 #[tokio::test(start_paused = true)]
+async fn pending_async_listener_runs_prefix_inline_before_its_owned_task() {
+    struct E;
+    event!(E = "pending-prefix", Contained);
+    let k = Kernel::start();
+    let ctx = k.root().child("pending listener").unwrap();
+    ctx.fiber().settled().await.unwrap();
+    let calls = Arc::new(Mutex::new(vec![]));
+    let polls = Arc::new(AtomicUsize::new(0));
+    let a = calls.clone();
+    ctx.on_contained::<E>(move |_| {
+        lock(&a).push("A");
+        Ok(())
+    })
+    .unwrap();
+    let b = calls.clone();
+    let p = polls.clone();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let started = Arc::new(Mutex::new(Some(started)));
+    ctx.on_contained_async::<E, _>(move |_| {
+        let b = b.clone();
+        let p = p.clone();
+        let started = started.clone();
+        async move {
+            lock(&b).push("B prefix");
+            std::future::poll_fn(move |_| {
+                if p.fetch_add(1, Ordering::SeqCst) == 1 {
+                    lock(&b).push("task");
+                    let _ = lock(&started).take().unwrap().send(());
+                }
+                std::task::Poll::<()>::Pending
+            })
+            .await;
+            Ok(())
+        }
+    })
+    .unwrap();
+    let c = calls.clone();
+    ctx.on_contained::<E>(move |_| {
+        lock(&c).push("C");
+        Ok(())
+    })
+    .unwrap();
+    k.root().dispatch(E).invoke(|e| panic!("unexpected {e:?}"));
+    assert_eq!(*lock(&calls), ["A", "B prefix", "C"]);
+    assert_eq!(polls.load(Ordering::SeqCst), 1);
+    assert_eq!(lock(&ctx.activation.effects).effects.len(), 4);
+    running.await.unwrap();
+    assert_eq!(*lock(&calls), ["A", "B prefix", "C", "task"]);
+    ctx.fiber().dispose().await;
+    assert!(lock(&ctx.activation.effects).effects.is_empty());
+    assert!(lock(&k.root().activation.effects).effects.is_empty());
+    k.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn panicking_contained_factory_leaves_no_owner_record() {
+    struct E;
+    event!(E = "factory-record", Contained);
+    let k = Kernel::start();
+    let ctx = k.root().child("factory listener").unwrap();
+    ctx.fiber().settled().await.unwrap();
+    ctx.on_contained_async::<E, std::future::Ready<Result<(), Error>>>(|_| {
+        panic!("factory failure")
+    })
+    .unwrap();
+    let failures = Arc::new(Mutex::new(vec![]));
+    let out = failures.clone();
+    k.root().dispatch(E).invoke(move |e| {
+        lock(&out).push(match e {
+            ListenerFailure::Threw(e) => ("threw", e.to_string()),
+            ListenerFailure::Rejected(e) => ("rejected", e.to_string()),
+        })
+    });
+    assert_eq!(
+        *lock(&failures),
+        [(
+            "rejected",
+            "event listener panicked: factory failure".into()
+        )]
+    );
+    assert_eq!(lock(&ctx.activation.effects).effects.len(), 1);
+    tokio::task::yield_now().await;
+    assert_eq!(lock(&ctx.activation.effects).effects.len(), 1);
+    ctx.fiber().dispose().await;
+    assert!(lock(&k.root().activation.effects).effects.is_empty());
+    k.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn contained_without_runtime_distinguishes_ready_pending_and_runtime_prefixes() {
+    struct E;
+    event!(E = "without-runtime", Contained);
+    let k = Kernel::start();
+    let root = k.root();
+    let calls = Arc::new(Mutex::new(vec![]));
+    let a = calls.clone();
+    root.on_contained::<E>(move |_| {
+        lock(&a).push("sync");
+        Ok(())
+    })
+    .unwrap();
+    let b = calls.clone();
+    root.on_contained_async::<E, _>(move |_| {
+        let b = b.clone();
+        async move {
+            lock(&b).push("ready");
+            Ok(())
+        }
+    })
+    .unwrap();
+    let c = calls.clone();
+    root.on_contained_async::<E, _>(move |_| {
+        let c = c.clone();
+        async move {
+            lock(&c).push("pending");
+            std::future::pending::<()>().await;
+            Ok(())
+        }
+    })
+    .unwrap();
+    root.on_contained_async::<E, _>(|_| async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        Ok(())
+    })
+    .unwrap();
+    root.on_contained_async::<E, _>(|_| async {
+        tokio::spawn(async {})
+            .await
+            .map_err(|e| Box::new(e) as Error)?;
+        Ok(())
+    })
+    .unwrap();
+    let last = calls.clone();
+    root.on_contained::<E>(move |_| {
+        lock(&last).push("last");
+        Ok(())
+    })
+    .unwrap();
+    let failures = Arc::new(Mutex::new(vec![]));
+    let out = failures.clone();
+    let log = calls.clone();
+    let snapshot = root.dispatch(E);
+    // Only this thread invokes the listeners; it has no Tokio runtime entered.
+    std::thread::spawn(move || {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        snapshot.invoke(move |e| {
+            lock(&log).push("rejected");
+            lock(&out).push(match e {
+                ListenerFailure::Threw(e) => ("threw", e.to_string()),
+                ListenerFailure::Rejected(e) => ("rejected", e.to_string()),
+            });
+        });
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        *lock(&calls),
+        [
+            "sync", "ready", "pending", "last", "rejected", "rejected", "rejected"
+        ]
+    );
+    {
+        let errors = lock(&failures);
+        assert_eq!(errors.len(), 3);
+        assert_eq!(
+            errors[0],
+            (
+                "rejected",
+                "asynchronous listener requires a tokio runtime".into()
+            )
+        );
+        for (kind, message) in &errors[1..] {
+            assert_eq!(*kind, "rejected");
+            assert!(message.starts_with("event listener panicked: "));
+            assert!(message.contains("runtime"));
+        }
+    }
+    assert_eq!(lock(&root.activation.effects).effects.len(), 6);
+    k.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn inline_completion_reserves_no_task_record() {
     struct E;
     event!(E = "inline-record", Contained);
