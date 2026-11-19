@@ -1364,6 +1364,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-mcp-resources"
+version = "0.1.0"
+dependencies = [
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-values",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-native-command"
 version = "0.1.0"
 dependencies = [
