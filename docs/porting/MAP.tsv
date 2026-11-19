@@ -99,7 +99,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	infra	packages/test-support/llm-replay	@deepseek-ai/dsh-llm-replay	hoh-llm-replay	1212	2528	done	плагин: подменяет модель записанным потоком StreamChunk внутри процесса; подключается к hoh только в сборке для прогона сценариев
 1	infra	packages/test-support/loader-smoke	@deepseek-ai/dsh-loader-smoke	hoh-loader-smoke	375	742	writing:x2	нужное переносится в hoh-conformance и тестовые помощники
 1	infra	packages/test-support/session-snapshot	@deepseek-ai/dsh-session-snapshot	hoh-conformance	4819	6449	done	прогон и сверка сценариев: внутрь hoh-conformance (описание в crates/hoh-conformance/README.md)
-1	infra	packages/test-support/tool-testkit	@deepseek-ai/dsh-tool-testkit	hoh-tool-testkit	92	42	done	нужное переносится в hoh-conformance и тестовые помощники
+1	infra	packages/test-support/tool-testkit	@deepseek-ai/dsh-tool-testkit	hoh-tool-testkit	92	42	accepted	нужное переносится в hoh-conformance и тестовые помощники
 1	port	packages/todo/tool-todo	@deepseek-ai/dsh-tool-todo	hoh-tool-todo	271	683	accepted	
 1	port	packages/util/atomic-write	@deepseek-ai/dsh-atomic-write	hoh-atomic-write	293	513	done	
 1	port	packages/util/brand	@deepseek-ai/dsh-brand	hoh-brand	39	13	done	
@@ -147,7 +147,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/session/session-title-first-prompt-llm	@deepseek-ai/dsh-session-title-first-prompt-llm	hoh-session-title-first-prompt-llm	168	551	writing:x4	
 2	port	packages/session/session-title-llm	@deepseek-ai/dsh-session-title-llm	hoh-session-title-llm	291	569	writing:x4	
 2	port	packages/shell/bash-local	@deepseek-ai/dsh-bash-local	hoh-bash-local	404	589	done	
-2	port	packages/shell/bash-sandbox	@deepseek-ai/dsh-bash-sandbox	hoh-bash-sandbox	206	1565	writing:sg4	
+2	port	packages/shell/bash-sandbox	@deepseek-ai/dsh-bash-sandbox	hoh-bash-sandbox	206	1565	done	
 2	port	packages/shell/shell-env	@deepseek-ai/dsh-shell-env	hoh-shell-env	255	249	accepted	
 2	port	packages/shell/tool-bash	@deepseek-ai/dsh-tool-bash	hoh-tool-bash	871	2569	accepted	
 2	port	packages/skill/skill-filesystem	@deepseek-ai/dsh-skill-filesystem	hoh-skill-filesystem	1064	1530	todo	

@@ -858,6 +858,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-bash-sandbox"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-bash-local",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-node-addon-system",
+ "hoh-sandbox",
+ "hoh-sandbox-local",
+ "hoh-sandbox-policy",
+ "hoh-session-projection",
+ "hoh-shell",
+ "hoh-subprocess",
+ "hoh-subprocess-local",
+ "hoh-timeout",
+ "indexmap",
+ "rustix",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-brand"
 version = "0.1.0"
 dependencies = [
