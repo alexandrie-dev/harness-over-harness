@@ -477,10 +477,9 @@ async fn folds_to_the_last_event_or_undefined_without_one() {
         h.service().override_of(a.session()).unwrap(),
         Some(ApprovalPolicy::Ask)
     );
-    assert_eq!(
-        events(a.session()).last().unwrap().data(),
-        &json!({"policy":"ask"})
-    );
+    let last = events(a.session()).pop().unwrap();
+    assert_eq!(last.event_type(), "approval/policy");
+    assert_eq!(last.data(), &json!({"policy":"ask"}));
     h.close().await;
 }
 #[tokio::test]

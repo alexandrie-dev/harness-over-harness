@@ -1,7 +1,11 @@
 //! One-shot user approval, fail-closed answerers, and durable session policy.
+mod host;
+mod method;
 mod shim;
 mod state;
 pub mod types;
+pub use host::HostApprovalPeer;
+pub use method::method_human_text;
 pub use types::{ApprovalOutcome, ApprovalRequestEvent, ApprovalRequestId, DisplayReason};
 pub type ApprovalRequest = ApprovalRequestEvent;
 
@@ -80,6 +84,8 @@ pub enum ApprovalError {
     InvalidPolicy,
     #[error("{0}")]
     InvalidState(String),
+    #[error("host approval mode is already configured")]
+    HostAlreadyConfigured,
 }
 impl ApprovalError {
     pub fn name(&self) -> &'static str {
@@ -87,6 +93,7 @@ impl ApprovalError {
             Self::OutsideTurn => "Error",
             Self::InvalidPolicy => "TypeError",
             Self::InvalidState(_) => "ZodError",
+            Self::HostAlreadyConfigured => "Error",
         }
     }
 }
@@ -123,8 +130,29 @@ pub struct ApprovalService {
     ctx: Context,
     config: Arc<Mutex<Config>>,
     approval_projection_handle: ProjectionHandle<state::ApprovalState>,
+    host: Arc<Mutex<Option<host::HostApprovalMode>>>,
 }
 hoh_kernel::service!(pub Approval: ApprovalService = "approval");
+
+/// The host-mode slot of one kernel. The server enables host mode once, in `initialize`, but the
+/// service is rebuilt whenever a dependency (the projection registry) leaves and returns, so the
+/// slot lives on the kernel root and is shared by every incarnation of the service.
+#[derive(Clone, Default)]
+pub(crate) struct HostSlot(Arc<Mutex<Option<host::HostApprovalMode>>>);
+hoh_kernel::service!(HostSlotKey: HostSlot = "approvalHostSlot");
+
+async fn host_slot(ctx: &Context) -> Result<Arc<Mutex<Option<host::HostApprovalMode>>>, BoxError> {
+    if ctx.get::<HostSlotKey>().is_none() {
+        // The root owns the provision, so it outlives any one fiber of this plugin.
+        ctx.root()
+            .provide::<HostSlotKey>(Arc::new(HostSlot::default()))
+            .await?;
+    }
+    let slot = ctx
+        .get::<HostSlotKey>()
+        .ok_or("approval host slot is unavailable")?;
+    Ok(slot.0.clone())
+}
 
 impl ApprovalService {
     /// The source's mutable config property, shared by all service references.
@@ -133,6 +161,54 @@ impl ApprovalService {
         self.config
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /// GLUE-SHIM(2b): the JSON-RPC server calls this once from a successful host-mode
+    /// `initialize`. The peer keeps this crate independent from the server transport.
+    pub fn install_host_mode(
+        &self,
+        approval_key: &str,
+        peer: Arc<dyn HostApprovalPeer>,
+    ) -> Result<(), BoxError> {
+        let key = hoh_protocol::approval::key_from_hex(approval_key)?;
+        let mut slot = self
+            .host
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_some() {
+            return Err(ApprovalError::HostAlreadyConfigured.into());
+        }
+        *slot = Some(host::HostApprovalMode::new(key, peer));
+        Ok(())
+    }
+    /// Decide one privileged JSON-RPC method call (`hoh_protocol::PRIVILEGED_METHODS`) in host
+    /// mode: the same `approval/request` with a verified mac as for tools. `Ok(())` only when the
+    /// user allowed exactly this call; without host mode, or on any other outcome, an error.
+    /// GLUE-SHIM(2b): the server's `HohPrivilegedApprover` service wraps this method.
+    pub fn approve_privileged(
+        &self,
+        method: &str,
+        params: &Value,
+    ) -> futures_util::future::BoxFuture<'static, Result<(), BoxError>> {
+        let host = self
+            .host
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let context = self.ctx.clone();
+        let (method, params) = (method.to_owned(), params.clone());
+        Box::pin(async move {
+            let Some(host) = host else {
+                return Err(format!("{method} requires host approval mode").into());
+            };
+            host.approve_method(&context, &method, &params, request_id()?.to_string())
+                .await
+        })
+    }
+    pub fn host_mode_enabled(&self) -> bool {
+        self.host
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
     }
     async fn initialize(
         ctx: Context,
@@ -148,6 +224,7 @@ impl ApprovalService {
             ctx: ctx.clone(),
             config: Arc::new(Mutex::new(config)),
             approval_projection_handle: handle,
+            host: host_slot(&ctx).await?,
         };
         let for_prompt = service.clone();
         let prompt = ctx.inject::<PromptDeps, _>(move |scope, deps| {
@@ -247,6 +324,11 @@ impl ApprovalService {
             Ok(value) => value,
             Err(error) => return Box::pin(async { Err(error) }),
         };
+        let host = self
+            .host
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let context = self.ctx.clone();
         // No context timer/task in source: this is continuation of an already
         // started public Promise, rather than a background plugin effect.
@@ -254,28 +336,32 @@ impl ApprovalService {
             let outcome = match immediate {
                 Some(outcome) => outcome,
                 None => {
-                    let (started, answer) = agent_carrier(&req.agent)
-                        .context(&context)
-                        .waterfall_with_start::<ApprovalRequestEvent, Value, _>(
-                        req.clone(),
-                        |_| async { Ok(ApprovalOutcome::Unavailable.into()) },
-                    );
-                    // TS schedules the answerer before the cancelled request's
-                    // audit continuation. Await startup, never the pending answer.
-                    started.await;
-                    let answer = async move {
-                        answer
-                            .await
-                            .map(ApprovalOutcome::normalize)
-                            .unwrap_or(ApprovalOutcome::Unavailable)
-                    };
-                    match &req.signal {
-                        None => answer.await,
-                        Some(signal) => {
-                            tokio::select! {
-                                biased;
-                                _ = signal.cancelled() => ApprovalOutcome::Cancelled,
-                                outcome = answer => outcome,
+                    if let Some(host) = host {
+                        host.resolve(&context, req.clone(), id.as_str()).await
+                    } else {
+                        let (started, answer) = agent_carrier(&req.agent)
+                            .context(&context)
+                            .waterfall_with_start::<ApprovalRequestEvent, Value, _>(
+                            req.clone(),
+                            |_| async { Ok(ApprovalOutcome::Unavailable.into()) },
+                        );
+                        // TS schedules the answerer before the cancelled request's
+                        // audit continuation. Await startup, never the pending answer.
+                        started.await;
+                        let answer = async move {
+                            answer
+                                .await
+                                .map(ApprovalOutcome::normalize)
+                                .unwrap_or(ApprovalOutcome::Unavailable)
+                        };
+                        match &req.signal {
+                            None => answer.await,
+                            Some(signal) => {
+                                tokio::select! {
+                                    biased;
+                                    _ = signal.cancelled() => ApprovalOutcome::Cancelled,
+                                    outcome = answer => outcome,
+                                }
                             }
                         }
                     }
@@ -334,6 +420,9 @@ impl Plugin for ApprovalService {
 #[cfg(test)]
 #[path = "../tests/approval.rs"]
 mod approval_tests;
+#[cfg(test)]
+#[path = "../tests/host.rs"]
+mod host_tests;
 #[cfg(test)]
 #[path = "../tests/projection.rs"]
 mod projection_tests;

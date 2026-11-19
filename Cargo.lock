@@ -2453,6 +2453,7 @@ dependencies = [
  "hoh-error",
  "hoh-kernel",
  "hoh-llm",
+ "hoh-protocol",
  "hoh-scope",
  "hoh-session",
  "hoh-session-projection",

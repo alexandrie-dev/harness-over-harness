@@ -8,6 +8,21 @@ use std::sync::{
 };
 use tokio::sync::oneshot;
 
+/// `rejects.toThrow('outside an open turn')`: the very error, not any failure.
+fn assert_outside_turn(error: BoxError) {
+    assert!(
+        matches!(
+            error.downcast_ref::<ApprovalError>(),
+            Some(ApprovalError::OutsideTurn)
+        ),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("outside an open turn"),
+        "{error}"
+    );
+}
+
 fn checkpoint(h: &Harness, s: &Session) -> Value {
     serde_json::to_value(h.registry().checkpoint(s).unwrap()).unwrap()
 }
@@ -127,7 +142,7 @@ async fn rebuilds_policy_and_turn_state_before_a_replacement_service_becomes_rea
     let a = h.agent(&[]);
     let s = a.session();
     assert_eq!(h.service().override_of(s).unwrap(), None);
-    assert!(h.service().request(req(a.clone())).await.is_err());
+    assert_outside_turn(h.service().request(req(a.clone())).await.unwrap_err());
     for _ in 0..2 {
         s.append("turn/start", json!({"turn":1}), None).unwrap();
     }
@@ -172,7 +187,7 @@ async fn rebuilds_policy_and_turn_state_before_a_replacement_service_becomes_rea
         h.service().override_of(s).unwrap(),
         Some(ApprovalPolicy::Ask)
     );
-    assert!(h.service().request(req(a.clone())).await.is_err());
+    assert_outside_turn(h.service().request(req(a.clone())).await.unwrap_err());
     assert_eq!(s.seq(), before);
     assert_eq!(called.load(Ordering::SeqCst), 0);
     s.append("turn/start", json!({"turn":2}), None).unwrap();
@@ -319,9 +334,11 @@ async fn provides_the_same_policy_when_the_optional_prompt_service_loads_or_rest
     pump().await;
     let first = context_text(&h, Some(a.clone())).await;
     assert_eq!(first.as_deref(), Some(NEVER_SENTENCE));
+    assert_eq!(context_count(&h, Some(a.clone())).await, 1);
     prompt.dispose().await;
     h.load::<SystemPrompt>(json!({})).await;
     pump().await;
+    assert_eq!(context_count(&h, Some(a.clone())).await, 1);
     assert_eq!(context_text(&h, Some(a)).await, first);
     h.close().await;
 }

@@ -168,3 +168,35 @@ CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w4. Приостановле
 - `cargo fmt -p hoh-kernel -p hoh-user-approval -- --check`: exit 0, без вывода.
 - Оба замечания ревью закрыты и проверены. Из зависимостей изменено только явно разрешённое
   добавление kernel startup API; старый waterfall сохранён побайтно. SDK server не начинался.
+
+## Режим host (склейка окна, часть 4, sg4, 19.11)
+
+- Не часть TS-пакета: добавление HoH для окна. `src/host.rs` + `ApprovalService::install_host_mode(key_hex, peer)`.
+  Один раз на сервис (повтор → `HostAlreadyConfigured`); без вызова поведение прежнее (цепочка answerer'ов).
+- В режиме host запрос обходит цепочку answerer'ов: `approval.pending` → обратный запрос
+  `approval/request {approvalId,risk,humanText,actionHash,reason,expiresAt,…}` через `HostApprovalPeer` →
+  `hoh_protocol::approval::verify_decision` (HMAC-SHA256, срок, совпадение id) → `approval.resolved`.
+  Любая ошибка/неверный mac/ответ после срока → `unavailable` (fail-closed); 5 минут → `cancelled`
+  (сигнал уходит транспорту); abort хода → `cancelled`. Новый `approvalId` на каждый запрос, поэтому
+  повтор прежнего ответа новое подтверждение не авторизует. `humanText` строится из `displayReason.en`
+  или из имени инструмента; текст модели (`reason`) в него не попадает.
+- GLUE-SHIM(2b): трейт `HostApprovalPeer` — сервер JSON-RPC реализует его и вызывает `install_host_mode`
+  из успешного `initialize` с `capabilities.approvals:"host"`.
+- Привилегированные методы (`PRIVILEGED_METHODS`): `ApprovalService::approve_privileged(method, params)` →
+  тот же путь `approval/request` с mac (`sessionId` из params, иначе `host`; `toolName` = метод; `action` =
+  `{method, params}`; для `hoh/model/key/set` — `{keyHash, baseUrl}`, ключ не уходит). Текст (`src/method.rs`,
+  `method_human_text`) перенесён из `hoh-window-stub::engine::approval_text` и строится из типизированных
+  параметров; невалидные параметры/текст → отказ без запроса. Не `allowed-once` → ошибка.
+  Монтаж `HohPrivilegedApprover` невозможен внутри этого крейта: трейт и ключ сервиса живут в
+  `hoh-sdk-jsonrpc-server`, который зависит от `hoh-user-approval` (цикл). Стык — тонкий адаптер
+  `impl PrivilegedApprover` над `approve_privileged` в `apps/hoh` или в сервере (см. отчёт).
+- Тесты `tests/host.rs`: 8/0 (всего крейт 55/0).
+
+## Круг исправлений по ревью (sg4-fix1, 19.11)
+- Host-режим переживает пересборку сервиса: слот режима лежит в сервисе `approvalHostSlot`, который
+  провайдится из корня ядра (`ctx.root()`), а не в экземпляре `ApprovalService`. Публичный API
+  (`install_host_mode`, `approve_privileged`, `host_mode_enabled`) не менялся; повторная установка
+  по-прежнему ошибка и на новом экземпляре. Слот живёт до остановки ядра.
+- Тесты усилены как в образце: ровно один вклад `approval:policy` до и после перезапуска промпта
+  (`context_text` теперь падает на дубле), `OutsideTurn` проверяется по типу и тексту, у `approval/policy`
+  проверяется тип события.

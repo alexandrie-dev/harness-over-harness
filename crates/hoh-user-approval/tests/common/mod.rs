@@ -188,7 +188,8 @@ pub fn answer(ctx: &Context, outcome: ApprovalOutcome) {
     )
     .unwrap();
 }
-pub async fn context_text(h: &Harness, agent: Option<Arc<dyn Agent>>) -> Option<String> {
+/// The assembled `approval:policy` contexts; the contribution is never duplicated.
+async fn policy_contexts(h: &Harness, agent: Option<Arc<dyn Agent>>) -> Vec<String> {
     let context = agent.map_or_else(AssembleContext::default, |a| {
         AssembleContext::default().with_extension(AssembleAgent(a))
     });
@@ -200,8 +201,21 @@ pub async fn context_text(h: &Harness, agent: Option<Arc<dyn Agent>>) -> Option<
         .unwrap()
         .contexts
         .into_iter()
-        .find(|e| e.name == "approval:policy")
+        .filter(|e| e.name == "approval:policy")
         .map(|e| e.text)
+        .collect()
+}
+pub async fn context_count(h: &Harness, agent: Option<Arc<dyn Agent>>) -> usize {
+    policy_contexts(h, agent).await.len()
+}
+pub async fn context_text(h: &Harness, agent: Option<Arc<dyn Agent>>) -> Option<String> {
+    let mut texts = policy_contexts(h, agent).await;
+    assert!(
+        texts.len() <= 1,
+        "approval:policy contributed {} times",
+        texts.len()
+    );
+    texts.pop()
 }
 pub async fn pump() {
     for _ in 0..20 {
