@@ -64,7 +64,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/schedule/schedule	@deepseek-ai/dsh-schedule	hoh-schedule	3569	7346	writing:x4	зависит от: dsh-api-session-controller=skip, dsh-typert-protocol=skip
 1	port	packages/schedule/tool-schedule	@deepseek-ai/dsh-tool-schedule	hoh-tool-schedule	496	664	writing:x4	
 1	port	packages/sdk/protocol	@deepseek-ai/dsh-sdk-protocol	hoh-sdk-protocol	571	310	writing:w4	
-1	port	packages/sdk/server	@deepseek-ai/dsh-sdk-jsonrpc-server	hoh-sdk-jsonrpc-server	1049	4674	writing:w4	
+1	port	packages/sdk/server	@deepseek-ai/dsh-sdk-jsonrpc-server	hoh-sdk-jsonrpc-server	1049	4674	accepted	
 1	port	packages/session-query/session-query	@deepseek-ai/dsh-session-query	hoh-session-query	2241	3066	writing:x3	
 1	port	packages/session/session-checkpoint-policy	@deepseek-ai/dsh-session-checkpoint-policy	hoh-session-checkpoint-policy	83	453	writing:x6	
 1	port	packages/session/session-format	@deepseek-ai/dsh-session-format	hoh-session-format	945	758	done	
@@ -91,7 +91,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/storage/storage-domain	@deepseek-ai/dsh-storage-domain	hoh-storage-domain	910	714	done	
 1	port	packages/subagent/subagent	@deepseek-ai/dsh-subagent	hoh-subagent	5057	11365	writing:w4	зависит от: dsh-typert-protocol=skip
 1	port	packages/subprocess/subprocess	@deepseek-ai/dsh-subprocess	hoh-subprocess	576	334	done	
-1	port	packages/subprocess/subprocess-local	@deepseek-ai/dsh-subprocess-local	hoh-subprocess-local	5104	8920	review	
+1	port	packages/subprocess/subprocess-local	@deepseek-ai/dsh-subprocess-local	hoh-subprocess-local	5104	8920	done	
 1	port	packages/terminal/terminal	@deepseek-ai/dsh-terminal	hoh-terminal	694	634	writing:x1	
 1	port	packages/terminal/terminal-bash	@deepseek-ai/dsh-terminal-bash	hoh-terminal-bash	1369	3391	todo	
 1	infra	packages/test-support/agent-loop-testkit	@deepseek-ai/dsh-agent-loop-testkit	hoh-agent-loop-testkit	211	174	writing:x6	нужное переносится в hoh-conformance и тестовые помощники; зависит от: dsh-tool-executor-ptc=redesign
