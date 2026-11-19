@@ -1512,6 +1512,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-plugin-package-inventory-deepseek"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-preset-registry",
+ "hoh-deepseek-llm-api-extensions",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-loader",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-timeout",
+ "hoh-util-values",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "hoh-protocol"
 version = "0.1.0"
 dependencies = [
