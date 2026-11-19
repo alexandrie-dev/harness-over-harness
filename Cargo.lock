@@ -2385,6 +2385,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-workspace-dependencies"
+version = "0.1.0"
+dependencies = [
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "indexmap",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tools"
 version = "0.1.0"
 dependencies = [
