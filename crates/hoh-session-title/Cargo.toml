@@ -1,0 +1,32 @@
+[package]
+name = "hoh-session-title"
+description = "Port of @deepseek-ai/dsh-session-title (packages/session/session-title)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+futures-util.workspace = true
+hoh-agent = { path = "../hoh-agent" }
+hoh-brand = { path = "../hoh-brand" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-util-values = { path = "../hoh-util-values" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-session-persistence-jsonl = { path = "../hoh-session-persistence-jsonl" }
+tempfile.workspace = true

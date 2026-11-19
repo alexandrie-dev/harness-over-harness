@@ -78,7 +78,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/session/session-persistence-jsonl	@deepseek-ai/dsh-session-persistence-jsonl	hoh-session-persistence-jsonl	5145	9634	done	
 1	port	packages/session/session-projection	@deepseek-ai/dsh-session-projection	hoh-session-projection	1031	2011	done	
 1	port	packages/session/session-projection-cache	@deepseek-ai/dsh-session-projection-cache	hoh-session-projection-cache	579	2076	done	
-1	port	packages/session/session-title	@deepseek-ai/dsh-session-title	hoh-session-title	1027	1851	writing:x5	
+1	port	packages/session/session-title	@deepseek-ai/dsh-session-title	hoh-session-title	1027	1851	done	
 1	port	packages/session/tool-working-directory	@deepseek-ai/dsh-tool-working-directory	hoh-tool-working-directory	43	0	done	
 1	port	packages/session/working-directory	@deepseek-ai/dsh-working-directory	hoh-working-directory	290	456	done	
 1	port	packages/settings/settings	@deepseek-ai/dsh-settings	hoh-settings	704	800	writing:w5	
