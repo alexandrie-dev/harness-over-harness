@@ -907,6 +907,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-compaction"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-brand",
+ "hoh-commands",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-session",
+ "hoh-timeout",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-compaction-image-offload"
 version = "0.1.0"
 dependencies = [
