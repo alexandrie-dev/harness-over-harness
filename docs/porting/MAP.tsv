@@ -43,7 +43,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/goal/goal	@deepseek-ai/dsh-goal	hoh-goal	1309	1250	writing:x2	зависит от: dsh-typert-protocol=skip
 1	port	packages/identity/anonymous-user-id	@deepseek-ai/dsh-anonymous-user-id	hoh-anonymous-user-id	100	105	done	
 1	port	packages/interaction/commands	@deepseek-ai/dsh-commands	hoh-commands	734	716	writing:x2	зависит от: dsh-typert-protocol=skip
-1	port	packages/interaction/permission-presets	@deepseek-ai/dsh-permission-presets	hoh-permission-presets	556	786	writing:x1	зависит от: dsh-typert-protocol=skip
+1	port	packages/interaction/permission-presets	@deepseek-ai/dsh-permission-presets	hoh-permission-presets	556	786	done	зависит от: dsh-typert-protocol=skip
 1	port	packages/interaction/tool-ask-user	@deepseek-ai/dsh-tool-ask-user	hoh-tool-ask-user	332	698	writing:x4	
 1	port	packages/interaction/user-approval	@deepseek-ai/dsh-user-approval	hoh-user-approval	430	761	done	
 1	port	packages/interaction/user-questions	@deepseek-ai/dsh-user-questions	hoh-user-questions	964	1370	writing:x2	зависит от: dsh-typert-protocol=skip
