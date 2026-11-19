@@ -150,7 +150,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/shell/bash-sandbox	@deepseek-ai/dsh-bash-sandbox	hoh-bash-sandbox	206	1565	done	
 2	port	packages/shell/shell-env	@deepseek-ai/dsh-shell-env	hoh-shell-env	255	249	done	
 2	port	packages/shell/tool-bash	@deepseek-ai/dsh-tool-bash	hoh-tool-bash	871	2569	done	
-2	port	packages/skill/skill-filesystem	@deepseek-ai/dsh-skill-filesystem	hoh-skill-filesystem	1064	1530	todo	
+2	port	packages/skill/skill-filesystem	@deepseek-ai/dsh-skill-filesystem	hoh-skill-filesystem	1064	1530	writing:x4	
 2	port	packages/skill/tool-skill	@deepseek-ai/dsh-tool-skill	hoh-tool-skill	452	1240	todo	
 2	port	packages/spill/spill	@deepseek-ai/dsh-spill	hoh-spill	138	61	done	
 2	port	packages/spill/spill-local	@deepseek-ai/dsh-spill-local	hoh-spill-local	727	663	writing:x6	
@@ -159,21 +159,21 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/subagent/subagent-fork-in-process	@deepseek-ai/dsh-subagent-fork-in-process	hoh-subagent-fork-in-process	83	347	writing:x5	
 2	port	packages/subagent/subagent-spawn-in-process	@deepseek-ai/dsh-subagent-spawn-in-process	hoh-subagent-spawn-in-process	59	525	writing:x5	
 2	port	packages/subagent/tool-subagent	@deepseek-ai/dsh-tool-subagent	hoh-tool-subagent	965	3380	todo	
-2	port	packages/subagent/tool-subagent-control	@deepseek-ai/dsh-tool-subagent-control	hoh-tool-subagent-control	373	1468	todo	
+2	port	packages/subagent/tool-subagent-control	@deepseek-ai/dsh-tool-subagent-control	hoh-tool-subagent-control	373	1468	writing:x5	
 2	port	packages/team/agent-team	@deepseek-ai/dsh-agent-team	hoh-agent-team	1109	1862	todo	зависит от: dsh-typert-protocol=skip
 2	port	packages/team/tool-agent-team	@deepseek-ai/dsh-tool-agent-team	hoh-tool-agent-team	235	1064	todo	
 2	port	packages/telemetry/otel	@deepseek-ai/dsh-otel	hoh-otel	475	466	todo	
 2	port	packages/util/ripgrep	@deepseek-ai/dsh-util-ripgrep	hoh-util-ripgrep	109	189	done	
 2	port	packages/web/tool-web	@deepseek-ai/dsh-tool-web	hoh-tool-web	1054	1692	writing:x8	
 2	port	packages/web/web	@deepseek-ai/dsh-web	hoh-web	507	394	done	зависит от: dsh-typert-protocol=skip
-2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	todo	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
+2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	writing:x8	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
 2	port	packages/web/web-fetch-http	@deepseek-ai/dsh-web-fetch-http	hoh-web-fetch-http	601	853	done	
 2	port	packages/web/web-search-deepseek	@deepseek-ai/dsh-web-search-deepseek	hoh-web-search-deepseek	696	1322	todo	зависит от: dsh-deepseek-account=later
 3	port	packages/browser-use/browser-use	@deepseek-ai/dsh-browser-use	hoh-browser-use	65	51	todo	
 3	port	packages/computer-use/computer-use	@deepseek-ai/dsh-computer-use	hoh-computer-use	65	51	todo	
 3	port	packages/context/harness-dev-context	@deepseek-ai/dsh-harness-dev-context	hoh-harness-dev-context	158	231	todo	
 3	port	packages/context/session-reference	@deepseek-ai/dsh-session-reference	hoh-session-reference	1011	1545	writing:x3	
-3	port	packages/context/tmux-context	@deepseek-ai/dsh-tmux-context	hoh-tmux-context	272	484	writing:x5	
+3	port	packages/context/tmux-context	@deepseek-ai/dsh-tmux-context	hoh-tmux-context	272	484	done	
 3	port	packages/core/agent-tool-presentation	@deepseek-ai/dsh-agent-tool-presentation	hoh-agent-tool-presentation	54	139	done	
 3	port	packages/deliverables/workspace-changes	@deepseek-ai/dsh-workspace-changes	hoh-workspace-changes	1294	1477	todo	
 3	port	packages/fs/tool-str-replace-editor	@deepseek-ai/dsh-tool-str-replace-editor	hoh-tool-str-replace-editor	537	690	done	
