@@ -1,0 +1,41 @@
+[package]
+name = "hoh-tool-str-replace-editor"
+description = "Port of @deepseek-ai/dsh-tool-str-replace-editor (packages/fs/tool-str-replace-editor)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-error = { path = "../hoh-error" }
+hoh-fs = { path = "../hoh-fs" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-output-retention = { path = "../hoh-output-retention" }
+hoh-sandbox = { path = "../hoh-sandbox" }
+hoh-sandbox-policy = { path = "../hoh-sandbox-policy" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-fs-local = { path = "../hoh-fs-local" }
+hoh-fs-observation-policy = { path = "../hoh-fs-observation-policy" }
+hoh-fs-patch = { path = "../hoh-fs-patch" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-tool-executor-native = { path = "../hoh-tool-executor-native" }
+hoh-tool-testkit = { path = "../hoh-tool-testkit" }
+tempfile.workspace = true
+tokio.workspace = true
+

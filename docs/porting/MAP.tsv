@@ -174,9 +174,9 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 3	port	packages/context/harness-dev-context	@deepseek-ai/dsh-harness-dev-context	hoh-harness-dev-context	158	231	todo	
 3	port	packages/context/session-reference	@deepseek-ai/dsh-session-reference	hoh-session-reference	1011	1545	writing:x3	
 3	port	packages/context/tmux-context	@deepseek-ai/dsh-tmux-context	hoh-tmux-context	272	484	todo	
-3	port	packages/core/agent-tool-presentation	@deepseek-ai/dsh-agent-tool-presentation	hoh-agent-tool-presentation	54	139	todo	
+3	port	packages/core/agent-tool-presentation	@deepseek-ai/dsh-agent-tool-presentation	hoh-agent-tool-presentation	54	139	writing:x6	
 3	port	packages/deliverables/workspace-changes	@deepseek-ai/dsh-workspace-changes	hoh-workspace-changes	1294	1477	todo	
-3	port	packages/fs/tool-str-replace-editor	@deepseek-ai/dsh-tool-str-replace-editor	hoh-tool-str-replace-editor	537	690	writing:x7	
+3	port	packages/fs/tool-str-replace-editor	@deepseek-ai/dsh-tool-str-replace-editor	hoh-tool-str-replace-editor	537	690	done	
 3	port	packages/mcp/mcp-client	@deepseek-ai/dsh-mcp-client	hoh-mcp-client	2175	5064	writing:x8	
 3	port	packages/mcp/mcp-manager	@deepseek-ai/dsh-mcp-manager	hoh-mcp-manager	652	1349	writing:x8	
 3	port	packages/preset/agent-preset/skills/dsh-doc/templates/decoration	@local/my-decoration	hoh-my-decoration	0	0	todo	

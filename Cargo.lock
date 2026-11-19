@@ -2442,6 +2442,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-str-replace-editor"
+version = "0.1.0"
+dependencies = [
+ "hoh-agent",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-fs-observation-policy",
+ "hoh-fs-patch",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-output-retention",
+ "hoh-sandbox",
+ "hoh-sandbox-policy",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-testkit"
 version = "0.1.0"
 dependencies = [
