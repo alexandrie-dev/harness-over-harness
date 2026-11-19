@@ -1,0 +1,291 @@
+//! The question shown to the user, in Russian, as the window's approval screen words it:
+//! what will be done, to which files, and why it cannot be undone. The headline is one line
+//! without control characters (the host protocol rejects anything else); the raw command goes
+//! to the details.
+
+use std::path::Path;
+
+use crate::classify::{GitKind, Risk, Source};
+
+const MAX_NAMES: usize = 4;
+const MAX_NAME_CHARS: usize = 60;
+const MAX_HEADLINE_CHARS: usize = 600;
+const MAX_DETAILS_CHARS: usize = 2000;
+
+pub struct Question {
+    /// Becomes `humanText`: one line, what will happen and what cannot be undone.
+    pub headline: String,
+    /// Becomes `reason`: the command as the assistant wrote it.
+    pub details: String,
+}
+
+fn phrases(risks: &[Risk]) -> Vec<String> {
+    let mut phrases: Vec<String> = Vec::new();
+    for risk in risks {
+        let phrase = phrase(risk);
+        if !phrases.contains(&phrase) {
+            phrases.push(phrase);
+        }
+    }
+    phrases
+}
+
+fn drops_files(risks: &[Risk]) -> bool {
+    risks.iter().any(|r| {
+        matches!(
+            r,
+            Risk::Delete { .. }
+                | Risk::Git {
+                    kind: GitKind::Clean | GitKind::Remove,
+                    ..
+                }
+        )
+    })
+}
+
+/// The question for a call that asks to leave the sandbox (`sandbox_permissions:
+/// "danger-full-access"`): the same wording as [`question`], saying that nothing confines the
+/// command. `risks` may be empty: then the command is simply unconfined.
+pub fn escalation_question(risks: &[Risk], command: &str, justification: &str) -> Question {
+    let what = if risks.is_empty() {
+        "она сможет читать и менять любые файлы на этом компьютере".to_owned()
+    } else {
+        phrases(risks).join("; ")
+    };
+    let mut headline =
+        format!("Помощник просит выполнить команду без ограничений песочницы: {what}");
+    if drops_files(risks) {
+        headline.push_str(". Файлы не попадут в корзину");
+    }
+    Question {
+        headline: truncate(&clean(&headline), MAX_HEADLINE_CHARS),
+        details: truncate(
+            &format!("Команда: {command}. Обоснование Помощника: {justification}"),
+            MAX_DETAILS_CHARS,
+        ),
+    }
+}
+
+pub fn question(risks: &[Risk], command: &str, cwd: Option<&Path>) -> Question {
+    let phrases = phrases(risks);
+    let only_overwrites = risks.iter().all(|r| {
+        matches!(
+            r,
+            Risk::Overwrite { .. }
+                | Risk::Truncate { .. }
+                | Risk::Extract { .. }
+                | Risk::Patch { .. }
+        )
+    });
+    let folder = cwd.and_then(folder_name);
+    let mut headline = if only_overwrites {
+        let mut text = capitalize(&phrases.join("; "));
+        if let Some(folder) = &folder {
+            text.push_str(&format!(" (папка {folder})"));
+        }
+        text
+    } else {
+        let place = folder.map_or(String::new(), |f| format!(" в папке {f}"));
+        format!("Выполнить команду{place}: {}", phrases.join("; "))
+    };
+    if drops_files(risks) {
+        headline.push_str(". Файлы не попадут в корзину");
+    }
+    Question {
+        headline: truncate(&clean(&headline), MAX_HEADLINE_CHARS),
+        details: truncate(&format!("Команда: {command}"), MAX_DETAILS_CHARS),
+    }
+}
+
+fn phrase(risk: &Risk) -> String {
+    match risk {
+        Risk::Delete {
+            names,
+            folders,
+            source,
+        } => delete_phrase(names, *folders, *source),
+        Risk::Truncate { names } => match names.len() {
+            0 => "очистить файлы: прежнее содержимое будет потеряно".to_owned(),
+            _ => format!(
+                "очистить {}: прежнее содержимое будет потеряно",
+                list(names)
+            ),
+        },
+        Risk::Overwrite { names, checked } => overwrite_phrase(names, *checked),
+        Risk::Patch { names } => match names.len() {
+            0 => "применить патч и перезаписать файлы, которые он меняет: прежнее содержимое будет потеряно".to_owned(),
+            1 => format!("применить патч и перезаписать файл {}: прежнее содержимое будет потеряно", list(names)),
+            _ => format!("применить патч и перезаписать файлы {}: прежнее содержимое будет потеряно", list(names)),
+        },
+        Risk::Extract { archive } => match archive {
+            Some(name) => format!(
+                "распаковать архив {} и перезаписать файлы с теми же именами: прежнее содержимое будет потеряно",
+                list(std::slice::from_ref(name))
+            ),
+            None => "распаковать архив и перезаписать файлы с теми же именами: прежнее содержимое будет потеряно".to_owned(),
+        },
+        Risk::Git { kind, names } => git_phrase(*kind, names),
+        Risk::Opaque(what) => format!(
+            "запустить то, что нельзя проверить заранее ({what}); оно может удалить или перезаписать файлы"
+        ),
+        Risk::Unparsable => {
+            "запустить команду, которую не удалось разобрать; она может удалить или перезаписать файлы"
+                .to_owned()
+        }
+    }
+}
+
+fn delete_phrase(names: &[String], folders: bool, source: Source) -> String {
+    match source {
+        Source::Find => "удалить все файлы, которые найдёт команда find".to_owned(),
+        Source::Xargs => "удалить файлы из списка, переданного команде xargs".to_owned(),
+        Source::Sync => {
+            "удалить в папке назначения файлы, которых нет в источнике (rsync --delete)".to_owned()
+        }
+        Source::Listed if names.is_empty() => "удалить файлы".to_owned(),
+        Source::Listed => {
+            let patterns = names.iter().any(|n| n.contains(['*', '?', '[', '(']));
+            if patterns {
+                format!("удалить файлы по именам и маскам: {}", list(names))
+            } else if folders {
+                format!(
+                    "удалить {} {} вместе со всем содержимым: {}",
+                    names.len(),
+                    plural(names.len(), "элемент", "элемента", "элементов"),
+                    list(names)
+                )
+            } else {
+                format!(
+                    "удалить {} {}: {}",
+                    names.len(),
+                    plural(names.len(), "файл", "файла", "файлов"),
+                    list(names)
+                )
+            }
+        }
+    }
+}
+
+fn overwrite_phrase(names: &[String], checked: bool) -> String {
+    if names.is_empty() {
+        return "перезаписать файлы, список которых станет известен только при запуске".to_owned();
+    }
+    let noun = if names.len() == 1 {
+        "файл"
+    } else {
+        "файлы"
+    };
+    if checked {
+        format!(
+            "перезаписать {noun} {}: прежнее содержимое будет потеряно",
+            list(names)
+        )
+    } else {
+        format!(
+            "перезаписать {noun} {}, если он уже существует (проверить заранее нельзя): прежнее содержимое будет потеряно",
+            list(names)
+        )
+    }
+}
+
+fn git_phrase(kind: GitKind, names: &[String]) -> String {
+    let files = if names.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", list(names))
+    };
+    match kind {
+        GitKind::Clean => "удалить файлы, которые git не отслеживает".to_owned(),
+        GitKind::ResetHard => {
+            "сбросить все несохранённые изменения до последнего коммита; изменения пропадут"
+                .to_owned()
+        }
+        GitKind::Checkout | GitKind::Restore => {
+            format!("вернуть файлы к сохранённой версии{files}; несохранённые изменения пропадут")
+        }
+        GitKind::Remove => format!("удалить файлы из папки и из git{files}"),
+    }
+}
+
+fn list(names: &[String]) -> String {
+    let shown: Vec<String> = names
+        .iter()
+        .take(MAX_NAMES)
+        .map(|name| truncate(&clean(name), MAX_NAME_CHARS))
+        .collect();
+    let mut text = shown.join(", ");
+    if names.len() > MAX_NAMES {
+        text.push_str(&format!(" и ещё {}", names.len() - MAX_NAMES));
+    }
+    text
+}
+
+/// Russian plural form for `n`: 1 файл, 2 файла, 5 файлов.
+fn plural(n: usize, one: &'static str, few: &'static str, many: &'static str) -> &'static str {
+    match (n % 100, n % 10) {
+        (11..=14, _) => many,
+        (_, 1) => one,
+        (_, 2..=4) => few,
+        _ => many,
+    }
+}
+
+fn folder_name(cwd: &Path) -> Option<String> {
+    let parts: Vec<String> = cwd
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    match parts.as_slice() {
+        [] => None,
+        [only] => Some(only.clone()),
+        [.., parent, last] => Some(format!("{parent}/{last}")),
+    }
+}
+
+/// Anything the protocol refuses in `humanText` becomes a space; the rest of the text is kept.
+fn clean(text: &str) -> String {
+    let mapped: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() || (c.is_whitespace() && c != ' ') || invisible(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    mapped
+        .split(' ')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{115f}' | '\u{1160}'
+        | '\u{17b4}'..='\u{17b5}' | '\u{180e}' | '\u{200b}'..='\u{200f}'
+        | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{3164}'
+        | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{ffa0}' | '\u{fff9}'..='\u{fffb}'
+        | '\u{1bca0}'..='\u{1bca3}' | '\u{1d173}'..='\u{1d17a}'
+        | '\u{e0000}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}')
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
+}
+
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}

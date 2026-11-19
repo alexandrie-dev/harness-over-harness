@@ -23,8 +23,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     future::Future,
     sync::{Arc, Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
 const ASK_SENTENCE: &str = "Approval prompts are enabled in this session: operations that require approval may ask through the configured answerers; without an available answerer, the request fails closed.";
@@ -125,23 +127,52 @@ pub fn set_approval_policy(session: &Session, policy: ApprovalPolicy) -> Result<
     Ok(())
 }
 
+#[cfg(test)]
+type PolicyReadHook = Arc<dyn Fn() + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ApprovalService {
     ctx: Context,
     config: Arc<Mutex<Config>>,
     approval_projection_handle: ProjectionHandle<state::ApprovalState>,
     host: Arc<Mutex<Option<host::HostApprovalMode>>>,
+    /// Sandbox escalations the user already allowed through another question (see
+    /// [`ApprovalService::pre_approve_escalation`]). Shared by every incarnation of the service.
+    escalation_grants: Arc<Mutex<HashMap<(String, String), EscalationGrant>>>,
+    /// `set_policy` reads the effective policy, appends and injects as one step (the source's
+    /// method has no `await` between them, so concurrent switches never interleave). One lock for
+    /// every incarnation of the service: an old `Service<Approval>` that outlives a replacement
+    /// still switches under the same lock as the new one.
+    policy_switch: Arc<Mutex<()>>,
+    /// Test seam: runs between reading the previous policy and writing the new one.
+    #[cfg(test)]
+    after_policy_read: Arc<Mutex<Option<PolicyReadHook>>>,
 }
 hoh_kernel::service!(pub Approval: ApprovalService = "approval");
 
-/// The host-mode slot of one kernel. The server enables host mode once, in `initialize`, but the
-/// service is rebuilt whenever a dependency (the projection registry) leaves and returns, so the
-/// slot lives on the kernel root and is shared by every incarnation of the service.
+/// The state of one kernel that must be the same for every incarnation of the service: host mode
+/// (enabled once, in `initialize`), the policy-switch lock and the escalation grants. The service is
+/// rebuilt whenever a dependency (the projection registry) leaves and returns, and an old
+/// `Service<Approval>` may outlive its replacement, so the slot lives on the kernel root.
 #[derive(Clone, Default)]
-pub(crate) struct HostSlot(Arc<Mutex<Option<host::HostApprovalMode>>>);
+pub(crate) struct HostSlot {
+    host: Arc<Mutex<Option<host::HostApprovalMode>>>,
+    policy_switch: Arc<Mutex<()>>,
+    escalation_grants: Arc<Mutex<HashMap<(String, String), EscalationGrant>>>,
+}
 hoh_kernel::service!(HostSlotKey: HostSlot = "approvalHostSlot");
 
-async fn host_slot(ctx: &Context) -> Result<Arc<Mutex<Option<host::HostApprovalMode>>>, BoxError> {
+/// How long a grant waits for the escalation request it was made for.
+const ESCALATION_GRANT_LIFETIME: Duration = Duration::from_secs(300);
+
+/// One allowed escalation: for one tool and for exactly the reason that tool will ask with.
+struct EscalationGrant {
+    tool_name: String,
+    reason: String,
+    made: Instant,
+}
+
+async fn host_slot(ctx: &Context) -> Result<HostSlot, BoxError> {
     if ctx.get::<HostSlotKey>().is_none() {
         // The root owns the provision, so it outlives any one fiber of this plugin.
         ctx.root()
@@ -151,7 +182,8 @@ async fn host_slot(ctx: &Context) -> Result<Arc<Mutex<Option<host::HostApprovalM
     let slot = ctx
         .get::<HostSlotKey>()
         .ok_or("approval host slot is unavailable")?;
-    Ok(slot.0.clone())
+    let slot: &HostSlot = &slot;
+    Ok(slot.clone())
 }
 
 impl ApprovalService {
@@ -204,6 +236,40 @@ impl ApprovalService {
                 .await
         })
     }
+    /// HoH window profile (no dsh counterpart): the user has just allowed (`allowed-once`) a
+    /// question that covers the sandbox escalation `tool_name` is about to ask for in `call_id`
+    /// (the destructive guard words it in Russian). The next request of that very call, from that
+    /// very tool, with exactly `reason` (the tool's escalation text) resolves `allowed-once`
+    /// without asking again; it is still audited (`approval/asked` + `approval/decided`).
+    ///
+    /// Call it only after the host's decision: a rejected, cancelled or expired question makes no
+    /// grant. A grant is bound to (session, call id, tool name, reason), is used once, expires after
+    /// five minutes, never overrides `policy: never` or an aborted call, and is not spent by a
+    /// request of another tool or reason — a call id may be reused between steps.
+    pub fn pre_approve_escalation(
+        &self,
+        session: &Session,
+        call_id: &hoh_llm::ToolCallId,
+        tool_name: &str,
+        reason: &str,
+    ) {
+        let mut grants = self
+            .escalation_grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        grants.retain(|_, grant| grant.made.elapsed() < ESCALATION_GRANT_LIFETIME);
+        if grants.len() >= 256 {
+            grants.clear();
+        }
+        grants.insert(
+            (session.id().to_string(), call_id.to_string()),
+            EscalationGrant {
+                tool_name: tool_name.to_owned(),
+                reason: reason.to_owned(),
+                made: Instant::now(),
+            },
+        );
+    }
     pub fn host_mode_enabled(&self) -> bool {
         self.host
             .lock()
@@ -220,11 +286,16 @@ impl ApprovalService {
         if ctx.ensure_active().is_err() {
             return Ok(None);
         }
+        let slot = host_slot(&ctx).await?;
         let service = Self {
             ctx: ctx.clone(),
             config: Arc::new(Mutex::new(config)),
             approval_projection_handle: handle,
-            host: host_slot(&ctx).await?,
+            host: slot.host,
+            escalation_grants: slot.escalation_grants,
+            policy_switch: slot.policy_switch,
+            #[cfg(test)]
+            after_policy_read: Arc::default(),
         };
         let for_prompt = service.clone();
         let prompt = ctx.inject::<PromptDeps, _>(move |scope, deps| {
@@ -260,7 +331,24 @@ impl ApprovalService {
         Ok(Some(service))
     }
     pub fn set_policy(&self, agent: &dyn Agent, policy: ApprovalPolicy) -> Result<(), BoxError> {
+        // Check and change under one lock: of two simultaneous switches to the same policy the
+        // second sees the first one's result and does nothing (one event, one notice).
+        let _switching = self
+            .policy_switch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let previous = self.effective_policy(agent.session())?;
+        #[cfg(test)]
+        {
+            let hook = self
+                .after_policy_read
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
         if previous == policy {
             return Ok(());
         }
@@ -283,6 +371,40 @@ impl ApprovalService {
             return Ok(policy);
         }
         Ok(self.config().policy)
+    }
+    /// Test seam: make every grant older by `by`.
+    #[cfg(test)]
+    fn age_escalation_grants(&self, by: Duration) {
+        for grant in self
+            .escalation_grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values_mut()
+        {
+            grant.made -= by;
+        }
+    }
+    fn take_escalation_grant(&self, session: &Session, req: &ApprovalRequest) -> bool {
+        let (Some(call_id), Some(reason)) = (&req.call_id, &req.reason) else {
+            return false;
+        };
+        let key = (session.id().to_string(), call_id.to_string());
+        let mut grants = self
+            .escalation_grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(grant) = grants.get(&key) else {
+            return false;
+        };
+        if grant.made.elapsed() >= ESCALATION_GRANT_LIFETIME {
+            grants.remove(&key);
+            return false;
+        }
+        if grant.tool_name != req.tool_name || grant.reason != *reason {
+            return false; // not this request: the grant stays for the one it was made for
+        }
+        grants.remove(&key);
+        true
     }
     /// Starts immediately and continues if its returned future is dropped, like
     /// the source Promise. Audit failures propagate without replacing their error.
@@ -315,6 +437,8 @@ impl ApprovalService {
                 Some(ApprovalOutcome::Cancelled)
             } else if self.effective_policy(&session)? == ApprovalPolicy::Never {
                 Some(ApprovalOutcome::Rejected)
+            } else if self.take_escalation_grant(&session, &req) {
+                Some(ApprovalOutcome::AllowedOnce)
             } else {
                 None
             };

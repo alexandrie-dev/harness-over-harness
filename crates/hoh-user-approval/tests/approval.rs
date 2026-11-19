@@ -754,3 +754,242 @@ async fn fused_dispatch_overwrites_a_foreign_agent_of_the_request_with_its_subje
     assert_ne!(subject.id(), foreign.id());
     h.close().await;
 }
+
+fn escalation_request(a: Arc<dyn Agent>, call: &str, reason: &str) -> ApprovalRequest {
+    escalation_request_of(a, "bash", call, reason)
+}
+
+fn escalation_request_of(
+    a: Arc<dyn Agent>,
+    tool: &str,
+    call: &str,
+    reason: &str,
+) -> ApprovalRequest {
+    let mut request = ApprovalRequest::new(a, tool);
+    request.call_id = Some(call.into());
+    request.reason = Some(reason.into());
+    request
+}
+
+const ESCALATION: &str = "escalate sandbox to danger-full-access: clean up";
+
+#[tokio::test]
+async fn a_pre_approved_escalation_resolves_allowed_once_exactly_once_and_stays_audited() {
+    let h = Harness::mounted().await;
+    let a = h.open_agent();
+    let ask = |call: &str, reason: &str| escalation_request(a.clone(), call, reason);
+    // Nobody listens: without a grant the fail-closed default answers.
+    assert_eq!(
+        h.service()
+            .request(ask("call-1", ESCALATION))
+            .await
+            .unwrap(),
+        ApprovalOutcome::Unavailable
+    );
+    h.service()
+        .pre_approve_escalation(a.session(), &"call-1".into(), "bash", ESCALATION);
+    // Another call, another reason (even the same tool's), or a non-escalation request does not
+    // use the grant.
+    for (call, reason) in [
+        ("call-2", ESCALATION),
+        ("call-1", "Команда: rm a.txt"),
+        (
+            "call-1",
+            "escalate sandbox to danger-full-access: something else",
+        ),
+    ] {
+        assert_eq!(
+            h.service().request(ask(call, reason)).await.unwrap(),
+            ApprovalOutcome::Unavailable,
+            "{call} {reason}"
+        );
+    }
+    let before = audit(a.session()).len();
+    assert_eq!(
+        h.service()
+            .request(ask("call-1", ESCALATION))
+            .await
+            .unwrap(),
+        ApprovalOutcome::AllowedOnce
+    );
+    let events = audit(a.session());
+    assert_eq!(
+        events.len() - before,
+        2,
+        "asked + decided are still written"
+    );
+    assert_eq!(events.last().unwrap().data()["outcome"], "allowed-once");
+    // Used up.
+    assert_eq!(
+        h.service()
+            .request(ask("call-1", ESCALATION))
+            .await
+            .unwrap(),
+        ApprovalOutcome::Unavailable
+    );
+    h.close().await;
+}
+
+/// A call id may be reused between steps and `hoh-tool-fs` asks with the same reason prefix: a
+/// grant made for a `bash` question is not for a `write` with the same id.
+#[tokio::test]
+async fn a_bash_grant_is_not_spent_by_another_tool_with_the_same_call_id() {
+    let h = Harness::mounted().await;
+    let a = h.open_agent();
+    h.service()
+        .pre_approve_escalation(a.session(), &"x".into(), "bash", ESCALATION);
+    for tool in ["write", "edit", "read", "apply_patch"] {
+        assert_eq!(
+            h.service()
+                .request(escalation_request_of(a.clone(), tool, "x", ESCALATION))
+                .await
+                .unwrap(),
+            ApprovalOutcome::Unavailable,
+            "{tool} was granted by a bash grant"
+        );
+    }
+    // The grant is still there for the call it was made for, and only once.
+    assert_eq!(
+        h.service()
+            .request(escalation_request_of(a.clone(), "bash", "x", ESCALATION))
+            .await
+            .unwrap(),
+        ApprovalOutcome::AllowedOnce
+    );
+    assert_eq!(
+        h.service()
+            .request(escalation_request_of(a.clone(), "bash", "x", ESCALATION))
+            .await
+            .unwrap(),
+        ApprovalOutcome::Unavailable
+    );
+    h.close().await;
+}
+
+/// No grant without a call to `pre_approve_escalation` (which the guard makes only after the host's
+/// `allowed-once`): a request whose question was rejected has nothing to spend on a later `write`.
+#[tokio::test]
+async fn without_a_grant_a_request_of_any_tool_goes_to_the_answerers() {
+    let h = Harness::mounted().await;
+    let a = h.open_agent();
+    for tool in ["bash", "write"] {
+        assert_eq!(
+            h.service()
+                .request(escalation_request_of(a.clone(), tool, "x", ESCALATION))
+                .await
+                .unwrap(),
+            ApprovalOutcome::Unavailable
+        );
+    }
+    h.close().await;
+}
+
+/// A grant that nobody used goes stale.
+#[tokio::test]
+async fn an_unused_grant_expires() {
+    let h = Harness::mounted().await;
+    let a = h.open_agent();
+    h.service()
+        .pre_approve_escalation(a.session(), &"x".into(), "bash", ESCALATION);
+    h.service().age_escalation_grants(Duration::from_secs(301));
+    assert_eq!(
+        h.service()
+            .request(escalation_request_of(a.clone(), "bash", "x", ESCALATION))
+            .await
+            .unwrap(),
+        ApprovalOutcome::Unavailable
+    );
+    h.close().await;
+}
+
+#[tokio::test]
+async fn simultaneous_policy_switches_write_one_event_and_one_notice() {
+    use std::sync::{Condvar, Mutex as StdMutex};
+    use std::time::Duration;
+    let h = Harness::mounted().await;
+    let a = h.open_agent();
+    let service: ApprovalService = (*h.service()).clone();
+    // Both switches read the previous policy, then wait for each other (up to half a second:
+    // a serialized pair cannot both be here, so the first one just times out).
+    let gate = Arc::new((StdMutex::new(0usize), Condvar::new()));
+    {
+        let gate = gate.clone();
+        *service.after_policy_read.lock().unwrap() = Some(Arc::new(move || {
+            let (arrived, wake) = &*gate;
+            let mut arrived = arrived.lock().unwrap();
+            *arrived += 1;
+            wake.notify_all();
+            let _ = wake
+                .wait_timeout_while(arrived, Duration::from_millis(500), |n| *n < 2)
+                .unwrap();
+        }));
+    }
+    let switches: Vec<_> = (0..2)
+        .map(|_| {
+            let (service, agent) = (service.clone(), a.clone());
+            std::thread::spawn(move || service.set_policy(agent.as_ref(), ApprovalPolicy::Never))
+        })
+        .collect();
+    for switch in switches {
+        switch.join().unwrap().unwrap();
+    }
+    let policy_events = events(a.session())
+        .into_iter()
+        .filter(|e| e.event_type() == ApprovalPolicyEvent::TYPE)
+        .count();
+    assert_eq!(policy_events, 1, "two approval/policy events were written");
+    assert_eq!(lock(&a.injected).len(), 1, "two notices were injected");
+    h.close().await;
+}
+
+/// An old `Service<Approval>` can outlive its replacement (the projection registry left and came
+/// back). Both incarnations switch under one lock, so two simultaneous `Ask → Never` still write one
+/// event and queue one notice.
+#[tokio::test]
+async fn policy_switches_on_the_old_and_the_new_incarnation_write_one_event_and_one_notice() {
+    use std::sync::{Condvar, Mutex as StdMutex};
+    let mut h = Harness::context().await;
+    let approval = h.load::<ApprovalService>(json!({})).await;
+    let old: ApprovalService = (*h.service()).clone();
+    let a = h.open_agent();
+    h.registry_owner.take().unwrap().dispose().await;
+    h.registry_owner = Some(
+        h.load::<hoh_session_projection::SessionProjectionRegistry>(json!({}))
+            .await,
+    );
+    approval.settled().await.unwrap();
+    let new: ApprovalService = (*h.service()).clone();
+
+    // Each switch reads the previous policy and then waits for the other (up to half a second: a
+    // serialized pair cannot both be here, so the first one just times out).
+    let gate = Arc::new((StdMutex::new(0usize), Condvar::new()));
+    for service in [&old, &new] {
+        let gate = gate.clone();
+        *service.after_policy_read.lock().unwrap() = Some(Arc::new(move || {
+            let (arrived, wake) = &*gate;
+            let mut arrived = arrived.lock().unwrap();
+            *arrived += 1;
+            wake.notify_all();
+            let _ = wake
+                .wait_timeout_while(arrived, Duration::from_millis(500), |n| *n < 2)
+                .unwrap();
+        }));
+    }
+    let switches: Vec<_> = [old, new]
+        .into_iter()
+        .map(|service| {
+            let agent = a.clone();
+            std::thread::spawn(move || service.set_policy(agent.as_ref(), ApprovalPolicy::Never))
+        })
+        .collect();
+    for switch in switches {
+        switch.join().unwrap().unwrap();
+    }
+    let policy_events = events(a.session())
+        .into_iter()
+        .filter(|e| e.event_type() == ApprovalPolicyEvent::TYPE)
+        .count();
+    assert_eq!(policy_events, 1, "two approval/policy events were written");
+    assert_eq!(lock(&a.injected).len(), 1, "two notices were injected");
+    h.close().await;
+}

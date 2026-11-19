@@ -2812,6 +2812,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-window-destructive-guard"
+version = "0.1.0"
+dependencies = [
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-protocol",
+ "hoh-tools",
+ "hoh-user-approval",
+ "hoh-working-directory",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-window-stub"
 version = "0.1.0"
 dependencies = [
