@@ -952,6 +952,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-fs-observation-policy"
+version = "0.1.0"
+dependencies = [
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-kernel",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-timeout",
+ "hoh-tools",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-fs-patch"
 version = "0.1.0"
 dependencies = [
