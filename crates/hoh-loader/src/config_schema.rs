@@ -1,7 +1,5 @@
 //! Boot-free composition inspection. Plugin schemas come from schemars, without plugin application.
-use crate::{
-    Entry, Layer, PluginRegistry, Profile, compose, expression, parse_entries, parse_patches,
-};
+use crate::{Entry, Layer, PluginRegistry, Profile, expression, parse_entries, parse_patches};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -76,7 +74,7 @@ pub async fn generate_config_schema(
     registry: &PluginRegistry,
 ) -> Value {
     let mut diagnostics: Vec<_> = profile.skipped.iter().map(|bundle| ConfigSchemaDiagnostic { level: "error".into(), path: None, message: format!("Selected profile bundle {} could not be loaded; repair or remove its bundle selection.", hoh_util_values::js_json_stringify(&Value::String(bundle.name.clone()))) }).collect();
-    let composition = compose(base, layers, &mut |message| {
+    let composition = crate::patches::compose_unlabelled(base, layers, &mut |message| {
         diagnostics.push(ConfigSchemaDiagnostic {
             level: "warning".into(),
             path: None,
@@ -342,12 +340,32 @@ impl Collector<'_> {
             {
                 self.targets.insert(id, Some(index));
             }
-            let definition = self.registry.resolve(&name);
+            // Included rows keep their literal names; resolve them in their owning file's tree.
+            let lookup = if self.registry.resolve(&name).is_none()
+                && (name.starts_with("./")
+                    || name.starts_with("../")
+                    || Path::new(&name).is_absolute())
+            {
+                let filename = dir.join(&name);
+                let filename = if cfg!(windows) {
+                    crate::expr::windows_normalize(&filename.to_string_lossy())
+                } else {
+                    crate::expr::normalize(&filename.to_string_lossy())
+                };
+                url::Url::from_file_path(filename).ok().map(String::from)
+            } else {
+                None
+            };
+            let lookup = lookup.as_deref().unwrap_or(&name);
+            let definition = self.registry.resolve(lookup);
             let kind = definition.and_then(|d| match d.name() {
                 "cordis:group" => Some("group"),
                 "cordis:include" => Some("include"),
                 _ => None,
             });
+            if definition.is_some() && kind.is_none() && self.registry.is_carrier(lookup) {
+                self.report(&path,"unrecognized Loader tree carrier; use cordis:group or cordis:include for native child collection");
+            }
             let config_ref = if let Some(kind) = kind {
                 self.entries[index].tree = Some(kind.into());
                 if kind == "group" {
@@ -355,10 +373,9 @@ impl Collector<'_> {
                 } else {
                     "#/$defs/includeConfig".into()
                 }
+            } else if definition.is_some() && self.registry.schema(lookup).is_none() {
+                "#/$defs/unknownConfig".into()
             } else if let Some(definition) = definition {
-                if self.registry.is_carrier(&name) {
-                    self.report(&path, "unrecognized Loader tree carrier; use cordis:group or cordis:include for native child collection");
-                }
                 let identity = std::ptr::from_ref(definition) as usize;
                 if let Some(reference) = self.schemas.get(&identity) {
                     reference.clone()
@@ -395,11 +412,15 @@ impl Collector<'_> {
                 self.report(&path, format!("cannot resolve plugin {name}"));
                 "#/$defs/unknownConfig".into()
             };
-            self.entries[index].status = if definition.is_some() {
-                "schema".into()
-            } else {
-                "error".into()
-            };
+            self.entries[index].status =
+                if definition.is_some() && kind.is_none() && self.registry.schema(lookup).is_none()
+                {
+                    "absent".into()
+                } else if definition.is_some() {
+                    "schema".into()
+                } else {
+                    "error".into()
+                };
             self.entries[index].config_ref = config_ref.clone();
             self.names
                 .entry(name.clone())

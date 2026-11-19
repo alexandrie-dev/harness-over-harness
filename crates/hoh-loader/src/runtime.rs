@@ -4,7 +4,7 @@ use crate::{
 };
 use futures_util::future::join_all;
 use hoh_kernel::{
-    Cfg, ConfigResolver, Context, Error, Fiber, FiberInfo, FiberState, KernelError, Plugin,
+    Cfg, ConfigResolver, Context, Error, Fiber, FiberInfo, FiberState, Kernel, KernelError, Plugin,
     PluginOptions, Realm, Service, Undo,
 };
 use indexmap::{IndexMap, IndexSet};
@@ -19,6 +19,22 @@ use std::{
 
 pub(crate) fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
     value.lock().unwrap_or_else(|e| e.into_inner())
+}
+struct ValidationKernel(Option<Kernel>);
+impl ValidationKernel {
+    async fn close(&mut self) {
+        if let Some(kernel) = self.0.take() {
+            kernel.shutdown().await;
+        }
+    }
+}
+impl Drop for ValidationKernel {
+    fn drop(&mut self) {
+        if let Some(kernel) = self.0.take() {
+            // shutdown enqueues synchronously, even when the validation future is cancelled.
+            drop(kernel.shutdown());
+        }
+    }
 }
 fn component(id: &str) -> String {
     id.replace('%', "%25").replace(':', "%3A")
@@ -77,6 +93,7 @@ hoh_kernel::event!(ConfigReload = "app-boot/config-reload", hoh_kernel::Emit);
 pub(crate) struct Node {
     pub(crate) info: EntryInfo,
     ctx: Context,
+    config_context: Arc<Mutex<Option<Context>>>,
     generation: u64,
     error: Option<String>,
     update_error: Option<String>,
@@ -151,9 +168,14 @@ struct Resolver {
     env: EvalEnv,
     registry: Arc<PluginRegistry>,
     base: PathBuf,
+    context: Weak<Mutex<Option<Context>>>,
 }
 impl ConfigResolver for Resolver {
     fn resolve(&self, ctx: &Context, raw: &Value) -> Result<Value, Error> {
+        // The entry owns the capture; its fiber's resolver must not own its own Context.
+        if let Some(capture) = self.context.upgrade() {
+            *lock(&capture) = Some(ctx.clone());
+        }
         self.value(ctx, raw).map(|v| v.unwrap_or(Value::Null))
     }
 }
@@ -493,6 +515,10 @@ impl Group {
                         .as_ref()
                         .map(|n| n.ctx.clone())
                         .unwrap_or_else(|| ctx.clone()),
+                    config_context: old
+                        .as_ref()
+                        .map(|n| n.config_context.clone())
+                        .unwrap_or_default(),
                     generation,
                     error: None,
                     update_error: None,
@@ -615,6 +641,13 @@ impl Group {
                     EntryChange::Updated(id, UpdateAction::None)
                 });
             };
+            let config_context = lock(&self.inner.site.tree)
+                .nodes
+                .get(&key)
+                .map(|n| n.config_context.clone())
+                .unwrap_or_default();
+            // A replacement must not interpolate through its predecessor's activation context.
+            *lock(&config_context) = None;
             let fiber = ctx.plugin_dyn(
                 &definition,
                 row.config.clone(),
@@ -635,6 +668,7 @@ impl Group {
                             env: self.inner.env.clone(),
                             registry: self.inner.registry.clone(),
                             base: self.inner.site.base.clone(),
+                            context: Arc::downgrade(&config_context),
                         }) as Arc<dyn ConfigResolver>
                     }),
                 },
@@ -1468,6 +1502,78 @@ impl Node {
     }
 }
 impl Loader {
+    fn configuration_node(&self, entry: &EntryInfo) -> Result<Node, LoadError> {
+        self.records()
+            .into_iter()
+            .find(|node| {
+                node.info.id == entry.id
+                    && node.info.fiber.as_ref().map(Fiber::uid)
+                        == entry.fiber.as_ref().map(Fiber::uid)
+                    && node.info.fiber.is_some()
+            })
+            .ok_or_else(|| LoadError::Runtime("Configuration entry is no longer available".into()))
+    }
+    /// Schema of this mounted entry's actual plugin definition.
+    pub fn entry_schema(&self, entry: &EntryInfo) -> Result<Option<Value>, LoadError> {
+        let node = self.configuration_node(entry)?;
+        Ok(self.runtime.registry.schema(&node.info.name).cloned())
+    }
+    /// Interpolate raw layer values in the mounted entry's configuration context.
+    pub fn interpolate_entry(&self, entry: &EntryInfo, raw: &Value) -> Result<Value, LoadError> {
+        let node = self.configuration_node(entry)?;
+        let context = lock(&node.config_context)
+            .clone()
+            .unwrap_or_else(|| node.ctx.clone());
+        Resolver {
+            env: self.runtime.env.clone(),
+            registry: self.runtime.registry.clone(),
+            base: node.source,
+            context: Arc::downgrade(&node.config_context),
+        }
+        .value(&context, raw)
+        .map(|v| v.unwrap_or(Value::Null))
+        .map_err(|error| LoadError::Runtime(error.to_string()))
+    }
+    /// Resolve inherited layer data using the actual definition, without live candidate hooks.
+    /// Invalid or incomplete inherited data falls back to its interpolated raw value.
+    pub async fn resolve_inherited(
+        &self,
+        entry: &EntryInfo,
+        raw: &Value,
+    ) -> Result<Value, LoadError> {
+        let interpolated = self.interpolate_entry(entry, raw)?;
+        if self.entry_schema(entry)?.is_none() {
+            return Ok(interpolated);
+        }
+        let node = self.configuration_node(entry)?;
+        let definition = self
+            .runtime
+            .registry
+            .resolve(&node.info.name)
+            .ok_or_else(|| {
+                LoadError::Runtime("Configuration entry is no longer available".into())
+            })?;
+        // The kernel exposes its exact codec through Fiber. A private, permanently pending
+        // fiber runs that codec without activation, service effects, or the live fiber's hooks.
+        let mut validation = ValidationKernel(Some(Kernel::start()));
+        let kernel = validation.0.as_ref().ok_or_else(|| {
+            LoadError::Runtime("Configuration validation context is unavailable".into())
+        })?;
+        let fiber = kernel.root().plugin_dyn(
+            definition,
+            interpolated.clone(),
+            PluginOptions {
+                inject: vec![Arc::from("loader/inherited-validation")],
+                ..Default::default()
+            },
+        )?;
+        kernel.snapshot().await;
+        let resolved = fiber
+            .resolve_config(&interpolated)
+            .unwrap_or_else(|_| interpolated.clone());
+        validation.close().await;
+        Ok(resolved)
+    }
     pub fn audit(&self, required: &[&str]) -> Audit {
         let entries = self.entries();
         let missing = required
@@ -1558,10 +1664,16 @@ impl Loader {
 }
 
 pub async fn boot(root: &Context, options: BootOptions) -> Result<Service<LoaderKey>, LoadError> {
+    let configuration_path = if options.base.is_absolute() {
+        options.base.clone()
+    } else {
+        options.env.cwd.join(&options.base)
+    };
     let mut result = boot_inner(root, options).await;
     if let Err(error) = &mut result {
         root.fiber().dispose().await;
         if let LoadError::Startup(error) = error {
+            error.configuration_path = Some(configuration_path);
             error.messages = root
                 .logger()
                 .buffer()
@@ -1655,4 +1767,87 @@ async fn boot_inner(
         return Err(error);
     }
     root.get::<LoaderKey>().ok_or(KernelError::Inactive.into())
+}
+
+#[cfg(test)]
+mod inherited_validation_lifecycle {
+    use super::*;
+    #[tokio::test]
+    async fn a_resolver_does_not_retain_its_own_fiber_context_after_entry_removal() {
+        let kernel = Kernel::start();
+        let marker = Arc::new(());
+        let released = Arc::downgrade(&marker);
+        let ctx = kernel.root().with_tag(marker.clone());
+        drop(marker);
+        let capture = Arc::new(Mutex::new(None));
+        let resolver = Arc::new(Resolver {
+            env: EvalEnv {
+                home: "/virtual/home".into(),
+                cwd: "/virtual".into(),
+                exe: "/virtual/hoh".into(),
+                platform: "linux",
+                var: Arc::new(|_| None),
+            },
+            registry: Arc::new(PluginRegistry::default()),
+            base: "/virtual".into(),
+            context: Arc::downgrade(&capture),
+        });
+        let fiber = ctx
+            .plugin_dyn(
+                &hoh_kernel::PluginDef::of::<GroupPlugin>(),
+                json!([]),
+                PluginOptions {
+                    inject: vec![Arc::from("test/never-provided")],
+                    resolver: Some(resolver),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        drop(ctx);
+        kernel.snapshot().await;
+        fiber.resolve_config(&json!([])).unwrap();
+        assert!(lock(&capture).is_some());
+        drop(capture);
+        kernel.shutdown().await;
+        drop(fiber);
+        drop(kernel);
+        for _ in 0..1000 {
+            if released.upgrade().is_none() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(released.upgrade().is_none());
+    }
+    #[tokio::test]
+    async fn cancellation_enqueues_private_kernel_shutdown() {
+        let kernel = Kernel::start();
+        let child = kernel.root().child("validation-child").unwrap();
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let observe = cleaned.clone();
+        child
+            .effect("validation cancellation", move || {
+                Undo::sync(move || {
+                    observe.store(true, Ordering::Release);
+                })
+            })
+            .unwrap();
+        let guard = ValidationKernel(Some(kernel.clone()));
+        drop(guard);
+        for _ in 0..1000 {
+            if matches!(kernel.root().ensure_active(), Err(KernelError::Closed)) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        // R15: uid 0 stays Active; shutdown must dispose children, drain effects and close the actor.
+        assert!(child.fiber().is_disposed());
+        assert!(cleaned.load(Ordering::Acquire));
+        assert!(matches!(
+            kernel.root().ensure_active(),
+            Err(KernelError::Closed)
+        ));
+        assert_eq!(kernel.root().fiber().state(), FiberState::Active);
+        kernel.shutdown().await;
+    }
 }

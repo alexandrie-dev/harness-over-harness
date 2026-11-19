@@ -360,6 +360,21 @@ fn flatten(rows: &[Entry]) -> IndexMap<String, Value> {
 }
 /// Prefix snapshots always apply ONE flattened list to the original base (§L9).
 pub fn compose(base: &[Entry], layers: &[Layer], warn: &mut dyn FnMut(String)) -> Composition {
+    compose_impl(base, layers, warn, true)
+}
+pub(crate) fn compose_unlabelled(
+    base: &[Entry],
+    layers: &[Layer],
+    warn: &mut dyn FnMut(String),
+) -> Composition {
+    compose_impl(base, layers, warn, false)
+}
+fn compose_impl(
+    base: &[Entry],
+    layers: &[Layer],
+    warn: &mut dyn FnMut(String),
+    label_warnings: bool,
+) -> Composition {
     let patches = layers
         .iter()
         .flat_map(|l| l.patches.iter().cloned())
@@ -393,7 +408,11 @@ pub fn compose(base: &[Entry], layers: &[Layer], warn: &mut dyn FnMut(String)) -
             &mut pool,
         );
         for warning in &warnings[warnings_seen..] {
-            warn(format!("[{label}] {warning}"));
+            warn(if label_warnings {
+                format!("[{label}] {warning}")
+            } else {
+                warning.clone()
+            });
         }
         warnings_seen = warnings.len();
         let current = flatten(&entries);

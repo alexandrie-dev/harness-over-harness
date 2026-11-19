@@ -36,6 +36,7 @@ pub struct StartupCompositionDiagnostic {
 #[error("{message}")]
 pub struct StartupError {
     pub message: String,
+    pub configuration_path: Option<std::path::PathBuf>,
     pub composition: StartupCompositionDiagnostic,
     pub failures: Vec<String>,
     pub messages: Vec<String>,
@@ -74,6 +75,7 @@ pub enum StartupOutcome {
 pub fn format_activation_error(error: &(dyn std::error::Error + 'static)) -> String {
     let mut pending = vec![error];
     let mut seen = std::collections::HashSet::new();
+    let mut rendered = std::collections::HashSet::new();
     let mut lines = vec![];
     while let Some(error) = pending.pop() {
         // An error and its first source field can share an address; retain the trait metadata too.
@@ -86,7 +88,12 @@ pub fn format_activation_error(error: &(dyn std::error::Error + 'static)) -> Str
             pending.push(inner.as_ref().as_ref());
             continue;
         }
-        lines.push(error.to_string());
+        // Trait upcasts may use different vtables for the same concrete error.
+        // Keep walking those nodes (including aggregates), but render their message once.
+        let message = error.to_string();
+        if rendered.insert((std::ptr::from_ref(error).cast::<()>(), message.clone())) {
+            lines.push(message);
+        }
         if let Some(aggregate) = error.downcast_ref::<ActivationErrors>() {
             for error in aggregate.errors.iter().rev() {
                 pending.push(error);
@@ -404,6 +411,7 @@ pub async fn audit_startup_entries(
             .collect();
         return Err(LoadError::Startup(Box::new(StartupError {
             message: lines.join("\n"),
+            configuration_path: None,
             composition: capture(loader).await,
             failures: failures
                 .into_iter()

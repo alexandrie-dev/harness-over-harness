@@ -45,20 +45,16 @@ pub fn init_profile(dir: &Path, bundles: &[String]) -> Result<(), LoadError> {
     }
     Ok(())
 }
-// These read-only filesystem errors are the Node strings exposed by readProfileManifest.
-// hoh-error is outside this task's allowed direct dependencies; keep this adapter local until authorized.
 fn read_error(error: &std::io::Error, file: &Path) -> String {
-    use std::io::ErrorKind;
-    let text = match error.kind() {
-        ErrorKind::NotFound => "ENOENT: no such file or directory",
-        ErrorKind::PermissionDenied => "EACCES: permission denied",
-        ErrorKind::IsADirectory => {
-            return "Error: EISDIR: illegal operation on a directory, read".into();
-        }
-        ErrorKind::NotADirectory => "ENOTDIR: not a directory",
-        _ => return format!("Error: {error}"),
+    let (operation, path) = if error.kind() == std::io::ErrorKind::IsADirectory {
+        ("read", None)
+    } else {
+        ("open", file.to_str())
     };
-    format!("Error: {text}, open '{}'", file.display())
+    format!(
+        "Error: {}",
+        hoh_error::node_fs_error_message(error, operation, path, None)
+    )
 }
 pub fn read_profile_manifest(bin_name: &str, dir: &Path) -> Result<Value, LoadError> {
     let path = dir.join("package.json");
@@ -158,6 +154,18 @@ pub fn load_profile(
     overlays: &[PathBuf],
     env: &EvalEnv,
 ) -> Result<Profile, LoadError> {
+    load_profile_with_user_layer(bin_name, name, bundles, home, overlays, env, true)
+}
+#[allow(clippy::too_many_arguments)] // Source loadProfile exposes userLayer as an option.
+pub fn load_profile_with_user_layer(
+    bin_name: &str,
+    name: &str,
+    bundles: &dyn BundleSource,
+    home: &Path,
+    overlays: &[PathBuf],
+    env: &EvalEnv,
+    user_layer: bool,
+) -> Result<Profile, LoadError> {
     let home = if home.is_absolute() {
         home.to_path_buf()
     } else {
@@ -200,5 +208,5 @@ pub fn load_profile(
         )?;
         write_profile_manifest(&dir, &updated)?;
     }
-    Profile::load(&dir, bundles, &home, overlays, env)
+    Profile::load_with_user_layer(&dir, bundles, &home, overlays, env, user_layer)
 }

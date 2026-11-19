@@ -866,3 +866,103 @@ old={}, next={nested:{count:1}}. Ожидается true, получается f
 r54_preserves_a_default_on_a_nonrecursive_object_reference сначала FAILED, теперь ignored по правилу brief.
 Kernel не редактировался. Source fixtures проверены inline, как непосредственно объявленные source z.object.
 Остались прежние вопросы A о WSL kernel release в EvalEnv и NaN/Infinity вне serde_json::Value.
+# Stage0 launcher API supplement
+
+The latest task's API/test accounting is appended at the end of this document.
+
+## Stage0 launcher и API для hoh-settings (18.11.2026)
+
+cmdline сохранён модулем hoh-loader (MAP row3); hoh-commander не зависит от
+loader, поэтому отдельный hoh-cmdline не нужен. apps/hoh владеет native process
+адаптером. Весь список app-boot #1–33 выше теперь перенесён в
+`tests/support/launcher_helpers.rs` (подмодуль tests/app_boot.rs): 3 path,
+4 loadEnv, 15 layeredEnv/bootstrap prohibitions, 11 failLoud groups. Предыдущая
+надпись «следующий task» для этих 33 cases заменяется этой записью.
+Явные cwd/home/map/warn/event hooks заменяют ambient process defaults; source
+case default paths используют те же переданные host facts. Ни один тест не
+читает реальный home или environment. Тексты bootstrap guards до байта;
+read failures используют hoh-error Node fs formatter. Proxy/endpoint provenance
+через принятый hoh-launch-environment, без std::env::set_var (unsafe в edition2024).
+
+### Публичные API для w5
+
+| Потребность | API |
+|---|---|
+| Отказ после reload, внутри file/serial transaction, до write | `ConfigEditor::try_edit(&EntryInfo, FnOnce(Value, Value) -> Future<Output=Result<Value, hoh_error::BoxError>>) -> Result<(), BoxError>` |
+| Schema реального definition, проверка stale uid | `ConfigEditor::schema(&EntryInfo)`, `Loader::entry_schema(&EntryInfo) -> Result<Option<Value>, LoadError>` |
+| Interpolate в actual entry config context | `Loader::interpolate_entry(&EntryInfo, &Value) -> Result<Value, LoadError>` |
+| Inherited defaults/validation без candidate hooks | `ConfigEditor::resolve_inherited` / `Loader::resolve_inherited(&EntryInfo, &Value) -> async Result<Value, LoadError>` |
+| Active profile facts | `ConfigEditor::home() -> &Path`, `profile_name() -> &str`; `ProfileContextKey` (`profileContext`) / immutable service `ProfileContext {name, dir, home}` |
+
+Source: config-editor/src/index.ts:86–146; settings/settings/src/index.ts:213–219,
+224,241–257,296–324,391–429; vendor/loader/src/config/entry.ts interpolation in
+fiber context. try_edit forwards the original boxed callback error unchanged,
+including downcast type and pointer; old infallible edit remains compatible.
+NoConfig represents a native plugin without Config export (schema returns None).
+The registry exposes its actual native Config schema, no reconstructed settings
+validator. Interpolation uses the actual context captured by ConfigResolver,
+including injected service visibility and entry realms.
+
+Kernel codec is public through Fiber::resolve_config, which also runs a fiber's
+candidate hooks; PluginDef does not expose its codec separately. Therefore the
+loader uses the actual registered definition in a private kernel with one
+permanently pending fiber (unprovided extra required injection), then calls that
+codec after interpolation in the real context. No apply, no service effects,
+no candidate hooks; the active kernel is unchanged. Awaited shutdown on success,
+synchronously enqueued shutdown on cancellation. Invalid/incomplete inherited
+config falls back to interpolated raw per source inheritedConfig; interpolation
+errors still propagate. Async API is the native adaptation; no kernel edits or
+second schema validator. Tests cover codec defaults, missing required fallback,
+original error identity, no apply/hooks, active-tree isolation and private cleanup.
+ProfileContext is the source subset needed by settings, not npm install/runtime
+fields excluded by O6. Launcher supplies the exact profile name and explicit home.
+ProfileContextKey exposes its name/dir/home as JSON for the shipped ctx.get(...)
+expressions. The entry owns its configuration-context capture; Resolver retains
+only a Weak handle, preventing a fiber/resolver/context ownership cycle. A
+dedicated unit case checks that context tags release after entry removal.
+
+### cmdline tests
+
+20 source groups from packages/boot/cmdline/tests/cmdline.spec.ts in tests/cmdline.rs.
+The source's object-form inject group is excluded by binding L4 (lists only);
+a native rejection test explicitly records that decision. Other groups preserve
+immutable argv, multiple independent parsers, child actions/help, typed errors,
+owned EOF/readiness subscriptions, cancellation/microtasks and byte-preserving
+transport notification without consuming stdin. Whole CLI source-case/file
+accounting is in apps/hoh/PORT_NOTES.md and SOURCE_TEST_CASES.md.
+
+### Отличия
+
+Native process defaults are explicit injected host facts. FailLoudReason uses
+native Error Debug/source with an injectable host inspection string rather than
+JS util.inspect properties. Native host event bridge replaces JS global hooks;
+assembled rejection identity is scoped by an owned guard. No grammar widening:
+L1 reserved expression markers, L4 array injections, L2/L18 YAML writer remain
+binding. CLI golden schema differences are precisely listed in apps/hoh notes.
+
+## Проверка ведущего 19.11: исправление девяти падений
+
+- `config_schema`: относительные имена строк из Include разрешаются относительно
+  каталога читаемого файла, включая `initial`; исходное имя в опубликованной
+  декларации сохраняется. Источник: app-boot/src/config-schema/collect.ts:125–168,
+  особенно передача нового baseUrl при walk(children). Исходный acceptance-тест
+  canonical Include/re-export alias сохранён без ослабления.
+- `format_activation_error`: отдельные visited и rendered множества. Разные
+  vtable при upcast одного error больше не дублируют его сообщение; обход
+  aggregate/source продолжается, одинаковые тексты разных объектов сохраняются.
+- По запросу ведущего о memory-mcp-configs добавлен **один фиксированный терм**,
+  отсутствующий в исходном §5.5:
+  `process.env.MEMORY_FILE_PATH?.trim() || process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:os').homedir(), '.dsh-mcp-reference-memory.jsonl')`.
+  Источник: apps/cli/config/examples/mcp-memory/mcp-reference-memory.cordis.yml:12–13.
+  Это явное дополнение к спецификации для данного примера, а не общий `.trim()`,
+  OS import или исполнение JS. Исходные YAML сохранены без изменений. Trim — JS;
+  OS home берётся только из EvalEnv::var HOME / USERPROFILE, отдельно от DSH home.
+  При отсутствии обоих нужного override и OS home возвращается positioned error;
+  системная passwd/Windows lookup не делается. Есть проверки Linux/Windows,
+  whitespace override, отличия OS home от DSH home и отказа прочим JS-методам.
+- Cancellation-тест исправляет ошибочный setup по **R15**: uid 0 всегда Active.
+  Проверяются реальный disposable child, завершение его эффекта, Closed ядра и
+  неизменность Active корня; проверка отмены не заменена ожиданием явного close.
+  Guard по-прежнему синхронно ставит shutdown в очередь в Drop.
+
+

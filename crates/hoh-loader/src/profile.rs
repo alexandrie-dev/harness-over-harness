@@ -56,7 +56,7 @@ fn read(file: &Path) -> Result<String, LoadError> {
         source,
     })
 }
-fn optional(file: &Path) -> Result<Option<Vec<Patch>>, LoadError> {
+pub fn load_optional_patches(file: &Path) -> Result<Option<Vec<Patch>>, LoadError> {
     match std::fs::read_to_string(file) {
         Ok(text) => parse_patches(&text, file).map(Some),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -66,6 +66,72 @@ fn optional(file: &Path) -> Result<Option<Vec<Patch>>, LoadError> {
         }),
     }
 }
+
+fn node_read_error(source: &std::io::Error, file: &Path) -> String {
+    if source.kind() == std::io::ErrorKind::IsADirectory {
+        hoh_error::node_fs_error_message(source, "read", None, None)
+    } else {
+        let file = file.to_string_lossy();
+        hoh_error::node_fs_error_message(source, "open", Some(file.as_ref()), None)
+    }
+}
+
+fn parse_named_patches(
+    bin_name: &str,
+    label: &str,
+    text: &str,
+    file: &Path,
+) -> Result<Vec<Patch>, LoadError> {
+    let parse_error = |source: LoadError| {
+        LoadError::Runtime(format!(
+            "{bin_name}: failed to parse {label} {}: {source}",
+            file.display()
+        ))
+    };
+    let value = crate::yaml::parse_value(text, file).map_err(&parse_error)?;
+    let Some(entries) = value.as_array() else {
+        return Err(LoadError::Runtime(format!(
+            "{bin_name}: {label} {} must be a top-level YAML array of loader patch entries",
+            file.display()
+        )));
+    };
+    if let Some(index) = entries.iter().position(|entry| !entry.is_object()) {
+        return Err(LoadError::Runtime(format!(
+            "{bin_name}: {label} entry {} in {} must be a mapping (a loader patch entry)",
+            index + 1,
+            file.display()
+        )));
+    }
+    parse_patches(text, file).map_err(parse_error)
+}
+
+/// Source-compatible optional profile/home patch diagnostics for launcher surfaces.
+pub fn load_named_optional_patches(
+    bin_name: &str,
+    file: &Path,
+) -> Result<Option<Vec<Patch>>, LoadError> {
+    match std::fs::read_to_string(file) {
+        Ok(text) => parse_named_patches(bin_name, "patches", &text, file).map(Some),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(LoadError::Runtime(format!(
+            "{bin_name}: failed to read patches {}: Error: {}",
+            file.display(),
+            node_read_error(&source, file)
+        ))),
+    }
+}
+
+/// Source-compatible required command-line overlay diagnostics for launcher surfaces.
+pub fn load_named_overlay_patches(bin_name: &str, file: &Path) -> Result<Vec<Patch>, LoadError> {
+    let text = std::fs::read_to_string(file).map_err(|source| {
+        LoadError::Runtime(format!(
+            "{bin_name}: failed to read overlay {}: Error: {}",
+            file.display(),
+            node_read_error(&source, file)
+        ))
+    })?;
+    parse_named_patches(bin_name, "overlay", &text, file)
+}
 impl Profile {
     pub fn load(
         dir: &Path,
@@ -73,6 +139,17 @@ impl Profile {
         home: &Path,
         overlays: &[PathBuf],
         env: &EvalEnv,
+    ) -> Result<Profile, LoadError> {
+        Self::load_with_user_layer(dir, bundles, home, overlays, env, true)
+    }
+    /// Recovery dumps deliberately do not read profile, home or argv patches.
+    pub fn load_with_user_layer(
+        dir: &Path,
+        bundles: &dyn BundleSource,
+        home: &Path,
+        overlays: &[PathBuf],
+        env: &EvalEnv,
+        user_layer: bool,
     ) -> Result<Profile, LoadError> {
         let dir = if dir.is_absolute() {
             dir.to_path_buf()
@@ -138,57 +215,139 @@ impl Profile {
                 }),
             }
         }
-        let home = if home.is_absolute() {
-            home.to_path_buf()
-        } else {
-            env.cwd.join(home)
-        };
-        for (source, file) in [
-            (LayerSource::Profile, dir.join("cordis.patch.yml")),
-            (LayerSource::Home, home.join("cordis.patch.yml")),
-        ] {
-            if let Some(patches) = optional(&file)? {
+        if user_layer {
+            let file = dir.join("cordis.patch.yml");
+            if let Some(patches) = load_optional_patches(&file)? {
                 layers.push(Layer {
-                    source,
+                    source: LayerSource::Profile,
                     file: Some(file),
                     patches,
                 });
             }
         }
-        for overlay in overlays {
-            let file = if overlay.is_absolute() {
-                overlay.clone()
-            } else {
-                env.cwd.join(overlay)
-            };
-            let patches = parse_patches(&read(&file)?, &file)?;
-            layers.push(Layer {
-                source: LayerSource::CommandLine(file.clone()),
-                file: Some(file),
-                patches,
-            });
-        }
-        if (env.var)("DSH_TELEMETRY_DISABLED").is_some_and(|v| !v.is_empty()) {
-            let entries = compose(&[], &layers, &mut |_| {}).entries;
-            if entries.iter().any(|row| row.id == "session-telemetry-otel") {
-                layers.push(Layer {
-                    source: LayerSource::Launcher("DSH_TELEMETRY_DISABLED"),
-                    file: None,
-                    patches: vec![Patch {
-                        id: Some("session-telemetry-otel".into()),
-                        name: None,
-                        set: [("disabled".into(), Value::Bool(true))].into(),
-                        insert: None,
-                    }],
-                });
-            }
-        }
-        Ok(Profile {
+        let mut profile = Profile {
             name: dir.file_name().unwrap_or_default().to_string_lossy().into(),
             dir,
             layers,
             skipped,
+        };
+        if user_layer {
+            profile.layers = read_profile_patches(&profile, home, overlays, env)?;
+        }
+        Ok(profile)
+    }
+}
+/// Bundle/profile layers followed by current home, argv and launch-time telemetry policy.
+pub fn read_profile_patches(
+    profile: &Profile,
+    home: &Path,
+    overlays: &[PathBuf],
+    env: &EvalEnv,
+) -> Result<Vec<Layer>, LoadError> {
+    read_profile_patches_impl(None, profile, home, overlays, env)
+}
+
+/// Launcher variant with source-compatible diagnostics and overlay-first reads.
+pub fn read_named_profile_patches(
+    bin_name: &str,
+    profile: &Profile,
+    home: &Path,
+    overlays: &[PathBuf],
+    env: &EvalEnv,
+) -> Result<Vec<Layer>, LoadError> {
+    read_profile_patches_impl(Some(bin_name), profile, home, overlays, env)
+}
+
+fn read_profile_patches_impl(
+    bin_name: Option<&str>,
+    profile: &Profile,
+    home: &Path,
+    overlays: &[PathBuf],
+    env: &EvalEnv,
+) -> Result<Vec<Layer>, LoadError> {
+    let mut layers: Vec<_> = profile
+        .layers
+        .iter()
+        .filter(|l| matches!(l.source, LayerSource::Bundle(_) | LayerSource::Profile))
+        .cloned()
+        .collect();
+    if let Some(bin_name) = bin_name
+        && !layers
+            .iter()
+            .any(|layer| matches!(layer.source, LayerSource::Profile))
+    {
+        let file = profile.dir.join("cordis.patch.yml");
+        if let Some(patches) = load_named_optional_patches(bin_name, &file)? {
+            layers.push(Layer {
+                source: LayerSource::Profile,
+                file: Some(file),
+                patches,
+            });
+        }
+    }
+    // The source freezes every explicit overlay in composeProfile before boot reads
+    // the optional home patch, while the final application order remains home then argv.
+    let overlay_layers = overlays
+        .iter()
+        .map(|overlay| {
+            let file = crate::resolve_config_path(
+                &overlay.to_string_lossy(),
+                None,
+                &env.cwd.to_string_lossy(),
+            );
+            let patches = match bin_name {
+                Some(bin_name) => load_named_overlay_patches(bin_name, &file)?,
+                None => parse_patches(&read(&file)?, &file)?,
+            };
+            Ok(Layer {
+                source: LayerSource::CommandLine(file.clone()),
+                file: Some(file),
+                patches,
+            })
         })
+        .collect::<Result<Vec<_>, LoadError>>()?;
+    let home = if home.is_absolute() {
+        home.to_path_buf()
+    } else {
+        env.cwd.join(home)
+    };
+    let file = home.join("cordis.patch.yml");
+    let home_patches = match bin_name {
+        Some(bin_name) => load_named_optional_patches(bin_name, &file)?,
+        None => load_optional_patches(&file)?,
+    };
+    if let Some(patches) = home_patches {
+        layers.push(Layer {
+            source: LayerSource::Home,
+            file: Some(file),
+            patches,
+        });
+    }
+    layers.extend(overlay_layers);
+    append_telemetry_patch(&mut layers, env);
+    Ok(layers)
+}
+pub fn resolve_telemetry_patch(disabled_env: Option<&str>, has_row: bool) -> Option<Patch> {
+    (disabled_env.is_some_and(|s| !s.is_empty()) && has_row).then(|| Patch {
+        id: Some("session-telemetry-otel".into()),
+        name: None,
+        set: [("disabled".into(), Value::Bool(true))].into(),
+        insert: None,
+    })
+}
+pub(crate) fn append_telemetry_patch(layers: &mut Vec<Layer>, env: &EvalEnv) {
+    if let Some(patch) = resolve_telemetry_patch(
+        (env.var)("DSH_TELEMETRY_DISABLED").as_deref(),
+        compose(&[], layers, &mut |_| {})
+            .entries
+            .iter()
+            .any(|row| row.id == "session-telemetry-otel"),
+    ) {
+        layers.push(Layer {
+            source: LayerSource::Launcher("DSH_TELEMETRY_DISABLED"),
+            file: None,
+            patches: vec![patch],
+        });
     }
 }
 fn invalid_bundle_name(value: &Value) -> String {

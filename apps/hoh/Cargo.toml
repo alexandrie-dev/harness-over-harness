@@ -1,0 +1,52 @@
+[package]
+name = "hoh"
+description = "HoH stage-0 profile launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-loader = { path = "../../crates/hoh-loader" }
+hoh-kernel = { path = "../../crates/hoh-kernel" }
+hoh-commander = { path = "../../crates/hoh-commander" }
+hoh-error = { path = "../../crates/hoh-error" }
+hoh-util-values = { path = "../../crates/hoh-util-values" }
+hoh-home-paths = { path = "../../crates/hoh-home-paths" }
+hoh-launch-environment = { path = "../../crates/hoh-launch-environment" }
+hoh-http-proxy = { path = "../../crates/hoh-http-proxy" }
+hoh-official-bundles = { path = "../../crates/hoh-official-bundles" }
+hoh-persona = { path = "../../crates/hoh-persona" }
+hoh-llm = { path = "../../crates/hoh-llm" }
+hoh-session = { path = "../../crates/hoh-session" }
+hoh-session-projection = { path = "../../crates/hoh-session-projection" }
+hoh-fs-local = { path = "../../crates/hoh-fs-local" }
+hoh-system-prompt = { path = "../../crates/hoh-system-prompt" }
+hoh-skill = { path = "../../crates/hoh-skill" }
+hoh-storage = { path = "../../crates/hoh-storage" }
+hoh-storage-json = { path = "../../crates/hoh-storage-json" }
+hoh-storage-domain = { path = "../../crates/hoh-storage-domain" }
+hoh-attachment-local = { path = "../../crates/hoh-attachment-local" }
+hoh-deepseek-llm-api-extensions = { path = "../../crates/hoh-deepseek-llm-api-extensions" }
+hoh-web = { path = "../../crates/hoh-web" }
+hoh-web-fetch-http = { path = "../../crates/hoh-web-fetch-http" }
+hoh-deliverable-file-references = { path = "../../crates/hoh-deliverable-file-references" }
+hoh-util-time = { path = "../../crates/hoh-util-time" }
+futures-util.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tempfile.workspace = true
+thiserror.workspace = true
+jiff.workspace = true
+getrandom.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+rustix.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

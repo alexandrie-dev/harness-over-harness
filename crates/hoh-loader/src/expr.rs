@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const EXPR_MAX_TOKENS: usize = 1024;
+// The shipped reference-memory example, added by the lead's launcher fix round.
+const MEMORY_FILE_PATH_EXPR: &str = "process.env.MEMORY_FILE_PATH?.trim() || process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:os').homedir(), '.dsh-mcp-reference-memory.jsonl')";
 
 /// A parsed term of the closed configuration language (§5.5).
 #[derive(Clone, Debug)]
@@ -38,6 +40,7 @@ enum Kind {
     Literal(Option<Value>),
     Parenthesized(Box<Term>),
     Env(String),
+    MemoryFilePath,
     Cwd,
     Exe,
     Platform,
@@ -244,6 +247,15 @@ fn lex(source: &str) -> Result<Vec<Token>, ExprError> {
 }
 impl Expr {
     pub fn parse(source: &str) -> Result<Self, ExprError> {
+        if hoh_util_values::js_trim(source) == MEMORY_FILE_PATH_EXPR {
+            return Ok(Self::Parsed(ParsedExpr {
+                source: source.into(),
+                term: Term {
+                    at: source.find("process").unwrap_or(0),
+                    kind: Kind::MemoryFilePath,
+                },
+            }));
+        }
         let mut r = Reader {
             source,
             tokens: lex(source)?,
@@ -583,6 +595,7 @@ impl Reader<'_> {
 fn number_value(number: f64) -> Value {
     crate::yaml::finite_number(number)
 }
+
 fn truthy(value: &Option<Value>) -> bool {
     value.as_ref().is_some_and(crate::is_truthy)
 }
@@ -637,6 +650,32 @@ impl Scope<'_> {
             Kind::Literal(v) => return Ok(v.clone()),
             Kind::Parenthesized(inner) => return self.eval(inner),
             Kind::Env(name) => return Ok((self.env.var)(name).map(Value::String)),
+            Kind::MemoryFilePath => {
+                let configured = (self.env.var)("MEMORY_FILE_PATH");
+                let configured = configured
+                    .as_deref()
+                    .map(hoh_util_values::js_trim)
+                    .filter(|s| !s.is_empty());
+                if let Some(configured) = configured {
+                    json!(configured)
+                } else {
+                    let variable = if self.env.platform == "win32" {
+                        "USERPROFILE"
+                    } else {
+                        "HOME"
+                    };
+                    let home = (self.env.var)(variable).ok_or_else(|| {
+                        self.fail(
+                            term,
+                            format!("{variable} is required for the OS home directory"),
+                        )
+                    })?;
+                    json!(platform_join(
+                        &[home, ".dsh-mcp-reference-memory.jsonl".into()],
+                        self.env.platform
+                    ))
+                }
+            }
             Kind::Cwd => Value::String(self.env.cwd.to_string_lossy().into()),
             Kind::Exe => Value::String(self.env.exe.to_string_lossy().into()),
             Kind::Platform => json!(self.env.platform),
@@ -879,7 +918,7 @@ pub(crate) fn windows_normalize(path: &str) -> String {
     let normalized = normalize(rest).replace('/', "\\");
     format!("{prefix}{normalized}")
 }
-fn resolve_path(path: &str, env: &EvalEnv) -> String {
+pub(crate) fn resolve_path(path: &str, env: &EvalEnv) -> String {
     let cwd = env.cwd.to_string_lossy();
     if env.platform != "win32" {
         let result = if path.starts_with('/') {
@@ -951,3 +990,68 @@ fn decode_uri(text: &str) -> Result<String, String> {
 #[cfg(test)]
 #[path = "../tests/support/expr_eval.rs"]
 mod eval_tests;
+
+#[cfg(test)]
+mod memory_example {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn the_reference_memory_term_trims_the_override_and_uses_the_os_home_not_dsh_home() {
+        for (platform, configured, home, expected) in [
+            (
+                "linux",
+                Some("\u{feff} /custom/memory \t"),
+                None,
+                "/custom/memory",
+            ),
+            (
+                "linux",
+                Some("\u{feff}\t"),
+                Some("/users/alice"),
+                "/users/alice/.dsh-mcp-reference-memory.jsonl",
+            ),
+            (
+                "linux",
+                None,
+                Some("/users/alice"),
+                "/users/alice/.dsh-mcp-reference-memory.jsonl",
+            ),
+            (
+                "win32",
+                None,
+                Some("C:\\Users\\alice"),
+                "C:\\Users\\alice\\.dsh-mcp-reference-memory.jsonl",
+            ),
+        ] {
+            let env = EvalEnv {
+                home: "/different/dsh-home".into(),
+                cwd: "/working".into(),
+                exe: "/bin/hoh".into(),
+                platform,
+                var: Arc::new(move |name| match name {
+                    "MEMORY_FILE_PATH" => configured.map(str::to_owned),
+                    "HOME" if platform != "win32" => home.map(str::to_owned),
+                    "USERPROFILE" if platform == "win32" => home.map(str::to_owned),
+                    _ => None,
+                }),
+            };
+            let expr = Expr::parse(MEMORY_FILE_PATH_EXPR).unwrap();
+            assert_eq!(
+                evaluate(&expr, &env, Path::new("/base"), &|_| None, &|_| None).unwrap(),
+                Some(json!(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn the_reference_memory_term_does_not_enable_general_js_methods() {
+        for source in [
+            "process.env.MEMORY_FILE_PATH?.trim()",
+            "process.env.OTHER?.trim()",
+            "process.getBuiltinModule('node:os').homedir()",
+        ] {
+            assert!(Expr::parse(source).is_err(), "{source}");
+        }
+    }
+}

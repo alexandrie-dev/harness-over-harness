@@ -553,3 +553,5 @@ async fn returns_when_disposal_completes_before_root_entry_creation_returns() {
     );
     kernel.shutdown().await;
 }
+#[path = "support/launcher_helpers.rs"]
+mod launcher_helpers;

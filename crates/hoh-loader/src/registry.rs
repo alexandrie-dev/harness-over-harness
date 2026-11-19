@@ -8,6 +8,7 @@ pub struct PluginRegistry {
     aliases: IndexMap<String, String>,
     carriers: IndexSet<String>,
     resources: IndexMap<String, PathBuf>,
+    no_schema: IndexSet<String>,
 }
 
 impl Default for PluginRegistry {
@@ -17,6 +18,7 @@ impl Default for PluginRegistry {
             aliases: IndexMap::new(),
             carriers: IndexSet::new(),
             resources: IndexMap::new(),
+            no_schema: IndexSet::new(),
         };
         registry
             .add::<crate::runtime::GroupPlugin>("cordis:group")
@@ -31,6 +33,11 @@ impl Default for PluginRegistry {
 
 impl PluginRegistry {
     pub fn add<P: Plugin>(&mut self, name: &str) -> &mut Self {
+        if std::any::TypeId::of::<P::Config>() == std::any::TypeId::of::<hoh_kernel::NoConfig>() {
+            self.no_schema.insert(name.into());
+        } else {
+            self.no_schema.shift_remove(name);
+        }
         self.plugins.insert(name.into(), PluginDef::of::<P>());
         self
     }
@@ -62,6 +69,15 @@ impl PluginRegistry {
     }
     pub fn resolve(&self, name: &str) -> Option<&PluginDef> {
         self.plugins.get(self.canonical(name)?)
+    }
+    /// NoConfig is the native marker for a plugin without an exported Config schema.
+    pub fn schema(&self, name: &str) -> Option<&serde_json::Value> {
+        let canonical = self.canonical(name)?;
+        if self.no_schema.contains(canonical) {
+            None
+        } else {
+            self.plugins.get(canonical).map(PluginDef::schema)
+        }
     }
     pub(crate) fn is_carrier(&self, name: &str) -> bool {
         if self.carriers.contains(name) {

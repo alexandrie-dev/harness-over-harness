@@ -2,7 +2,9 @@
 resolver = "3"
 # `apps/*` joins the members with the first application, `ui` with the desktop window (PLAN.md).
 # Cargo rejects a glob that matches nothing.
-members = ["crates/*"]
+members = ["crates/*", "apps/hoh"]
+# The desktop shell (Tauri) is its own workspace with its own lock file, so its dependency tree stays out of the engine.
+exclude = ["apps/hoh-desktop"]
 
 [workspace.package]
 version = "0.1.0"

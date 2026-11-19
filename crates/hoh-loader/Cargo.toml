@@ -13,6 +13,10 @@ workspace = true
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-atomic-write = { path = "../hoh-atomic-write" }
 hoh-util-values = { path = "../hoh-util-values" }
+hoh-error = { path = "../hoh-error" }
+hoh-commander = { path = "../hoh-commander" }
+hoh-launch-environment = { path = "../hoh-launch-environment" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
 futures-util.workspace = true
 schemars.workspace = true
 indexmap.workspace = true

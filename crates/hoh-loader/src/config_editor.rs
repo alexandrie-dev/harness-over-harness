@@ -4,19 +4,25 @@ use crate::{
     compose, parse_patches,
 };
 use futures_util::FutureExt;
+use hoh_error::BoxError;
 use hoh_kernel::{Context, FiberState, Service};
 use indexmap::IndexMap;
 use serde_json::Value;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 hoh_kernel::service!(pub ConfigEditorKey: ConfigEditor = "configEditor");
 #[derive(Clone)]
 pub struct ConfigEditor {
     ctx: Context,
     dir: PathBuf,
+    name: String,
     bundles: Arc<dyn BundleSource>,
     home: PathBuf,
-    overlays: Vec<PathBuf>,
+    overlays: Vec<Layer>,
     env: EvalEnv,
     writes: Arc<tokio::sync::Mutex<()>>,
 }
@@ -24,6 +30,14 @@ pub struct Configuration {
     pub entry: EntryInfo,
     pub inherited: Value,
     pub r#override: Value,
+}
+
+fn config_or_empty(config: Value) -> Value {
+    if config.is_null() {
+        serde_json::json!({})
+    } else {
+        config
+    }
 }
 
 impl ConfigEditor {
@@ -35,11 +49,48 @@ impl ConfigEditor {
         overlays: Vec<PathBuf>,
         env: EvalEnv,
     ) -> Result<Service<ConfigEditorKey>, LoadError> {
+        let mut frozen = Vec::new();
+        for overlay in overlays {
+            let file = crate::resolve_config_path(
+                &overlay.to_string_lossy(),
+                None,
+                &env.cwd.to_string_lossy(),
+            );
+            let text = tokio::fs::read_to_string(&file)
+                .await
+                .map_err(|source| LoadError::Io {
+                    file: file.clone(),
+                    source,
+                })?;
+            frozen.push(Layer {
+                source: LayerSource::CommandLine(file.clone()),
+                file: Some(file.clone()),
+                patches: parse_patches(&text, &file)?,
+            });
+        }
+        Self::mount_with_overlays(ctx, dir, bundles, home, frozen, env).await
+    }
+    /// Launchers pass the invocation's already parsed, immutable overlay snapshot.
+    pub async fn mount_with_overlays(
+        ctx: &Context,
+        dir: PathBuf,
+        bundles: Arc<dyn BundleSource>,
+        home: PathBuf,
+        overlays: Vec<Layer>,
+        env: EvalEnv,
+    ) -> Result<Service<ConfigEditorKey>, LoadError> {
+        let active = ctx.get::<crate::ProfileContextKey>();
         let editor = Arc::new(Self {
             ctx: ctx.clone(),
+            name: active.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| {
+                dir.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            }),
             dir,
             bundles,
-            home,
+            home: active.as_ref().map(|p| p.home.clone()).unwrap_or(home),
             overlays,
             env,
             writes: Arc::new(tokio::sync::Mutex::new(())),
@@ -50,6 +101,31 @@ impl ConfigEditor {
     }
     pub fn document_path(&self) -> PathBuf {
         self.dir.join("cordis.patch.yml")
+    }
+    /// Active profile home supplied by the host; never inferred from HOME.
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+    /// Active profile name, as loaded by Profile::load.
+    pub fn profile_name(&self) -> &str {
+        &self.name
+    }
+    pub fn schema(&self, entry: &EntryInfo) -> Result<Option<Value>, LoadError> {
+        self.ctx
+            .get::<LoaderKey>()
+            .ok_or_else(|| LoadError::Runtime("Configuration entry is no longer available".into()))?
+            .entry_schema(entry)
+    }
+    pub async fn resolve_inherited(
+        &self,
+        entry: &EntryInfo,
+        raw: &Value,
+    ) -> Result<Value, LoadError> {
+        self.ctx
+            .get::<LoaderKey>()
+            .ok_or_else(|| LoadError::Runtime("Configuration entry is no longer available".into()))?
+            .resolve_inherited(entry, raw)
+            .await
     }
     pub fn entries(&self) -> Vec<EntryInfo> {
         let Some(loader) = self.ctx.get::<LoaderKey>() else {
@@ -74,7 +150,13 @@ impl ConfigEditor {
             self.env.clone(),
         );
         tokio::task::spawn_blocking(move || {
-            Profile::load(&dir, source.as_ref(), &home, &overlays, &env)
+            let mut profile = Profile::load(&dir, source.as_ref(), &home, &[], &env)?;
+            profile
+                .layers
+                .retain(|l| !matches!(l.source, LayerSource::Launcher(_)));
+            profile.layers.extend(overlays);
+            crate::profile::append_telemetry_patch(&mut profile.layers, &env);
+            Ok(profile)
         })
         .await
         .map_err(|e| LoadError::Runtime(e.to_string()))?
@@ -97,7 +179,7 @@ impl ConfigEditor {
         }
         let composed = compose(&[], &layers, &mut |_| {});
         find(&composed.entries, &entry.options.id)
-            .map(|e| e.config)
+            .map(|e| config_or_empty(e.config))
             .unwrap_or_else(|| serde_json::json!({}))
     }
     pub async fn configuration(&self) -> Result<Vec<Configuration>, LoadError> {
@@ -119,6 +201,7 @@ impl ConfigEditor {
                     })
                     .and_then(|p| p.set.get("config"))
                     .cloned()
+                    .map(config_or_empty)
                     .unwrap_or_else(|| serde_json::json!({}));
                 Configuration {
                     entry,
@@ -133,6 +216,24 @@ impl ConfigEditor {
         entry: &EntryInfo,
         change: impl FnOnce(Value, Value) -> Value + Send + 'static,
     ) -> Result<(), LoadError> {
+        self.try_edit(entry, |current, inherited| async move {
+            Ok(change(current, inherited))
+        })
+        .await
+        .map_err(|error| match error.downcast::<LoadError>() {
+            Ok(error) => *error,
+            Err(error) => match error.downcast::<hoh_kernel::KernelError>() {
+                Ok(error) => LoadError::Kernel(*error),
+                Err(error) => LoadError::AtomicWrite(error),
+            },
+        })
+    }
+    /// Reject an edit after reload and before validation/write, preserving the caller's error.
+    pub async fn try_edit<F, Fut>(&self, entry: &EntryInfo, change: F) -> Result<(), BoxError>
+    where
+        F: FnOnce(Value, Value) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Value, BoxError>> + Send,
+    {
         let editor = self.clone();
         let entry = entry.clone();
         let (reply, result) = tokio::sync::oneshot::channel();
@@ -145,11 +246,11 @@ impl ConfigEditor {
         task.dispose().await;
         result?
     }
-    async fn edit_serial(
-        &self,
-        entry: &EntryInfo,
-        change: impl FnOnce(Value, Value) -> Value + Send,
-    ) -> Result<(), LoadError> {
+    async fn edit_serial<F, Fut>(&self, entry: &EntryInfo, change: F) -> Result<(), BoxError>
+    where
+        F: FnOnce(Value, Value) -> Fut + Send,
+        Fut: Future<Output = Result<Value, BoxError>> + Send,
+    {
         let _serial = self.writes.lock().await;
         hoh_atomic_write::with_file_lock(
             self.dir.join("package.json"),
@@ -157,35 +258,29 @@ impl ConfigEditor {
                 let result = std::panic::AssertUnwindSafe(self.edit_locked(entry, change))
                     .catch_unwind()
                     .await;
-                result
-                    .unwrap_or_else(|payload| {
-                        Err(LoadError::Runtime(
-                            payload
-                                .downcast_ref::<String>()
-                                .cloned()
-                                .or_else(|| {
-                                    payload
-                                        .downcast_ref::<&str>()
-                                        .map(|message| (*message).into())
-                                })
-                                .unwrap_or_else(|| "Configuration edit callback panicked".into()),
-                        ))
-                    })
-                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+                result.unwrap_or_else(|payload| {
+                    Err(Box::new(LoadError::Runtime(
+                        payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| {
+                                payload
+                                    .downcast_ref::<&str>()
+                                    .map(|message| (*message).into())
+                            })
+                            .unwrap_or_else(|| "Configuration edit callback panicked".into()),
+                    )) as BoxError)
+                })
             },
             hoh_atomic_write::FileLockOptions::default(),
         )
         .await
-        .map_err(|error| match error.downcast::<LoadError>() {
-            Ok(error) => *error,
-            Err(error) => LoadError::AtomicWrite(error),
-        })
     }
-    async fn edit_locked(
-        &self,
-        entry: &EntryInfo,
-        change: impl FnOnce(Value, Value) -> Value + Send,
-    ) -> Result<(), LoadError> {
+    async fn edit_locked<F, Fut>(&self, entry: &EntryInfo, change: F) -> Result<(), BoxError>
+    where
+        F: FnOnce(Value, Value) -> Fut + Send,
+        Fut: Future<Output = Result<Value, BoxError>> + Send,
+    {
         let loader = self.ctx.get::<LoaderKey>().ok_or_else(|| {
             LoadError::Runtime("Configuration entry is no longer available".into())
         })?;
@@ -196,9 +291,9 @@ impl ConfigEditor {
             })
         };
         if available(self.entries()).and_then(|e| e.fiber).is_none() {
-            return Err(LoadError::Runtime(
-                "Configuration entry is no longer available".into(),
-            ));
+            return Err(
+                LoadError::Runtime("Configuration entry is no longer available".into()).into(),
+            );
         }
         let profile = self.profile().await?;
         let previous_layers = profile.layers.clone();
@@ -208,27 +303,24 @@ impl ConfigEditor {
         })?;
         let inherited = Self::inherited(&current, &profile);
         let next = change(
-            if current.options.config.is_null() {
-                serde_json::json!({})
-            } else {
-                current.options.config.clone()
-            },
+            config_or_empty(current.options.config.clone()),
             inherited.clone(),
-        );
+        )
+        .await?;
         let fiber = current.fiber.ok_or_else(|| {
             LoadError::Runtime("Configuration entry is no longer available".into())
         })?;
         if fiber.state() != FiberState::Active {
-            return Err(LoadError::Runtime(
-                "Configuration plugin is no longer active".into(),
-            ));
+            return Err(
+                LoadError::Runtime("Configuration plugin is no longer active".into()).into(),
+            );
         }
         fiber.resolve_config(&next)?;
         let path = self.document_path();
         let before = match tokio::fs::read_to_string(&path).await {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => "[]\n".into(),
-            Err(source) => return Err(LoadError::Io { file: path, source }),
+            Err(source) => return Err(LoadError::Io { file: path, source }.into()),
         };
         let text = crate::yaml_edit::edit_config(
             &before,
@@ -262,14 +354,15 @@ impl ConfigEditor {
         let effective = compose(&[], &layers, &mut |_| {});
         if !hoh_util_values::deep_equal_json(
             &find(&effective.entries, &entry.options.id)
-                .map(|e| e.config)
+                .map(|e| config_or_empty(e.config))
                 .unwrap_or_else(|| serde_json::json!({})),
             &next,
         ) {
             return Err(LoadError::Runtime(format!(
                 "Configuration for \"{}\" is overridden by a home patch or command-line overlay",
                 entry.options.id
-            )));
+            ))
+            .into());
         }
         self.write_atomic(&text).await?;
         let result = loader.recompose(layers).await.and_then(|_| {
@@ -292,7 +385,7 @@ impl ConfigEditor {
         if let Err(error) = result {
             self.write_atomic(&before).await?;
             loader.recompose(previous_layers).await?;
-            return Err(error);
+            return Err(error.into());
         }
         Ok(())
     }

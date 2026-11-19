@@ -1,11 +1,15 @@
 //! Loader of HoH: entries, groups, layered patches, recomposition (docs/kernel.md).
 
+pub mod cmdline;
 pub mod config_editor;
 pub mod config_schema;
+pub mod environment;
 mod expr;
+pub mod fail_loud;
 mod identity;
 mod patches;
 mod profile;
+mod profile_context;
 mod profile_files;
 pub mod profile_sanitize;
 mod registry;
@@ -23,11 +27,19 @@ pub use startup_diagnostics::{
     StartupCompositionDiagnostic, StartupError, StartupPluginState, StartupServiceState,
 };
 
+pub use environment::{load_env, load_layered_env, resolve_config_path};
 pub use expr::{Expr, ExprError};
+pub use fail_loud::{FAIL_LOUD_RELEASE_TIMEOUT_MS, install_fail_loud};
 pub use patches::{apply_patches, compose, render_dump};
-pub use profile::{Bundle, BundleSource, Profile, SkippedBundle};
+pub use profile::{
+    Bundle, BundleSource, Profile, SkippedBundle, load_named_optional_patches,
+    load_named_overlay_patches, load_optional_patches, read_named_profile_patches,
+    read_profile_patches, resolve_telemetry_patch,
+};
+pub use profile_context::{ProfileContext, ProfileContextKey};
 pub use profile_files::{
-    init_profile, load_profile, read_profile_manifest, resolve_profile_dir, write_profile_manifest,
+    init_profile, load_profile, load_profile_with_user_layer, read_profile_manifest,
+    resolve_profile_dir, write_profile_manifest,
 };
 pub use yaml::{parse_entries, parse_patches};
 
