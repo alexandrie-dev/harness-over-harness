@@ -1,0 +1,48 @@
+[package]
+name = "hoh-sdk-jsonrpc-server"
+description = "Port of @deepseek-ai/dsh-sdk-jsonrpc-server (packages/sdk/server)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-agent = { path = "../hoh-agent" }
+hoh-attachment = { path = "../hoh-attachment" }
+hoh-brand = { path = "../hoh-brand" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-protocol = { path = "../hoh-protocol" }
+hoh-session = { path = "../hoh-session" }
+hoh-user-approval = { path = "../hoh-user-approval" }
+hoh-working-directory = { path = "../hoh-working-directory" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-loader = { path = "../hoh-loader" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-error = { path = "../hoh-error" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+hoh-util-crypto = { path = "../hoh-util-crypto" }
+futures-util.workspace = true
+indexmap.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-std"] }
+
+[dev-dependencies]
+hoh-agent-loop = { path = "../hoh-agent-loop" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-fs = { path = "../hoh-fs" }
+hoh-fs-local = { path = "../hoh-fs-local" }
+hoh-sandbox = { path = "../hoh-sandbox" }
+hoh-session-persistence-jsonl = { path = "../hoh-session-persistence-jsonl" }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

@@ -1542,6 +1542,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-sdk-jsonrpc-server"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-attachment",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-loader",
+ "hoh-protocol",
+ "hoh-sandbox",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-persistence-jsonl",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tools",
+ "hoh-user-approval",
+ "hoh-util-crypto",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "hoh-working-directory",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-session"
 version = "0.1.0"
 dependencies = [
