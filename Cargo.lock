@@ -717,6 +717,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-agent-loop-testkit"
+version = "0.1.0"
+dependencies = [
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-tool-executor-native",
+ "hoh-tools",
+ "hoh-working-directory",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-anonymous-user-id"
 version = "0.1.0"
 dependencies = [
