@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run an already-built window with a disposable home, X server and bus; no IP sockets."""
+"""Run an already-built window with a disposable home, X server and bus; no IP sockets (unless HOH_WINDOW_NET=1)."""
 import os
 from pathlib import Path
 import subprocess
@@ -18,6 +18,9 @@ with tempfile.TemporaryDirectory(prefix='hoh-webkitgtk-') as home:
                LIBGL_ALWAYS_SOFTWARE='1', __GLX_VENDOR_LIBRARY_NAME='mesa',
                __EGL_VENDOR_LIBRARY_FILENAMES='/usr/share/glvnd/egl_vendor.d/50_mesa.json',
                WEBKIT_DISABLE_COMPOSITING_MODE='1', GIO_USE_VFS='local')
-    result = subprocess.run(['python3', str(root/'ui/scripts/offline.py'), 'timeout', '60', 'xvfb-run', '-a', '-e', '/tmp/hoh-ui2-xvfb.log', '-s',
+    # QA on a model (mock on 127.0.0.1 or live): HOH_WINDOW_NET=1 keeps IP sockets; HOH_WINDOW_TIMEOUT for long sessions.
+    net = os.environ.get('HOH_WINDOW_NET') == '1'
+    guard = [] if net else ['python3', str(root/'ui/scripts/offline.py')]
+    result = subprocess.run([*guard, 'timeout', os.environ.get('HOH_WINDOW_TIMEOUT', '60'), 'xvfb-run', '-a', '-e', '/tmp/hoh-ui2-xvfb.log', '-s',
                              '-screen 0 1200x800x24 -nolisten tcp -extension GLX', 'dbus-run-session', *sys.argv[1:]], env=env)
     sys.exit(result.returncode)
