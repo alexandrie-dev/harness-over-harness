@@ -1,0 +1,2432 @@
+{
+  "lockSha256": "f9ddfe4c5f429cd6f675e451203eaa45c61d5b677c13eb5d779d7aa0fabad589",
+  "registry": "https://registry.npmjs.org/",
+  "checkedAt": "2026-11-18T22:35:28.183674+00:00",
+  "packages": {
+    "@babel/runtime": {
+      "versions": {
+        "8.1.0": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "e3a7a3c8d338685d5b06159d7477ae9142f6dde4",
+            "tarball": "https://registry.npmjs.org/@babel/runtime/-/runtime-8.1.0.tgz",
+            "fileCount": 202,
+            "integrity": "sha512-MQye/pU7gzXerMzlhScFNH1u4Je6rR8cqJWSgAfD+rIwbbtwG8tVDegoI7sWfcXkfVRW09G7vk2vjxGIuKFfwg==",
+            "signatures": [
+              {
+                "sig": "MEQCIC+z1r57akuszyBMM06n45XNNsFH8wJctBMNxM0KygbZAiB4wQnCWPARjUwvsmmy56p/Zyz0ZRqYuyrwp1YaOB6JXg==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIA4t7c+tUlCQE4Pc5xIOFGsVQTtRz4BgeMXld20R6iTOAiBnmKdusUvgl63oH85iXy1X2sV/CPsb0N5SH+yJFQc9rg==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@babel%2fruntime@8.1.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 123997
+          }
+        }
+      },
+      "time": {
+        "8.1.0": "2026-11-02T12:08:32.900Z"
+      }
+    },
+    "@base-ui/react": {
+      "versions": {
+        "1.9.0": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "950dbd8cd4fd6f8d8796fa6a227346115eca8204",
+            "tarball": "https://registry.npmjs.org/@base-ui/react/-/react-1.9.0.tgz",
+            "fileCount": 3451,
+            "integrity": "sha512-S8CSYosASBKtpL8SWUfS78rFElfLijiCgA7oHOK22jCJ95FULsYyKwBNFOgudt0RA+/7yNc7F81bOvQnRgbBiQ==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCydmkCCQlcqWOsNCwsAJxCNwyHh6+/d44amPvZcXHd4wIhALKkvOp5Avmufu4G/OpwTVZOJmewzbM/c2Q0HHMpMfgv",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQDDsGEH5M+bKkAgfoFVwEEh/CwaTl10+p/oupg7dtaZNAIhAO8udyLkIKDomga2r8xWjb6NBVo6rmtAkHrakSmKtPhU"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@base-ui%2freact@1.9.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 10377319
+          }
+        }
+      },
+      "time": {
+        "1.9.0": "2026-10-09T08:52:43.788Z"
+      }
+    },
+    "@base-ui/utils": {
+      "versions": {
+        "0.5.0": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "0d73b0b4f5bb53d0442b88597ec7f2fbf44ef7f4",
+            "tarball": "https://registry.npmjs.org/@base-ui/utils/-/utils-0.5.0.tgz",
+            "fileCount": 249,
+            "integrity": "sha512-dYGGcEttjkYiMoa5nHm8vLaJ2UcuTWxo3BFAwOYXeRg/q7UVVvA6cacEIXEs3FgBfK1CGtW1ptElqs7wsx+t9A==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCmiAPuuMdZMYHcBKziovBboYiciarusQhFx1vGHNx65AIgfeTztQRYD7IkJg/qFGaB5djS2Mg2vyIRs95HTarKl1s=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCICIgFO/xSlcom2ryx/X2+mlarA7SCXnUsub9XG7mL70yAiEAqqAaeQKH1a2BqNrOrJQGZ2VvgCkO6eJRZ6zSDq0rHOM="
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@base-ui%2futils@0.5.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 319030
+          }
+        }
+      },
+      "time": {
+        "0.5.0": "2026-10-09T08:50:42.770Z"
+      }
+    },
+    "@floating-ui/core": {
+      "versions": {
+        "1.8.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "vitest run",
+            "test:watch": "vitest watch",
+            "lint": "eslint .",
+            "format": "prettier --ignore-path ../../.gitignore --write .",
+            "clean": "rimraf dist out-tsc",
+            "dev": "rollup -c -w",
+            "build": "rollup -c",
+            "build:api": "build-api --tsc tsconfig.lib.json",
+            "publint": "publint",
+            "typecheck": "tsc -b"
+          },
+          "dist": {
+            "integrity": "sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ==",
+            "shasum": "d01c0bbea02e4a57f6fd7d5de6fc2c5c7dca40e1",
+            "tarball": "https://registry.npmjs.org/@floating-ui/core/-/core-1.8.0.tgz",
+            "fileCount": 11,
+            "unpackedSize": 218589,
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@floating-ui%2fcore@1.8.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIEmwnKXcGWooeKGk83+FOyMdxHex4f4aWdxuuD5pawcFAiEA2hDPpfKM+azBYgAvrT2g5u+Tjbvqj8j1i0GA6oSBsCI="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "1.8.0": "2026-07-11T08:41:32.920Z"
+      }
+    },
+    "@floating-ui/dom": {
+      "versions": {
+        "1.8.0": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint .",
+            "format": "prettier --ignore-path ../../.gitignore --write .",
+            "clean": "rimraf dist out-tsc test-results",
+            "dev": "vite",
+            "build": "rollup -c",
+            "build:api": "build-api --tsc tsconfig.lib.json",
+            "test": "vitest run",
+            "test:watch": "vitest watch",
+            "test:browser": "TEST_ENV=browser vitest --browser",
+            "publint": "publint",
+            "playwright": "playwright test ./test/functional",
+            "typecheck": "tsc -b"
+          },
+          "dist": {
+            "integrity": "sha512-yXSrzeHZBTZadLOlfyhCkJHNeLJnHRnRInwdZ40L7ZiaAtrBwoYlsDrX3v5zB1Utk7CLfzcOVnVVWoXEky7Ceg==",
+            "shasum": "8a20e6facbe2456afdbeb6c8b968a72df689cf63",
+            "tarball": "https://registry.npmjs.org/@floating-ui/dom/-/dom-1.8.0.tgz",
+            "fileCount": 11,
+            "unpackedSize": 174208,
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@floating-ui%2fdom@1.8.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQCDBZATHWUJ7tuHIPnKf3ITtDM3FxP+ubLpVQxy/0ykdwIhAMUeSMn9VCmK+c5usCeLrn8Yi/fdyTrm7adNq46jkw8M"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "1.8.0": "2026-07-11T08:41:32.794Z"
+      }
+    },
+    "@floating-ui/react-dom": {
+      "versions": {
+        "2.1.9": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint .",
+            "format": "prettier --ignore-path ../../.gitignore --write .",
+            "clean": "rimraf dist out-tsc",
+            "test": "vitest run",
+            "test:watch": "vitest watch",
+            "build": "rollup -c",
+            "build:api": "build-api --tsc tsconfig.lib.json",
+            "publint": "publint",
+            "typecheck": "tsc -b"
+          },
+          "dist": {
+            "integrity": "sha512-JDjEFGCpImxDCA7JJKviA0M9+RtmJdj0m/NVU5IMgBK+AmZouAQQ7/+2GLH0GXXY0YMw9oXPB8hKdbPYg5QLYg==",
+            "shasum": "f42a5f469ea56d6f2e2751efa1cf936243a87355",
+            "tarball": "https://registry.npmjs.org/@floating-ui/react-dom/-/react-dom-2.1.9.tgz",
+            "fileCount": 9,
+            "unpackedSize": 63904,
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@floating-ui%2freact-dom@2.1.9",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQD80EQlvZ9BA2FlWEYtZ2Ud9FXkPzgJrS1Ii/TeJ1lmuwIhAJQ3rbCVOYGvPelkZ6SCf/dZLe49TYa6DqnXdZ97gmSi"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.9": "2026-07-11T08:41:32.791Z"
+      }
+    },
+    "@floating-ui/utils": {
+      "versions": {
+        "0.2.12": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint .",
+            "format": "prettier --ignore-path ../../.gitignore --write .",
+            "clean": "rimraf dist out-tsc dom react",
+            "test": "vitest run --globals",
+            "test:watch": "vitest watch --globals",
+            "dev": "rollup -c -w",
+            "build": "rollup -c",
+            "build:api": "build-api --tsc tsconfig.lib.json --aec api-extractor.json --aec api-extractor.dom.json --aec api-extractor.react.json",
+            "publint": "publint",
+            "typecheck": "tsc -b"
+          },
+          "dist": {
+            "integrity": "sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==",
+            "shasum": "afefe785949f16ac4cdd1e695935a321572dd56a",
+            "tarball": "https://registry.npmjs.org/@floating-ui/utils/-/utils-0.2.12.tgz",
+            "fileCount": 19,
+            "unpackedSize": 66066,
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@floating-ui%2futils@0.2.12",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIEyv9pnhw1sCW3a2aXRrYdCrkORxTIUt3j+G1at47Xn/AiAH//pJSZ8mkmgNlO6Pt2f5wpAS3/0Dpaqfmx9w4e+2mA=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "0.2.12": "2026-07-11T08:41:33.036Z"
+      }
+    },
+    "@fontsource-variable/inter": {
+      "versions": {
+        "5.3.0": {
+          "license": "OFL-1.1",
+          "dist": {
+            "integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+            "shasum": "351dd1e02dab63a6cf66d57ec36dcfd10c07f07b",
+            "tarball": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+            "fileCount": 58,
+            "unpackedSize": 1909049,
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@fontsource-variable%2finter@5.3.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQDvTyVpaSpv8sHo6YwldlyV/okEFuf6U750q4nL/WyMoAIhAKPFCbAvX6BeAD3XfRZ7dj6DORrcSSvBRt0x3J7B7/dI"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "5.3.0": "2026-07-19T03:50:25.793Z"
+      }
+    },
+    "@jridgewell/gen-mapping": {
+      "versions": {
+        "0.3.13": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "run-s -n lint:types lint:format",
+            "test": "run-s -n test:types test:only test:format",
+            "build": "run-s -n build:code build:types",
+            "clean": "run-s -n clean:code clean:types",
+            "benchmark": "run-s build:code benchmark:*",
+            "test:only": "mocha",
+            "build:code": "node ../../esbuild.mjs gen-mapping.ts",
+            "clean:code": "tsc --build --clean tsconfig.build.json",
+            "lint:types": "npm run test:types -- --fix",
+            "test:types": "eslint '{src,test}/**/*.ts'",
+            "build:types": "run-s build:types:force build:types:emit build:types:mts",
+            "clean:types": "rimraf dist types",
+            "lint:format": "npm run test:format -- --write",
+            "test:format": "prettier --check '{src,test}/**/*.ts'",
+            "benchmark:only": "node --expose-gc benchmark/index.js",
+            "prepublishOnly": "npm run-s -n build test",
+            "build:types:mts": "node ../../mts-types.mjs",
+            "build:types:emit": "tsc --project tsconfig.build.json",
+            "benchmark:install": "cd benchmark && npm install",
+            "build:types:force": "rimraf tsconfig.build.tsbuildinfo"
+          },
+          "dist": {
+            "shasum": "6342a19f44347518c93e43b1ac69deb3c4656a1f",
+            "tarball": "https://registry.npmjs.org/@jridgewell/gen-mapping/-/gen-mapping-0.3.13.tgz",
+            "fileCount": 31,
+            "integrity": "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCZS3dgBdG5uXwrzHb1UYb5NNdvaORTULbodpiz+zsgCgIhAPHtuiXeY1/emutgT7qTbyJLtsq305ywba6Hbp/g2ZjD",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 93797
+          }
+        }
+      },
+      "time": {
+        "0.3.13": "2025-08-12T06:43:21.134Z"
+      }
+    },
+    "@jridgewell/remapping": {
+      "versions": {
+        "2.3.5": {
+          "license": "MIT",
+          "scripts": {
+            "benchmark": "run-s build:code benchmark:*",
+            "benchmark:install": "cd benchmark && npm install",
+            "benchmark:only": "node --expose-gc benchmark/index.js",
+            "build": "run-s -n build:code build:types",
+            "build:code": "node ../../esbuild.mjs remapping.ts",
+            "build:types": "run-s build:types:force build:types:emit build:types:mts",
+            "build:types:force": "rimraf tsconfig.build.tsbuildinfo",
+            "build:types:emit": "tsc --project tsconfig.build.json",
+            "build:types:mts": "node ../../mts-types.mjs",
+            "clean": "run-s -n clean:code clean:types",
+            "clean:code": "tsc --build --clean tsconfig.build.json",
+            "clean:types": "rimraf dist types",
+            "test": "run-s -n test:types test:only test:format",
+            "test:format": "prettier --check '{src,test}/**/*.ts'",
+            "test:only": "mocha",
+            "test:types": "eslint '{src,test}/**/*.ts'",
+            "lint": "run-s -n lint:types lint:format",
+            "lint:format": "npm run test:format -- --write",
+            "lint:types": "npm run test:types -- --fix",
+            "prepublishOnly": "npm run-s -n build test"
+          },
+          "dist": {
+            "integrity": "sha512-LI9u/+laYG4Ds1TDKSJW2YPrIlcVYOwi2fUC6xB43lueCjgxV4lffOCZCtYFiH6TNOX+tQKXx97T4IKHbhyHEQ==",
+            "shasum": "375c476d1972947851ba1e15ae8f123047445aa1",
+            "tarball": "https://registry.npmjs.org/@jridgewell/remapping/-/remapping-2.3.5.tgz",
+            "fileCount": 32,
+            "unpackedSize": 59366,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIQDmnq5itLnV7/riJcHN0MZ4pwbZicCcpV9JGXDLgqWb+AIgak7hXSDglw9tX3DNlTtgq3jAG4XEYqiEx29bztRnx0Y="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.3.5": "2025-08-12T06:43:35.321Z"
+      }
+    },
+    "@jridgewell/resolve-uri": {
+      "versions": {
+        "3.1.2": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "run-s -n lint:*",
+            "test": "run-s -n test:lint test:only",
+            "build": "run-s -n build:*",
+            "lint:ts": "npm run test:lint:ts -- --fix",
+            "pretest": "run-s build:rollup",
+            "build:ts": "tsc --project tsconfig.build.json",
+            "prebuild": "rm -rf dist",
+            "test:lint": "run-s -n test:lint:*",
+            "test:only": "mocha",
+            "preversion": "run-s test build",
+            "test:debug": "mocha --inspect-brk",
+            "test:watch": "mocha --watch",
+            "build:rollup": "rollup -c rollup.config.js",
+            "test:lint:ts": "eslint '{src,test}/**/*.ts'",
+            "lint:prettier": "npm run test:lint:prettier -- --write",
+            "test:coverage": "c8 mocha",
+            "prepublishOnly": "npm run preversion",
+            "test:lint:prettier": "prettier --check '{src,test}/**/*.ts'"
+          },
+          "dist": {
+            "shasum": "7a0ee601f60f99a20c7c7c5ff0c80388c1189bd6",
+            "tarball": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
+            "fileCount": 8,
+            "integrity": "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==",
+            "signatures": [
+              {
+                "sig": "MEQCIEXppH+0BsrbWtra1kPPaPPmx9gUaehh6s6zaKjIHAFlAiBmQfkNGAwgSsvu0SsXAVHZi7isPYQkKaLUvLVGXwxCaw==",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 53153
+          }
+        }
+      },
+      "time": {
+        "3.1.2": "2024-02-14T19:32:38.143Z"
+      }
+    },
+    "@jridgewell/sourcemap-codec": {
+      "versions": {
+        "1.6.0": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "run-s -n lint:types lint:format",
+            "test": "run-s -n test:types test:only test:format",
+            "build": "run-s -n build:code build:types",
+            "clean": "run-s -n clean:code clean:types",
+            "benchmark": "run-s build:code benchmark:*",
+            "test:only": "mocha",
+            "build:code": "node ../../esbuild.mjs sourcemap-codec.ts",
+            "clean:code": "tsc --build --clean tsconfig.build.json",
+            "lint:types": "npm run test:types -- --fix",
+            "test:types": "eslint '{src,test}/**/*.ts'",
+            "test:watch": "mocha --watch",
+            "build:types": "run-s build:types:force build:types:emit build:types:mts",
+            "clean:types": "rimraf dist types",
+            "lint:format": "npm run test:format -- --write",
+            "test:format": "prettier --check '{src,test}/**/*.ts'",
+            "benchmark:only": "node --expose-gc benchmark/index.js",
+            "prepublishOnly": "npm run-s -n build test",
+            "build:types:mts": "node ../../mts-types.mjs",
+            "build:types:emit": "tsc --project tsconfig.build.json",
+            "benchmark:install": "cd benchmark && npm install",
+            "build:types:force": "rimraf tsconfig.build.tsbuildinfo"
+          },
+          "dist": {
+            "shasum": "f4c663e862f06dc98ca4d453862c46902789a18d",
+            "tarball": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.6.0.tgz",
+            "fileCount": 32,
+            "integrity": "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==",
+            "signatures": [
+              {
+                "sig": "MEUCID2yH70Ss45IMGTOPkxOjXb+ujSZyKynZt3qMx7uuDQ2AiEA10KVxh15mTI15w09BWSLJ+ReM9lqj8pSxWdQ+t0LRDk=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQDMe77/0TrzJHiWeODwQJjwyD2z13mqlvpdAJVJ8AKTDAIhAJS4mfQYkgJRc1BSe6Q9DXbjJWEGr+KpFFdlLHN+kD8E"
+              }
+            ],
+            "unpackedSize": 96626
+          }
+        }
+      },
+      "time": {
+        "1.6.0": "2026-08-28T01:14:47.331Z"
+      }
+    },
+    "@jridgewell/trace-mapping": {
+      "versions": {
+        "0.3.31": {
+          "license": "MIT",
+          "scripts": {
+            "benchmark": "run-s build:code benchmark:*",
+            "benchmark:install": "cd benchmark && npm install",
+            "benchmark:only": "node --expose-gc benchmark/index.mjs",
+            "build": "run-s -n build:code build:types",
+            "build:code": "node ../../esbuild.mjs trace-mapping.ts",
+            "build:types": "run-s build:types:force build:types:emit build:types:mts",
+            "build:types:force": "rimraf tsconfig.build.tsbuildinfo",
+            "build:types:emit": "tsc --project tsconfig.build.json",
+            "build:types:mts": "node ../../mts-types.mjs",
+            "clean": "run-s -n clean:code clean:types",
+            "clean:code": "tsc --build --clean tsconfig.build.json",
+            "clean:types": "rimraf dist types",
+            "test": "run-s -n test:types test:only test:format",
+            "test:format": "prettier --check '{src,test}/**/*.ts'",
+            "test:only": "mocha",
+            "test:types": "eslint '{src,test}/**/*.ts'",
+            "lint": "run-s -n lint:types lint:format",
+            "lint:format": "npm run test:format -- --write",
+            "lint:types": "npm run test:types -- --fix",
+            "prepublishOnly": "npm run-s -n build test"
+          },
+          "dist": {
+            "integrity": "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==",
+            "shasum": "db15d6781c931f3a251a3dac39501c98a6082fd0",
+            "tarball": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz",
+            "fileCount": 52,
+            "unpackedSize": 146724,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQDnt7ZEsRkLh3IbT97P+q8XOsPOIAm84QB799xQzYZB/AIhAO6Mu+WPLULxKneRGao2w4gLAEcsMgb/Sl16RVJJzM4r"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "0.3.31": "2025-09-10T20:12:49.468Z"
+      }
+    },
+    "@legendapp/list": {
+      "versions": {
+        "3.7.2": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "6b6b156ae2efd2540b3eaff24d9e9fd799970b22",
+            "tarball": "https://registry.npmjs.org/@legendapp/list/-/list-3.7.2.tgz",
+            "fileCount": 28,
+            "integrity": "sha512-StFy5qjOHHuxHKjenwLq500S/z+zuF43hj8iqXhX9EMtzeOagPfsnMRWphvBG4CYBvMTX6VzgLjN5BzzwY1jDA==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCdAEIV4/uXnkeLV4eboD8FEpZCMQL+KJrmZVLDh/3lQAIgcFV0Kbo0eEaZ9Wne+I5Hd5mQEf5XJ0QgmYFUJMQ0jrs=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQDYu5ZVMVEVsuhEKHIoN8laXygUVHoari2zwPhQtzuT2gIhAIxKHAuJHk00p64smkAoDvQXoz5FEd3mIE+M9hMHE6/s",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 2796878
+          }
+        }
+      },
+      "time": {
+        "3.7.2": "2026-11-07T08:25:18.389Z"
+      }
+    },
+    "@oxc-project/types": {
+      "versions": {
+        "0.156.0": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "00e35b1ead490d81b4c7fe1dbfe35fc55e89c5e6",
+            "tarball": "https://registry.npmjs.org/@oxc-project/types/-/types-0.156.0.tgz",
+            "fileCount": 4,
+            "integrity": "sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDxmH47ZeK1EroP1LMQT9hNj2C11NMb4FXx4OdXbhYCCgIhAOzLOJUBuEbeAUDnmaq+wqdW0NGiD3GAGSfvhToY9VP5",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQDtS3uo13XbrmkaDG5LNChO5no/AYH3FpDbC3SzPGrClAIhAIKM57JoCu0Ww3xmazsVysbEL/NyqVloQR3uFowGoHTJ",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@oxc-project%2ftypes@0.156.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 44596
+          }
+        }
+      },
+      "time": {
+        "0.156.0": "2026-10-27T03:22:38.894Z"
+      }
+    },
+    "@oxc-transform-react/binding-linux-x64-gnu": {
+      "versions": {
+        "0.156.0": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "ca91ac763b37e9f013a9b8f0edc616caef2ba5a4",
+            "tarball": "https://registry.npmjs.org/@oxc-transform-react/binding-linux-x64-gnu/-/binding-linux-x64-gnu-0.156.0.tgz",
+            "fileCount": 3,
+            "integrity": "sha512-+CfzH5OiKZjz/2TqVcgMhYaN0ruogou3T1+nycmG0WjptmDJ7BYHwHIYjfRaAI87beps4MgXltgMFLGkm2N/JQ==",
+            "signatures": [
+              {
+                "sig": "MEYCIQD34lHNIZAM9G9goVebRiEimMHidgu+W9AVnh5qv8ygYAIhAKYJ44T6cigGJQBLaQKO6R9KdwuuHvJlmCPMH9WMKznC",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIQCtMPowMw2j8QLHUCZQLip6lKUBgT154t18HvTLbHSTVQIgenUvkb5W++szmvbjFr3EOzenaqEcpn/p9WFgbgUvVQ8=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@oxc-transform-react%2fbinding-linux-x64-gnu@0.156.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 5341947
+          }
+        }
+      },
+      "time": {
+        "0.156.0": "2026-10-27T03:30:45.293Z"
+      }
+    },
+    "@rolldown/binding-linux-x64-gnu": {
+      "versions": {
+        "1.2.19": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "3aaea578ecdfd10c83ec4a14db5b70332a761996",
+            "tarball": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.2.19.tgz",
+            "fileCount": 3,
+            "integrity": "sha512-rm75/9DkHKeU2WnA8w4X94WGYgLlDCFCfkQC+4bguVJmC/jvDRv2B+2wLOYhyE0fVuv7//Ckk39OoOufyCu76Q==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCDAozhCYHXjNN4P0/b5UyZTHJXEyS4pSXtKoiJXsN7HgIgLntR/dRZ//jXKgVHNEfAXFLCW2TE5UKu6GstgnASnJU=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIHCCQYP1iT4Lhwl1v72EkWaQQKA8IuABk0Fzvy9jM9uMAiEArw/4Nu7ReW6MlAyFuWvlsjbvP0kirhf0RwNUNXvLw4U=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@rolldown%2fbinding-linux-x64-gnu@1.2.19",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 21118337
+          }
+        }
+      },
+      "time": {
+        "1.2.19": "2026-11-11T07:46:35.048Z"
+      }
+    },
+    "@rolldown/pluginutils": {
+      "versions": {
+        "1.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "dev": "tsdown --watch",
+            "test": "vitest --project pluginutils",
+            "build": "tsdown",
+            "test:types": "vitest --project pluginutils --typecheck.only"
+          },
+          "dist": {
+            "shasum": "9c029af4d8bdd9c0765784edbabe741f2b314629",
+            "tarball": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.1.0.tgz",
+            "fileCount": 8,
+            "integrity": "sha512-K+NU2HDCEem4sClgHH4ZZXwdJeNFkJo+hRk479DIwdIviAPN2hFJH1KHHwg8CxHQXvi0M5XY4deTXINfIiSG6w==",
+            "signatures": [
+              {
+                "sig": "MEQCIDWhpdzotHI5cSKbZKCB7hj8bgOZFNL5D1tZ4PFh8w/2AiBhDfSeY5kr2ompWhkLSspNyElbFrpyNihB+Id1KUISLA==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIQCC/mZcQ/uwKPj90TUMtwvQb2CZCbdPuQkJTzVo28PigwIgO2jYRSXDZhgPd3qSMf0KWvaBUqVUD/CxoyrgZp/2iUw=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@rolldown%2fpluginutils@1.1.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 26795
+          }
+        }
+      },
+      "time": {
+        "1.1.0": "2026-11-09T07:04:55.568Z"
+      }
+    },
+    "@tailwindcss/node": {
+      "versions": {
+        "4.3.5": {
+          "license": "MIT",
+          "scripts": {
+            "dev": "pnpm run build -- --watch",
+            "build": "tsup-node"
+          },
+          "dist": {
+            "shasum": "c70aed925ae6b22c0c7f21a1e5f5bbfe6b338bbd",
+            "tarball": "https://registry.npmjs.org/@tailwindcss/node/-/node-4.3.5.tgz",
+            "fileCount": 11,
+            "integrity": "sha512-yT53FzV4ke0cr/BguDxhWMpm5MJu1O2muzk+tKw6lKHjODAsYArBbWwFbJiaksfzFv1tpkO9QHGzmfs1hJT66g==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCt2wduznm+NRIpbqdJ0Bw1des2JRaawnXn6YeTwtEZeAIgZTwLd3MrMODQQ4l/CqO66lfg9QVvHym8RMn7atIU7vA=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQDTk6nqvnsIfdkgsfvS2x+7TssVxrvOy9DYqEe988vSPwIhALD7yyxioTzfHYTwTxaa5dNyfCGoqP4nODUu4G1exl1W",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tailwindcss%2fnode@4.3.5",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 130749
+          }
+        }
+      },
+      "time": {
+        "4.3.5": "2026-11-06T15:16:08.726Z"
+      }
+    },
+    "@tailwindcss/oxide-linux-x64-gnu": {
+      "versions": {
+        "4.3.5": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "6e2e947fe3c691a7f503f9524331e4c21dde3774",
+            "tarball": "https://registry.npmjs.org/@tailwindcss/oxide-linux-x64-gnu/-/oxide-linux-x64-gnu-4.3.5.tgz",
+            "fileCount": 4,
+            "integrity": "sha512-4uxQvtBvPuIdl13WfUBj9xMZHH14PtHZ8OZdtLmdyDtG66sCa1t599NZT+jagkUzRtWhuul1qRZQ1nAJscXN5g==",
+            "signatures": [
+              {
+                "sig": "MEQCIDYOusJLbIYZ8gUFnGhFbDOf4HjfL8SCnroZ3pVYTMo3AiAmy0tIy3x6T4q561bsO1FaVEeFdeQ0DT2pzbWwPuCOaw==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIQDT+PEzVuPLkbOiHux7Q9CtuDbLNwD8xj4cUvS+0cmxbwIgO/osBMMgfzrSgGXQOkbzuMWmdCoIr4e5v67m2VRGrXo=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tailwindcss%2foxide-linux-x64-gnu@4.3.5",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 3044223
+          }
+        }
+      },
+      "time": {
+        "4.3.5": "2026-11-06T15:16:03.219Z"
+      }
+    },
+    "@tailwindcss/oxide": {
+      "versions": {
+        "4.3.5": {
+          "license": "MIT",
+          "scripts": {
+            "dev": "cargo watch --quiet --shell 'npm run build'",
+            "build": "pnpm run build:platform && pnpm run build:wasm",
+            "version": "napi version",
+            "build:wasm": "napi build --release --target wasm32-wasip1-threads",
+            "build:debug": "napi build --platform",
+            "build:platform": "napi build --platform --release",
+            "postbuild:wasm": "node ./scripts/move-artifacts.mjs",
+            "postbuild:platform": "node ./scripts/move-artifacts.mjs"
+          },
+          "dist": {
+            "shasum": "e0600d6a38eab9fe9365d67c933b560fbf744883",
+            "tarball": "https://registry.npmjs.org/@tailwindcss/oxide/-/oxide-4.3.5.tgz",
+            "fileCount": 4,
+            "integrity": "sha512-PynqGLZsZvwM9tqD/CUxkOIfyd6K5elZ2MooauzJryP/UqXYgi3yYbtt3N0Xe+MHV/eFKPFQCEfIKAqlAS1CBg==",
+            "signatures": [
+              {
+                "sig": "MEQCIH7iwbkNLyFeGSgxJOX9NbYUKkbZXXtlyybTJIVqV2z7AiBgRpTGwhI96fqm1l9gcPdZMswd4zYWD89kTmEgStwu6Q==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIEFh3aLA2P6I+eKUR8/PdXBujA+c/aiCrUWb/sH3HNRzAiEArNYJFsOCwww4NJp9b5Lrz0TTNqgs1l9640N0x2SBRHQ=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tailwindcss%2foxide@4.3.5",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 29783
+          }
+        }
+      },
+      "time": {
+        "4.3.5": "2026-11-06T15:23:52.116Z"
+      }
+    },
+    "@tailwindcss/vite": {
+      "versions": {
+        "4.3.5": {
+          "license": "MIT",
+          "scripts": {
+            "dev": "pnpm run build -- --watch",
+            "build": "tsup-node"
+          },
+          "dist": {
+            "shasum": "b6d14b0a78b419143b27a43db6756f3e8858d643",
+            "tarball": "https://registry.npmjs.org/@tailwindcss/vite/-/vite-4.3.5.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-BCNiY0a1ZjdOHVqw7kyb7U72BwfMF3dfUuN+tQsLWky/J5JOI/r7abibglXfygrZhVO/3u3V+E25kkKTeMkXaQ==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCsHKcAwW+i7Q3CaOrbKLPHU9uLezq8YHCgCQr3xz7yEgIhAOS5qDjO5iJdQVxlR2tIXvQqLiY2Jp0CvQ+SZT8iIWhU",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQDV0zaHuc1ARoFL2yKThgL90wloh+5Djs2sQ5C/jNteqgIhAJ2qsYG/UB04gdOzj+oGDAymf3UwrytlXr7and6G9X1B",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tailwindcss%2fvite@4.3.5",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 12016
+          }
+        }
+      },
+      "time": {
+        "4.3.5": "2026-11-06T15:16:27.506Z"
+      }
+    },
+    "@tauri-apps/api": {
+      "versions": {
+        "2.12.4": {
+          "license": "Apache-2.0 OR MIT",
+          "scripts": {
+            "build": "rollup -c --configPlugin typescript",
+            "npm-pack": "pnpm build && cd ./dist && npm pack",
+            "ts:check": "tsc --noEmit",
+            "eslint:fix": "eslint src/**/*.ts --fix",
+            "build:debug": "rollup -c --configPlugin typescript",
+            "npm-publish": "pnpm build && cd ./dist && pnpm publish --access public --loglevel debug --no-git-checks",
+            "eslint:check": "eslint src/**/*.ts"
+          },
+          "dist": {
+            "shasum": "2bab72b87696ae8dcfb4f4db2119e46a87aeabe0",
+            "tarball": "https://registry.npmjs.org/@tauri-apps/api/-/api-2.12.4.tgz",
+            "fileCount": 68,
+            "integrity": "sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDhr5xG+NmlT4Itff79ZfzxFLM9gDxoqCP+oTbrENb8TAIhAJ8oAlIetU9Ps5AYQDqSm1GQMFPbqMpR6Hdi6kXPC0da",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIECsTC/wq0YRNfYKSofeYfcTOhd/k4P6Bdm0rD8dmpnVAiBsCB0XyZMZ0411pPbVm54qoAOkDVZ9C5xayOpyCw/Ozw==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tauri-apps%2fapi@2.12.4",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 892209
+          }
+        }
+      },
+      "time": {
+        "2.12.4": "2026-10-14T18:47:44.921Z"
+      }
+    },
+    "@tauri-apps/cli-linux-x64-gnu": {
+      "versions": {
+        "2.12.4": {
+          "license": "Apache-2.0 OR MIT",
+          "dist": {
+            "shasum": "0dbabc5df1db3a9c48298fb6061a1979a6886941",
+            "tarball": "https://registry.npmjs.org/@tauri-apps/cli-linux-x64-gnu/-/cli-linux-x64-gnu-2.12.4.tgz",
+            "fileCount": 3,
+            "integrity": "sha512-tNzZSa79Z1nRpHxEpQ38lsAFpKlFlYvoXzjTV+lRRn/zSf3wrdUC3wnLcq2XEadchPu4ttK0zivhYzr+XGD19Q==",
+            "signatures": [
+              {
+                "sig": "MEUCIBDmG8LxvLb87byDq6yTXjCXDn4dYpLw7KcpVRTGFrAQAiEA9akvvAV0WALThqe1BTf2FPpmGThT7G0oB1lD5Sc/txQ=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIFozohi52CnuUFY8srkDlq4HpnhU+N7OJzbGE677iuAIAiAdF/crQP0sgSpZT/bDxyS3+yKRcFLLnjeueCA7f8/FAg==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tauri-apps%2fcli-linux-x64-gnu@2.12.4",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 19882694
+          }
+        }
+      },
+      "time": {
+        "2.12.4": "2026-10-21T12:18:50.744Z"
+      }
+    },
+    "@tauri-apps/cli": {
+      "versions": {
+        "2.12.4": {
+          "license": "Apache-2.0 OR MIT",
+          "scripts": {
+            "test": "vitest run",
+            "build": "cross-env TARGET=node napi build --platform --profile release-size-optimized",
+            "tauri": "node ./tauri.js",
+            "prepack": "cp ../../crates/tauri-schema-generator/schemas/config.schema.json .",
+            "version": "napi version",
+            "artifacts": "napi artifacts",
+            "postbuild": "node append-headers.js",
+            "build:debug": "cross-env TARGET=node napi build --platform",
+            "prepublishOnly": "napi prepublish -t npm --gh-release-id $RELEASE_ID",
+            "postbuild:debug": "node append-headers.js"
+          },
+          "dist": {
+            "shasum": "877284bf929b3c190b2e9f859e602c51c34a7c9f",
+            "tarball": "https://registry.npmjs.org/@tauri-apps/cli/-/cli-2.12.4.tgz",
+            "fileCount": 12,
+            "integrity": "sha512-JI9bHfudSRJikGOrjbXEm6RjzzvmKuLc+JixB1NE8hNzQkNlCCIC3pTES3uypkR9lxHrsbxzcnSwhI2IxBQphw==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCsPiZ7ZsNMolVc1PCaCPsJk9+g+Svw4oUGK/2IudJS+gIhAL8sLV2CoByJO1BYEPlrxrYR7zS6XlMl1YA0S3DxCfCO",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQCLrBloYWg/zYvoScVQGBucguGGj37Lf9Yzf/lljvWi0QIhAIXc2SGyuvgJ9XGkZztvwOsrYIwe2HF4WlV9U1u+LIeO",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tauri-apps%2fcli@2.12.4",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 432536
+          }
+        }
+      },
+      "time": {
+        "2.12.4": "2026-10-21T12:20:52.691Z"
+      }
+    },
+    "@types/node": {
+      "versions": {
+        "24.19.2": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "8718eedbc0f89648de6525be9f4a9c61cdbaa502",
+            "tarball": "https://registry.npmjs.org/@types/node/-/node-24.19.2.tgz",
+            "fileCount": 88,
+            "integrity": "sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==",
+            "signatures": [
+              {
+                "sig": "MEQCIANcVRgt/opOpIiouz2oQFvOIyDM4lBAgR5KWFpeM0S7AiAlIKKketPR7tVtdmeqoW9ERmEN+hUSbmSsgvw4PZE5xg==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIEyyRKiIaH5zy091E3cDbeZApk+zitfD9OmZP0qKnrKRAiB6X7j1j2Vakh+MTSX0FSCk/vXjx9TKwcy6mTWJb+rXXg==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 2613701
+          }
+        }
+      },
+      "time": {
+        "24.19.2": "2026-10-09T18:44:25.189Z"
+      }
+    },
+    "@types/react-dom": {
+      "versions": {
+        "19.3.0": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "90294a9266efd928a5266f2110d60d5dba5015d2",
+            "tarball": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.3.0.tgz",
+            "fileCount": 19,
+            "integrity": "sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDeggFlao9be7yHQ/b9bEJ/aNUgA9ewpLiMScDNunzitAIhAKh8Ct2ZYAjnfZI/KeuIMkZ0Qz2vlOS1C1PkdT2UacvQ",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQDfRDroOzjwBEz1yqXRbBWKCYOt7p/DKB+WIMPoMWCfUAIhAMPChj/cPQOALZVIGvV0h+QYQERrlQ5RJZb3dptWvQFV",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 32862
+          }
+        }
+      },
+      "time": {
+        "19.3.0": "2026-09-09T18:07:51.886Z"
+      }
+    },
+    "@types/react": {
+      "versions": {
+        "19.3.0": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "3b3ce8d8c1627fb5ccd4dadd57ef445c5a153b77",
+            "tarball": "https://registry.npmjs.org/@types/react/-/react-19.3.0.tgz",
+            "fileCount": 18,
+            "integrity": "sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==",
+            "signatures": [
+              {
+                "sig": "MEQCICO9E9W9sN+6oHDGno2fJYJ8YEsNOa01MoJJmauunAjGAiAVusL8FBYYoRgnVrnz0RY2KMSjP1OlJ7GunY0YhIr0GA==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQCG/2kbQCjMBz9wJNsFnPRUQFtQzxGIbkrwTxQ3ZYlQrwIhAKZAxRpE46wtsHz27OGDgRmXLV83Q5GivNToLaMzF7Q2",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 408108
+          }
+        }
+      },
+      "time": {
+        "19.3.0": "2026-09-09T18:08:49.750Z"
+      }
+    },
+    "@vitejs/plugin-react": {
+      "versions": {
+        "6.3.0": {
+          "license": "MIT",
+          "scripts": {
+            "dev": "tsdown --watch ./src --watch ../common",
+            "build": "tsdown",
+            "test-unit": "vitest run",
+            "prepublishOnly": "npm run build"
+          },
+          "dist": {
+            "shasum": "28b3ec6e786601a362fbfdf8b12725931b619669",
+            "tarball": "https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.3.0.tgz",
+            "fileCount": 10,
+            "integrity": "sha512-H9E955aVvD2F4zNHCw4eIZbIfF6xKldlh7MNu+hSU7xwQzh65lI/N+CJWqmfhi0PEjDXIt/H7T7J/4wU63KJiw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCdgoLcWpn5c/hgOwsF06lY3sfxx6chA3ormfqyYHkKlgIgI/pmYq23G0NGS8l1p0hRrtTWifpljVPsPIRJ9bv7Xro=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQCdWO3ej7Y4B4HA3uIQuk1m5VOzg4qaIaOxbsq7rFbrtwIhAOVFoXYM361j2ejjnuJ9mg/UG84OEeuFRZBsoWmajAD5"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@vitejs%2fplugin-react@6.3.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 47551
+          }
+        }
+      },
+      "time": {
+        "6.3.0": "2026-11-09T06:12:31.033Z"
+      }
+    },
+    "class-variance-authority": {
+      "versions": {
+        "0.7.1": {
+          "license": "Apache-2.0",
+          "scripts": {
+            "build": "run-p build:**",
+            "build:cjs": "swc ./src/index.ts --config-file ./.config/.swcrc -o dist/index.js -C module.type=commonjs",
+            "build:esm": "swc ./src/index.ts --config-file ./.config/.swcrc -o dist/index.mjs -C module.type=es6 ",
+            "build:tsc": "tsc --project .config/tsconfig.build.json",
+            "check": "tsc --project tsconfig.json --noEmit",
+            "bundlesize": "pnpm build && bundlesize -f 'dist/*.js' -s 1.2KB"
+          },
+          "dist": {
+            "integrity": "sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg==",
+            "shasum": "4008a798a0e4553a781a57ac5177c9fb5d043787",
+            "tarball": "https://registry.npmjs.org/class-variance-authority/-/class-variance-authority-0.7.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 22073,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQD8Ow1fDpGJrlJunCUBoC6MmqcGhmiMrjgR/7XLqD+vwQIgJjg1VIoLC6xKrdXZj9wvuoLJmI0erWC7gAeRTTjq9EE="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "0.7.1": "2024-11-26T08:20:34.604Z"
+      }
+    },
+    "clsx": {
+      "versions": {
+        "2.1.1": {
+          "license": "MIT",
+          "scripts": {
+            "test": "uvu -r esm test",
+            "build": "node bin"
+          },
+          "dist": {
+            "shasum": "eed397c9fd8bd882bfb18deab7102049a2f32999",
+            "tarball": "https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz",
+            "fileCount": 10,
+            "integrity": "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCt4cimtFNdDPY5NOqLXbuPrCyxPFP7Pym/n1+tTeA16wIgUvCZBteiHTXv3GZRuhWQ2BqaV+qtiZYbi4c0T7jw87M=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 8555
+          }
+        }
+      },
+      "time": {
+        "2.1.1": "2024-04-23T05:26:04.645Z"
+      }
+    },
+    "csstype": {
+      "versions": {
+        "3.2.3": {
+          "license": "MIT",
+          "scripts": {
+            "lazy": "tsc && npm run lint",
+            "lint": "eslint . --ext .js,.jsx,.ts,.tsx --fix",
+            "test": "jest --runInBand",
+            "build": "tsx --inspect build.ts --start",
+            "watch": "tsx build.ts --watch",
+            "pretty": "prettier --write build.ts **/*.{ts,js,json,md}",
+            "update": "tsx update.ts",
+            "release": "release-it",
+            "test:src": "jest src.*.ts",
+            "test:dist": "jest dist.*.ts --runInBand",
+            "prepublish": "npm install --no-save --prefix __tests__ && npm install --no-save --prefix __tests__/__fixtures__"
+          },
+          "dist": {
+            "shasum": "ec48c0f3e993e50648c86da559e2610995cf989a",
+            "tarball": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCW+CNKJwot6/l093k7h2clXR0Ucofwk9ZTjRiRC02OjwIgAYsOZV+Mfm2Bj8yEH7GbF3VGBDmDxQtNVg0JE6wj8mo=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 1253449
+          }
+        }
+      },
+      "time": {
+        "3.2.3": "2025-11-17T11:42:27.045Z"
+      }
+    },
+    "detect-libc": {
+      "versions": {
+        "2.1.2": {
+          "license": "Apache-2.0",
+          "scripts": {
+            "test": "semistandard && nyc --reporter=text --check-coverage --branches=100 ava test/unit.js",
+            "changelog": "conventional-changelog -i CHANGELOG.md -s",
+            "bench": "node benchmark/detect-libc",
+            "bench:calls": "node benchmark/call-familySync.js && sleep 1 && node benchmark/call-isNonGlibcLinuxSync.js && sleep 1 && node benchmark/call-versionSync.js"
+          },
+          "dist": {
+            "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
+            "shasum": "689c5dcdc1900ef5583a4cb9f6d7b473742074ad",
+            "tarball": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
+            "fileCount": 8,
+            "unpackedSize": 26437,
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/detect-libc@2.1.2",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIF1K2xLAn5hsm9ciKDdCTYG8t/RLfRhgxAP141A5a3u7AiBqAwFNw0gO55d7HBGPBEywWb+lelLcAZWszH90TSkiiw=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.2": "2025-10-05T12:46:33.077Z"
+      }
+    },
+    "enhanced-resolve": {
+      "versions": {
+        "5.26.1": {
+          "license": "MIT",
+          "scripts": {
+            "fix": "npm run fix:code && npm run build:types",
+            "fmt": "npm run fmt:base -- --log-level warn --write",
+            "lint": "npm run lint:code && npm run lint:types && npm run lint:types-test && npm run fmt:check && npm run lint:spellcheck",
+            "test": "npm run test:only",
+            "prepare": "husky",
+            "pretest": "npm run lint",
+            "release": "changeset publish",
+            "version": "changeset version",
+            "fix:code": "npm run lint:code -- --fix",
+            "fmt:base": "node_modules/prettier/bin/prettier.cjs --cache --ignore-unknown .",
+            "benchmark": "node --max-old-space-size=4096 --hash-seed=1 --random-seed=1 --no-opt --predictable --predictable-gc-schedule --interpreted-frames-native-stack --allow-natives-syntax --expose-gc --no-concurrent-sweeping ./benchmark/run.mjs",
+            "fmt:check": "npm run fmt:base -- --check",
+            "lint:code": "eslint --cache .",
+            "test:only": "node scripts/test.js",
+            "lint:types": "tsc",
+            "test:watch": "node scripts/test.js --watch",
+            "build:types": "node -e \"require('fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.types.json && prettier --log-level warn --write \"types/**/*.d.ts\"",
+            "type-report": "rimraf coverage && npm run cover:types && npm run cover:report && open-cli coverage/lcov-report/index.html",
+            "test:browser": "node --experimental-vm-modules test/smoke/browser-run.cjs",
+            "test:coverage": "node scripts/test.js --experimental-test-coverage --test-coverage-include=\"lib/**\" --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info",
+            "lint:spellcheck": "cspell --cache --no-must-find-files --quiet \"**/*.*\"",
+            "lint:types-test": "tsc -p tsconfig.types.test.json"
+          },
+          "dist": {
+            "shasum": "444213a1efe5be80c1c2ae045aa0fd14269ee07f",
+            "tarball": "https://registry.npmjs.org/enhanced-resolve/-/enhanced-resolve-5.26.1.tgz",
+            "fileCount": 118,
+            "integrity": "sha512-PPnnSJq3azKOIewXR/uppBV/6h98dprBJ/WaQ9Qgj10xX1lJLNfg+XShpbsrSqcDSy2yYYyhfXM1wWhftqgyzw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCBRaP4iEik0vFREj/7AmM3OJF40EjVqqZwzgE+wARHJwIgBFDFLFg+Y9Dk02Y8HbNwgQRrqu4w0k3gwxzJQYCQKw4=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIErz3QiBWWqC75bCpjthGs7obf0q2skaoiaiBUNckwoFAiBrdbm1LmBNopeOXHycksgoleN2QpdTnVmazqmm6BcpAQ==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/enhanced-resolve@5.26.1",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 545009
+          }
+        }
+      },
+      "time": {
+        "5.26.1": "2026-11-03T09:15:19.164Z"
+      }
+    },
+    "fdir": {
+      "versions": {
+        "6.5.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run test && npm run build",
+            "build": "tsdown",
+            "format": "prettier --write src __tests__ benchmarks",
+            "test": "vitest run __tests__/",
+            "test:coverage": "vitest run --coverage __tests__/",
+            "test:watch": "vitest __tests__/",
+            "bench": "ts-node benchmarks/benchmark.js",
+            "bench:glob": "ts-node benchmarks/glob-benchmark.ts",
+            "bench:fdir": "ts-node benchmarks/fdir-benchmark.ts",
+            "release": "./scripts/release.sh"
+          },
+          "dist": {
+            "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
+            "shasum": "ed2ab967a331ade62f18d077dae192684d50d350",
+            "tarball": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 53291,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIH0wQCebp2QVphslaYbOXNLLIEWXJQeu+SBQ98iHU/E8AiBf9S/FKNmKpLju7S0BR0jg8EK3+F2u9xc/b3pjZqiCQA=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "6.5.0": "2025-08-14T16:56:03.948Z"
+      }
+    },
+    "graceful-fs": {
+      "versions": {
+        "4.2.11": {
+          "license": "ISC",
+          "scripts": {
+            "test": "nyc --silent node test.js | tap -c -",
+            "posttest": "nyc report",
+            "preversion": "npm test",
+            "postpublish": "git push origin --follow-tags",
+            "postversion": "npm publish"
+          },
+          "dist": {
+            "shasum": "4183e4e8bf08bb6e05bbb2f7d2e0c8f712ca40e3",
+            "tarball": "https://registry.npmjs.org/graceful-fs/-/graceful-fs-4.2.11.tgz",
+            "fileCount": 7,
+            "integrity": "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==",
+            "signatures": [
+              {
+                "sig": "MEQCIGvrVOcn7hI1H803c2vtwpp2SWqq+i4Io7slvfmq5ALwAiBUkAIGXz4UnL+r6Mp2H+OE2q0DUtrViYowDGL171hm5w==",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 32535,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJkE25LACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2Vmo1Cw/+N8TlrsFr9s7NQc7VlIFHMU2rKzP4vToGXmp36eSQFnl6ovT2\r\nORy24D9wbXLJHjoK3OXXfJj05y29v8qiNIEVpSxrULuRhvK49Ck3KkOl8uCg\r\n8gmXQCDCnY3n4MsEQgiUH34r+xJHE1szyaO4asFcfoDWJzq+YkLX2bbNfgow\r\n2Qrv+cuqOJVT2jVXRieFhJd5FWCD9Y4U+nzzY39a+UzvJvpq30lhRgTqZfNW\r\nct6GJx6Td8Kvc5SQ+EwAiFTrp8DUfZrzqD+U+E/GuMLLj3bCczYCagndUU27\r\nf1PNUMkqeTFpjuduqsQQuyyoLFm6cvKU4llHOETAaVTZpUPS6iR9SE91cuQt\r\n+ABAuaxuGuEmLWWBSbaPeOI76+CJAQ4mjwwFEwRSPTUY7wfCuhis4YBzEISD\r\nrDwkGKXwQ2XpLymE9QMAAFc6mxO1WxRbnlaxgmZLBhJGKeRh7KRaQRtI0qIy\r\nPm6M2Tpp+JoFOFIKy5Q8AldLlWWL5zzo71jglrQrGytDwem1sYjGDozXfVgm\r\nfYFO4SV4y0gXeY2Z68y0g+S4BmP+JUWM5v4WCBJxm1gEmEzz4yLv7PXVx12R\r\n10binyrgUoOUUWC7qSeQaVwROIQI8dNhOjSvdOJ3Vlpk2+cebpStOgJ9/eyY\r\nX1M50AoJmZh/Yl4oqHc8jSU5i9HjwWGe4zE=\r\n=HvMs\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "4.2.11": "2023-03-16T19:30:19.323Z"
+      }
+    },
+    "jiti": {
+      "versions": {
+        "2.7.0": {
+          "license": "MIT",
+          "scripts": {
+            "bench": "node test/bench.mjs && deno -A test/bench.mjs && bun --bun test/bench.mjs",
+            "build": "pnpm clean && pnpm rspack",
+            "build:rolldown": "pnpm clean && pnpm rolldown -c rolldown.config.mjs",
+            "clean": "rm -rf dist",
+            "dev": "pnpm clean && pnpm rspack --watch",
+            "jiti": "JITI_DEBUG=1 JITI_JSX=1 lib/jiti-cli.mjs",
+            "lint": "eslint . && prettier -c src lib test stubs",
+            "lint:fix": "eslint --fix . && prettier -w src lib test stubs",
+            "prepack": "pnpm build",
+            "release": "pnpm build && pnpm test && changelogen --release --push && npm publish",
+            "test": "pnpm lint && pnpm test:types && vitest run --coverage && pnpm test:node-register && pnpm test:bun && pnpm test:native",
+            "test:bun": "bun --bun test test/bun",
+            "test:native": "pnpm test:native:bun && pnpm test:native:node && pnpm test:native:deno",
+            "test:native:bun": "bun --bun test test/native/bun.test.ts",
+            "test:native:deno": "deno test -A --no-check test/native/deno.test.ts",
+            "test:native:node": "node --test --experimental-strip-types test/native/node.test.ts",
+            "test:node-register": "JITI_JSX=1 node --test test/node-register.test.mjs",
+            "test:types": "tsgo --noEmit"
+          },
+          "dist": {
+            "integrity": "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==",
+            "shasum": "974228f2f4ca2bc21885a1797b45fea68e950c64",
+            "tarball": "https://registry.npmjs.org/jiti/-/jiti-2.7.0.tgz",
+            "fileCount": 16,
+            "unpackedSize": 1751293,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIE8EWcZV7Ll1AKCHeFXYhkVyPqcPbKjg2QPO8C5ylcw7AiASHS6m0T9biaCfJZVnQr8rHzksFERY3zNeN4NFLpCbeQ=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.7.0": "2026-05-05T21:02:47.918Z"
+      }
+    },
+    "lightningcss-linux-x64-gnu": {
+      "versions": {
+        "1.33.0": {
+          "license": "MPL-2.0",
+          "dist": {
+            "integrity": "sha512-ar+Ju7LmcN0Jo4FpL4hpFybwNG9/3A/Br5KW2n2jyODg3MEZXaDYADdemoNS+BDNfMgKvylJLj4S5tyRActuAg==",
+            "shasum": "8b927862ea8c2bbc6831a46509244b50d9936e55",
+            "tarball": "https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.33.0.tgz",
+            "fileCount": 4,
+            "unpackedSize": 10048780,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIBVwP9KyrxytIkzkhnr+EDiH5ZhFKRdTbMPDaUiMaoagAiAkMcnxumWm0X8w08smzPcFUC677hB91LT1XqJpAL/f2g=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "1.33.0": "2026-07-20T05:10:52.507Z"
+      }
+    },
+    "lightningcss": {
+      "versions": {
+        "1.33.0": {
+          "license": "MPL-2.0",
+          "scripts": {
+            "prepare": "patch-package",
+            "build": "node scripts/build.js && node scripts/build-flow.js",
+            "build-release": "node scripts/build.js --release && node scripts/build-flow.js",
+            "prepublishOnly": "node scripts/build-flow.js",
+            "wasm:build": "cargo build --target wasm32-unknown-unknown -p lightningcss_node && wasm-opt target/wasm32-unknown-unknown/debug/lightningcss_node.wasm --asyncify --pass-arg=asyncify-imports@env.await_promise_sync -Oz -o wasm/lightningcss_node.wasm && node scripts/build-wasm.js",
+            "wasm:build-release": "cargo build --target wasm32-unknown-unknown -p lightningcss_node --release && wasm-opt target/wasm32-unknown-unknown/release/lightningcss_node.wasm --asyncify --pass-arg=asyncify-imports@env.await_promise_sync -Oz -o wasm/lightningcss_node.wasm && node scripts/build-wasm.js",
+            "website:start": "parcel 'website/*.html' website/playground/index.html",
+            "website:build": "yarn wasm:build-release && parcel build 'website/*.html' website/playground/index.html",
+            "build-ast": "cargo run --example schema --features jsonschema && node scripts/build-ast.js",
+            "tsc": "tsc -p node/tsconfig.json",
+            "test": "uvu node/test"
+          },
+          "dist": {
+            "integrity": "sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==",
+            "shasum": "c08867d71a79385c6e190214fd72fef3e5f95f0b",
+            "tarball": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz",
+            "fileCount": 14,
+            "unpackedSize": 513814,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQD6IxrcvTJjhhJlgfKe7RuFv5TmKSx2/oRjJFZ6rhFXsAIhAPzxReFHw+l4nMIgYtlaZJJJUFVgHCmzSnw1tHjX2ikY"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "1.33.0": "2026-07-20T05:11:09.509Z"
+      }
+    },
+    "lucide-react": {
+      "versions": {
+        "1.71.0": {
+          "license": "ISC",
+          "scripts": {
+            "test": "pnpm build:icons && vitest run",
+            "build": "pnpm clean && pnpm copy:license && pnpm build:icons && pnpm typecheck && pnpm build:bundles",
+            "clean": "rm -rf dist && rm -rf stats && rm -rf ./src/icons/*.ts && rm -f dynamic.{d.ts,d.mts,mts,mjs,mjs.map} && rm -f dynamicIconImports.d.ts",
+            "typecheck": "pnpm build:icons && tsc --noEmit",
+            "test:watch": "vitest watch",
+            "build:icons": "build-icons --output=./src --templateSrc=./scripts/exportTemplate.mts --renderUniqueKey --withAliases --withDynamicImports --separateAliasesFile --separateAliasesFileIgnore=fingerprint --aliasesFileExtension=.ts --iconFileExtension=.ts --exportFileName=index.ts",
+            "copy:license": "cp ../../LICENSE ./LICENSE",
+            "build:bundles": "rollup -c ./rollup.config.mjs",
+            "typecheck:watch": "tsc -w"
+          },
+          "dist": {
+            "shasum": "10594c541a08482b10ff918082c60def5e43468a",
+            "tarball": "https://registry.npmjs.org/lucide-react/-/lucide-react-1.71.0.tgz",
+            "fileCount": 4748,
+            "integrity": "sha512-8YtvF+bqT/EMqAXU7kWvYdRu+TV9j4kS1eIS7IbN1j1Z1DgupbrTL0nDIygdqgBDTD7AJPP607VdVgzDTar4zA==",
+            "signatures": [
+              {
+                "sig": "MEUCIQC62E5fP4V+V/Tauaxj8gv15qaDL28vbfsShbEPHzr6HQIgYRsEa00gvtndwjo3eMvnsHP7Y48E8FnfbaKwyYGp2F0=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIG//E1fc5+UGsDXPLb0MhxkAHxvA95U5Vxn6qixDDNGGAiA8RblUbt8MwQg6i4lji16x4JcLgOc9Ol9ptssD1K7LCw==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/lucide-react@1.71.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 38911146
+          }
+        }
+      },
+      "time": {
+        "1.71.0": "2026-11-10T06:11:39.938Z"
+      }
+    },
+    "magic-string": {
+      "versions": {
+        "1.4.5": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint",
+            "test": "vitest run",
+            "bench": "pnpm run build && vitest bench --run --reporter=verbose",
+            "build": "tsdown",
+            "watch": "tsdown -w",
+            "pretest": "pnpm run build",
+            "release": "bumpp -x \"pnpm run changelog\" --all",
+            "lint:fix": "eslint --fix",
+            "test:dev": "vitest",
+            "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s",
+            "typecheck": "tsc && tsc -p tsconfig.test.json"
+          },
+          "dist": {
+            "shasum": "201c852d51eb0664d6f66cf7ab93b20b416e48d9",
+            "tarball": "https://registry.npmjs.org/magic-string/-/magic-string-1.4.5.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-oLLC2+YvQUfAa+vxoufE/yc1icb87M9iXIRqAoR/2EhE/8cb3SF/+Gi0c2By1B+5Vz2e2vQtUvHiu1+63Znh+w==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDN53b5PXMs3mDEd1DuIWVHN8fd/EHMHN8sp8/BeSa7tgIhAO2iu3Y/0ROVovlhNzWfC1gc6Wy0PxXAHUBvipRhzbOc",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIQCqXBIX/8fs9sTsqFpjX+5Iz68K6czRq94Pg/cL8jpxGQIgW0fLzVqI6cpXg5Jq/l+ewr/NCHbPy+20tK/2X+BlUgw="
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/magic-string@1.4.5",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 104305
+          }
+        }
+      },
+      "time": {
+        "1.4.5": "2026-10-27T05:36:50.800Z"
+      }
+    },
+    "marked": {
+      "versions": {
+        "18.2.0": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint --fix",
+            "test": "npm run build:reset && npm run build:docs && npm run test:specs && npm run test:unit && npm run test:umd && npm run test:cjs && npm run test:types && npm run test:lint",
+            "bench": "npm run build && node test/bench.js",
+            "build": "npm run build:esbuild && npm run build:types && npm run build:man",
+            "rules": "node test/rules.js",
+            "test:cjs": "node test/cjs-test.cjs",
+            "test:umd": "node test/umd-test.js",
+            "build:man": "marked-man man/marked.1.md > man/marked.1",
+            "test:lint": "eslint",
+            "test:only": "npm run build && npm run test:specs:only && npm run test:unit:only",
+            "test:unit": "node --test --test-reporter=spec test/unit/*.test.js",
+            "build:docs": "npm run build && node docs/build.js",
+            "test:specs": "node --test --test-reporter=spec test/run-spec-tests.js",
+            "test:types": "tsc --project tsconfig-type-test.json && attw -P --entrypoints . --profile esm-only",
+            "build:reset": "rimraf ./lib ./public",
+            "build:types": "tsc && dts-bundle-generator --export-referenced-types --project tsconfig.json -o lib/marked.d.ts src/marked.ts",
+            "test:update": "node test/update-specs.js",
+            "test:recheck": "node test/recheck.ts > vuln.js",
+            "build:esbuild": "node esbuild.config.js",
+            "test:unit:only": "node --test --test-only --test-reporter=spec test/unit/*.test.js",
+            "test:specs:only": "node --test --test-only --test-reporter=spec test/run-spec-tests.js"
+          },
+          "dist": {
+            "shasum": "58d7f91aa57cab1591bce1be264b1251694a63f3",
+            "tarball": "https://registry.npmjs.org/marked/-/marked-18.2.0.tgz",
+            "fileCount": 12,
+            "integrity": "sha512-KaeL+tAbtvI930q7HE2PN5lYXYdT8EiSmxHlN6F3rsfb57wd5mp5W5TLazpdj4inTQBJdgjYwbs40W/0VUGU+Q==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCTFL3s7SpL3cVFFnY0H+AEkPwVuw/74kMyRlRNS5az4wIgc9hv9ivYay2hRXxTQJ99MI7SLLhL7zoeqcCxFTipDj8=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIQDpgmkub+/vBEkNrsHL5tgCszFGnyifbe3ZmczISvgwegIgffOOvrBJ+lUFFKhIPUwniISkxkUPZAUCfC1sGWA2sAo=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/marked@18.2.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 569026
+          }
+        }
+      },
+      "time": {
+        "18.2.0": "2026-11-09T23:05:41.759Z"
+      }
+    },
+    "nanoid": {
+      "versions": {
+        "3.3.20": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "dfd4444d85aa10111ef66ba85ed72e08ba0855d8",
+            "tarball": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.20.tgz",
+            "fileCount": 26,
+            "integrity": "sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ==",
+            "signatures": [
+              {
+                "sig": "MEQCIC6ipEZGWzyII33h0aQZiAnmSvXOYOPiz62855wkZ49VAiBSwFj3BIlKUZEJFjRoFWsZ3KI0/bfmQB7PaH4D/xH5bQ==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/nanoid@3.3.20",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 26808
+          }
+        }
+      },
+      "time": {
+        "3.3.20": "2026-10-05T09:44:40.679Z"
+      }
+    },
+    "oxc-transform-react": {
+      "versions": {
+        "0.156.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "vitest run --dir ./test",
+            "build": "pnpm run build-dev --features allocator --release",
+            "build-dev": "napi build --esm --platform",
+            "postbuild": "publint",
+            "build-test": "pnpm run build-dev --profile coverage",
+            "build-wasm": "pnpm run build-wasm-dev --release",
+            "build-wasip1": "pnpm run build-wasip1-dev --release",
+            "postbuild-dev": "node scripts/patch.js",
+            "build-wasm-dev": "pnpm run build-dev --target wasm32-wasip1-threads --dts transform-react.wasi.d.cts",
+            "build-wasip1-dev": "pnpm run build-dev --target wasm32-wasip1 --dts transform-react.wasip1.d.cts"
+          },
+          "dist": {
+            "shasum": "140634abe4201ec0b17f85717852e9c70e21d606",
+            "tarball": "https://registry.npmjs.org/oxc-transform-react/-/oxc-transform-react-0.156.0.tgz",
+            "fileCount": 11,
+            "integrity": "sha512-BQQ/DKTy80gwDx+JHFc/gPnt2BXY0yqveRQo9IjWD/H7OpUkG5qQxwrQmQwVQzHfJnrCbUL518aeA9rvar6TDg==",
+            "signatures": [
+              {
+                "sig": "MEUCIBfkcgYw1zO8SZqB1AyjN3RbnlEGLOk8s0OeEOmg7KcjAiEAuYfE3PSNuuf79k7OpgKb4BvmFXUgrZyHhmmpUdKcpOE=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQDhTfy17rSUPn9LURhNESeJVIU9cTdy4CjMbUZDUZtNjQIhALYLt0jBlS8iYbewob/ElZP/U/VgxY5RQpWyCq6XueG1",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/oxc-transform-react@0.156.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 4340205
+          }
+        }
+      },
+      "time": {
+        "0.156.0": "2026-10-27T03:36:10.706Z"
+      }
+    },
+    "pdfjs-dist": {
+      "versions": {
+        "6.5.438": {
+          "license": "Apache-2.0",
+          "scripts": {},
+          "dist": {
+            "shasum": "e7f8986ec4ea04057b5d9d2f0e5b63ea94d2303f",
+            "tarball": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-6.5.438.tgz",
+            "fileCount": 570,
+            "integrity": "sha512-vg8Pw1x+AFKy4AMDvhuWl5cOYV8d698UoEANoFFhc79hqXDnZQqnOXoxw3HG907WHOg1JYOvLhP756boddFxpA==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCHpARAHxjhmQYrv76T3PzkM9FflAZUZOyhnmSiAeva3wIhAKNa1q++oA9OwGCdoJqR618RG7DqFWmYTuk34Mlze1JB",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIQCnhrHziJt7WeagumZHQTRV/H+EbMUo1TGNMxeq3I09/QIgSN1S5hdEoPMghm1+QgwY9ae3lDFuqNfqvCbi6E9fNcg="
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/pdfjs-dist@6.5.438",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 37616588
+          }
+        }
+      },
+      "time": {
+        "6.5.438": "2026-11-01T18:22:21.690Z"
+      }
+    },
+    "picocolors": {
+      "versions": {
+        "1.1.1": {
+          "license": "ISC",
+          "dist": {
+            "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
+            "shasum": "3d321af3eab939b083c8f929a1d12cda81c26b6b",
+            "tarball": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+            "fileCount": 7,
+            "unpackedSize": 6373,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQD1ga0Ghvdul0FY1X3tDEHWjLF2ImSjnhKBBPgfOq1CvAIgSrqciFjzA8uVTKSuA6NKBADmO/cxtGcYXQhHjD0U1Nw="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "1.1.1": "2024-10-16T18:20:03.921Z"
+      }
+    },
+    "picomatch": {
+      "versions": {
+        "4.0.7": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint --cache --cache-location node_modules/.cache/.eslintcache --report-unused-disable-directives --ignore-path .gitignore .",
+            "test": "npm run lint && npm run mocha",
+            "mocha": "mocha --reporter dot",
+            "test:ci": "npm run test:cover",
+            "test:cover": "nyc npm run mocha"
+          },
+          "dist": {
+            "shasum": "6313360034ccb36b3dc61ecbdff78121f90fe21f",
+            "tarball": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+            "fileCount": 10,
+            "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+            "signatures": [
+              {
+                "sig": "MEQCIDeMRsq78AZoXJyPEawvv8JPPk7eIeoZRHU3VVnx4FUFAiAtcTcxKUlp2um5SNhGRRFGN8v1oGVjwBoiQBVBFbkk3A==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIFTk5VYWLeXAIebu2UWpaOQ5z72vxnbIe1t8ICKz/cuAAiEAp9RKfBDmwsNgt/m6Rs5cwKMCDQPoDAQTy408DJpDhVs="
+              }
+            ],
+            "unpackedSize": 93759
+          }
+        }
+      },
+      "time": {
+        "4.0.7": "2026-08-24T14:36:23.690Z"
+      }
+    },
+    "playwright-core": {
+      "versions": {
+        "1.65.0": {
+          "license": "Apache-2.0",
+          "dist": {
+            "shasum": "2b4671949db79c6ea47facf09f4aeffb90bc5c7f",
+            "tarball": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.65.0.tgz",
+            "fileCount": 116,
+            "integrity": "sha512-vNSKgH6YqtN7cdT/L334zo0a+YwkrpicyrHJlWWPIm/Q+Nn2SWInil01oT0mbu96U4GgoRtCYQD9CzJQgju+lA==",
+            "signatures": [
+              {
+                "sig": "MEUCIBG4qxKhc4NwAwknt6jfkbKD+65SjfPgz5b3Rkp+X5a4AiEAvhAQNOHYaR4kswm68SKpUFuHJ5QLfRkKwp0sl3bdYos=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIFvvhMd7zPKNlWr+EXS0ozeNB/FSycydaafjb5TjckjHAiEA5JC9Er6mO0Gda8n5n/9ChNHsUFwCLCbQZi79DEwWCm0=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/playwright-core@1.65.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 13969978
+          }
+        }
+      },
+      "time": {
+        "1.65.0": "2026-11-05T20:17:40.688Z"
+      }
+    },
+    "postcss": {
+      "versions": {
+        "8.5.32": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "fbccef8388a0c77508c713bfd37728d646595803",
+            "tarball": "https://registry.npmjs.org/postcss/-/postcss-8.5.32.tgz",
+            "fileCount": 55,
+            "integrity": "sha512-LJlKCCAUFKOuZxipUdYw1NzIITEsPcgyOG9LkvRJvuKj/bRzbuRY0ARXvL0pWGpsZvn8jku+LMep2eU0seHp8g==",
+            "signatures": [
+              {
+                "sig": "MEQCICaVEVMXfMeYkcOopkG+BDkGhayhn8dTiSZyAFJopbczAiAeq6eqQVd7X6WhLx25iGntEV54VlWv/AA92mxnkaS1Dg==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/postcss@8.5.32",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 220843
+          }
+        }
+      },
+      "time": {
+        "8.5.32": "2026-10-26T20:36:42.832Z"
+      }
+    },
+    "react-dom": {
+      "versions": {
+        "19.3.1": {
+          "license": "MIT",
+          "scripts": {
+            "start": "node server.js"
+          },
+          "dist": {
+            "shasum": "b384c53cfcbe9c2a5d09d863b98455de9d68afe2",
+            "tarball": "https://registry.npmjs.org/react-dom/-/react-dom-19.3.1.tgz",
+            "fileCount": 43,
+            "integrity": "sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDKhj2WJ0+n7p8mYN1rC0wCt9+cD0S58A7JGp6iSDsusgIhAIzdEcBxzxMDJ5pGXlJ1Qw+Utal8MwAbfud/9Fm04N1N",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQCVaB5TV8fUMl1DUqtKZxsqf+6v/itdKfx9lY/4yHu8kwIhANkvM3hU52XEwXbe6/xrseK88Q6blbENfk+peCPY6Ih4",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/react-dom@19.3.1",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 8067632
+          }
+        }
+      },
+      "time": {
+        "19.3.1": "2026-10-14T16:49:10.081Z"
+      }
+    },
+    "react": {
+      "versions": {
+        "19.3.1": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "26e9523fc36ea06be5050ebb780249a133260ad7",
+            "tarball": "https://registry.npmjs.org/react/-/react-19.3.1.tgz",
+            "fileCount": 27,
+            "integrity": "sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw==",
+            "signatures": [
+              {
+                "sig": "MEUCIDFKwsaTXLOJNpD3WJ6dy5E7wkTf2QNrZgmlItJn3Cy4AiEAoAvLd5MEj+CHKGO1a81NFTiC79fQLibq7JqAPGvPC0w=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIG60Jz/rQm93/m8ZTZvxX3fxIhTqB5EnASV642pG4n94AiA8XxzTRyCDS6L54HKPSciJX3l/dcW5MjgnFd4plotjSg==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/react@19.3.1",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 178663
+          }
+        }
+      },
+      "time": {
+        "19.3.1": "2026-10-14T16:47:15.290Z"
+      }
+    },
+    "reselect": {
+      "versions": {
+        "5.3.0": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint src test",
+            "test": "node --expose-gc ./node_modules/vitest/dist/cli-wrapper.js --run && yarn type-check",
+            "bench": "node --expose-gc ./node_modules/vitest/dist/cli-wrapper.js --run bench --mode production",
+            "build": "yarn clean && tsup",
+            "clean": "rimraf dist",
+            "format": "prettier --write \"{src,test}/**/*.{js,ts}\" \"bench/*.mjs\" \"docs/**/*.md\"",
+            "prepack": "yarn build",
+            "test:cov": "vitest run --coverage",
+            "docs:build": "yarn --cwd website build",
+            "docs:clear": "yarn --cwd website clear",
+            "docs:serve": "yarn --cwd website serve",
+            "docs:start": "yarn --cwd website start",
+            "test:watch": "node --expose-gc ./node_modules/vitest/dist/cli-wrapper.js --watch",
+            "type-check": "vitest --run --typecheck.only && yarn type-check:loose-null-checks",
+            "heap-snapshot": "yarn build && node --expose-gc ./scripts/weakMapMemoizeHeapSnapshot.mjs",
+            "bench:hot-path": "node ./bench/build.mjs && node --expose-gc ./bench/run.mjs",
+            "test:typescript": "tsc --noEmit -p typescript_test/tsconfig.json",
+            "type-check:trace": "vitest --run --typecheck.only && tsc --noEmit -p typescript_test/tsconfig.json --generateTrace trace && npx @typescript/analyze-trace trace && rimraf trace",
+            "bench:hot-path:dev": "node ./bench/build.mjs --dev && node --expose-gc ./bench/run.mjs",
+            "type-check:loose-null-checks": "tsc --noEmit -p type-tests/tsconfig.looseNullChecks.json"
+          },
+          "dist": {
+            "shasum": "0a3e3ed4436bdf2ab7c5e0f392dab2c062595d61",
+            "tarball": "https://registry.npmjs.org/reselect/-/reselect-5.3.0.tgz",
+            "fileCount": 28,
+            "integrity": "sha512-XGoLeRAVzUTcJ1qkxPQhDJyIZ5d6zzZD9nT7AEZOaaU9UbWclhycElmhO+VD5bFeLuzhPBaOV2oXC8uG35ZSpg==",
+            "signatures": [
+              {
+                "sig": "MEUCIAINnYfRXdlFwF2IFMVKy6CcUsM3p9jCkei1qQwcBIdaAiEA51TwEGB49IvHro0cmIadz/pTV6hop4/B0VkDDJ8eNm8=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIQCHfv0gKq0pXdbRFlu1pk8tvGQQ1CKNv7C8fKRPagFCnAIgDh31ueP8HTYH8JuxsjYo8GfD40XPzISPgC5IBQX11aA="
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/reselect@5.3.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 664830
+          }
+        }
+      },
+      "time": {
+        "5.3.0": "2026-08-22T02:13:00.013Z"
+      }
+    },
+    "rolldown": {
+      "versions": {
+        "1.2.19": {
+          "license": "MIT",
+          "scripts": {
+            "publint": "publint .",
+            "artifacts": "napi artifacts --cwd ./src --package-json-path ../package.json -o=../artifacts --npm-dir ../npm",
+            "build-node": "node --enable-source-maps --import @oxc-node/core/register -C dev ./build.ts",
+            "build-binding": "oxnode ./build-binding.ts",
+            "build-js-glue": "pnpm run --sequential '/^build-(node|types-check)$/'",
+            "build-wasi:debug": "TARGET='rolldown-wasi' pnpm run --sequential '/^build-(binding|binding:wasi|node)$/'",
+            "build-types-check": "tsc -p ./tsconfig.check.json",
+            "build-binding:wasi": "pnpm build-binding --target wasm32-wasip1-threads",
+            "build-native:debug": "pnpm run --sequential '/^build-(binding|js-glue)$/'",
+            "build-wasi:release": "TARGET='rolldown-wasi' pnpm run --sequential '/^build-(binding|binding:wasi:release|node)$/'",
+            "# Scrips for docs #": "_",
+            "# Scrips for node #": "_",
+            "build-native:profile": "pnpm run build-binding:profile && pnpm run build-js-glue",
+            "build-native:release": "pnpm run --sequential '/^build-(binding:release|js-glue)$/'",
+            "build-binding:profile": "pnpm build-binding --profile profile --features chrome-tracing",
+            "build-binding:release": "pnpm build-binding --release",
+            "# Scrips for binding #": "_",
+            "build-browser-pkg:debug": "TARGET='browser' pnpm run --sequential '/^build-(binding:wasi|node)$/'",
+            "build-browser-pkg:release": "TARGET='browser' pnpm run --sequential '/^build-(binding:wasi:release|node)$/'",
+            "build-binding:wasi:release": "pnpm build-binding --profile release-wasi --target wasm32-wasip1-threads",
+            "build-native:memory-profile": "pnpm run build-binding:profile --features default_global_allocator && pnpm run build-js-glue"
+          },
+          "dist": {
+            "shasum": "259be7978a73d9f223480f8cd10d39e45075e159",
+            "tarball": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.19.tgz",
+            "fileCount": 54,
+            "integrity": "sha512-QIiV1J9d0pzN4jeeTH4sjPy0AZ6cAy2cG0ExeoE1+U8Rvj+hR3gYkokx0YbeUNGlZqiQJJ2utcETe0oKXwzsuA==",
+            "signatures": [
+              {
+                "sig": "MEQCIFAXqhd4NjWpT+rYs9yvw4vmU/GYyJ2IHtRqSZMnQ4obAiA0uck4HQg3AyzX0OmwL+XcyaOsN2FBVnUd/OzPR3S38A==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQCpdrYames1rGBgBGhbJcbhMS76IRz252VaHlQwHWiHvAIhAIF0xdz+Avcfnk9z2+sq47CA4QghwsoogHwITP4b+sjy",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/rolldown@1.2.19",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 884684
+          }
+        }
+      },
+      "time": {
+        "1.2.19": "2026-11-11T07:59:15.612Z"
+      }
+    },
+    "scheduler": {
+      "versions": {
+        "0.28.0": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "03d3ca348aeaf8b7502f64468f217b27523f9695",
+            "tarball": "https://registry.npmjs.org/scheduler/-/scheduler-0.28.0.tgz",
+            "fileCount": 15,
+            "integrity": "sha512-juorfCmIkIw8tT+p5BXSm6PJjQF/ycEYmKyzURCIt/RaZIhL+PulbQ9Yu2z1HdOJDdqDTlxA1+xKBmHXJsczAw==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCp6JhfBUG0bNJ0AX9+v90XqfYsRerL3xB93Bzc7rkJbgIhAMiUdDkiN+BQW2IGNWdRupf1NWrUv3kTeYWHkOcBj8SK",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIQCYs2BeSsTLmwCuhToI8CO7xqwUyKCKX9nYaB5TeoS7CwIgGbmyAGGhO+idI2DYBerRitZy2Sd3jAMKpUkFItyTyoY=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/scheduler@0.28.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 82659
+          }
+        }
+      },
+      "time": {
+        "0.28.0": "2026-09-09T17:17:30.281Z"
+      }
+    },
+    "source-map-js": {
+      "versions": {
+        "1.2.2": {
+          "license": "BSD-3-Clause",
+          "scripts": {
+            "toc": "doctoc --title '## Table of Contents' README.md && doctoc --title '## Table of Contents' CONTRIBUTING.md",
+            "test": "npm run build && node test/run-tests.js",
+            "build": "webpack --color"
+          },
+          "dist": {
+            "shasum": "79fb88d97535a21cb27162cb05d211b67acea4ab",
+            "tarball": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.2.tgz",
+            "fileCount": 18,
+            "integrity": "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCZPHMjtDeHbdrm8FkXj5rlr8cwbP4XoW93v0jVGGdWcQIgDcavClXA2dNCvB2XyxxKW7ZkgwaSlqeBeaayOtgq3ik=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIAIRiJPeK+kn49RlwVL7LPl5GHFd6PnL/DKFgl/oQu6HAiBd4xIiwYFmu+pXEiZr7YrCXUt4BQ3XkahaDqCpu90zYA==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 142723
+          }
+        }
+      },
+      "time": {
+        "1.2.2": "2026-09-30T14:08:09.382Z"
+      }
+    },
+    "tailwind-merge": {
+      "versions": {
+        "3.7.0": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint --max-warnings 0 .",
+            "test": "vitest --no-watch",
+            "bench": "vitest bench --no-watch",
+            "build": "rollup --config scripts/rollup.config.mjs --forceExit",
+            "release": "pnpm version --tag-version-prefix=tailwind-merge@ --message=tailwind-merge@%s",
+            "version": "node ../../scripts/update-pinned-links.mjs && zx scripts/update-readme.mjs",
+            "preversion": "if [ -n \"$DANYS_MACHINE\" ]; then git checkout main && git pull; fi",
+            "test:types": "tsc --noEmit && tsc --noEmit --project tests/tsconfig.json",
+            "test:watch": "vitest",
+            "postversion": "if [ -n \"$DANYS_MACHINE\" ]; then git push --follow-tags && open https://github.com/dcastil/tailwind-merge/releases; fi",
+            "test:exports": "node scripts/test-built-package-exports.cjs && node scripts/test-built-package-exports.mjs && pnpm test:types:compat",
+            "test:types:compat": "node node_modules/typescript-compat/bin/tsc --project scripts/typescript-compatibility/tsconfig.json"
+          },
+          "dist": {
+            "shasum": "61e9a67ab11b64138dea7d4fa5b74a33e17f2c87",
+            "tarball": "https://registry.npmjs.org/tailwind-merge/-/tailwind-merge-3.7.0.tgz",
+            "fileCount": 36,
+            "integrity": "sha512-XPPUyAc+cvspz3lHTcR/QgPfW2A0lv/xQNIjX3HGhLR+Nq2lHaLq5MtTesHn8GUr3W3DguT2KT5x3NVgRtYwmA==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCkKnSRL7xMc2sfe2DlCjJBx+t9Ppu4Ho1YZVdsip7aFgIgd7vKaetvFQpRq9PrEd2QypReBfDZy0qkgzdKu6qw96Y=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIQCXLogdiYh6r6HhaQVTJak4lGSNt2nthyqSzMuUd71pGAIgGN5AamsATcPdm7wIM2Qrq6YMrgwK7YPxoQ32Cs8fck0=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/tailwind-merge@3.7.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 1052654
+          }
+        }
+      },
+      "time": {
+        "3.7.0": "2026-09-12T20:10:15.257Z"
+      }
+    },
+    "tailwindcss": {
+      "versions": {
+        "4.3.5": {
+          "license": "MIT",
+          "scripts": {
+            "dev": "tsup-node --env.NODE_ENV development --watch",
+            "lint": "tsc --noEmit",
+            "build": "tsup-node --env.NODE_ENV production",
+            "test:ui": "playwright test"
+          },
+          "dist": {
+            "shasum": "91ac1f2486f3dff8747aebd0a687abd5955035b8",
+            "tarball": "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.5.tgz",
+            "fileCount": 34,
+            "integrity": "sha512-FcQk9BuffmEHJP2G0XmB2SplU1aLTI7j07Kunk+U74Ny+XiWOtzXz9aujFZ/avntw1e2cOv/3PkgzflQ7gX2vQ==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDElqLSck5B/npxu47VIE//KIg+yTdR6b5rqhcZZwrtaQIhAO0xK9w2fnbaFwfDMcz35fzNNR2Ob8X0WRSkPakFMfam",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQDGuyITEgAZ7anRBZwSksnV7fl5Bda2r/VDD1vnmlBqVQIhAIw83RztFQteE8UfdFYml0TipB444WSEZHmmIwtDsHZx",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/tailwindcss@4.3.5",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 787200
+          }
+        }
+      },
+      "time": {
+        "4.3.5": "2026-11-06T15:16:02.164Z"
+      }
+    },
+    "tapable": {
+      "versions": {
+        "2.3.3": {
+          "license": "MIT",
+          "scripts": {
+            "fix": "npm run fix:code && npm run fmt",
+            "fmt": "npm run fmt:base -- --log-level warn --write",
+            "lint": "npm run lint:code && npm run fmt:check",
+            "test": "jest",
+            "release": "changeset publish",
+            "version": "changeset version",
+            "fix:code": "npm run lint:code -- --fix",
+            "fmt:base": "node ./node_modules/prettier/bin/prettier.cjs --cache --ignore-unknown .",
+            "benchmark": "node --max-old-space-size=4096 --hash-seed=1 --random-seed=1 --no-opt --predictable --predictable-gc-schedule --interpreted-frames-native-stack --allow-natives-syntax --expose-gc --no-concurrent-sweeping ./benchmark/run.mjs",
+            "fmt:check": "npm run fmt:base -- --check",
+            "lint:code": "eslint --cache ."
+          },
+          "dist": {
+            "shasum": "5da7c9992c46038221267985ab28421a8879f160",
+            "tarball": "https://registry.npmjs.org/tapable/-/tapable-2.3.3.tgz",
+            "fileCount": 20,
+            "integrity": "sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCO4IKtVuajXyWWB5vPqkY8gMTIz+D/OH2cldumP9RbXQIhAKy3rk1uh4bmDBfUV79876tBYXlh5WySfjwcXvnt3n6R",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/tapable@2.3.3",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 73418
+          }
+        }
+      },
+      "time": {
+        "2.3.3": "2026-04-21T13:37:30.215Z"
+      }
+    },
+    "tinyglobby": {
+      "versions": {
+        "0.2.17": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "biome lint",
+            "test": "node --test \"test/**/*.ts\"",
+            "bench": "node benchmark/bench.ts",
+            "build": "tsdown",
+            "check": "biome check",
+            "format": "biome format --write",
+            "check:fix": "biome check --write --unsafe",
+            "test:only": "node --test --test-only \"test/**/*.ts\"",
+            "typecheck": "tsc --noEmit",
+            "bench:setup": "node benchmark/setup.ts",
+            "test:coverage": "node --test --experimental-test-coverage \"test/**/*.ts\""
+          },
+          "dist": {
+            "shasum": "562a9a6c9eb2b3b123d39719f9af5bb44fcd7631",
+            "tarball": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+            "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
+            "fileCount": 7,
+            "unpackedSize": 39288,
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/tinyglobby@0.2.17",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIBb1NW/DoA5iHpC4dnAW9CHCT0c0lMzS25CHkJqC1tWbAiB00yQG3ibgdu0HOIG+aspYfvxV64FhOyM5JgsbphDGhg=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "0.2.17": "2026-05-30T19:57:21.717Z"
+      }
+    },
+    "typescript": {
+      "versions": {
+        "6.0.3": {
+          "license": "Apache-2.0",
+          "scripts": {
+            "gulp": "hereby",
+            "knip": "hereby knip",
+            "lint": "hereby lint",
+            "test": "hereby runtests-parallel --light=false",
+            "build": "npm run build:compiler && npm run build:tests",
+            "clean": "hereby clean",
+            "format": "dprint fmt",
+            "build:tests": "hereby tests",
+            "setup-hooks": "node scripts/link-hooks.mjs",
+            "build:compiler": "hereby local",
+            "test:eslint-rules": "hereby run-eslint-rules-tests",
+            "build:tests:notypecheck": "hereby tests --no-typecheck"
+          },
+          "dist": {
+            "shasum": "90251dc007916e972786cb94d74d15b185577d21",
+            "tarball": "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
+            "fileCount": 140,
+            "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDv8tVB8x5z1EeS+UHLgSqOywErEEFERRmMNef6kTXsPQIhAMO+L+ktR6FwCDSc+z0KD68md8mvKukeVzgjuBhoie9i",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 24346827
+          }
+        }
+      },
+      "time": {
+        "6.0.3": "2026-04-16T23:38:27.905Z"
+      }
+    },
+    "undici-types": {
+      "versions": {
+        "7.24.6": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "61275b485d7fd4e9d269c7cf04ec2873c9cc0f91",
+            "tarball": "https://registry.npmjs.org/undici-types/-/undici-types-7.24.6.tgz",
+            "fileCount": 47,
+            "integrity": "sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==",
+            "signatures": [
+              {
+                "sig": "MEQCIGOFusMm+aShu8iACeUDxP8zYzunQy5UogvjUqMvDs6/AiAqcul1J1r3maLfSzkiGQ6r9sN+MtPdwgrXVLVcRDvL9g==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/undici-types@7.24.6",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 116546
+          }
+        }
+      },
+      "time": {
+        "7.24.6": "2026-03-25T16:01:36.357Z"
+      }
+    },
+    "uplot": {
+      "versions": {
+        "1.6.32": {
+          "license": "MIT",
+          "scripts": {
+            "build": "rollup -c --bundleConfigAsCjs",
+            "test": "echo \"Error: no test specified\" && exit 1"
+          },
+          "dist": {
+            "integrity": "sha512-KIMVnG68zvu5XXUbC4LQEPnhwOxBuLyW1AHtpm6IKTXImkbLgkMy+jabjLgSLMasNuGGzQm/ep3tOkyTxpiQIw==",
+            "shasum": "c800a63b432bad692d6d746f44f0882aa73a49ae",
+            "tarball": "https://registry.npmjs.org/uplot/-/uplot-1.6.32.tgz",
+            "fileCount": 9,
+            "unpackedSize": 545468,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIQD1Napd0cgys47pYkDgEwnk2NxE8ss38vPsm4SVs+uPqQIgcenRDEvcwPTu4BnhLemSDj9Ph9D0qldyhzx27VkUf70="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "1.6.32": "2025-03-14T02:51:47.242Z"
+      }
+    },
+    "use-sync-external-store": {
+      "versions": {
+        "1.7.0": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "6dcb66ef569e02f186af6b3d575f414ce746e18f",
+            "tarball": "https://registry.npmjs.org/use-sync-external-store/-/use-sync-external-store-1.7.0.tgz",
+            "fileCount": 18,
+            "integrity": "sha512-6L+EeigHMQhdaIPNIFUKwfWJSwWFQ8gJbJ2DLOs5sDIegTwR9fRxvnM3uciHKjIZhFz+KAv2emhWMRvDmMcY8A==",
+            "signatures": [
+              {
+                "sig": "MEUCIQC1oROufTGq98bwTtpTeSOnbNaeJ1f/SfEOIgYxoACorwIgLbIQE/9UT/VCDyNe3Ijq0bFQiVx5b/fOChZ67duO6Uk=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCICkLpb/IyrM8zMMNoYt100MiBM5KSfKU4tlOjTsqSO7CAiBuLjlwN4uc8YzGgSX+7JLxSCr4AdG9UJe/AC4Z3sZHaw==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/use-sync-external-store@1.7.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 28183
+          }
+        }
+      },
+      "time": {
+        "1.7.0": "2026-09-09T17:19:07.352Z"
+      }
+    },
+    "vite": {
+      "versions": {
+        "8.3.7": {
+          "license": "MIT",
+          "scripts": {
+            "dev": "premove dist && pnpm build-bundle -w",
+            "lint": "oxlint src",
+            "build": "premove dist && pnpm build-bundle && pnpm build-types",
+            "format": "oxfmt",
+            "typecheck": "tsc && tsc -p src/node && tsc -p src/client && tsc -p src/module-runner && tsc -p src/shared && tsc -p src/node/__tests_dts__ && tsc -p src/module-runner/__tests_dts__",
+            "build-types": "pnpm build-types-roll && pnpm build-types-check",
+            "build-bundle": "rolldown --config rolldown.config.ts",
+            "generate-target": "tsx scripts/generateTarget.ts",
+            "build-types-roll": "rolldown --config rolldown.dts.config.ts",
+            "build-types-check": "tsc --project tsconfig.check.json"
+          },
+          "dist": {
+            "shasum": "0fb4dc6a6d15129bf9b4cab99b1c331becf68029",
+            "tarball": "https://registry.npmjs.org/vite/-/vite-8.3.7.tgz",
+            "fileCount": 37,
+            "integrity": "sha512-oxh0dMxrayBr33ScJvvBJ2HBQ2jc1TBrXKR2NyL/MJ9WPuX19mN2DXWUmywKdyw5RFVQBo8hmtb2FMC0LHrnng==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDxzy9CDpJbkFeoMJd+ybGsL7S1Vfdxg/6QnEWIhNwFxgIhAPUpk0s9/b3m2pfYtDd7JfA5s4p/idzrBgdX08tSWvZz",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIGJnFBFcLRDA1hL/6vSnHbyWZlWqgcTxgP81EWOmhHApAiEAu4mCouGVeYoIMk9pb/SzvCcTXVhWBd1OxA3owPfDYwo=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/vite@8.3.7",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 2377792
+          }
+        }
+      },
+      "time": {
+        "8.3.7": "2026-11-09T10:25:29.212Z"
+      }
+    },
+    "zustand": {
+      "versions": {
+        "5.1.0": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "739f981fa5427f3d3704705726e9c821671b307f",
+            "tarball": "https://registry.npmjs.org/zustand/-/zustand-5.1.0.tgz",
+            "fileCount": 52,
+            "integrity": "sha512-ciJZlP48M1PTQbVQq81CGVFxHTLpZNrFjKqwjtCU34AWuXTZT/jrF3p9+fI84Cf1eSCMLapxqBy/SNTfwOBuqA==",
+            "signatures": [
+              {
+                "sig": "MEQCIH0UIghbuA/TRIS2dwdvgXdbipZ89tuNOO6fKPMGPDC4AiA/nR8u1YboaqAa1aQMLJAYE8FaN+3NTvSsPjhFaQPocA==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIAIxqb7NUwwjK7h9aEUC2SlH/9UEODtFINs9X6/APIO9AiBze94qLR4Vkw8cSo8z892WTAgEpS4ekNwp9fy1v4q78w=="
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/zustand@5.1.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 111698
+          }
+        }
+      },
+      "time": {
+        "5.1.0": "2026-11-06T14:07:48.019Z"
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "lockPackages": 417,
+  "archivesPresent": 417,
+  "downloadedThisStep": 136,
+  "error": null,
+  "registry": "crates.io",
+  "tlsCertificateValidation": true,
+  "downloadedChecksumsVerified": true,
+  "networkArchivesTotal": 153,
+  "readonlyCacheReused": 264,
+  "linuxCrates": 272
+}

@@ -1,0 +1,20 @@
+{
+  "lockSha256": "f9ddfe4c5f429cd6f675e451203eaa45c61d5b677c13eb5d779d7aa0fabad589",
+  "checkedAt": "2026-11-18T22:35:28.183674+00:00",
+  "report": {
+    "advisories": {},
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0
+      },
+      "dependencies": 23,
+      "devDependencies": 42,
+      "optionalDependencies": 0,
+      "totalDependencies": 65
+    }
+  }
+}

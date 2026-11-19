@@ -2151,6 +2151,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-title-first-prompt-llm"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-session-title",
+ "hoh-session-title-llm",
+ "hoh-timeout",
+ "hoh-util-values",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-session-title-llm"
 version = "0.1.0"
 dependencies = [
