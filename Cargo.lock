@@ -1795,6 +1795,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-spill"
+version = "0.1.0"
+dependencies = [
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-session",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-storage"
 version = "0.1.0"
 dependencies = [
