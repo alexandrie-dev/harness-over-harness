@@ -2416,6 +2416,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-util-ripgrep"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-error",
+ "hoh-subprocess",
+ "hoh-timeout",
+ "indexmap",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-util-time"
 version = "0.1.0"
 dependencies = [

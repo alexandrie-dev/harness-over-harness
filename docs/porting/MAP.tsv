@@ -163,7 +163,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/team/agent-team	@deepseek-ai/dsh-agent-team	hoh-agent-team	1109	1862	todo	зависит от: dsh-typert-protocol=skip
 2	port	packages/team/tool-agent-team	@deepseek-ai/dsh-tool-agent-team	hoh-tool-agent-team	235	1064	todo	
 2	port	packages/telemetry/otel	@deepseek-ai/dsh-otel	hoh-otel	475	466	todo	
-2	port	packages/util/ripgrep	@deepseek-ai/dsh-util-ripgrep	hoh-util-ripgrep	109	189	writing:w5	
+2	port	packages/util/ripgrep	@deepseek-ai/dsh-util-ripgrep	hoh-util-ripgrep	109	189	done	
 2	port	packages/web/tool-web	@deepseek-ai/dsh-tool-web	hoh-tool-web	1054	1692	writing:x8	
 2	port	packages/web/web	@deepseek-ai/dsh-web	hoh-web	507	394	done	зависит от: dsh-typert-protocol=skip
 2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	todo	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
