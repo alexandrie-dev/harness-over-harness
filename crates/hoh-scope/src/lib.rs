@@ -15,7 +15,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, Weak,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -42,6 +42,48 @@ impl ScopeKey {
             id: NEXT.fetch_add(1, Ordering::Relaxed),
             parent: Mutex::new(None),
         }))
+    }
+}
+
+impl ScopeKey {
+    /// A non-owning handle to this key's identity; it does not keep the key alive.
+    pub fn downgrade(&self) -> WeakScopeKey {
+        WeakScopeKey {
+            id: self.0.id,
+            data: Arc::downgrade(&self.0),
+        }
+    }
+}
+
+/// A weak scope key: the source's `WeakMap` key. Equality and hashing follow the identity of the
+/// original key and stay stable after it dies. A weak key keeps the key's allocation reserved, so
+/// a freshly minted key never compares equal to a dead one.
+#[derive(Clone)]
+pub struct WeakScopeKey {
+    id: u64,
+    data: Weak<KeyData>,
+}
+
+impl WeakScopeKey {
+    /// The key while some strong handle to it is alive.
+    pub fn upgrade(&self) -> Option<ScopeKey> {
+        self.data.upgrade().map(ScopeKey)
+    }
+}
+impl PartialEq for WeakScopeKey {
+    fn eq(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.data, &other.data)
+    }
+}
+impl Eq for WeakScopeKey {}
+impl Hash for WeakScopeKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+impl fmt::Debug for WeakScopeKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("WeakScopeKey").field(&self.id).finish()
     }
 }
 

@@ -693,3 +693,55 @@ async fn scoped_registrations_resolve_the_minters_committed_services_through_cle
     assert!(weak.upgrade().is_none());
     kernel.shutdown().await;
 }
+
+#[test]
+fn a_weak_key_follows_the_identity_and_dies_with_the_last_strong_handle() {
+    let key = ScopeKey::new();
+    let weak = key.downgrade();
+    assert_eq!(weak, key.clone().downgrade());
+    assert_eq!(weak.upgrade(), Some(key.clone()));
+    let other = ScopeKey::new();
+    assert_ne!(weak, other.downgrade());
+    drop(key);
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn a_weak_key_hashes_and_compares_stably_after_the_key_dies() {
+    use std::collections::{HashMap, hash_map::DefaultHasher};
+    use std::hash::{Hash, Hasher};
+    fn hash_of(weak: &WeakScopeKey) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        weak.hash(&mut hasher);
+        hasher.finish()
+    }
+    let key = ScopeKey::new();
+    let weak = key.downgrade();
+    let before = hash_of(&weak);
+    let mut table = HashMap::new();
+    table.insert(weak.clone(), "entry");
+    drop(key);
+    assert_eq!(hash_of(&weak), before);
+    assert_eq!(table.get(&weak), Some(&"entry"));
+    // A key minted afterwards is a different identity, whether or not the old one is collected.
+    let fresh = ScopeKey::new();
+    assert_ne!(fresh.downgrade(), weak);
+    assert_eq!(table.get(&fresh.downgrade()), None);
+    table.retain(|key, _| key.upgrade().is_some());
+    assert!(table.is_empty());
+}
+
+#[test]
+fn a_weak_key_does_not_keep_the_parent_chain_alive() {
+    let parent = ScopeKey::new();
+    let child = ScopeKey::new();
+    bind_scope_parent(&child, parent.clone()).unwrap();
+    let weak_parent = parent.downgrade();
+    drop(parent);
+    assert_eq!(
+        scope_parent_of(&child).map(|p| p.downgrade()),
+        Some(weak_parent.clone())
+    );
+    drop(child);
+    assert!(weak_parent.upgrade().is_none());
+}
