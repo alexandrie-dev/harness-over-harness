@@ -645,3 +645,47 @@ Production calls: hoh-loader config_editor::edit и runtime::boot; два handle
 - `cargo clippy -p hoh-kernel -p hoh-kernel-macros --all-targets -- -D warnings`: exit 0, `Finished dev profile … in 6m 05s`.
 - `cargo fmt -p hoh-kernel -p hoh-kernel-macros -- --check`: exit 0.
 - `cargo check` не запускался: запрос этого дополнения требует grep-аудит, а не workspace build.
+
+## Добавлено w4 для hoh-user-approval, 19.11
+
+Добавление явно разрешено ведущим после rv-approval.full.md. k1 в этот момент не работает;
+изменения ограничены новым API, его тестами и этой записью, существующий waterfall не переписан.
+
+- `Context::waterfall_with_start<E,R,Fut>(event,tail) -> (WaterfallStarted, impl Future<Output=Result<R,Error>> + Send + 'static)`.
+  Аргументы и generic bounds совпадают с waterfall. Новый публичный WaterfallStarted — Future<Output=()>.
+  Оба результата владеют наблюдением; Drop любого из них не отменяет запущенный dispatch.
+- Started означает завершение начальных poll callback factories/futures и непосредственно
+  делегированных через next.run() продолжений. Он не ждёт pending ответа пользователя.
+  Продолжение, которое впервые poll-ится после первого Pending родителя, относится к дальнейшей
+  работе, не задерживает started. Пустая цепь проходит initial poll tail; ошибка, unwind и
+  уничтожение task также освобождают startup tickets, чтобы наблюдатель не зависал.
+- Реализация `src/waterfall_start.rs` — отдельный путь с теми же snapshot/resolve, liveness,
+  Next wrapping, spawn_inherited и error forwarding, что исходный waterfall. Старые waterfall
+  и chain в events.rs сохранены побайтно. В events.rs только подключение модуля и экспорт.
+- Каждый начальный task poll получает отдельный ticket; вызванный при нём next передаёт
+  ticket дочерней задаче. Завершение первого poll/ошибка уменьшает общий счётчик, последний
+  ticket посылает oneshot. Сигнал отправляется после освобождения mutex, callback не исполняется
+  под ним. Atomic active flag исключает дальнейшие poll продолжения из начального прохода.
+  Нет таймеров, числа yield, глобальных реестров и unsafe. Исходные API/поведение не менялись.
+- `tests/waterfall_start.rs`: шесть новых тестов; terminal pending после 0/1/8/128 делегатов,
+  happens-before на двух runtime workers (16 повторов), pending tail без слушателей, Err и
+  factory/first-poll panic, next после отдельного ожидания, Drop обоих наблюдателей.
+- `hoh-user-approval` использует started для порядка asked → callback prefix → decided(cancelled)
+  при abort сразу после request. Request не ждёт UI-ответа, поздние ответ/ошибка содержатся.
+
+Все Cargo-команды w4: CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true
+CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w4. Остановленные регулятором процессы
+самостоятельно не возобновляются. `cargo check -p hoh-kernel -p hoh-user-approval --tests`:
+exit 0, Finished dev profile in 11.14s.
+
+- `cargo test -p hoh-kernel -p hoh-user-approval`: exit 0, Finished test profile in 31m 47s.
+  kernel: суммарно 294 passed, 0 failed, 1 ignored; approval: 46 passed, 0 failed, 0 ignored.
+  Новый waterfall_start target: `test result: ok. 6 passed; 0 failed; 0 ignored`.
+  Существующий ignored — events::review_tests::c14_stack_probe (isolated subprocess helper),
+  новых ignored нет. Все существующие тесты ядра сохранены. Doc-tests обоих пакетов: 0/0.
+- `cargo clippy -p hoh-kernel -p hoh-user-approval --all-targets -- -D warnings`: exit 0,
+  Finished dev profile in 22m 58s; предупреждений и lint-правок не было.
+- `cargo fmt -p hoh-kernel -p hoh-user-approval -- --check`: exit 0, без вывода.
+- Отдельная побайтная сверка с HEAD подтвердила: существующий events.rs отличается только
+  тремя строками подключения/экспорта нового модуля. Старые chain/waterfall и остальные
+  исходные файлы ядра не изменялись. Полный тестовый прогон выполнен один раз.

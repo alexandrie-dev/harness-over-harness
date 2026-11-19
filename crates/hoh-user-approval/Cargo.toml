@@ -1,0 +1,32 @@
+[package]
+name = "hoh-user-approval"
+description = "Port of @deepseek-ai/dsh-user-approval (packages/interaction/user-approval)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-brand = { path = "../hoh-brand" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-error = { path = "../hoh-error" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-util-values = { path = "../hoh-util-values" }
+futures-util.workspace = true
+getrandom.workspace = true
+indexmap.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

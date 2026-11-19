@@ -4,6 +4,9 @@ use futures_util::{
     stream::{FuturesOrdered, StreamExt},
 };
 use std::{any::TypeId, collections::HashMap, marker::PhantomData, panic::AssertUnwindSafe};
+#[path = "waterfall_start.rs"]
+mod waterfall_start;
+pub use waterfall_start::WaterfallStarted;
 #[cfg(test)]
 #[path = "events_review_tests.rs"]
 mod review_tests;

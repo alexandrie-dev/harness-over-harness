@@ -23,7 +23,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/context/file-reference	@deepseek-ai/dsh-file-reference	hoh-file-reference	112	21	todo	
 1	port	packages/context/file-reference-local	@deepseek-ai/dsh-file-reference-local	hoh-file-reference-local	523	541	todo	
 1	port	packages/context/time-context	@deepseek-ai/dsh-time-context	hoh-time-context	377	977	todo	
-1	port	packages/core/agent	@deepseek-ai/dsh-agent	hoh-agent	1791	1677	todo	зависит от: dsh-typert-protocol=skip
+1	port	packages/core/agent	@deepseek-ai/dsh-agent	hoh-agent	1791	1677	review	зависит от: dsh-typert-protocol=skip
 1	port	packages/core/agent-default-model	@deepseek-ai/dsh-agent-default-model	hoh-agent-default-model	98	70	todo	
 1	port	packages/core/agent-loop	@deepseek-ai/dsh-agent-loop	hoh-agent-loop	2149	15523	todo	
 1	port	packages/core/scope	@deepseek-ai/dsh-scope	hoh-scope	471	511	done	
@@ -45,7 +45,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/interaction/commands	@deepseek-ai/dsh-commands	hoh-commands	734	716	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/interaction/permission-presets	@deepseek-ai/dsh-permission-presets	hoh-permission-presets	556	786	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/interaction/tool-ask-user	@deepseek-ai/dsh-tool-ask-user	hoh-tool-ask-user	332	698	todo	
-1	port	packages/interaction/user-approval	@deepseek-ai/dsh-user-approval	hoh-user-approval	430	761	review	
+1	port	packages/interaction/user-approval	@deepseek-ai/dsh-user-approval	hoh-user-approval	430	761	done	
 1	port	packages/interaction/user-questions	@deepseek-ai/dsh-user-questions	hoh-user-questions	964	1370	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/jobs/jobs	@deepseek-ai/dsh-jobs	hoh-jobs	714	312	todo	
 1	port	packages/jobs/jobs-local	@deepseek-ai/dsh-jobs-local	hoh-jobs-local	1050	2117	todo	
