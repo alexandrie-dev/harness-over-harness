@@ -17,6 +17,7 @@ pub struct Context {
 pub struct Normalizer {
     uuid: Regex,
     short_job: Regex,
+    reserved_id: Regex,
     canonical: Regex,
     mentions: Regex,
     anonymous: Regex,
@@ -38,6 +39,7 @@ impl Normalizer {
         Ok(Self {
             uuid: re(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")?,
             short_job: re(r"(?i)-[0-9a-f]{16}$")?,
+            reserved_id: re(r"\{\{id:[1-9][0-9]*\}\}")?,
             canonical: re(
                 r"^\{\{(session|message|approval|workflow|command|rpc|retry|id):([1-9][0-9]*)\}\}$",
             )?,
@@ -287,6 +289,51 @@ impl Normalizer {
             }
         }
         usage(v);
+    }
+
+    /// normalize.ts:359–387: reserve existing tokens and replace jobs before legacy UUID scrubbing.
+    pub fn legacy_log(&self, raw: &str, ctx: &Context) -> Result<Vec<Value>> {
+        let mut rows = crate::records(raw)?;
+        let reserved: std::collections::HashSet<&str> = self
+            .reserved_id
+            .find_iter(raw)
+            .map(|m| m.as_str())
+            .collect();
+        let mut jobs = Vec::<(String, String)>::new();
+        let mut next = 1;
+        for row in &rows {
+            if !["job/registered", "job/settled"].contains(&row["type"].as_str().unwrap_or("")) {
+                continue;
+            }
+            let Some(id) = row["data"]["jobId"].as_str() else {
+                continue;
+            };
+            if (!self.uuid.is_match(id) && !self.short_job.is_match(id))
+                || jobs.iter().any(|(known, _)| known == id)
+            {
+                continue;
+            }
+            let token = loop {
+                let token = format!("{{{{id:{next}}}}}");
+                next += 1;
+                if !reserved.contains(token.as_str()) {
+                    break token;
+                }
+            };
+            jobs.push((id.into(), token));
+        }
+        for row in &mut rows {
+            map_strings(row, &mut |s, _| {
+                let mut out = s.to_owned();
+                for (id, token) in &jobs {
+                    out = out.replace(id, token);
+                }
+                out
+            });
+            self.clocks(row)?;
+            self.value(row, ctx, true);
+        }
+        Ok(rows)
     }
 
     pub fn logs(&self, raw: &[String], ctx: &Context) -> Result<Logs> {

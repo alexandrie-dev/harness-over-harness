@@ -1,0 +1,34 @@
+[package]
+name = "hoh-llm-replay"
+description = "Port of @deepseek-ai/dsh-llm-replay (packages/test-support/llm-replay)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-brand = { path = "../hoh-brand" }
+hoh-deepseek-llm-api-extensions = { path = "../hoh-deepseek-llm-api-extensions" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-format-catalog = { path = "../hoh-session-format-catalog" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-error = { path = "../hoh-error" }
+hoh-timeout = { path = "../hoh-timeout" }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+feruca.workspace = true
+futures-util.workspace = true
+indexmap.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

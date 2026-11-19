@@ -228,6 +228,19 @@ fn create(path: &Path) -> Result<fs::File> {
     fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Records comparisons actually executed, independently of a later unavailable capability gate.
+fn checked(dir: &Path, name: &str, result: Check) -> Result<Check> {
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("checks.jsonl"))
+        .map_err(|e| e.to_string())?;
+    let entry = json!({"check":name,"status":if result.is_ok(){"pass"}else{"fail"}});
+    writeln!(file, "{}", hoh_util_values::js_json_stringify(&entry)).map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
 pub fn environment(
     s: &Scenario,
     fixture_files: &[PathBuf],
@@ -717,13 +730,12 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
     if s.name == "subagent-dsh-sdk-dynamic-route" {
         actual.extend(harvest(&cwd.join(".child-dsh/sessions"), "sdk")?);
     }
-    let expected_code = if s.suite == "session" {
-        compare::expected_exit(&rows)
-    } else {
-        0
-    };
-    // Exit alone cannot prove an expected error: /bin/false emits no session or protocol evidence.
-    if status.code() != Some(expected_code) || !status.success() && actual.is_empty() {
+    let expected_code = compare::expected_exit(&rows);
+    // Headless asserts its exit code. SDK client.ts:263–267,494–510 and dispose.ts:82–98,
+    // like ACP launcher.ts:271–294,445–448, only await termination after protocol completion.
+    if s.suite == "session"
+        && (status.code() != Some(expected_code) || !status.success() && actual.is_empty())
+    {
         return Ok(Err(Failure::new(
             "exit",
             format!(
@@ -739,14 +751,45 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
             error,
         )));
     }
-    if let Some(f) = pending {
-        return Ok(Err(f));
-    }
     let has_model = rows.iter().any(|r| r["type"] == "request/header");
+    // A missing decoder is an input failure, even when the process emitted a comparison diff.
+    // Preserve launch/exit precedence above; ACP without a model turn does not restore a log.
     for raw in raw.iter().filter(|_| s.suite != "acp" || has_model) {
-        if let Err(f) = compare::migration_gate(raw) {
+        if let Err(f) = checked(dir, "migration", compare::migration_gate(raw))? {
             return Ok(Err(f));
         }
+    }
+    let notifications_path = s.dir.join(if s.manifest.get("sessionFormat").is_some() {
+        "notifications.current.expected.jsonl"
+    } else {
+        "notifications.expected.jsonl"
+    });
+    let has_wire_goldens =
+        notifications_path.exists() || s.dir.join("result.expected.json").exists();
+    if s.suite == "sdk" && has_wire_goldens {
+        if let Err(f) = checked(
+            dir,
+            "wire-generation-actual",
+            compare::sdk_wire_generation(&actual, "actual").map(|_| ()),
+        )? {
+            return Ok(Err(f));
+        }
+        if let Err(f) = checked(
+            dir,
+            "wire-generation-expected",
+            compare::sdk_wire_generation(&s.expected_logs()?, "expected").map(|_| ()),
+        )? {
+            return Ok(Err(f));
+        }
+    }
+    if s.suite != "acp"
+        && let Err(f) = checked(
+            dir,
+            "writer-generation",
+            compare::current_writer_generation(&actual),
+        )?
+    {
+        return Ok(Err(f));
     }
     let n = Normalizer::new()?;
     let ctx = compare::context(&actual, &cwd.to_string_lossy())?;
@@ -779,10 +822,14 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
         )));
     }
     if s.suite != "acp" || has_model {
-        if let Err(f) = compare::logs(&n, &s.expected_logs()?, &actual, &ctx) {
+        if let Err(f) = checked(
+            dir,
+            "log",
+            compare::logs(&n, &s.expected_logs()?, &actual, &ctx),
+        )? {
             return Ok(Err(f));
         }
-        if let Err(f) = compare::headers(&n, all, s, &actual, &ctx) {
+        if let Err(f) = checked(dir, "headers", compare::headers(&n, all, s, &actual, &ctx))? {
             return Ok(Err(f));
         }
     }
@@ -795,20 +842,28 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
     } else {
         initial
     };
-    if let Err(f) = compare::equal(
+    if let Err(f) = checked(
+        dir,
         "tree",
-        "working tree",
-        &json!(expected_tree),
-        &json!(final_tree),
-    ) {
+        compare::equal(
+            "tree",
+            "working tree",
+            &json!(expected_tree),
+            &json!(final_tree),
+        ),
+    )? {
         return Ok(Err(f));
     }
     if s.suite == "session" {
-        if let Err(f) = compare::headless_stdout(
-            &raw[0],
-            &read(&dir.join("stdout.txt"))?,
-            &read(&dir.join("stderr.txt"))?,
-        ) {
+        if let Err(f) = checked(
+            dir,
+            "stdout",
+            compare::headless_stdout(
+                &raw[0],
+                &read(&dir.join("stdout.txt"))?,
+                &read(&dir.join("stderr.txt"))?,
+            ),
+        )? {
             return Ok(Err(f));
         }
     } else if s.suite == "acp" {
@@ -819,7 +874,11 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
         let actual = n.frames(&raw_stdout, &ctx);
         match (expected, actual) {
             (Ok(e), Ok(a)) => {
-                if let Err(f) = compare::equal("frames", "ACP stdout", &json!(e), &json!(a)) {
+                if let Err(f) = checked(
+                    dir,
+                    "ACP stdout",
+                    compare::equal("frames", "ACP stdout", &json!(e), &json!(a)),
+                )? {
                     return Ok(Err(f));
                 }
             }
@@ -863,12 +922,16 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
                         json!("{{sourceSessionFormatVersion}}");
                 }
             }
-            if let Err(f) = compare::equal(
-                "frames",
+            if let Err(f) = checked(
+                dir,
                 "SDK notifications",
-                &json!(expected_notifications),
-                &json!(actual_notifications),
-            ) {
+                compare::equal(
+                    "frames",
+                    "SDK notifications",
+                    &json!(expected_notifications),
+                    &json!(actual_notifications),
+                ),
+            )? {
                 return Ok(Err(f));
             }
             let Some(last) = sdk_results.last() else {
@@ -878,17 +941,25 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
                 )));
             };
             let result = crate::jsonl(&n.frames(&crate::jsonl(std::slice::from_ref(last)), &ctx)?);
-            if let Err(f) = compare::equal(
-                "frames",
+            if let Err(f) = checked(
+                dir,
                 "SDK result",
-                &json!(read(&result_path)?),
-                &json!(result),
-            ) {
+                compare::equal(
+                    "frames",
+                    "SDK result",
+                    &json!(read(&result_path)?),
+                    &json!(result),
+                ),
+            )? {
                 return Ok(Err(f));
             }
         }
     }
-    Ok(scenario_checks(s))
+    // Missing setup/schema support cannot yield pass.
+    if let Some(f) = pending {
+        return Ok(Err(f));
+    }
+    checked(dir, "scenario-check", scenario_checks(s))
 }
 
 pub async fn run(options: &Options, all: &[Scenario], s: &Scenario) -> Outcome {

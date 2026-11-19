@@ -64,9 +64,83 @@ pub fn logs(n: &Normalizer, expected: &[String], actual: &[String], ctx: &Contex
         .map_err(|e| Failure::new("log", e))?;
     let actual = n.logs(actual, ctx).map_err(|e| Failure::new("log", e))?;
     for (i, (e, a)) in expected.into_iter().zip(actual).enumerate() {
-        equal("log", &format!("session role {i}"), &json!(e), &json!(a))?;
+        if let Err(mut failure) = equal("log", &format!("session role {i}"), &json!(e), &json!(a)) {
+            failure.reason = if e.len() != a.len() {
+                let extra = a
+                    .get(e.len())
+                    .map(|v| format!("; extra type {}", v["type"]))
+                    .unwrap_or_default();
+                format!(
+                    "session role {i} row count: expected {}, got {}{extra}",
+                    e.len(),
+                    a.len()
+                )
+            } else {
+                let row = e
+                    .iter()
+                    .zip(&a)
+                    .position(|(e, a)| !hoh_util_values::deep_equal_json(e, a))
+                    .expect("unequal logs contain an unequal row");
+                let types = format!(
+                    "session role {i} row {row}: expected type {}, got {}",
+                    e[row]["type"], a[row]["type"]
+                );
+                if e[row]["type"] != a[row]["type"] {
+                    format!("{types}; event type/order mismatch")
+                } else {
+                    let (path, before, after) = first_difference(&e[row], &a[row], String::new())
+                        .expect("unequal row contains a difference");
+                    format!(
+                        "{types}; value at {path}: expected {}, got {}",
+                        hoh_util_values::js_json_stringify(&before),
+                        hoh_util_values::js_json_stringify(&after)
+                    )
+                }
+            };
+            return Err(failure);
+        }
     }
     Ok(())
+}
+
+fn first_difference(
+    expected: &Value,
+    actual: &Value,
+    path: String,
+) -> Option<(String, Value, Value)> {
+    if hoh_util_values::deep_equal_json(expected, actual) {
+        return None;
+    }
+    match (expected, actual) {
+        (Value::Object(e), Value::Object(a)) => {
+            for key in e.keys().chain(a.keys().filter(|k| !e.contains_key(*k))) {
+                let child = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
+                if let Some(difference) = first_difference(
+                    e.get(key).unwrap_or(&Value::Null),
+                    a.get(key).unwrap_or(&Value::Null),
+                    child.clone(),
+                ) {
+                    return Some(difference);
+                }
+                if e.contains_key(key) != a.contains_key(key) {
+                    return Some((
+                        child,
+                        e.get(key).cloned().unwrap_or(Value::Null),
+                        a.get(key).cloned().unwrap_or(Value::Null),
+                    ));
+                }
+            }
+        }
+        (Value::Array(e), Value::Array(a)) if e.len() == a.len() => {
+            for (i, (e, a)) in e.iter().zip(a).enumerate() {
+                if let Some(difference) = first_difference(e, a, format!("{path}/{i}")) {
+                    return Some(difference);
+                }
+            }
+        }
+        _ => {}
+    }
+    Some((path, expected.clone(), actual.clone()))
 }
 
 pub fn catalog_creation_times(raw: &[String]) -> Check {
@@ -96,6 +170,42 @@ pub fn catalog_creation_times(raw: &[String]) -> Check {
         }
     }
     Ok(())
+}
+
+/// headless.snapshot.ts:199–205; sdk.snapshot.ts:362–367. Check before comparison removes version.
+pub fn current_writer_generation(raw: &[String]) -> Check {
+    for (role, log) in raw.iter().enumerate() {
+        let rows = records(log).map_err(|e| Failure::new("log", e))?;
+        let version = rows.first().and_then(|h| h["version"].as_u64());
+        if version != Some(4) {
+            return Err(Failure::new(
+                "log",
+                format!("current writer generation: role {role} wrote {version:?}; expected v4"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// sdk.snapshot.ts:533–541 applies independently to actual and expected role sets.
+pub fn sdk_wire_generation(raw: &[String], side: &str) -> std::result::Result<u64, Failure> {
+    let mut versions = std::collections::BTreeSet::new();
+    for log in raw {
+        let rows = records(log).map_err(|e| Failure::new("frames", e))?;
+        let version = rows
+            .first()
+            .and_then(|h| h["version"].as_u64())
+            .ok_or_else(|| Failure::new("frames", "SDK wire role lacks a declared generation"))?;
+        versions.insert(version);
+    }
+    if versions.len() != 1 {
+        return Err(Failure::new(
+            "frames",
+            format!("SDK wire goldens require one common writer generation ({side}): {versions:?}"),
+        ));
+    }
+    // A singleton set was checked above.
+    Ok(*versions.first().expect("one generation"))
 }
 
 pub fn context(logs: &[String], cwd: &str) -> Result<Context> {
@@ -152,10 +262,7 @@ pub fn format_prompts(prompts: &[String]) -> String {
     out
 }
 fn header_values(n: &Normalizer, log: &str, ctx: &Context) -> Result<Vec<Value>> {
-    let mut rows = records(log)?;
-    for row in &mut rows {
-        n.value(row, ctx, true);
-    }
+    let rows = n.legacy_log(log, ctx)?;
     Ok(rows
         .into_iter()
         .filter(|r| r["type"] == "request/header")
@@ -256,20 +363,19 @@ pub fn headers(
     let perform = || -> std::result::Result<(), Failure> {
         let pin = corpus::pin(all, s).map_err(|e| Failure::new("headers", e))?;
         let pin_files = pin.fixtures().map_err(|e| Failure::new("headers", e))?;
-        let mut pinned = read(&pin_files[0]).map_err(|e| Failure::new("headers", e))?;
-        if s.suite == "acp" {
-            let pin_rows = records(&pinned).map_err(|e| Failure::new("headers", e))?;
-            pinned = crate::jsonl(
-                &pin_rows
-                    .into_iter()
-                    .filter(|r| r["type"] != "request/header" || r["data"]["reason"] != "series")
-                    .collect::<Vec<_>>(),
-            );
-        }
+        let pinned = read(&pin_files[0]).map_err(|e| Failure::new("headers", e))?;
         let pin_context = context(std::slice::from_ref(&pinned), "{{cwd}}")
             .map_err(|e| Failure::new("headers", e))?;
-        let mut base =
-            header_values(n, &pinned, &pin_context).map_err(|e| Failure::new("headers", e))?;
+        let mut base = if s.suite == "acp" {
+            n.legacy_log(&pinned, &pin_context)
+                .map_err(|e| Failure::new("headers", e))?
+                .into_iter()
+                .filter(|r| r["type"] == "request/header" && r["data"]["reason"] != "series")
+                .map(|r| r["data"]["header"].clone())
+                .collect()
+        } else {
+            header_values(n, &pinned, &pin_context).map_err(|e| Failure::new("headers", e))?
+        };
         if base.is_empty() && actual.is_empty() {
             return Ok(());
         }
@@ -284,14 +390,13 @@ pub fn headers(
             }
         }
         for (index, log) in actual.iter().enumerate() {
-            let mut rows = records(log).map_err(|e| Failure::new("headers", e))?;
+            let rows = n
+                .legacy_log(log, ctx)
+                .map_err(|e| Failure::new("headers", e))?;
             let first_header = rows.iter().position(|r| r["type"] == "request/header");
             let first_prompt = rows.iter().position(|r| r["type"] == "system/message");
             if first_header.is_some_and(|h| first_prompt.is_none_or(|p| p >= h)) {
                 return Err(Failure::new("headers", "systemPromptPrecedesRequests"));
-            }
-            for r in &mut rows {
-                n.value(r, ctx, true);
             }
             let prompts: Vec<String> = rows
                 .iter()

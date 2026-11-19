@@ -389,7 +389,12 @@ pub async fn sdk(rpc: &mut Rpc, s: &Scenario, rows: &[Value], cwd: &Path) -> Res
         rpc.request("session/wait", json!({"sessionId":"fixture-root-session"}))
             .await?;
     }
-    rpc.request("shutdown", json!({})).await?;
+    // SDK client.ts:494–508 treats shutdown failure as diagnostic; EOF/termination reaps the process.
+    let _ = tokio::time::timeout(
+        Duration::from_millis(1000),
+        rpc.request("shutdown", json!({})),
+    )
+    .await;
     Ok(())
 }
 
