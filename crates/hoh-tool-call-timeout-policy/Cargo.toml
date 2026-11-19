@@ -1,0 +1,25 @@
+[package]
+name = "hoh-tool-call-timeout-policy"
+description = "Port of @deepseek-ai/dsh-tool-call-timeout-policy (packages/guard/timeout-policy)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-util-values = { path = "../hoh-util-values" }
+
+[dev-dependencies]
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-tool-executor-native = { path = "../hoh-tool-executor-native" }
+hoh-tool-testkit = { path = "../hoh-tool-testkit" }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

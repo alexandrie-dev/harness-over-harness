@@ -2411,6 +2411,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-call-timeout-policy"
+version = "0.1.0"
+dependencies = [
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-values",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-executor-native"
 version = "0.1.0"
 dependencies = [
