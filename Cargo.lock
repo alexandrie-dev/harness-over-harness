@@ -1067,6 +1067,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-goal"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop-testkit",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-timeout",
+ "hoh-util-crypto",
+ "hoh-util-values",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-home-paths"
 version = "0.1.0"
 dependencies = [
