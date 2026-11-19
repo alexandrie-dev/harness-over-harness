@@ -1,0 +1,26 @@
+[package]
+name = "hoh-session-telemetry"
+description = "Port of @deepseek-ai/dsh-session-telemetry (packages/session/session-telemetry)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-session = { path = "../hoh-session" }
+futures-util.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+hoh-llm = { path = "../hoh-llm" }
+hoh-scope = { path = "../hoh-scope" }
+tokio = { workspace = true, features = ["test-util"] }
+
