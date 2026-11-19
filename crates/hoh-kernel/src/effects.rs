@@ -105,6 +105,12 @@ pub(crate) struct Effect {
     log: Logger,
     owner: std::sync::Weak<Activation>,
     ancestry: Vec<u32>,
+    /// Kernel the effect belongs to, for the values `Disposer::dispose()` captures.
+    kernel: std::sync::Weak<crate::fiber::Shared>,
+    /// What the caller of `Disposer::dispose()` captured; the cleanup tasks carry it.
+    carried: Mutex<Option<Arc<dispose_capture::Carried>>>,
+    /// The fiber this effect unloads (a child's parent-owned effect); other effects have none.
+    subject: Mutex<Option<u32>>,
 }
 struct EffectData {
     ready: bool,
@@ -114,6 +120,9 @@ struct EffectData {
 impl Effect {
     pub(crate) fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+    pub(crate) fn set_subject(&self, uid: u32) {
+        *lock(&self.subject) = Some(uid);
     }
     pub(crate) fn add(&self, undo: Undo) {
         undo.adopt();
@@ -127,6 +136,7 @@ impl Effect {
         log: Logger,
         owner: std::sync::Weak<Activation>,
         ancestry: Vec<u32>,
+        kernel: std::sync::Weak<crate::fiber::Shared>,
     ) -> Arc<Self> {
         Arc::new(Self {
             requested: AtomicBool::new(false),
@@ -143,6 +153,9 @@ impl Effect {
             log,
             owner,
             ancestry,
+            kernel,
+            carried: Mutex::new(None),
+            subject: Mutex::new(None),
         })
     }
     pub(crate) fn finish_setup(&self) {
@@ -278,7 +291,8 @@ impl Effect {
             return Ok(());
         }
         let effect = self.clone();
-        fiber::spawn_for(self.ancestry.clone(), async move {
+        let carried = lock(&self.carried).clone();
+        let cleanup = async move {
             loop {
                 let notified = effect.notify.notified();
                 if lock(&effect.state).ready {
@@ -289,7 +303,14 @@ impl Effect {
             let undos = pending.unwrap_or_else(|| std::mem::take(&mut lock(&effect.state).undos));
             effect.cleanup(undos).await;
             effect.complete();
-        });
+        };
+        match carried {
+            Some(carried) => fiber::spawn_for(
+                self.ancestry.clone(),
+                dispose_capture::scope(carried, cleanup),
+            ),
+            None => fiber::spawn_for(self.ancestry.clone(), cleanup),
+        };
         Ok(())
     }
     pub(crate) async fn wait(&self) {
@@ -341,8 +362,27 @@ pub struct Disposer {
 }
 impl Disposer {
     pub fn dispose(self) -> impl Future<Output = ()> + Send + 'static {
+        // The disposer of the source is single-shot: a repeat call, from anywhere (a cleanup of
+        // the very fiber this effect is unloading included), returns at once and does not wait
+        // for the teardown another call started (`fiber.ts`, `if (!runner.epoch) return`).
+        let repeat = self.effect.is_running();
+        if repeat {
+            return futures_util::future::Either::Left(std::future::ready(()));
+        }
+        if let Some(kernel) = self.effect.kernel.upgrade() {
+            // Only functions of the unloaded subtree apply: the fiber this effect unloads, else
+            // the owner of the effect.
+            let target =
+                lock(&self.effect.subject).or_else(|| self.effect.ancestry.last().copied());
+            let values = dispose_capture::collect(&kernel, target, &self.effect.log);
+            if !values.is_empty() {
+                let set = Arc::<dispose_capture::CaptureSet>::default();
+                set.extend(values, &kernel.captures.changed);
+                *lock(&self.effect.carried) = Some(dispose_capture::carried(&kernel, vec![set]));
+            }
+        }
         self.effect.begin();
-        async move { self.effect.wait().await }
+        futures_util::future::Either::Right(async move { self.effect.wait().await })
     }
 }
 pub(crate) struct Activation {
@@ -412,6 +452,7 @@ impl Context {
             self.logger(),
             Arc::downgrade(&self.activation),
             self.data.ancestry.clone(),
+            Arc::downgrade(&self.inner),
         );
         {
             let mut state = lock(&self.activation.effects);

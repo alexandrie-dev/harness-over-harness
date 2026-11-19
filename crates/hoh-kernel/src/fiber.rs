@@ -24,7 +24,12 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    tokio::spawn(APPLY_ANCESTRY.scope(ancestry, future))
+    match dispose_capture::current() {
+        Some(carried) => {
+            tokio::spawn(APPLY_ANCESTRY.scope(ancestry, dispose_capture::scope(carried, future)))
+        }
+        None => tokio::spawn(APPLY_ANCESTRY.scope(ancestry, future)),
+    }
 }
 pub(crate) fn spawn_inherited<F>(future: F) -> tokio::task::JoinHandle<F::Output>
 where
@@ -356,9 +361,10 @@ impl Fiber {
     }
     pub fn dispose(&self) -> impl Future<Output = ()> + Send + 'static {
         let (tx, rx) = oneshot::channel();
-        let _ = self.inner.tx.send(Command::Dispose(self.uid(), tx));
         let uid = self.uid();
         let log = self.log();
+        dispose_capture::send_captures(&self.inner, uid, &log);
+        let _ = self.inner.tx.send(Command::Dispose(uid, tx));
         async move {
             if APPLY_ANCESTRY
                 .try_with(|a| a.contains(&uid))
@@ -420,6 +426,7 @@ pub(crate) struct Shared {
     pub(crate) contexts: RwLock<HashMap<u32, Context>>,
     pub(crate) bus: events::Bus,
     pub(crate) logs: Arc<Mutex<logger::Logs>>,
+    pub(crate) captures: dispose_capture::CaptureRegistry,
 }
 #[derive(Clone)]
 pub struct Kernel {
@@ -479,6 +486,7 @@ impl Kernel {
             contexts: RwLock::default(),
             bus: events::Bus::default(),
             logs: Arc::new(Mutex::new(logger::Logs::default())),
+            captures: dispose_capture::CaptureRegistry::default(),
         });
         let ctx = Context::base(inner.clone(), root, inner.root_activation.clone());
         write(&inner.contexts).insert(0, ctx.clone());
@@ -492,6 +500,7 @@ impl Kernel {
             root_done: false,
             shutdown_waiters: vec![],
             notified: IndexMap::new(),
+            capture_sets: HashMap::new(),
             #[cfg(test)]
             type_scans: 0,
         };
@@ -516,10 +525,27 @@ impl Kernel {
     }
     pub fn shutdown(&self) -> impl Future<Output = ()> + Send + 'static {
         let (tx, rx) = oneshot::channel();
+        let log = self.root().logger();
+        dispose_capture::send_captures(&self.inner, 0, &log);
         let _ = self.inner.tx.send(Command::Shutdown(tx));
         async move {
+            // As `Fiber::dispose()` of the root: a task of the kernel itself (an apply, a
+            // cleanup) cannot wait for the shutdown that waits for it. The command is sent.
+            if APPLY_ANCESTRY.try_with(|_| ()).is_ok() {
+                log.kernel_error(&KernelError::SelfWait);
+                return;
+            }
             let _ = rx.await;
         }
+    }
+}
+#[cfg(test)]
+impl Kernel {
+    /// How many fibers the actor holds a capture set for.
+    pub(crate) async fn capture_set_count(&self) -> usize {
+        let (tx, rx) = oneshot::channel();
+        self.inner.tx.send(Command::CaptureSets(tx)).unwrap();
+        rx.await.unwrap()
     }
 }
 impl Context {
@@ -590,6 +616,7 @@ impl Context {
         }
         let ctx = self.child_context(fiber.data.clone(), activation, eager);
         let child = fiber.clone();
+        disposer.effect.set_subject(uid);
         disposer.effect.add(Undo::future(move || async move {
             child.dispose().await;
             Ok(())
@@ -638,6 +665,8 @@ pub(crate) enum Command {
     Fault,
     #[cfg(test)]
     TypeScans(Reply<usize>),
+    #[cfg(test)]
+    CaptureSets(Reply<usize>),
     Create(Context, Context, bool),
     Start(u32, u64),
     Loaded(u32, u64, Result<(), Error>),
@@ -658,6 +687,8 @@ pub(crate) enum Command {
     ),
     Volatile(u32, Json, Reply<Result<bool, KernelError>>),
     Dispose(u32, Reply<()>),
+    /// Values the callers of a disposal captured, sent just before its command.
+    Capture(u32, Vec<dispose_capture::Captured>),
     Snapshot(Reply<Snapshot>),
     Shutdown(Reply<()>),
     Provide {
@@ -734,10 +765,20 @@ struct Actor {
     root_done: bool,
     shutdown_waiters: Vec<Reply<()>>,
     notified: IndexMap<ServiceAddress, (u64, bool)>,
+    /// What the callers of `Fiber::dispose()` captured, per disposed fiber.
+    capture_sets: HashMap<u32, Arc<dispose_capture::CaptureSet>>,
     #[cfg(test)]
     type_scans: usize,
 }
 impl Actor {
+    /// The live set of what disposals of this fiber captured; teardown tasks of the fiber and of
+    /// its descendants hold it.
+    fn capture_set(&mut self, uid: u32) -> Arc<dispose_capture::CaptureSet> {
+        if !self.nodes.contains_key(&uid) {
+            return Arc::default();
+        }
+        self.capture_sets.entry(uid).or_default().clone()
+    }
     async fn run(&mut self, mut rx: mpsc::UnboundedReceiver<Command>) {
         while let Some(command) = rx.recv().await {
             self.command(command);
@@ -773,6 +814,10 @@ impl Actor {
             #[cfg(test)]
             Command::TypeScans(reply) => {
                 let _ = reply.send(self.type_scans);
+            }
+            #[cfg(test)]
+            Command::CaptureSets(reply) => {
+                let _ = reply.send(self.capture_sets.len());
             }
             #[cfg(test)]
             Command::Fault => {
@@ -876,6 +921,13 @@ impl Actor {
                     }
                 } else {
                     let _ = reply.send(Err(KernelError::Inactive));
+                }
+            }
+            Command::Capture(uid, captures) => {
+                // A disposal of a fiber that is already gone leaves nothing behind.
+                if self.nodes.contains_key(&uid) {
+                    let set = self.capture_set(uid);
+                    set.extend(captures, &self.shared.captures.changed);
                 }
             }
             Command::Dispose(uid, reply) => {
@@ -1211,8 +1263,14 @@ impl Actor {
                 node.unload_started = true;
                 let activation = node.ctx.activation.clone();
                 let tx = self.shared.tx.clone();
+                let ancestry = node.ctx.data.ancestry.clone();
+                let sets = ancestry
+                    .iter()
+                    .map(|ancestor| self.capture_set(*ancestor))
+                    .collect::<Vec<_>>();
+                let carried = dispose_capture::carried(&self.shared, sets);
                 tokio::spawn(async move {
-                    activation.unload().await;
+                    dispose_capture::scope(carried, activation.unload()).await;
                     let _ = tx.send(Command::Unloaded(uid));
                 });
             }
@@ -1248,6 +1306,7 @@ impl Actor {
             for uid in disposed {
                 if let Some(mut node) = self.nodes.shift_remove(&uid) {
                     release_types = true;
+                    self.capture_sets.remove(&uid);
                     if let Some(effect) = node.ctx.data.parent_effect.upgrade() {
                         effect.retire_child();
                     }

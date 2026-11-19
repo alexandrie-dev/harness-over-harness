@@ -730,3 +730,28 @@ async fn disposes_the_runtime_context_contribution_with_the_service() {
     assert!(context_text(&h, Some(a)).await.is_none());
     h.close().await;
 }
+
+#[tokio::test]
+async fn fused_dispatch_overwrites_a_foreign_agent_of_the_request_with_its_subject() {
+    let h = Harness::mounted().await;
+    let (subject, foreign) = (h.open_agent(), h.open_agent());
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let sink = heard.clone();
+    h.ctx
+        .on_waterfall::<ApprovalRequestEvent, Value, _>(move |r, _| {
+            lock(&sink).push(r.agent.id().clone());
+            async { Ok(Value::Null) }
+        })
+        .unwrap();
+    let (subject, foreign): (Arc<dyn Agent>, Arc<dyn Agent>) = (subject, foreign);
+    hoh_agent::agent_events(&h.ctx, &subject)
+        .waterfall::<ApprovalRequestEvent, Value, _>(
+            |_| req(foreign.clone()),
+            |_| async { Ok(Value::Null) },
+        )
+        .await
+        .unwrap();
+    assert_eq!(*lock(&heard), [subject.id().clone()]);
+    assert_ne!(subject.id(), foreign.id());
+    h.close().await;
+}

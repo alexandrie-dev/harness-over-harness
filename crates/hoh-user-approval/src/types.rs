@@ -68,7 +68,11 @@ impl Event for ApprovalRequestEvent {
     // JS answerers are untrusted; normalize before returning the closed outcome.
     type Mode = Waterfall<Value>;
 }
-impl hoh_agent::AgentSubjectEvent for ApprovalRequestEvent {}
+impl hoh_agent::AgentSubjectEvent for ApprovalRequestEvent {
+    fn set_agent(&mut self, agent: Arc<dyn Agent>) {
+        self.agent = agent;
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]

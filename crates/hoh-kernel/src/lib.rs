@@ -2,6 +2,7 @@
 extern crate self as hoh_kernel;
 pub mod config;
 mod context;
+mod dispose_capture;
 mod effects;
 mod events;
 mod fiber;
