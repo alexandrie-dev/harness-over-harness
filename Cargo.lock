@@ -1554,6 +1554,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-message-feedback"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-persistence-jsonl",
+ "hoh-util-crypto",
+ "hoh-util-values",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-model-host"
 version = "0.1.0"
 dependencies = [

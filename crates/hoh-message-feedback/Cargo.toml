@@ -1,0 +1,30 @@
+[package]
+name = "hoh-message-feedback"
+description = "Port of @deepseek-ai/dsh-message-feedback (packages/feedback/message-feedback)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-brand = { path = "../hoh-brand" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-util-crypto = { path = "../hoh-util-crypto" }
+hoh-util-values = { path = "../hoh-util-values" }
+futures-util.workspace = true
+indexmap.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-session-persistence-jsonl = { path = "../hoh-session-persistence-jsonl" }
+tempfile.workspace = true

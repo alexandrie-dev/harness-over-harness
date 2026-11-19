@@ -128,7 +128,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/credentials/authorization	@deepseek-ai/dsh-authorization	hoh-authorization	541	603	todo	
 2	port	packages/credentials/credentials-local	@deepseek-ai/dsh-credentials-local	hoh-credentials-local	930	1577	done	
 2	port	packages/feedback/command-feedback	@deepseek-ai/dsh-command-feedback	hoh-command-feedback	197	388	done	зависит от: dsh-typert-protocol=skip
-2	port	packages/feedback/message-feedback	@deepseek-ai/dsh-message-feedback	hoh-message-feedback	490	1061	writing:x4	зависит от: dsh-typert-protocol=skip
+2	port	packages/feedback/message-feedback	@deepseek-ai/dsh-message-feedback	hoh-message-feedback	490	1061	done	зависит от: dsh-typert-protocol=skip
 2	port	packages/fs/fs-observation-policy	@deepseek-ai/dsh-fs-observation-policy	hoh-fs-observation-policy	170	257	done	
 2	port	packages/fs/fs-sandbox	@deepseek-ai/dsh-fs-sandbox	hoh-fs-sandbox	257	404	done	
 2	port	packages/fs/tool-fs-search	@deepseek-ai/dsh-tool-fs-search	hoh-tool-fs-search	1546	2017	writing:w5	
@@ -144,7 +144,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/session-query/session-query-sqlite	@deepseek-ai/dsh-session-query-sqlite	hoh-session-query-sqlite	1781	2215	todo	
 2	port	packages/session/session-telemetry	@deepseek-ai/dsh-session-telemetry	hoh-session-telemetry	479	910	writing:x5	
 2	port	packages/session/session-telemetry-otel	@deepseek-ai/dsh-session-telemetry-otel	hoh-session-telemetry-otel	278	1323	todo	
-2	port	packages/session/session-title-first-prompt-llm	@deepseek-ai/dsh-session-title-first-prompt-llm	hoh-session-title-first-prompt-llm	168	551	writing:x4	
+2	port	packages/session/session-title-first-prompt-llm	@deepseek-ai/dsh-session-title-first-prompt-llm	hoh-session-title-first-prompt-llm	168	551	accepted	
 2	port	packages/session/session-title-llm	@deepseek-ai/dsh-session-title-llm	hoh-session-title-llm	291	569	writing:x4	
 2	port	packages/shell/bash-local	@deepseek-ai/dsh-bash-local	hoh-bash-local	404	589	done	
 2	port	packages/shell/bash-sandbox	@deepseek-ai/dsh-bash-sandbox	hoh-bash-sandbox	206	1565	done	
@@ -156,7 +156,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/spill/spill-local	@deepseek-ai/dsh-spill-local	hoh-spill-local	727	663	writing:x6	
 2	port	packages/spill/spill-policy	@deepseek-ai/dsh-spill-policy	hoh-spill-policy	346	1235	writing:x6	
 2	port	packages/storage/storage-json	@deepseek-ai/dsh-storage-json	hoh-storage-json	844	839	done	
-2	port	packages/subagent/subagent-fork-in-process	@deepseek-ai/dsh-subagent-fork-in-process	hoh-subagent-fork-in-process	83	347	todo	
+2	port	packages/subagent/subagent-fork-in-process	@deepseek-ai/dsh-subagent-fork-in-process	hoh-subagent-fork-in-process	83	347	writing:x5	
 2	port	packages/subagent/subagent-spawn-in-process	@deepseek-ai/dsh-subagent-spawn-in-process	hoh-subagent-spawn-in-process	59	525	todo	
 2	port	packages/subagent/tool-subagent	@deepseek-ai/dsh-tool-subagent	hoh-tool-subagent	965	3380	todo	
 2	port	packages/subagent/tool-subagent-control	@deepseek-ai/dsh-tool-subagent-control	hoh-tool-subagent-control	373	1468	todo	
