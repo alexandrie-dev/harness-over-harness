@@ -273,3 +273,172 @@ async fn retains_an_error_emitted_during_terminal_publication() {
         .unwrap();
     h.close().await;
 }
+
+#[tokio::test]
+async fn rejects_bad_or_unknown_wait_requests_and_forgets_sessions_after_shutdown() {
+    let h = Env::new().await;
+    assert!(
+        h.server
+            .handle_request("session/wait", json!({"sessionId":"missing"}))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("not initialized")
+    );
+    h.initialize().await;
+    let bad = h
+        .server
+        .handle_request("session/wait", json!({}))
+        .await
+        .unwrap_err();
+    assert!(bad.to_string().contains("sessionId string"), "{bad}");
+    let unknown = h
+        .server
+        .handle_request("session/wait", json!({"sessionId":"missing"}))
+        .await
+        .unwrap_err();
+    assert!(
+        unknown.to_string().contains("unknown SDK session"),
+        "{unknown}"
+    );
+    assert!(
+        h.ctx
+            .get::<Agents>()
+            .unwrap()
+            .get(&"missing".into())
+            .is_none()
+    );
+    h.prompt("main", "first").await;
+    h.wait("main").await;
+    h.server.shutdown().await.unwrap();
+    let forgotten = h
+        .server
+        .handle_request("session/wait", json!({"sessionId":"main"}))
+        .await
+        .unwrap_err();
+    assert!(
+        forgotten.to_string().contains("unknown SDK session"),
+        "{forgotten}"
+    );
+    h.close().await;
+}
+
+/// A follow-up turn queued while the owner tree is being awaited: wait must see that the
+/// session moved on (`session.seq != idleSeq`) and wait for the second turn as well.
+#[tokio::test]
+async fn includes_a_child_triggered_root_turn_that_starts_during_the_tree_wait() {
+    let h = opened().await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    h.ctx
+        .provide::<Subagents>(Arc::new(WaitTree {
+            depth: 1,
+            calls: AtomicUsize::new(0),
+            entered: entered.clone(),
+            release: release.clone(),
+        }))
+        .await
+        .unwrap();
+    let turn_ends = |h: &Env| {
+        h.peer
+            .events("session.event")
+            .iter()
+            .filter(|n| n["sessionId"] == "main" && n["event"]["type"] == "turn/end")
+            .count()
+    };
+    assert_eq!(turn_ends(&h), 1);
+    let server = h.server.clone();
+    let waiting = tokio::spawn(async move {
+        server
+            .wait(SessionWaitParams {
+                session_id: "main".into(),
+            })
+            .await
+    });
+    entered.notified().await;
+    assert!(!waiting.is_finished());
+    h.agent("main")
+        .followup(hoh_llm::create_user_message(hoh_llm::NewUserMessage {
+            content: vec![hoh_llm::ContentBlock::text("child result")],
+            source: hoh_llm::MessageSource::new("user"),
+        }))
+        .unwrap();
+    release.add_permits(1);
+    waiting.await.unwrap().unwrap();
+    assert_eq!(turn_ends(&h), 2);
+    h.close().await;
+}
+
+/// The tree reports no work, but the session moved on while it was asked (`seq != idleSeq`):
+/// wait must look again instead of returning on a stale idle observation.
+struct LateTree {
+    calls: AtomicUsize,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Semaphore>,
+}
+impl SubagentsApi for LateTree {
+    fn root_of(&self, _: &Arc<dyn Agent>) -> Result<Arc<dyn Agent>, BoxError> {
+        Err("root_of is not used by wait".into())
+    }
+    fn wait_for_tree_work(&self, _: Arc<dyn Agent>) -> BoxFuture<'static, Result<bool, BoxError>> {
+        let first = self.calls.fetch_add(1, Ordering::SeqCst) == 0;
+        let (entered, release) = (self.entered.clone(), self.release.clone());
+        Box::pin(async move {
+            if first {
+                entered.notify_one();
+                release.acquire().await.unwrap().forget();
+            }
+            Ok(false)
+        })
+    }
+    fn drain_descendants(
+        &self,
+        _: Vec<Arc<dyn Agent>>,
+    ) -> BoxFuture<'static, Result<(), BoxError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+#[tokio::test]
+async fn looks_again_when_the_session_advanced_while_the_tree_reported_no_work() {
+    let h = opened().await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let tree = Arc::new(LateTree {
+        calls: AtomicUsize::new(0),
+        entered: entered.clone(),
+        release: release.clone(),
+    });
+    h.ctx.provide::<Subagents>(tree.clone()).await.unwrap();
+    let server = h.server.clone();
+    let waiting = tokio::spawn(async move {
+        server
+            .wait(SessionWaitParams {
+                session_id: "main".into(),
+            })
+            .await
+    });
+    entered.notified().await;
+    let agent = h.agent("main");
+    let turns = |agent: &Arc<dyn Agent>| {
+        agent
+            .session()
+            .snapshot_events(None, None)
+            .iter()
+            .filter(|e| e.event_type() == "turn/end")
+            .count()
+    };
+    agent
+        .followup(hoh_llm::create_user_message(hoh_llm::NewUserMessage {
+            content: vec![hoh_llm::ContentBlock::text("late work")],
+            source: hoh_llm::MessageSource::new("user"),
+        }))
+        .unwrap();
+    // the second turn finishes completely while the tree call is still pending
+    support::until(|| turns(&agent) == 2 && agent.status() == hoh_agent::AgentStatus::Idle).await;
+    release.add_permits(1);
+    waiting.await.unwrap().unwrap();
+    // call 1 saw a stale idle (seq moved on), call 2 confirmed it
+    assert_eq!(tree.calls.load(Ordering::SeqCst), 2);
+    h.close().await;
+}

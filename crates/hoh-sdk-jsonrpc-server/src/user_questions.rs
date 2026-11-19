@@ -2,8 +2,8 @@
 use crate::{transport::JsonRpcTransportPeer, user_question_helpers::UserQuestionError};
 use hoh_agent::Agent;
 use hoh_error::{BoxError, HarnessError};
-use hoh_kernel::{Context, Disposer, Waterfall};
-use hoh_protocol::{AskUserQuestionItem, SdkUserQuestionAnswer, SdkUserQuestionRequest};
+use hoh_kernel::{Context, Disposer};
+use hoh_protocol::{SdkUserQuestionAnswer, SdkUserQuestionRequest};
 use hoh_timeout::{AbortController, AbortSignal};
 use serde_json::Value;
 use std::sync::{
@@ -11,16 +11,14 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-/// SHIM(hoh-user-questions): only the owner-declared request event; replace when available.
-pub struct AskUserQuestionRequest {
-    pub agent: Option<Arc<dyn Agent>>,
-    pub questions: Vec<AskUserQuestionItem>,
-    pub signal: Option<AbortSignal>,
+use hoh_user_questions::AskUserQuestionAnswer;
+/// The owner crate's request event (`user-questions/request`), answered through a waterfall.
+pub use hoh_user_questions::AskUserQuestionRequest;
+
+/// Same JSON on both sides (`deny_unknown_fields`, camelCase); the wire type lives in hoh-protocol.
+fn convert<T: serde::Serialize, U: serde::de::DeserializeOwned>(value: &T) -> Result<U, BoxError> {
+    Ok(serde_json::from_value(serde_json::to_value(value)?)?)
 }
-hoh_kernel::event!(
-    AskUserQuestionRequest = "user-questions/request",
-    Waterfall<SdkUserQuestionAnswer>
-);
 
 pub struct SdkUserQuestionBridge {
     enabled: Arc<AtomicBool>,
@@ -37,14 +35,14 @@ impl SdkUserQuestionBridge {
         let shutdown = Arc::new(AbortController::new());
         let (enabled_listener, shutdown_listener, owner) =
             (enabled.clone(), shutdown.clone(), ctx.clone());
-        let unregister = ctx.on_waterfall::<AskUserQuestionRequest, SdkUserQuestionAnswer, _>(move |request, next| {
+        let unregister = ctx.on_waterfall::<AskUserQuestionRequest, AskUserQuestionAnswer, _>(move |request, next| {
             let (enabled, shutdown, ctx, transport) = (enabled_listener.clone(), shutdown_listener.clone(), owner.clone(), transport.clone());
             let owned = enabled.load(Ordering::SeqCst) && request.agent.as_ref().is_some_and(&owns_agent);
             async move {
                 if !enabled.load(Ordering::SeqCst) || !owned { return next.run().await; }
                 // The ownership predicate above established presence.
                 let agent = request.agent.as_ref().ok_or("missing question Agent")?;
-                let params = SdkUserQuestionRequest { request_id: hoh_util_crypto::random_uuid().to_string(), session_id: agent.session().id().to_string(), questions: request.questions.clone() };
+                let params = SdkUserQuestionRequest { request_id: hoh_util_crypto::random_uuid().to_string(), session_id: agent.session().id().to_string(), questions: convert(&request.questions)? };
                 let signal = request.signal.as_ref().map_or_else(|| shutdown.signal(), |s| AbortSignal::any([s.clone(), shutdown.signal()]));
                 signal.throw_if_aborted()?;
                 let result = transport.request("user-question/ask", serde_json::to_value(&params)?, Some(signal.clone()));
@@ -60,7 +58,7 @@ impl SdkUserQuestionBridge {
                     result = result => result,
                 };
                 match result {
-                    Ok(value) => parse_host_answer(value, &request.questions.iter().map(|q| q.id.as_str()).collect::<Vec<_>>()),
+                    Ok(value) => parse_host_answer(value, &request.questions.iter().map(|q| q.id.as_str()).collect::<Vec<_>>()).and_then(|answer| convert(&answer)),
                     Err(error) => {
                         if HarnessError::of(error.as_ref()).is_some_and(|e| e.is_named(UserQuestionError::NAME)) { return Err(error); }
                         let cancelled = signal.aborted();

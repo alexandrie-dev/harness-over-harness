@@ -1,26 +1,56 @@
 mod support;
 use hoh_agent::{AgentError, Agents, CreateAgentOptions};
-use hoh_error::SharedError;
-use hoh_llm::{ContentBlock, MessageSource, NewUserMessage, create_user_message};
-use hoh_protocol::CommandResult;
-use hoh_sdk_jsonrpc_server::{
-    command_helpers::BuiltinCommandName,
-    integration::{GoalActivationChanged, Goals, GoalsApi},
+use hoh_commands::CommandResult;
+use hoh_error::{BoxError, SharedError};
+use hoh_goal::{
+    CreateGoalRequest, GoalActivation, GoalActivationChanged, GoalActivationView, GoalBlockReason,
+    GoalServicePlugin, GoalView, Goals,
 };
+use hoh_llm::{ContentBlock, MessageSource, NewUserMessage, create_user_message};
+use hoh_sdk_jsonrpc_server::command_helpers::BuiltinCommandName;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use support::{commands::Registry, *};
-struct ActiveGoal;
-impl GoalsApi for ActiveGoal {
-    fn is_active(&self, _: &Arc<dyn hoh_agent::Agent>) -> bool {
-        true
-    }
+
+fn create_goal(agent: &Arc<dyn hoh_agent::Agent>) -> Result<GoalView, BoxError> {
+    agent.ctx().get::<Goals>().unwrap().create(
+        agent,
+        CreateGoalRequest {
+            objective: "fixture goal".into(),
+            max_goal_rounds: None,
+        },
+    )
 }
+
+fn clear_goal(agent: &Arc<dyn hoh_agent::Agent>) -> Result<(), BoxError> {
+    let goals = agent.ctx().get::<Goals>().unwrap();
+    let current = goals.get(agent)?.ok_or("fixture goal is missing")?;
+    goals.clear(agent, &current.as_ref())?;
+    Ok(())
+}
+
+fn dispatch_disarmed(agent: &Arc<dyn hoh_agent::Agent>) -> Result<(), BoxError> {
+    let goals = agent.ctx().get::<Goals>().unwrap();
+    let current = goals.get(agent)?.ok_or("fixture goal is missing")?;
+    agent
+        .ctx()
+        .dispatch(GoalActivationChanged {
+            session_id: agent.id().clone(),
+            goal: Some(GoalActivationView {
+                id: current.goal.id,
+                revision: current.goal.revision,
+                activation: GoalActivation::Disarmed,
+            }),
+        })
+        .invoke(|_| panic!("observer"));
+    Ok(())
+}
+
 async fn setup(goal: bool) -> (Env, Arc<Registry>) {
     let h = Env::new().await;
     let c = Registry::mount(&h).await;
     if goal {
-        h.ctx.provide::<Goals>(Arc::new(ActiveGoal)).await.unwrap();
+        mount::<GoalServicePlugin>(&h.ctx, json!({})).await;
     }
     h.initialize().await;
     c.register("plan", Some(BuiltinCommandName::Plan));
@@ -139,11 +169,7 @@ async fn goal_run(text: &str) -> (Env, Arc<Registry>, Arc<tokio::sync::Semaphore
     lock(&h.model.texts).push_back(text.into());
     c.handler(Arc::new(|agent, _, _, _| {
         Box::pin(async move {
-            agent.session().append(
-                "goal/change",
-                json!({"operation":"create","goal":{"id":"goal-1","phase":"active"}}),
-                None,
-            )?;
+            create_goal(&agent)?;
             agent.followup(user("goal round"))?;
             Ok(success("accepted"))
         })
@@ -152,19 +178,34 @@ async fn goal_run(text: &str) -> (Env, Arc<Registry>, Arc<tokio::sync::Semaphore
     h.model.entered.notified().await;
     (h, c, gate, response)
 }
-fn goal_change(h: &Env, operation: &str, phase: &str) {
-    h.agent("activity")
-        .session()
-        .append(
-            "goal/change",
-            if operation == "clear" {
-                json!({"operation":"clear","cleared":{"id":"goal-1"}})
-            } else {
-                json!({"operation":operation,"goal":{"id":"goal-1","phase":phase}})
-            },
-            None,
-        )
-        .unwrap();
+fn goal_change(h: &Env, operation: &str, _phase: &str) {
+    let agent = h.agent("activity");
+    let goals = h.ctx.get::<Goals>().unwrap();
+    let current = goals.get(&agent).unwrap().unwrap();
+    match operation {
+        "complete" => {
+            goals.complete(&agent, &current.as_ref()).unwrap();
+        }
+        "pause" => {
+            goals.pause(&agent, &current.as_ref()).unwrap();
+        }
+        "clear" => {
+            goals.clear(&agent, &current.as_ref()).unwrap();
+        }
+        "block" => {
+            goals
+                .block(
+                    &agent,
+                    &current.as_ref(),
+                    GoalBlockReason {
+                        code: "fixture-block".into(),
+                        message: "fixture blocked".into(),
+                    },
+                )
+                .unwrap();
+        }
+        other => panic!("unsupported fixture goal operation: {other}"),
+    }
 }
 #[tokio::test]
 async fn waits_for_the_last_reply_after_the_goal_becomes_complete() {
@@ -190,11 +231,7 @@ async fn returns_empty_model_text_when_goal_ends_without_reply() {
         lock(&h.model.texts).push_back("".into());
         c.handler(Arc::new(|agent, _, _, _| {
             Box::pin(async move {
-                agent.session().append(
-                    "goal/change",
-                    json!({"operation":"create","goal":{"id":"goal-1","phase":"active"}}),
-                    None,
-                )?;
+                create_goal(&agent)?;
                 agent.followup(user("goal round"))?;
                 Ok(success("accepted"))
             })
@@ -215,11 +252,7 @@ async fn preserves_goal_completion_when_clear_arrives_before_final_reply_finishe
     goal_change(&h, "complete", "complete");
     c.handler(Arc::new(|agent, _, _, _| {
         Box::pin(async move {
-            agent.session().append(
-                "goal/change",
-                json!({"operation":"clear","cleared":{"id":"goal-1"}}),
-                None,
-            )?;
+            clear_goal(&agent)?;
             Ok(success("Goal cleared."))
         })
     }));
@@ -245,11 +278,7 @@ async fn lets_clear_return_while_original_goal_run_waits_for_current_reply() {
     let (h, c, gate, _) = goal_run("final reply").await;
     c.handler(Arc::new(|agent, _, _, _| {
         Box::pin(async move {
-            agent.session().append(
-                "goal/change",
-                json!({"operation":"clear","cleared":{"id":"goal-1"}}),
-                None,
-            )?;
+            clear_goal(&agent)?;
             Ok(success("Goal cleared."))
         })
     }));
@@ -274,18 +303,8 @@ async fn finishes_visibly_when_goal_persistence_failure_disarms_continuation_bef
     let (h, c) = setup(true).await;
     c.handler(Arc::new(|agent, _, _, _| {
         Box::pin(async move {
-            agent.session().append(
-                "goal/change",
-                json!({"operation":"create","goal":{"id":"goal-1","phase":"active"}}),
-                None,
-            )?;
-            agent
-                .ctx()
-                .dispatch(GoalActivationChanged {
-                    session_id: agent.id().clone(),
-                    goal: Some(json!({"id":"goal-1","activation":"disarmed"})),
-                })
-                .invoke(|_| panic!("observer"));
+            create_goal(&agent)?;
+            dispatch_disarmed(&agent)?;
             Ok(success("accepted"))
         })
     }));
@@ -308,12 +327,7 @@ async fn reports_a_goal_agent_failure_followed_by_disarmed_continuation() {
             error: SharedError::new("driver failed"),
         })
         .invoke(|_| panic!("observer"));
-    h.ctx
-        .dispatch(GoalActivationChanged {
-            session_id: agent.id().clone(),
-            goal: Some(json!({"id":"goal-1","activation":"disarmed"})),
-        })
-        .invoke(|_| panic!("observer"));
+    dispatch_disarmed(&agent).unwrap();
     gate.add_permits(1);
     let end = completion(&h).await;
     assert_eq!(end["finishReason"], "error");
@@ -416,7 +430,13 @@ async fn waits_across_goal_rounds_and_reports_configured_round_limit() {
     let first = Arc::new(tokio::sync::Semaphore::new(0));
     *lock(&h.model.gate) = Some(first.clone());
     lock(&h.model.texts).extend(["first round".into(), "second round".into()]);
-    c.handler(Arc::new(|agent,_,_,_|Box::pin(async move{agent.session().append("goal/change",json!({"operation":"create","goal":{"id":"goal-1","phase":"active","roundsStarted":0}}),None)?;agent.followup(user("first round"))?;Ok(success("accepted"))})));
+    c.handler(Arc::new(|agent, _, _, _| {
+        Box::pin(async move {
+            create_goal(&agent)?;
+            agent.followup(user("first round"))?;
+            Ok(success("accepted"))
+        })
+    }));
     h.query("activity", "/goal work").await.unwrap();
     h.model.entered.notified().await;
     first.add_permits(1);
@@ -438,16 +458,12 @@ async fn waits_across_goal_rounds_and_reports_configured_round_limit() {
 #[tokio::test]
 async fn ends_a_goal_query_when_its_provider_unloads() {
     let (h, c) = setup(false).await;
-    let provider = h.ctx.provide::<Goals>(Arc::new(ActiveGoal)).await.unwrap();
+    let provider = mount::<GoalServicePlugin>(&h.ctx, json!({})).await;
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
     *lock(&h.model.gate) = Some(gate.clone());
     c.handler(Arc::new(|agent, _, _, _| {
         Box::pin(async move {
-            agent.session().append(
-                "goal/change",
-                json!({"operation":"create","goal":{"id":"goal-1","phase":"active"}}),
-                None,
-            )?;
+            create_goal(&agent)?;
             agent.followup(user("round"))?;
             Ok(success("accepted"))
         })
@@ -466,7 +482,7 @@ async fn ends_a_goal_query_when_its_provider_unloads() {
 #[tokio::test]
 async fn keeps_unrelated_plan_activity_alive_when_optional_goal_provider_unloads() {
     let (h, c) = setup(false).await;
-    let provider = h.ctx.provide::<Goals>(Arc::new(ActiveGoal)).await.unwrap();
+    let provider = mount::<GoalServicePlugin>(&h.ctx, json!({})).await;
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
     *lock(&h.model.gate) = Some(gate.clone());
     lock(&h.model.texts).push_back("plan reply".into());
@@ -487,18 +503,14 @@ async fn keeps_unrelated_plan_activity_alive_when_optional_goal_provider_unloads
 #[tokio::test]
 async fn correlates_provider_loss_before_native_command_response_arrives() {
     let (h, c) = setup(false).await;
-    let provider = h.ctx.provide::<Goals>(Arc::new(ActiveGoal)).await.unwrap();
+    let provider = mount::<GoalServicePlugin>(&h.ctx, json!({})).await;
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Semaphore::new(0));
     let (e, r) = (entered.clone(), release.clone());
     c.handler(Arc::new(move |agent, _, _, _| {
         let (e, r) = (e.clone(), r.clone());
         Box::pin(async move {
-            agent.session().append(
-                "goal/change",
-                json!({"operation":"create","goal":{"id":"goal-1","phase":"active"}}),
-                None,
-            )?;
+            create_goal(&agent)?;
             e.notify_one();
             r.acquire().await.unwrap().forget();
             Ok(success("accepted"))

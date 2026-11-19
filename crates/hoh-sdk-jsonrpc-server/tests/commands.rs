@@ -1,8 +1,8 @@
 mod support;
 use hoh_agent::Agents;
+use hoh_commands::CommandResult;
 use hoh_error::SharedError;
-use hoh_protocol::CommandResult;
-use hoh_sdk_jsonrpc_server::command_helpers::{BuiltinCommandName, CommandDescriptor};
+use hoh_sdk_jsonrpc_server::command_helpers::BuiltinCommandName;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use support::{commands::Registry, *};
@@ -108,6 +108,7 @@ async fn rejects_malformed_content_before_creating_a_session() {
 #[tokio::test]
 async fn leaves_command_attachment_support_to_the_native_registry() {
     let (h, c) = setup().await;
+    let _store = support::images::Store::mount(&h).await;
     c.register("compact", Some(BuiltinCommandName::Compact));
     c.handler(Arc::new(|_, _, images, _| {
         Box::pin(async move {
@@ -130,6 +131,7 @@ async fn leaves_command_attachment_support_to_the_native_registry() {
 #[tokio::test]
 async fn admits_named_images_through_the_native_command_executor_in_both_orders() {
     let (h, c) = setup().await;
+    let _store = support::images::Store::mount(&h).await;
     c.register("plan", Some(BuiltinCommandName::Plan));
     for image_first in [true, false] {
         let text = json!({"type":"text","text":"/plan inspect"});
@@ -151,13 +153,13 @@ async fn admits_named_images_through_the_native_command_executor_in_both_orders(
             "command"
         );
     }
-    assert!(
-        lock(&c.calls)
-            .iter()
-            .all(|(line, images)| line == "/plan inspect"
-                && images.len() == 1
-                && images[0].image.name.as_deref() == Some("diagram.png"))
-    );
+    assert!(lock(&c.calls).iter().all(|(line, images)| {
+        line == "/plan inspect"
+            && images.len() == 1
+            && images[0]
+                .image()
+                .is_some_and(|image| image.attachment.name.as_deref() == Some("diagram.png"))
+    }));
     h.close().await;
 }
 #[tokio::test]
@@ -248,11 +250,7 @@ async fn keeps_an_unrelated_definition_outside_native_sdk_dispatch() {
         ("plan", " task"),
         ("goal", " task"),
     ] {
-        lock(&c.descriptors).push(CommandDescriptor {
-            name: name.into(),
-            definition_id: Some(format!("example/{name}").into()),
-            description: "Unrelated".into(),
-        });
+        c.register_with_definition_id(name, Some(format!("example/{name}").into()));
         let line = format!("/{name}{args}");
         assert_eq!(h.query("unrelated", &line).await.unwrap()["kind"], "prompt");
         h.wait("unrelated").await;

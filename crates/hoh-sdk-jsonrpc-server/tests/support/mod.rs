@@ -312,120 +312,98 @@ pub async fn until(predicate: impl Fn() -> bool) {
 
 pub mod commands {
     use super::*;
-    use hoh_protocol::{CommandExecution, CommandResult};
-    use hoh_sdk_jsonrpc_server::integration::CommandImageAttachment;
-    use hoh_sdk_jsonrpc_server::{
-        command_helpers::{BuiltinCommandName, CommandDescriptor},
-        integration::{Commands, CommandsApi},
+    use hoh_commands::{
+        CommandDefinition, CommandInputDescriptor, CommandResult, CommandRuntime, Commands,
     };
+    use hoh_sdk_jsonrpc_server::command_helpers::BuiltinCommandName;
     use hoh_timeout::AbortSignal;
     pub type Handler = Arc<
         dyn Fn(
                 Arc<dyn Agent>,
                 String,
-                Vec<CommandImageAttachment>,
+                Vec<hoh_llm::ContentBlock>,
                 AbortSignal,
             ) -> BoxFuture<'static, Result<Option<CommandResult>, BoxError>>
             + Send
             + Sync,
     >;
-    pub type Calls = Arc<Mutex<Vec<(String, Vec<CommandImageAttachment>)>>>;
+    pub type Calls = Arc<Mutex<Vec<(String, Vec<hoh_llm::ContentBlock>)>>>;
     pub struct Registry {
-        pub descriptors: Mutex<Vec<CommandDescriptor>>,
+        runtime: Arc<CommandRuntime>,
+        ctx: Context,
+        registrations: Mutex<Vec<hoh_kernel::Disposer>>,
         pub calls: Calls,
-        pub handler: Mutex<Handler>,
-        counter: std::sync::atomic::AtomicU64,
+        pub handler: Arc<Mutex<Handler>>,
     }
     impl Registry {
         pub async fn mount(h: &Env) -> Arc<Self> {
+            Self::mount_on(&h.ctx).await
+        }
+        pub async fn mount_on(ctx: &Context) -> Arc<Self> {
+            let runtime = Arc::new(CommandRuntime::new(ctx.clone()).unwrap());
             let this = Arc::new(Self {
-                descriptors: Mutex::new(Vec::new()),
+                runtime: runtime.clone(),
+                ctx: ctx.clone(),
+                registrations: Mutex::new(Vec::new()),
                 calls: Arc::new(Mutex::new(Vec::new())),
-                handler: Mutex::new(Arc::new(|_, _, _, _| {
+                handler: Arc::new(Mutex::new(Arc::new(|_, _, _, _| {
                     Box::pin(async {
                         Ok(Some(CommandResult::Success {
                             text: Some("native outcome".into()),
                             source_event_seq: None,
                         }))
                     })
-                })),
-                counter: std::sync::atomic::AtomicU64::new(0),
+                }))),
             });
-            h.ctx.provide::<Commands>(this.clone()).await.unwrap();
+            ctx.provide::<Commands>(runtime).await.unwrap();
             this
         }
         pub fn register(&self, name: &str, id: Option<BuiltinCommandName>) {
-            lock(&self.descriptors).push(CommandDescriptor {
-                name: name.into(),
-                definition_id: id.map(|id| id.definition_id().into()),
+            self.register_with_definition_id(name, id.map(|id| id.definition_id().into()));
+        }
+        pub fn register_with_definition_id(
+            &self,
+            name: &str,
+            definition_id: Option<hoh_commands::CommandDefinitionId>,
+        ) {
+            let registered_name = name.to_owned();
+            let line_name = registered_name.clone();
+            let handler = self.handler.clone();
+            let calls = self.calls.clone();
+            let definition = CommandDefinition {
+                definition_id,
+                name: registered_name,
                 description: "Fixture command".into(),
-            });
+                input: Some(
+                    CommandInputDescriptor::new("Fixture command input").with_attachments(),
+                ),
+                record_input: None,
+                handler: Arc::new(move |invocation| {
+                    let handler = lock(&handler).clone();
+                    let calls = calls.clone();
+                    let line = format!("/{line_name}{}", invocation.raw_input);
+                    let raw_input = invocation.raw_input;
+                    let attachments = invocation.attachments.to_vec();
+                    let agent = invocation.agent;
+                    let signal = invocation.signal;
+                    Box::pin(async move {
+                        lock(&calls).push((line, attachments.clone()));
+                        handler(agent, raw_input, attachments, signal)
+                            .await?
+                            .ok_or_else(|| {
+                                "The selected command is unavailable in this SDK profile".into()
+                            })
+                    })
+                }),
+            };
+            lock(&self.registrations).push(
+                self.runtime
+                    .register(&self.ctx, definition)
+                    .expect("fixture command registers"),
+            );
         }
         pub fn handler(&self, handler: Handler) {
             *lock(&self.handler) = handler;
-        }
-    }
-    impl CommandsApi for Registry {
-        fn list(&self, _: &Arc<dyn Agent>) -> Result<Vec<CommandDescriptor>, BoxError> {
-            Ok(lock(&self.descriptors).clone())
-        }
-        fn execute(
-            &self,
-            agent: Arc<dyn Agent>,
-            line: String,
-            images: Vec<CommandImageAttachment>,
-            signal: AbortSignal,
-        ) -> BoxFuture<'static, Result<Option<CommandExecution>, BoxError>> {
-            let handler = lock(&self.handler).clone();
-            let calls = self.calls.clone();
-            let id = format!(
-                "command-{}",
-                self.counter
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            );
-            Box::pin(async move {
-                signal.throw_if_aborted()?;
-                agent.ctx().ensure_active()?;
-                lock(&calls).push((line.clone(), images.clone()));
-                let separator = line.find([' ', '\t', '\r', '\n']);
-                let name = &line[1..separator.unwrap_or(line.len())];
-                let raw = separator.map_or("", |i| &line[i..]);
-                agent.session().append(
-                    "command/run",
-                    json!({"commandId":id,"name":name,"args":raw,"source":{"kind":"user"}}),
-                    None,
-                )?;
-                let result = handler(agent.clone(), raw.into(), images, signal.clone()).await;
-                let result = if let Err(reason) = signal.throw_if_aborted() {
-                    Err(reason.into())
-                } else if let Err(reason) = agent.ctx().ensure_active() {
-                    Err(reason.into())
-                } else {
-                    result
-                };
-                match result {
-                    Ok(Some(result)) => {
-                        let mut done = json!({"commandId":id});
-                        for (k, v) in serde_json::to_value(&result)?.as_object().unwrap() {
-                            done[k] = v.clone();
-                        }
-                        agent.session().append("command/done", done, None)?;
-                        Ok(Some(CommandExecution {
-                            command_id: id,
-                            result,
-                        }))
-                    }
-                    Ok(None) => Ok(None),
-                    Err(error) => {
-                        let _ = agent.session().append(
-                            "command/done",
-                            json!({"commandId":id,"kind":"error","text":error.to_string()}),
-                            None,
-                        );
-                        Err(error)
-                    }
-                }
-            })
         }
     }
 }

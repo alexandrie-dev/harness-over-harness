@@ -973,3 +973,35 @@ async fn creates_an_sdk_session_without_an_optional_system_prompt() {
     assert_eq!(lock(&h.model.requests).len(), 1);
     h.close().await;
 }
+
+/// server.ts:233-234 names `${params.provider}` for any provider that is not a registered id.
+#[tokio::test]
+async fn names_a_missing_or_non_string_provider_like_the_source() {
+    let h = Env::new().await;
+    for (provider, shown) in [
+        (None, "undefined"),
+        (Some(json!(5)), "5"),
+        (Some(json!(null)), "null"),
+        (Some(json!(true)), "true"),
+        (Some(json!(["a", "b"])), "a,b"),
+        (Some(json!({"x": 1})), "[object Object]"),
+        (Some(json!("unregistered")), "unregistered"),
+    ] {
+        let mut params = json!({"cwd": ".", "model": "m"});
+        if let Some(provider) = provider {
+            params["provider"] = provider;
+        }
+        let error = h
+            .server
+            .handle_request("initialize", params)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("no adapter registered for provider \"{shown}\"")
+        );
+    }
+    // none of these attempts counted as the one initialize
+    h.initialize().await;
+    h.close().await;
+}

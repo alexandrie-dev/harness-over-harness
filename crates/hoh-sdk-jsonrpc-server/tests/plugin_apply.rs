@@ -3,8 +3,9 @@ mod support;
 use futures_util::future::BoxFuture;
 use hoh_agent::Agent;
 use hoh_error::BoxError;
-use hoh_kernel::{Cfg, Context, Plugin};
+use hoh_kernel::{Cfg, Context, Plugin, Undo};
 use hoh_llm::Llm;
+use hoh_sdk_jsonrpc_server::command_helpers::BuiltinCommandName;
 use hoh_sdk_jsonrpc_server::{
     JsonRpcRuntime, JsonRpcRuntimeHooks, SdkJsonRpcServer,
     integration::{Subagents, SubagentsApi},
@@ -23,6 +24,9 @@ use tokio::io::{AsyncWrite, AsyncWriteExt, BufReader, DuplexStream};
 struct CaptureState {
     bytes: Vec<u8>,
     flushes: usize,
+    /// Ordered record of everything observable: `frame:<id>`, `flush`, `root-disposed`, `exit`.
+    events: Vec<String>,
+    output_errors: Vec<String>,
 }
 
 struct DelayedGate {
@@ -66,13 +70,30 @@ impl AsyncWrite for CaptureWriter {
         _: &mut TaskContext<'_>,
         bytes: &[u8],
     ) -> Poll<io::Result<usize>> {
-        lock(&self.state).bytes.extend_from_slice(bytes);
+        {
+            let mut state = lock(&self.state);
+            state.bytes.extend_from_slice(bytes);
+            for line in String::from_utf8_lossy(bytes).lines() {
+                if let Ok(frame) = serde_json::from_str::<Value>(line)
+                    && let Some(id) = frame["id"].as_str()
+                {
+                    state.events.push(format!("frame:{id}"));
+                }
+            }
+        }
         self.changed.notify_waiters();
         Poll::Ready(Ok(bytes.len()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, _: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
-        lock(&self.state).flushes += 1;
+        {
+            let mut state = lock(&self.state);
+            state.flushes += 1;
+            state.events.push("flush".into());
+            if self.fail_flush {
+                state.output_errors.push("flush callback failed".into());
+            }
+        }
         self.changed.notify_waiters();
         if self.fail_flush {
             Poll::Ready(Err(io::Error::other("flush callback failed")))
@@ -132,11 +153,19 @@ impl Harness {
         let exits = Arc::new(Mutex::new(Vec::new()));
         let observed_exits = exits.clone();
         let exit_changed = capture.changed.clone();
+        let exit_state = capture.state.clone();
+        let root_state = capture.state.clone();
+        ctx.root()
+            .effect("test.root-disposed", move || {
+                Undo::sync(move || lock(&root_state).events.push("root-disposed".into()))
+            })
+            .unwrap();
         ctx.provide::<JsonRpcRuntime>(Arc::new(JsonRpcRuntimeHooks::new(
             Box::new(BufReader::new(server_input)),
             Box::new(capture.clone()),
             move |code| {
                 lock(&observed_exits).push(code);
+                lock(&exit_state).events.push("exit".into());
                 exit_changed.notify_waiters();
             },
         )))
@@ -355,16 +384,106 @@ async fn drives_a_prompt_turn_end_to_end_and_forwards_session_notifications() {
 }
 
 #[tokio::test]
+async fn runs_the_window_scenario_over_stdio_without_echoing_the_approval_key() {
+    const KEY: &str = "4242424242424242424242424242424242424242424242424242424242424242";
+    let mut harness = Harness::new(false).await;
+    support::mount::<hoh_user_approval::ApprovalService>(&harness.ctx, json!({})).await;
+    assert!(
+        harness
+            .ctx
+            .get::<hoh_sdk_jsonrpc_server::HohRpcMethods>()
+            .is_some()
+    );
+    let init = json!({"cwd":harness._dir.path(),"provider":"mock","model":"apply-model",
+        "capabilities":{"approvals":"host"},"hoh":{"protocolVersion":1,"approvalKey":KEY}});
+    harness
+        .send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":init}))
+        .await;
+    assert_eq!(
+        harness.wait_for(|frame| frame["id"] == 1).await["result"]["hoh"],
+        json!({"protocolVersion":1,"approvals":"host"})
+    );
+    harness
+        .send(json!({"jsonrpc":"2.0","id":2,"method":"initialize","params":init}))
+        .await;
+    assert!(harness.wait_for(|frame| frame["id"] == 2).await["error"].is_object());
+    harness.send(json!({"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"main","contentBlocks":[{"type":"text","text":"hi window"}]}})).await;
+    harness.wait_for(|frame| frame["id"] == 3).await;
+    harness
+        .wait_for(|frame| {
+            frame["method"] == "session.status" && frame["params"]["status"] == "idle"
+        })
+        .await;
+    harness
+        .send(json!({"jsonrpc":"2.0","id":4,"method":"session/list","params":{}}))
+        .await;
+    let list = harness.wait_for(|frame| frame["id"] == 4).await;
+    assert_eq!(list["result"]["sessions"][0]["id"], "main");
+    assert_eq!(list["result"]["sessions"][0]["title"], "hi window");
+    harness.send(json!({"jsonrpc":"2.0","id":5,"method":"session/events","params":{"sessionId":"main","limit":1000}})).await;
+    let events = harness.wait_for(|frame| frame["id"] == 5).await;
+    assert!(events["result"]["events"].as_array().unwrap().len() > 1);
+    harness
+        .send(
+            json!({"jsonrpc":"2.0","id":6,"method":"session/cancel","params":{"sessionId":"main"}}),
+        )
+        .await;
+    assert_eq!(
+        harness.wait_for(|frame| frame["id"] == 6).await["result"],
+        json!({})
+    );
+    harness
+        .send(json!({"jsonrpc":"2.0","id":7,"method":"shutdown"}))
+        .await;
+    harness.wait_for_exit().await;
+    assert_eq!(*lock(&harness.exits), vec![0]);
+    let wire = String::from_utf8(lock(&harness.capture.state).bytes.clone()).unwrap();
+    assert!(!wire.contains(KEY));
+    harness.dispose().await;
+}
+
+impl Harness {
+    fn events(&self) -> Vec<String> {
+        lock(&self.capture.state).events.clone()
+    }
+    /// Input sent after the process exited must produce no frame at all.
+    async fn assert_silent_after_exit(&mut self) {
+        let before = self.frames().len();
+        let _ = self
+            .input
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":\"after-exit\",\"method\":\"initialize\",\"params\":{\"cwd\":\"/\",\"provider\":\"mock\",\"model\":\"x\"}}\n",
+            )
+            .await;
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(self.frames().len(), before);
+    }
+}
+
+#[tokio::test]
 async fn answers_racing_shutdowns_before_disposal_and_exits_zero_once() {
     let mut harness = Harness::new(false).await;
     harness.send_raw("{\"jsonrpc\":\"2.0\",\"id\":\"sd-1\",\"method\":\"shutdown\"}\n{\"jsonrpc\":\"2.0\",\"id\":\"sd-2\",\"method\":\"shutdown\"}\n").await;
     harness.wait_for_exit().await;
-    let frames = harness.frames();
-    assert!(frames.iter().any(|frame| frame["id"] == "sd-1"));
-    assert!(frames.iter().any(|frame| frame["id"] == "sd-2"));
     assert_eq!(*lock(&harness.exits), vec![0]);
     assert!(harness.ctx.ensure_active().is_err());
-    assert!(lock(&harness.capture.state).flushes > 0);
+    // plugin-apply.spec.ts:302-326: both answers, then the flush barrier, then the root
+    // disposal, then exit.
+    let events = harness.events();
+    let at = |name: &str| events.iter().position(|e| e == name);
+    let (first, second) = (at("frame:sd-1").unwrap(), at("frame:sd-2").unwrap());
+    let flush = at("flush").expect("flush barrier");
+    let root = at("root-disposed").expect("root disposed");
+    let exit = at("exit").expect("exit");
+    assert!(flush > first && flush > second, "{events:?}");
+    assert!(root > flush, "{events:?}");
+    assert!(exit > root, "{events:?}");
+    assert_eq!(events.iter().filter(|e| *e == "root-disposed").count(), 1);
+    assert_eq!(events.iter().filter(|e| *e == "exit").count(), 1);
+    harness.assert_silent_after_exit().await;
     harness.dispose().await;
 }
 
@@ -410,6 +529,132 @@ async fn still_disposes_and_exits_once_when_flush_fails() {
     assert_eq!(*lock(&harness.exits), vec![0]);
     assert!(harness.ctx.ensure_active().is_err());
     assert!(lock(&harness.capture.state).flushes > 0);
+    // plugin-apply.spec.ts:341-348: one root disposal, the one flush failure, then silence.
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(*lock(&harness.exits), vec![0]);
+    let events = harness.events();
+    assert_eq!(events.iter().filter(|e| *e == "root-disposed").count(), 1);
+    assert_eq!(
+        lock(&harness.capture.state).output_errors,
+        vec!["flush callback failed".to_string()]
+    );
+    harness.assert_silent_after_exit().await;
+    harness.dispose().await;
+}
+
+/// transport.ts:238-243 / index.ts:97-102: unloading only stops reading; a request that is
+/// still running is answered. An abort-waiting command is released by the unload itself.
+#[tokio::test]
+async fn answers_a_running_request_when_the_plugin_is_unloaded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (kernel, ctx, _, _, _tool_executor) = base(&dir, None).await;
+    let registry = support::commands::Registry::mount_on(&ctx).await;
+    let mut harness = Harness::attach(dir, kernel, ctx, false).await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let signalled = entered.clone();
+    registry.handler(Arc::new(move |_, _, _, signal| {
+        let signalled = signalled.clone();
+        Box::pin(async move {
+            signalled.notify_one();
+            let reason = signal.cancelled().await;
+            Err(reason.into())
+        })
+    }));
+    registry.register("plan", Some(BuiltinCommandName::Plan));
+    harness.send(json!({"jsonrpc":"2.0","id":"init","method":"initialize","params":{"cwd":harness._dir.path(),"provider":"mock","model":"apply-model"}})).await;
+    harness.wait_for(|frame| frame["id"] == "init").await;
+    harness.send(json!({"jsonrpc":"2.0","id":"q","method":"session/query","params":{"sessionId":"main","contentBlocks":[{"type":"text","text":"/plan"}]}})).await;
+    entered.notified().await;
+    harness.fiber.clone().dispose().await;
+    let frames = harness.frames();
+    let answer = frames
+        .iter()
+        .find(|frame| frame["id"] == "q")
+        .unwrap_or_else(|| panic!("no answer for the running request: {frames:?}"));
+    assert!(answer["error"].is_object(), "{answer}");
+    harness.dispose().await;
+}
+
+/// The window falls back only on `-32601`; unknown `hoh/*` methods must carry exactly that
+/// code, while an unknown SDK method keeps the source's `-32603`.
+#[tokio::test]
+async fn answers_unregistered_hoh_methods_with_method_not_found() {
+    let mut harness = Harness::new(false).await;
+    harness.send(json!({"jsonrpc":"2.0","id":"init","method":"initialize","params":{"cwd":harness._dir.path(),"provider":"mock","model":"apply-model"}})).await;
+    harness.wait_for(|frame| frame["id"] == "init").await;
+    for (id, method) in [
+        ("a", "hoh/employee/open"),
+        ("b", "hoh/security/summary"),
+        ("c", "hoh/not/declared"),
+    ] {
+        harness
+            .send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":{}}))
+            .await;
+        let frame = harness.wait_for(|frame| frame["id"] == id).await;
+        assert_eq!(frame["error"]["code"], -32601, "{frame}");
+        assert_eq!(
+            frame["error"]["message"],
+            format!("unknown HoH method: {method}")
+        );
+    }
+    harness
+        .send(json!({"jsonrpc":"2.0","id":"d","method":"nope/unknown"}))
+        .await;
+    assert_eq!(
+        harness.wait_for(|frame| frame["id"] == "d").await["error"]["code"],
+        -32603
+    );
+    harness.dispose().await;
+}
+
+/// transport.ts:266 never rejects a write and `user-questions.ts` cancels an open question on
+/// teardown: a plain unload (no `shutdown` request) must still deliver `user-question.cancelled`.
+#[tokio::test]
+async fn tells_the_host_a_question_is_cancelled_when_the_plugin_is_unloaded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (kernel, ctx, _, _, _tool_executor) = base(&dir, None).await;
+    support::mount::<hoh_user_questions::UserQuestionsPlugin>(&ctx, json!({})).await;
+    let mut harness = Harness::attach(dir, kernel, ctx, false).await;
+    harness.send(json!({"jsonrpc":"2.0","id":"init","method":"initialize","params":{"cwd":harness._dir.path(),"provider":"mock","model":"apply-model","capabilities":{"userQuestions":true}}})).await;
+    harness.wait_for(|frame| frame["id"] == "init").await;
+    harness.send(json!({"jsonrpc":"2.0","id":"open","method":"session/working-directory/get","params":{"sessionId":"main"}})).await;
+    harness.wait_for(|frame| frame["id"] == "open").await;
+    let agent = harness
+        .ctx
+        .get::<hoh_agent::Agents>()
+        .unwrap()
+        .get(&"main".into())
+        .unwrap();
+    let service = harness
+        .ctx
+        .get::<hoh_user_questions::UserQuestions>()
+        .unwrap();
+    let asking = tokio::spawn(async move {
+        service
+            .ask(hoh_user_questions::AskUserQuestionRequest {
+                questions: serde_json::from_value(json!([{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}])).unwrap(),
+                agent: Some(agent),
+                signal: None,
+                wait: None,
+            })
+            .await
+    });
+    let ask = harness
+        .wait_for(|frame| frame["method"] == "user-question/ask")
+        .await;
+    let request_id = ask["params"]["requestId"].clone();
+    harness.fiber.clone().dispose().await;
+    let frames = harness.frames();
+    let cancelled = frames
+        .iter()
+        .find(|frame| frame["method"] == "user-question.cancelled")
+        .unwrap_or_else(|| panic!("host was not told the question is cancelled: {frames:?}"));
+    assert_eq!(cancelled["params"]["requestId"], request_id);
+    assert_eq!(cancelled["params"]["sessionId"], "main");
+    assert!(lock(&harness.exits).is_empty());
+    assert!(asking.await.unwrap().is_err());
     harness.dispose().await;
 }
 
@@ -419,9 +664,11 @@ async fn stops_serving_on_bare_fiber_dispose_without_process_exit() {
     harness
         .send(json!({"jsonrpc":"2.0","id":"probe-1","method":"nope/unknown"}))
         .await;
+    let error = harness.wait_for(|frame| frame["id"] == "probe-1").await;
+    assert_eq!(error["error"]["code"], -32603);
     assert_eq!(
-        harness.wait_for(|frame| frame["id"] == "probe-1").await["error"]["code"],
-        -32603
+        error["error"]["message"],
+        "unknown DeepSeek Harness SDK runtime method: nope/unknown"
     );
     harness.fiber.clone().dispose().await;
     assert!(harness.ctx.ensure_active().is_ok());

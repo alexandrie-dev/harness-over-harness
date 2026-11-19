@@ -501,3 +501,91 @@ async fn rejects_an_invalid_wire_capability_flag() {
     );
     h.close().await;
 }
+
+/// approval.spec.ts:110 on a real wire: the request frame reaches the client, the pending
+/// approval settles, and the client's late grant frame changes nothing.
+async fn pending_on_wire(action: &str) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let mut h = setup(Some(true)).await;
+    h.server.shutdown().await.unwrap();
+    let (a, b) = tokio::io::duplex(4096);
+    let (r, w) = tokio::io::split(a);
+    let wire = JsonRpcLineTransport::start(&h.ctx, BufReader::new(r), w).unwrap();
+    h.server =
+        HarnessSdkJsonRpcServer::new(h.ctx.clone(), Arc::new(wire.clone()), Default::default())
+            .unwrap();
+    let mut p = h.params();
+    p.approval_requests = Some(true);
+    h.server.initialize(p).await.unwrap();
+    let agent = h.open("wire").await;
+    agent
+        .session()
+        .append("turn/start", json!({"turn":1}), None)
+        .unwrap();
+    let (client_in, mut client_out) = tokio::io::split(b);
+    let mut client_in = BufReader::new(client_in);
+    let control = AbortController::new();
+    let mut request = req(agent.clone());
+    request.signal = Some(control.signal());
+    let pending = h.ctx.get::<Approval>().unwrap().request(request);
+    let frame = loop {
+        let mut line = String::new();
+        client_in.read_line(&mut line).await.unwrap();
+        let frame: Value = serde_json::from_str(&line).unwrap();
+        if frame["method"] != "session.event" {
+            break frame;
+        }
+    };
+    assert_eq!(frame["method"], "approval/request");
+    assert_eq!(frame["params"]["toolName"], "bash");
+    match action {
+        "cancel" => control.abort(),
+        "shutdown" => {
+            h.server.shutdown().await.unwrap();
+        }
+        _ => wire.close(),
+    }
+    let expected = if action == "cancel" {
+        ApprovalOutcome::Cancelled
+    } else {
+        ApprovalOutcome::Unavailable
+    };
+    assert_eq!(pending.await.unwrap(), expected);
+    let grant = json!({"jsonrpc":"2.0","id":frame["id"],"result":{"outcome":"allowed-once"}});
+    client_out
+        .write_all(format!("{grant}\n").as_bytes())
+        .await
+        .unwrap();
+    client_out.flush().await.unwrap();
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
+    }
+    let decided: Vec<_> = agent
+        .session()
+        .snapshot_events(None, None)
+        .iter()
+        .filter(|e| e.event_type() == "approval/decided")
+        .map(|e| e.data()["outcome"].clone())
+        .collect();
+    assert_eq!(
+        decided,
+        [json!(if action == "cancel" {
+            "cancelled"
+        } else {
+            "unavailable"
+        })]
+    );
+    h.close().await;
+}
+#[tokio::test]
+async fn settles_a_wire_approval_on_cancel_and_ignores_the_late_grant_frame() {
+    pending_on_wire("cancel").await;
+}
+#[tokio::test]
+async fn settles_a_wire_approval_on_shutdown_and_ignores_the_late_grant_frame() {
+    pending_on_wire("shutdown").await;
+}
+#[tokio::test]
+async fn settles_a_wire_approval_on_disconnect_and_ignores_the_late_grant_frame() {
+    pending_on_wire("disconnect").await;
+}

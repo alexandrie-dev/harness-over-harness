@@ -4,6 +4,7 @@ pub mod error;
 pub mod query_activity;
 pub mod query_content;
 pub mod query_input;
+mod rpc_methods;
 pub mod server;
 mod shim;
 pub mod transport;
@@ -13,12 +14,11 @@ pub mod user_questions;
 /// Temporary integration contracts for absent optional packages, not their implementations.
 /// These reexports disappear when their owners provide the real types (PORT_NOTES.md).
 pub mod integration {
-    pub use crate::shim::{
-        CommandImageAttachment, Commands, CommandsApi, DeepSeekFallback, DeepSeekFallbackApi,
-        GoalActivationChanged, Goals, GoalsApi, ScheduleResolveAgent, SubagentRunEndInfo,
-        Subagents, SubagentsApi,
-    };
+    pub use crate::shim::{ScheduleResolveAgent, SubagentRunEndInfo, Subagents, SubagentsApi};
 }
+pub use rpc_methods::{
+    HohPrivilegedApprover, HohRpcMethodRegistry, HohRpcMethods, PrivilegedApprover,
+};
 pub use server::{HarnessSdkJsonRpcServer, HarnessSdkJsonRpcServerOptions};
 
 use hoh_agent::Agents;
@@ -100,6 +100,8 @@ impl Plugin for SdkJsonRpcServer {
     type Config = JsonRpcConfig;
     type Deps = Deps;
     async fn apply(ctx: Context, _deps: Deps, config: Cfg<JsonRpcConfig>) -> Result<(), BoxError> {
+        ctx.provide::<HohRpcMethods>(Arc::new(HohRpcMethodRegistry::default()))
+            .await?;
         let hooks = ctx.get::<JsonRpcRuntime>();
         let (input, output): (Input, Output) = match &hooks {
             Some(hooks) => lock(&hooks.streams)
@@ -169,6 +171,9 @@ impl Plugin for SdkJsonRpcServer {
         // here preserves that admission boundary while keeping teardown ordered as
         // server.shutdown() -> transport.close().
         transport.start_reader(&ctx, input)?;
+        // The undo of `jsonrpc.serve` closes the transport after the server's own teardown;
+        // the writer waits for that so the teardown's last frames are written.
+        transport.hold_writer_until_closed();
         ctx.effect("jsonrpc.serve", move || {
             Undo::future(move || async move {
                 let result = server.shutdown().await;

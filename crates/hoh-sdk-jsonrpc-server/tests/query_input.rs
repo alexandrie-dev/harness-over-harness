@@ -17,6 +17,7 @@ fn commands() -> Vec<CommandDescriptor> {
         name: name.into(),
         definition_id: Some(id.definition_id().into()),
         description: name.into(),
+        input: None,
     })
     .collect()
 }
@@ -306,11 +307,13 @@ fn does_not_identify_unrelated_scoped_replacements_as_builtins() {
             name: "compact".into(),
             definition_id: None,
             description: "Scoped command".into(),
+            input: None,
         },
         CommandDescriptor {
             name: "permission".into(),
             definition_id: None,
             description: "Scoped permission".into(),
+            input: None,
         },
     ];
     for text in [
@@ -327,7 +330,8 @@ fn does_not_identify_unrelated_scoped_replacements_as_builtins() {
             &[CommandDescriptor {
                 name: "plan".into(),
                 definition_id: None,
-                description: "Scoped plan".into()
+                description: "Scoped plan".into(),
+                input: None,
             }]
         ),
         None
@@ -361,7 +365,8 @@ fn leaves_other_registered_commands_and_unavailable_supported_commands_unchanged
                 &[CommandDescriptor {
                     name: name.into(),
                     definition_id: Some(id.definition_id().into()),
-                    description: "Renamed".into()
+                    description: "Renamed".into(),
+                    input: None,
                 }]
             )
             .as_deref(),
@@ -374,7 +379,8 @@ fn leaves_other_registered_commands_and_unavailable_supported_commands_unchanged
             &[CommandDescriptor {
                 name: "goal".into(),
                 definition_id: None,
-                description: "Scoped".into()
+                description: "Scoped".into(),
+                input: None,
             }]
         ),
         None
@@ -387,6 +393,7 @@ fn preserves_exact_name_priority_over_localized_aliases() {
         name: "权限".into(),
         definition_id: None,
         description: "Another".into(),
+        input: None,
     });
     assert_eq!(query_command("/权限 read-only", &descriptors), None);
 }

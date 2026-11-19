@@ -5,10 +5,7 @@ use crate::{
     query_activity::{QUERY_INVOCATION, QueryActivity},
     query_content::{query_command_images, query_content},
     query_input::query_command,
-    shim::{
-        Commands, DeepSeekFallback, Goals, ScheduleResolveAgent, SubagentRunEndInfo, Subagents,
-        directory_agent,
-    },
+    shim::{ScheduleResolveAgent, SubagentRunEndInfo, Subagents, directory_agent},
     transport::JsonRpcTransportPeer,
     user_questions::SdkUserQuestionBridge,
 };
@@ -24,16 +21,21 @@ use hoh_attachment::{
     AttachmentError, AttachmentErrorCode, Attachments, EncodedImageAttachment, ImageMediaType,
     admit_encoded_images,
 };
+use hoh_commands::{
+    CommandExecution as NativeCommandExecution, CommandResult as NativeCommandResult, Commands,
+};
 use hoh_error::{BoxError, HarnessError, SharedError};
+use hoh_goal::Goals;
 use hoh_kernel::{Context, Disposer, Fiber, Inject, Service, Undo};
 use hoh_llm::{
     ContentBlock, Llm, LlmCallConfig, LlmCallControls, MessageSource, NewUserMessage,
     ReasoningEffortId, create_user_message,
 };
 use hoh_protocol::{
-    InitializeParams, InitializeResult, ServerInfo, SessionPromptParams, SessionPromptResult,
-    SessionQueryParams, SessionQueryResult, SessionResumeParams, SessionWaitParams,
-    SessionWorkingDirectoryParams, SessionWorkingDirectoryResult, SessionWorkingDirectorySetParams,
+    ApprovalHost, HohInitializeResult, InitializeParams, InitializeResult, SecretString,
+    ServerInfo, SessionPromptParams, SessionPromptResult, SessionQueryParams, SessionQueryResult,
+    SessionResumeParams, SessionWaitParams, SessionWorkingDirectoryParams,
+    SessionWorkingDirectoryResult, SessionWorkingDirectorySetParams,
 };
 use hoh_session::{SessionCreated, SessionEventEmitted, SessionId, SessionLogOffset};
 use hoh_session_persistence::SessionPersistenceService;
@@ -44,6 +46,80 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
+
+mod session_rpc;
+
+const HOH_PROTOCOL_VERSION: u32 = 1;
+
+/// The validated host-approval part of `initialize`. The key is never logged or echoed.
+struct HostHandshake {
+    key: SecretString,
+}
+impl HostHandshake {
+    /// `Ok(None)` is the plain SDK handshake; every host-mode rule fails before any state change.
+    fn from_params(params: &InitializeParams) -> Result<Option<Self>, BoxError> {
+        let host = params
+            .capabilities
+            .as_ref()
+            .is_some_and(|c| c.approvals.is_some());
+        let hoh = params.hoh.as_ref();
+        if hoh.is_some_and(|h| h.protocol_version != HOH_PROTOCOL_VERSION) {
+            return Err(error(format!(
+                "unsupported hoh.protocolVersion; this server speaks {HOH_PROTOCOL_VERSION}"
+            )));
+        }
+        let key = hoh.and_then(|h| h.approval_key.as_ref());
+        if !host {
+            return if key.is_some() {
+                Err(error("approvalKey requires host approvals"))
+            } else {
+                Ok(None)
+            };
+        }
+        if hoh.is_none() {
+            return Err(error(format!(
+                "host approvals require hoh.protocolVersion {HOH_PROTOCOL_VERSION}"
+            )));
+        }
+        let key = key.ok_or_else(|| error("host approvals require approvalKey"))?;
+        hoh_protocol::approval::key_from_hex(key.expose()).map_err(error)?;
+        Ok(Some(Self { key: key.clone() }))
+    }
+}
+
+/// Lets the approval service reach the window through this server's transport without a
+/// dependency from `hoh-user-approval` back to this crate.
+struct TransportApprovalPeer(Arc<dyn JsonRpcTransportPeer>);
+impl hoh_user_approval::HostApprovalPeer for TransportApprovalPeer {
+    fn request(
+        &self,
+        method: &'static str,
+        params: Value,
+        signal: Option<AbortSignal>,
+    ) -> BoxFuture<'static, Result<Value, BoxError>> {
+        self.0.request(method, params, signal)
+    }
+    fn notify(&self, method: &'static str, params: Value) -> Result<(), BoxError> {
+        self.0.notify(method, Some(params))
+    }
+}
+
+fn protocol_command_execution(execution: NativeCommandExecution) -> hoh_protocol::CommandExecution {
+    let result = match execution.result {
+        NativeCommandResult::Success {
+            text,
+            source_event_seq,
+        } => hoh_protocol::CommandResult::Success {
+            text,
+            source_event_seq: source_event_seq.map(|seq| seq.get()),
+        },
+        NativeCommandResult::Error { text } => hoh_protocol::CommandResult::Error { text },
+    };
+    hoh_protocol::CommandExecution {
+        command_id: execution.command_id.to_string(),
+        result,
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +145,8 @@ struct Route {
 struct State {
     route: Route,
     initialized: bool,
+    initializing: bool,
+    host_approvals: bool,
     shutting_down: bool,
     approval_requests: bool,
     sessions: IndexMap<SessionId, Arc<SessionRecord>>,
@@ -121,6 +199,8 @@ impl HarnessSdkJsonRpcServer {
                         max_tokens: None,
                     },
                     initialized: false,
+                    initializing: false,
+                    host_approvals: false,
                     shutting_down: false,
                     approval_requests: false,
                     sessions: IndexMap::new(),
@@ -310,7 +390,36 @@ impl HarnessSdkJsonRpcServer {
         Ok(this)
     }
 
+    /// The one-time handshake. A second call is an error, whatever the first one carried:
+    /// the host approval key is set once (docs/window.md §4).
     pub async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult, BoxError> {
+        {
+            let mut state = lock(&self.inner.state);
+            if state.initialized || state.initializing {
+                return Err(error("SDK server is already initialized"));
+            }
+            state.initializing = true;
+        }
+        let result = self.initialize_once(params).await;
+        if result.is_err() {
+            lock(&self.inner.state).initializing = false;
+        }
+        result
+    }
+    async fn initialize_once(
+        &self,
+        params: InitializeParams,
+    ) -> Result<InitializeResult, BoxError> {
+        let host = HostHandshake::from_params(&params)?;
+        let approval = match &host {
+            Some(_) => Some(
+                self.inner
+                    .ctx
+                    .get::<hoh_user_approval::Approval>()
+                    .ok_or_else(|| error("host approvals require the approval service"))?,
+            ),
+            None => None,
+        };
         if params
             .reasoning_effort
             .as_ref()
@@ -336,13 +445,11 @@ impl HarnessSdkJsonRpcServer {
                     params.provider
                 )));
             }
-            // SHIM(hoh-llm-deepseek-api-key): user explicitly forbids this port. Host registers
-            // hoh-llm-openai, or supplies this mount hook until the composition is integrated.
-            let fallback =
-                self.inner.ctx.get::<DeepSeekFallback>().ok_or_else(|| {
-                    error("no adapter registered for provider \"deepseek-official\"")
-                })?;
-            let fiber = fallback.mount(self.inner.ctx.clone()).await?;
+            let fiber = self
+                .inner
+                .ctx
+                .plugin::<hoh_llm_deepseek_api_key::DeepSeekApiKey>(json!({}))?;
+            fiber.settled().await?;
             lock(&self.inner.state).llm_fiber = Some(fiber);
         }
         let llm = self
@@ -365,6 +472,13 @@ impl HarnessSdkJsonRpcServer {
             None,
         )
         .await?;
+        // Last fallible step: a failed initialize must leave no key behind for a retry.
+        if let (Some(host), Some(approval)) = (&host, &approval) {
+            approval.install_host_mode(
+                host.key.expose(),
+                Arc::new(TransportApprovalPeer(self.inner.transport.clone())),
+            )?;
+        }
         {
             let mut state = lock(&self.inner.state);
             state.route = Route {
@@ -375,6 +489,8 @@ impl HarnessSdkJsonRpcServer {
                 max_tokens,
             };
             state.approval_requests = params.approval_requests == Some(true);
+            state.host_approvals = host.is_some();
+            state.initializing = false;
             state.initialized = true;
             if let Some(questions) = lock(&self.inner.questions).as_ref() {
                 questions
@@ -387,7 +503,10 @@ impl HarnessSdkJsonRpcServer {
                 name: "deepseek-harness-sdk-runtime".into(),
                 version: "0.0.1".into(),
             },
-            hoh: None,
+            hoh: host.map(|_| HohInitializeResult {
+                protocol_version: HOH_PROTOCOL_VERSION,
+                approvals: ApprovalHost::Host,
+            }),
         })
     }
     pub async fn prompt(
@@ -449,7 +568,7 @@ impl HarnessSdkJsonRpcServer {
             let rec = self.get_or_create_session(session_id.clone()).await?;
             self.inner.lifetime.signal().throw_if_aborted()?;
             self.assert_live_agent(&rec, &session_id)?;
-            if let Some(line) = query_command(text, &commands.list(&rec.handle.agent)?) {
+            if let Some(line) = query_command(text, &commands.list(&rec.handle.agent)) {
                 let images = query_command_images(&blocks, text_index)?;
                 let weak = Arc::downgrade(&self.inner);
                 let activity = QueryActivity::new(
@@ -481,9 +600,15 @@ impl HarnessSdkJsonRpcServer {
                     .scope(activity.id(), async move {
                         let result = commands.execute(agent, line, images, signal).await;
                         let outcome = match result {
-                            Ok(Some(execution)) => command_activity
-                                .accept(execution.clone())
-                                .map(|()| execution),
+                            Ok(Some(execution)) => {
+                                command_activity.accept(execution.clone()).map_or_else(
+                                    |e| {
+                                        command_activity.close();
+                                        Err(e)
+                                    },
+                                    |()| Ok(execution),
+                                )
+                            }
                             Ok(None) => {
                                 command_activity.close();
                                 Err(error(
@@ -501,13 +626,26 @@ impl HarnessSdkJsonRpcServer {
                     .boxed()
                     .shared();
                 let completed = job.clone().map(|_| ()).boxed().shared();
-                lock(&self.inner.state).command_tasks.insert(id, completed);
+                // Source: the shutting-down check and the registration of the task are one
+                // synchronous step, so shutdown either sees the task or the command never
+                // starts. `job` is lazy: dropping it unpolled never calls the handler.
+                {
+                    let mut state = lock(&self.inner.state);
+                    if state.shutting_down {
+                        drop(state);
+                        activity.close();
+                        return Err(error("SDK server is shutting down"));
+                    }
+                    state.command_tasks.insert(id, completed);
+                }
                 let drive = job.clone();
                 tokio::spawn(async move {
                     let _ = drive.await;
                 });
                 let execution = job.await.map_err(|error| Box::new(error) as BoxError)?;
-                return Ok(SessionQueryResult::Command { execution });
+                return Ok(SessionQueryResult::Command {
+                    execution: protocol_command_execution(execution),
+                });
             }
         }
         let receipt = self.prompt_blocks(session_id, blocks).await?;
@@ -932,6 +1070,16 @@ impl HarnessSdkJsonRpcServer {
                         params.get("cwd"),
                     )));
                 }
+                // Source: a provider that is no string matches no adapter id and is not
+                // "deepseek-official", so the failure names `String(provider)`.
+                if !params.get("provider").is_some_and(Value::is_string) {
+                    let shown = params
+                        .get("provider")
+                        .map_or_else(|| "undefined".to_owned(), hoh_util_values::js_string);
+                    return Err(error(format!(
+                        "no adapter registered for provider \"{shown}\""
+                    )));
+                }
                 let mut normalized = params;
                 if let Some(n) = normalized.get("maxTokens").and_then(Value::as_f64) {
                     normalized["maxTokens"] = Value::from(n as u64);
@@ -1027,6 +1175,7 @@ impl HarnessSdkJsonRpcServer {
                     })
                     .await?
                 } else {
+                    self.approve_privileged(method, &params).await?;
                     self.set_working_directory(SessionWorkingDirectorySetParams {
                         session_id: id.into(),
                         path: string_field(
@@ -1040,7 +1189,11 @@ impl HarnessSdkJsonRpcServer {
                 };
                 serde_json::to_value(result).map_err(Into::into)
             }
+            "session/list" => self.session_list(params).await,
+            "session/events" => self.session_events(params).await,
+            "session/cancel" => self.session_cancel(params),
             "shutdown" => self.shutdown().await,
+            method if method.starts_with("hoh/") => self.hoh_method(method, params).await,
             _ => Err(error(format!(
                 "unknown DeepSeek Harness SDK runtime method: {method}"
             ))),

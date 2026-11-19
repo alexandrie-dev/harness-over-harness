@@ -21,6 +21,13 @@ impl SdkServerError {
     }
 }
 
+/// An unknown or unregistered `hoh/*` method. The transport answers it with JSON-RPC
+/// `-32601` (method not found): the window falls back on exactly that code when the engine
+/// does not implement a `hoh/*` method yet. Other failures are `-32603`.
+#[derive(Debug, thiserror::Error)]
+#[error("unknown HoH method: {0}")]
+pub struct HohMethodNotFound(pub String);
+
 /// Rust carrier for a JavaScript value thrown by an optional owner package.
 /// The SDK ownership rule deliberately inspects only `name` and `code`.
 #[derive(Clone, Debug)]

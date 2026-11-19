@@ -1,13 +1,10 @@
 //! packages/sdk/server/src/query-activity.ts. Command completion through quiescence.
-use crate::{
-    lock,
-    shim::{GoalActivationChanged, Goals},
-    transport::JsonRpcTransportPeer,
-};
+use crate::{lock, transport::JsonRpcTransportPeer};
 use hoh_agent::{Agent, AgentDisposed, AgentError, AgentStatus, AgentStatusChanged};
+use hoh_commands::{CommandExecution, CommandResult};
 use hoh_error::BoxError;
+use hoh_goal::{GoalActivation, GoalActivationChanged, GoalPhase, Goals};
 use hoh_kernel::{Context, Disposer};
-use hoh_protocol::{CommandExecution, CommandResult};
 use hoh_session::SessionEventEmitted;
 use hoh_timeout::AbortSignal;
 use serde_json::{Value, json};
@@ -134,18 +131,22 @@ impl QueryActivity {
             let matches = {
                 let s = lock(&this.state);
                 event.session_id == *this.agent.session().id()
-                    && event.goal.as_ref().and_then(|g| g.get("id")) == s.goal_id.as_ref()
-                    && event
-                        .goal
-                        .as_ref()
-                        .is_some_and(|g| g["activation"] == "disarmed")
+                    && event.goal.as_ref().is_some_and(|goal| {
+                        s.goal_id.as_ref().and_then(Value::as_str) == Some(goal.id.as_str())
+                            && goal.activation == GoalActivation::Disarmed
+                    })
             };
-            if matches
-                && this
-                    .ctx
-                    .get::<Goals>()
-                    .is_some_and(|g| g.is_active(&this.agent))
-            {
+            let active = if matches {
+                match this.ctx.get::<Goals>() {
+                    Some(goals) => goals
+                        .get(&this.agent)?
+                        .is_some_and(|goal| goal.goal.phase == GoalPhase::Active),
+                    None => false,
+                }
+            } else {
+                false
+            };
+            if active {
                 lock(&this.state).goal_stopped = true;
                 this.check()?;
             }
@@ -197,7 +198,7 @@ impl QueryActivity {
     pub fn accept(self: &Arc<Self>, execution: CommandExecution) -> Result<(), BoxError> {
         let input = {
             let mut s = lock(&self.state);
-            s.command_id = Some(execution.command_id);
+            s.command_id = Some(execution.command_id.to_string());
             s.result = Some(execution.result);
             s.input
         };

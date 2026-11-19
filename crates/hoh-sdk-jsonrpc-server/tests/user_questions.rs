@@ -1,11 +1,11 @@
 mod support;
 use hoh_agent::{Agents, CreateAgentOptions};
 use hoh_error::HarnessError;
-use hoh_protocol::{AskUserQuestionItem, SdkUserQuestionAnswer};
 use hoh_sdk_jsonrpc_server::{
     user_question_helpers::UserQuestionError, user_questions::AskUserQuestionRequest,
 };
 use hoh_timeout::AbortController;
+use hoh_user_questions::{AskUserQuestionAnswer as SdkUserQuestionAnswer, AskUserQuestionItem};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use support::*;
@@ -34,6 +34,7 @@ async fn ask(
                 agent,
                 questions: questions(),
                 signal,
+                wait: None,
             },
             |_| async { Err(UserQuestionError::new("no provider", "NO_PROVIDER").into()) },
         )
@@ -170,6 +171,7 @@ async fn cancelled(shutdown: bool, broken_notify: bool) {
                 agent: Some(agent),
                 questions: questions(),
                 signal: Some(signal),
+                wait: None,
             },
             |_| async { Err("must not delegate".into()) },
         )
@@ -234,4 +236,30 @@ async fn response_sanitizes_unknown_keys_and_keeps_selected_order() {
         serde_json::to_value(result).unwrap(),
         json!({"answers":[{"id":"format","selected":["JSON","CSV"],"custom":""}]})
     );
+}
+
+/// The owner service dispatches its own `user-questions/request` event; the bridge must hear
+/// exactly that event (a private copy of the event had a different type id and was never reached).
+#[tokio::test]
+async fn answers_a_question_asked_through_the_owner_service() {
+    let h = Env::new().await;
+    mount::<hoh_user_questions::UserQuestionsPlugin>(&h.ctx, json!({})).await;
+    let mut p = h.params();
+    p.capabilities = Some(serde_json::from_value(json!({"userQuestions":true})).unwrap());
+    h.server.initialize(p).await.unwrap();
+    h.open("main").await;
+    h.peer.answer(answer());
+    let service = h.ctx.get::<hoh_user_questions::UserQuestions>().unwrap();
+    let got = service
+        .ask(hoh_user_questions::AskUserQuestionRequest {
+            questions: questions(),
+            agent: Some(h.agent("main")),
+            signal: None,
+            wait: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(serde_json::to_value(got).unwrap(), answer());
+    assert_eq!(lock(&h.peer.requests)[0].0, "user-question/ask");
+    h.close().await;
 }

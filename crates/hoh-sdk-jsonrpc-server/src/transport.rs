@@ -1,9 +1,12 @@
 //! Async host adapter over hoh-protocol's framing, classification and pending correlation.
 //! hoh-protocol intentionally leaves async waiters/execution to the embedding host.
-use crate::{error::error, lock};
+use crate::{
+    error::{HohMethodNotFound, error},
+    lock,
+};
 use futures_util::future::BoxFuture;
 use hoh_error::{BoxError, SharedError};
-use hoh_kernel::Context;
+use hoh_kernel::{Context, Undo};
 use hoh_protocol::{
     framing::{self, JsonRpcId, RpcError},
     transport::{Incoming, PendingRequests},
@@ -14,11 +17,16 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt},
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
 };
+
+/// Longest wait, on unload, for requests that are still being answered. The source never
+/// waits (the process just exits); a handler that cannot settle must not hang disposal.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub trait JsonRpcTransportPeer: Send + Sync + 'static {
     fn request(
@@ -41,6 +49,8 @@ pub struct JsonRpcResponseError(pub RpcError);
 enum Output {
     Frame(Value),
     Flush(oneshot::Sender<Result<(), SharedError>>),
+    /// Everything queued before this has been written; the writer ends.
+    Stop,
 }
 #[derive(Default)]
 struct State {
@@ -50,11 +60,34 @@ struct State {
     request_handler: Option<RequestHandler>,
     notification_handler: Option<NotificationHandler>,
     after_response: Option<AfterResponse>,
+    /// The owner promises to call [`JsonRpcLineTransport::close`] during unload; the writer then
+    /// outlives everything the owner's own teardown still sends.
+    hold_writer: bool,
 }
 struct Inner {
     reader_shutdown: AbortController,
     state: Mutex<State>,
     output: mpsc::UnboundedSender<Output>,
+    /// Incoming requests whose handler has not answered yet.
+    in_flight: watch::Sender<usize>,
+    /// Set by `close()`: the owner's teardown has finished producing frames.
+    closed: watch::Sender<bool>,
+    /// `true` once the writer was told to stop; writes after that are errors, not silent drops.
+    /// Locked only around the channel send, never together with `state`'s own work.
+    stopped: Mutex<bool>,
+}
+/// One unanswered incoming request; counted from admission until its task ends.
+struct InFlight(Arc<Inner>);
+impl InFlight {
+    fn enter(inner: &Arc<Inner>) -> Self {
+        inner.in_flight.send_modify(|count| *count += 1);
+        Self(inner.clone())
+    }
+}
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.in_flight.send_modify(|count| *count -= 1);
+    }
 }
 #[derive(Clone)]
 pub struct JsonRpcLineTransport {
@@ -72,31 +105,39 @@ impl JsonRpcLineTransport {
                 reader_shutdown: AbortController::new(),
                 state: Mutex::new(State::default()),
                 output: tx,
+                in_flight: watch::channel(0).0,
+                closed: watch::channel(false).0,
+                stopped: Mutex::new(false),
             }),
         };
         let sender = transport.clone();
-        ctx.spawn("jsonrpc.write", move |token| async move {
-            loop {
-                let message =
-                    tokio::select! { biased; _ = token.cancelled() => break, m = rx.recv() => m };
-                let Some(message) = message else {
-                    break;
-                };
-                match message {
-                    Output::Frame(value) => {
-                        let mut bytes = js_json_stringify(&value).into_bytes();
-                        bytes.push(b'\n');
-                        if let Err(e) = output.write_all(&bytes).await {
-                            sender.fail(SharedError::new(e));
+        let finisher = transport.clone();
+        // The writer is not cancelled by plugin unload: answers of requests that are still
+        // running must reach the output, as in the source, where closing the transport only
+        // stops reading. Unload waits for those requests, then stops the writer.
+        ctx.effect("jsonrpc.write", move || {
+            let writer = tokio::spawn(async move {
+                while let Some(message) = rx.recv().await {
+                    match message {
+                        Output::Frame(value) => {
+                            let mut bytes = js_json_stringify(&value).into_bytes();
+                            bytes.push(b'\n');
+                            if let Err(e) = output.write_all(&bytes).await {
+                                sender.fail(SharedError::new(e));
+                            }
                         }
-                    }
-                    Output::Flush(done) => {
-                        let result = output.flush().await.map_err(SharedError::new);
-                        let _ = done.send(result);
+                        Output::Flush(done) => {
+                            let result = output.flush().await.map_err(SharedError::new);
+                            let _ = done.send(result);
+                        }
+                        Output::Stop => break,
                     }
                 }
-            }
-            Ok(())
+            });
+            Undo::future(move || async move {
+                finisher.finish().await;
+                writer.await.map_err(|e| Box::new(e) as BoxError)
+            })
         })?;
         Ok(transport)
     }
@@ -122,7 +163,7 @@ impl JsonRpcLineTransport {
                 }
                 let text = String::from_utf8_lossy(&line);
                 if let Ok(value) = js_json_parse(js_trim(&text)) && let Some(frame) = hoh_protocol::transport::classify(value) {
-                    reader.receive(&owner, frame)?;
+                    reader.receive(&owner, frame);
                 }
             }
             Ok(())
@@ -150,10 +191,21 @@ impl JsonRpcLineTransport {
         lock(&self.inner.state).after_response = Some(callback);
     }
     fn write(&self, value: Value) -> Result<(), BoxError> {
+        let stopped = lock(&self.inner.stopped);
+        if *stopped {
+            return Err(error("JSON-RPC transport closed"));
+        }
         self.inner
             .output
             .send(Output::Frame(value))
             .map_err(|_| error("JSON-RPC transport closed"))
+    }
+    /// For an owner that calls [`close`](Self::close) from its own unload (the SDK server does,
+    /// after `server.shutdown()`): the writer is stopped only after that, so frames produced by
+    /// the teardown (`user-question.cancelled`, ...) still leave. Without it the writer stops as
+    /// soon as the requests in flight are answered.
+    pub fn hold_writer_until_closed(&self) {
+        lock(&self.inner.state).hold_writer = true;
     }
     pub async fn flush(&self) -> Result<(), BoxError> {
         let (tx, rx) = oneshot::channel();
@@ -165,7 +217,27 @@ impl JsonRpcLineTransport {
             .map_err(|_| error("JSON-RPC transport closed"))?
             .map_err(Into::into)
     }
+    /// Wait (bounded) for requests still being answered (and, when the owner asked for it, for
+    /// its `close()`), then stop the writer after everything queued so far. Called by the unload
+    /// of the output effect; input has stopped by then.
+    async fn finish(&self) {
+        let hold = lock(&self.inner.state).hold_writer;
+        let mut closed = self.inner.closed.subscribe();
+        let mut idle = self.inner.in_flight.subscribe();
+        // On timeout nothing more can be said to the peer; the writer ends either way.
+        let _ = tokio::time::timeout(DRAIN_TIMEOUT, async {
+            if hold {
+                let _ = closed.wait_for(|closed| *closed).await;
+            }
+            let _ = idle.wait_for(|count| *count == 0).await;
+        })
+        .await;
+        let mut stopped = lock(&self.inner.stopped);
+        *stopped = true;
+        let _ = self.inner.output.send(Output::Stop);
+    }
     pub fn close(&self) {
+        self.inner.closed.send_replace(true);
         self.inner.reader_shutdown.abort();
         self.fail(SharedError::new(error("JSON-RPC transport closed")));
     }
@@ -186,7 +258,7 @@ impl JsonRpcLineTransport {
             let _ = waiter.send(Err(reason.clone()));
         }
     }
-    fn receive(&self, ctx: &Context, frame: Incoming) -> Result<(), BoxError> {
+    fn receive(&self, _ctx: &Context, frame: Incoming) {
         match frame {
             Incoming::Response { ref id, .. } => {
                 let key = id.key();
@@ -210,29 +282,42 @@ impl JsonRpcLineTransport {
             Incoming::Request { id, method, params } => {
                 let handler = lock(&self.inner.state).request_handler.clone();
                 let this = self.clone();
-                ctx.spawn("jsonrpc.request", move |token| async move {
-                    let id = serde_json::to_value(id)?;
-                    let (response, succeeded) = tokio::select! {
-                        biased;
-                        _ = token.cancelled() => return Ok(()),
-                        response = async {
-                            match handler {
-                                None => (framing::error(id, -32601, format!("method not found: {method}")), false),
-                                Some(handler) => match handler(method.clone(), params).await {
-                                    Ok(result) => (framing::success(id, result), true),
-                                    Err(e) => (framing::error(id, -32603, e.to_string()), false),
-                                },
-                            }
-                        } => response,
+                // A finished request leaves nothing behind (no per-request effect), and an
+                // unload does not cancel it: its answer is still written.
+                let in_flight = InFlight::enter(&self.inner);
+                tokio::spawn(async move {
+                    let _in_flight = in_flight;
+                    let Ok(id) = serde_json::to_value(id) else {
+                        return;
                     };
-                    this.write(response)?;
+                    let (response, succeeded) = match handler {
+                        None => (
+                            framing::error(id, -32601, format!("method not found: {method}")),
+                            false,
+                        ),
+                        Some(handler) => match handler(method.clone(), params).await {
+                            Ok(result) => (framing::success(id, result), true),
+                            Err(e) => {
+                                let code = if e.downcast_ref::<HohMethodNotFound>().is_some() {
+                                    -32601
+                                } else {
+                                    -32603
+                                };
+                                (framing::error(id, code, e.to_string()), false)
+                            }
+                        },
+                    };
+                    // After the writer has stopped (process exit) there is nobody to answer.
+                    if this.write(response).is_err() {
+                        return;
+                    }
                     let callback = lock(&this.inner.state).after_response.clone();
-                    if let Some(callback) = callback { callback(&method, succeeded); }
-                    Ok(())
-                })?;
+                    if let Some(callback) = callback {
+                        callback(&method, succeeded);
+                    }
+                });
             }
         }
-        Ok(())
     }
 }
 impl JsonRpcTransportPeer for JsonRpcLineTransport {

@@ -74,16 +74,15 @@ pub fn query_content(value: &Value) -> Result<Vec<Value>, BoxError> {
 pub fn query_command_images(
     blocks: &[Value],
     text_index: usize,
-) -> Result<Vec<crate::shim::CommandImageAttachment>, BoxError> {
+) -> Result<Vec<hoh_commands::CommandSubmitAttachment>, BoxError> {
     blocks.iter().enumerate().filter(|(i, _)| *i != text_index).map(|(_, block)| {
         if block["type"] != "image" || block.get("data").is_none() {
             return Err(type_error("Native SDK commands require one text block and optional encoded image blocks"));
         }
-        let image = hoh_attachment::EncodedImageAttachment {
+        Ok(hoh_commands::CommandSubmitAttachment::Image {
             data: block["data"].as_str().ok_or_else(|| type_error("Native SDK commands require one text block and optional encoded image blocks"))?.to_owned(),
             media_type: serde_json::from_value(block["mimeType"].clone()).map_err(|_| type_error("Native SDK commands require one text block and optional encoded image blocks"))?,
             name: block.get("name").and_then(Value::as_str).map(str::to_owned),
-        };
-        Ok(crate::shim::CommandImageAttachment { image })
+        })
     }).collect()
 }
