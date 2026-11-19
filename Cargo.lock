@@ -2492,6 +2492,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-schedule"
+version = "0.1.0"
+dependencies = [
+ "hoh-agent",
+ "hoh-agent-preset-registry",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-schedule",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-persistence-jsonl",
+ "hoh-session-projection",
+ "hoh-storage",
+ "hoh-storage-domain",
+ "hoh-storage-json",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tools",
+ "hoh-util-values",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-str-replace-editor"
 version = "0.1.0"
 dependencies = [
