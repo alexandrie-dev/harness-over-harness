@@ -3239,6 +3239,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-web-search-deepseek"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-credentials",
+ "hoh-error",
+ "hoh-http-proxy",
+ "hoh-kernel",
+ "hoh-launch-environment",
+ "hoh-llm",
+ "hoh-llm-deepseek",
+ "hoh-package-manifest",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-timeout",
+ "hoh-web",
+ "http",
+ "indexmap",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "hoh-window-destructive-guard"
 version = "0.1.0"
 dependencies = [
