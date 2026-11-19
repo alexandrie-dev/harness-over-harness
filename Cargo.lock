@@ -1309,6 +1309,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-llm-mock-server"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "hoh-util-values",
+ "indexmap",
+ "reqwest",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-llm-openai"
 version = "0.1.0"
 dependencies = [
