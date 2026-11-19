@@ -1,0 +1,33 @@
+[package]
+name = "hoh-agent-preset-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-loader = { path = "../hoh-loader" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-util-values = { path = "../hoh-util-values" }
+feruca.workspace = true
+futures-util.workspace = true
+indexmap.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-llm = { path = "../hoh-llm" }
+hoh-timeout = { path = "../hoh-timeout" }
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

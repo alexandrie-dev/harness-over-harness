@@ -738,6 +738,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-agent-preset-registry"
+version = "0.1.0"
+dependencies = [
+ "feruca",
+ "futures-util",
+ "hoh-agent",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-loader",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-timeout",
+ "hoh-tools",
+ "hoh-util-values",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-anonymous-user-id"
 version = "0.1.0"
 dependencies = [
