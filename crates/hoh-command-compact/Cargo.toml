@@ -1,0 +1,28 @@
+[package]
+name = "hoh-command-compact"
+description = "Port of @deepseek-ai/dsh-command-compact (packages/compaction/command-compact)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-commands = { path = "../hoh-commands" }
+hoh-compaction = { path = "../hoh-compaction" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-util-values = { path = "../hoh-util-values" }
+tokio.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+hoh-agent = { path = "../hoh-agent" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-session = { path = "../hoh-session" }
+hoh-timeout = { path = "../hoh-timeout" }
+serde_json.workspace = true
+
