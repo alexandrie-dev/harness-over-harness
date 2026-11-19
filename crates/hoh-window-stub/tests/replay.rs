@@ -165,22 +165,22 @@ fn setup_approval_text_names_the_folder_internet_policy_and_provider() {
         (
             "hoh/model/key/set",
             json!({"apiKey":secret,"baseUrl":"https://new.example.test/v1"}),
-            "Сохранить API-ключ для провайдера \"https://new.example.test/v1\"?",
+            "Сохранить API-ключ для провайдера «https://new.example.test/v1»?",
         ),
         (
             "hoh/settings/rules/set",
-            json!({"internet":"ask","folder":"/home/Документы/Отчёты"}),
-            "Разрешить работу в папке \"/home/Документы/Отчёты\" и доступ в интернет с запросом разрешения?",
+            json!({"internet":"ask","folder":r#"C:\Users\Анна\Проект "Ёлка""#}),
+            r#"Разрешить работу в папке «C:\Users\Анна\Проект "Ёлка"» и доступ в интернет с запросом разрешения?"#,
         ),
         (
             "hoh/settings/rules/set",
             json!({"internet":"public","folder":"/team/shared"}),
-            "Разрешить работу в папке \"/team/shared\" и доступ в интернет к общедоступным сайтам?",
+            "Разрешить работу в папке «/team/shared» и доступ в интернет к общедоступным сайтам?",
         ),
         (
             "hoh/model/probe",
             json!({"baseUrl":"https://models.example.test/v1","model":"example-chat"}),
-            "Разрешить проверку модели \"example-chat\" у провайдера \"https://models.example.test/v1\"?",
+            "Разрешить проверку модели «example-chat» у провайдера «https://models.example.test/v1»?",
         ),
     ];
     for (method, params, expected_text) in cases {
@@ -224,13 +224,193 @@ fn setup_approval_text_names_the_folder_internet_policy_and_provider() {
     );
     assert_eq!(
         client.reverse.last().unwrap()["params"]["humanText"],
-        "Сохранить API-ключ для провайдера \"https://saved.example.test/v1\"?"
+        "Сохранить API-ключ для провайдера «https://saved.example.test/v1»?"
     );
     assert!(
         !serde_json::to_string(&client.frames)
             .unwrap()
             .contains(secret)
     );
+    client.shutdown();
+}
+
+#[test]
+fn remaining_privileged_approval_texts_name_targets_and_rights_in_russian() {
+    let mut client = Client::new(
+        "text-turn",
+        vec![json!({"outcome":"allowed-once"}); 4],
+        true,
+    );
+    let permissions = json!({
+        "internet":"ask",
+        "domains":["пример.рф","t.me"],
+        "folders":[r#"C:\Данные "Анны""#],
+        "writeFiles":true,
+        "programs":false,
+        "programNetwork":["api.example"],
+        "actAsUser":false
+    });
+    let rights = r#"интернет — с запросом разрешения; сайты — «пример.рф», «t.me»; папки — «C:\Данные "Анны"»; изменение файлов — разрешено; запуск программ — запрещено; сеть для программ — «api.example»; действия от вашего имени — запрещено"#;
+    let cases = [
+        (
+            "session/working-directory/set",
+            json!({"sessionId":SESSION,"path":r#"C:\Users\Анна\Проект "Ёлка""#}),
+            r#"Разрешить работу в папке «C:\Users\Анна\Проект "Ёлка"»?"#.to_owned(),
+        ),
+        (
+            "hoh/settings/set",
+            json!({"model":{"baseUrl":"https://модели.example/v1","model":"Модель-Ёж"}}),
+            "Изменить настройки: модель — «Модель-Ёж», провайдер — «https://модели.example/v1»?"
+                .to_owned(),
+        ),
+        (
+            "hoh/employee/create",
+            json!({"draft":{"name":"Психолог","role":"Объясняет по-русски","rules":["Отвечай бережно"],"taskIds":["задача-1"],"permissions":permissions.clone()}}),
+            format!(
+                "Создать сотрудника «Психолог» с ролью «Объясняет по-русски»; правила — «Отвечай бережно»; назначенные задачи — «задача-1»; права: {rights}?"
+            ),
+        ),
+        (
+            "hoh/employee/update",
+            json!({"id":"сотрудник-1","rev":2,"patch":{"name":"Анна","role":"Проверяет факты","rules":["Пиши по-русски"],"taskIds":["задача-2"],"permissions":permissions}}),
+            format!(
+                "Изменить сотрудника «сотрудник-1»: имя — «Анна»; роль — «Проверяет факты»; правила — «Пиши по-русски»; назначенные задачи — «задача-2»; права: {rights}?"
+            ),
+        ),
+    ];
+    for (method, params, expected_text) in cases {
+        let reply = client.call(method, params);
+        assert!(reply.get("error").is_none(), "{method}: {reply}");
+        assert_eq!(
+            client.reverse.last().unwrap()["params"]["humanText"],
+            expected_text,
+            "{method}"
+        );
+        assert_eq!(
+            client
+                .notifications()
+                .iter()
+                .rev()
+                .find(|frame| frame["method"] == "approval.pending")
+                .unwrap()["params"]["humanText"],
+            expected_text,
+            "{method}"
+        );
+    }
+    client.shutdown();
+}
+
+#[test]
+fn combined_settings_text_discloses_and_applies_every_field() {
+    let mut client = Client::new("text-turn", vec![json!({"outcome":"allowed-once"})], true);
+    let patch = json!({
+        "model":{"baseUrl":"https://провайдер.example/v1","model":"Русская модель"},
+        "security":{
+            "internet":"deny",
+            "domains":[],
+            "folders":[r#"D:\Работа "Общая""#],
+            "writeFiles":false,
+            "programs":true,
+            "programNetwork":["api.example"],
+            "actAsUser":true
+        },
+        "view":{"theme":"dark","fontSize":19}
+    });
+    let expected = r#"Изменить настройки: модель — «Русская модель», провайдер — «https://провайдер.example/v1»; права: интернет — запрещён; сайты — нет; папки — «D:\Работа "Общая"»; изменение файлов — запрещено; запуск программ — разрешено; сеть для программ — «api.example»; действия от вашего имени — разрешено; вид — тёмная тема, размер текста — 19?"#;
+    let reply = client.call("hoh/settings/set", patch.clone());
+    assert_eq!(
+        client.reverse.last().unwrap()["params"]["humanText"],
+        expected
+    );
+    assert_eq!(reply["result"]["model"], patch["model"]);
+    assert_eq!(reply["result"]["security"], patch["security"]);
+    assert_eq!(reply["result"]["view"], patch["view"]);
+    assert_eq!(
+        client.call("hoh/settings/get", json!({}))["result"],
+        reply["result"]
+    );
+    client.shutdown();
+}
+
+#[test]
+fn view_only_settings_apply_without_host_approval() {
+    let mut client = Client::new("text-turn", vec![], true);
+    let view = json!({"theme":"dark","fontSize":18});
+    let reply = client.call("hoh/settings/set", json!({"view":view.clone()}));
+    assert_eq!(reply["result"]["view"], view);
+    assert!(client.reverse.is_empty());
+    assert_eq!(
+        client.call("hoh/settings/get", json!({}))["result"]["view"],
+        view
+    );
+    client.shutdown();
+}
+
+fn assert_rejected(client: &Client) {
+    let resolved: Vec<_> = client
+        .notifications()
+        .into_iter()
+        .filter(|frame| frame["method"] == "approval.resolved")
+        .collect();
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0]["params"]["outcome"], "rejected");
+}
+
+#[test]
+fn rejected_rules_change_does_not_apply() {
+    let mut client = Client::new("text-turn", vec![json!({"outcome":"rejected"})], true);
+    let before = client.call("hoh/settings/get", json!({}))["result"]["security"].clone();
+    let rejected = client.call(
+        "hoh/settings/rules/set",
+        json!({"internet":"public","folder":"/Новая папка"}),
+    );
+    assert!(rejected.get("error").is_some());
+    assert_eq!(
+        client.call("hoh/settings/get", json!({}))["result"]["security"],
+        before
+    );
+    assert_rejected(&client);
+    client.shutdown();
+}
+
+#[test]
+fn rejected_model_change_does_not_apply() {
+    let mut client = Client::new("text-turn", vec![json!({"outcome":"rejected"})], true);
+    let before = client.call("hoh/settings/get", json!({}))["result"]["model"].clone();
+    let rejected = client.call(
+        "hoh/settings/set",
+        json!({"model":{"baseUrl":"https://новый.example/v1","model":"Новая модель"}}),
+    );
+    assert!(rejected.get("error").is_some());
+    assert_eq!(
+        client.call("hoh/settings/get", json!({}))["result"]["model"],
+        before
+    );
+    assert_rejected(&client);
+    client.shutdown();
+}
+
+#[test]
+fn rejected_working_directory_change_does_not_apply() {
+    let mut client = Client::new("text-turn", vec![json!({"outcome":"rejected"})], true);
+    let before = client.call(
+        "session/working-directory/get",
+        json!({"sessionId":SESSION}),
+    )["result"]["cwd"]
+        .clone();
+    let rejected = client.call(
+        "session/working-directory/set",
+        json!({"sessionId":SESSION,"path":"/Другая папка"}),
+    );
+    assert!(rejected.get("error").is_some());
+    assert_eq!(
+        client.call(
+            "session/working-directory/get",
+            json!({"sessionId":SESSION})
+        )["result"]["cwd"],
+        before
+    );
+    assert_rejected(&client);
     client.shutdown();
 }
 

@@ -47,7 +47,7 @@ enum Effect {
     Cwd { session: String, cwd: String },
     Key(hoh_protocol::SecretString),
     Rules(hoh_protocol::SettingsRulesSetParams),
-    Model(hoh_protocol::ModelSettings),
+    Settings(hoh_protocol::SettingsSetParams),
 }
 struct Deferred {
     id: Value,
@@ -77,8 +77,7 @@ pub struct Engine<W> {
     stopped: bool,
     privileged: Option<Deferred>,
     credentials: crate::credentials::StubCredentials,
-    rules: Option<hoh_protocol::SettingsRulesSetParams>,
-    model: Option<hoh_protocol::ModelSettings>,
+    settings: Option<hoh_protocol::Settings>,
 }
 impl<W: Write> Engine<W> {
     pub fn new(output: W, recording: Recording, fixtures: PathBuf) -> Self {
@@ -98,8 +97,7 @@ impl<W: Write> Engine<W> {
             stopped: false,
             privileged: None,
             credentials: Default::default(),
-            rules: None,
-            model: None,
+            settings: None,
         }
     }
     pub fn stopped(&self) -> bool {
@@ -351,17 +349,10 @@ impl<W: Write> Engine<W> {
                 validate_result(method, &result)?;
                 let mut result = result;
                 if method == "hoh/settings/get"
-                    && let Some(model) = &self.model
+                    && let Some(settings) = &self.settings
                 {
-                    result["model"] =
-                        serde_json::to_value(model).map_err(|_| "invalid saved model settings")?;
-                }
-                if method == "hoh/settings/get"
-                    && let Some(rules) = &self.rules
-                {
-                    result["security"]["internet"] = serde_json::to_value(&rules.internet)
-                        .map_err(|_| "invalid setup internet mode")?;
-                    result["security"]["folders"] = json!([rules.folder]);
+                    result =
+                        serde_json::to_value(settings).map_err(|_| "invalid saved settings")?;
                 }
                 let (effect, action_params) = match method {
                     "hoh/model/key/set" => {
@@ -385,15 +376,18 @@ impl<W: Write> Engine<W> {
                         (Effect::Rules(rules), params.clone())
                     }
                     "hoh/model/probe" => (Effect::Probe, params.clone()),
-                    "hoh/settings/set" if params.get("model").is_some() => {
-                        let model = serde_json::from_value(params["model"].clone())
-                            .map_err(|_| "invalid model settings")?;
-                        (Effect::Model(model), params.clone())
+                    "hoh/settings/set" => {
+                        let settings = serde_json::from_value(params.clone())
+                            .map_err(|_| "invalid settings")?;
+                        (Effect::Settings(settings), params.clone())
                     }
                     _ => (Effect::None, params.clone()),
                 };
                 if hoh_protocol::requires_host_approval(method, &params) {
                     self.defer(id, method, action_params, result, effect)
+                } else if method == "hoh/settings/set" {
+                    self.commit(Deferred { id, result, effect })
+                        .map_err(|error| error.to_string())
                 } else {
                     self.reply(id, result).map_err(|e| e.to_string())
                 }
@@ -439,13 +433,29 @@ impl<W: Write> Engine<W> {
             }
             Effect::Key(key) => self.credentials.store_model_key(key.expose()),
             Effect::Rules(rules) => {
-                self.rules = Some(rules);
+                let mut settings = self.current_settings()?;
+                settings.security.internet = match rules.internet {
+                    hoh_protocol::SetupInternetMode::Ask => hoh_protocol::InternetMode::Ask,
+                    hoh_protocol::SetupInternetMode::Public => hoh_protocol::InternetMode::Public,
+                };
+                settings.security.folders = vec![rules.folder];
+                self.settings = Some(settings);
                 Ok(())
             }
-            Effect::Model(model) => {
-                response["model"] = serde_json::to_value(&model)
+            Effect::Settings(update) => {
+                let mut settings = self.current_settings()?;
+                if let Some(model) = update.model {
+                    settings.model = model;
+                }
+                if let Some(security) = update.security {
+                    settings.security = security;
+                }
+                if let Some(view) = update.view {
+                    settings.view = view;
+                }
+                response = serde_json::to_value(&settings)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                self.model = Some(model);
+                self.settings = Some(settings);
                 Ok(())
             }
         };
@@ -453,6 +463,16 @@ impl<W: Write> Engine<W> {
             Ok(()) => self.reply(deferred.id, response),
             Err(message) => self.reject(deferred.id, message),
         }
+    }
+    fn current_settings(&self) -> io::Result<hoh_protocol::Settings> {
+        if let Some(settings) = &self.settings {
+            return Ok(settings.clone());
+        }
+        let path = self.fixtures.join("hoh-settings-get.response.json");
+        let frame: Value = serde_json::from_str(&fs::read_to_string(&path)?)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        serde_json::from_value(frame["result"].clone())
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
     fn start(&mut self, id: Value, query: bool, params: &Value) -> Result<(), String> {
         if self.active.is_some() || self.pending.is_some() {
@@ -643,6 +663,82 @@ impl<W: Write> Engine<W> {
     }
     fn approval_text(&self, method: &str, params: &Value) -> Result<String, String> {
         match method {
+            "session/working-directory/set" => {
+                let request: hoh_protocol::SessionWorkingDirectorySetParams =
+                    serde_json::from_value(params.clone())
+                        .map_err(|_| "invalid working directory")?;
+                Ok(format!(
+                    "Разрешить работу в папке {}?",
+                    quoted(&request.path)
+                ))
+            }
+            "hoh/settings/set" => {
+                let request: hoh_protocol::SettingsSetParams =
+                    serde_json::from_value(params.clone()).map_err(|_| "invalid settings")?;
+                let mut changes = Vec::new();
+                if let Some(model) = request.model {
+                    changes.push(format!(
+                        "модель — {}, провайдер — {}",
+                        quoted(&model.model),
+                        quoted(&model.base_url)
+                    ));
+                }
+                if let Some(security) = request.security {
+                    changes.push(format!("права: {}", permissions_text(&security)));
+                }
+                if let Some(view) = request.view {
+                    changes.push(format!(
+                        "вид — {}, размер текста — {}",
+                        theme_text(&view.theme),
+                        view.font_size
+                    ));
+                }
+                if changes.is_empty() {
+                    return Err("settings update has no changes".into());
+                }
+                Ok(format!("Изменить настройки: {}?", changes.join("; ")))
+            }
+            "hoh/employee/create" => {
+                let request: hoh_protocol::EmployeeCreateParams =
+                    serde_json::from_value(params.clone()).map_err(|_| "invalid employee draft")?;
+                Ok(format!(
+                    "Создать сотрудника {} с ролью {}; правила — {}; назначенные задачи — {}; права: {}?",
+                    quoted(&request.draft.name),
+                    quoted(&request.draft.role),
+                    quoted_list(&request.draft.rules),
+                    quoted_list(&request.draft.task_ids),
+                    permissions_text(&request.draft.permissions)
+                ))
+            }
+            "hoh/employee/update" => {
+                let request: hoh_protocol::EmployeeUpdateParams =
+                    serde_json::from_value(params.clone())
+                        .map_err(|_| "invalid employee update")?;
+                let mut changes = Vec::new();
+                if let Some(name) = request.patch.name {
+                    changes.push(format!("имя — {}", quoted(&name)));
+                }
+                if let Some(role) = request.patch.role {
+                    changes.push(format!("роль — {}", quoted(&role)));
+                }
+                if let Some(rules) = request.patch.rules {
+                    changes.push(format!("правила — {}", quoted_list(&rules)));
+                }
+                if let Some(task_ids) = request.patch.task_ids {
+                    changes.push(format!("назначенные задачи — {}", quoted_list(&task_ids)));
+                }
+                if let Some(permissions) = request.patch.permissions {
+                    changes.push(format!("права: {}", permissions_text(&permissions)));
+                }
+                if changes.is_empty() {
+                    return Err("privileged employee update has no rights change".into());
+                }
+                Ok(format!(
+                    "Изменить сотрудника {}: {}?",
+                    quoted(&request.id),
+                    changes.join("; ")
+                ))
+            }
             "hoh/settings/rules/set" => {
                 let rules: hoh_protocol::SettingsRulesSetParams =
                     serde_json::from_value(params.clone()).map_err(|_| "invalid setup rules")?;
@@ -651,8 +747,8 @@ impl<W: Write> Engine<W> {
                     hoh_protocol::SetupInternetMode::Public => "к общедоступным сайтам",
                 };
                 Ok(format!(
-                    "Разрешить работу в папке {:?} и доступ в интернет {internet}?",
-                    rules.folder
+                    "Разрешить работу в папке {} и доступ в интернет {internet}?",
+                    quoted(&rules.folder)
                 ))
             }
             "hoh/model/key/set" => {
@@ -660,14 +756,18 @@ impl<W: Write> Engine<W> {
                     .as_str()
                     .filter(|value| !value.is_empty())
                     .ok_or("model provider address missing")?;
-                Ok(format!("Сохранить API-ключ для провайдера {address:?}?"))
+                Ok(format!(
+                    "Сохранить API-ключ для провайдера {}?",
+                    quoted(address)
+                ))
             }
             "hoh/model/probe" => {
                 let probe: hoh_protocol::ModelProbeParams =
                     serde_json::from_value(params.clone()).map_err(|_| "invalid model probe")?;
                 Ok(format!(
-                    "Разрешить проверку модели {:?} у провайдера {:?}?",
-                    probe.model, probe.base_url
+                    "Разрешить проверку модели {} у провайдера {}?",
+                    quoted(&probe.model),
+                    quoted(&probe.base_url)
                 ))
             }
             _ => Ok(format!("Разрешить действие {method}?")),
@@ -862,6 +962,56 @@ impl<W: Write> Engine<W> {
         Ok(())
     }
 }
+
+fn quoted(value: &str) -> String {
+    format!("«{value}»")
+}
+
+fn quoted_list(values: &[String]) -> String {
+    if values.is_empty() {
+        "нет".into()
+    } else {
+        values
+            .iter()
+            .map(|value| quoted(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn permissions_text(permissions: &hoh_protocol::Permissions) -> String {
+    let internet = match &permissions.internet {
+        hoh_protocol::InternetMode::Ask => "с запросом разрешения",
+        hoh_protocol::InternetMode::Public => "общедоступные сайты",
+        hoh_protocol::InternetMode::Deny => "запрещён",
+    };
+    format!(
+        "интернет — {internet}; сайты — {}; папки — {}; изменение файлов — {}; запуск программ — {}; сеть для программ — {}; действия от вашего имени — {}",
+        quoted_list(&permissions.domains),
+        quoted_list(&permissions.folders),
+        allowed(permissions.write_files),
+        allowed(permissions.programs),
+        quoted_list(&permissions.program_network),
+        allowed(permissions.act_as_user)
+    )
+}
+
+fn allowed(value: bool) -> &'static str {
+    if value {
+        "разрешено"
+    } else {
+        "запрещено"
+    }
+}
+
+fn theme_text(theme: &hoh_protocol::Theme) -> &'static str {
+    match theme {
+        hoh_protocol::Theme::Light => "светлая тема",
+        hoh_protocol::Theme::Dark => "тёмная тема",
+        hoh_protocol::Theme::System => "как в системе",
+    }
+}
+
 fn command_execution(event: &Value) -> Value {
     let data = &event["data"];
     let mut result = json!({"kind":data["kind"]});
