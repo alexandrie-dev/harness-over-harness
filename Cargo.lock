@@ -2119,6 +2119,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-ask-user"
+version = "0.1.0"
+dependencies = [
+ "hoh-agent",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tools",
+ "hoh-user-questions",
+ "hoh-util-values",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-bash"
 version = "0.1.0"
 dependencies = [
