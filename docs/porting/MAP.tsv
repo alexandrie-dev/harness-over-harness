@@ -141,7 +141,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/plan/plan-mode	@deepseek-ai/dsh-plan-mode	hoh-plan-mode	580	1737	writing:x7	
 2	port	packages/preset/agent-preset	@deepseek-ai/dsh-agent-preset	hoh-agent-preset	30	271	todo	
 2	port	packages/preset/persona	@deepseek-ai/dsh-persona	hoh-persona	75	179	done	
-2	port	packages/session-query/session-query-sqlite	@deepseek-ai/dsh-session-query-sqlite	hoh-session-query-sqlite	1781	2215	todo	
+2	port	packages/session-query/session-query-sqlite	@deepseek-ai/dsh-session-query-sqlite	hoh-session-query-sqlite	1781	2215	writing:x4	
 2	port	packages/session/session-telemetry	@deepseek-ai/dsh-session-telemetry	hoh-session-telemetry	479	910	done	
 2	port	packages/session/session-telemetry-otel	@deepseek-ai/dsh-session-telemetry-otel	hoh-session-telemetry-otel	278	1323	todo	
 2	port	packages/session/session-title-first-prompt-llm	@deepseek-ai/dsh-session-title-first-prompt-llm	hoh-session-title-first-prompt-llm	168	551	accepted	
@@ -151,7 +151,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/shell/shell-env	@deepseek-ai/dsh-shell-env	hoh-shell-env	255	249	done	
 2	port	packages/shell/tool-bash	@deepseek-ai/dsh-tool-bash	hoh-tool-bash	871	2569	done	
 2	port	packages/skill/skill-filesystem	@deepseek-ai/dsh-skill-filesystem	hoh-skill-filesystem	1064	1530	writing:x4	
-2	port	packages/skill/tool-skill	@deepseek-ai/dsh-tool-skill	hoh-tool-skill	452	1240	writing:x4
+2	port	packages/skill/tool-skill	@deepseek-ai/dsh-tool-skill	hoh-tool-skill	452	1240	accepted
 2	port	packages/spill/spill	@deepseek-ai/dsh-spill	hoh-spill	138	61	done	
 2	port	packages/spill/spill-local	@deepseek-ai/dsh-spill-local	hoh-spill-local	727	663	writing:x6	
 2	port	packages/spill/spill-policy	@deepseek-ai/dsh-spill-policy	hoh-spill-policy	346	1235	writing:x6	
@@ -166,7 +166,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/util/ripgrep	@deepseek-ai/dsh-util-ripgrep	hoh-util-ripgrep	109	189	done	
 2	port	packages/web/tool-web	@deepseek-ai/dsh-tool-web	hoh-tool-web	1054	1692	writing:x8	
 2	port	packages/web/web	@deepseek-ai/dsh-web	hoh-web	507	394	done	зависит от: dsh-typert-protocol=skip
-2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	writing:x8	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
+2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	accepted	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
 2	port	packages/web/web-fetch-http	@deepseek-ai/dsh-web-fetch-http	hoh-web-fetch-http	601	853	done	
 2	port	packages/web/web-search-deepseek	@deepseek-ai/dsh-web-search-deepseek	hoh-web-search-deepseek	696	1322	writing:x8	зависит от: dsh-deepseek-account=later
 3	port	packages/browser-use/browser-use	@deepseek-ai/dsh-browser-use	hoh-browser-use	65	51	todo	
@@ -175,13 +175,13 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 3	port	packages/context/session-reference	@deepseek-ai/dsh-session-reference	hoh-session-reference	1011	1545	writing:x3	
 3	port	packages/context/tmux-context	@deepseek-ai/dsh-tmux-context	hoh-tmux-context	272	484	done	
 3	port	packages/core/agent-tool-presentation	@deepseek-ai/dsh-agent-tool-presentation	hoh-agent-tool-presentation	54	139	done	
-3	port	packages/deliverables/workspace-changes	@deepseek-ai/dsh-workspace-changes	hoh-workspace-changes	1294	1477	writing:x5	
+3	port	packages/deliverables/workspace-changes	@deepseek-ai/dsh-workspace-changes	hoh-workspace-changes	1294	1477	done	
 3	port	packages/fs/tool-str-replace-editor	@deepseek-ai/dsh-tool-str-replace-editor	hoh-tool-str-replace-editor	537	690	done	
 3	port	packages/mcp/mcp-client	@deepseek-ai/dsh-mcp-client	hoh-mcp-client	2175	5064	accepted	
 3	port	packages/mcp/mcp-manager	@deepseek-ai/dsh-mcp-manager	hoh-mcp-manager	652	1349	writing:x8	
 3	port	packages/preset/agent-preset/skills/dsh-doc/templates/decoration	@local/my-decoration	hoh-my-decoration	0	0	todo	
 3	port	packages/preset/agent-preset/skills/dsh-doc/templates/mcp	@local/demo-mcp	hoh-demo-mcp	0	0	todo	
-3	port	packages/session-query/session-log-export	@deepseek-ai/dsh-session-log-export	hoh-session-log-export	2013	3283	todo	
+3	port	packages/session-query/session-log-export	@deepseek-ai/dsh-session-log-export	hoh-session-log-export	2013	3283	writing:x5	
 3	port	packages/session/message-quotes	@deepseek-ai/dsh-message-quotes	hoh-message-quotes	230	325	writing:x3	
 3	port	packages/session/session-stats	@deepseek-ai/dsh-session-stats	hoh-session-stats	299	450	writing:x3	
 3	port	packages/session/session-turn-outline	@deepseek-ai/dsh-session-turn-outline	hoh-session-turn-outline	229	377	writing:x3	

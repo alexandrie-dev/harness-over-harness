@@ -3222,6 +3222,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-workspace-changes"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-subprocess",
+ "hoh-subprocess-local",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tools",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
