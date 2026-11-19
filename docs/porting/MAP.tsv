@@ -22,7 +22,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/compaction/compaction-tool-result-pruner	@deepseek-ai/dsh-compaction-tool-result-pruner	hoh-compaction-tool-result-pruner	303	356	writing:x7	
 1	port	packages/context/file-reference	@deepseek-ai/dsh-file-reference	hoh-file-reference	112	21	writing:x8	
 1	port	packages/context/file-reference-local	@deepseek-ai/dsh-file-reference-local	hoh-file-reference-local	523	541	writing:x8	
-1	port	packages/context/time-context	@deepseek-ai/dsh-time-context	hoh-time-context	377	977	writing:x3	
+1	port	packages/context/time-context	@deepseek-ai/dsh-time-context	hoh-time-context	377	977	done	
 1	port	packages/core/agent	@deepseek-ai/dsh-agent	hoh-agent	1791	1677	done	зависит от: dsh-typert-protocol=skip
 1	port	packages/core/agent-default-model	@deepseek-ai/dsh-agent-default-model	hoh-agent-default-model	98	70	writing:x3	
 1	port	packages/core/agent-loop	@deepseek-ai/dsh-agent-loop	hoh-agent-loop	2149	15523	done	
