@@ -2342,6 +2342,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-user-questions"
+version = "0.1.0"
+dependencies = [
+ "hoh-agent",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-timeout",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-util-code-language"
 version = "0.1.0"
 
