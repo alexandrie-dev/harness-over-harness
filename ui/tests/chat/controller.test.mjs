@@ -513,6 +513,121 @@ test('the durable assistant message takes the place of the live text without a s
   } finally { controller.disconnect(); await stub.close(); }
 });
 
+async function withGapController(history, callback, { failCancelOnce = false } = {}) {
+  const stub = await StubClient.open(); let emit; let historyReads = 0; let waitReads = 0; let cancelAttempts = 0;
+  const client = transport(stub, (method, params) => {
+    if (method === 'session/cancel' && failCancelOnce && cancelAttempts++ === 0) return Promise.reject(new Error('temporary cancellation failure'));
+    if (method === 'session/wait') waitReads++;
+    if (method === 'session/events') {
+      historyReads++;
+      if (historyReads > 1) return Promise.resolve({ events: history, nextSeq: history.at(-1)?.seq ?? -1 });
+    }
+    return stub.request(method, params);
+  });
+  client.subscribe = async listener => { emit = listener; return () => { emit = undefined; }; };
+  const controller = new ChatController(() => client, undefined, async () => {});
+  try {
+    await controller.connect(); const sessionId = controller.sessionId;
+    const push = async (method, params) => { emit({ method, params: { sessionId, ...params } }); await controller.queue; };
+    await callback(controller, push, () => historyReads, () => waitReads);
+  } finally { controller.disconnect(); await stub.close(); }
+}
+
+async function sendGappedTurn(push, end = true) {
+  await push('session.status', { status: 'running' });
+  await push('session.assistant-stream', { frame: { type: 'start', attemptId: 'gap-1', revision: 1, turn: 7, step: 2 } });
+  await push('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'gap-1', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Префикс' } } });
+  await push('session.assistant-stream', { frame: { type: 'gap', attemptId: 'gap-1', revision: 3, index: 1 } });
+  await push('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'gap-1', revision: 4, index: 2, time: 1, chunk: { type: 'text-delta', text: ' ЛИШНЕЕ' } } });
+  if (end) await push('session.assistant-stream', { frame: { type: 'end', attemptId: 'gap-1', revision: 5, index: 3, outcome: 'committed' } });
+}
+
+test('turn end reconciles a gapped live prefix from durable session history', async () => {
+  const final = { type: 'assistant/message', seq: 700, time: 1, data: { turn: 7, step: 2, message: { id: 'gap-final', content: [{ type: 'text', text: 'Полный ответ' }] } } };
+  await withGapController([final], async (controller, push, historyReads) => {
+    await sendGappedTurn(push);
+    assert.deepEqual(controller.state.entries.map(entry => [entry.text, entry.streaming]), [['Префикс', true]]);
+    await push('session.event', { event: { type: 'turn/end', seq: 701, time: 1, data: { reason: { kind: 'completed' } } } });
+    assert.deepEqual(controller.state.entries, [{ id: 'assistant-gap-final', kind: 'assistant', text: 'Полный ответ', streaming: false }]);
+    assert.equal(controller.state.busy, false); assert.equal(historyReads(), 2);
+  });
+});
+
+test('turn end marks an unrecoverable gapped prefix as incomplete instead of final', async () => {
+  await withGapController([], async (controller, push, historyReads) => {
+    await sendGappedTurn(push);
+    await push('session.event', { event: { type: 'turn/end', seq: 702, time: 1, data: { reason: { kind: 'error' } } } });
+    assert.deepEqual(controller.state.entries.map(entry => [entry.text, entry.streaming, entry.incomplete]), [['Префикс\n\n*Ответ получен не полностью.*', false, true]]);
+    assert.equal(controller.state.busy, false); assert.equal(historyReads(), 2);
+  });
+});
+
+test('Stop waits for cancellation and replaces a gapped prefix from durable history', async () => {
+  const final = { type: 'assistant/message', seq: 710, time: 1, data: { turn: 7, step: 2, message: { id: 'cancel-final', content: [{ type: 'text', text: 'Сохранённый ответ' }] } } };
+  await withGapController([final], async (controller, push, historyReads) => {
+    await sendGappedTurn(push, false);
+    await controller.stop();
+    assert.deepEqual(controller.state.entries, [{ id: 'assistant-cancel-final', kind: 'assistant', text: 'Сохранённый ответ', streaming: false }]);
+    assert.equal(controller.state.busy, false); assert.equal(controller.state.canceling, false); assert.equal(historyReads(), 2);
+  });
+});
+
+test('a successful Stop retry still recovers a gapped prefix after cancellation failed once', async () => {
+  const final = { type: 'assistant/message', seq: 711, time: 1, data: { turn: 7, step: 2, message: { id: 'retry-final', content: [{ type: 'text', text: 'Итог после повтора' }] } } };
+  await withGapController([final], async (controller, push, historyReads) => {
+    await sendGappedTurn(push, false);
+    await controller.stop();
+    assert.equal(controller.state.busy, true); assert.equal(controller.state.canceling, false);
+    assert.equal(controller.state.entries[0].streaming, true); assert.equal(controller.projection.hasGap(), true);
+    await controller.stop();
+    assert.deepEqual(controller.state.entries, [{ id: 'assistant-retry-final', kind: 'assistant', text: 'Итог после повтора', streaming: false }]);
+    assert.equal(controller.state.busy, false); assert.equal(historyReads(), 2);
+  }, { failCancelOnce: true });
+});
+
+test('a late durable message replaces an incomplete gap without affecting a later ordinary Stop', async () => {
+  await withGapController([], async (controller, push, historyReads, waitReads) => {
+    await sendGappedTurn(push);
+    await push('session.event', { event: { type: 'turn/end', seq: 720, time: 1, data: { reason: { kind: 'completed' } } } });
+    assert.equal(controller.projection.hasGap(), false);
+    assert.equal(historyReads(), 2);
+    await push('session.event', { event: { type: 'assistant/message', seq: 721, time: 1, data: { turn: 7, step: 2, message: { id: 'late-final', content: [{ type: 'text', text: 'Поздний полный ответ' }] } } } });
+    assert.deepEqual(controller.state.entries.filter(entry => entry.kind === 'assistant'), [{ id: 'assistant-late-final', kind: 'assistant', text: 'Поздний полный ответ', streaming: false }]);
+
+    await push('session.status', { status: 'running' });
+    await push('session.assistant-stream', { frame: { type: 'start', attemptId: 'ordinary', revision: 1, turn: 8, step: 1 } });
+    await push('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'ordinary', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Обычный ответ' } } });
+    await controller.stop();
+    assert.equal(historyReads(), 2); assert.equal(waitReads(), 0);
+  });
+});
+
+test('a late empty durable message removes an incomplete gap without affecting a later ordinary Stop', async () => {
+  await withGapController([], async (controller, push, historyReads, waitReads) => {
+    await sendGappedTurn(push);
+    await push('session.event', { event: { type: 'turn/end', seq: 722, time: 1, data: { reason: { kind: 'completed' } } } });
+    assert.equal(controller.projection.hasGap(), false); assert.equal(historyReads(), 2);
+    await push('session.event', { event: { type: 'assistant/message', seq: 723, time: 1, data: { turn: 7, step: 2, message: { id: 'late-empty', content: [] } } } });
+    assert.deepEqual(controller.state.entries, []);
+
+    await push('session.status', { status: 'running' });
+    await push('session.assistant-stream', { frame: { type: 'start', attemptId: 'ordinary-empty', revision: 1, turn: 8, step: 1 } });
+    await push('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'ordinary-empty', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Обычный ответ' } } });
+    await controller.stop();
+    assert.equal(historyReads(), 2); assert.equal(waitReads(), 0);
+  });
+});
+
+test('history recovery removes a gapped prefix when the canonical message is empty', async () => {
+  const empty = { type: 'assistant/message', seq: 730, time: 1, data: { turn: 7, step: 2, message: { id: 'empty-recovered', content: [] } } };
+  await withGapController([empty], async (controller, push, historyReads) => {
+    await sendGappedTurn(push);
+    await push('session.event', { event: { type: 'turn/end', seq: 731, time: 1, data: { reason: { kind: 'completed' } } } });
+    assert.deepEqual(controller.state.entries, []);
+    assert.equal(controller.state.busy, false); assert.equal(historyReads(), 2);
+  });
+});
+
 test('questions from the assistant are shown, answered through the host, and withdrawn by the engine', async () => {
   const stub = await StubClient.open(); let ask; const answered = [];
   const client = { ...transport(stub),

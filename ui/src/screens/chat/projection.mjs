@@ -80,6 +80,23 @@ function argumentsOf(value) {
   try { return record(typeof value === 'string' ? JSON.parse(value) : value); }
   catch { return {}; }
 }
+const incompleteMarker = '*Ответ получен не полностью.*';
+function withIncompleteMarker(value) {
+  let fence;
+  for (const sourceLine of value.split('\n')) {
+    const line = sourceLine.endsWith('\r') ? sourceLine.slice(0, -1) : sourceLine;
+    if (fence) {
+      const closing = line.match(/^ {0,3}(`+|~+)[ \t]*$/);
+      if (closing && closing[1][0] === fence.char && closing[1].length >= fence.length) fence = undefined;
+      continue;
+    }
+    const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (opening && (opening[1][0] !== '`' || !opening[2].includes('`')))
+      fence = { char: opening[1][0], length: opening[1].length };
+  }
+  const closing = fence ? '\n' + fence.char.repeat(fence.length) : '';
+  return value + closing + '\n\n' + incompleteMarker;
+}
 function operationOf(name, args) {
   if (['read', 'read_file', 'file_read', 'read_image'].includes(name) || (name === 'str_replace_editor' && args.command === 'view')) return 'read';
   if (['write', 'write_file', 'file_write', 'str_replace_editor', 'edit_file'].includes(name)) return 'write';
@@ -131,10 +148,22 @@ export class ChatProjection {
     this.arguments = new Map();
     this.counter = 0;
     this.live = new Map();
+    this.incomplete = new Map();
     this.retired = new Set();
   }
   replace(index, entry) {
     const entries = this.entries.slice(); entries[index] = entry; this.entries = entries;
+  }
+  remove(index) {
+    const entries = this.entries.slice(); entries.splice(index, 1); this.entries = entries;
+    for (const map of [this.users, this.assistants, this.calls, this.incomplete]) for (const [key, value] of map) {
+      if (value === index) map.delete(key);
+      else if (value > index) map.set(key, value - 1);
+    }
+    for (const live of this.live.values()) if (live.index !== undefined) {
+      if (live.index === index) live.index = undefined;
+      else if (live.index > index) live.index--;
+    }
   }
   append(entry) { const index = this.entries.length; this.entries = [...this.entries, entry]; return index; }
   optimistic(value) {
@@ -169,7 +198,7 @@ export class ChatProjection {
   }
   /**
    * Live text of the answer, as the engine publishes it while the model is still writing
-   * (`session.assistant-stream`: start | chunk{text-delta} | end). It is process-local: the durable
+   * (`session.assistant-stream`: start | chunk{text-delta} | gap | end). It is process-local: the durable
    * `assistant/message` that follows replaces it in place. Whatever arrived before a stop stays.
    */
   liveFrame(frame) {
@@ -188,7 +217,7 @@ export class ChatProjection {
       const previous = this.live.get(key);
       // a retried attempt of the same step starts the text over; the replaced one never comes back
       if (previous) this.retired.add(previous.attemptId);
-      this.live.set(key, { attemptId: attempt, raw: '', last: -1, index: previous?.index, revision });
+      this.live.set(key, { attemptId: attempt, raw: '', last: -1, index: previous?.index, revision, gapped: false });
       if (previous?.index !== undefined) this.replace(previous.index, { ...this.entries[previous.index], text: '', streaming: true });
       return;
     }
@@ -197,11 +226,20 @@ export class ChatProjection {
     const [liveKey, live] = found;
     if (revision < live.revision) return;
     live.revision = revision;
-    if (type === 'end') {
-      this.retired.add(attempt);
-      if (live.index !== undefined) this.replace(live.index, { ...this.entries[live.index], streaming: false });
+    if (type === 'gap') {
+      if (!Number.isSafeInteger(frameRecord.index) || frameRecord.index < 0) return;
+      live.gapped = true;
+      this.live.set(liveKey, live);
       return;
     }
+    if (type === 'end') {
+      this.retired.add(attempt);
+      // A gap means the visible text is only a prefix. Keep its cursor until the
+      // durable assistant/message settles it or the controller exhausts history.
+      if (!live.gapped && live.index !== undefined) this.replace(live.index, { ...this.entries[live.index], streaming: false });
+      return;
+    }
+    if (live.gapped) return;
     const chunk = record(frameRecord.chunk);
     if (type !== 'chunk' || chunk.type !== 'text-delta' || typeof chunk.text !== 'string') return;
     if (!Number.isSafeInteger(frameRecord.index) || frameRecord.index <= live.last) return;
@@ -212,20 +250,34 @@ export class ChatProjection {
     else this.replace(live.index, entry);
     this.live.set(liveKey, live);
   }
+  hasGap() { return [...this.live.values()].some(live => live.gapped); }
+  hasUnsettledGap() { return this.hasGap(); }
+  /** A durable answer was unavailable after turn/end: retain and label the prefix honestly. */
+  finishGaps() {
+    for (const [key, live] of this.live) {
+      if (!live.gapped) continue;
+      this.live.delete(key); this.retired.add(live.attemptId);
+      if (live.index === undefined) continue;
+      this.incomplete.set(key, live.index);
+      const entry = this.entries[live.index];
+      this.replace(live.index, { ...entry, text: withIncompleteMarker(entry.text), streaming: false, incomplete: true });
+    }
+  }
   hasLive(event) {
-    const live = this.live.get(String(event.data?.turn ?? '') + ':' + String(event.data?.step ?? ''));
-    return live?.index !== undefined;
+    const key = String(event.data?.turn ?? '') + ':' + String(event.data?.step ?? '');
+    return this.live.get(key)?.index !== undefined || this.incomplete.has(key);
   }
   /** The durable answer takes the place of what was shown live. */
   settleLive(event, value) {
     const key = String(event.data?.turn ?? '') + ':' + String(event.data?.step ?? '');
-    const live = this.live.get(key); const message = record(event.data?.message);
-    if (live?.index === undefined || !text(message.id)) return false;
-    this.live.delete(key); this.retired.add(live.attemptId);
-    if (!value) return true;
+    const live = this.live.get(key); const index = live?.index ?? this.incomplete.get(key); const message = record(event.data?.message);
+    if (index === undefined || !text(message.id)) return false;
+    if (live) { this.live.delete(key); this.retired.add(live.attemptId); }
+    this.incomplete.delete(key);
+    if (!value) { this.remove(index); return true; }
     const id = 'assistant-' + message.id;
-    this.replace(live.index, { id, kind: 'assistant', text: visibleText(value, this.folder), streaming: false });
-    this.assistants.set(id, live.index);
+    this.replace(index, { id, kind: 'assistant', text: visibleText(value, this.folder), streaming: false });
+    this.assistants.set(id, index);
     return true;
   }
   apply(event) {
@@ -238,7 +290,7 @@ export class ChatProjection {
     }
     if (event.type === 'turn/start') this.running = true;
     if (event.type === 'turn/end') {
-      if (data.reason?.kind === 'aborted') this.stop();
+      if (data.reason?.kind === 'aborted') this.stop(true);
       else this.setRunning(false);
     }
     if (event.type === 'user/message' && data.source?.kind === 'user') {
@@ -287,14 +339,17 @@ export class ChatProjection {
   }
   setRunning(running) {
     this.running = running;
-    if (!running) this.entries = this.entries.map(entry => entry.kind === 'step' && entry.status === 'running'
+    const unfinished = new Set([...this.live.values()].filter(live => live.gapped).map(live => live.index));
+    if (!running) this.entries = this.entries.map((entry, index) => entry.kind === 'step' && entry.status === 'running'
       ? { ...entry, status: 'error', label: labelFor(entry, 'error'), detail: 'Действие не удалось завершить.' }
-      : entry.streaming ? { ...entry, streaming: false } : entry);
+      : entry.streaming && !unfinished.has(index) ? { ...entry, streaming: false } : entry);
   }
-  stop() {
+  stop(preserveGaps = false) {
     this.running = false;
-    this.entries = this.entries.map(entry => entry.kind === 'step' && entry.status === 'running'
+    const unfinished = new Set([...this.live.values()].filter(live => live.gapped).map(live => live.index));
+    this.entries = this.entries.map((entry, index) => entry.kind === 'step' && entry.status === 'running'
       ? { ...entry, status: 'stopped', label: labelFor(entry, 'stopped') }
-      : entry.streaming ? { ...entry, streaming: false } : entry);
+      : entry.streaming && (!preserveGaps || !unfinished.has(index)) ? { ...entry, streaming: false } : entry);
+    if (!preserveGaps) this.finishGaps();
   }
 }

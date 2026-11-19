@@ -179,6 +179,23 @@ try {
     if (process.argv[2]) await page.screenshot({ path: join(process.argv[2], 'stream-stopped.png'), animations: 'disabled' });
   });
 
+  await check('gap-incomplete-markdown', 'text-turn', async page => {
+    const { sessionId } = await page.evaluate(() => window.__HOH_CHAT_TEST_TRANSPORT__.request('hoh/employee/open', { id: 'employee-1' }));
+    const send = (method, params) => page.evaluate(([m, p]) => window.__hohChatNotify({ method: m, params: p }), [method, { sessionId, ...params }]);
+    await send('session.status', { status: 'running' });
+    await send('session.assistant-stream', { frame: { type: 'start', attemptId: 'gap-markdown', revision: 1, turn: 9, step: 1 } });
+    await send('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'gap-markdown', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Пример:\n```js\nalert(1)' } } });
+    await send('session.assistant-stream', { frame: { type: 'gap', attemptId: 'gap-markdown', revision: 3, index: 1 } });
+    await send('session.assistant-stream', { frame: { type: 'end', attemptId: 'gap-markdown', revision: 4, index: 2, outcome: 'committed' } });
+    await send('session.event', { event: { type: 'turn/end', seq: 9901, time: 1, data: { reason: { kind: 'completed' } } } });
+    const answer = page.locator('[data-chat-entry="assistant"]').last();
+    await answer.locator('em').waitFor();
+    assert.equal(await answer.locator('em').textContent(), 'Ответ получен не полностью.');
+    assert.equal(await answer.locator('pre em').count(), 0, 'the marker must render outside an unfinished code fence');
+    assert.equal(await answer.locator('pre code').textContent(), 'alert(1)');
+    assert.equal(await answer.getAttribute('data-streaming'), 'false');
+  });
+
   await check('text-stream', 'text-turn', async (page, stub) => {
     const prompt = await recordedPrompt('text-turn');
     await page.getByLabel('Сообщение Помощнику', { exact: true }).fill(prompt);

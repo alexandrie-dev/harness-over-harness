@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { Lexer } from 'marked';
 import { harmfulMarkdownCases } from './markdown-cases.mjs';
 import { ChatProjection, assistantChunks, humanFile, numberInWords, visibleText } from '../../src/screens/chat/projection.mjs';
 import { StubClient, recordedPrompt, WORKSPACE } from './stub-client.mjs';
@@ -156,6 +157,81 @@ test('an idle/error ending gives unfinished work a terminal human result', () =>
   p.event(event('turn/end', 1, { reason: { kind: 'error', detail: '/etc/private' } }));
   assert.equal(p.entries[0].status, 'error'); assert.equal(p.entries[0].label, 'Не удалось прочитать note.txt');
   assert(!p.entries[0].detail.includes('/etc')); assert.equal(p.running, false);
+});
+
+test('a stream gap keeps its prefix unfinished until the durable answer replaces it', () => {
+  const p = new ChatProjection();
+  p.liveFrame({ type: 'start', attemptId: 'a1', revision: 1, turn: 1, step: 1 });
+  p.liveFrame({ type: 'chunk', attemptId: 'a1', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Начало ' } });
+  p.liveFrame({ type: 'gap', attemptId: 'foreign', revision: 99, index: 1 });
+  p.liveFrame({ type: 'gap', attemptId: 'a1', revision: 1, index: 1 });
+  p.liveFrame({ type: 'chunk', attemptId: 'a1', revision: 2, index: 1, time: 1, chunk: { type: 'text-delta', text: 'середина ' } });
+  p.liveFrame({ type: 'gap', attemptId: 'a1', revision: 3, index: 2 });
+  p.liveFrame({ type: 'chunk', attemptId: 'a1', revision: 4, index: 3, time: 1, chunk: { type: 'text-delta', text: 'ПОСЛЕ GAP' } });
+  p.liveFrame({ type: 'end', attemptId: 'a1', revision: 5, index: 4, outcome: 'committed' });
+  p.liveFrame({ type: 'gap', attemptId: 'a1', revision: 6, index: 5 });
+  assert.deepEqual(p.entries.map(entry => [entry.text, entry.streaming]), [['Начало середина ', true]]);
+
+  p.event(event('assistant/message', 1, { turn: 1, step: 1, message: { id: 'final', content: [{ type: 'text', text: 'Начало и полный конец.' }] } }));
+  assert.deepEqual(p.entries, [{ id: 'assistant-final', kind: 'assistant', text: 'Начало и полный конец.', streaming: false }]);
+});
+
+test('an incomplete marker is italic outside an unterminated Markdown fence', () => {
+  const p = new ChatProjection();
+  p.liveFrame({ type: 'start', attemptId: 'fenced', revision: 1, turn: 1, step: 1 });
+  p.liveFrame({ type: 'chunk', attemptId: 'fenced', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Пример:\n```js\nalert(1)' } });
+  p.liveFrame({ type: 'gap', attemptId: 'fenced', revision: 3, index: 1 });
+  p.finishGaps();
+  assert.equal(p.entries[0].text, 'Пример:\n```js\nalert(1)\n```\n\n*Ответ получен не полностью.*');
+  const tokens = Lexer.lex(p.entries[0].text, { gfm: true });
+  assert.equal(tokens.at(-1).type, 'paragraph');
+  assert.equal(tokens.at(-1).tokens[0].type, 'em');
+
+  const crlf = new ChatProjection();
+  const closed = 'Пример:\r\n```js\r\nalert(1)\r\n```\r\nПосле';
+  crlf.liveFrame({ type: 'start', attemptId: 'crlf', revision: 1, turn: 2, step: 1 });
+  crlf.liveFrame({ type: 'chunk', attemptId: 'crlf', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: closed } });
+  crlf.liveFrame({ type: 'gap', attemptId: 'crlf', revision: 3, index: 1 });
+  crlf.finishGaps();
+  assert.equal(crlf.entries[0].text, closed + '\n\n*Ответ получен не полностью.*');
+  const crlfTokens = Lexer.lex(crlf.entries[0].text, { gfm: true });
+  assert.equal(crlfTokens.at(-1).tokens[0].type, 'em');
+});
+
+test('an empty canonical message removes a gapped prefix like an ordinary empty message', () => {
+  const ordinary = new ChatProjection();
+  ordinary.event(event('assistant/message', 1, { turn: 1, step: 1, message: { id: 'empty-ordinary', content: [] } }));
+  assert.deepEqual(ordinary.entries, []);
+
+  const p = new ChatProjection();
+  p.liveFrame({ type: 'start', attemptId: 'empty-gap', revision: 1, turn: 1, step: 1 });
+  p.liveFrame({ type: 'chunk', attemptId: 'empty-gap', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Лишний префикс' } });
+  p.liveFrame({ type: 'gap', attemptId: 'empty-gap', revision: 3, index: 1 });
+  p.event(event('assistant/message', 2, { turn: 1, step: 1, message: { id: 'empty-gap-final', content: [] } }));
+  assert.deepEqual(p.entries, []);
+  assert.equal(p.hasGap(), false);
+
+  const indexed = new ChatProjection();
+  indexed.event(event('user/message', 3, { id: 'before', source: { kind: 'user' }, content: [{ type: 'text', text: 'До' }] }));
+  indexed.liveFrame({ type: 'start', attemptId: 'indexed-gap', revision: 1, turn: 2, step: 1 });
+  indexed.liveFrame({ type: 'chunk', attemptId: 'indexed-gap', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Лишнее' } });
+  indexed.liveFrame({ type: 'gap', attemptId: 'indexed-gap', revision: 3, index: 1 });
+  indexed.event(event('tool/call', 4, { turn: 2, name: 'read', callId: 'after', arguments: { file_path: 'note.txt' } }));
+  indexed.event(event('assistant/message', 5, { turn: 2, step: 1, message: { id: 'empty-indexed', content: [] } }));
+  indexed.event(event('tool/result', 6, { turn: 2, message: { toolCallId: 'after', content: [{ type: 'text', text: 'После' }] } }));
+  indexed.event(event('user/message', 7, { id: 'before', source: { kind: 'user' }, content: [{ type: 'text', text: 'До' }] }));
+  assert.deepEqual(indexed.entries.map(entry => entry.kind === 'step' ? [entry.kind, entry.detail] : [entry.kind, entry.text]), [['user', 'До'], ['step', 'После']]);
+
+  const late = new ChatProjection();
+  late.event(event('user/message', 8, { id: 'kept', source: { kind: 'user' }, content: [{ type: 'text', text: 'До' }] }));
+  late.liveFrame({ type: 'start', attemptId: 'late-indexed', revision: 1, turn: 3, step: 1 });
+  late.liveFrame({ type: 'chunk', attemptId: 'late-indexed', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Неполно' } });
+  late.liveFrame({ type: 'gap', attemptId: 'late-indexed', revision: 3, index: 1 });
+  late.finishGaps();
+  late.event(event('tool/call', 9, { turn: 3, name: 'read', callId: 'late-after', arguments: { file_path: 'note.txt' } }));
+  late.event(event('assistant/message', 10, { turn: 3, step: 1, message: { id: 'late-empty-indexed', content: [] } }));
+  late.event(event('tool/result', 11, { turn: 3, message: { toolCallId: 'late-after', content: [{ type: 'text', text: 'Индекс сдвинут' }] } }));
+  assert.deepEqual(late.entries.map(entry => entry.kind === 'step' ? [entry.kind, entry.detail] : [entry.kind, entry.text]), [['user', 'До'], ['step', 'Индекс сдвинут']]);
 });
 
 test('a JSON-shaped or HTML-shaped filename stays a generic file label', () => {

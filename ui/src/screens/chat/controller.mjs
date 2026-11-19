@@ -33,10 +33,22 @@ export class ChatController {
   update(patch) { this.state = { ...this.state, ...patch }; this.changed(this.state); }
   publish() { this.update({ entries: this.projection.entries, busy: this.projection.running || this.cancelUnconfirmed }); }
   setDraft(draft) { this.update({ draft }); }
+  async readHistory(transport, projection, current) {
+    let afterSeq;
+    for (;;) {
+      const page = await transport.request('session/events', { sessionId: this.sessionId, limit: 1000, ...(afterSeq === undefined ? {} : { afterSeq }) });
+      if (!current()) return false;
+      for (const event of page.events) projection.event(event);
+      if (page.events.length < 1000) return true;
+      if (afterSeq !== undefined && page.nextSeq <= afterSeq) throw new Error('History did not advance');
+      afterSeq = page.nextSeq;
+    }
+  }
   async consume(task, current) {
     const event = task.event;
     if (current !== this.generation || !this.projection.accept(event)) return;
     task.accepted = true;
+    const recoverGap = event.type === 'turn/end' && this.projection.hasUnsettledGap();
     if (event.type === 'assistant/message' && !this.projection.hasLive(event)) {
       const chunks = assistantChunks(event); let value = '';
       for (let index = 0; index < chunks.length; index++) {
@@ -50,6 +62,13 @@ export class ChatController {
     } else {
       this.projection.apply(event);
       this.publish();
+      if (recoverGap) {
+        try {
+          await this.readHistory(this.transport, this.projection, () => current === this.generation && this.active);
+        } catch { /* the explicit incomplete marker below is the safe fallback */ }
+        if (current !== this.generation || !this.active) return;
+        this.projection.finishGaps(); this.publish();
+      }
       if (event.type === 'turn/end' && event.data?.reason?.kind === 'error')
         this.update({ error: 'Ответ прервался. Попробуйте ещё раз.' });
     }
@@ -189,16 +208,8 @@ export class ChatController {
       const normalized = directory.cwd.replaceAll('\\', '/').replace(/\/$/, '');
       const name = humanFile(normalized, normalized.slice(0, normalized.lastIndexOf('/')));
       this.update({ folderLabel: windowText(name === 'файл' ? 'Рабочая папка' : name, '', 'Рабочая папка') });
-      let afterSeq;
-      for (;;) {
-        const page = await transport.request('session/events', { sessionId: this.sessionId, limit: 1000, ...(afterSeq === undefined ? {} : { afterSeq }) });
-        if (ownEpoch !== this.epoch) return;
-        if (loadGeneration !== this.generation) return;
-        for (const event of page.events) projection.event(event);
-        if (page.events.length < 1000) break;
-        if (afterSeq !== undefined && page.nextSeq <= afterSeq) throw new Error('History did not advance');
-        afterSeq = page.nextSeq;
-      }
+      await this.readHistory(transport, projection, () => ownEpoch === this.epoch && loadGeneration === this.generation);
+      if (ownEpoch !== this.epoch || loadGeneration !== this.generation) return;
       const summary = await unlessMissing(() => transport.request('hoh/security/summary', {}), async () => {
         const settings = await transport.request('hoh/settings/get', {});
         return { model: { local: isLocalAddress(settings.model.baseUrl) } };
@@ -248,11 +259,23 @@ export class ChatController {
     if (!this.state.busy || this.state.canceling) return;
     const ownEpoch = this.epoch;
     this.flushReceived(); this.queue = Promise.resolve();
+    const recoverGap = this.projection.hasGap();
     this.generation++; this.ignoreUntilNextTurn = true; this.allowNextTurn = false; this.cancelUnconfirmed = true;
-    this.projection.stop(); this.publish(); this.update({ canceling: true, error: '' });
+    // Preserve a gapped row while cancellation is unconfirmed so a failed Stop
+    // can be retried and a successful one can still settle from durable history.
+    this.projection.stop(recoverGap); this.publish(); this.update({ canceling: true, error: '' });
     try {
       await this.transport.request('session/cancel', { sessionId: this.sessionId });
       if (ownEpoch !== this.epoch) return;
+      if (recoverGap) {
+        // Cancellation is acknowledged before the agent necessarily reaches idle.
+        // Wait for its durable prefix/final message, then reconcile exactly as turn/end does.
+        try { await this.transport.request('session/wait', { sessionId: this.sessionId }); } catch { /* history can still be available */ }
+        if (ownEpoch !== this.epoch) return;
+        try { await this.readHistory(this.transport, this.projection, () => ownEpoch === this.epoch && this.active); } catch { /* finish with the marker below */ }
+        if (ownEpoch !== this.epoch) return;
+        this.projection.finishGaps();
+      }
       this.cancelUnconfirmed = false; this.publish(); this.update({ canceling: false });
     } catch {
       if (ownEpoch !== this.epoch) return;

@@ -1,5 +1,5 @@
 import type { SessionEvent } from '../../protocol';
-export type MessageEntry = { id: string; kind: 'user' | 'assistant'; text: string; pending?: boolean; failed?: boolean; streaming?: boolean; at?: number };
+export type MessageEntry = { id: string; kind: 'user' | 'assistant'; text: string; pending?: boolean; failed?: boolean; streaming?: boolean; incomplete?: boolean; at?: number };
 export type WorkEntry = { id: string; kind: 'step'; operation: 'read' | 'write' | 'command' | 'action'; status: 'running' | 'done' | 'error' | 'stopped'; label: string; file: string; detail: string; exitCode?: number };
 export type ChatEntry = MessageEntry | WorkEntry;
 export function contentText(value: unknown): string;
@@ -20,6 +20,9 @@ export class ChatProjection {
   event(event: SessionEvent): void;
   apply(event: SessionEvent): void;
   assistant(event: SessionEvent, text: string, streaming?: boolean): void;
+  hasGap(): boolean;
+  hasUnsettledGap(): boolean;
+  finishGaps(): void;
   setRunning(running: boolean): void;
-  stop(): void;
+  stop(preserveGaps?: boolean): void;
 }
