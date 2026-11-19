@@ -641,13 +641,17 @@ dependencies = [
  "hoh-loader",
  "hoh-official-bundles",
  "hoh-persona",
+ "hoh-scope",
  "hoh-session",
  "hoh-session-projection",
+ "hoh-shell-env",
  "hoh-skill",
  "hoh-storage",
  "hoh-storage-domain",
  "hoh-storage-json",
  "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tools",
  "hoh-util-time",
  "hoh-util-values",
  "hoh-web",
@@ -831,6 +835,26 @@ dependencies = [
  "webp",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "hoh-bash-local"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-shell",
+ "hoh-subprocess",
+ "hoh-timeout",
+ "indexmap",
+ "rustix",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -1776,6 +1800,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-shell-env"
+version = "0.1.0"
+dependencies = [
+ "hoh-error",
+ "hoh-home-paths",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-loader",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-shell",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tools",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-skill"
 version = "0.1.0"
 dependencies = [
@@ -1973,6 +2021,42 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "hoh-tool-bash"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-bash-local",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-patch",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-sandbox",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-shell",
+ "hoh-shell-env",
+ "hoh-subprocess",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tools",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "hoh-working-directory",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
 ]
 

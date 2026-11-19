@@ -1,0 +1,32 @@
+[package]
+name = "hoh-shell-env"
+description = "Port of @deepseek-ai/dsh-shell-env (packages/shell/shell-env)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-error = { path = "../hoh-error" }
+hoh-home-paths = { path = "../hoh-home-paths" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-loader = { path = "../hoh-loader" }
+hoh-shell = { path = "../hoh-shell" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+indexmap.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+hoh-scope = { path = "../hoh-scope" }
+hoh-session = { path = "../hoh-session" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-timeout = { path = "../hoh-timeout" }
+tokio = { workspace = true, features = ["test-util"] }

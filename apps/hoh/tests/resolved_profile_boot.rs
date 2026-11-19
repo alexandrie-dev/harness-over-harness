@@ -117,6 +117,7 @@ fn options(root: &Path, profile: Profile, registry: PluginRegistry) -> RunProfil
         env: support::env(root),
         args: vec!["--port".into(), "0".into(), "--no-open".into()],
         registry: Arc::new(registry),
+        install_root: None,
     }
 }
 fn host() -> ProfileHost {

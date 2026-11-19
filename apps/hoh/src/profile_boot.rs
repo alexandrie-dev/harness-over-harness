@@ -303,6 +303,17 @@ pub struct RunProfileOptions {
     pub env: EvalEnv,
     pub args: Vec<String>,
     pub registry: Arc<PluginRegistry>,
+    /// Root of the installation; `DSH_INSTALL_DIR` is derived from it. `None` provides no
+    /// `installAnchor`, and shell-env falls back to the executable's directory.
+    pub install_root: Option<PathBuf>,
+}
+/// The installation root of a launched executable: the prefix above `bin/`, else its own directory.
+pub fn install_root_of(exe: &Path) -> PathBuf {
+    let dir = exe.parent().unwrap_or(exe);
+    match (dir.file_name(), dir.parent()) {
+        (Some(name), Some(prefix)) if name == "bin" => prefix.to_path_buf(),
+        _ => dir.to_path_buf(),
+    }
 }
 #[derive(Clone)]
 pub(crate) struct EditorHost {
@@ -470,6 +481,14 @@ pub async fn run_profile(
             home: options.home,
         }))
         .await?;
+        // `dirname(profile.installAnchor)` of the source is the installation root; the anchor is
+        // the `package.json` that marks it.
+        if let Some(root) = options.install_root {
+            ctx.provide::<hoh_shell_env::InstallAnchorKey>(Arc::new(hoh_shell_env::InstallAnchor(
+                root.join("package.json"),
+            )))
+            .await?;
+        }
         ctx.provide::<LaunchEnvironment>(Arc::new(options.environment))
             .await?;
         let exit_host = host.clone();

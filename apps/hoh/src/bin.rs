@@ -285,6 +285,7 @@ where
                     env,
                     args,
                     registry: Arc::new(super::registry::registry()),
+                    install_root: Some(super::profile_boot::install_root_of(&host.exe)),
                 },
                 application.clone(),
             ))
