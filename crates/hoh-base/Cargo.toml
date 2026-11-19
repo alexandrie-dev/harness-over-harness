@@ -1,0 +1,15 @@
+[package]
+name = "hoh-base"
+description = "Port of @deepseek-ai/dsh-base (packages/bundle/base)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+hoh-loader = { path = "../hoh-loader" }
+serde_json.workspace = true
+

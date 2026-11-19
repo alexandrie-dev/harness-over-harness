@@ -1016,6 +1016,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-base"
+version = "0.1.0"
+dependencies = [
+ "hoh-loader",
+ "serde_json",
+]
+
+[[package]]
 name = "hoh-bash-local"
 version = "0.1.0"
 dependencies = [
