@@ -261,3 +261,15 @@ zip = "9.6.0"                        # этап 3
 | 15 | OTLP — свой сериализатор поверх общего клиента (этап 2). |
 
 Новые crates `hoh-yaml` и `hoh-jsdiff` — добавление к плану: в `PLAN.md` их нет, основателю сообщено.
+
+### 5.6 Круг исправлений `hoh-fs-local` (2026-11-19)
+
+| Crate | Версия | Лицензия | Зачем | Почему не другое |
+|---|---|---|---|---|
+| `nix` | 0.28.0 (уже в `Cargo.lock` через `portable-pty`; без features; сборка нового пакета не нужна) | MIT | `nix::unistd::close(OwnedFd::into_raw_fd())` — безопасная функция, которая возвращает ошибку `close(2)` до публикации файла (`fsio.ts:648`: ошибка `close` отменяет запись). Без `unsafe` в нашем коде | `rustix::io::close` объявлена `unsafe`; `tokio::fs::File` и `File::drop` результат `close` отбрасывают |
+| `feruca` | 0.13.0 (2026; Unicode 18, CLDR 49) | MIT | `String.prototype.localeCompare` Node (ICU, `en-US`) при сортировке `readdir`: таблица CLDR root, `shifting: false` (non-ignorable — умолчание ICU), без добавочного сравнения по байтам. `é` раньше `z` | `icu_collator` 2.4.0 (Unicode-3.0, Rust 1.88) подходит по правилам, но добавляет в `Cargo.lock` 6 новых пакетов (`icu_collator`, `icu_collator_data`, `icu_locale_fallback`, `icu_locale_fallback_data`, `utf16_iter`, `write16`); `feruca` — 4 (`feruca`, `bstr` 1.14.0, `cobs` 0.3.0, `postcard` 1.1.3). Решение CEO: брать тот, что добавляет меньше |
+
+Число новых записей `[[package]]` измерено 2026-11-19 на копии рабочего дерева (`cargo metadata` с каждым crate по очереди,
+сравнение пар «имя версия» с текущим `Cargo.lock`): `feruca` — 4, `icu_collator` — 6. Лицензии новых пакетов `feruca`:
+`feruca` MIT, `bstr` MIT OR Apache-2.0, `cobs` MIT OR Apache-2.0, `postcard` MIT OR Apache-2.0 — всё в разрешённом наборе
+`deny.toml`. `cargo-deny` не установлен (по правилам не устанавливался): проверка по `Cargo.toml` каждого пакета, не инструментом.

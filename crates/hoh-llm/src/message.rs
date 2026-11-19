@@ -152,7 +152,11 @@ pub struct ToolResultMessage {
     pub id: MessageId,
 }
 /// Closed role vocabulary; every payload validates and serializes its own fixed role.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// Deserialization is selected by the `role` field: the payload structs share one field shape,
+/// so an untagged read would accept every message as the first variant (a user message as a
+/// developer message). An unknown or absent role is an error.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum Message {
     System(SystemMessage),
@@ -160,6 +164,30 @@ pub enum Message {
     User(UserMessage),
     Assistant(AssistantMessage),
     Tool(ToolResultMessage),
+}
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let value = Value::deserialize(deserializer)?;
+        let role = match value.get("role") {
+            Some(Value::String(role)) => role.clone(),
+            Some(_) => return Err(D::Error::custom("message role must be a string")),
+            None => return Err(D::Error::custom("message role is missing")),
+        };
+        let message = match role.as_str() {
+            "system" => serde_json::from_value(value).map(Self::System),
+            "developer" => serde_json::from_value(value).map(Self::Developer),
+            "user" => serde_json::from_value(value).map(Self::User),
+            "assistant" => serde_json::from_value(value).map(Self::Assistant),
+            "tool" => serde_json::from_value(value).map(Self::Tool),
+            other => {
+                return Err(D::Error::custom(format!(
+                    "unknown message role \"{other}\""
+                )));
+            }
+        };
+        message.map_err(D::Error::custom)
+    }
 }
 impl Message {
     pub fn role(&self) -> &'static str {

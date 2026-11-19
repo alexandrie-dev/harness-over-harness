@@ -30,6 +30,7 @@
 | tests/service.spec.ts | tests/service.rs | все 71 случай; типово невозможные строки таблиц проверяют serde-отказ |
 | tests/topology.spec.ts | tests/topology.rs | все 18 случаев, включая contained sync/async failures |
 | review round | tests/review_fixes.rs | 13 регрессий: unfiltered dispatch/logger scope, ordered JSON, projection, order, cleanup, schema |
+| c4 shared gap | tests/accumulator_malformed.rs | 6 регрессий raw chunks, snapshot timing, порядка полей, чисел и диагностик |
 | locale/*.json | locale/*.json | все 8 файлов побайтно; проверено diff -rq |
 | README.md, package.json | PORT_NOTES.md, Cargo.toml | прочитаны; дополнительные entry points соответствуют публичным Rust-модулям |
 
@@ -208,6 +209,26 @@ failure JSON сохраняется losslessly. ToolSchema пишет name,descr
 LlmResolvedModelInfo пишет reasoning после systemPromptUpdate/toolUpdate.
 Projection images/files выбирает блок по type, а не успешности typed serde attachment.
 
+### Исправление общей границы для c4
+
+AssistantStreamAccumulator::push_value повторяет src/assistant-stream.ts в исходный момент:
+сначала safeTime, затем snapshotJsonValue, затем switch и только delta-проверки. Raw
+block-start/block-end/usage/finish не проверяют поля; malformed JSON доходит до поздней
+проверки embedded stream у владельца формата. Tool delta проверяет index, id, собственный
+name, argumentsDelta, и лишь затем выбирает raw запись для пустых id/name.
+Неудачный push не изменяет предыдущий run/time. Допускаются целые JS number индексы 1.0;
+в packed run они становятся u64, raw snapshot не переписывается. Snapshot rejection имеет
+приоритет перед полями delta/неизвестным type; null после snapshot даёт исходный текст
+ошибки чтения type, отсутствующее time печатается как undefined.
+
+Публичное изменение: TimedStreamChunk<C = StreamChunk> получил default generic, поэтому
+прежний typed TimedStreamChunk/push не изменился. push_value возвращает
+Result<TimedStreamChunk<Value>, ValueError>: иначе malformed raw chunks нельзя представить
+в закрытом StreamChunk. snapshot и Value expansion продолжают хранить raw JSON; typed
+assembly/expansion остаются отдельными границами. Шесть тестов accumulator_malformed.rs
+сначала упали на принятом 0136cbe; корректные streams проверяются прежним полным набором.
+
+
 ## Не перенесено
 
 Из 213 именованных it/it.each definitions перенесено 205. it.each считается одной именованной
@@ -261,7 +282,7 @@ registrant или root. Это сохраняет attachment/filesystem scope. �
 `saved at "…"`, требуют настоящего пути от filesystem provider; placeholder не заменяет его.
 Все известные различия Rust API описаны выше.
 
-## Проверки
+## Проверки принятого 0136cbe (до исправления c4)
 
 Все финальные Cargo-команды выполнены с
 `CARGO_BUILD_JOBS=4 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w7`.
@@ -306,3 +327,41 @@ Clippy потребовал компактного хранения snapshots: i
 синхронным чтением snapshot. В чужих crates ошибок не было, правок чужого кода нет.
 Все обязательные проверки завершены; заглушек и незаконченного кода в crate нет.
 Интеграция будущего owning fs API и правила awaited close / fiber-owned Drop оговорены выше.
+
+## Проверки исправления c4 (w7)
+
+Первый прогон до остановки по лимиту времени: CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4
+CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w7.
+
+- cargo test -p hoh-llm -- --quiet: exit 0, **232 passed; 0 failed**.
+  Все 226 прежних тестов сохранены, добавлены шесть accumulator_malformed.
+- cargo fmt -p hoh-llm -p hoh-session-format -- --check: exit 0.
+- cargo clippy -p hoh-llm -p hoh-session-format --all-targets -- -D warnings: exit 0.
+
+Проверка потребителей (cargo test -p <crate> -- --quiet, без правок потребителей):
+
+| crate | passed | failed |
+| --- | --- | --- |
+| hoh-session-format-v0-to-v1 | 81 | 0 |
+| hoh-session-format-v1-to-v2 | 63 | 0 |
+| hoh-session-format-v2-to-v3 | 191 | 0 |
+| hoh-web | 49 | 0 |
+| hoh-skill | 45 | 0 |
+| hoh-system-prompt | 92 | 0 |
+| hoh-session | 302 | 0 (2 ignored в существующем review_fixes) |
+
+Финальное продолжение после переноса target в tmpfs выполнено с `CARGO_BUILD_JOBS=2`,
+`CARGO_NET_OFFLINE=true` и тем же `CARGO_TARGET_DIR`. Совместный прогон
+`cargo test -p hoh-llm -p hoh-session-format` прошёл: **272 passed; 0 failed**
+(из них hoh-llm 237/0, включая пять параллельно добавленных не-w7 тестов message_role,
+и hoh-session-format 35/0). Набор из 31 собирающегося потребителя прошёл 2406/0,
+12 ignored. Clippy `--all-targets -- -D warnings` чист для обоих shared crates и
+26 незаблокированных потребителей; ещё четыре sandbox-зависимых потребителя также
+чисты отдельно. `cargo fmt ... -- --check` чист для всех 43 найденных целей.
+
+Полный workspace-набор не зелёный по причинам вне shared2: четыре чужих crate не
+компилируются (`hoh-tool-fs`, `hoh-sdk-jsonrpc-server`, `hoh-tool-bash`,
+`hoh-working-directory`); шесть потребителей имеют собственные или sandbox-зависимые
+падения тестов (`hoh`, `hoh-conformance`, `hoh-llm-openai`, `hoh-web-fetch-http`,
+`hoh-web-search-yandex`, `hoh-agent-loop`). Clippy дополнительно блокируется чужими
+warnings в `hoh-agent-loop` и `hoh-web-search-yandex`. Эти crates w7 не менял.

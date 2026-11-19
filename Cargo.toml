@@ -16,6 +16,7 @@ publish = false
 # A crate may be added here only together with a line in docs/porting/DEPS.md.
 [workspace.dependencies]
 base64 = "0.23.1"
+quick-xml = "0.41.0" # XML responses in hoh-web-search-yandex; cached, no external entity resolution
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 getrandom = "0.4.3"
 http = "1.5.0"
@@ -27,6 +28,14 @@ proc-macro2 = "1.0.107"
 quote = "1.0.47"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "stream"] }
+async-compression = { version = "0.4.42", features = ["tokio", "gzip", "deflate", "brotli", "zstd"] }  # Content-Encoding in hoh-web-fetch-http (undici decodes, keeps headers)
+encoding_rs = "0.8.44"  # WHATWG labels for TextDecoder (DEPS.md)
+notify = "8.2.2"  # fs watching (DEPS.md decision 6), hoh-fs-local
+feruca = "0.13.0"  # UCA/CLDR root collation for String.localeCompare in hoh-fs-local (DEPS.md 5.6)
+nix = { version = "0.28.0", default-features = false }  # safe close(2) wrapper in hoh-fs-local (DEPS.md 5.6); already in Cargo.lock via portable-pty
+portable-pty = "0.9.0"  # PTY (DEPS.md decision 10), hoh-subprocess-local
+procfs = "0.18.0"  # /proc walk instead of process-inspector.ts (research/v1-shortcuts.md)
+zstd = "0.13.5"  # session log frames (DEPS.md decision 8, CEO 18.11: point crates); same version as async-compression uses
 landlock = "0.4.7"
 moxcms = "0.8.1"
 rustix = { version = "1.1.6", features = ["fs", "process"] }

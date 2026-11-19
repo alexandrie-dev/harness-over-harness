@@ -15,6 +15,7 @@
 | `tests/filename.spec.ts` | `tests/filename.rs` (2) | перенесён |
 | `tests/chain.spec.ts` | `tests/chain.rs` (8) | перенесён полностью |
 | `tests/catalog.spec.ts` | `tests/catalog.rs` (11) | перенесён полностью (`it.each` собран в один тест с циклом) |
+| c4 shared gap | `tests/error_cause.rs` (2) | точный message, класс, typed cause/source, вложенные причины и старые конструкторы |
 | `README.md`, `README.zh.md`, `README.i18n.yaml`, `locale/` | нет | документация; `locale/` у пакета нет |
 
 ## Отличия от образца
@@ -76,7 +77,25 @@
 - Fix-round c4, пункты 1 и 8: `SessionFormatEventRun: Any + Send` позволяет стабильный upcast `&dyn SessionFormatEventRun -> &dyn Any` и `Box<dyn SessionFormatEventRun> -> Box<dyn Any + Send>`, без дополнительных методов и без раскрытия run. Конкретный тип должен быть `'static` (требование `Any`); владение строками/событиями и синхронные операции сохранены. Тест `event_runs_support_borrowed_and_owned_any_upcasts_preserving_send` проверяет borrowed/owned downcast, сохранение allocation после отказа по чужому типу и последующее раскрытие.
 - Fix-round c4, пункт 8: JSON-кавычки имени миграции в `chain::json_string` пишет `hoh_util_values::js_json_stringify`; имеющаяся path-зависимость уже достаточна. Тест `duplicate_migration_names_use_shared_js_json_quoting` проверяет кавычку, backslash, перенос строки и управляющие символы в имени. Все 31 прежний тест и 2 новых проходят (33 passed, 0 failed); clippy с `--all-targets -- -D warnings` и fmt `-- --check` чисты при `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-c4`.
 
+### Проверка cause для c4 (w7)
+
+Используется SessionFormatError::new_with_cause(message, cause) и FormatWithCause
+{ message, cause: Box<dyn Error + Send + Sync> }. Это тот же класс SessionFormatError,
+не UnsupportedMigration и не Other; Display message не дополняется причиной.
+Error::source() возвращает исходную причину с downcast до исходного типа.
+Прежние new, Format(String), unsupported_migration, other и UnsupportedMigration
+{ message, cause } сохранены. error_cause.rs проверяет причину, вложенную цепочку,
+класс и старые конструкторы.
+
+После замечания ведущего убраны избыточные cause() и path-зависимость hoh-error.
+Отдельный getter не нужен: достаточно стандартного Error::source().
+Конструктор/вариант сохранены: в проверенном git HEAD их нет, а актуальный c4 уже
+вызывает new_with_cause и сопоставляет FormatWithCause. Откат всей разницы error.rs
+удалил бы используемый API. Нового API причин сверх этого существующего seam нет.
+Код c4 writer w7 не менял.
+
 ## Не перенесено
+
 - `deepFreeze` (раздел 8 / задание): нет аналога.
 - Случаи `tests/json.spec.ts`, не выразимые в `serde_json::Value`: `Infinity`, `undefined`-член, разреженный массив, символьный ключ, неперечислимый член,
   свойство массива, цикл, экземпляры классов, `null` как заголовок. Покрыт только `-0` (остальные нарушения невозможны по построению типа).
@@ -100,3 +119,23 @@
 3. Подозрение на образец: `finishDecoder` в каталоге сверяет только предварительно объявленный срез с `finish()` декодера, а при `undefined` — нет;
    перенесено как есть. Тест `bypasses ... current input` и др. заданы так, как в образце.
 4. `createSessionFormatChain` и подобные принимают `Arc<dyn Trait>`; если дальним crates нужны не-`Send` стадии, ограничения `Send` придётся снять.
+
+## Проверки исправления c4 (w7)
+
+Первый прогон до удаления лишнего getter: CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4
+CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w7.
+
+- cargo test -p hoh-session-format --test error_cause: exit 0, **2 passed; 0 failed**.
+- cargo test -p hoh-session-format -- --quiet: exit 0, **35 passed; 0 failed**.
+- cargo fmt -p hoh-llm -p hoh-session-format -- --check: exit 0.
+- cargo clippy -p hoh-llm -p hoh-session-format --all-targets -- -D warnings: exit 0.
+
+Продолжение после указания ведущего выполнено с `CARGO_BUILD_JOBS=2`, offline и target
+в tmpfs. Удалены ненужные cause() и dependency hoh-error; тест использует
+Error::source(). Совместный прогон `cargo test -p hoh-llm -p hoh-session-format`
+после этой уборки прошёл: **272 passed; 0 failed**, из них hoh-session-format 35/0.
+Набор из 31 собирающегося потребителя прошёл 2406/0, 12 ignored. Clippy
+`--all-targets -- -D warnings` чист для shared crates и всех проверяемых потребителей,
+чьи графы не блокируют чужие warnings; fmt `--check` чист для всех 43 целей.
+Внешние compile/test/clippy-блокеры перечислены в hoh-llm/PORT_NOTES.md и не требуют
+изменений этого crate.

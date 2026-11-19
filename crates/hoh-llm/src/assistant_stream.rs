@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 const SAFE: i64 = 9_007_199_254_740_991;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TimedStreamChunk {
+pub struct TimedStreamChunk<C = StreamChunk> {
     pub time: i64,
-    pub chunk: StreamChunk,
+    pub chunk: C,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -207,48 +207,88 @@ impl AssistantStreamAccumulator {
     pub fn snapshot(&self) -> Vec<AssistantStreamRecord> {
         self.records.clone()
     }
-    pub fn push_value(&mut self, value: &Value) -> Result<TimedStreamChunk, ValueError> {
-        let time = safe_time_value(value.get("time").unwrap_or(&Value::Null))?;
-        let chunk = value.get("chunk").ok_or_else(|| {
-            ValueError::Message(
-                "Assistant stream chunk must be losslessly JSON-serializable".into(),
-            )
-        })?;
+    /// Untyped source boundary: raw chunks are snapshotted without field validation.
+    /// The returned JSON may require later durable-format/assembler validation.
+    pub fn push_value(&mut self, value: &Value) -> Result<TimedStreamChunk<Value>, ValueError> {
+        let time = value
+            .get("time")
+            .ok_or_else(|| {
+                ValueError::Message(
+                    "Assistant stream time must be a safe integer, got undefined".into(),
+                )
+            })
+            .and_then(safe_time_value)?;
+        let chunk = value
+            .get("chunk")
+            .and_then(hoh_util_values::snapshot_json_value)
+            .ok_or_else(|| {
+                ValueError::Message(
+                    "Assistant stream chunk must be losslessly JSON-serializable".into(),
+                )
+            })?;
+        if chunk.is_null() {
+            return Err(ValueError::Message(
+                "Cannot read properties of null (reading 'type')".into(),
+            ));
+        }
         let label = chunk.get("type").and_then(Value::as_str).unwrap_or("");
-        match label {
-            "text-delta" | "reasoning-delta" | "tool-call-delta" => {
-                safe_index_value(chunk.get("index").unwrap_or(&Value::Null), label)?;
-                for key in if label == "tool-call-delta" {
-                    vec!["id", "argumentsDelta"]
-                } else {
-                    vec!["text"]
-                } {
-                    if !chunk.get(key).is_some_and(Value::is_string) {
-                        return Err(ValueError::Message(format!(
-                            "{label} {key} must be a string"
-                        )));
-                    }
-                }
-                if label == "tool-call-delta" && chunk.get("name").is_some_and(|v| !v.is_string()) {
-                    return Err(ValueError::Message(
-                        "tool-call-delta name must be a string".into(),
-                    ));
-                }
+        let index = match label {
+            "block-start" | "block-end" | "usage" | "finish" => {
+                self.records.push(AssistantStreamRecord::Chunk {
+                    time,
+                    chunk: chunk.clone(),
+                });
+                self.last_time = Some(time);
+                return Ok(TimedStreamChunk { time, chunk });
             }
-            "block-start" | "block-end" | "usage" | "finish" => {}
+            "text-delta" | "reasoning-delta" | "tool-call-delta" => {
+                let index = safe_index_value(chunk.get("index").unwrap_or(&Value::Null), label)?;
+                let check_string = |key: &str| {
+                    if chunk.get(key).is_some_and(Value::is_string) {
+                        Ok(())
+                    } else {
+                        Err(ValueError::Message(format!(
+                            "{label} {key} must be a string"
+                        )))
+                    }
+                };
+                if label == "tool-call-delta" {
+                    check_string("id")?;
+                    if chunk.get("name").is_some() {
+                        check_string("name")?;
+                    }
+                    check_string("argumentsDelta")?;
+                    if chunk["id"] == "" || chunk.get("name").is_some_and(|name| name == "") {
+                        self.records.push(AssistantStreamRecord::Chunk {
+                            time,
+                            chunk: chunk.clone(),
+                        });
+                        self.last_time = Some(time);
+                        return Ok(TimedStreamChunk { time, chunk });
+                    }
+                } else {
+                    check_string("text")?;
+                }
+                index
+            }
             _ => {
                 return Err(ValueError::Message(format!(
                     "unreachable variant in AssistantStreamAccumulator.push: {}",
-                    hoh_util_values::js_json_stringify(chunk)
+                    hoh_util_values::js_json_stringify(&chunk)
                 )));
             }
-        }
-        let chunk = serde_json::from_value(chunk.clone()).map_err(|_| {
+        };
+        // JS has one number type: a checked 1.0 index packs as the integer index 1.
+        // Preserve the original snapshot in the return value and every raw record.
+        let mut typed = chunk.clone();
+        typed["index"] = index.into();
+        let typed = serde_json::from_value(typed).map_err(|_| {
             ValueError::Message(
                 "Assistant stream chunk must be losslessly JSON-serializable".into(),
             )
         })?;
-        self.push(TimedStreamChunk { time, chunk })
+        self.push(TimedStreamChunk { time, chunk: typed })?;
+        Ok(TimedStreamChunk { time, chunk })
     }
 }
 fn safe_time_value(value: &Value) -> Result<i64, ValueError> {
