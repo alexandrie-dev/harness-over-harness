@@ -246,3 +246,26 @@ Wire<T> остаётся отдельным API сохранения чужог�
 ui/src/protocol.ts — только разрешённые окну методы и достижимые типы.
 Никакого импорта core-модуля из window-модуля нет.
 
+## Поле `details` в `HostApprovalRequest` (sg2, A-03)
+- Не часть TS-протокола: необязательная строка `details` (JSON-имя ровно `details`) рядом с `reason`; окну
+  — для свёрнутых подробностей (сырая команда bash). `None` не сериализуется; явный `null` — ошибка, как у
+  других необязательных членов; старый JSON без поля читается. Размер 1..8192 единиц UTF-16
+  (`validate_host_request`, `MAX_DETAILS_UNITS`), переводы строк разрешены.
+- Вне `action`, поэтому вне `actionHash` и вне mac решения (mac — approvalId, outcome, actionHash, risk,
+  humanText, expiresAt): сверка не меняется. Маскировку адресов (`redact_text`) делает окно ядра
+  (`apps/hoh-desktop`) так же, как для `reason`; движок `reason` не маскирует.
+- Сгенерированы заново: `protocol/schema/HostApprovalRequest.json`, `protocol/core.ts` (`hoh-protocol-schema`,
+  затем `node scripts/gen-protocol-ts.mjs`). `ui/src/protocol.ts` не изменился: тип входит в «native core
+  only», окно читает `ApprovalView` из `ui/src/screens/approval/bridge.ts`. Тесты: `tests/details.rs`.
+
+## Живой ответ для окна (x7, A-02)
+
+- `session.assistant-stream` — осознанное расширение относительно dsh: там живой поток до клиента
+  доставляет session-controller, а JSON-RPC SDK-сервер отдельного уведомления не объявляет. Окну HoH
+  нужен тот же процессный поток без опроса журнала.
+- Params: `{sessionId,frame}`; `start`, `chunk`, `end` сохраняют идентификатор попытки, ревизию и
+  индексы ядра. Наружу описан только `chunk.type = "text-delta"`: reasoning, tool-call, usage и
+  структурные части модели намеренно не входят в публичный контракт окна.
+- `committed` означает завершение обычной попытки после её durable `assistant/message`;
+  `abandoned` — отменённую генерацию. Частичный текст отменённой попытки при этом остаётся в durable
+  сообщении и уже отправленных chunk-кадрах.

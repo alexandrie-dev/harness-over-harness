@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use hoh_window_destructive_guard::{Risk, assess, question};
+use hoh_window_destructive_guard::{Risk, assess, escalation_question, question};
 
 fn folder() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -96,6 +96,19 @@ fn deleting_commands_name_the_files_and_say_why_it_hurts() {
         !ask.headline.contains("rm old1"),
         "the raw command stays in the details"
     );
+    // A-03: the window's explanation is words and the files, never the raw command.
+    assert!(
+        ask.explanation
+            .contains("удалить 3 файла: old1.txt, old2.txt, old3.txt")
+            && ask.explanation.contains("не попадут в корзину"),
+        "{}",
+        ask.explanation
+    );
+    assert!(
+        !ask.explanation.contains("rm ") && !ask.explanation.contains("Команда:"),
+        "{}",
+        ask.explanation
+    );
 }
 
 #[test]
@@ -139,6 +152,98 @@ fn overwrite_asks_only_when_the_target_exists_or_cannot_be_checked() {
     ] {
         asks(dir.path(), command);
     }
+}
+
+/// A-03: the explanation lists every file (up to twenty) where the one-line headline stops at four,
+/// and for every kind of question (delete, overwrite, in-place edit) it carries no raw command.
+#[test]
+fn the_explanation_lists_the_files_and_never_the_raw_command() {
+    let dir = folder();
+    let command = "rm f1.txt f2.txt f3.txt f4.txt f5.txt f6.txt";
+    let ask = question(&risks(dir.path(), command), command, Some(dir.path()));
+    assert!(
+        ask.headline
+            .contains("f1.txt, f2.txt, f3.txt, f4.txt и ещё 2")
+    );
+    assert!(
+        ask.explanation
+            .contains("f1.txt, f2.txt, f3.txt, f4.txt, f5.txt, f6.txt"),
+        "{}",
+        ask.explanation
+    );
+    for command in [
+        command,
+        "echo hi > a.txt",
+        "sed -i s/old/new/ a.txt",
+        "cp -f b.txt a.txt",
+    ] {
+        let ask = question(&risks(dir.path(), command), command, Some(dir.path()));
+        assert!(
+            !ask.explanation.contains("Команда:")
+                && !ask.explanation.contains(command)
+                && !ask.explanation.contains("echo")
+                && !ask.explanation.contains("sed -i"),
+            "{command}: {}",
+            ask.explanation
+        );
+        assert!(ask.details.starts_with("Команда: "), "{command}");
+        assert!(
+            ask.explanation.contains("a.txt") || command.starts_with("rm"),
+            "{command}: {}",
+            ask.explanation
+        );
+    }
+}
+
+/// A-03: the explanation of an escalation is built by the guard alone; not one word of the model's
+/// justification enters it, however it quotes the command. Command and justification sit together in
+/// the details, within the protocol's size bound.
+#[test]
+fn an_escalation_explanation_has_no_word_of_the_justification_and_the_details_have_both() {
+    let dir = folder();
+    for (command, justification) in [
+        ("rm old.txt", "нужно запустить rm old.txt"),
+        ("rm /tmp/old.txt", "нужно запустить RM \"/tmp/old.txt\""),
+        ("rm  old.txt", "run `rm old.txt` to clean up"),
+        ("rm -rf dir", "очистить dir через Rm -Rf, он устарел"),
+        ("rm a", "perform a cleanup"),
+        ("ls", "show details about the directory"),
+        ("rm /tmp/archive/old.txt", "rm old.txt"),
+    ] {
+        let ask = escalation_question(&risks(dir.path(), command), command, justification);
+        let words: Vec<&str> = justification
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.chars().count() > 3)
+            .collect();
+        for word in words {
+            assert!(
+                !ask.explanation
+                    .to_lowercase()
+                    .contains(&word.to_lowercase()),
+                "{justification:?}: {word:?} in {}",
+                ask.explanation
+            );
+        }
+        assert!(
+            ask.explanation
+                .ends_with("Обоснование Помощника — в подробностях"),
+            "{}",
+            ask.explanation
+        );
+        assert_eq!(
+            ask.details,
+            format!("Команда: {command}\nОбоснование Помощника: {justification}")
+        );
+    }
+    // The size stays inside the protocol (8192 UTF-16 units), astral characters included.
+    let long = "😀".repeat(5000);
+    let ask = escalation_question(&[], &long, &long);
+    assert!(
+        ask.details.encode_utf16().count() <= 8192,
+        "{}",
+        ask.details.encode_utf16().count()
+    );
+    assert!(ask.details.contains("Команда: ") && ask.details.contains("Обоснование Помощника: "));
 }
 
 #[test]
@@ -374,6 +479,7 @@ fn text_is_one_clean_line_with_a_bounded_list() {
     let long = format!("rm {}", "n".repeat(5000));
     let ask = question(&risks(dir.path(), &long), &long, Some(dir.path()));
     assert!(hoh_protocol::approval::validate_human_text(&ask.headline).is_ok());
+    assert!(ask.explanation.chars().count() <= 2000);
     assert!(ask.details.chars().count() <= 2000);
 }
 
@@ -690,7 +796,23 @@ fn escalated_questions_are_worded_like_the_guards() {
     assert!(ask.headline.contains("Файлы не попадут в корзину"));
     assert_eq!(
         ask.details,
-        "Команда: rm -rf dir. Обоснование Помощника: clean the build output"
+        "Команда: rm -rf dir\nОбоснование Помощника: clean the build output"
+    );
+    assert!(
+        ask.explanation.contains("вместе со всем содержимым: dir")
+            && ask.explanation.contains("Файлы не попадут в корзину")
+            && ask
+                .explanation
+                .ends_with("Обоснование Помощника — в подробностях"),
+        "{}",
+        ask.explanation
+    );
+    assert!(
+        !ask.explanation.contains("rm -rf")
+            && !ask.explanation.contains("clean")
+            && !ask.explanation.contains("Команда:"),
+        "{}",
+        ask.explanation
     );
     let plain = escalation_question(&[], "ls /", "look around");
     assert_eq!(

@@ -23,6 +23,7 @@ fn main() {
             hoh_desktop::native::engine_request,
             hoh_desktop::native::pick_folder,
             hoh_desktop::native::question_answer,
+            hoh_desktop::native::approval_history,
             hoh_desktop::native::approval_current,
             hoh_desktop::native::approval_decide
         ])

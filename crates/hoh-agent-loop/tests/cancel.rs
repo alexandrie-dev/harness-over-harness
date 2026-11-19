@@ -7,7 +7,8 @@ mod common;
 use common::*;
 use hoh_agent::{
     Agent, AgentAssistantStream, AgentStatus, AgentStatusChanged, AgentTurnStopping, Agents,
-    CancelCauseError, CancelOptions, CreateAgentOptions,
+    AssistantStreamFrame, AssistantStreamOutcome, CancelCauseError, CancelOptions,
+    CreateAgentOptions,
 };
 use hoh_llm::StreamChunk;
 use hoh_session::{AgentCancelCause, SessionEventEmitted};
@@ -760,6 +761,17 @@ async fn cancel_before_any_visible_content_finalizes_nothing() {
     ])]);
     let env = harness(adapter.clone()).await;
     let agent = create_agent(&env, "nothing-to-finalize").await;
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let sink = frames.clone();
+    let id = agent.id().clone();
+    env.ctx
+        .on_contained::<AgentAssistantStream>(move |event| {
+            if event.agent.id() == &id {
+                lock(&sink).push(event.frame.clone());
+            }
+            Ok(())
+        })
+        .expect("listener");
 
     send(&agent, "go");
     until(|| adapter.request_count() == 1).await;
@@ -768,6 +780,17 @@ async fn cancel_before_any_visible_content_finalizes_nothing() {
     agent.when_idle().await;
 
     assert_eq!(count(&agent, "assistant/message"), 0);
+    let attempt = last_event(&agent, "assistant/attempt").expect("durable empty attempt");
+    match lock(&frames).last() {
+        Some(AssistantStreamFrame::End { outcome, .. }) => match outcome {
+            AssistantStreamOutcome::Committed { event_type, seq } => {
+                assert_eq!(*event_type, "assistant/attempt");
+                assert_eq!(json!(seq), attempt["seq"]);
+            }
+            AssistantStreamOutcome::Abandoned => panic!("dsh commits the empty attempt"),
+        },
+        frame => panic!("expected terminal frame, got {frame:?}"),
+    }
 }
 
 // ---------------------------------------------------------------- synchronous listeners

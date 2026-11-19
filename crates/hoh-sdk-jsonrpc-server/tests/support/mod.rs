@@ -84,6 +84,9 @@ pub struct Replay {
     pub texts: Mutex<VecDeque<String>>,
     pub reasoning: Mutex<Option<hoh_llm::LlmModelReasoningInfo>>,
     pub gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    pub scripted_chunks: Mutex<Option<Vec<StreamChunk>>>,
+    /// Pause immediately before the zero-based scripted chunk at this position.
+    pub pause_before: Mutex<Option<(usize, Arc<tokio::sync::Semaphore>)>>,
     pub entered: Arc<tokio::sync::Notify>,
 }
 impl LlmAdapter for Replay {
@@ -113,16 +116,42 @@ impl LlmAdapter for Replay {
         let text = lock(&self.texts)
             .pop_front()
             .unwrap_or_else(|| "answer".into());
-        let chunks = [
-            json!({"type":"block-start","index":0,"blockType":"text"}),
-            json!({"type":"text-delta","index":0,"text":text}),
-            json!({"type":"block-end","index":0,"block":{"type":"text","text":text}}),
-            json!({"type":"finish","reason":{"kind":"stop"}}),
-        ];
-        let mut chunks = chunks
+        let mut chunks = lock(&self.scripted_chunks).take().unwrap_or_else(|| {
+            [
+                json!({"type":"block-start","index":0,"blockType":"text"}),
+                json!({"type":"text-delta","index":0,"text":text}),
+                json!({"type":"block-end","index":0,"block":{"type":"text","text":text}}),
+                json!({"type":"finish","reason":{"kind":"stop"}}),
+            ]
             .into_iter()
             .map(|v| serde_json::from_value::<StreamChunk>(v).unwrap())
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+        });
+        if let Some((index, gate)) = lock(&self.pause_before).take() {
+            use futures_util::{StreamExt, stream};
+            assert!(
+                index < chunks.len(),
+                "pause position outside scripted stream"
+            );
+            let mut tail = chunks.split_off(index);
+            let first = tail.remove(0);
+            let entered = self.entered.clone();
+            let delayed_signal = signal.clone();
+            let delayed = stream::once(async move {
+                entered.notify_one();
+                if let Some(signal) = delayed_signal {
+                    tokio::select! {p=gate.acquire()=>{p.unwrap().forget();},reason=signal.cancelled()=>return Err(Box::new(reason) as BoxError)}
+                } else {
+                    gate.acquire().await.unwrap().forget();
+                }
+                Ok(first)
+            });
+            return Ok(LlmStream::new(
+                stream::iter(chunks.into_iter().map(Ok))
+                    .chain(delayed)
+                    .chain(stream::iter(tail.into_iter().map(Ok))),
+            ));
+        }
         if let Some(gate) = lock(&self.gate).take() {
             use futures_util::{StreamExt, stream};
             let first = chunks.remove(0);

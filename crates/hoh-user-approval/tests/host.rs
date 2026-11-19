@@ -104,6 +104,12 @@ async fn host_mode_emits_typed_pending_request_and_resolved_for_tool_approval() 
     assert_eq!(host.tool_name, "bash");
     assert_eq!(host.call_id.as_deref(), Some("call-1"));
     assert_eq!(host.reason.as_deref(), Some("команда меняет файлы"));
+    assert_eq!(host.details, None);
+    assert!(
+        requests[0].get("details").is_none(),
+        "no details, no key: {}",
+        requests[0]
+    );
     assert_eq!(host.risk, hoh_protocol::Risk::High);
     assert_eq!(host.human_text, "Allow the requested command?");
     assert_eq!(
@@ -125,6 +131,178 @@ async fn host_mode_emits_typed_pending_request_and_resolved_for_tool_approval() 
     assert_eq!(notifications[1].1["approvalId"], host.approval_id);
     assert_eq!(notifications[1].1["outcome"], "allowed-once");
     assert_pair(agent.session(), ApprovalOutcome::AllowedOnce);
+    h.close().await;
+}
+
+/// `details` rides next to `reason` under that name, stays out of the signed action and out of the
+/// session journal, and a decision signed for the request still verifies.
+#[tokio::test]
+async fn details_reach_the_host_outside_the_action_and_the_journal() {
+    let h = Harness::mounted().await;
+    let agent = h.open_agent();
+    let (key, key_hex) = key_pair(0x42);
+    let responder = signed(key, ProtocolOutcome::AllowedOnce);
+    let peer = Peer::new(move |params, signal| responder(params, signal));
+    h.service()
+        .install_host_mode(&key_hex, peer.clone())
+        .unwrap();
+
+    let mut request = ApprovalRequest::new(agent.clone(), "bash");
+    request.call_id = Some("call-1".into());
+    request.reason = Some("Удалить файл old.txt".into());
+    request.details = Some("Команда: rm old.txt".into());
+    request.display_reason = Some(DisplayReason::new("Удалить файл"));
+    assert_eq!(
+        h.service().request(request).await.unwrap(),
+        ApprovalOutcome::AllowedOnce
+    );
+
+    let requests = lock(&peer.requests).clone();
+    assert_eq!(requests[0]["details"], "Команда: rm old.txt");
+    assert_eq!(requests[0]["reason"], "Удалить файл old.txt");
+    let host: HostApprovalRequest = serde_json::from_value(requests[0].clone()).unwrap();
+    assert_eq!(host.details.as_deref(), Some("Команда: rm old.txt"));
+    assert_eq!(
+        host.action,
+        json!({"method":"approval/request","params":{"sessionId":agent.session().id(),"toolName":"bash","callId":"call-1","reason":"Удалить файл old.txt"}}),
+        "details are not part of the signed action"
+    );
+    hoh_protocol::approval::validate_host_request(&host).unwrap();
+    let journal: Vec<_> = audit(agent.session())
+        .iter()
+        .map(|event| event.data().to_string())
+        .collect();
+    assert!(
+        journal.iter().all(|line| !line.contains("rm old.txt")),
+        "the command is not journaled: {journal:?}"
+    );
+    assert_pair(agent.session(), ApprovalOutcome::AllowedOnce);
+    h.close().await;
+}
+
+/// The bash tool's own escalation ask carries the model's justification. When its grant is gone
+/// (expired or never made) it reaches the host: there the engine words it in Russian, the model's
+/// words are only in `details`, and the session journal keeps the ask as the tool made it.
+#[tokio::test]
+async fn an_escalation_ask_reaching_the_host_is_worded_by_the_engine_and_the_justification_is_in_details()
+ {
+    let h = Harness::mounted().await;
+    let agent = h.open_agent();
+    let (key, key_hex) = key_pair(0x42);
+    let responder = signed(key, ProtocolOutcome::AllowedOnce);
+    let peer = Peer::new(move |params, signal| responder(params, signal));
+    h.service()
+        .install_host_mode(&key_hex, peer.clone())
+        .unwrap();
+
+    let justification = "нужно выполнить RM \"old.txt\" (rm old.txt) и ещё: двоеточие";
+    let original = format!("escalate sandbox to danger-full-access: {justification}");
+    let ask = |tool: &str, call: &str| {
+        let mut request = ApprovalRequest::new(agent.clone(), tool);
+        request.call_id = Some(call.into());
+        request.reason = Some(original.clone());
+        let mut display = DisplayReason::new(format!(
+            "Allow this operation with danger-full-access permissions: {justification}"
+        ));
+        display.insert("ru", "Разрешить: русский текст инструмента");
+        request.display_reason = Some(display);
+        request
+    };
+    // Expired grant.
+    h.service()
+        .pre_approve_escalation(agent.session(), &"c1".into(), "bash", &original);
+    h.service()
+        .age_escalation_grants(std::time::Duration::from_secs(301));
+    assert_eq!(
+        h.service().request(ask("bash", "c1")).await.unwrap(),
+        ApprovalOutcome::AllowedOnce
+    );
+    // No grant at all, another tool.
+    assert_eq!(
+        h.service().request(ask("write", "c2")).await.unwrap(),
+        ApprovalOutcome::AllowedOnce
+    );
+
+    let requests = lock(&peer.requests).clone();
+    assert_eq!(requests.len(), 2);
+    for (value, what) in [(&requests[0], "команду"), (&requests[1], "действие")] {
+        let host: HostApprovalRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(
+            host.human_text,
+            format!("Помощник просит выполнить {what} без ограничений песочницы")
+        );
+        assert_eq!(
+            host.reason.as_deref(),
+            Some(
+                format!(
+                    "{}. Обоснование Помощника — в подробностях",
+                    host.human_text
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(
+            host.details.as_deref(),
+            Some(format!("Обоснование Помощника: {justification}").as_str())
+        );
+        let window_text = format!("{} {}", host.human_text, host.reason.as_deref().unwrap());
+        for word in ["old.txt", "RM", "rm", "двоеточие", "выполнить RM", "Allow"]
+        {
+            assert!(!window_text.contains(word), "{word:?} in {window_text}");
+        }
+        assert_eq!(
+            host.action["params"]["reason"].as_str(),
+            host.reason.as_deref(),
+            "the signed action carries the same reason that is shown"
+        );
+        hoh_protocol::approval::validate_host_request(&host).unwrap();
+    }
+    // The engine's own journal keeps the ask as the tool made it.
+    let asked: Vec<_> = audit(agent.session())
+        .iter()
+        .filter(|event| event.event_type() == "approval/asked")
+        .map(|event| event.data()["reason"].clone())
+        .collect();
+    assert_eq!(asked, vec![json!(original), json!(original)]);
+    h.close().await;
+}
+
+/// Other modes get their own Russian words; an overlong justification still fits the protocol.
+#[tokio::test]
+async fn escalation_wording_covers_other_modes_and_an_overlong_justification() {
+    let h = Harness::mounted().await;
+    let agent = h.open_agent();
+    let (key, key_hex) = key_pair(0x42);
+    let responder = signed(key, ProtocolOutcome::AllowedOnce);
+    let peer = Peer::new(move |params, signal| responder(params, signal));
+    h.service()
+        .install_host_mode(&key_hex, peer.clone())
+        .unwrap();
+    for (call, mode) in [("c1", "workspace-write"), ("c2", "something-new")] {
+        let mut request = ApprovalRequest::new(agent.clone(), "bash");
+        request.call_id = Some(call.into());
+        request.reason = Some(format!("escalate sandbox to {mode}: {}", "😀".repeat(6000)));
+        assert_eq!(
+            h.service().request(request).await.unwrap(),
+            ApprovalOutcome::AllowedOnce
+        );
+    }
+    let requests = lock(&peer.requests).clone();
+    let first: HostApprovalRequest = serde_json::from_value(requests[0].clone()).unwrap();
+    let second: HostApprovalRequest = serde_json::from_value(requests[1].clone()).unwrap();
+    assert_eq!(
+        first.human_text,
+        "Помощник просит выполнить команду с правом записи в рабочую папку"
+    );
+    assert_eq!(
+        second.human_text,
+        "Помощник просит выполнить команду с расширенными правами песочницы"
+    );
+    for host in [&first, &second] {
+        let details = host.details.as_deref().unwrap();
+        assert!(details.encode_utf16().count() <= 8192);
+        hoh_protocol::approval::validate_host_request(host).unwrap();
+    }
     h.close().await;
 }
 

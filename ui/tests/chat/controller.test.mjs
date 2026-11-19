@@ -370,12 +370,147 @@ test('a window-profile engine without employees keeps one conversation and judge
   } finally { controller.disconnect(); await stub.close(); }
 });
 
+test('after a restart the saved conversation is resumed before its folder is asked for, and shown', async () => {
+  const stub = await StubClient.open('text-turn'); const asked = [];
+  await stub.request('session/resume', { sessionId: 'window-main' });
+  await stub.request('session/prompt', { sessionId: 'window-main', contentBlocks: [{ type: 'text', text: await recordedPrompt('text-turn') }] });
+  await stub.request('session/wait', { sessionId: 'window-main' });
+  // the real engine: a session on disk that is not open yet cannot be reached except by resume
+  let open = false;
+  const client = transport(stub, (method, params) => {
+    asked.push(method);
+    if (method === 'hoh/employee/open' || method === 'hoh/security/summary') return Promise.reject(new Error('method-unavailable'));
+    if (method === 'hoh/settings/get') return Promise.resolve({ model: { baseUrl: 'http://127.0.0.1:8080/v1', model: 'm' } });
+    if (method === 'session/resume') { open = true; return Promise.resolve({}); }
+    if (method === 'session/working-directory/get' && !open) return Promise.reject(new Error('session "window-main" already exists'));
+    return stub.request(method, params);
+  });
+  const controller = new ChatController(() => client, undefined, async () => {});
+  try {
+    await controller.connect();
+    assert.equal(controller.state.connection, 'ready');
+    assert(controller.state.entries.some(e => e.kind === 'user'), 'прежняя история на экране');
+    assert(controller.state.entries.some(e => e.kind === 'assistant'));
+    assert(asked.indexOf('session/resume') < asked.indexOf('session/working-directory/get'));
+  } finally { controller.disconnect(); await stub.close(); }
+});
+
+test('a failing resume (new session, already open) does not stop the connection', async () => {
+  const stub = await StubClient.open();
+  const client = transport(stub, (method, params) => method === 'session/resume' ? Promise.reject(new Error('session "window-main" not found')) : stub.request(method, params));
+  const controller = new ChatController(() => client);
+  try { await controller.connect(); assert.equal(controller.state.connection, 'ready'); }
+  finally { controller.disconnect(); await stub.close(); }
+});
+
 test('only the missing-method marker triggers the fallback', async () => {
   const stub = await StubClient.open();
   const client = transport(stub, (method, params) => method === 'hoh/employee/open' ? Promise.reject(new Error('Помощник отклонил запрос')) : stub.request(method, params));
   const controller = new ChatController(() => client);
   try { await controller.connect(); assert.equal(controller.state.connection, 'error'); }
   finally { controller.disconnect(); await stub.close(); }
+});
+
+test('the answer grows part by part while the model writes, keeps what came before Stop, and the final message replaces it', async () => {
+  const stub = await StubClient.open(); let emit;
+  const client = { ...transport(stub), subscribe: async listener => { emit = listener; return () => { emit = undefined; }; } };
+  const controller = new ChatController(() => client, undefined, async () => {});
+  try {
+    await controller.connect();
+    const sessionId = controller.sessionId;
+    const push = async (method, params) => { emit({ method, params: { sessionId, ...params } }); await controller.queue; };
+    const answer = () => controller.state.entries.filter(e => e.kind === 'assistant');
+    const chunk = (index, text) => push('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'a1', revision: 2 + index, index, time: 1, chunk: { type: 'text-delta', text } } });
+    await push('session.status', { status: 'running' });
+    await push('session.assistant-stream', { frame: { type: 'start', attemptId: 'a1', revision: 1, turn: 1, step: 1 } });
+    assert.equal(answer().length, 0, 'пустого ответа до первой части нет');
+    await chunk(0, 'Я умею ');
+    assert.deepEqual(answer().map(e => [e.text, e.streaming]), [['Я умею ', true]]);
+    await chunk(1, 'читать файлы');
+    assert.equal(answer()[0].text, 'Я умею читать файлы', 'текст растёт');
+    await chunk(1, 'ПОВТОР');
+    assert.equal(answer()[0].text, 'Я умею читать файлы', 'повтор кадра не удваивает текст');
+    assert(controller.state.busy);
+    await controller.stop();
+    assert.deepEqual(answer().map(e => [e.text, e.streaming]), [['Я умею читать файлы', false]], 'после «Стоп» остаётся полученная часть');
+    await chunk(2, ' ПОЗДНО');
+    assert.equal(answer()[0].text, 'Я умею читать файлы', 'поздние части остановленного ответа не возвращаются');
+  } finally { controller.disconnect(); await stub.close(); }
+});
+
+async function liveSetup() {
+  const stub = await StubClient.open(); let emit;
+  const client = { ...transport(stub), subscribe: async listener => { emit = listener; return () => { emit = undefined; }; } };
+  const controller = new ChatController(() => client, undefined, async () => {});
+  await controller.connect();
+  const sessionId = controller.sessionId;
+  const push = async (params, session = sessionId, method = 'session.assistant-stream') => { emit({ method, params: { sessionId: session, ...params } }); await controller.queue; };
+  const start = (attemptId, revision, step = 1) => push({ frame: { type: 'start', attemptId, revision, turn: 1, step } });
+  const chunk = (attemptId, revision, index, text) => push({ frame: { type: 'chunk', attemptId, revision, index, time: 1, chunk: { type: 'text-delta', text } } });
+  const shown = () => controller.state.entries.filter(e => e.kind === 'assistant').map(e => e.text);
+  return { stub, controller, push, start, chunk, shown, sessionId, close: async () => { controller.disconnect(); await stub.close(); } };
+}
+
+test('live frames: another session is ignored, revision is per attempt, a replaced attempt never comes back', async () => {
+  const t = await liveSetup();
+  try {
+    await t.push({ frame: { type: 'start', attemptId: 'x', revision: 1, turn: 1, step: 1 } }, 'another-session');
+    await t.push({ frame: { type: 'chunk', attemptId: 'x', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'ЧУЖАЯ' } } }, 'another-session');
+    assert.deepEqual(t.shown(), [], 'кадры чужой сессии не рисуются');
+
+    await t.start('a1', 1); await t.chunk('a1', 1, 0, 'первая ');
+    assert.deepEqual(t.shown(), ['первая '], 'первая часть с той же ревизией, что и start, не теряется');
+    await t.chunk('a1', 1, 1, 'и вторая ');
+    assert.deepEqual(t.shown(), ['первая и вторая '], 'ревизия может не расти на каждом кадре');
+    await t.chunk('a1', 1, 1, 'ПОВТОР ИНДЕКСА');
+    await t.chunk('a1', 0, 2, 'ОТКАТ РЕВИЗИИ');
+    assert.deepEqual(t.shown(), ['первая и вторая '], 'повтор индекса и откат ревизии внутри попытки игнорируются');
+    await t.chunk('a1', 5, 2, 'третья');
+    assert.deepEqual(t.shown(), ['первая и вторая третья']);
+
+    // a retry of the step restarts the revision at 1: the new attempt is shown, the text starts over
+    await t.start('a2', 1); await t.chunk('a2', 1, 0, 'вторая попытка');
+    assert.deepEqual(t.shown(), ['вторая попытка'], 'новая попытка с revision 1 после revision 5 видна');
+    // late frames of the replaced attempt are dropped whatever their revision
+    await t.start('a1', 9);
+    await t.chunk('a1', 9, 3, ' ПОЗДНО');
+    await t.chunk('a1', 1, 4, ' ПОЗДНО 2');
+    assert.deepEqual(t.shown(), ['вторая попытка'], 'запоздалая попытка a1 не возвращается');
+    await t.chunk('a2', 1, 1, ' продолжается');
+    assert.deepEqual(t.shown(), ['вторая попытка продолжается'], 'текущая попытка продолжает расти');
+  } finally { await t.close(); }
+});
+
+test('frames after the end of an attempt and after the final message do not change the answer', async () => {
+  const t = await liveSetup();
+  try {
+    await t.start('a1', 1); await t.chunk('a1', 2, 0, 'Готово');
+    await t.push({ frame: { type: 'end', attemptId: 'a1', revision: 3, index: 1, outcome: 'committed' } });
+    await t.chunk('a1', 4, 1, ' ПОСЛЕ КОНЦА');
+    assert.deepEqual(t.shown(), ['Готово']);
+    await t.push({ event: { type: 'assistant/message', seq: 901, time: 1, data: { turn: 1, step: 1, message: { id: 'm-9', role: 'assistant', content: [{ type: 'text', text: 'Готово.' }] } } } }, t.sessionId, 'session.event');
+    assert.deepEqual(t.shown(), ['Готово.']);
+    await t.start('a1', 9); await t.chunk('a1', 10, 0, 'ВОСКРЕС');
+    assert.deepEqual(t.shown(), ['Готово.'], 'после итогового сообщения живой текст не возвращается');
+  } finally { await t.close(); }
+});
+
+test('the durable assistant message takes the place of the live text without a second copy', async () => {
+  const stub = await StubClient.open(); let emit;
+  const client = { ...transport(stub), subscribe: async listener => { emit = listener; return () => { emit = undefined; }; } };
+  const controller = new ChatController(() => client, undefined, async () => {});
+  try {
+    await controller.connect();
+    const sessionId = controller.sessionId;
+    const push = async (method, params) => { emit({ method, params: { sessionId, ...params } }); await controller.queue; };
+    await push('session.status', { status: 'running' });
+    await push('session.assistant-stream', { frame: { type: 'start', attemptId: 'a1', revision: 1, turn: 1, step: 1 } });
+    await push('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'a1', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Готово' } } });
+    await push('session.assistant-stream', { frame: { type: 'end', attemptId: 'a1', revision: 3, index: 1, outcome: 'committed' } });
+    await push('session.event', { event: { type: 'assistant/message', seq: 900, time: 1, data: { turn: 1, step: 1, message: { id: 'm-1', role: 'assistant', content: [{ type: 'text', text: 'Готово.' }] } } } });
+    const answers = controller.state.entries.filter(e => e.kind === 'assistant');
+    assert.deepEqual(answers.map(e => [e.id, e.text, e.streaming]), [['assistant-m-1', 'Готово.', false]]);
+  } finally { controller.disconnect(); await stub.close(); }
 });
 
 test('questions from the assistant are shown, answered through the host, and withdrawn by the engine', async () => {

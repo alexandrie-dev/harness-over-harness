@@ -51,6 +51,7 @@ try {
         subscribeStatus: async listener => { statusListeners.add(listener); return () => statusListeners.delete(listener); },
         subscribeQuestions: async listener => { window.__hohAsk = listener; return () => { window.__hohAsk = undefined; }; },
         answerQuestion: async (requestId, answer) => { window.__hohAnswers.push({ requestId, answer }); },
+        approvalHistory: async () => window.__hohApprovalHistory ?? [],
       };
       window.__hohAnswers = [];
       window.__hohChatNotify = notification => { for (const listener of listeners) listener(notification); };
@@ -129,6 +130,54 @@ try {
     await page.reload();
     await page.waitForSelector('[data-chat-screen][data-connection="ready"]');
   }, [], { firstRun: true });
+
+  await check('approvals-section', 'text-turn', async page => {
+    // what the native core returns from the journal: newest first, addresses already closed
+    await page.evaluate(() => {
+      window.__hohApprovalHistory = [
+        { at: Date.UTC(2026, 10, 19, 18, 4), asker: 'assistant', method: 'bash', outcome: 'rejected', humanText: 'Выполнить команду в папке Документы/HoH: удалить 2 файла', reason: 'Эти файлы старые', details: 'Команда: rm -f old-1.txt old-2.txt' },
+        { at: Date.UTC(2026, 10, 19, 18, 1), asker: 'you', method: 'hoh/settings/set', outcome: 'allowed-once', humanText: 'Изменить настройки: провайдер — «https://user:•••@host.example/v1?api_key=•••»' },
+      ];
+    });
+    assert.equal(await page.locator('[data-approvals]').count(), 0, 'раздел открывается по нажатию');
+    await page.locator('[data-nav-approvals]').click();
+    await page.getByRole('heading', { name: 'Подтверждения' }).waitFor();
+    const rows = page.locator('.ap-history-row');
+    assert.equal(await rows.count(), 2);
+    assert.match(await rows.nth(0).innerText(), /удалить 2 файла[\s\S]*Просил Помощник[\s\S]*Отклонено/);
+    assert.match(await rows.nth(1).innerText(), /Вы, в настройках[\s\S]*Разрешено один раз/);
+    const shown = await page.locator('[data-approvals]').innerText();
+    assert(!shown.includes('rm -f'), 'сырая команда скрыта до раскрытия «Подробностей»');
+    assert(shown.includes('api_key=•••'));
+    await rows.nth(0).locator('summary').click();
+    assert((await rows.nth(0).innerText()).includes('rm -f old-1.txt old-2.txt'));
+    if (process.argv[2]) await page.screenshot({ path: join(process.argv[2], 'approvals-section.png'), animations: 'disabled' });
+    await page.getByRole('button', { name: /Помощник/ }).first().click();
+    await page.getByLabel('Сообщение Помощнику', { exact: true }).waitFor();
+    assert.equal(await page.locator('[data-approvals]').count(), 0);
+  });
+
+  await check('live-answer-parts', 'text-turn', async page => {
+    // the engine's live frames (session.assistant-stream): the text grows, a stop keeps the received part
+    const { sessionId } = await page.evaluate(() => window.__HOH_CHAT_TEST_TRANSPORT__.request('hoh/employee/open', { id: 'employee-1' }));
+    const send = (method, params) => page.evaluate(([m, p]) => window.__hohChatNotify({ method: m, params: p }), [method, { sessionId, ...params }]);
+    const frame = (index, text) => send('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'a1', revision: index + 2, index, time: 1, chunk: { type: 'text-delta', text } } });
+    const answer = () => page.locator('[data-chat-entry="assistant"]').last().innerText();
+    await send('session.status', { status: 'running' });
+    await send('session.assistant-stream', { frame: { type: 'start', attemptId: 'a1', revision: 1, turn: 1, step: 1 } });
+    await frame(0, 'Я умею читать ');
+    await page.waitForFunction(() => document.querySelector('[data-chat-entry="assistant"][data-streaming="true"]'));
+    const first = await answer();
+    await frame(1, 'и писать файлы в вашей папке.');
+    await page.waitForFunction(text => document.querySelector('[data-chat-entry="assistant"]:last-of-type')?.textContent.length > text.length, first);
+    const second = await answer();
+    assert(second.length > first.length && second.startsWith(first.trim()), `текст должен расти: «${first}» → «${second}»`);
+    if (process.argv[2]) await page.screenshot({ path: join(process.argv[2], 'stream-part-2.png'), animations: 'disabled' });
+    await page.locator('[data-chat-stop]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-chat-entry="assistant"][data-streaming="true"]'));
+    assert.equal(await answer(), second, 'после «Стоп» остаётся полученная часть');
+    if (process.argv[2]) await page.screenshot({ path: join(process.argv[2], 'stream-stopped.png'), animations: 'disabled' });
+  });
 
   await check('text-stream', 'text-turn', async (page, stub) => {
     const prompt = await recordedPrompt('text-turn');

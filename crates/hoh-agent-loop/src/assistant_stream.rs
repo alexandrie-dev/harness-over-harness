@@ -119,7 +119,21 @@ impl AssistantStreamAttempt {
         Ok(())
     }
 
-    /// Publish abandonment when no durable attempt event can be committed.
+    /// Commit the durable interrupted prefix, then mark the live generation attempt abandoned.
+    /// Cancellation preserves visible text in history without claiming that the model completed.
+    pub fn settle_abandoned(
+        &mut self,
+        append: impl FnOnce() -> Result<SessionSeq, BoxError>,
+    ) -> Result<(), BoxError> {
+        if let Err(error) = append() {
+            self.abandon();
+            return Err(error);
+        }
+        self.abandon();
+        Ok(())
+    }
+
+    /// Publish that generation did not complete, whether or not a partial prefix was persisted.
     pub fn abandon(&mut self) {
         self.terminal = true;
         let revision = (self.next_revision)();

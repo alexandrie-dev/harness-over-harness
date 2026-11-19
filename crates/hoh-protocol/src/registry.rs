@@ -173,6 +173,8 @@ pub enum Notification {
     UserQuestionCancelled(SdkUserQuestionCancelled),
     #[serde(rename = "session.event")]
     SessionEvent(SessionEventNotification),
+    #[serde(rename = "session.assistant-stream")]
+    SessionAssistantStream(SessionAssistantStreamNotification),
     #[serde(rename = "session.status")]
     SessionStatus(SessionStatusNotification),
     #[serde(rename = "session.query.completed")]
@@ -258,6 +260,7 @@ pub const REQUEST_METHODS: &[&str] = &[
 pub const NOTIFICATION_METHODS: &[&str] = &[
     "user-question.cancelled",
     "session.event",
+    "session.assistant-stream",
     "session.status",
     "session.query.completed",
     "subagent.started",
@@ -400,6 +403,7 @@ pub fn validate_notification(method: &str, value: &Value) -> Result<(), String> 
     match method {
         "user-question.cancelled" => admit::<SdkUserQuestionCancelled>(value),
         "session.event" => admit::<SessionEventNotification>(value),
+        "session.assistant-stream" => admit::<SessionAssistantStreamNotification>(value),
         "session.status" => admit::<SessionStatusNotification>(value),
         "session.query.completed" => admit::<SessionQueryCompleted>(value),
         "subagent.started" => admit::<SubagentStartedNotification>(value),

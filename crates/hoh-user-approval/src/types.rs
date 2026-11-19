@@ -48,6 +48,9 @@ pub struct ApprovalRequestEvent {
     pub tool_name: String,
     pub call_id: Option<ToolCallId>,
     pub reason: Option<String>,
+    /// Not part of the source: extra text the host window shows folded away (the raw command of a
+    /// bash approval). Sent to the host only; not journaled and not shown to answerers' `reason`.
+    pub details: Option<String>,
     pub display_reason: Option<DisplayReason>,
     pub signal: Option<AbortSignal>,
 }
@@ -58,6 +61,7 @@ impl ApprovalRequestEvent {
             tool_name: tool_name.into(),
             call_id: None,
             reason: None,
+            details: None,
             display_reason: None,
             signal: None,
         }

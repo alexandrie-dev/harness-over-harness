@@ -25,6 +25,8 @@ fn capabilities_keep_main_and_approval_authority_disjoint() {
     assert!(!main_permissions.contains("allow-approval-decide"));
     assert!(main_permissions.contains("allow-question-answer"));
     assert!(!approval_permissions.contains("allow-question-answer"));
+    assert!(main_permissions.contains("allow-approval-history"));
+    assert!(!approval_permissions.contains("allow-approval-history"));
     assert_eq!(
         approval_permissions,
         BTreeSet::from([

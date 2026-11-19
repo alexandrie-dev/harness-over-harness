@@ -37,7 +37,7 @@ export class ChatController {
     const event = task.event;
     if (current !== this.generation || !this.projection.accept(event)) return;
     task.accepted = true;
-    if (event.type === 'assistant/message') {
+    if (event.type === 'assistant/message' && !this.projection.hasLive(event)) {
       const chunks = assistantChunks(event); let value = '';
       for (let index = 0; index < chunks.length; index++) {
         if (current !== this.generation) return;
@@ -58,7 +58,8 @@ export class ChatController {
     // Receipt is authoritative; animation is only presentation. Include the
     // currently animated message AND every event already waiting behind it.
     for (const task of this.received) {
-      if (task.event) {
+      if (task.frame) this.projection.liveFrame(task.frame);
+      else if (task.event) {
         if (task.accepted) this.projection.apply(task.event);
         else this.projection.event(task.event);
       } else this.projection.setRunning(task.running);
@@ -75,6 +76,10 @@ export class ChatController {
         this.ignoreUntilNextTurn = false; this.allowNextTurn = false;
       }
       task = { event, accepted: false };
+    } else if (notification.method === 'session.assistant-stream' && notification.params.sessionId === this.sessionId) {
+      // late frames of an answer that was stopped must not bring its text back
+      if (this.ignoreUntilNextTurn) return;
+      task = { frame: notification.params.frame };
     } else if (notification.method === 'session.status' && notification.params.sessionId === this.sessionId) {
       if (this.ignoreUntilNextTurn) return;
       task = { running: notification.params.status === 'running' };
@@ -83,7 +88,8 @@ export class ChatController {
     this.received.add(task);
     this.queue = this.queue.then(async () => {
       if (current !== this.generation) return;
-      if (task.event) await this.consume(task, current);
+      if (task.frame) { this.projection.liveFrame(task.frame); this.publish(); }
+      else if (task.event) await this.consume(task, current);
       else { this.projection.setRunning(task.running); this.publish(); }
     }).finally(() => this.received.delete(task)).catch(() => {
       if (current === this.generation) {
@@ -170,6 +176,13 @@ export class ChatController {
       const opened = await unlessMissing(() => transport.request('hoh/employee/open', { id: 'employee-1' }), () => ({ sessionId: WINDOW_SESSION }));
       if (ownEpoch !== this.epoch) return;
       this.sessionId = opened.sessionId;
+      // After a restart the conversation is on disk but not open in the new engine. Asking for its
+      // working folder first would open it as a NEW one ("already exists") and the history would be
+      // lost to the screen, so it is resumed first. A session that does not exist yet ("not found")
+      // or is already open is fine: the next request creates or reuses it, and any real failure
+      // surfaces there.
+      try { await transport.request('session/resume', { sessionId: this.sessionId }); } catch { /* see above */ }
+      if (ownEpoch !== this.epoch) return;
       const directory = await transport.request('session/working-directory/get', { sessionId: this.sessionId });
       if (ownEpoch !== this.epoch) return;
       projection.folder = directory.cwd;

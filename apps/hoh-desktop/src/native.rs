@@ -206,8 +206,10 @@ fn handle_event(
             {
                 // The window is told only that a decision waits; an address in it stays closed.
                 frame["params"]["humanText"] = Value::String(crate::approval::redact_text(text));
-                if let Some(reason) = frame["params"]["reason"].as_str() {
-                    frame["params"]["reason"] = Value::String(crate::approval::redact_text(reason));
+                for key in ["reason", "details"] {
+                    if let Some(text) = frame["params"][key].as_str() {
+                        frame["params"][key] = Value::String(crate::approval::redact_text(text));
+                    }
                 }
             }
             let _ = handle.emit_to("main", "engine-notification", frame);
@@ -682,6 +684,18 @@ pub fn question_answer(
         .engine
         .respond(generation, frame)
         .map_err(|_| "Помощник недоступен".to_owned())
+}
+
+/// The decisions of the person, for the «Подтверждения» section. Only the main window may read them.
+#[tauri::command]
+pub fn approval_history(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+) -> Result<Vec<Value>, String> {
+    if window.label() != "main" {
+        return Err("История доступна только главному окну".into());
+    }
+    Ok(state.approvals.history(200))
 }
 
 #[tauri::command]

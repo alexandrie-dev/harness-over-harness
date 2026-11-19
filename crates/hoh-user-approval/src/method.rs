@@ -205,6 +205,7 @@ pub(crate) fn build_method_request(
         tool_name: method.to_owned(),
         call_id: None,
         reason: None,
+        details: None,
         approval_id,
         risk: Risk::High,
         human_text,

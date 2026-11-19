@@ -73,7 +73,8 @@ impl Plugin for DestructiveGuard {
                             escalation_prompt(command, base, justification, fs.clone()).await;
                         let mut request = ApprovalRequest::new(agent.clone(), "bash");
                         request.call_id = Some(exec.call_id.clone());
-                        request.reason = Some(prompt.details);
+                        request.reason = Some(prompt.explanation);
+                        request.details = Some(prompt.details);
                         request.display_reason = Some(DisplayReason::new(prompt.headline));
                         request.signal = Some(exec.signal());
                         return match approval.request(request).await? {
@@ -103,8 +104,16 @@ impl Plugin for DestructiveGuard {
                             )),
                         };
                     }
-                    if let Some(ask) = decide(command, base, fs).await {
-                        return Ok(ask);
+                    // Every other question is an `Ask`: the pipeline puts it to the approval
+                    // service and ends the waterfall, as before.
+                    if let Some(question) = decide(command, base, fs).await {
+                        return Ok(PreToolDecision::Ask {
+                            reason: Some(question.explanation),
+                            // The host protocol carries one text, keyed `en`; the window shows it
+                            // as written.
+                            display_reason: Some(DisplayReason::new(question.headline)),
+                            details: Some(question.details),
+                        });
                     }
                 }
                 next.run().await
@@ -126,23 +135,14 @@ fn full_access_justification(arguments: &serde_json::Value) -> Option<&str> {
         .filter(|text| !text.trim().is_empty())
 }
 
-/// The decision for one bash command run in `cwd`: `None` leaves it to the next listener. The
+/// The question for one bash command run in `cwd`: `None` leaves it to the next listener. The
 /// file system is only touched on a blocking thread.
-pub async fn decide(
-    command: &str,
-    cwd: Option<PathBuf>,
-    fs: Arc<dyn Fs>,
-) -> Option<PreToolDecision> {
+pub async fn decide(command: &str, cwd: Option<PathBuf>, fs: Arc<dyn Fs>) -> Option<Question> {
     let risks = assess_blocking(command.to_owned(), cwd.clone(), fs).await;
     if risks.is_empty() {
         return None;
     }
-    let question = question(&risks, command, cwd.as_deref());
-    Some(PreToolDecision::Ask {
-        reason: Some(question.details),
-        // The host protocol carries one text, keyed `en`; the window shows it as written.
-        display_reason: Some(DisplayReason::new(question.headline)),
-    })
+    Some(question(&risks, command, cwd.as_deref()))
 }
 
 /// What the bash tool asks the host when the call escalates (`hoh-sandbox`'s
@@ -160,7 +160,7 @@ fn denial(reason: &str, code: &str) -> PreToolDecision {
 
 /// The question for a bash command that asks to run without the sandbox: always asked, in the
 /// guard's wording, with what the command would do (whatever the classifier finds). `headline` is
-/// the host's `humanText`, `details` its `reason`.
+/// the host's `humanText`, `explanation` its `reason`; the raw command is only `command`.
 pub async fn escalation_prompt(
     command: &str,
     cwd: Option<PathBuf>,

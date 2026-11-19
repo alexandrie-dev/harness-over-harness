@@ -377,6 +377,48 @@ object!(SessionEventNotification {
     session_id: String,
     event: SessionEvent
 });
+/// Window-only projection of one process-local assistant attempt. Only visible text deltas cross
+/// the JSON-RPC boundary; reasoning, tool-call, usage, and structural model chunks stay internal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum SessionAssistantStreamFrame {
+    Start {
+        attempt_id: String,
+        revision: u64,
+        turn: u64,
+        step: u64,
+    },
+    Chunk {
+        attempt_id: String,
+        revision: u64,
+        index: u64,
+        time: i64,
+        chunk: SessionAssistantStreamChunk,
+    },
+    End {
+        attempt_id: String,
+        revision: u64,
+        index: u64,
+        outcome: SessionAssistantStreamOutcome,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum SessionAssistantStreamChunk {
+    TextDelta { text: String },
+}
+choices!(SessionAssistantStreamOutcome {
+    Committed => "committed",
+    Abandoned => "abandoned"
+});
+object!(SessionAssistantStreamNotification {
+    session_id: String,
+    frame: SessionAssistantStreamFrame
+});
 choices!(SessionStatus { Idle => "idle", Running => "running" });
 object!(SessionStatusNotification {
     session_id: String,

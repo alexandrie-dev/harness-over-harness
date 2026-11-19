@@ -15,6 +15,10 @@
     "reason": {
       "type": "string"
     },
+    "details": {
+      "description": "What the window shows folded away: the raw command of a bash approval. Not part of\n`action`, so not part of `actionHash` or the decision MAC; the host closes secret parts\nof addresses in it as it does in `reason`.",
+      "type": "string"
+    },
     "approvalId": {
       "type": "string",
       "minLength": 1,

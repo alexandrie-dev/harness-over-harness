@@ -130,6 +130,8 @@ export class ChatProjection {
     this.calls = new Map();
     this.arguments = new Map();
     this.counter = 0;
+    this.live = new Map();
+    this.retired = new Set();
   }
   replace(index, entry) {
     const entries = this.entries.slice(); entries[index] = entry; this.entries = entries;
@@ -165,6 +167,67 @@ export class ChatProjection {
     if (index === undefined) { index = this.append(entry); this.assistants.set(id, index); }
     else this.replace(index, entry);
   }
+  /**
+   * Live text of the answer, as the engine publishes it while the model is still writing
+   * (`session.assistant-stream`: start | chunk{text-delta} | end). It is process-local: the durable
+   * `assistant/message` that follows replaces it in place. Whatever arrived before a stop stays.
+   */
+  liveFrame(frame) {
+    const frameRecord = record(frame); const type = frameRecord.type;
+    const key = String(frameRecord.turn ?? '') + ':' + String(frameRecord.step ?? '');
+    const attempt = frameRecord.attemptId; const revision = frameRecord.revision;
+    // Contract (crates/hoh-agent/src/runtime_types.rs, AssistantStreamFrame): revision is monotone
+    // only WITHIN an attempt and need not grow on every frame; a replacement attempt may restart it
+    // at 1. So a new attemptId is accepted at any revision, frames of one attempt are ordered by
+    // `index` (and never go back in revision), and an attempt that was replaced or settled is
+    // remembered and all its frames are dropped.
+    if (typeof attempt !== 'string' || !Number.isSafeInteger(revision) || this.retired.has(attempt)) return;
+    if (type === 'start') {
+      const known = [...this.live.values()].find(live => live.attemptId === attempt);
+      if (known) return;
+      const previous = this.live.get(key);
+      // a retried attempt of the same step starts the text over; the replaced one never comes back
+      if (previous) this.retired.add(previous.attemptId);
+      this.live.set(key, { attemptId: attempt, raw: '', last: -1, index: previous?.index, revision });
+      if (previous?.index !== undefined) this.replace(previous.index, { ...this.entries[previous.index], text: '', streaming: true });
+      return;
+    }
+    const found = [...this.live.entries()].find(([, live]) => live.attemptId === attempt);
+    if (!found) return;
+    const [liveKey, live] = found;
+    if (revision < live.revision) return;
+    live.revision = revision;
+    if (type === 'end') {
+      this.retired.add(attempt);
+      if (live.index !== undefined) this.replace(live.index, { ...this.entries[live.index], streaming: false });
+      return;
+    }
+    const chunk = record(frameRecord.chunk);
+    if (type !== 'chunk' || chunk.type !== 'text-delta' || typeof chunk.text !== 'string') return;
+    if (!Number.isSafeInteger(frameRecord.index) || frameRecord.index <= live.last) return;
+    live.last = frameRecord.index; live.raw += chunk.text;
+    const entry = { id: 'live-' + live.attemptId, kind: 'assistant', text: visibleText(live.raw, this.folder), streaming: true };
+    if (!entry.text) return;
+    if (live.index === undefined) live.index = this.append(entry);
+    else this.replace(live.index, entry);
+    this.live.set(liveKey, live);
+  }
+  hasLive(event) {
+    const live = this.live.get(String(event.data?.turn ?? '') + ':' + String(event.data?.step ?? ''));
+    return live?.index !== undefined;
+  }
+  /** The durable answer takes the place of what was shown live. */
+  settleLive(event, value) {
+    const key = String(event.data?.turn ?? '') + ':' + String(event.data?.step ?? '');
+    const live = this.live.get(key); const message = record(event.data?.message);
+    if (live?.index === undefined || !text(message.id)) return false;
+    this.live.delete(key); this.retired.add(live.attemptId);
+    if (!value) return true;
+    const id = 'assistant-' + message.id;
+    this.replace(live.index, { id, kind: 'assistant', text: visibleText(value, this.folder), streaming: false });
+    this.assistants.set(id, live.index);
+    return true;
+  }
   apply(event) {
     const data = record(event.data);
     // A prompt can be acknowledged before its turn starts. Persisted inbox
@@ -185,7 +248,10 @@ export class ChatProjection {
       if (pending >= 0) { this.users.set(id, pending); this.replace(pending, { ...this.entries[pending], pending: false }); }
       else this.users.set(id, this.append({ id: 'user-' + id, kind: 'user', text: value }));
     }
-    if (event.type === 'assistant/message') this.assistant(event, contentText(data.message?.content));
+    if (event.type === 'assistant/message') {
+      const value = contentText(data.message?.content);
+      if (!this.settleLive(event, value)) this.assistant(event, value);
+    }
     if (event.type === 'tool/call') {
       const rawId = text(data.callId); if (!rawId) return;
       const callId = String(data.turn ?? '') + ':' + rawId; if (this.calls.has(callId)) return;

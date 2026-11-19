@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","method":"session.assistant-stream","params":{"sessionId":"session-1","frame":{"type":"chunk","attemptId":"session-1:1","revision":2,"index":0,"time":1700000000000,"chunk":{"type":"text-delta","text":"Привет"}}}}

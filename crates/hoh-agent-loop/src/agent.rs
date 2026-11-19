@@ -1222,7 +1222,7 @@ impl ReactLoopAgent {
         }
         data.insert("stream".into(), serde_json::to_value(live.stream())?);
         let session = self.session.clone();
-        live.settle("assistant/message", move || {
+        live.settle_abandoned(move || {
             Ok(session
                 .append(
                     "assistant/message",

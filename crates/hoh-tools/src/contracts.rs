@@ -826,6 +826,9 @@ pub enum PreToolDecision {
         reason: Option<String>,
         /// Localized prompt text keyed by locale; always carries `en`.
         display_reason: Option<DisplayReason>,
+        /// Not part of the source: text the host window shows folded away (a bash command). Goes
+        /// to `ApprovalRequest.details` only.
+        details: Option<String>,
     },
 }
 

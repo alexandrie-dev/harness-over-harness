@@ -27,6 +27,53 @@ pub const GRANT_TTL_MS: u64 = 30_000;
 /// forbids signing; the engine cancels the request by its own deadline and the journal says `expired`.
 pub const EXPIRY_MARGIN_MS: u64 = 5_000;
 const MAX_AUDIT_ENTRIES: usize = 1_000;
+/// The «Подтверждения» section reads at most this much of the end of the journal file.
+pub const HISTORY_TAIL_BYTES: u64 = 512 * 1024;
+
+/// The last journal lines, newest first, parsed one by one: a line that is not valid UTF-8 or JSON
+/// is skipped (or read lossily), never the whole file. Reads at most `max_bytes` from the end and
+/// looks at no more than `max_lines` lines.
+pub fn read_journal_tail(path: &std::path::Path, max_bytes: u64, max_lines: usize) -> Vec<Value> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(length) = file.metadata().map(|m| m.len()) else {
+        return Vec::new();
+    };
+    let start = length.saturating_sub(max_bytes);
+    // One byte more is read from before the window: if it is a newline the window begins exactly
+    // at the start of a line and that line is whole; otherwise the first line is cut and dropped.
+    let from = start.saturating_sub(1);
+    let mut bytes = Vec::new();
+    if file.seek(SeekFrom::Start(from)).is_err()
+        || file
+            .take(max_bytes + (start - from))
+            .read_to_end(&mut bytes)
+            .is_err()
+    {
+        return Vec::new();
+    }
+    let (cut, body) = if start > 0 {
+        (
+            bytes.first() != Some(&b'\n'),
+            bytes.get(1..).unwrap_or_default(),
+        )
+    } else {
+        (false, &bytes[..])
+    };
+    let mut lines = body.split(|b| *b == b'\n');
+    if cut {
+        lines.next();
+    }
+    let lines: Vec<&[u8]> = lines.filter(|line| !line.is_empty()).collect();
+    lines
+        .iter()
+        .rev()
+        .take(max_lines)
+        .filter_map(|line| serde_json::from_str(&String::from_utf8_lossy(line)).ok())
+        .collect()
+}
 
 const MASK: &str = "•••";
 const SECRET_WORDS: [&str; 8] = [
@@ -229,6 +276,8 @@ pub struct AuditEntry {
     pub human_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
     pub outcome: String,
     pub note: &'static str,
 }
@@ -249,6 +298,9 @@ pub struct ApprovalView {
     pub human_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Shown folded away (the raw command); closed like `reason`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
     pub expires_at: u64,
 }
 
@@ -316,6 +368,51 @@ impl Broker {
         self
     }
 
+    /// The decisions the person can read in the main window, newest first: who asked, what, when
+    /// and the answer. Read from the journal file, so it survives a restart; the entries the core
+    /// signed on the person's earlier confirmation are left out (they repeat the person's decision).
+    /// Addresses stay closed, as in the journal itself.
+    pub fn history(&self, limit: usize) -> Vec<Value> {
+        // Newest first. The file is read from its end, boundedly, before anything is parsed.
+        let newest_first: Vec<Value> = match &self.audit_file {
+            Some(path) => read_journal_tail(path, HISTORY_TAIL_BYTES, limit.saturating_mul(4)),
+            None => self
+                .audit_log()
+                .iter()
+                .rev()
+                .filter_map(|entry| serde_json::to_value(entry).ok())
+                .collect(),
+        };
+        newest_first
+            .iter()
+            .filter(|entry| {
+                entry["who"] == "human"
+                    || !entry["note"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .starts_with("подписано ядром без второго окна")
+            })
+            .filter_map(|entry| {
+                let closed = |key: &str| entry[key].as_str().map(redact_text);
+                let mut record = json!({
+                    "at": entry["at"].as_u64()?,
+                    "asker": if entry["via"] == "approval-window" { "assistant" } else { "you" },
+                    "method": entry["method"].as_str()?,
+                    "humanText": closed("humanText")?,
+                    "outcome": entry["outcome"].as_str()?,
+                });
+                if let Some(reason) = closed("reason") {
+                    record["reason"] = json!(reason);
+                }
+                if let Some(details) = closed("details") {
+                    record["details"] = json!(details);
+                }
+                Some(record)
+            })
+            .take(limit)
+            .collect()
+    }
+
     pub fn audit_log(&self) -> Vec<AuditEntry> {
         self.audit.lock().map(|log| log.clone()).unwrap_or_default()
     }
@@ -337,6 +434,7 @@ impl Broker {
             action_hash: request.action_hash.clone(),
             human_text: redact_text(&request.human_text),
             reason: request.reason.as_deref().map(redact_text),
+            details: request.details.as_deref().map(redact_text),
             outcome: outcome.to_owned(),
             note,
         };
@@ -463,6 +561,7 @@ impl Broker {
             tool_name: method.into(),
             call_id: None,
             reason: None,
+            details: None,
             approval_id: format!("native-preflight-{sequence}"),
             risk: Risk::High,
             human_text: redact_text(&preflight_text(method, params)?),
@@ -559,6 +658,7 @@ impl Broker {
             risk: request.risk.clone(),
             human_text: redact_text(&request.human_text),
             reason: request.reason.as_deref().map(redact_text),
+            details: request.details.as_deref().map(redact_text),
             expires_at: request.expires_at,
         };
         let mut slot = self
@@ -593,6 +693,7 @@ impl Broker {
             risk: pending.request.risk.clone(),
             human_text: redact_text(&pending.request.human_text),
             reason: pending.request.reason.as_deref().map(redact_text),
+            details: pending.request.details.as_deref().map(redact_text),
             expires_at: pending.request.expires_at,
         })
     }

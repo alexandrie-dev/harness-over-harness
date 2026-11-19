@@ -6,6 +6,7 @@ import { Icon } from '../shared/icons';
 import type { ChatEntry } from './projection.mjs';
 import { ChatIcon } from './icons';
 import { QuestionCard } from './QuestionCard';
+import { ApprovalsScreen } from './ApprovalsScreen';
 import '../shared/primitives.css';
 import './chat.css';
 
@@ -46,6 +47,7 @@ export function ChatScreen() {
   const draft = useChatStore(state => state.draft);
   const question = useChatStore(state => state.questions[0]);
   const [compact, setCompact] = useState(false);
+  const [section, setSection] = useState<'chat' | 'approvals'>('chat');
   const [estimate] = useState(() => Number.parseFloat(cssValue('--chat-estimated-row')) || undefined);
   const { connect, disconnect, send, stop, setDraft } = useChatStore.getState();
   useEffect(() => { void connect(); return disconnect; }, [connect, disconnect]);
@@ -67,13 +69,20 @@ export function ChatScreen() {
     <div className="chat-shell">
       <aside className="chat-sidebar" data-chat-sidebar aria-label="Помощник">
         <div className="chat-brand"><span className="mark">H</span><b>HoH</b></div>
-        <div className="chat-assistant-nav"><div className="chat-assistant" aria-current="page">
-          <span className="chat-avatar"><ChatIcon name="star" small /></span>
-          <span className="chat-assistant-name">Помощник<small>{ready ? busy ? 'работает' : 'готов к работе' : connection === 'recovering' ? 'восстанавливаю связь' : connection === 'error' ? 'нет связи' : 'подключаюсь'}</small></span>
-        </div></div>
+        <nav className="chat-assistant-nav" aria-label="Разделы">
+          <button type="button" className="chat-assistant" aria-current={section === 'chat' ? 'page' : undefined} onClick={() => setSection('chat')}>
+            <span className="chat-avatar"><ChatIcon name="star" small /></span>
+            <span className="chat-assistant-name">Помощник<small>{ready ? busy ? 'работает' : 'готов к работе' : connection === 'recovering' ? 'восстанавливаю связь' : connection === 'error' ? 'нет связи' : 'подключаюсь'}</small></span>
+          </button>
+          <button type="button" className="chat-assistant" data-nav-approvals aria-current={section === 'approvals' ? 'page' : undefined} onClick={() => setSection('approvals')}>
+            <span className="chat-avatar"><Icon name="shield" small /></span>
+            <span className="chat-assistant-name">Подтверждения</span>
+          </button>
+        </nav>
         <div className="chat-sidebar-footer"><Icon name="folder" small /><span>{folderLabel}</span></div>
       </aside>
-      <section className="chat-main" aria-label="Чат с Помощником">
+      {section === 'approvals' && <ApprovalsScreen />}
+      <section className="chat-main" aria-label="Чат с Помощником" hidden={section !== 'chat'}>
         <header className="chat-header"><h1>Помощник</h1><span className="chat-status" aria-hidden="true">{canceling ? 'останавливаю…' : busy ? 'отвечает…' : ''}</span><span className="chat-folder-chip"><Icon name="folder" small />{folderLabel}</span></header>
         <section className="chat-conversation" aria-label="Переписка" aria-busy={busy}>
           {entries.length === 0 && <div className="chat-empty" data-chat-empty><h2>С чего начнём?</h2><p>{connection === 'connecting' ? 'Подключаюсь к Помощнику…' : ready ? 'Напишите, что нужно сделать. Ход работы появится здесь.' : 'Разговор появится после подключения.'}</p></div>}

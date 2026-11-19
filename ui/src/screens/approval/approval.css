@@ -63,3 +63,7 @@
 @media (prefers-reduced-motion: reduce) {
   .ap-bar i { transition: none; }
 }
+
+.ap-details { margin-block-end: var(--space-7); font-size: var(--text-xs); color: var(--color-muted); }
+.ap-details summary { cursor: pointer; }
+.ap-details pre { margin-block-start: var(--space-3); white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -237,3 +237,23 @@ CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w4. Приостановле
   одного ядра делят один замок. Тест `policy_switches_on_the_old_and_the_new_incarnation_write_one_event_and_one_notice`:
   старый сервис сохранён, registry пересобран, оба экземпляра идут через `after_policy_read` с барьером;
   ждём ровно один event и один notice. Проверка «красным»: с замком на экземпляр тест падает.
+
+## sg2 (A-03): `ApprovalRequest.details`
+- Необязательное `details: Option<String>` в `ApprovalRequestEvent` (= `ApprovalRequest`), не часть TS-пакета.
+  Host-режим кладёт его в `HostApprovalRequest.details` (не в `action`, не в журнал `approval/asked`);
+  ответчикам события оно не показывается. Тест `details_reach_the_host_outside_the_action_and_the_journal`.
+- `PreToolDecision::Ask.details` (hoh-tools) → `service_ask` → `ApprovalRequest.details`; существующие
+  вызовы `Ask` передают `None`.
+
+## sg2 (details fix3): запрос эскалации песочницы на пути к хосту окна
+- Запрос второй эскалации (`reason` = `escalate sandbox to {mode}: {justification}`, его строит `hoh-sandbox`
+  для `bash` и файловых инструментов) несёт слова модели. В host-режиме (`host.rs::build_request`) движок сам
+  формулирует его по-русски: `humanText` «Помощник просит выполнить команду|действие без ограничений песочницы»
+  (для `workspace-write` и прочих режимов — свои слова), `reason` = `humanText` + «. Обоснование Помощника — в
+  подробностях», а обоснование (до 3600 знаков, влезает в 8192 единиц UTF-16) уходит в `details`:
+  «Обоснование Помощника: …». Тот же `reason` стоит в подписываемом `action`. Без host-режима (dsh-совместимые
+  профили) путь не меняется; журнал `approval/asked` хранит исходный `reason` инструмента.
+- Окно пишет в `approvals.log` только `humanText`/`reason`/`details` из `HostApprovalRequest` (проверено по
+  `apps/hoh-desktop/src/approval.rs`: `AuditEntry` не содержит `action`). Тесты в `tests/host.rs`:
+  `an_escalation_ask_reaching_the_host_is_worded_by_the_engine_and_the_justification_is_in_details`
+  (истёкший грант и запрос без гранта), `escalation_wording_covers_other_modes_and_an_overlong_justification`.

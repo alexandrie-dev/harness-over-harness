@@ -187,11 +187,65 @@ impl HostApprovalMode {
     }
 }
 
+/// The prefix of the reason the sandbox's escalation ask carries (`hoh-sandbox`'s
+/// `approve_escalation`): `escalate sandbox to {mode}: {justification}`.
+const ESCALATION_PREFIX: &str = "escalate sandbox to ";
+const MAX_JUSTIFICATION_CHARS: usize = 3600;
+
+/// What the window shows for an escalation ask: built here in Russian, so that not a word of the
+/// model's justification is in `humanText` or `reason`; the justification goes to `details`.
+struct EscalationText {
+    human_text: String,
+    reason: String,
+    details: String,
+}
+
+fn escalation_text(approval: &ApprovalRequest) -> Option<EscalationText> {
+    let rest = approval
+        .reason
+        .as_deref()?
+        .strip_prefix(ESCALATION_PREFIX)?;
+    let (mode, justification) = rest.split_once(": ")?;
+    let what = if approval.tool_name == "bash" {
+        "команду"
+    } else {
+        "действие"
+    };
+    let human_text = match mode {
+        "danger-full-access" => {
+            format!("Помощник просит выполнить {what} без ограничений песочницы")
+        }
+        "workspace-write" => {
+            format!("Помощник просит выполнить {what} с правом записи в рабочую папку")
+        }
+        _ => format!("Помощник просит выполнить {what} с расширенными правами песочницы"),
+    };
+    let justification: String = justification
+        .chars()
+        .take(MAX_JUSTIFICATION_CHARS)
+        .collect();
+    Some(EscalationText {
+        reason: format!("{human_text}. Обоснование Помощника — в подробностях"),
+        human_text,
+        details: format!("Обоснование Помощника: {justification}"),
+    })
+}
+
 fn build_request(
     approval: &ApprovalRequest,
     approval_id: &str,
     now: u64,
 ) -> Result<HostApprovalRequest, String> {
+    let escalation = escalation_text(approval);
+    let reason = match &escalation {
+        Some(text) => Some(text.reason.clone()),
+        None => approval.reason.clone(),
+    };
+    let details = match (&approval.details, &escalation) {
+        (Some(details), _) => Some(details.clone()),
+        (None, Some(text)) => Some(text.details.clone()),
+        (None, None) => None,
+    };
     let mut params = Map::new();
     params.insert(
         "sessionId".into(),
@@ -201,7 +255,7 @@ fn build_request(
     if let Some(call_id) = &approval.call_id {
         params.insert("callId".into(), Value::String(call_id.to_string()));
     }
-    if let Some(reason) = &approval.reason {
+    if let Some(reason) = &reason {
         params.insert("reason".into(), Value::String(reason.clone()));
     }
     let action = json!({"method":"approval/request","params":params});
@@ -209,10 +263,14 @@ fn build_request(
         session_id: approval.agent.session().id().to_string(),
         tool_name: approval.tool_name.clone(),
         call_id: approval.call_id.as_ref().map(ToString::to_string),
-        reason: approval.reason.clone(),
+        reason,
+        details,
         approval_id: approval_id.to_owned(),
         risk: Risk::High,
-        human_text: human_text(approval),
+        human_text: match &escalation {
+            Some(text) => text.human_text.clone(),
+            None => human_text(approval),
+        },
         action_hash: hoh_protocol::approval::action_hash(&action),
         expires_at: now.saturating_add(HOST_APPROVAL_LIFETIME.as_millis() as u64),
         action,

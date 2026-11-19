@@ -346,6 +346,26 @@ async function openApproval(view, viewport, options = {}) {
 }
 
 {
+  const { page, context } = await openApproval(request({ reason: 'Нужно убрать старые файлы.', details: 'Команда: rm -f old-1.txt old-2.txt' }));
+  await page.getByRole('alertdialog').waitFor();
+  const main = await page.locator('.ap-body').innerText();
+  assert(main.includes('Нужно убрать старые файлы.'), 'объяснение на виду');
+  assert(!main.includes('rm -f'), 'сырая команда не в основном тексте');
+  await page.getByText('Подробности').click();
+  await page.getByText('Команда: rm -f old-1.txt old-2.txt').waitFor();
+  await context.close();
+  ok('сырая команда только под «Подробностями», основной текст — объяснение');
+}
+
+{
+  const { page, context } = await openApproval(request());
+  await page.getByRole('alertdialog').waitFor();
+  assert.equal(await page.locator('.ap-details').count(), 0, 'без details блока «Подробности» нет');
+  await context.close();
+  ok('без details блока «Подробности» нет');
+}
+
+{
   // The view is what the native core hands the window for an address with a secret in it
   // (apps/hoh-desktop/tests/grants.rs checks the core produces exactly this view from `raw`).
   const fixture = JSON.parse(await readFile(new URL('./secret-address-view.json', import.meta.url), 'utf8'));

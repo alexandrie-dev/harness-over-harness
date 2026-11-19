@@ -14,8 +14,10 @@ use futures_util::{
     future::{BoxFuture, Shared, join_all},
 };
 use hoh_agent::{
-    Agent, AgentError, AgentHandle, AgentOptions, AgentSessionMeta, AgentStatus,
-    AgentStatusChanged, Agents, CreateAgentOptions, Live, ModelSelection, ResumeAgentOptions,
+    Agent, AgentAssistantStream, AgentError, AgentHandle, AgentOptions, AgentSessionMeta,
+    AgentStatus, AgentStatusChanged, Agents, AssistantStreamFrame as AgentAssistantStreamFrame,
+    AssistantStreamOutcome as AgentAssistantStreamOutcome, CreateAgentOptions, Live,
+    ModelSelection, ResumeAgentOptions,
 };
 use hoh_attachment::{
     AttachmentError, AttachmentErrorCode, Attachments, EncodedImageAttachment, ImageMediaType,
@@ -29,13 +31,15 @@ use hoh_goal::Goals;
 use hoh_kernel::{Context, Disposer, Fiber, Inject, Service, Undo};
 use hoh_llm::{
     ContentBlock, Llm, LlmCallConfig, LlmCallControls, MessageSource, NewUserMessage,
-    ReasoningEffortId, create_user_message,
+    ReasoningEffortId, StreamChunk, create_user_message,
 };
 use hoh_protocol::{
     ApprovalHost, HohInitializeResult, InitializeParams, InitializeResult, SecretString,
-    ServerInfo, SessionPromptParams, SessionPromptResult, SessionQueryParams, SessionQueryResult,
-    SessionResumeParams, SessionWaitParams, SessionWorkingDirectoryParams,
-    SessionWorkingDirectoryResult, SessionWorkingDirectorySetParams,
+    ServerInfo, SessionAssistantStreamChunk, SessionAssistantStreamFrame,
+    SessionAssistantStreamNotification, SessionAssistantStreamOutcome, SessionPromptParams,
+    SessionPromptResult, SessionQueryParams, SessionQueryResult, SessionResumeParams,
+    SessionWaitParams, SessionWorkingDirectoryParams, SessionWorkingDirectoryResult,
+    SessionWorkingDirectorySetParams,
 };
 use hoh_session::{SessionCreated, SessionEventEmitted, SessionId, SessionLogOffset};
 use hoh_session_persistence::SessionPersistenceService;
@@ -119,6 +123,63 @@ fn protocol_command_execution(execution: NativeCommandExecution) -> hoh_protocol
         command_id: execution.command_id.to_string(),
         result,
     }
+}
+
+fn assistant_stream_frame(
+    frame: &AgentAssistantStreamFrame,
+) -> Option<SessionAssistantStreamFrame> {
+    Some(match frame {
+        AgentAssistantStreamFrame::Start {
+            attempt_id,
+            revision,
+            turn,
+            step,
+        } => SessionAssistantStreamFrame::Start {
+            attempt_id: attempt_id.to_string(),
+            revision: *revision,
+            turn: *turn,
+            step: *step,
+        },
+        AgentAssistantStreamFrame::Chunk {
+            attempt_id,
+            revision,
+            index,
+            time,
+            chunk: StreamChunk::TextDelta { text, .. },
+        } => SessionAssistantStreamFrame::Chunk {
+            attempt_id: attempt_id.to_string(),
+            revision: *revision,
+            index: *index,
+            time: *time,
+            chunk: SessionAssistantStreamChunk::TextDelta { text: text.clone() },
+        },
+        AgentAssistantStreamFrame::Chunk { .. } => return None,
+        AgentAssistantStreamFrame::End {
+            attempt_id,
+            revision,
+            index,
+            outcome,
+        } => SessionAssistantStreamFrame::End {
+            attempt_id: attempt_id.to_string(),
+            revision: *revision,
+            index: *index,
+            outcome: match outcome {
+                AgentAssistantStreamOutcome::Committed { .. } => {
+                    SessionAssistantStreamOutcome::Committed
+                }
+                AgentAssistantStreamOutcome::Abandoned => SessionAssistantStreamOutcome::Abandoned,
+            },
+        },
+    })
+}
+
+fn is_current_owned_agent<T: ?Sized>(
+    owned: Option<&Arc<T>>,
+    registered: Option<&Arc<T>>,
+    event: &Arc<T>,
+) -> bool {
+    owned.is_some_and(|agent| Arc::ptr_eq(agent, event))
+        && registered.is_some_and(|agent| Arc::ptr_eq(agent, event))
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -345,6 +406,40 @@ impl HarnessSdkJsonRpcServer {
                 inner.transport.notify(
                     "session.event",
                     Some(json!({"sessionId":event.session.id(), "event":event.event})),
+                )
+            },
+        )?);
+        let weak = Arc::downgrade(&this.inner);
+        lock(&this.inner.disposers).push(ctx.on_contained::<AgentAssistantStream>(
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return Ok(());
+                };
+                let session_id = event.agent.session().id();
+                let owned_agent = lock(&inner.state)
+                    .sessions
+                    .get(session_id)
+                    .map(|rec| rec.handle.agent.clone());
+                let registered_agent = inner
+                    .ctx
+                    .get::<Agents>()
+                    .and_then(|agents| agents.get(event.agent.id()));
+                if !is_current_owned_agent(
+                    owned_agent.as_ref(),
+                    registered_agent.as_ref(),
+                    &event.agent,
+                ) {
+                    return Ok(());
+                }
+                let Some(frame) = assistant_stream_frame(&event.frame) else {
+                    return Ok(());
+                };
+                inner.transport.notify(
+                    "session.assistant-stream",
+                    Some(serde_json::to_value(SessionAssistantStreamNotification {
+                        session_id: session_id.to_string(),
+                        frame,
+                    })?),
                 )
             },
         )?);
@@ -1302,4 +1397,28 @@ fn node_path_resolve_argument_error(value: Option<&Value>) -> String {
         Some(Value::String(_)) => unreachable!("strings are accepted above"),
     };
     format!("The \"paths[0]\" argument must be of type string. Received {received}")
+}
+
+#[cfg(test)]
+mod assistant_stream_ownership_tests {
+    use super::is_current_owned_agent;
+    use std::sync::Arc;
+
+    #[test]
+    fn requires_the_event_to_be_both_owned_and_current_by_arc_identity() {
+        let old = Arc::new(());
+        let replacement = Arc::new(());
+        assert!(is_current_owned_agent(Some(&old), Some(&old), &old));
+        assert!(!is_current_owned_agent(
+            Some(&old),
+            Some(&replacement),
+            &old
+        ));
+        assert!(!is_current_owned_agent(
+            Some(&old),
+            Some(&replacement),
+            &replacement
+        ));
+        assert!(!is_current_owned_agent(None, Some(&old), &old));
+    }
 }

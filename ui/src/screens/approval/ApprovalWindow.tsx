@@ -151,6 +151,7 @@ export function ApprovalWindow() {
                 <h2>Объяснение Помощника</h2>
                 {view.reason?.trim() ? <p>{view.reason}</p> : <p className="ap-said-empty">Помощник не объяснил, зачем ему это нужно.</p>}
               </div>
+              {view.details?.trim() && <details className="ap-details"><summary>Подробности</summary><pre>{view.details}</pre></details>}
               <div className="ap-timer"><Icon name="clock" small /><span>Ответьте за <b data-testid="timer">{clock(left)}</b></span></div>
               <div className="ap-bar" aria-hidden="true"><i style={{ '--share': share } as CSSProperties} /></div>
               <p className="ap-timer-note">Если не ответить, действие отклонится само.</p>

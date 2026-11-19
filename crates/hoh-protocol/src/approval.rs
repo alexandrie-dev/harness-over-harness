@@ -88,8 +88,16 @@ pub fn verify(expected: &str, actual: &str) -> bool {
             .fold(0u8, |diff, (a, b)| diff | (a ^ b))
             == 0
 }
+/// `details` is folded text for the window (a raw command, newlines allowed); only its size is bound.
+pub const MAX_DETAILS_UNITS: usize = 8192;
+
 pub fn validate_host_request(request: &HostApprovalRequest) -> Result<(), String> {
     validate_human_text(&request.human_text)?;
+    if let Some(details) = &request.details
+        && !(1..=MAX_DETAILS_UNITS).contains(&details.encode_utf16().count())
+    {
+        return Err("details requires 1..8192 UTF-16 code units".into());
+    }
     if !(1..=9_007_199_254_740_991).contains(&request.expires_at) {
         return Err("expiresAt must be a positive safe integer".into());
     }

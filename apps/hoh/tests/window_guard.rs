@@ -272,13 +272,21 @@ async fn deleting_files_asks_with_a_human_text_and_a_rejection_keeps_them() {
         !asked.human_text.contains("rm "),
         "the raw command is for the details"
     );
+    // A-03: the window's "Объяснение Помощника" is Russian words and the files, not the command.
+    let reason = asked.reason.as_deref().unwrap_or_default();
     assert!(
-        asked
-            .reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains(command)),
-        "{:?}",
-        asked.reason
+        reason.contains("удалить 3 файла: old1.txt, old2.txt, old3.txt")
+            && reason.contains("Файлы не попадут в корзину"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains(command) && !reason.contains("rm ") && !reason.contains("Команда:"),
+        "the raw command leaked into reason: {reason}"
+    );
+    assert_eq!(
+        asked.details.as_deref(),
+        Some(format!("Команда: {command}").as_str()),
+        "the command belongs in the folded details"
     );
     assert!(
         all_exist(&engine.work, &names),
@@ -346,6 +354,21 @@ async fn overwriting_an_existing_file_asks_and_a_rejection_keeps_its_content() {
         asked.human_text.starts_with("Перезаписать файл keep.txt"),
         "{}",
         asked.human_text
+    );
+    let reason = asked.reason.as_deref().unwrap_or_default();
+    assert!(
+        reason.contains("Перезаписать файл keep.txt")
+            && reason.contains("прежнее содержимое будет потеряно"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("echo") && !reason.contains("replaced") && !reason.contains("Команда:"),
+        "the raw command leaked into reason: {reason}"
+    );
+    assert_eq!(
+        asked.details.as_deref(),
+        Some("Команда: echo replaced > keep.txt"),
+        "the command belongs in the folded details"
     );
     engine.answer("rejected").await;
     assert!(
@@ -416,10 +439,60 @@ async fn ordinary_commands_run_without_a_single_question() {
 }
 
 fn escalated_bash(n: usize, command: &str, mode: &str) -> hoh_llm_openai_mock::ScenarioResponse {
+    escalated_bash_because(n, command, mode, "the user asked for it")
+}
+
+fn escalated_bash_because(
+    n: usize,
+    command: &str,
+    mode: &str,
+    justification: &str,
+) -> hoh_llm_openai_mock::ScenarioResponse {
     let mut call = bash(n, command);
     call.tool_calls[0].arguments["sandbox_permissions"] = json!(mode);
-    call.tool_calls[0].arguments["justification"] = json!("the user asked for it");
+    call.tool_calls[0].arguments["justification"] = json!(justification);
     call
+}
+
+/// The model's justification quotes the command: the window's explanation must not repeat it.
+#[tokio::test]
+async fn an_escalation_whose_justification_quotes_the_command_keeps_it_out_of_the_reason() {
+    let root = sandboxed_root();
+    let mut engine = start_engine(
+        root.path(),
+        vec![
+            escalated_bash_because(
+                1,
+                "rm old.txt",
+                "danger-full-access",
+                "нужно запустить RM \"old.txt\" (rm old.txt)",
+            ),
+            say("done"),
+        ],
+    )
+    .await;
+    write_files(&engine.work, &["old.txt"]);
+    engine.prompt("clean up").await;
+    let asked = engine
+        .next_approval()
+        .await
+        .expect("the escalation must ask");
+    let reason = asked.reason.as_deref().unwrap_or_default();
+    assert!(
+        !reason.to_lowercase().contains("rm")
+            && !reason.contains("нужно")
+            && !reason.contains("запустить")
+            && reason.contains("Обоснование Помощника — в подробностях"),
+        "{reason}"
+    );
+    assert_eq!(
+        asked.details.as_deref(),
+        Some(
+            "Команда: rm old.txt\nОбоснование Помощника: нужно запустить RM \"old.txt\" (rm old.txt)"
+        )
+    );
+    engine.answer("rejected").await;
+    engine.finish().await;
 }
 
 /// A call that escalates to `danger-full-access` is one question, worded by the guard in Russian
@@ -457,10 +530,21 @@ async fn a_full_access_escalation_is_one_russian_question() {
         !asked.human_text.contains("rm old.txt"),
         "the command is for the details"
     );
-    let details = asked.reason.as_deref().unwrap_or_default();
+    let reason = asked.reason.as_deref().unwrap_or_default();
     assert!(
-        details.contains("Команда: rm old.txt") && details.contains("the user asked for it"),
-        "{details}"
+        reason.contains("удалить 1 файл: old.txt")
+            && reason.contains("Обоснование Помощника — в подробностях")
+            && !reason.contains("the user asked for it"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("rm old.txt") && !reason.contains("Команда:"),
+        "the raw command leaked into reason: {reason}"
+    );
+    assert_eq!(
+        asked.details.as_deref(),
+        Some("Команда: rm old.txt\nОбоснование Помощника: the user asked for it"),
+        "the command and the justification belong in the folded details"
     );
     assert!(old.exists());
     engine.answer("allowed-once").await;

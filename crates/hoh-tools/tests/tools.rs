@@ -1027,6 +1027,7 @@ async fn an_ask_decision_degrades_to_deny_when_no_approval_seam_is_mounted() {
             Ok(PreToolDecision::Ask {
                 reason: Some("needs approval".into()),
                 display_reason: None,
+                details: None,
             })
         })
         .unwrap();
@@ -1047,6 +1048,7 @@ async fn an_ask_decision_with_no_reason_degrades_to_deny_with_a_default_message(
             Ok(PreToolDecision::Ask {
                 reason: None,
                 display_reason: None,
+                details: None,
             })
         })
         .unwrap();
@@ -1076,10 +1078,55 @@ async fn ask_env(outcome: Option<ApprovalOutcome>) -> (Env, Arc<Answerer>) {
             Ok(PreToolDecision::Ask {
                 reason: Some("hook wants a human".into()),
                 display_reason: Some(display_reason),
+                details: None,
             })
         })
         .unwrap();
     (env, answerer)
+}
+
+/// `details` of an `Ask` reaches the approval request as `ApprovalRequest.details` (the answerers'
+/// `reason` is untouched), and the `Ask` ends the waterfall: a hook behind it never runs.
+#[tokio::test]
+async fn ask_details_reach_the_approval_request_and_the_ask_ends_the_waterfall() {
+    let env = setup().await;
+    register(&env, echo_tool());
+    let answerer = Answerer::new(ApprovalOutcome::AllowedOnce);
+    mount_approval(&env, answerer.clone()).await;
+    env.ctx
+        .on_waterfall::<ToolsPreExecute, PreToolDecision, _>(|_, _| async {
+            Ok(PreToolDecision::Ask {
+                reason: Some("what will happen".into()),
+                display_reason: Some(DisplayReason::new("Allow it?")),
+                details: Some("Команда: rm x".into()),
+            })
+        })
+        .unwrap();
+    let behind = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = behind.clone();
+    env.ctx
+        .on_waterfall::<ToolsPreExecute, PreToolDecision, _>(move |_, next| {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move { next.run().await }
+        })
+        .unwrap();
+    let mut request = input("c1", "echo", json!({ "text": "hi" }));
+    request.agent = Some(TestAgent::open(&env.ctx));
+    let result = execute_tool_fixture(&env.ctx, request).await;
+    assert!(!result.is_error());
+    assert_eq!(
+        *lock(&answerer.seen_details),
+        vec![Some("Команда: rm x".to_owned())]
+    );
+    assert_eq!(
+        lock(&answerer.seen)[0].2.as_deref(),
+        Some("what will happen")
+    );
+    assert_eq!(
+        behind.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a hook behind the Ask must not run"
+    );
 }
 
 #[tokio::test]
@@ -1206,6 +1253,7 @@ async fn ask_routing_returns_aborted_before_dispatch_when_caller_cancellation_ov
             Ok(PreToolDecision::Ask {
                 reason: None,
                 display_reason: None,
+                details: None,
             })
         })
         .unwrap();

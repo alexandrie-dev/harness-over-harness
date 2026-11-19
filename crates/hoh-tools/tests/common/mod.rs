@@ -350,6 +350,8 @@ pub type SeenApproval = (String, ToolCallId, Option<String>, Option<DisplayReaso
 pub struct Answerer {
     pub outcome: Mutex<Result<ApprovalOutcome, String>>,
     pub seen: Mutex<Vec<SeenApproval>>,
+    /// The `details` of each request seen, in the same order as `seen`.
+    pub seen_details: Mutex<Vec<Option<String>>>,
 }
 
 impl Answerer {
@@ -357,6 +359,7 @@ impl Answerer {
         Arc::new(Self {
             outcome: Mutex::new(Ok(outcome)),
             seen: Mutex::new(Vec::new()),
+            seen_details: Mutex::new(Vec::new()),
         })
     }
 }
@@ -392,6 +395,7 @@ pub async fn mount_approval(env: &Env, answerer: Arc<Answerer>) {
                 request.reason.clone(),
                 request.display_reason.clone(),
             ));
+            lock(&answerer.seen_details).push(request.details.clone());
             let outcome = lock(&answerer.outcome).clone();
             async move { outcome.map(Into::into).map_err(BoxError::from) }
         })

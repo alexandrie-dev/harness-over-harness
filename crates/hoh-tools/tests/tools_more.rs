@@ -141,6 +141,7 @@ async fn treats_a_failing_approval_answerer_as_unavailable() {
             Ok(PreToolDecision::Ask {
                 reason: None,
                 display_reason: None,
+                details: None,
             })
         })
         .unwrap();

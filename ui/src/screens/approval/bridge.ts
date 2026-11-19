@@ -4,7 +4,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ApprovalOutcome, Risk } from '../../protocol';
 
-/** То, что ядро показывает пользователю. Все поля покрыты mac на стороне ядра. */
+/** То, что ядро показывает пользователю. Поля, кроме `details`, покрыты mac на стороне ядра; `details` только для показа. */
 export interface ApprovalView {
   approvalId: string;
   risk: Risk;
@@ -12,6 +12,7 @@ export interface ApprovalView {
   humanText: string;
   /** Объяснение, написанное моделью. Недоверенный текст: только показывать. */
   reason?: string;
+  details?: string;
   /** Конец срока, мс от начала эпохи. */
   expiresAt: number;
 }

@@ -497,6 +497,38 @@ fn first_run_and_a_streamed_turn_work_against_the_real_engine() {
     assert!(!list["sessions"].as_array().unwrap().is_empty(), "{list}");
 }
 
+/// QA A-05: after the app is started again on the same data the earlier conversation must come
+/// back. The engine keeps the session on disk but does not open it by itself, so the window
+/// resumes it first (ui/src/screens/chat/controller.mjs) and only then asks for its folder and events.
+#[test]
+fn a_restarted_engine_on_the_same_data_gives_back_the_conversation_after_a_resume() {
+    let h = launch(WINDOW_SCENARIO, "restart");
+    h.first_run();
+    h.prompt_and_wait("привет");
+    // the person closes the app and opens it again: a new engine process on the same data folder
+    h.engine.restart_in(&h.work).unwrap();
+    let resumed = h.request("session/resume", json!({"sessionId":"window-main"}));
+    assert_eq!(resumed, json!({}));
+    let folder = h.request(
+        "session/working-directory/get",
+        json!({"sessionId":"window-main"}),
+    );
+    assert_eq!(folder["cwd"], json!(h.work));
+    let events = h.request(
+        "session/events",
+        json!({"sessionId":"window-main","limit":1000}),
+    );
+    let text = serde_json::to_string(&events["events"]).unwrap();
+    assert!(
+        text.contains("привет"),
+        "the person's message is gone: {text}"
+    );
+    assert!(
+        text.contains("Это поток от mock."),
+        "the answer is gone: {text}"
+    );
+}
+
 /// Condition of the milestone (CEO 19.11): deleting files INSIDE the work folder also asks the
 /// person. Rejecting leaves the files; allowing once removes them. The engine does not do this
 /// yet, so this test is expected to stay red until the engine change lands.

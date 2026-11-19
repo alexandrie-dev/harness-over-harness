@@ -458,6 +458,12 @@ optional!(HostApprovalRequest {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     #[schemars(required)]
     reason: Option<String>,
+    /// What the window shows folded away: the raw command of a bash approval. Not part of
+    /// `action`, so not part of `actionHash` or the decision MAC; the host closes secret parts
+    /// of addresses in it as it does in `reason`.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    #[schemars(required)]
+    details: Option<String>,
     #[schemars(length(min = 1, max = 128), regex(pattern = "^[A-Za-z0-9_.:-]+$"))]
     approval_id: String,
     risk: Risk,

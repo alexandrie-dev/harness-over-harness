@@ -198,3 +198,13 @@ JSONL-хранилищем во временном корне; `until`, `events_
 2. Сменить `hoh_agent::Inbox::next_turn/next_step` и `Model::current` на `Result`, чтобы убрать панику геттера (п. 6)?
 3. Ядро запускает эффекты узла одновременно (`unload`: `begin` всех, затем `wait`); порядок даёт только усыновление.
    Нужно ли это документировать в `hoh-kernel`?
+
+## Уточнение live-потока при отмене (x7, A-02)
+
+Частичный `assistant/message` при пользовательской отмене по-прежнему сохраняется с
+`interrupted:true`, но terminal frame теперь `AssistantStreamOutcome::Abandoned`, а не `Committed`.
+Durable событие публикуется перед terminal frame. Исключение сохранено по образцу dsh
+(`packages/core/agent-loop/src/agent.ts:508-531`): если отмена пришла до любого безопасного видимого
+блока, цикл сохраняет `assistant/attempt` и завершает frame как `Committed`; `assistant/message` не
+создаётся, поэтому окно показывает пустую реплику. Тест:
+`cancel.rs::cancel_before_any_visible_content_finalizes_nothing`.

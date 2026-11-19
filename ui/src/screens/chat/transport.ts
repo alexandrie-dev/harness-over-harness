@@ -13,12 +13,17 @@ export interface AskedQuestion {
 }
 export interface PendingQuestion { requestId: string; sessionId: string; questions: AskedQuestion[] }
 export type QuestionAnswer = { answers: { id: string; selected: string[]; custom?: string }[] } | { cancelled: true };
+export interface ApprovalRecord {
+  at: number; asker: 'assistant' | 'you'; method: string; humanText: string;
+  outcome: string; reason?: string; details?: string;
+}
 export interface ChatTransport {
   request<M extends ChatMethod>(method: M, params: MethodMap[M]['params']): Promise<MethodMap[M]['result']>;
   subscribe(listener: (event: Notification) => void): Promise<() => void>;
   subscribeStatus(listener: (status: EngineStatus) => void): Promise<() => void>;
   subscribeQuestions?(listener: (question: PendingQuestion) => void): Promise<() => void>;
   answerQuestion?(requestId: string, answer: QuestionAnswer): Promise<void>;
+  approvalHistory?(): Promise<ApprovalRecord[]>;
 }
 declare global {
   interface Window { __HOH_CHAT_TEST_TRANSPORT__?: ChatTransport; }
@@ -36,5 +41,6 @@ export function chatTransport(): ChatTransport {
     subscribeStatus: listener => listen<EngineStatus>('engine-status', event => listener(event.payload)),
     subscribeQuestions: listener => listen<PendingQuestion>('engine-question', event => listener(event.payload)),
     answerQuestion: (requestId, answer) => invoke<void>('question_answer', { requestId, answer }),
+    approvalHistory: () => invoke<ApprovalRecord[]>('approval_history'),
   };
 }

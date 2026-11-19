@@ -377,13 +377,8 @@ async fn cancel_mid_stream_ends_the_turn_with_reason_aborted() {
     match frames.last() {
         Some(AssistantStreamFrame::End { index, outcome, .. }) => {
             assert_eq!(*index, chunks);
-            assert!(matches!(
-                outcome,
-                AssistantStreamOutcome::Committed {
-                    event_type: "assistant/message",
-                    ..
-                }
-            ));
+            assert!(matches!(outcome, AssistantStreamOutcome::Abandoned));
+            assert!(last_event(&agent, "assistant/message").is_some());
         }
         other => panic!("expected an end frame, got {other:?}"),
     }

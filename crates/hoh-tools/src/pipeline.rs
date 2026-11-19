@@ -310,7 +310,11 @@ impl ToolExecutionPipeline {
             PreToolDecision::Ask {
                 reason,
                 display_reason,
-            } => self.service_ask(exec, reason, display_reason).await?,
+                details,
+            } => {
+                self.service_ask(exec, reason, display_reason, details)
+                    .await?
+            }
             decision => ToolAskResolution {
                 decision,
                 approval_cancelled: false,
@@ -613,6 +617,7 @@ impl ToolExecutionPipeline {
         exec: &Arc<ToolExecution>,
         reason: Option<String>,
         display_reason: Option<DisplayReason>,
+        details: Option<String>,
     ) -> Result<ToolAskResolution, BoxError> {
         let Some(approval) = self.0.ctx.get::<Approval>() else {
             return Ok(ToolAskResolution {
@@ -644,6 +649,7 @@ impl ToolExecutionPipeline {
         request.call_id = Some(exec.call_id.clone());
         request.reason = reason;
         request.display_reason = display_reason;
+        request.details = details;
         request.signal = Some(exec.signal());
         let outcome = approval.request(request).await?;
         let name = &exec.name;

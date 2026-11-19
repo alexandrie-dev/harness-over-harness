@@ -135,7 +135,7 @@ export type FileAttachmentRef = { "attachmentId": string; "name": string; "bytes
 
 export type HostApprovalDecision = { "approvalId": string; "outcome": ApprovalOutcome; "mac": string; };
 
-export type HostApprovalRequest = { "sessionId": string; "toolName": string; "callId"?: string; "reason"?: string; "approvalId": string; "risk": Risk; "humanText": string; "actionHash": string; "expiresAt": number; "action": unknown; };
+export type HostApprovalRequest = { "sessionId": string; "toolName": string; "callId"?: string; "reason"?: string; "details"?: string; "approvalId": string; "risk": Risk; "humanText": string; "actionHash": string; "expiresAt": number; "action": unknown; };
 
 export type IdParams = { "id": string; };
 
@@ -173,9 +173,9 @@ export type ModelProbeResult = { "ok": boolean; "latencyMs": number; "toolCalls"
 
 export type ModelSettings = { "baseUrl": string; "model": string; };
 
-export type Notification = ({ "method": "user-question.cancelled"; "params": SdkUserQuestionCancelled; } | { "method": "session.event"; "params": SessionEventNotification; } | { "method": "session.status"; "params": SessionStatusNotification; } | { "method": "session.query.completed"; "params": SessionQueryCompleted; } | { "method": "subagent.started"; "params": SubagentStartedNotification; } | { "method": "subagent.finished"; "params": SubagentFinishedNotification; } | { "method": "employee.changed"; "params": EmployeeChanged; } | { "method": "task.changed"; "params": TaskChanged; } | { "method": "task.draft.state"; "params": TaskDraftState; } | { "method": "task.example"; "params": TaskExample; } | { "method": "schedule.fired"; "params": ScheduleFired; } | { "method": "schedule.changed"; "params": ScheduleChanged; } | { "method": "artifact.presented"; "params": ArtifactPresented; } | { "method": "approval.pending"; "params": ApprovalPending; } | { "method": "approval.resolved"; "params": ApprovalResolved; } | { "method": "security.egress"; "params": SecurityEgress; });
+export type Notification = ({ "method": "user-question.cancelled"; "params": SdkUserQuestionCancelled; } | { "method": "session.event"; "params": SessionEventNotification; } | { "method": "session.assistant-stream"; "params": SessionAssistantStreamNotification; } | { "method": "session.status"; "params": SessionStatusNotification; } | { "method": "session.query.completed"; "params": SessionQueryCompleted; } | { "method": "subagent.started"; "params": SubagentStartedNotification; } | { "method": "subagent.finished"; "params": SubagentFinishedNotification; } | { "method": "employee.changed"; "params": EmployeeChanged; } | { "method": "task.changed"; "params": TaskChanged; } | { "method": "task.draft.state"; "params": TaskDraftState; } | { "method": "task.example"; "params": TaskExample; } | { "method": "schedule.fired"; "params": ScheduleFired; } | { "method": "schedule.changed"; "params": ScheduleChanged; } | { "method": "artifact.presented"; "params": ArtifactPresented; } | { "method": "approval.pending"; "params": ApprovalPending; } | { "method": "approval.resolved"; "params": ApprovalResolved; } | { "method": "security.egress"; "params": SecurityEgress; });
 
-export type NotificationFrame = ({ "jsonrpc": Version; } & ({ "method": "user-question.cancelled"; "params": SdkUserQuestionCancelled; } | { "method": "session.event"; "params": SessionEventNotification; } | { "method": "session.status"; "params": SessionStatusNotification; } | { "method": "session.query.completed"; "params": SessionQueryCompleted; } | { "method": "subagent.started"; "params": SubagentStartedNotification; } | { "method": "subagent.finished"; "params": SubagentFinishedNotification; } | { "method": "employee.changed"; "params": EmployeeChanged; } | { "method": "task.changed"; "params": TaskChanged; } | { "method": "task.draft.state"; "params": TaskDraftState; } | { "method": "task.example"; "params": TaskExample; } | { "method": "schedule.fired"; "params": ScheduleFired; } | { "method": "schedule.changed"; "params": ScheduleChanged; } | { "method": "artifact.presented"; "params": ArtifactPresented; } | { "method": "approval.pending"; "params": ApprovalPending; } | { "method": "approval.resolved"; "params": ApprovalResolved; } | { "method": "security.egress"; "params": SecurityEgress; }));
+export type NotificationFrame = ({ "jsonrpc": Version; } & ({ "method": "user-question.cancelled"; "params": SdkUserQuestionCancelled; } | { "method": "session.event"; "params": SessionEventNotification; } | { "method": "session.assistant-stream"; "params": SessionAssistantStreamNotification; } | { "method": "session.status"; "params": SessionStatusNotification; } | { "method": "session.query.completed"; "params": SessionQueryCompleted; } | { "method": "subagent.started"; "params": SubagentStartedNotification; } | { "method": "subagent.finished"; "params": SubagentFinishedNotification; } | { "method": "employee.changed"; "params": EmployeeChanged; } | { "method": "task.changed"; "params": TaskChanged; } | { "method": "task.draft.state"; "params": TaskDraftState; } | { "method": "task.example"; "params": TaskExample; } | { "method": "schedule.fired"; "params": ScheduleFired; } | { "method": "schedule.changed"; "params": ScheduleChanged; } | { "method": "artifact.presented"; "params": ArtifactPresented; } | { "method": "approval.pending"; "params": ApprovalPending; } | { "method": "approval.resolved"; "params": ApprovalResolved; } | { "method": "security.egress"; "params": SecurityEgress; }));
 
 export type PermissionSummary = { "employeeId": string; "permissions": Permissions; };
 
@@ -258,6 +258,14 @@ export type SecuritySummaryParams = Record<string, never>;
 export type SecuritySummaryResult = { "model": SecurityModel; "egress": Array<EgressSummary>; "permissions": Array<PermissionSummary>; "approvals": Array<ApprovalSummary>; };
 
 export type ServerInfo = { "name": string; "version": string; };
+
+export type SessionAssistantStreamChunk = ({ "type": "text-delta"; "text": string; });
+
+export type SessionAssistantStreamFrame = ({ "type": "start"; "attemptId": string; "revision": number; "turn": number; "step": number; } | { "type": "chunk"; "attemptId": string; "revision": number; "index": number; "time": number; "chunk": SessionAssistantStreamChunk; } | { "type": "end"; "attemptId": string; "revision": number; "index": number; "outcome": SessionAssistantStreamOutcome; });
+
+export type SessionAssistantStreamNotification = { "sessionId": string; "frame": SessionAssistantStreamFrame; };
+
+export type SessionAssistantStreamOutcome = "committed" | "abandoned";
 
 export type SessionCancelParams = { "sessionId": string; };
 

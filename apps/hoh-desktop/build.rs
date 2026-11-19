@@ -7,6 +7,7 @@ fn main() {
             "engine_request",
             "pick_folder",
             "question_answer",
+            "approval_history",
             "approval_current",
             "approval_decide",
         ]),

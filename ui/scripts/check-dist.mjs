@@ -42,6 +42,7 @@ for (const path of await files('dist')) {
 }
 // Package 1's empty-shell cap covered one screen; this build has chat, first run
 // and approval entries. Keep both a whole-window cap and a compressed payload cap.
-assert(total < 512 * 1024, `window text assets unexpectedly large: ${total} bytes`);
+// 19.11 fix QA A: 512 -> 544 KiB for the «Подтверждения» section, live answer text and the approval details.
+assert(total < 544 * 1024, `window text assets unexpectedly large: ${total} bytes`);
 assert(compressed < 160 * 1024, `window compressed text assets unexpectedly large: ${compressed} bytes`);
-console.log(`passed: dist has no external network URLs or dynamic code; text ${total}/524288, gzip ${compressed}/163840 bytes`);
+console.log(`passed: dist has no external network URLs or dynamic code; text ${total}/557056, gzip ${compressed}/163840 bytes`);
