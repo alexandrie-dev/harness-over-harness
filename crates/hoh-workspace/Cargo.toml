@@ -1,0 +1,32 @@
+[package]
+name = "hoh-workspace"
+description = "Port of @deepseek-ai/dsh-workspace (packages/workspace/workspace)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+feruca.workspace = true
+futures-util.workspace = true
+hoh-brand = { path = "../hoh-brand" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-storage-domain = { path = "../hoh-storage-domain" }
+hoh-util-crypto = { path = "../hoh-util-crypto" }
+hoh-util-time = { path = "../hoh-util-time" }
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-storage = { path = "../hoh-storage" }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

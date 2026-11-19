@@ -2224,6 +2224,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-workspace"
+version = "0.1.0"
+dependencies = [
+ "feruca",
+ "futures-util",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-storage",
+ "hoh-storage-domain",
+ "hoh-util-crypto",
+ "hoh-util-time",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
