@@ -188,15 +188,23 @@ async fn default_abort_reason_is_reachable_through_the_runner_abort_error() {
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[tokio::test]
 async fn no_interpreter_script_is_refused_by_the_real_runner_on_glibc() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("no-interpreter");
-    tokio::fs::write(&path, "printf 'no-interpreter✓\\n'\n")
-        .await
-        .unwrap();
-    tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-        .await
-        .unwrap();
+    {
+        // Linux returns ETXTBSY when exec races an outstanding writer. Keep creation synchronous
+        // and close that writer explicitly before testing the runner's no-shebang ENOEXEC path.
+        let mut script = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o755)
+            .open(&path)
+            .unwrap();
+        script
+            .write_all("printf 'no-interpreter✓\\n'\n".as_bytes())
+            .unwrap();
+        script.sync_all().unwrap();
+    }
     let error = run_native_command(path.to_str().unwrap(), &[], &signal(), Window::Hidden)
         .await
         .expect_err("observe whether Rust/libc falls back to /bin/sh");
