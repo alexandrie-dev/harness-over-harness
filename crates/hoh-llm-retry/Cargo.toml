@@ -1,0 +1,37 @@
+[package]
+name = "hoh-llm-retry"
+description = "Port of @deepseek-ai/dsh-llm-retry (packages/llm/llm-retry)"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-brand = { path = "../hoh-brand" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-util-crypto = { path = "../hoh-util-crypto" }
+hoh-util-values = { path = "../hoh-util-values" }
+getrandom.workspace = true
+indexmap.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-scope = { path = "../hoh-scope" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-session-persistence-jsonl = { path = "../hoh-session-persistence-jsonl" }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+

@@ -53,7 +53,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/llm/llm	@deepseek-ai/dsh-llm	hoh-llm	4245	4172	done	зависит от: dsh-typert-protocol=skip
 1	port	packages/llm/llm-deepseek	@deepseek-ai/dsh-llm-deepseek	hoh-llm-deepseek	3737	9293	todo	
 1	port	packages/llm/llm-deepseek-api-key	@deepseek-ai/dsh-llm-deepseek-api-key	hoh-llm-deepseek-api-key	185	272	todo	
-1	port	packages/llm/llm-retry	@deepseek-ai/dsh-llm-retry	hoh-llm-retry	319	1674	writing:x4	
+1	port	packages/llm/llm-retry	@deepseek-ai/dsh-llm-retry	hoh-llm-retry	319	1674	done	
 1	port	packages/llm/plugin-package-inventory-deepseek	@deepseek-ai/dsh-plugin-package-inventory-deepseek	hoh-plugin-package-inventory-deepseek	233	426	todo	
 1	port	packages/llm/token-meter	@deepseek-ai/dsh-token-meter	hoh-token-meter	1625	2708	todo	
 1	port	packages/mcp/mcp-resources	@deepseek-ai/dsh-mcp-resources	hoh-mcp-resources	223	373	todo	
@@ -74,9 +74,9 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/session/session-format-v2-to-v3	@deepseek-ai/dsh-session-format-v2-to-v3	hoh-session-format-v2-to-v3	815	2057	done	
 1	port	packages/session/session-format-v3-to-v4	@deepseek-ai/dsh-session-format-v3-to-v4	hoh-session-format-v3-to-v4	1702	3119	done	
 1	port	packages/session/session-log-deepseek	@deepseek-ai/dsh-session-log-deepseek	hoh-session-log-deepseek	396	1083	todo	
-1	port	packages/session/session-persistence	@deepseek-ai/dsh-session-persistence	hoh-session-persistence	636	1243	review	
-1	port	packages/session/session-persistence-jsonl	@deepseek-ai/dsh-session-persistence-jsonl	hoh-session-persistence-jsonl	5145	9634	review	
-1	port	packages/session/session-projection	@deepseek-ai/dsh-session-projection	hoh-session-projection	1031	2011	review	
+1	port	packages/session/session-persistence	@deepseek-ai/dsh-session-persistence	hoh-session-persistence	636	1243	done	
+1	port	packages/session/session-persistence-jsonl	@deepseek-ai/dsh-session-persistence-jsonl	hoh-session-persistence-jsonl	5145	9634	done	
+1	port	packages/session/session-projection	@deepseek-ai/dsh-session-projection	hoh-session-projection	1031	2011	done	
 1	port	packages/session/session-projection-cache	@deepseek-ai/dsh-session-projection-cache	hoh-session-projection-cache	579	2076	todo	
 1	port	packages/session/session-title	@deepseek-ai/dsh-session-title	hoh-session-title	1027	1851	todo	
 1	port	packages/session/tool-working-directory	@deepseek-ai/dsh-tool-working-directory	hoh-tool-working-directory	43	0	review	

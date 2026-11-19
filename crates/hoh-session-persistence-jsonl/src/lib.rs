@@ -1,0 +1,21 @@
+//! Durable JSONL session generations, raw or checksummed Zstandard frames.
+mod backend;
+pub mod catalog_migration;
+mod error;
+pub mod format;
+pub mod generation;
+mod io;
+pub mod lease;
+pub mod migration_verifier;
+mod shim;
+pub mod storage;
+pub mod testing;
+pub mod worker;
+pub mod zstd;
+pub mod zstd_private_decoder;
+pub mod zstd_public_decoder;
+pub use backend::{Config, JsonlSessionPersistence, JsonlSessionPersistencePlugin};
+pub use error::{JsonlError, Result};
+pub use format::JsonlCompression;
+pub const NAME: &str = "session-persistence-jsonl";
+mod catalog_adapter;
