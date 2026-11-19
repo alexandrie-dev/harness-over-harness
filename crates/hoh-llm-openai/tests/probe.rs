@@ -1,5 +1,5 @@
 mod support;
-use hoh_llm_openai::{ProbeOptions, probe};
+use hoh_llm_openai::{ProbeOptions, probe, probe_first_listed};
 use support::*;
 
 const MODELS: &str = r#"{"object":"list","data":[{"id":"qwen"}]}"#;
@@ -110,4 +110,42 @@ async fn silent_server_times_out() {
 async fn bad_base_url_is_reported() {
     let result = probe("nope", "qwen", None, &quick(), None).await;
     assert_eq!(result.error.unwrap().code, "INVALID_CONFIG");
+}
+
+#[tokio::test]
+async fn first_listed_model_gets_the_completion_after_one_model_list_request() {
+    let server = serve(vec![
+        (
+            "GET /v1/models",
+            vec![Reply::json(
+                200,
+                r#"{"data":[{"id":"qwen"},{"id":"other"}]}"#,
+            )],
+        ),
+        (CHAT, vec![Reply::json(200, COMPLETION)]),
+    ])
+    .await;
+    let result = probe_first_listed(&server.base_url, "fallback", None, &quick(), None).await;
+    assert!(result.ok && result.model_listed == Some(true), "{result:?}");
+    assert_eq!(result.models, ["qwen", "other"]);
+    let requests = server.captured();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.path.ends_with("/models"))
+            .count(),
+        1
+    );
+    assert_eq!(requests[1].json()["model"], "qwen");
+}
+
+#[tokio::test]
+async fn first_listed_model_falls_back_without_a_list() {
+    let server = serve(vec![(CHAT, vec![Reply::json(200, COMPLETION)])]).await;
+    let result = probe_first_listed(&server.base_url, "fallback", None, &quick(), None).await;
+    assert!(result.ok, "{result:?}");
+    assert_eq!(
+        server.captured().last().unwrap().json()["model"],
+        "fallback"
+    );
 }

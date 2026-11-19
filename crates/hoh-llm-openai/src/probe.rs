@@ -69,6 +69,42 @@ pub async fn probe(
     options: &ProbeOptions,
     signal: Option<&AbortSignal>,
 ) -> ProbeResult {
+    probe_choosing(base_url, Wanted::Named(model), api_key, options, signal).await
+}
+
+/// Like [`probe`] for a caller that has no model name yet: the completion goes to the first id of
+/// the one `GET /models`, or to `fallback_model` when the list is unavailable or empty.
+pub async fn probe_first_listed(
+    base_url: &str,
+    fallback_model: &str,
+    api_key: Option<&str>,
+    options: &ProbeOptions,
+    signal: Option<&AbortSignal>,
+) -> ProbeResult {
+    probe_choosing(
+        base_url,
+        Wanted::FirstListed(fallback_model),
+        api_key,
+        options,
+        signal,
+    )
+    .await
+}
+
+/// Which model the one-token completion goes to.
+enum Wanted<'a> {
+    Named(&'a str),
+    /// First id of the model list, else this one.
+    FirstListed(&'a str),
+}
+
+async fn probe_choosing(
+    base_url: &str,
+    wanted: Wanted<'_>,
+    api_key: Option<&str>,
+    options: &ProbeOptions,
+    signal: Option<&AbortSignal>,
+) -> ProbeResult {
     let mut result = ProbeResult {
         ok: false,
         latency_ms: 0,
@@ -112,7 +148,10 @@ pub async fn probe(
     };
     match listing.await {
         Ok(ids) => {
-            result.model_listed = (!ids.is_empty()).then(|| ids.iter().any(|id| id == model));
+            result.model_listed = (!ids.is_empty()).then(|| match wanted {
+                Wanted::Named(model) => ids.iter().any(|id| id == model),
+                Wanted::FirstListed(_) => true,
+            });
             result.models = ids;
         }
         // Unreachable server: the completion would only repeat the same failure.
@@ -124,6 +163,10 @@ pub async fn probe(
         Err(_) => {}
     }
 
+    let model = match wanted {
+        Wanted::Named(model) => model,
+        Wanted::FirstListed(fallback) => result.models.first().map_or(fallback, String::as_str),
+    };
     let completion_wait = Duration::from_millis(options.completion_timeout_ms);
     let started = Instant::now();
     let mut probe = Completion {
