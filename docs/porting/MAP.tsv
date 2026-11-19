@@ -124,7 +124,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/bundle/base	@deepseek-ai/dsh-base	hoh-base	9	85	todo	профиль как данные; строки pwsh подключаются на этапе 5
 2	port	packages/bundle/headless	@deepseek-ai/dsh-headless	hoh-headless	992	2273	todo	профиль как данные
 2	port	packages/compaction/command-compact	@deepseek-ai/dsh-command-compact	hoh-command-compact	109	469	writing:x4	
-2	port	packages/context/agent-instructions	@deepseek-ai/dsh-agent-instructions	hoh-agent-instructions	2114	6711	todo	
+2	port	packages/context/agent-instructions	@deepseek-ai/dsh-agent-instructions	hoh-agent-instructions	2114	6711	writing:x6	
 2	port	packages/credentials/authorization	@deepseek-ai/dsh-authorization	hoh-authorization	541	603	todo	
 2	port	packages/credentials/credentials-local	@deepseek-ai/dsh-credentials-local	hoh-credentials-local	930	1577	done	
 2	port	packages/feedback/command-feedback	@deepseek-ai/dsh-command-feedback	hoh-command-feedback	197	388	writing:x4	зависит от: dsh-typert-protocol=skip
@@ -186,7 +186,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 3	port	packages/session/session-stats	@deepseek-ai/dsh-session-stats	hoh-session-stats	299	450	writing:x3	
 3	port	packages/session/session-turn-outline	@deepseek-ai/dsh-session-turn-outline	hoh-session-turn-outline	229	377	writing:x3	
 3	port	packages/storage/storage-sqlite	@deepseek-ai/dsh-storage-sqlite	hoh-storage-sqlite	516	499	todo	
-3	port	packages/util/text-search	@deepseek-ai/dsh-util-text-search	hoh-util-text-search	301	203	writing:x7	
+3	port	packages/util/text-search	@deepseek-ai/dsh-util-text-search	hoh-util-text-search	301	203	done	
 4	port4	packages/acp/acp	@deepseek-ai/dsh-acp	hoh-acp	1782	3583	todo	
 4	port4	packages/bundle/acp-app	@deepseek-ai/dsh-acp-app	hoh-acp-app	48	97	todo	профиль ACP
 4	port4	packages/lsp/lsp	@deepseek-ai/dsh-lsp	hoh-lsp	320	188	todo	

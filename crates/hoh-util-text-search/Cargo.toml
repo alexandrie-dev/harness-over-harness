@@ -1,0 +1,16 @@
+[package]
+name = "hoh-util-text-search"
+description = "Port of @deepseek-ai/dsh-util-text-search (packages/util/text-search)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-package-manifest = { path = "../hoh-package-manifest" }
+hoh-util-values = { path = "../hoh-util-values" }
+icu_normalizer = { version = "2.4.0", default-features = false, features = ["compiled_data", "utf8_iter"] }
+icu_properties = "2.4.0"
