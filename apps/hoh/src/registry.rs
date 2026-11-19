@@ -67,7 +67,39 @@ pub fn registry() -> PluginRegistry {
         .add::<hoh_web_fetch_http::WebFetchHttpPlugin>("@deepseek-ai/dsh-web-fetch-http")
         .add::<hoh_deliverable_file_references::DeliverableFileReferences>(
             "@deepseek-ai/dsh-deliverable-file-references",
-        );
+        )
+        .add::<hoh_subprocess_local::LocalSubprocessRuntime>("@deepseek-ai/dsh-subprocess-local")
+        .add::<hoh_bash_local::LocalBashExecutor>("@deepseek-ai/dsh-bash-local")
+        .add::<hoh_shell_env::ShellEnvPlugin>("@deepseek-ai/dsh-shell-env")
+        .add::<hoh_tools::ToolRuntime>("@deepseek-ai/dsh-tools")
+        .add::<hoh_tool_executor_native::NativeToolExecutorPlugin>(
+            "@deepseek-ai/dsh-tool-executor-native",
+        )
+        .add::<hoh_agent::AgentRegistryPlugin>("@deepseek-ai/dsh-agent")
+        .add::<hoh_working_directory::WorkingDirectory>("@deepseek-ai/dsh-working-directory")
+        .add::<hoh_tool_working_directory::ToolWorkingDirectory>(
+            "@deepseek-ai/dsh-tool-working-directory",
+        )
+        .add::<hoh_tool_fs::ToolFs>("@deepseek-ai/dsh-tool-fs")
+        .add::<hoh_tool_bash::ToolBash>("@deepseek-ai/dsh-tool-bash")
+        .add::<hoh_user_questions::UserQuestionsPlugin>("@deepseek-ai/dsh-user-questions")
+        .add::<hoh_user_approval::ApprovalService>("@deepseek-ai/dsh-user-approval")
+        .add::<hoh_tool_ask_user::ToolAskUser>("@deepseek-ai/dsh-tool-ask-user")
+        .add::<hoh_tool_todo::ToolTodo>("@deepseek-ai/dsh-tool-todo")
+        .add::<hoh_agent_loop::AgentLoopPlugin>("@deepseek-ai/dsh-agent-loop")
+        .add::<hoh_sdk_app::SdkApp>("@deepseek-ai/dsh-sdk-app")
+        .add::<hoh_sdk_jsonrpc_server::SdkJsonRpcServer>("@deepseek-ai/dsh-sdk-jsonrpc-server")
+        .add::<hoh_credentials_local::LocalCredentialProvider>("@deepseek-ai/dsh-credentials-local")
+        .add::<hoh_session_persistence_jsonl::JsonlSessionPersistencePlugin>(
+            "@deepseek-ai/dsh-session-persistence-jsonl",
+        )
+        .add::<hoh_sandbox_local::LocalSandboxPlugin>("@deepseek-ai/dsh-sandbox-local")
+        .add::<hoh_sandbox_policy::SandboxPolicyService>("@deepseek-ai/dsh-sandbox-policy")
+        .add::<hoh_bash_sandbox::SandboxBashExecutor>("@deepseek-ai/dsh-bash-sandbox")
+        .add::<hoh_fs_sandbox::FsSandboxPlugin>("@deepseek-ai/dsh-fs-sandbox")
+        .add::<hoh_model_host::ModelHostPlugin>("hoh:model-host")
+        .add::<super::window_glue::WindowModelSettings>("hoh:window-model-settings")
+        .add::<super::window_glue::WindowPrivilegedApprover>("hoh:window-privileged-approver");
     #[cfg(debug_assertions)]
     if std::env::var_os("HOH_TEST_EXIT_THEN_FAIL").is_some() {
         registry.add::<ExitThenFailFixture>("hoh:test-exit-then-fail");

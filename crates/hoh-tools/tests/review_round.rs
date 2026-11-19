@@ -800,10 +800,7 @@ async fn rejects_a_post_policy_context_whose_source_is_not_lossless() {
 async fn builds_a_pipeline_without_a_tools_service_and_prepare_rejects_with_a_plain_type_error() {
     let kernel = Kernel::start();
     let pipeline = ToolExecutionPipeline::new(kernel.root()).expect("constructs without a service");
-    let error = match pipeline
-        .try_prepare(input("c", "anything", json!({})))
-        .await
-    {
+    let error = match pipeline.prepare(input("c", "anything", json!({}))).await {
         Ok(_) => panic!("the lookup without a registry must reject"),
         Err(error) => error,
     };
@@ -814,21 +811,6 @@ async fn builds_a_pipeline_without_a_tools_service_and_prepare_rejects_with_a_pl
     assert_eq!(
         plain.message(),
         "Cannot read properties of undefined (reading 'executable')"
-    );
-    // The infallible form keeps its signature and settles as a plain failure carrying that same error.
-    let ScheduledToolPreparation::FinalResult { result, .. } =
-        pipeline.prepare(input("c", "anything", json!({}))).await
-    else {
-        panic!("the infallible form settles as a failure");
-    };
-    let failure = result.error().expect("a failure result");
-    assert_eq!(
-        failure.message,
-        "Cannot read properties of undefined (reading 'executable')"
-    );
-    assert!(
-        failure.info.is_none(),
-        "no invented TOOL_EXECUTOR_UNAVAILABLE"
     );
     kernel.shutdown().await;
 }
@@ -1082,7 +1064,10 @@ async fn a_forged_output_schema_fails_the_body_and_post_execute_still_runs() {
         reject: None,
     };
     let pipeline = ToolExecutionPipeline::with_source(env.ctx.clone(), source).unwrap();
-    let prepared = pipeline.prepare(input("c", "forged", json!({}))).await;
+    let prepared = pipeline
+        .prepare(input("c", "forged", json!({})))
+        .await
+        .unwrap();
     let exec = prepared.exec().clone();
     let ScheduledToolPreparation::Dispatch(dispatching) = prepared else {
         panic!("the forged tool is visible and must dispatch");

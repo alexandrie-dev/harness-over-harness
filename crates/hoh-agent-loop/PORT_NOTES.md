@@ -155,8 +155,8 @@ JSONL-хранилищем во временном корне; `until`, `events_
 - `SHIM(hoh-session-projection)` **заменён** настоящим крейтом: зависимость добавлена, `hoh_agent::shim` удалён
   (для `hoh-agent` это сделал я до передачи ревью; дальнейшие правки `hoh-agent` — у s16). `fold_definition` в `hoh-agent`
   строит `ProjectionDefinition` из функции свёртки.
-- `hoh-tools`: используется `hoh_tools::Agent` (в крейте — свой минимальный трейт `scope_key`/`session`);
-  адаптер `ToolsAgent` в `agent.rs` оборачивает `Arc<dyn hoh_agent::Agent>` (оставлен по решению ведущего).
+- `hoh-tools`: `hoh_tools::Agent` теперь реэкспортирует настоящий `hoh_agent::Agent`; драйвер передаёт свой
+  исходный `Arc<dyn Agent>` напрямую, как `this` в образце, без меняющего `TypeId` адаптера.
 
 ## Не перенесено
 

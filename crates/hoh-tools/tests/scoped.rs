@@ -25,7 +25,7 @@ struct Minted {
 }
 
 fn mint(env: &Env, parent: Option<&Minted>) -> Minted {
-    let agent = TestAgent::new();
+    let agent = TestAgent::new(&env.ctx);
     let scope = create_scope(
         &env.ctx,
         agent.key.clone(),
@@ -134,7 +134,7 @@ fn matches_error(result: Result<hoh_kernel::Disposer, String>, needle: &str) {
 async fn files_a_scoped_tool_in_its_layer_visible_and_executable_for_that_scope_only() {
     let env = setup().await;
     let a = mint(&env, None);
-    let other = TestAgent::new();
+    let other = TestAgent::new(&env.ctx);
     add(&env, tool("shared"));
     add_in(&env, &a, tool("mine"));
 
@@ -384,7 +384,7 @@ async fn lets_an_ancestors_restriction_reach_every_scope_nested_inside_it() {
 async fn an_agent_ctx_pre_execute_listener_gates_only_its_own_agent_and_never_subject_less_calls() {
     let env = setup().await;
     let a = mint(&env, None);
-    let other = TestAgent::new();
+    let other = TestAgent::new(&env.ctx);
     add(&env, tool("t"));
 
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -415,7 +415,7 @@ async fn applies_scoped_guards_after_pre_execute_and_unwinds_duplicate_registrat
 {
     let env = setup().await;
     let a = mint(&env, None);
-    let other = TestAgent::new();
+    let other = TestAgent::new(&env.ctx);
     let body_calls = Arc::new(AtomicUsize::new(0));
     let mut definition = tool("t");
     {

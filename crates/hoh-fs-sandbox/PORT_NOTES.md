@@ -3,10 +3,10 @@
 ## Файлы
 | образец | перенос | состояние |
 |---|---|---|
-| src/index.ts | src/lib.rs, src/shim.rs | SandboxedFileSystem, Config, plugin, пять ограждённых мутаций |
+| src/index.ts | src/lib.rs | SandboxedFileSystem, Config, plugin, пять ограждённых мутаций |
 | src/containment.ts | src/containment.rs | лексическое сравнение и fallback по dev/ino |
 | tests/containment.spec.ts | tests/containment.rs | все 6 объявлений |
-| tests/fs-sandbox.spec.ts | tests/fs_sandbox.rs | все 24 объявления, таблица трёх режимов |
+| tests/fs-sandbox.spec.ts | tests/fs_sandbox.rs | все 24 объявления, таблица трёх режимов; тест сессионных разрешений идёт через настоящие сессии (`register_writable_root`, `set_sandbox_mode`, выгрузка плагина) |
 | locale/*.json | locale/*.json | восемь файлов скопированы без изменений |
 | README.md, README.zh.md | — | прочитаны; собственного LICENSE нет |
 
@@ -16,8 +16,8 @@
 - Наследование `LocalFileSystem` заменено композицией: `SandboxedFileSystem` реализует объектобезопасный `FileSystem` и делегирует чтения, метаданные, watch и path helpers без изменений. Пять мутаций получают свежую цель после policy-проверки; move проверяет source и destination до делегирования.
 - `sandboxMode` представлен `FileSystem::sandbox_mode() -> Some(default_mode)`. `Config` реэкспортирован из `hoh-fs-local`; plugin `FsSandboxPlugin` сохраняет исходное имя строки `SandboxedFileSystem` и предоставляет сервис `fs`.
 - `isPathUnder` стал `is_path_under(path, root, Option<bool>) -> Result<bool, BoxError>`; optional bool сохраняет исходный host default. Linux dev/ino взяты из безопасного MetadataExt. На неподдержанных не-Unix целях identity fallback консервативно не разрешает иной spelling; сам `hoh-fs-local` сейчас Linux-only.
-- Standalone-конструктор принимает `Arc<dyn SandboxPolicyApi>` для тестов и прямой композиции. Kernel plugin получает тот же интерфейс через service key.
-- В исходном интеграционном тесте lifecycle session grant создаёт `sandbox-policy`; пока зависимость пишется параллельно, тот же observable fence проверен изменением policy SHIM (grant, mode override, revoke). Session-specific таблицу владеет будущий crate.
+- Standalone-конструктор принимает `SandboxPolicyService` (клон настоящего сервиса `hoh-sandbox-policy`; `resolve(SandboxPolicyRequest)` возвращает `Result`, ошибка политики — ошибка мутации). Kernel plugin получает `Service<SandboxPolicy>` (ключ `sandboxPolicy` крейта `hoh-sandbox-policy`).
+- Тесты идут на настоящем `hoh-sandbox-policy` (плагин над `SessionProjectionRegistry`); session-override и корни пишет сам сервис; тест сессионных разрешений регистрирует их через `register_writable_root`/`set_sandbox_mode` и проверяет изоляцию двух сессий и снятие при выгрузке плагина (`fs-sandbox.spec.ts:96-128`).
 
 ## Не перенесено
 Нет исходных файлов, экспортов или тестовых объявлений, исключённых из переноса.
@@ -26,7 +26,7 @@
 Windows alias/case identity и macOS; конкретный локальный backend заявлен Linux-only. Остаточная TOCTOU между свежим resolve и syscall сохранена как в образце.
 
 ## Вопросы ведущему
-- `src/shim.rs`: SHIM(hoh-sandbox-policy) — `SandboxPolicyApi::resolve(Option<&Session>)` и сервис `sandboxPolicy`. Заменить на принятый API `hoh-sandbox-policy`; одновременно `hoh-tool-fs` должен импортировать тот же service key вместо собственного shim, иначе одинаковое строковое имя не устраняет различие Rust `TypeId`.
+- SHIM(hoh-sandbox-policy) снят: `src/shim.rs` удалён, собственного ключа `sandboxPolicy` в крейте нет (раньше ядро отказывало смонтировать его вместе с `hoh-sandbox-policy`: другой тип значения под одним именем).
 
 ## Проверка
 Все команды: `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-x5`, cargo-вызовы ограничены внешним `timeout`.

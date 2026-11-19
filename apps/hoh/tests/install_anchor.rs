@@ -1,11 +1,19 @@
 //! The launcher provides the installation anchor, so `DSH_INSTALL_DIR` is the installation root
 //! (TS `shell-env/src/index.ts:176-180`: `dirname(profile.installAnchor)`), not the binary's directory.
 mod support;
+use futures_util::future::BoxFuture;
 use hoh::profile_boot::*;
+use hoh_agent::{
+    AgentOptions, AgentStatus, CancelOptions, Inbox, InboxTarget, MaintenanceFuture,
+    MaintenanceTask, Model,
+};
+use hoh_error::BoxError;
+use hoh_kernel::Context;
 use hoh_launch_environment::create_launch_environment_snapshot;
+use hoh_llm::UserMessage;
 use hoh_loader::PluginRegistry;
 use hoh_scope::ScopeKey;
-use hoh_session::Session;
+use hoh_session::{AgentCancelCause, Session, SessionId};
 use hoh_shell_env::{Config, InstallAnchorKey, ShellEnvRegistry};
 use hoh_system_prompt::SystemPrompt;
 use hoh_timeout::AbortController;
@@ -16,13 +24,64 @@ use hoh_tools::{
 use serde_json::json;
 use std::{path::Path, sync::Arc};
 
-struct NoAgent;
+/// The pipeline reads only the agent's scope key and session; the rest of the surface is unused.
+struct NoAgent {
+    session: Session,
+    options: AgentOptions,
+}
+impl NoAgent {
+    fn new() -> Self {
+        Self {
+            session: Session::create("install-anchor".into(), None, None, None, None).unwrap(),
+            options: AgentOptions::default(),
+        }
+    }
+}
 impl Agent for NoAgent {
+    fn id(&self) -> &SessionId {
+        self.session.id()
+    }
     fn scope_key(&self) -> ScopeKey {
         ScopeKey::new()
     }
-    fn session(&self) -> Session {
-        Session::create("install-anchor".into(), None, None, None, None).unwrap()
+    fn options(&self) -> &AgentOptions {
+        &self.options
+    }
+    fn session(&self) -> &Session {
+        &self.session
+    }
+    fn model(&self) -> &dyn Model {
+        unreachable!("the install-anchor test never reads the model")
+    }
+    fn inbox(&self) -> &dyn Inbox {
+        unreachable!("the install-anchor test never reads the inbox")
+    }
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+    fn ctx(&self) -> &Context {
+        unreachable!("the install-anchor test never reads the agent context")
+    }
+    fn cancel(&self, _: AgentCancelCause, _: CancelOptions) -> Result<(), BoxError> {
+        unreachable!("the install-anchor test never cancels")
+    }
+    fn when_idle(&self) -> BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
+    fn run_maintenance_erased(&self, _: MaintenanceTask) -> Result<MaintenanceFuture, BoxError> {
+        unreachable!("the install-anchor test never runs maintenance")
+    }
+    fn send(&self, _: UserMessage, _: InboxTarget, _: bool) -> Result<(), BoxError> {
+        unreachable!("the install-anchor test never sends input")
+    }
+    fn followup(&self, _: UserMessage) -> Result<(), BoxError> {
+        unreachable!("the install-anchor test never sends input")
+    }
+    fn steer(&self, _: UserMessage) -> Result<(), BoxError> {
+        unreachable!("the install-anchor test never sends input")
+    }
+    fn inject(&self, _: UserMessage) -> Result<(), BoxError> {
+        unreachable!("the install-anchor test never sends input")
     }
 }
 
@@ -73,11 +132,12 @@ async fn collected_install_dir(running: &RunningProfile) -> Option<String> {
         json!({ "command": "true" }),
         AbortController::new().signal(),
     );
-    input.agent = Some(Arc::new(NoAgent));
+    input.agent = Some(Arc::new(NoAgent::new()));
     let execution = ToolExecutionPipeline::new(ctx.clone())
         .unwrap()
         .prepare(input)
         .await
+        .unwrap()
         .exec()
         .clone();
     let registry = ShellEnvRegistry::new(&ctx, &Config::default()).unwrap();

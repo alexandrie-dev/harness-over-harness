@@ -1,17 +1,23 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use hoh_agent::{
+    AgentOptions, AgentStatus, CancelOptions, Inbox, InboxTarget, MaintenanceFuture,
+    MaintenanceTask, Model,
+};
+use hoh_error::BoxError;
 use hoh_kernel::{Context, Fiber, InternalPlugin, Kernel, Realm};
-use hoh_llm::ToolCallId;
+use hoh_llm::{ToolCallId, UserMessage};
 use hoh_mcp_resources::{
     McpResourceFuture, McpResourceProvider, McpResourceRequest, McpResourceRuntime, McpResources,
     render_resource_result,
 };
 use hoh_scope::{CreateScopeOptions, ScopeKey, bind_scope_parent, create_scope, scope_of};
-use hoh_session::Session;
+use hoh_session::{AgentCancelCause, Session, SessionId};
 use hoh_system_prompt::{AssembleContext, SystemPrompt, SystemPromptKey, render_prompt};
 use hoh_timeout::AbortController;
 use hoh_tool_executor_native::NativeToolExecutorPlugin;
 use hoh_tool_testkit::execute_tool_fixture;
+use hoh_tools::shim::BoxFuture;
 use hoh_tools::{
     Agent, DefineToolOptions, DefineToolOutput, ToolExecution, ToolExecutionInput,
     ToolExecutionResult, ToolRegistrationOptions, ToolRuntime, Tools, define_tool,
@@ -110,24 +116,80 @@ impl McpResourceProvider for Probe {
 struct TestAgent {
     key: ScopeKey,
     session: Session,
+    ctx: Context,
+    options: AgentOptions,
 }
 
 impl TestAgent {
-    fn new(id: &str, key: ScopeKey) -> Arc<Self> {
+    fn new(ctx: &Context, id: &str, key: ScopeKey) -> Arc<Self> {
         Arc::new(Self {
             key,
             session: Session::create(id.into(), None, None, None, None).unwrap(),
+            ctx: ctx.clone(),
+            options: AgentOptions::default(),
         })
     }
 }
 
 impl Agent for TestAgent {
+    fn id(&self) -> &SessionId {
+        self.session.id()
+    }
+
     fn scope_key(&self) -> ScopeKey {
         self.key.clone()
     }
 
-    fn session(&self) -> Session {
-        self.session.clone()
+    fn options(&self) -> &AgentOptions {
+        &self.options
+    }
+
+    fn session(&self) -> &Session {
+        &self.session
+    }
+
+    fn model(&self) -> &dyn Model {
+        panic!("the resource tools do not read the model")
+    }
+
+    fn inbox(&self) -> &dyn Inbox {
+        panic!("the resource tools do not read the inbox")
+    }
+
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+
+    fn ctx(&self) -> &Context {
+        &self.ctx
+    }
+
+    fn cancel(&self, _: AgentCancelCause, _: CancelOptions) -> Result<(), BoxError> {
+        panic!("the resource tools do not cancel the agent")
+    }
+
+    fn when_idle(&self) -> BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
+
+    fn run_maintenance_erased(&self, _: MaintenanceTask) -> Result<MaintenanceFuture, BoxError> {
+        panic!("the resource tools do not run maintenance")
+    }
+
+    fn send(&self, _: UserMessage, _: InboxTarget, _: bool) -> Result<(), BoxError> {
+        panic!("the resource tools do not send input")
+    }
+
+    fn followup(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the resource tools do not send input")
+    }
+
+    fn steer(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the resource tools do not send input")
+    }
+
+    fn inject(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the resource tools do not send input")
     }
 }
 
@@ -386,7 +448,7 @@ async fn independent_owners_in_one_scope_share_the_same_tool_lease() {
         &h.ctx,
         "list_mcp_resources",
         json!({ "server": "second" }),
-        Some(TestAgent::new("same-scope", key.clone())),
+        Some(TestAgent::new(&h.ctx, "same-scope", key.clone())),
     )
     .await;
     assert_eq!(success_value(&remaining), &json!({}));
@@ -413,7 +475,7 @@ async fn independent_owners_in_one_scope_share_the_same_tool_lease() {
         &h.ctx,
         "list_mcp_resources",
         json!({ "server": "first" }),
-        Some(TestAgent::new("same-scope-reverse", key.clone())),
+        Some(TestAgent::new(&h.ctx, "same-scope-reverse", key.clone())),
     )
     .await;
     assert_eq!(success_value(&remaining), &json!({ "source": "first" }));
@@ -505,7 +567,7 @@ async fn duplicate_server_is_rejected_without_disturbing_the_owner() {
         &h.ctx,
         "list_mcp_resources",
         json!({ "server": "docs" }),
-        Some(TestAgent::new("scoped-owner", key.clone())),
+        Some(TestAgent::new(&h.ctx, "scoped-owner", key.clone())),
     )
     .await;
     assert_eq!(success_value(&result), &json!({ "source": "owner" }));
@@ -647,10 +709,10 @@ async fn scoped_provider_shadows_global_for_owner_and_descendants() {
     let local_dispose = runtime
         .register(&owner_scope.ctx, "docs", Arc::new(local.clone()))
         .unwrap();
-    let owner = TestAgent::new("owner", owner_key.clone());
-    let child = TestAgent::new("child", child_key.clone());
+    let owner = TestAgent::new(&h.ctx, "owner", owner_key.clone());
+    let child = TestAgent::new(&h.ctx, "child", child_key.clone());
     let other_key = ScopeKey::new();
-    let other = TestAgent::new("other", other_key.clone());
+    let other = TestAgent::new(&h.ctx, "other", other_key.clone());
     assert_eq!(visible_tools(&h.ctx, Some(&owner_key)), TOOL_NAMES);
     assert_eq!(visible_tools(&h.ctx, Some(&child_key)), TOOL_NAMES);
     for agent in [owner.clone(), child.clone()] {
@@ -731,7 +793,11 @@ async fn scoped_tools_are_invisible_to_unrelated_callers_without_global_servers(
             .await
             .contains("private")
     );
-    assert_resource_tools_unknown(&h.ctx, Some(TestAgent::new("unrelated", unrelated_key))).await;
+    assert_resource_tools_unknown(
+        &h.ctx,
+        Some(TestAgent::new(&h.ctx, "unrelated", unrelated_key)),
+    )
+    .await;
     h.kernel.shutdown().await;
 }
 

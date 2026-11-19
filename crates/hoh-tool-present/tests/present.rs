@@ -164,21 +164,6 @@ impl Agent for LiveAgent {
     }
 }
 
-struct ToolSeam {
-    key: ScopeKey,
-    session: Session,
-}
-
-impl hoh_tools::Agent for ToolSeam {
-    fn scope_key(&self) -> ScopeKey {
-        self.key.clone()
-    }
-
-    fn session(&self) -> Session {
-        self.session.clone()
-    }
-}
-
 struct StatOverride {
     path: String,
     info: FsInfo,
@@ -385,7 +370,7 @@ fn agent_in(stack: &Stack, id: &str, cwd: Option<&Path>, open_turn: bool) -> Own
         id,
         session: session.clone(),
         ctx: scope.ctx.clone(),
-        scope: key.clone(),
+        scope: key,
         options: AgentOptions::default(),
     });
     let registered: Arc<dyn Agent> = live.clone();
@@ -401,7 +386,7 @@ fn agent_in(stack: &Stack, id: &str, cwd: Option<&Path>, open_turn: bool) -> Own
             .unwrap();
     }
     Owner {
-        seam: Arc::new(ToolSeam { key, session }),
+        seam: live.clone(),
         live,
         _scope: scope,
         _detach: detach,
@@ -422,7 +407,10 @@ async fn call(
     );
     input.agent = agent;
     let pipeline = ToolExecutionPipeline::new(ctx.clone()).unwrap();
-    let prepared = pipeline.prepare(input).await;
+    let prepared = pipeline
+        .prepare(input)
+        .await
+        .expect("the tool lookup does not reject");
     let exec = prepared.exec().clone();
     let outcome = match prepared {
         ScheduledToolPreparation::Dispatch(exec) => pipeline.dispatch(exec).await,
@@ -662,9 +650,12 @@ async fn rejects_a_tool_agent_that_is_not_registered_as_a_live_agent() {
     session
         .append("turn/start", json!({ "turn": 1 }), None)
         .unwrap();
-    let seam: Arc<dyn hoh_tools::Agent> = Arc::new(ToolSeam {
-        key,
+    let seam: Arc<dyn hoh_tools::Agent> = Arc::new(LiveAgent {
+        id,
         session: session.clone(),
+        ctx: stack.ctx.clone(),
+        scope: key,
+        options: AgentOptions::default(),
     });
 
     let result = call(&stack.ctx, json!([{ "path": "a" }]), Some(seam)).await;

@@ -40,6 +40,7 @@ impl BundleSource for ShippedBundles {
             "@deepseek-ai/dsh-sdk-minimal" => {
                 include_str!("../assets/bundle/sdk-minimal/cordis.patch.yml")
             }
+            "@hoh/window" => include_str!("../assets/bundle/window/cordis.patch.yml"),
             _ => {
                 return Err(LoadError::Runtime(format!(
                     "bundle {} is not included in this HoH build",
@@ -92,6 +93,12 @@ pub fn prepare_profile(
 ) -> Result<Profile, BoxError> {
     if let Some(template) = from_default_profile {
         initialize_profile_from_default(name, template, home, warn)?;
+    }
+    if name == crate::window_glue::WINDOW_PROFILE {
+        let dir = hoh_loader::resolve_profile_dir(name, home)?;
+        if !dir.join("package.json").exists() {
+            hoh_loader::init_profile(&dir, &["@hoh/window".into()])?;
+        }
     }
     let mut profile =
         hoh_loader::load_profile_with_user_layer("dsh", name, bundles, home, &[], env, false)?;
@@ -474,6 +481,7 @@ pub async fn run_profile(
         env: options.env.clone(),
         overlays,
     });
+    let window_profile = options.profile.name == crate::window_glue::WINDOW_PROFILE;
     let launch = async {
         ctx.provide::<ProfileContextKey>(Arc::new(ProfileContext {
             name: options.profile.name,
@@ -501,6 +509,12 @@ pub async fn run_profile(
             },
         )
         .await?;
+        if window_profile {
+            let exit_host = host.clone();
+            crate::window_glue::provide_stdio(&ctx, move |code| exit_host.request_exit(code))
+                .await
+                .map_err(|error| LoadError::Runtime(error.to_string()))?;
+        }
         let base = hoh_loader::resolve_config_path(
             &path.to_string_lossy(),
             (options.env.var)("DSH_SNAPSHOT").as_deref(),
@@ -536,7 +550,7 @@ pub async fn run_profile(
         Err(error) => {
             host.finish_startup();
             host.kernel.shutdown().await;
-            if host.interrupted.load(Ordering::Acquire) {
+            if host.interrupted.load(Ordering::Acquire) || stopped_by_exit_request(&host, &error) {
                 Ok(RunningProfile {
                     ctx,
                     loader: None,
@@ -547,4 +561,15 @@ pub async fn run_profile(
             }
         }
     }
+}
+/// The window engine may be told to `shutdown` while the plugin tree is still finishing its boot;
+/// the disposed scope then fails the boot with `InactiveContext`, which is the requested exit, not
+/// a load failure.
+fn stopped_by_exit_request(host: &ProfileHost, error: &LoadError) -> bool {
+    let mut error = error;
+    while let LoadError::Boot(inner) = error {
+        error = inner;
+    }
+    host.exit_requested.load(Ordering::Acquire)
+        && matches!(error, LoadError::Kernel(hoh_kernel::KernelError::Inactive))
 }

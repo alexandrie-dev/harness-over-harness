@@ -15,7 +15,7 @@
 | `src/presentation.ts` | `src/presentation.rs` | сериализуемые виды вызова и результата |
 | `src/schema.ts` | `src/schema.rs` | DSL параметров, `validate_args`, `define_tool`, `project_tool_schema` |
 | `locale/*.json` | `locale/*.json` | все 8 файлов без изменений |
-| — | `src/errors.rs`, `src/shim.rs` | внутренние ошибки пакета; заглушки (см. ниже) |
+| — | `src/errors.rs`, `src/shim.rs` | внутренние ошибки пакета; совместимый алиас `BoxFuture` |
 
 ### Тесты
 
@@ -24,25 +24,25 @@
 | образец → tests/*.rs | перенесено | пояснение |
 | --- | --- | --- |
 | json-schema → json_schema.rs | 23 из 25 | глубина 4000 на потоке с 64 МБ; JS-графы (Proxy, getter, цикл) исключены |
-| schema → schema.rs | 5 из 10 | пять случаев — выведение типов TypeScript |
+| schema → schema.rs | 5 из 10 | четыре случая — выведение типов TypeScript; пятый («rejects cyclic author schemas») отложен, см. «Не перенесено» |
 | properties → properties.rs | 6 из 6 | детерминированный SplitMix64 вместо fast-check, 300 случаев на свойство |
 | scoped → scoped.rs | 21 из 27 | исключены 6, см. ниже |
 | activation → activation.rs | 10 из 10 | |
 | execution-mode → execution_mode.rs | 8 из 10 | исключены «truthy не-boolean» и `expectTypeOf` |
 | tools → tools.rs, tools_more.rs | 121 тест на 148 случаев | часть случаев объединена, 14 исключены, см. ниже |
-| круг исправлений по ревью → review_round.rs | см. ниже | «freezes dispatch outcomes» и «register() … composite yield» перенесены сюда; остальное — регрессии по пунктам ревью |
+| круги исправлений по ревью → review_round.rs, review_round2.rs | см. ниже | «freezes dispatch outcomes» и «register() … composite yield» перенесены сюда; остальное — регрессии по пунктам ревью |
 | execution-signal-types, gen-tool-catalog, exports.built.e2e | 0 | типы TypeScript, генератор, сборка JS (§10 PORTING) |
 
-Итог прогона: `cargo test -p hoh-tools` — 194 прошло, 0 упало (activation 10, execution_mode 8, json_schema 23,
-properties 6, schema 5, scoped 21, tools 80, tools_more 41).
+Итог прогона: `cargo test -p hoh-tools` — 227 прошло, 0 упало (внутренние 5, activation 13,
+execution_mode 8, json_schema 24, properties 6, review_round 24, schema 5, scoped 21, tools 80,
+tools_more 41).
 
 ## Отличия от образца
 
-- **Заглушки.** `hoh-agent` пуст, `hoh-user-approval` ещё нет. `src/shim.rs`: `SHIM(hoh-agent)` — трейт `Agent`
-  (`scope_key()`, `session()`) и `ModelSelection`; `SHIM(hoh-user-approval)` — `ApprovalRequest`,
-  `ApprovalOutcome`, трейт `ApprovalApi`, сервис `Approval`. Когда появится настоящий сервис с тем же именем,
-  но другим типом, `ctx.get` вернёт `None` и `ask` деградирует в отказ — заглушку нужно убрать в тот же момент.
-  `BoxFuture` из `shim` используют другие крейты (`hoh-tool-executor-native`).
+- `Agent` и `ModelSelection` берутся из `hoh-agent`; approval-ключ, запрос, исход и `DisplayReason` — из
+  `hoh-user-approval`. Интеграционные тесты монтируют настоящий `ApprovalService` и отвечают на его
+  `ApprovalRequestEvent`, поэтому совпадение `TypeId` ключа и события проверяется. `BoxFuture` оставлен в
+  `src/shim.rs` как совместимый алиас: этот путь используют уже перенесённые потребители.
 - **`ToolExecutionPipeline::new(ctx)`** не падает без сервиса `tools` (как конструктор образца, который только читает
   `ctx.tools`): сервис хранится как `Option`, а операции, которым нужен реестр (поиск определения, guards),
   отвечают `TOOL_EXECUTOR_UNAVAILABLE` результатом вызова. `Result` в сигнатуре сохранён ради вызывающих крейтов.
@@ -79,20 +79,36 @@ properties 6, schema 5, scoped 21, tools 80, tools_more 41).
 - tools.spec, 12 случаев без аналога в Rust: обязательное объявление `output` (проверяет тип), getter / Proxy
   в теле, значении, ошибке и снимках (3 случая о брошенных не-Error значениях, 2 о снимках проекторов,
   «hostile thrown value»), «throwing body snapshot», «required key present as undefined»,
-  «rogue outcome» подменён проверкой отказа сервиса одобрения (перечисление закрыто).
+  «rogue outcome»: настоящий `ApprovalService` нормализует посторонний ответ; вместо нарушения его закрытого
+  Rust API проверяется нормализация ошибки настоящего answerer в `unavailable` (перечисление закрыто).
 - scoped.spec, 6 случаев: тип `tools/result`, алиасинг массива фильтра, getter `parent`, единый снимок
   входа с getter, getter `arguments`, вложенный getter аргументов. Map и экземпляр класса сведены к проверке `-0.0`.
+- schema.spec «rejects cyclic author schemas» (deferred, не пропуск по ошибке): циклический автор-схем в Rust
+  невыразим. Схемы — `serde_json::Value`, а `Value` — владеющее дерево без разделяемых ссылок, поэтому
+  `schema.items = schema` построить нельзя; проверка `/circular/` относится к JS-графу, как «Proxy, getter, цикл»
+  в строке json-schema. Рантайм-теста нет и быть не может; он — пятый пропуск строки schema (остальные четыре — типы).
 - Экспорты образца без отдельной пары: типы-обёртки TypeScript (`InferArgs`, `ParameterSchemaSpec` как тип) —
   в Rust это `serde_json::Value`.
 
+## Круг исправлений по ревью hoh-tools.142420 (tests/review_round2.rs)
+
+- `tool_error_message` тотальна: паника в `Display` брошенного значения даёт `<unprintable thrown value>`
+  (pipeline.ts `toolErrorMessage`). Покрыто телом инструмента и наблюдателем `tools/result`.
+- `execution_mode` возвращает `Result`: ошибка поиска (нет сервиса `tools`) — отказ, а не `Exclusive`
+  (pipeline.ts:106). Пакет с журналом прерывается до `tool/call`.
+- `prepare` возвращает `Result` и отклоняется при ошибке поиска, как Promise образца; отдельный `try_prepare`
+  удалён (потребители вызывают `prepare(..).await?`).
+- `ToolExecution` замораживается перед наблюдателями `tools/result` (`Object.freeze(exec)`): `set_signal` после
+  этого не действует, `is_frozen()` сообщает состояние. Образец в строгом режиме бросил бы `TypeError`; здесь
+  замена молча отвергается, как у замороженного результата.
+- Без `agent` журнал пакета отказывает `TypeError` с текстом движка `Cannot read properties of undefined
+  (reading 'session')` (batch.ts:245).
+
 ## Не проверено
 
-- Работа с реальным `hoh-agent` и `hoh-user-approval`: оба заменены заглушками, тесты используют стенд `Answerer`.
 - Поведение планировщика при сотнях параллельных вызовов, кроме случаев из spec.
 - Сильная ссылка на `ScopeKey` в таблице исполнителей не измерялась на утечку при массовом создании областей.
 
 ## Вопросы ведущему
 
-1. Заглушки Agent / Approval: кто владеет трейтом `Agent` — `hoh-agent`? После его появления `hoh-tools` должен
-   перейти на него и удалить `shim.rs`.
-2. Нужна ли слабая таблица исполнителей по областям (например `Weak<ScopeKeyData>` в `hoh-scope`)?
+1. Нужна ли слабая таблица исполнителей по областям (например `Weak<ScopeKeyData>` в `hoh-scope`)?

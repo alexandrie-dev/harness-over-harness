@@ -9,8 +9,8 @@ use hoh_shell::{ShellExecution, ShellProcess, ShellProcessStatus, ShellSandboxIn
 use hoh_timeout::{AbortController, AbortSignal};
 
 use crate::render::runner_failed_notice;
-use crate::shim::{
-    BoxFuture, JobChannel, JobChunk, JobHooks, JobOutcome, JobOutcomeStatus, JobOutputSource,
+use hoh_jobs::{
+    JobChannel, JobChunk, JobFuture, JobHooks, JobOutcome, JobOutcomeStatus, JobOutputSource,
     JobSourceRead,
 };
 
@@ -93,12 +93,12 @@ pub fn process_sources(
         JobOutputSource {
             channel: Some(channel),
             read: Box::new(move |from_byte| match process() {
-                None => JobSourceRead {
+                None => Ok(JobSourceRead {
                     text: String::new(),
                     next_offset: from_byte,
                     lossy: false,
                     spill_path: None,
-                },
+                }),
                 Some(live) => {
                     let observed = live.observed();
                     let reader = if name == "stdout" {
@@ -107,12 +107,12 @@ pub fn process_sources(
                         observed.stderr
                     };
                     let read = reader.read_from(from_byte);
-                    JobSourceRead {
+                    Ok(JobSourceRead {
                         text: read.text,
                         next_offset: read.next_offset,
                         lossy: read.lossy,
                         spill_path: read.spill_path,
-                    }
+                    })
                 }
             }),
         }
@@ -172,7 +172,7 @@ impl ProcessFailure {
 
 /// Starts the process with job-owned cancellation.
 pub type StartProcess = Box<
-    dyn FnOnce(AbortSignal) -> BoxFuture<'static, Result<Arc<dyn ShellExecution>, BoxError>> + Send,
+    dyn FnOnce(AbortSignal) -> JobFuture<'static, Result<Arc<dyn ShellExecution>, BoxError>> + Send,
 >;
 
 /// Job hooks plus the original error of a job that failed before its process produced an outcome.
@@ -199,11 +199,24 @@ pub fn process_job(
         let signal = controller.signal();
         let process = process.clone();
         let failure = failure.clone();
-        // The source's async function runs up to its first `await` inside the call: the starter is
-        // invoked synchronously, and only its awaiting happens on the task.
-        let starting = start(signal.clone());
+        // The source's async function runs up to its first `await` inside the call: the starter's
+        // body begins now (so the executor is called inside `registry.start`), and only the rest
+        // of its awaiting happens on the task. One poll with a no-op waker does exactly that; the
+        // task's own first poll re-registers the real waker.
+        let mut starting = start(signal.clone());
+        let first = match starting
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+        {
+            std::task::Poll::Ready(result) => Some(result),
+            std::task::Poll::Pending => None,
+        };
         tokio::spawn(async move {
-            match starting.await {
+            let started = match first {
+                Some(result) => result,
+                None => starting.await,
+            };
+            match started {
                 Ok(started) => {
                     *lock(&process) = Some(started.clone());
                     // `try { if (aborted) process.kill() } finally { await process.done }`: a
@@ -247,18 +260,20 @@ pub fn process_job(
             }
         })
     };
-    let done: BoxFuture<'static, JobOutcome> = Box::pin(async move {
-        task.await.unwrap_or_else(|error| JobOutcome {
+    // `done` never rejects (the source's async function catches everything): a broken task
+    // is reported as a `failed` outcome, not as an error of the hook.
+    let done: JobFuture<'static, Result<JobOutcome, BoxError>> = Box::pin(async move {
+        Ok(task.await.unwrap_or_else(|error| JobOutcome {
             status: JobOutcomeStatus::Failed,
             detail: Some(error.to_string()),
             result: None,
-        })
+        }))
     });
     let cancel = {
         let signal = controller.signal();
         Box::new(move |reason: Option<&str>| {
             if signal.aborted() {
-                return;
+                return Ok(());
             }
             match reason {
                 Some(reason) => controller.abort_with(reason.to_owned()),
@@ -266,8 +281,11 @@ pub fn process_job(
             }
             let running = lock(&process).clone();
             if let Some(running) = running {
-                running.kill();
+                // A throwing termination request propagates to the registry, as in the source.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| running.kill()))
+                    .map_err(|payload| BoxError::from(panic_message(payload.as_ref())))?;
             }
+            Ok(())
         })
     };
     ProcessJob {

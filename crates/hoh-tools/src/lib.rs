@@ -46,6 +46,7 @@ pub use error_codes::{
 pub use errors::ToolsError;
 pub use events::{ToolsChange, ToolsExecute, ToolsPostExecute, ToolsPreExecute, ToolsResult};
 pub use executor::*;
+pub use hoh_agent::{Agent, ModelSelection};
 pub use json_schema::{
     JsonSchemaError, JsonSchemaNode, assert_object_json_schema, assert_supported_json_schema,
     is_json_schema_record, is_plain_json_array, is_plain_json_record, validate_json_schema_value,
@@ -56,7 +57,6 @@ pub use pipeline::{
 };
 pub use presentation::*;
 pub use schema::*;
-pub use shim::{Agent, ModelSelection};
 
 /// One restriction compiled at registration for repeated live-global lookup.
 struct CompiledToolRestriction {

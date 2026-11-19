@@ -1,5 +1,5 @@
 //! Port of the runtime, pipeline and DSL cases of tests/tools.spec.ts. Cases that need the agent loop,
-//! the user-approval plugin, JavaScript-only values (Proxy, getters, symbols, non-cloneable objects),
+//! JavaScript-only values (Proxy, getters, symbols, non-cloneable objects),
 //! TypeScript types or later mutation of a registered definition are listed in PORT_NOTES.md.
 
 mod common;
@@ -14,13 +14,13 @@ use hoh_error::{BoxError, HarnessError};
 use hoh_kernel::{Kernel, Next};
 use hoh_llm::{ContentBlock, MessageSource};
 use hoh_timeout::AbortController;
-use hoh_tools::shim::ApprovalOutcome;
 use hoh_tools::{
     DefineToolOptions, DefineToolOutput, PostToolDecision, PreToolDecision, ToolArgsError,
     ToolContextUnavailableError, ToolErrorInfo, ToolExecution, ToolExecutionResult,
     ToolNotFoundError, ToolOutputError, ToolRegistrationOptions, ToolRuntime, ToolsExecute,
     ToolsPostExecute, ToolsPreExecute, ToolsResult, define_tool, validate_args,
 };
+use hoh_user_approval::{ApprovalOutcome, ApprovalRequestEvent, DisplayReason};
 use serde_json::{Value, json};
 
 fn error_text(result: &ToolExecutionResult) -> String {
@@ -1071,9 +1071,11 @@ async fn ask_env(outcome: Option<ApprovalOutcome>) -> (Env, Arc<Answerer>) {
     }
     env.ctx
         .on_waterfall::<ToolsPreExecute, PreToolDecision, _>(|_, _| async {
+            let mut display_reason = DisplayReason::new("Allow it?");
+            display_reason.insert("zh", "允许吗？");
             Ok(PreToolDecision::Ask {
                 reason: Some("hook wants a human".into()),
-                display_reason: None,
+                display_reason: Some(display_reason),
             })
         })
         .unwrap();
@@ -1084,7 +1086,7 @@ async fn ask_env(outcome: Option<ApprovalOutcome>) -> (Env, Arc<Answerer>) {
 async fn ask_routing_dispatches_when_the_answerer_grants_allowed_once() {
     let (env, answerer) = ask_env(Some(ApprovalOutcome::AllowedOnce)).await;
     let mut request = input("c1", "echo", json!({ "text": "hi" }));
-    request.agent = Some(TestAgent::new());
+    request.agent = Some(TestAgent::open(&env.ctx));
     let result = execute_tool_fixture(&env.ctx, request).await;
     assert!(!result.is_error());
     assert_eq!(result.content(), &[text("hi")]);
@@ -1093,7 +1095,12 @@ async fn ask_routing_dispatches_when_the_answerer_grants_allowed_once() {
         vec![(
             "echo".to_owned(),
             call_id("c1"),
-            Some("hook wants a human".to_owned())
+            Some("hook wants a human".to_owned()),
+            Some({
+                let mut reason = DisplayReason::new("Allow it?");
+                reason.insert("zh", "允许吗？");
+                reason
+            })
         )]
     );
 }
@@ -1102,7 +1109,7 @@ async fn ask_routing_dispatches_when_the_answerer_grants_allowed_once() {
 async fn ask_routing_denies_with_the_user_rejection_reason_on_rejected() {
     let (env, _) = ask_env(Some(ApprovalOutcome::Rejected)).await;
     let mut request = input("c1", "echo", json!({}));
-    request.agent = Some(TestAgent::new());
+    request.agent = Some(TestAgent::open(&env.ctx));
     let result = execute_tool_fixture(&env.ctx, request).await;
     assert_eq!(
         result.content()[0].text_value(),
@@ -1115,7 +1122,7 @@ async fn ask_routing_denies_with_the_user_rejection_reason_on_rejected() {
 async fn ask_routing_denies_with_the_cancellation_reason_on_cancelled() {
     let (env, _) = ask_env(Some(ApprovalOutcome::Cancelled)).await;
     let mut request = input("c1", "echo", json!({}));
-    request.agent = Some(TestAgent::new());
+    request.agent = Some(TestAgent::open(&env.ctx));
     let result = execute_tool_fixture(&env.ctx, request).await;
     assert_eq!(
         result.content()[0].text_value(),
@@ -1128,7 +1135,7 @@ async fn ask_routing_denies_with_the_cancellation_reason_on_cancelled() {
 async fn ask_routing_denies_with_the_no_channel_reason_when_nobody_answers() {
     let (env, _) = ask_env(Some(ApprovalOutcome::Unavailable)).await;
     let mut request = input("c1", "echo", json!({}));
-    request.agent = Some(TestAgent::new());
+    request.agent = Some(TestAgent::open(&env.ctx));
     let result = execute_tool_fixture(&env.ctx, request).await;
     assert_eq!(
         result.content()[0].text_value(),
@@ -1171,30 +1178,28 @@ async fn ask_routing_returns_aborted_before_dispatch_when_caller_cancellation_ov
         });
         register(&env, probe);
     }
-    // The approval stand-in blocks until released, then grants.
+    // The real ApprovalService dispatches its owner event; this answerer blocks until released.
     struct Gate {
         entered: tokio::sync::Notify,
         release: tokio::sync::Notify,
-    }
-    impl hoh_tools::shim::ApprovalApi for Gate {
-        fn request(
-            &self,
-            _: hoh_tools::shim::ApprovalRequest,
-        ) -> hoh_tools::shim::BoxFuture<'_, Result<ApprovalOutcome, BoxError>> {
-            Box::pin(async {
-                self.entered.notify_one();
-                self.release.notified().await;
-                Ok(ApprovalOutcome::AllowedOnce)
-            })
-        }
     }
     let gate = Arc::new(Gate {
         entered: tokio::sync::Notify::new(),
         release: tokio::sync::Notify::new(),
     });
+    mount_approval_service(&env).await;
     env.ctx
-        .provide::<hoh_tools::shim::Approval>(gate.clone())
-        .await
+        .on_waterfall::<ApprovalRequestEvent, Value, _>({
+            let gate = gate.clone();
+            move |_, _| {
+                let gate = gate.clone();
+                async move {
+                    gate.entered.notify_one();
+                    gate.release.notified().await;
+                    Ok(ApprovalOutcome::AllowedOnce.into())
+                }
+            }
+        })
         .unwrap();
     env.ctx
         .on_waterfall::<ToolsPreExecute, PreToolDecision, _>(|_, _| async {
@@ -1206,7 +1211,7 @@ async fn ask_routing_returns_aborted_before_dispatch_when_caller_cancellation_ov
         .unwrap();
     let controller = Arc::new(AbortController::new());
     let mut request = input("approval-cancelled", "approval-probe", json!({}));
-    request.agent = Some(TestAgent::new());
+    request.agent = Some(TestAgent::open(&env.ctx));
     request.signal = controller.signal();
     let ctx = env.ctx.clone();
     let pending = tokio::spawn(async move { execute_tool_fixture(&ctx, request).await });
@@ -2302,7 +2307,7 @@ async fn rejects_a_zero_parallel_override_with_a_range_error() {
 async fn logs_root_call_and_result_events_to_the_agent_session_in_model_order() {
     let env = setup().await;
     register(&env, echo_tool());
-    let agent = TestAgent::new();
+    let agent = TestAgent::new(&env.ctx);
     let mut input = hoh_tools::ToolBatchInput::new(
         vec![
             model_call("a", "echo", r#"{"text":"one"}"#),

@@ -1,4 +1,4 @@
-//! Consumer API tests over a fake provider and the observation-policy stand-in: schemas,
+//! Consumer API tests over a fake provider and the real observation policy: schemas,
 //! validation, formatting, typed errors, intent dispatch, and observation-driven authorization.
 
 mod support;
@@ -39,13 +39,13 @@ mod current_directory_resolution {
         };
         let signal = live_signal();
         // A call with an agent resolves the Session's current directory through the service.
-        let agent: Arc<dyn Agent> = TestAgent::new();
-        support::ensure_live(&setup.ctx, &agent);
+        let seam: Arc<dyn Agent> = TestAgent::new();
+        let agent = support::ensure_live(&setup.ctx, &seam);
         let mut input =
             hoh_tools::ToolExecutionInput::new("c".into(), "read", json!({}), signal.clone());
         input.agent = Some(agent);
         let pipeline = hoh_tools::ToolExecutionPipeline::new(setup.ctx.clone()).unwrap();
-        let exec = pipeline.prepare(input).await.exec().clone();
+        let exec = pipeline.prepare(input).await.unwrap().exec().clone();
         let options = session_resolve_options(&env, &exec).await.unwrap();
         assert!(
             options
@@ -56,7 +56,7 @@ mod current_directory_resolution {
         assert!(options.signal.is_some());
         // A call without an agent leaves the directory to the provider.
         let bare = hoh_tools::ToolExecutionInput::new("c2".into(), "read", json!({}), signal);
-        let exec = pipeline.prepare(bare).await.exec().clone();
+        let exec = pipeline.prepare(bare).await.unwrap().exec().clone();
         let options = session_resolve_options(&env, &exec).await.unwrap();
         assert_eq!(options.cwd, None);
         assert!(options.signal.is_some());
@@ -170,14 +170,12 @@ mod registration {
             .as_object()
             .unwrap()
             .keys()
+            .take(fields.len() + 1)
             .collect();
         let mut expected: Vec<String> = vec!["file_path".into()];
         expected.extend(fields.iter().map(|field| (*field).to_owned()));
-        // Key order is the declaration order only when the JSON map preserves it; compare as sets
-        // of the leading names and check the required list, which is an ordered array.
-        for name in &expected {
-            assert!(keys.contains(&name), "{name} declared");
-        }
+        // The workspace builds serde_json with `preserve_order`, so this is the declaration order.
+        assert_eq!(keys, expected.iter().collect::<Vec<_>>());
         assert_eq!(parameters["required"], json!(expected));
         assert!(
             parameters["properties"]["file_path"]["description"]
@@ -220,6 +218,7 @@ mod registration {
                     args,
                     live_signal(),
                 ))
+                .unwrap()
                 .kind()
         };
         assert_eq!(mode("read", json!({ "file_path": "a.txt" })), "parallel");

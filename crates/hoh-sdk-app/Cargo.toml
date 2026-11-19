@@ -1,0 +1,21 @@
+[package]
+name = "hoh-sdk-app"
+description = "Port of @deepseek-ai/dsh-sdk-app (packages/bundle/sdk-app)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-commander = { path = "../hoh-commander" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-loader = { path = "../hoh-loader" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

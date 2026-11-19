@@ -9,9 +9,9 @@ use std::sync::{
 };
 
 use common::*;
+use hoh_agent::{Agent as _, ModelSelection};
 use hoh_error::BoxError;
 use hoh_timeout::AbortController;
-use hoh_tools::shim::{Agent as _, ModelSelection};
 use hoh_tools::{
     DefineToolOptions, DefineToolOutput, ResolvedToolSet, TOOL_ABORTED_BEFORE_DISPATCH,
     ToolActivationContext, ToolActivationError, ToolDefinition, ToolExecutionInput,
@@ -51,7 +51,7 @@ async fn harness() -> Harness {
         ))
         .unwrap()
     };
-    let agent = TestAgent::new();
+    let agent = TestAgent::new(&env.ctx);
     let scope = hoh_scope::create_scope(&env.ctx, agent.key.clone(), Default::default()).unwrap();
     Harness {
         env,
@@ -187,7 +187,7 @@ async fn keeps_admissions_specific_to_the_requesting_agent() {
         .unwrap();
     let tool_set = h.resolve().await.unwrap();
     let mut input = h.input();
-    input.agent = Some(TestAgent::new());
+    input.agent = Some(TestAgent::new(&h.env.ctx));
     input.tool_set = Some(tool_set);
     let result = execute_tool_fixture(&h.env.ctx, input).await;
     assert_eq!(code(&result).as_deref(), Some("UNKNOWN_TOOL"));

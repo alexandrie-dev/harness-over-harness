@@ -4,20 +4,26 @@
 
 use std::sync::{Arc, Mutex};
 
+use hoh_agent::{
+    Agent, AgentOptions, AgentStatus, CancelOptions, Inbox, InboxTarget, MaintenanceFuture,
+    MaintenanceTask, Model,
+};
 use hoh_error::BoxError;
 use hoh_kernel::{Cfg, Context, Inject, Kernel, NoConfig, Plugin, Service};
-use hoh_llm::{ContentBlock, ToolCallBlock, ToolCallId};
+use hoh_llm::{ContentBlock, ToolCallBlock, ToolCallId, UserMessage};
 use hoh_scope::ScopeKey;
-use hoh_session::Session;
+use hoh_session::{AgentCancelCause, Session, SessionPlugin};
+use hoh_session_projection::SessionProjectionRegistry;
 use hoh_system_prompt::SystemPrompt;
 use hoh_timeout::{AbortController, AbortSignal};
-use hoh_tools::shim::{Approval, ApprovalApi, ApprovalOutcome, ApprovalRequest, BoxFuture};
+use hoh_tools::shim::BoxFuture;
 use hoh_tools::{
-    Agent, DefineToolOptions, DefineToolOutput, ToolBatchInput, ToolBatchResult, ToolDefinition,
+    DefineToolOptions, DefineToolOutput, ToolBatchInput, ToolBatchResult, ToolDefinition,
     ToolExecution, ToolExecutionInput, ToolExecutionPipeline, ToolExecutionResult, ToolExecutor,
     ToolModelInput, ToolRegistrationOptions, ToolRuntime, Tools, ToolsService, define_tool,
     execute_tool_batch, project_tool_schema,
 };
+use hoh_user_approval::{ApprovalOutcome, ApprovalRequestEvent, ApprovalService, DisplayReason};
 use serde_json::{Value, json};
 
 pub fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -140,23 +146,75 @@ pub async fn setup_without_executor() -> Env {
 pub struct TestAgent {
     pub key: ScopeKey,
     pub session: Session,
+    ctx: Context,
+    options: AgentOptions,
 }
 
 impl TestAgent {
-    pub fn new() -> Arc<Self> {
+    pub fn new(ctx: &Context) -> Arc<Self> {
         Arc::new(Self {
             key: ScopeKey::new(),
             session: Session::create("test".into(), None, None, None, None).expect("session"),
+            ctx: ctx.clone(),
+            options: AgentOptions::default(),
         })
+    }
+
+    pub fn open(ctx: &Context) -> Arc<Self> {
+        let agent = Self::new(ctx);
+        agent
+            .session
+            .append("turn/start", json!({ "turn": 1 }), None)
+            .expect("turn starts");
+        agent
     }
 }
 
 impl Agent for TestAgent {
+    fn id(&self) -> &hoh_session::SessionId {
+        self.session.id()
+    }
     fn scope_key(&self) -> ScopeKey {
         self.key.clone()
     }
-    fn session(&self) -> Session {
-        self.session.clone()
+    fn options(&self) -> &AgentOptions {
+        &self.options
+    }
+    fn session(&self) -> &Session {
+        &self.session
+    }
+    fn model(&self) -> &dyn Model {
+        panic!("structural tools fixture has no model")
+    }
+    fn inbox(&self) -> &dyn Inbox {
+        panic!("structural tools fixture has no inbox")
+    }
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+    fn ctx(&self) -> &Context {
+        &self.ctx
+    }
+    fn cancel(&self, _: AgentCancelCause, _: CancelOptions) -> Result<(), BoxError> {
+        panic!("not used by tools")
+    }
+    fn when_idle(&self) -> BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
+    fn run_maintenance_erased(&self, _: MaintenanceTask) -> Result<MaintenanceFuture, BoxError> {
+        panic!("not used by tools")
+    }
+    fn send(&self, _: UserMessage, _: InboxTarget, _: bool) -> Result<(), BoxError> {
+        panic!("not used by tools")
+    }
+    fn followup(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("not used by tools")
+    }
+    fn steer(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("not used by tools")
+    }
+    fn inject(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("not used by tools")
     }
 }
 
@@ -237,7 +295,10 @@ pub fn input(call: &str, name: &str, arguments: Value) -> ToolExecutionInput {
 /// `executeToolFixture`: drive the invocation stages directly.
 pub async fn execute_tool_fixture(ctx: &Context, input: ToolExecutionInput) -> ToolExecutionResult {
     let pipeline = ToolExecutionPipeline::new(ctx.clone()).expect("pipeline");
-    let prepared = pipeline.prepare(input).await;
+    let prepared = pipeline
+        .prepare(input)
+        .await
+        .expect("the tool lookup does not reject");
     let exec = prepared.exec().clone();
     let outcome = match prepared {
         hoh_tools::ScheduledToolPreparation::Dispatch(exec) => pipeline.dispatch(exec).await,
@@ -284,9 +345,11 @@ pub async fn execute_model_tool_fixture(
 }
 
 /// An approval service answering with a fixed outcome and recording the request fields it saw.
+pub type SeenApproval = (String, ToolCallId, Option<String>, Option<DisplayReason>);
+
 pub struct Answerer {
     pub outcome: Mutex<Result<ApprovalOutcome, String>>,
-    pub seen: Mutex<Vec<(String, ToolCallId, Option<String>)>>,
+    pub seen: Mutex<Vec<SeenApproval>>,
 }
 
 impl Answerer {
@@ -298,20 +361,39 @@ impl Answerer {
     }
 }
 
-impl ApprovalApi for Answerer {
-    fn request(
-        &self,
-        request: ApprovalRequest,
-    ) -> BoxFuture<'_, Result<ApprovalOutcome, BoxError>> {
-        lock(&self.seen).push((request.tool_name, request.call_id, request.reason));
-        let outcome = lock(&self.outcome).clone();
-        Box::pin(async move { outcome.map_err(|message| message.into()) })
-    }
+pub async fn mount_approval_service(env: &Env) {
+    env.ctx
+        .plugin::<SessionPlugin>(json!({}))
+        .expect("sessions mount")
+        .settled()
+        .await
+        .expect("sessions settle");
+    env.ctx
+        .plugin::<SessionProjectionRegistry>(json!({}))
+        .expect("projections mount")
+        .settled()
+        .await
+        .expect("projections settle");
+    env.ctx
+        .plugin::<ApprovalService>(json!({}))
+        .expect("approval mounts")
+        .settled()
+        .await
+        .expect("approval settles");
 }
 
 pub async fn mount_approval(env: &Env, answerer: Arc<Answerer>) {
+    mount_approval_service(env).await;
     env.ctx
-        .provide::<Approval>(answerer)
-        .await
-        .expect("approval provides");
+        .on_waterfall::<ApprovalRequestEvent, Value, _>(move |request, _| {
+            lock(&answerer.seen).push((
+                request.tool_name.clone(),
+                request.call_id.clone().expect("tools forwards callId"),
+                request.reason.clone(),
+                request.display_reason.clone(),
+            ));
+            let outcome = lock(&answerer.outcome).clone();
+            async move { outcome.map(Into::into).map_err(BoxError::from) }
+        })
+        .expect("approval answerer installs");
 }

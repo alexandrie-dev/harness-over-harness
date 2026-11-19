@@ -489,3 +489,29 @@ async fn an_offset_past_the_end_names_the_unrounded_number() {
         "offset 100000000000000000000 is out of range for \"f\" (2 lines)"
     );
 }
+
+/// `read-render.ts:121-130`: the line buffer keeps `maxLineLength + 1` units and the carriage
+/// return is stripped from that bounded text, so a `\r` standing exactly on the cap position
+/// leaves a line of `maxLineLength` units that is not truncated and carries no suffix.
+#[tokio::test]
+async fn a_carriage_return_on_the_cap_position_leaves_a_line_that_fits() {
+    let request = ReadWindow {
+        max_line_length: 4,
+        ..READ_ALL
+    };
+    for text in ["aaaa\rb", "aaaa\r", "aaaa\r\nnext"] {
+        let whole = whole(text, &request).await.unwrap();
+        assert_eq!(whole.lines[0], line(1, "aaaa"), "whole {text:?}");
+        let streamed = chunked(text, 1, &request).await.unwrap();
+        assert_eq!(streamed.lines[0], line(1, "aaaa"), "streamed {text:?}");
+    }
+    // One unit more and the line does overflow, with or without the carriage return.
+    for text in ["aaaaa", "aaaaa\rb", "aaaaab\r"] {
+        let result = whole(text, &request).await.unwrap();
+        assert_eq!(
+            result.lines[0],
+            line(1, "aaaa... (line truncated to 4 chars)"),
+            "{text:?}"
+        );
+    }
+}

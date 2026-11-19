@@ -1,4 +1,4 @@
-//! Shared fixtures: an in-memory fake provider (`FakeFs`), the observation-policy stand-in, and the
+//! Shared fixtures: an in-memory fake provider (`FakeFs`), the real observation policy, and the
 //! real tool stack of the package under test (system prompt, tool runtime, native executor,
 //! working directory) in a fresh kernel.
 #![allow(dead_code)]
@@ -14,11 +14,10 @@ use hoh_agent::{
 };
 use hoh_error::{BoxError, HarnessError};
 use hoh_fs::{
-    Fs, FsByteRange, FsDeleteIntent, FsDeleteOutcome, FsDirEntry, FsEditIntent, FsEditOutcome,
-    FsEditRequest, FsError, FsErrorCode, FsFuture, FsInfo, FsMoveOptions, FsMoveOutcome,
-    FsObservation, FsObserved, FsPathInfo, FsPathType, FsResolveOptions, FsTarget, FsTextStream,
-    FsType, FsVersion, FsVersionGuard, FsWriteIntent, FsWriteIntentEvent, FsWriteOperation,
-    FsWriteOutcome,
+    Fs, FsByteRange, FsDeleteOutcome, FsDirEntry, FsEditOutcome, FsEditRequest, FsError,
+    FsErrorCode, FsFuture, FsInfo, FsMoveOptions, FsMoveOutcome, FsPathInfo, FsPathType,
+    FsResolveOptions, FsTarget, FsTextStream, FsType, FsVersion, FsVersionGuard, FsWriteIntent,
+    FsWriteOperation, FsWriteOutcome,
 };
 use hoh_kernel::{Context, Fiber, Kernel};
 use hoh_llm::ToolCallId;
@@ -32,7 +31,7 @@ use hoh_timeout::{AbortController, AbortSignal};
 use hoh_tool_executor_native::NativeToolExecutorPlugin;
 use hoh_tool_fs::ToolFs;
 use hoh_tools::{
-    Agent, ScheduledToolDispatch, ScheduledToolPreparation, ToolExecution, ToolExecutionInput,
+    Agent, ScheduledToolDispatch, ScheduledToolPreparation, ToolExecutionInput,
     ToolExecutionPipeline, ToolExecutionResult, ToolRuntime, Tools,
 };
 use hoh_user_approval::{ApprovalOutcome, ApprovalRequestEvent, ApprovalService};
@@ -378,6 +377,7 @@ impl hoh_fs::FileSystem for FakeFs {
 pub struct TestAgent {
     pub key: ScopeKey,
     pub session: Session,
+    options: AgentOptions,
 }
 
 impl TestAgent {
@@ -385,6 +385,7 @@ impl TestAgent {
         Arc::new(Self {
             key: ScopeKey::new(),
             session: Session::create("test".into(), None, None, None, None).expect("session"),
+            options: AgentOptions::default(),
         })
     }
 }
@@ -405,6 +406,7 @@ impl TestAgent {
         Arc::new(Self {
             key: ScopeKey::new(),
             session,
+            options: AgentOptions::default(),
         })
     }
 }
@@ -532,11 +534,11 @@ impl hoh_agent::Agent for LiveAgent {
 /// Register the agent behind `agent` in the `agents` registry (once per Session), as the real
 /// composition does before any tool call runs. With the approval service mounted, the Session also
 /// opens a turn (an approval may only be asked inside one).
-pub fn ensure_live(ctx: &Context, agent: &Arc<dyn Agent>) {
+pub fn ensure_live(ctx: &Context, agent: &Arc<dyn Agent>) -> Arc<dyn Agent> {
     let session = agent.session();
     let registry = ctx.get::<Agents>().expect("agents registry mounted");
-    if registry.get(session.id()).is_some() {
-        return;
+    if let Some(live) = registry.get(session.id()) {
+        return live;
     }
     let route = lock(&ROUTES)
         .get(&session.id().to_string())
@@ -558,100 +560,73 @@ pub fn ensure_live(ctx: &Context, agent: &Arc<dyn Agent>) {
         injected: Mutex::default(),
     });
     // Registered for the kernel's lifetime.
-    std::mem::forget(registry.enter(ctx, live).expect("agent registered"));
+    std::mem::forget(registry.enter(ctx, live.clone()).expect("agent registered"));
     if ctx.get::<hoh_user_approval::Approval>().is_some() {
         session
             .append("turn/start", json!({ "turn": 1 }), None)
             .expect("turn opened");
     }
+    live
 }
 
+/// The identity stand-in of a test agent: its Session and scope key. A tool call runs with the
+/// registered [`LiveAgent`] that [`ensure_live`] returns, which carries the rest of the agent surface.
 impl Agent for TestAgent {
+    fn id(&self) -> &SessionId {
+        self.session.id()
+    }
     fn scope_key(&self) -> ScopeKey {
         self.key.clone()
     }
-    fn session(&self) -> Session {
-        self.session.clone()
+    fn options(&self) -> &AgentOptions {
+        &self.options
+    }
+    fn session(&self) -> &Session {
+        &self.session
+    }
+    fn model(&self) -> &dyn Model {
+        &UnusedModel
+    }
+    fn inbox(&self) -> &dyn Inbox {
+        &UnsupportedInbox
+    }
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+    fn ctx(&self) -> &Context {
+        panic!("the tool seam has no context; the registered live agent does")
+    }
+    fn cancel(&self, _: AgentCancelCause, _: CancelOptions) -> Result<(), BoxError> {
+        Ok(())
+    }
+    fn when_idle(&self) -> futures_util::future::BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
+    fn run_maintenance_erased(&self, task: MaintenanceTask) -> Result<MaintenanceFuture, BoxError> {
+        Ok(task(AbortController::new().signal()))
+    }
+    fn send(&self, _: hoh_llm::UserMessage, _: InboxTarget, _: bool) -> Result<(), BoxError> {
+        Ok(())
+    }
+    fn followup(&self, _: hoh_llm::UserMessage) -> Result<(), BoxError> {
+        Ok(())
+    }
+    fn steer(&self, _: hoh_llm::UserMessage) -> Result<(), BoxError> {
+        Ok(())
+    }
+    fn inject(&self, _: hoh_llm::UserMessage) -> Result<(), BoxError> {
+        Ok(())
     }
 }
 
-/// The owner of an observation: the Session of the executing agent.
-fn owner(actor: &Option<hoh_fs::FsActor>) -> Option<String> {
-    let exec = actor.as_ref()?.downcast_ref::<ToolExecution>()?;
-    Some(exec.agent.as_ref()?.session().id().to_string())
-}
-
-/// The observation-policy stand-in (`@deepseek-ai/dsh-fs-observation-policy`): a map of owner and
-/// target to the last authoritative observation, with single-slot intent listeners deriving the
-/// guards from it.
-pub fn mount_policy(ctx: &Context) {
-    let observed: Arc<Mutex<HashMap<(String, String), FsObservation>>> = Arc::default();
-    let record = observed.clone();
-    ctx.on::<FsObserved>(move |event| {
-        if let Some(owner) = owner(&event.actor) {
-            lock(&record).insert(
-                (owner, event.target.target_key.to_string()),
-                event.observation.clone(),
-            );
-        }
-    })
-    .expect("fs/observed listener");
-    let writes = observed.clone();
-    ctx.on_waterfall::<FsWriteIntentEvent, Option<FsWriteIntent>, _>(move |event, _next| {
-        let prior = owner(&event.actor).and_then(|owner| {
-            lock(&writes)
-                .get(&(owner, event.target.target_key.to_string()))
-                .cloned()
-        });
-        async move {
-            Ok(Some(match prior {
-                Some(FsObservation::Present { version }) => {
-                    FsWriteIntent::ReplaceIfVersion { version }
-                }
-                _ => FsWriteIntent::CreateIfAbsent,
-            }))
-        }
-    })
-    .expect("fs/write-intent listener");
-    let edits = observed.clone();
-    ctx.on_waterfall::<FsEditIntent, Option<FsVersionGuard>, _>(move |event, _next| {
-        let result = require_present(&edits, &event.actor, &event.target, "edit");
-        async move { result }
-    })
-    .expect("fs/edit-intent listener");
-    let deletes = observed;
-    ctx.on_waterfall::<FsDeleteIntent, Option<FsVersionGuard>, _>(move |event, _next| {
-        let result = require_present(&deletes, &event.actor, &event.target, "delete");
-        async move { result }
-    })
-    .expect("fs/delete-intent listener");
-}
-
-fn require_present(
-    observed: &Mutex<HashMap<(String, String), FsObservation>>,
-    actor: &Option<hoh_fs::FsActor>,
-    target: &FsTarget,
-    verb: &str,
-) -> Result<Option<FsVersionGuard>, BoxError> {
-    let owner = owner(actor);
-    let prior = owner.as_ref().and_then(|owner| {
-        lock(observed)
-            .get(&(owner.clone(), target.target_key.to_string()))
-            .cloned()
-    });
-    match (owner, prior) {
-        (Some(_), Some(FsObservation::Present { version })) => Ok(Some(FsVersionGuard { version })),
-        (Some(_), Some(FsObservation::Absent)) => Err(FsError::new(
-            format!("cannot {verb} \"{}\": not found", target.display_path),
-            FsErrorCode::NotFound,
-        )
-        .into()),
-        _ => Err(FsError::new(
-            format!("{verb} requires reading \"{}\" first", target.display_path),
-            FsErrorCode::NotObserved,
-        )
-        .into()),
-    }
+/// Mounts the real observation policy (`hoh-fs-observation-policy`): it records authoritative
+/// observations per owner and target and derives the write, edit and delete guards from them.
+pub async fn mount_policy(ctx: &Context) {
+    ctx.plugin::<hoh_fs_observation_policy::FsObservationPolicy>(json!({}))
+        .expect("observation policy")
+        .settled()
+        .await
+        .expect("observation policy settles");
 }
 
 /// A running stack with the fake provider.
@@ -661,13 +636,12 @@ pub struct Setup {
     pub fs: Arc<FakeFs>,
     pub tools: hoh_kernel::Service<Tools>,
     pub tool_fs: Fiber,
-    pub policy: Arc<TestSandboxPolicy>,
 }
 
 impl Setup {
     /// A standing session override of the sandbox mode (the `sandbox/mode` record of the source).
     pub fn set_standing_mode(&self, agent: &Arc<dyn Agent>, mode: SandboxMode) {
-        lock(&self.policy.overrides).insert(agent.session().id().to_string(), mode);
+        hoh_sandbox_policy::set_sandbox_mode(agent.session(), mode).expect("sandbox/mode record");
     }
 }
 
@@ -686,33 +660,11 @@ pub async fn try_setup(config: Value) -> Result<Setup, hoh_kernel::KernelError> 
 pub struct Options {
     /// The provider confines under this default mode.
     pub confining: Option<SandboxMode>,
-    /// Mount the shared sandbox-policy resolver stand-in (needed by a confining provider).
+    /// Mount the real shared sandbox-policy resolver (needed by a confining provider): the default
+    /// mode is `confining` or workspace-write, the fallback project root `/session-project`.
     pub sandbox_policy: bool,
     /// Mount the real approval service with a user answering with this.
     pub approval: Option<Arc<Answerer>>,
-}
-
-/// The standing-policy resolver stand-in (`SandboxPolicyService`): the deployment default mode, a
-/// per-session override table, and the fixed session project root.
-pub struct TestSandboxPolicy {
-    pub default_mode: SandboxMode,
-    pub overrides: Mutex<HashMap<String, SandboxMode>>,
-}
-
-impl hoh_tool_fs::shim::SandboxPolicyApi for TestSandboxPolicy {
-    fn resolve(&self, session: Option<&Session>) -> SandboxExecutionPolicy {
-        let id = session.map(|session| session.id().clone());
-        let mode = id
-            .as_ref()
-            .and_then(|id| lock(&self.overrides).get(&id.to_string()).copied())
-            .unwrap_or(self.default_mode);
-        SandboxExecutionPolicy {
-            mode,
-            workspace_root: "/session-project".into(),
-            additional_writable_roots: None,
-            session_id: id,
-        }
-    }
 }
 
 /// The user behind the real approval service: answers every request with a fixed outcome and counts
@@ -768,21 +720,12 @@ pub async fn try_setup_with(
     ctx.plugin::<WorkingDirectory>(json!({ "defaultDirectory": DEFAULT_DIRECTORY }))?
         .settled()
         .await?;
-    mount_policy(&ctx);
-    let policy: Arc<TestSandboxPolicy> = Arc::new(TestSandboxPolicy {
-        default_mode: options.confining.unwrap_or(SandboxMode::WorkspaceWrite),
-        overrides: Mutex::default(),
-    });
+    mount_policy(&ctx).await;
     if options.sandbox_policy {
-        let provided = policy.clone();
-        ctx.inject(move |ctx, (): ()| {
-            let policy = provided.clone();
-            async move {
-                ctx.provide::<hoh_tool_fs::shim::SandboxPolicyKey>(policy)
-                    .await?;
-                Ok(())
-            }
-        })?
+        ctx.plugin::<hoh_sandbox_policy::SandboxPolicyService>(json!({
+            "mode": options.confining.unwrap_or(SandboxMode::WorkspaceWrite).as_str(),
+            "workspaceRoot": "/session-project",
+        }))?
         .settled()
         .await?;
     }
@@ -803,7 +746,6 @@ pub async fn try_setup_with(
         fs,
         tools,
         tool_fs,
-        policy,
     })
 }
 
@@ -835,12 +777,12 @@ pub async fn call_with_signal(
         .as_str()
         .into();
     let mut input = ToolExecutionInput::new(id, name, arguments, signal);
-    if let Some(agent) = &agent {
-        ensure_live(ctx, agent);
-    }
-    input.agent = agent;
+    input.agent = agent.map(|agent| ensure_live(ctx, &agent));
     let pipeline = ToolExecutionPipeline::new(ctx.clone()).expect("pipeline");
-    let prepared = pipeline.prepare(input).await;
+    let prepared = pipeline
+        .prepare(input)
+        .await
+        .expect("the tool lookup does not reject");
     let exec = prepared.exec().clone();
     let outcome = match prepared {
         ScheduledToolPreparation::Dispatch(exec) => pipeline.dispatch(exec).await,

@@ -12,33 +12,18 @@ use hoh_fs::Fs;
 use hoh_fs_observation_policy::FsObservationPolicy;
 use hoh_fs_sandbox::FsSandboxPlugin;
 use hoh_kernel::{Context, Fiber, Kernel};
-use hoh_sandbox::{SandboxExecutionPolicy, SandboxMode};
-use hoh_session::Session;
+use hoh_sandbox::SandboxMode;
+use hoh_sandbox_policy::SandboxPolicyService;
 use hoh_session_projection::SessionProjectionRegistry;
 use hoh_system_prompt::SystemPrompt;
 use hoh_tool_executor_native::NativeToolExecutorPlugin;
 use hoh_tool_fs::ToolFs;
-use hoh_tool_fs::shim::{SandboxPolicyApi, SandboxPolicyKey};
 use hoh_tools::{Agent, ToolRuntime, Tools};
+use hoh_user_approval::{ApprovalOutcome, ApprovalRequestEvent, ApprovalService};
 use hoh_working_directory::WorkingDirectory;
+use serde_json::Value;
 use serde_json::json;
-use support::{TestAgent, call, error_info};
-
-/// The one standing policy of the composition: workspace-write over one root.
-struct Policy {
-    workspace: String,
-}
-
-impl SandboxPolicyApi for Policy {
-    fn resolve(&self, session: Option<&Session>) -> SandboxExecutionPolicy {
-        SandboxExecutionPolicy {
-            mode: SandboxMode::WorkspaceWrite,
-            workspace_root: self.workspace.clone(),
-            additional_writable_roots: None,
-            session_id: session.map(|session| session.id().clone()),
-        }
-    }
-}
+use support::{Answerer, TestAgent, call, error_info};
 
 struct Composition {
     _base: tempfile::TempDir,
@@ -53,6 +38,11 @@ struct Composition {
 
 impl Composition {
     async fn new() -> Self {
+        Self::with_approval(None).await
+    }
+
+    /// `approval`: mount the real approval service with a user answering with this outcome.
+    async fn with_approval(approval: Option<Arc<Answerer>>) -> Self {
         // Under the working directory, not `/tmp`: the temporary directory is always writable.
         let base = tempfile::Builder::new()
             .prefix("hoh-toolfs-real-")
@@ -66,16 +56,43 @@ impl Composition {
         let workspace_text = workspace.to_string_lossy().into_owned();
         let kernel = Kernel::start();
         let ctx = kernel.root();
-        let policy: Arc<dyn SandboxPolicyApi> = Arc::new(Policy {
-            workspace: workspace_text.clone(),
-        });
-        ctx.provide::<SandboxPolicyKey>(policy).await.unwrap();
+        // The one real `sandboxPolicy` service: workspace-write over the workspace.
+        ctx.plugin::<SessionProjectionRegistry>(json!({}))
+            .unwrap()
+            .settled()
+            .await
+            .unwrap();
+        ctx.plugin::<SandboxPolicyService>(json!({
+            "mode": "workspace-write",
+            "workspaceRoot": workspace_text,
+        }))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+        if let Some(answerer) = approval {
+            ctx.plugin::<ApprovalService>(json!({}))
+                .unwrap()
+                .settled()
+                .await
+                .unwrap();
+            ctx.on_waterfall::<ApprovalRequestEvent, Value, _>(move |_, _| {
+                answerer
+                    .asked
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let outcome = *answerer
+                    .outcome
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                async move { Ok(outcome.into()) }
+            })
+            .unwrap();
+        }
         let sandbox = ctx
             .plugin::<FsSandboxPlugin>(json!({ "cwd": workspace_text }))
             .unwrap();
         sandbox.settled().await.unwrap();
         for plugin in [
-            ctx.plugin::<SessionProjectionRegistry>(json!({})).unwrap(),
             ctx.plugin::<AgentRegistryPlugin>(json!({})).unwrap(),
             ctx.plugin::<SystemPrompt>(json!({ "includeRuntimeContext": false }))
                 .unwrap(),
@@ -235,4 +252,46 @@ async fn an_unread_file_is_not_overwritten_until_it_has_been_read() {
         "{refused}"
     );
     c.kernel.shutdown().await;
+}
+
+fn write_args(path: &str) -> Value {
+    json!({
+        "file_path": path,
+        "content": "approved",
+        "sandbox_permissions": "danger-full-access",
+        "justification": "The user asked for a file outside the workspace.",
+    })
+}
+
+#[tokio::test]
+async fn a_write_outside_the_workspace_asks_the_user_and_obeys_the_answer() {
+    for (outcome, lands) in [
+        (ApprovalOutcome::Rejected, false),
+        (ApprovalOutcome::AllowedOnce, true),
+    ] {
+        let answerer = Answerer::new(outcome);
+        let c = Composition::with_approval(Some(answerer.clone())).await;
+        let agent = c.agent("escalating");
+        let target = path(&c.outside, "escalated.txt");
+
+        // Without the escalation fields the standing policy refuses and nobody is asked.
+        denied(&c.write(&agent, &target, "plain").await);
+        assert_eq!(answerer.asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let result = call(&c.ctx, "write", write_args(&target), Some(agent.clone())).await;
+        assert_eq!(
+            answerer.asked.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the escalation is resolved through the approval service: {}",
+            result.text()
+        );
+        assert_eq!(result.is_error(), !lands, "{}", result.text());
+        assert_eq!(
+            std::fs::read_to_string(c.outside.join("escalated.txt")).ok(),
+            lands.then(|| "approved".to_owned()),
+            "{}",
+            result.text()
+        );
+        c.kernel.shutdown().await;
+    }
 }

@@ -315,12 +315,60 @@ async fn reports_uncertain_writes_with_no_invented_diff_and_the_reread_remedy() 
     t.kernel.shutdown().await;
 }
 
+/// `tests/apply-patch.spec.ts:145`: escalation is advertised only by a confining backend, and the
+/// provider's denial of the first commit rejects the tool like a preflight refusal.
+///
+/// The registered definition and the model-visible schema both carry the field under `properties`
+/// (the previous check looked for the key at the top level of the normalized schema, where it can
+/// never be, so it could not fail).
+fn advertises_sandbox_permissions(t: &T) -> (bool, bool) {
+    let definition = t.env.tools.get("apply_patch", None, None).unwrap();
+    let schemas = t.env.tools.schemas(None, None).unwrap();
+    let schema = schemas
+        .iter()
+        .find(|tool| tool.name == "apply_patch")
+        .unwrap();
+    let parameters = serde_json::to_value(&schema.parameters).unwrap();
+    (
+        definition
+            .parameters
+            .get("properties")
+            .and_then(|properties| properties.get("sandbox_permissions"))
+            .is_some(),
+        parameters["properties"]
+            .get("sandbox_permissions")
+            .is_some(),
+    )
+}
+
 #[tokio::test]
-async fn advertises_no_escalation_for_a_non_confining_backend() {
+async fn advertises_escalation_only_for_a_confining_backend_and_throws_the_sandbox_refusal() {
     let bare = setup(PatchOptions::default()).await;
-    let definition = bare.env.tools.get("apply_patch", None, None).unwrap();
-    assert!(!definition.parameters.contains_key("sandbox_permissions"));
+    assert_eq!(advertises_sandbox_permissions(&bare), (false, false));
     bare.kernel.shutdown().await;
+
+    let t = setup(PatchOptions {
+        mode: Some(hoh_sandbox::SandboxMode::ReadOnly),
+        ..PatchOptions::default()
+    })
+    .await;
+    assert_eq!(advertises_sandbox_permissions(&t), (true, true));
+    let (a, b) = (t.path_text("a"), t.path_text("b"));
+    let result = t.call_patch(&patch(&[&add(&a), &add(&b)])).await;
+    assert!(result.is_error(), "{}", result.text());
+    assert_eq!(
+        support::error_info(&result),
+        Some(("FsError".to_owned(), "FS_SANDBOX_DENIED".to_owned()))
+    );
+    assert_eq!(
+        result.text(),
+        format!(
+            "Error: Patch rejected before any change (1 problems):\n- operation 1 (add {a}, patch line 2): [sandbox: file access denied under read-only mode]\n[sandbox: escalation available — retry this exact operation once with sandbox_permissions (the narrowest wider mode that suffices) + justification; the approval prompt asks the user]"
+        )
+    );
+    assert_eq!(result.meta(), None);
+    assert!(!t.path("a").exists() && !t.path("b").exists());
+    t.kernel.shutdown().await;
 }
 
 #[tokio::test]

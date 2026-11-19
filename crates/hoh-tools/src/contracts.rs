@@ -5,17 +5,19 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
+use hoh_agent::{Agent, ModelSelection};
 use hoh_error::{BoxError, HarnessError};
 use hoh_llm::{ContentBlock, ToolCallId, ToolSchema, UserMessage};
 use hoh_scope::ScopeKey;
 use hoh_timeout::AbortSignal;
+use hoh_user_approval::DisplayReason;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::error_codes::TOOL_CONTEXT_UNAVAILABLE;
 use crate::presentation::{ToolCallView, ToolResultView};
-use crate::shim::{Agent, BoxFuture, ModelSelection};
+use crate::shim::BoxFuture;
 
 /// Reserved model-facing program transport name.
 pub const RUN_CODE_NAME: &str = "run_code";
@@ -310,6 +312,8 @@ pub struct ToolExecution {
     pub token: ToolExecutionToken,
     signal: Mutex<AbortSignal>,
     signal_replaced: AtomicBool,
+    /// Set when the registry hands the execution to `tools/result` observers (`Object.freeze(exec)`).
+    frozen: AtomicBool,
     pub(crate) caller_signal: AbortSignal,
     pub(crate) body_invoked: AtomicBool,
     deferred: Mutex<Vec<UserMessage>>,
@@ -346,6 +350,7 @@ impl ToolExecution {
             token: ToolExecutionToken::mint(),
             signal: Mutex::new(input.signal.clone()),
             signal_replaced: AtomicBool::new(false),
+            frozen: AtomicBool::new(false),
             caller_signal: input.signal.clone(),
             body_invoked: AtomicBool::new(false),
             deferred: Mutex::new(Vec::new()),
@@ -379,9 +384,25 @@ impl ToolExecution {
 
     /// Replace the signal for a `tools/execute` wrapper's delegated lifetime. The executor fuses every
     /// replacement with the captured caller signal, so a wrapper cannot detach caller cancellation.
+    ///
+    /// Once the execution reaches the `tools/result` observers it is frozen (the source's
+    /// `Object.freeze(exec)`): a later replacement is rejected and the signal stays as it was.
     pub fn set_signal(&self, signal: AbortSignal) {
+        if self.is_frozen() {
+            return;
+        }
         self.signal_replaced.store(true, Ordering::SeqCst);
         *lock(&self.signal) = signal;
+    }
+
+    /// Freeze the execution before observers receive it.
+    pub(crate) fn freeze(&self) {
+        self.frozen.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the execution was frozen for the `tools/result` observers.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::SeqCst)
     }
 
     pub(crate) fn restore_signal(&self, signal: AbortSignal) {
@@ -804,7 +825,7 @@ pub enum PreToolDecision {
     Ask {
         reason: Option<String>,
         /// Localized prompt text keyed by locale; always carries `en`.
-        display_reason: Option<IndexMap<String, String>>,
+        display_reason: Option<DisplayReason>,
     },
 }
 

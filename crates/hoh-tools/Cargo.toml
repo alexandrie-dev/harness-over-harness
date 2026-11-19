@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hoh-agent = { path = "../hoh-agent" }
 hoh-error = { path = "../hoh-error" }
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-llm = { path = "../hoh-llm" }
@@ -17,6 +18,7 @@ hoh-scope = { path = "../hoh-scope" }
 hoh-session = { path = "../hoh-session" }
 hoh-system-prompt = { path = "../hoh-system-prompt" }
 hoh-timeout = { path = "../hoh-timeout" }
+hoh-user-approval = { path = "../hoh-user-approval" }
 hoh-util-values = { path = "../hoh-util-values" }
 schemars.workspace = true
 futures-util.workspace = true
@@ -27,4 +29,5 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+hoh-session-projection = { path = "../hoh-session-projection" }
 tokio = { workspace = true, features = ["test-util"] }

@@ -35,7 +35,7 @@ enum Owner {
 impl Owner {
     fn session(&self) -> Session {
         match self {
-            Self::Tool(agent) => agent.session(),
+            Self::Tool(agent) => agent.session().clone(),
             Self::Direct(session) => session.clone(),
         }
     }
@@ -66,7 +66,7 @@ impl StoredOwner {
         match self {
             Self::Tool(agent) => agent
                 .upgrade()
-                .is_some_and(|agent| agent.session() == session),
+                .is_some_and(|agent| agent.session() == &session),
             Self::Direct(stored) => stored == &session,
         }
     }

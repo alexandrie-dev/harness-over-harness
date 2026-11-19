@@ -220,20 +220,8 @@ pub fn select_model(agent: &Arc<dyn Agent>, model: &str) {
         .expect("model selects");
 }
 
-/// The `hoh-tools` view of an agent (the crate keeps its own minimal `Agent` shim).
-pub struct ToolsAgent(pub Arc<dyn Agent>);
-
-impl hoh_tools::Agent for ToolsAgent {
-    fn scope_key(&self) -> hoh_scope::ScopeKey {
-        self.0.scope_key()
-    }
-    fn session(&self) -> hoh_session::Session {
-        self.0.session().clone()
-    }
-}
-
 pub fn tools_agent(agent: &Arc<dyn Agent>) -> Arc<dyn hoh_tools::Agent> {
-    Arc::new(ToolsAgent(agent.clone()))
+    agent.clone()
 }
 
 /// Events of one type as the log holds them (`snapshotEvents().filter(e => e.type === …)`).

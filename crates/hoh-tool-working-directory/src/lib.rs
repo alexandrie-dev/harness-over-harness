@@ -72,7 +72,7 @@ impl Plugin for ToolWorkingDirectory {
                     };
                     // SHIM(hoh-tools): `exec.agent` is the session-level seam; the whole Agent
                     // (context, inbox for the transition notice) is the registered one.
-                    let Some(agent) = live_agent(&owner, &calling.session()) else {
+                    let Some(agent) = live_agent(&owner, calling.session()) else {
                         return Err(ToolContextUnavailableError::new(
                             "working_directory requires an agent registered in the agents registry",
                         )

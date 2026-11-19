@@ -80,7 +80,7 @@ impl Plugin for SessionCheckpointPolicy {
                 if event.exec.parent.is_some() {
                     return next.run().await;
                 }
-                sessions.flush(&agent.session()).await?;
+                sessions.flush(agent.session()).await?;
                 if event.exec.signal().aborted() {
                     return Ok(aborted_before_dispatch_result());
                 }

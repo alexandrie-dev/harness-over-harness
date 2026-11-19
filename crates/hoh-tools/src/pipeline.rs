@@ -1,15 +1,19 @@
 //! Shared tool invocation policy, cancellation, and result settlement.
 
-use std::{panic::AssertUnwindSafe, sync::Arc};
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::Arc,
+};
 
 use futures_util::FutureExt;
+use hoh_agent::Agent;
 use hoh_error::{BoxError, HarnessError};
 use hoh_kernel::{Context, ListenerFailure, ServiceKey};
 use hoh_llm::{ContentBlock, UserMessage};
 use hoh_scope::{ScopeFilter, ScopeKey, Scoped, scope_target};
 use hoh_timeout::{AbortSignal, is_abort_error};
+use hoh_user_approval::{Approval, ApprovalOutcome, ApprovalRequest, DisplayReason};
 use hoh_util_values::{is_json_value, snapshot_json_value};
-use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
 use crate::contracts::{
@@ -23,7 +27,6 @@ use crate::error_codes::{
 };
 use crate::errors::{ToolsError, catch_panic, panic_error};
 use crate::events::{ToolsExecute, ToolsPostExecute, ToolsPreExecute, ToolsResult};
-use crate::shim::{Agent, Approval, ApprovalOutcome, ApprovalRequest};
 use crate::{Tools, ToolsService};
 
 pub use crate::batch::execute_tool_batch;
@@ -193,25 +196,22 @@ impl ToolExecutionPipeline {
     }
 
     /// Classify a pending call through the caller's visible tool definition. Only an exact `true`
-    /// is parallel; unknown, hidden, undeclared, or throwing classifiers are exclusive.
-    pub fn execution_mode(&self, exec: &ToolExecutionInput) -> ToolExecutionMode {
-        let tool = self
-            .resolve_execution(
-                &exec.name,
-                scope_of_agent(&exec.agent).as_ref(),
-                exec.parent.is_some(),
-                exec.tool_set.as_ref(),
-            )
-            // Without a registry nothing can be classified: fail closed, the call itself reports the cause.
-            .ok()
-            .flatten();
+    /// is parallel; unknown, hidden, undeclared, or throwing classifiers are exclusive. A failed
+    /// lookup is not a classification: it rejects, as the source's `executionMode` throws.
+    pub fn execution_mode(&self, exec: &ToolExecutionInput) -> Result<ToolExecutionMode, BoxError> {
+        let tool = self.resolve_execution(
+            &exec.name,
+            scope_of_agent(&exec.agent).as_ref(),
+            exec.parent.is_some(),
+            exec.tool_set.as_ref(),
+        )?;
         let Some(classify) = tool.and_then(|tool| tool.is_concurrency_safe.clone()) else {
-            return ToolExecutionMode::Exclusive;
+            return Ok(ToolExecutionMode::Exclusive);
         };
-        match catch_panic(|| classify(&exec.arguments)) {
+        Ok(match catch_panic(|| classify(&exec.arguments)) {
             Ok(true) => ToolExecutionMode::Parallel,
             _ => ToolExecutionMode::Exclusive,
-        }
+        })
     }
 
     /// The lookup runs outside the source's `try`: a failure of it rejects `prepare` instead of becoming
@@ -268,21 +268,10 @@ impl ToolExecutionPipeline {
     /// Snapshot input, assign its correlation token, and run ordered pre-execute policy and guards.
     /// Cancellation skips a body that has not started.
     ///
-    /// The infallible form keeps the earlier signature: a rejection of [`Self::try_prepare`] settles as
-    /// a plain failure result of that same error. Schedulers use `try_prepare` and propagate it.
-    pub async fn prepare(&self, input: ToolExecutionInput) -> ScheduledToolPreparation {
-        match self.try_prepare(input.clone()).await {
-            Ok(prepared) => prepared,
-            Err(error) => ScheduledToolPreparation::FinalResult {
-                exec: Arc::new(ToolExecution::mint(&input, Value::Null, None, None)),
-                result: tool_error_result(&error),
-            },
-        }
-    }
-
-    /// [`Self::prepare`] with the source's rejection kept: a pipeline built without a `tools` service
-    /// fails with a bare `TypeError` while looking the tool up, exactly as `undefined.executable` does.
-    pub async fn try_prepare(
+    /// Like the source's `prepare`, it rejects when the tool lookup fails: a pipeline built without a
+    /// `tools` service fails with a bare `TypeError` while looking the tool up, exactly as
+    /// `undefined.executable` does, and that failure is not a call result.
+    pub async fn prepare(
         &self,
         input: ToolExecutionInput,
     ) -> Result<ScheduledToolPreparation, BoxError> {
@@ -589,6 +578,8 @@ impl ToolExecutionPipeline {
 
     /// Notify observers without exposing a mutation or error channel into the outcome.
     fn notify_result(&self, exec: &Arc<ToolExecution>, result: &ToolExecutionResult) {
+        // Freeze the registry's live object before observers receive it.
+        exec.freeze();
         let tool_name = exec.name.clone();
         let call_id = exec.call_id.clone();
         let log = self.0.ctx.logger();
@@ -621,7 +612,7 @@ impl ToolExecutionPipeline {
         &self,
         exec: &Arc<ToolExecution>,
         reason: Option<String>,
-        display_reason: Option<IndexMap<String, String>>,
+        display_reason: Option<DisplayReason>,
     ) -> Result<ToolAskResolution, BoxError> {
         let Some(approval) = self.0.ctx.get::<Approval>() else {
             return Ok(ToolAskResolution {
@@ -649,16 +640,12 @@ impl ToolExecutionPipeline {
                 approval_cancelled: false,
             });
         };
-        let outcome = approval
-            .request(ApprovalRequest {
-                agent,
-                tool_name: exec.name.clone(),
-                call_id: exec.call_id.clone(),
-                reason,
-                display_reason,
-                signal: exec.signal(),
-            })
-            .await?;
+        let mut request = ApprovalRequest::new(agent, exec.name.clone());
+        request.call_id = Some(exec.call_id.clone());
+        request.reason = reason;
+        request.display_reason = display_reason;
+        request.signal = Some(exec.signal());
+        let outcome = approval.request(request).await?;
         let name = &exec.name;
         Ok(match outcome {
             ApprovalOutcome::AllowedOnce => ToolAskResolution {
@@ -934,8 +921,12 @@ fn message_lossless(message: &UserMessage) -> bool {
 }
 
 /// Best-effort human-readable message from a thrown value.
+///
+/// Error normalization is the outermost safety boundary, so it is total: a `Display` that panics
+/// (the hostile thrown value of the source) yields the same placeholder as the source.
 pub fn tool_error_message(error: &BoxError) -> String {
-    error.to_string()
+    catch_unwind(AssertUnwindSafe(|| error.to_string()))
+        .unwrap_or_else(|_| "<unprintable thrown value>".into())
 }
 
 /// Derive one failure message from policy feedback without changing its rendered blocks.

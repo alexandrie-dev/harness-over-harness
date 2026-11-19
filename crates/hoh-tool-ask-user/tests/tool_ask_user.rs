@@ -252,21 +252,6 @@ impl Agent for LiveAgent {
     }
 }
 
-struct ToolAgent {
-    session: Session,
-    scope: ScopeKey,
-}
-
-impl hoh_tools::Agent for ToolAgent {
-    fn scope_key(&self) -> ScopeKey {
-        self.scope.clone()
-    }
-
-    fn session(&self) -> Session {
-        self.session.clone()
-    }
-}
-
 struct AgentFixture {
     live: Arc<LiveAgent>,
     tool: Arc<dyn hoh_tools::Agent>,
@@ -302,10 +287,7 @@ fn agent_in(stack: &Stack, id: &str, delegation_depth: u64) -> AgentFixture {
             .unwrap(),
     );
     AgentFixture {
-        tool: Arc::new(ToolAgent {
-            session,
-            scope: live.scope.clone(),
-        }),
+        tool: live.clone(),
         live,
     }
 }
@@ -910,9 +892,13 @@ async fn unregistered_agent_matches_user_questions_caller_not_live_error() {
             CreateSessionOptions::default(),
         )
         .unwrap();
-    let tool_agent: Arc<dyn hoh_tools::Agent> = Arc::new(ToolAgent {
+    let tool_agent: Arc<dyn hoh_tools::Agent> = Arc::new(LiveAgent {
         session,
+        ctx: stack.ctx.clone(),
         scope: ScopeKey::new(),
+        options: AgentOptions::default(),
+        model: UnusedModel,
+        inbox: UnusedInbox,
     });
     let result = execute_with(
         &stack.ctx,

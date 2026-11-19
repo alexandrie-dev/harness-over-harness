@@ -289,3 +289,40 @@ async fn deletes_a_file_created_earlier_in_the_patch_and_records_confirmed_absen
     );
     t.kernel.shutdown().await;
 }
+
+/// `tests/patch/success.spec.ts:100` (`it.each`): guarded changes commit under the permissive modes.
+#[tokio::test]
+async fn commits_guarded_changes_under_each_permissive_policy() {
+    for mode in [
+        hoh_sandbox::SandboxMode::WorkspaceWrite,
+        hoh_sandbox::SandboxMode::DangerFullAccess,
+    ] {
+        let t = setup(PatchOptions {
+            mode: Some(mode),
+            ..PatchOptions::default()
+        })
+        .await;
+        let a = t.record(Add, "a", 0, 2, None);
+        assert_eq!(
+            t.run_with(&patch(&[&add("a")]), Some(t.policy(mode)))
+                .await
+                .unwrap(),
+            commit(
+                vec![completed(
+                    a.clone(),
+                    vec![change(&a.path, None, Some("new\n"))]
+                )],
+                &[&a.path],
+                false,
+            ),
+            "{mode:?}"
+        );
+        assert_eq!(t.bytes("a").unwrap(), "new\n");
+        assert_eq!(
+            t.edit_intent("a").await.unwrap(),
+            guard(&t, "a").await,
+            "{mode:?}"
+        );
+        t.kernel.shutdown().await;
+    }
+}

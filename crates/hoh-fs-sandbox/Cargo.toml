@@ -16,11 +16,13 @@ hoh-fs-local = { path = "../hoh-fs-local" }
 hoh-fs-patch = { path = "../hoh-fs-patch" }
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-sandbox = { path = "../hoh-sandbox" }
-hoh-session = { path = "../hoh-session" }
+hoh-sandbox-policy = { path = "../hoh-sandbox-policy" }
 hoh-timeout = { path = "../hoh-timeout" }
 tokio.workspace = true
 
 [dev-dependencies]
+hoh-session = { path = "../hoh-session" }
+hoh-session-projection = { path = "../hoh-session-projection" }
 serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

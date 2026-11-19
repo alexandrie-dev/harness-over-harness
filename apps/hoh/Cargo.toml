@@ -23,6 +23,7 @@ hoh-persona = { path = "../../crates/hoh-persona" }
 hoh-llm = { path = "../../crates/hoh-llm" }
 hoh-session = { path = "../../crates/hoh-session" }
 hoh-session-projection = { path = "../../crates/hoh-session-projection" }
+hoh-fs-sandbox = { path = "../../crates/hoh-fs-sandbox" }
 hoh-fs-local = { path = "../../crates/hoh-fs-local" }
 hoh-system-prompt = { path = "../../crates/hoh-system-prompt" }
 hoh-skill = { path = "../../crates/hoh-skill" }
@@ -36,6 +37,30 @@ hoh-web-fetch-http = { path = "../../crates/hoh-web-fetch-http" }
 hoh-deliverable-file-references = { path = "../../crates/hoh-deliverable-file-references" }
 hoh-util-time = { path = "../../crates/hoh-util-time" }
 hoh-shell-env = { path = "../../crates/hoh-shell-env" }
+hoh-agent = { path = "../../crates/hoh-agent" }
+hoh-agent-loop = { path = "../../crates/hoh-agent-loop" }
+hoh-bash-sandbox = { path = "../../crates/hoh-bash-sandbox" }
+hoh-bash-local = { path = "../../crates/hoh-bash-local" }
+hoh-sandbox-local = { path = "../../crates/hoh-sandbox-local" }
+hoh-sandbox-policy = { path = "../../crates/hoh-sandbox-policy" }
+hoh-sdk-app = { path = "../../crates/hoh-sdk-app" }
+hoh-model-host = { path = "../../crates/hoh-model-host" }
+hoh-credentials-local = { path = "../../crates/hoh-credentials-local" }
+hoh-session-persistence-jsonl = { path = "../../crates/hoh-session-persistence-jsonl" }
+hoh-atomic-write = { path = "../../crates/hoh-atomic-write" }
+hoh-protocol = { path = "../../crates/hoh-protocol" }
+hoh-sdk-jsonrpc-server = { path = "../../crates/hoh-sdk-jsonrpc-server" }
+hoh-subprocess-local = { path = "../../crates/hoh-subprocess-local" }
+hoh-tool-ask-user = { path = "../../crates/hoh-tool-ask-user" }
+hoh-tool-bash = { path = "../../crates/hoh-tool-bash" }
+hoh-tool-executor-native = { path = "../../crates/hoh-tool-executor-native" }
+hoh-tool-fs = { path = "../../crates/hoh-tool-fs" }
+hoh-tool-todo = { path = "../../crates/hoh-tool-todo" }
+hoh-tool-working-directory = { path = "../../crates/hoh-tool-working-directory" }
+hoh-tools = { path = "../../crates/hoh-tools" }
+hoh-user-questions = { path = "../../crates/hoh-user-questions" }
+hoh-user-approval = { path = "../../crates/hoh-user-approval" }
+hoh-working-directory = { path = "../../crates/hoh-working-directory" }
 futures-util.workspace = true
 indexmap.workspace = true
 serde.workspace = true
@@ -49,7 +74,7 @@ getrandom.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-hoh-tools = { path = "../../crates/hoh-tools" }
+hoh-llm-openai-mock = { path = "../../crates/hoh-llm-openai-mock" }
 hoh-scope = { path = "../../crates/hoh-scope" }
 hoh-timeout = { path = "../../crates/hoh-timeout" }
 rustix.workspace = true

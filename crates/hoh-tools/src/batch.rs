@@ -13,6 +13,7 @@ use std::{
 };
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
+use hoh_agent::Agent;
 use hoh_error::BoxError;
 use hoh_llm::ToolResultMessageInput;
 use hoh_llm::{ToolCallBlock, UserMessage, create_tool_result_message};
@@ -32,7 +33,7 @@ use crate::pipeline::{
     ScheduledToolDispatch, ScheduledToolPreparation, ToolExecutionPipeline,
     tool_aborted_before_dispatch_result,
 };
-use crate::shim::{Agent, BoxFuture};
+use crate::shim::BoxFuture;
 
 /// One tool call after argument parsing, ready to schedule.
 struct PlannedCall {
@@ -128,7 +129,7 @@ async fn run_batch(
     while next < planned.len() {
         // Commit before classifying again so registry changes affect unstarted calls.
         let first = &planned[next];
-        let mode = pipeline.execution_mode(&first.exec);
+        let mode = pipeline.execution_mode(&first.exec)?;
         let group = if mode == ToolExecutionMode::Parallel {
             &planned[next..]
         } else {
@@ -236,14 +237,14 @@ async fn run_group(
                 let next_call = &group[next_to_start];
                 if next_to_start > 0
                     && mode == ToolExecutionMode::Parallel
-                    && pipeline.execution_mode(&next_call.exec) != ToolExecutionMode::Parallel
+                    && pipeline.execution_mode(&next_call.exec)? != ToolExecutionMode::Parallel
                 {
                     break;
                 }
                 let index = next_to_start;
                 call_seqs[index] = settlement.start(&next_call.block)?;
                 started += 1;
-                let prepared = drive!(pipeline.try_prepare(next_call.exec.clone()))?;
+                let prepared = drive!(pipeline.prepare(next_call.exec.clone()))?;
                 match prepared {
                     ScheduledToolPreparation::Dispatch(exec) => {
                         let pipeline = pipeline.clone();
@@ -372,10 +373,10 @@ impl BatchSettlement {
         let Some(log) = self.log else {
             return Ok(None);
         };
-        // ToolBatchInput requires agent whenever log is provided.
+        // ToolBatchInput requires agent whenever log is provided; the source dereferences it unchecked.
         let agent = self.agent.as_ref().ok_or_else(|| {
             Box::new(ToolsError::TypeError(
-                "tool batch log requires an agent".into(),
+                "Cannot read properties of undefined (reading 'session')".into(),
             )) as BoxError
         })?;
         Ok(Some((agent, log)))

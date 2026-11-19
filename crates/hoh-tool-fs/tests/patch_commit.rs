@@ -7,8 +7,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use hoh_error::HarnessError;
 use hoh_fs::{FsError, FsErrorCode, FsObserved, FsVersionGuard};
+use hoh_sandbox::SandboxMode;
 use hoh_tool_fs::patch::PatchOperationKind::{Add, Delete, Move, Update};
-use hoh_tool_fs::patch::PatchOperationOutcome;
+use hoh_tool_fs::patch::{PatchExecutionReport, PatchOperationOutcome};
 use support::patch::*;
 
 fn not_found(error: &std::io::Error) -> bool {
@@ -463,5 +464,116 @@ async fn reports_the_locked_move_source_after_an_external_edit_following_preflig
     // The source text was read once during preflight; the commit result came from the locked move.
     assert_eq!(t.spy.read_text_calls.load(Ordering::SeqCst), 1);
     assert_eq!(t.bytes("b").unwrap(), "new\nexternal\n");
+    t.kernel.shutdown().await;
+}
+
+fn sandboxed(mode: SandboxMode) -> PatchOptions {
+    PatchOptions {
+        mode: Some(mode),
+        ..PatchOptions::default()
+    }
+}
+
+/// The failure code and message of a failed outcome, with no changes retained.
+fn denial(
+    outcome: &PatchOperationOutcome,
+) -> (&hoh_tool_fs::patch::PatchOperationRecord, &str, &str) {
+    match outcome {
+        PatchOperationOutcome::Failed {
+            operation,
+            failure,
+            changes,
+        } => {
+            assert!(changes.is_empty(), "{changes:?}");
+            (operation, &failure.code, &failure.message)
+        }
+        other => panic!("expected a failed outcome, got {other:?}"),
+    }
+}
+
+/// `tests/patch/commit.spec.ts:193`: the real sandboxing provider under read-only policy.
+#[tokio::test]
+async fn stops_at_the_first_provider_sandbox_denial_under_read_only_policy() {
+    let t = setup(sandboxed(SandboxMode::ReadOnly)).await;
+    t.file("a", "old\n", true).await;
+    let b = t.record(Add, "b", 0, 2, None);
+    let report = t
+        .run_with(
+            &patch(&[&add("b"), &update("a"), &remove("a")]),
+            Some(t.policy(SandboxMode::ReadOnly)),
+        )
+        .await
+        .unwrap();
+    let PatchExecutionReport::Commit {
+        outcomes,
+        affected_paths,
+        cancelled,
+    } = report
+    else {
+        panic!("expected a commit report, got {report:?}");
+    };
+    assert_eq!(outcomes.len(), 3, "{outcomes:?}");
+    let (operation, code, message) = denial(&outcomes[0]);
+    assert_eq!(operation, &b);
+    assert_eq!(code, "FS_SANDBOX_DENIED");
+    assert!(
+        message.contains("[sandbox: file access denied under read-only mode]"),
+        "{message}"
+    );
+    assert_eq!(outcomes[1], skipped(t.record(Update, "a", 1, 4, None)));
+    assert_eq!(outcomes[2], skipped(t.record(Delete, "a", 2, 8, None)));
+    assert!(affected_paths.is_empty());
+    assert!(!cancelled);
+    assert_eq!(t.bytes("a").unwrap(), "old\n");
+    assert!(not_found(&t.bytes("b").unwrap_err()));
+    assert!(t.is_unobserved_empty());
+    t.kernel.shutdown().await;
+}
+
+/// `tests/patch/commit.spec.ts:207`: an earlier write stays when a later move leaves the roots.
+#[tokio::test]
+async fn retains_earlier_writes_when_the_provider_denies_a_move_destination_outside_writable_roots()
+{
+    let t = setup(sandboxed(SandboxMode::WorkspaceWrite)).await;
+    t.file("a", "old\n", true).await;
+    let outside = std::env::current_dir()
+        .unwrap()
+        .join("patch-commit-outside-root")
+        .to_string_lossy()
+        .into_owned();
+    let b = t.record(Add, "b", 0, 2, None);
+    let report = t
+        .run_with(
+            &patch(&[&add("b"), &mv("a", &outside)]),
+            Some(t.policy(SandboxMode::WorkspaceWrite)),
+        )
+        .await
+        .unwrap();
+    let PatchExecutionReport::Commit {
+        outcomes,
+        affected_paths,
+        cancelled,
+    } = report
+    else {
+        panic!("expected a commit report, got {report:?}");
+    };
+    assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+    assert_eq!(
+        outcomes[0],
+        completed(b.clone(), vec![change(&b.path, None, Some("new\n"))])
+    );
+    let (operation, code, message) = denial(&outcomes[1]);
+    assert_eq!(operation, &t.record(Move, "a", 1, 4, Some(&outside)));
+    assert_eq!(code, "FS_SANDBOX_DENIED");
+    assert!(
+        message.contains("[sandbox: file access denied under workspace-write mode]"),
+        "{message}"
+    );
+    assert_eq!(affected_paths, std::slice::from_ref(&b.path));
+    assert!(!cancelled);
+    assert_eq!(t.bytes("a").unwrap(), "old\n");
+    assert_eq!(t.bytes("b").unwrap(), "new\n");
+    assert!(!std::path::Path::new(&outside).exists());
+    assert_eq!(t.observed_paths(), [b.path]);
     t.kernel.shutdown().await;
 }

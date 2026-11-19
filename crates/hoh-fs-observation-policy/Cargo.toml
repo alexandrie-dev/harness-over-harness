@@ -17,7 +17,9 @@ hoh-session = { path = "../hoh-session" }
 hoh-tools = { path = "../hoh-tools" }
 
 [dev-dependencies]
+hoh-agent = { path = "../hoh-agent" }
 hoh-fs-local = { path = "../hoh-fs-local" }
+hoh-llm = { path = "../hoh-llm" }
 hoh-scope = { path = "../hoh-scope" }
 hoh-timeout = { path = "../hoh-timeout" }
 serde_json.workspace = true

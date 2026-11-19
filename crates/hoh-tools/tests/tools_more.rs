@@ -12,7 +12,6 @@ use common::*;
 use hoh_error::{BoxError, HarnessError};
 use hoh_llm::{MessageSource, UserMessage};
 use hoh_timeout::{AbortController, AbortError};
-use hoh_tools::shim::{Approval, ApprovalApi, ApprovalOutcome, ApprovalRequest, BoxFuture};
 use hoh_tools::{
     DefineToolOptions, DefineToolOutput, PostToolDecision, PreToolDecision,
     ScheduledToolPreparation, TOOL_ABORTED, TOOL_ABORTED_BEFORE_DISPATCH, ToolDefinition,
@@ -20,6 +19,7 @@ use hoh_tools::{
     ToolExecutionSuccess, ToolsExecute, ToolsPostExecute, ToolsPreExecute, ToolsResult,
     define_tool, validate_args,
 };
+use hoh_user_approval::ApprovalRequestEvent;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
@@ -127,18 +127,14 @@ async fn cancelled_at_gate(
 // ------------------------------------------------------------------- approval backstop
 
 #[tokio::test]
-async fn turns_a_failing_approval_service_into_an_is_error_result() {
-    struct Failing;
-    impl ApprovalApi for Failing {
-        fn request(&self, _: ApprovalRequest) -> BoxFuture<'_, Result<ApprovalOutcome, BoxError>> {
-            Box::pin(async { Err::<ApprovalOutcome, BoxError>("approval service exploded".into()) })
-        }
-    }
+async fn treats_a_failing_approval_answerer_as_unavailable() {
     let env = setup().await;
     register(&env, echo_tool());
+    mount_approval_service(&env).await;
     env.ctx
-        .provide::<Approval>(Arc::new(Failing))
-        .await
+        .on_waterfall::<ApprovalRequestEvent, Value, _>(|_, _| async {
+            Err::<Value, BoxError>("approval answerer exploded".into())
+        })
         .unwrap();
     env.ctx
         .on_waterfall::<ToolsPreExecute, PreToolDecision, _>(|_, _| async {
@@ -149,10 +145,13 @@ async fn turns_a_failing_approval_service_into_an_is_error_result() {
         })
         .unwrap();
     let mut request = input("c1", "echo", json!({}));
-    request.agent = Some(TestAgent::new());
+    request.agent = Some(TestAgent::open(&env.ctx));
     let result = execute_tool_fixture(&env.ctx, request).await;
     assert!(result.is_error());
-    assert!(result.text().contains("approval service exploded"));
+    assert_eq!(
+        result.text(),
+        "Error: tool \"echo\" requires approval, but no approval channel is available"
+    );
 }
 
 // ------------------------------------------------------------------ finalizers, contexts
@@ -848,7 +847,8 @@ async fn reports_cancellation_before_an_executor_refusal_without_entering_policy
     controller.abort();
     let prepared = pipeline
         .prepare(request("cancelled-refusal", "echo", &controller))
-        .await;
+        .await
+        .unwrap();
     let ScheduledToolPreparation::FinalResult { exec, result } = prepared else {
         panic!("a cancelled call must not be dispatched");
     };

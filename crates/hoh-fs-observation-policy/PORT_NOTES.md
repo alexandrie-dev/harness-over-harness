@@ -26,7 +26,8 @@
 
 ## Вопросы ведущему
 - Для точного WeakMap lifecycle нужен публичный weak identity/handle у `hoh-session::Session` либо owner abstraction в `hoh-fs::FsActor`. Чужие crates не менялись; текущая production-реализация не удерживает agent/session, освобождает все записи при disposal и функционально fail-closed.
-- Когда `hoh-tools` заменит свой Agent shim настоящим `hoh-agent`, downcast остаётся к стабильному `ToolExecution`, но owner extraction следует повторно проверить.
+- После замены `hoh-tools::Agent` настоящим `hoh_agent::Agent` downcast остаётся к стабильному `ToolExecution`;
+  production-тест использует настоящий контракт агента и повторно проверяет owner extraction.
 
 ## Проверка
 - `cargo test -p hoh-fs-observation-policy --offline`: 25 passed, 0 failed (24 исходных случая и 1 интеграционный regression test вехи).

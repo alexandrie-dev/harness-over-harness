@@ -10,11 +10,13 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-hoh-brand = { path = "../hoh-brand" }
+hoh-agent = { path = "../hoh-agent" }
 hoh-error = { path = "../hoh-error" }
+hoh-jobs = { path = "../hoh-jobs" }
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-llm = { path = "../hoh-llm" }
 hoh-sandbox = { path = "../hoh-sandbox" }
+hoh-sandbox-policy = { path = "../hoh-sandbox-policy" }
 hoh-session = { path = "../hoh-session" }
 hoh-shell = { path = "../hoh-shell" }
 hoh-shell-env = { path = "../hoh-shell-env" }
@@ -22,18 +24,17 @@ hoh-subprocess = { path = "../hoh-subprocess" }
 hoh-system-prompt = { path = "../hoh-system-prompt" }
 hoh-timeout = { path = "../hoh-timeout" }
 hoh-tools = { path = "../hoh-tools" }
+hoh-user-approval = { path = "../hoh-user-approval" }
 hoh-util-values = { path = "../hoh-util-values" }
 hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
 hoh-working-directory = { path = "../hoh-working-directory" }
-futures-util.workspace = true
-indexmap.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-hoh-agent = { path = "../hoh-agent" }
+hoh-subprocess-local = { path = "../hoh-subprocess-local" }
 hoh-agent-loop = { path = "../hoh-agent-loop" }
 hoh-session-projection = { path = "../hoh-session-projection" }
 hoh-bash-local = { path = "../hoh-bash-local" }
@@ -42,4 +43,5 @@ hoh-fs-patch = { path = "../hoh-fs-patch" }
 hoh-tool-executor-native = { path = "../hoh-tool-executor-native" }
 hoh-scope = { path = "../hoh-scope" }
 tempfile.workspace = true
+futures-util.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

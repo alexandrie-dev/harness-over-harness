@@ -1,11 +1,18 @@
 //! Shared test support: a kernel with the tools registry and a prepared `ToolExecution`.
 use std::sync::Arc;
 
+use hoh_agent::{
+    AgentOptions, AgentStatus, CancelOptions, Inbox, InboxTarget, MaintenanceFuture,
+    MaintenanceTask, Model,
+};
+use hoh_error::BoxError;
 use hoh_kernel::{Context, Kernel};
+use hoh_llm::UserMessage;
 use hoh_scope::ScopeKey;
-use hoh_session::Session;
+use hoh_session::{AgentCancelCause, Session, SessionId};
 use hoh_system_prompt::SystemPrompt;
 use hoh_timeout::AbortController;
+use hoh_tools::shim::BoxFuture;
 use hoh_tools::{
     Agent, DefineToolOptions, DefineToolOutput, ToolExecution, ToolExecutionInput,
     ToolExecutionPipeline, ToolRegistrationOptions, ToolRuntime, Tools, define_tool,
@@ -15,14 +22,55 @@ use serde_json::json;
 pub struct TestAgent {
     key: ScopeKey,
     session: Session,
+    ctx: Context,
+    options: AgentOptions,
 }
 
 impl Agent for TestAgent {
+    fn id(&self) -> &SessionId {
+        self.session.id()
+    }
     fn scope_key(&self) -> ScopeKey {
         self.key.clone()
     }
-    fn session(&self) -> Session {
-        self.session.clone()
+    fn options(&self) -> &AgentOptions {
+        &self.options
+    }
+    fn session(&self) -> &Session {
+        &self.session
+    }
+    fn model(&self) -> &dyn Model {
+        panic!("the shell-env tests do not read the model")
+    }
+    fn inbox(&self) -> &dyn Inbox {
+        panic!("the shell-env tests do not read the inbox")
+    }
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+    fn ctx(&self) -> &Context {
+        &self.ctx
+    }
+    fn cancel(&self, _: AgentCancelCause, _: CancelOptions) -> Result<(), BoxError> {
+        panic!("the shell-env tests do not cancel the agent")
+    }
+    fn when_idle(&self) -> BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
+    fn run_maintenance_erased(&self, _: MaintenanceTask) -> Result<MaintenanceFuture, BoxError> {
+        panic!("the shell-env tests do not run maintenance")
+    }
+    fn send(&self, _: UserMessage, _: InboxTarget, _: bool) -> Result<(), BoxError> {
+        panic!("the shell-env tests do not send input")
+    }
+    fn followup(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the shell-env tests do not send input")
+    }
+    fn steer(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the shell-env tests do not send input")
+    }
+    fn inject(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the shell-env tests do not send input")
     }
 }
 
@@ -81,8 +129,10 @@ impl Env {
             input.agent = Some(Arc::new(TestAgent {
                 key: ScopeKey::new(),
                 session: Session::create(id.into(), None, None, None, None).unwrap(),
+                ctx: self.ctx.clone(),
+                options: AgentOptions::default(),
             }));
         }
-        self.pipeline.prepare(input).await.exec().clone()
+        self.pipeline.prepare(input).await.unwrap().exec().clone()
     }
 }

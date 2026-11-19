@@ -3,6 +3,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use hoh_agent::Agent;
 use hoh_error::{BoxError, HarnessError, SharedError};
 use hoh_kernel::Service;
 use hoh_sandbox::{
@@ -16,8 +17,8 @@ use hoh_shell::{
 };
 use hoh_subprocess::{SubprocessFailure, subprocess_spawn_failure};
 use hoh_timeout::AbortSignal;
-use hoh_tools::shim::{Agent, Approval, ApprovalOutcome, ApprovalRequest};
 use hoh_tools::{TOOL_ABORTED, ToolArgsError, ToolContextUnavailableError, ToolExecution};
+use hoh_user_approval::{Approval, ApprovalOutcome, ApprovalRequest, DisplayReason};
 use hoh_util_values::{js_json_stringify, js_trim};
 use hoh_util_workspace_path::node_path::is_absolute;
 use serde_json::{Map, Value, json};
@@ -27,7 +28,8 @@ use crate::background::{
     ProcessFailure, process_job, process_outcome, process_sources, ring_delta,
 };
 use crate::render::{RenderedRun, render_job_read, render_promoted, render_result};
-use crate::shim::{JobHooks, JobId, JobSpec, JobToolCall, JobView, Jobs};
+use hoh_jobs::{JobHooks, JobId, JobSpec, JobToolCall, JobView, Jobs};
+use hoh_sandbox_policy::SandboxPolicyRequest;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -307,8 +309,7 @@ pub(crate) fn render_value(value: &Value, escalation_modes: &[SandboxMode]) -> S
     }
 }
 
-/// SHIM(hoh-user-approval): adapts the `approval` service of `hoh-tools` to the approver of the
-/// shared sandbox escalation sequence; replace when hoh-user-approval provides the approver.
+/// Adapts the approval owner service to the shared sandbox escalation sequence.
 struct ApprovalAdapter(Service<Approval>);
 
 impl EscalationApprover<Arc<dyn Agent>, hoh_llm::ToolCallId> for ApprovalAdapter {
@@ -316,17 +317,21 @@ impl EscalationApprover<Arc<dyn Agent>, hoh_llm::ToolCallId> for ApprovalAdapter
         &self,
         request: EscalationAsk<Arc<dyn Agent>, hoh_llm::ToolCallId>,
     ) -> SandboxFuture<'_, EscalationOutcome> {
-        let signal = request
-            .signal
-            .unwrap_or_else(|| hoh_timeout::AbortController::new().signal());
-        let future = self.0.request(ApprovalRequest {
-            agent: request.agent,
-            tool_name: request.tool_name,
-            call_id: request.call_id,
-            reason: Some(request.reason),
-            display_reason: Some(request.display_reason),
-            signal,
+        let mut texts = request.display_reason.into_iter();
+        let display_reason = texts.next().map(|(locale, text)| {
+            let mut reason = DisplayReason::new(text.clone());
+            reason.insert(locale, text);
+            for (locale, text) in texts {
+                reason.insert(locale, text);
+            }
+            reason
         });
+        let mut asked = ApprovalRequest::new(request.agent, request.tool_name);
+        asked.call_id = Some(request.call_id);
+        asked.reason = Some(request.reason);
+        asked.display_reason = display_reason;
+        asked.signal = request.signal;
+        let future = self.0.request(asked);
         Box::pin(async move {
             Ok(match future.await? {
                 ApprovalOutcome::AllowedOnce => EscalationOutcome::AllowedOnce,
@@ -355,9 +360,7 @@ impl StartedJob {
 }
 
 fn owner_of(exec: &ToolExecution) -> Option<SessionId> {
-    exec.agent
-        .as_ref()
-        .map(|agent| agent.session().id().clone())
+    exec.agent.as_ref().map(|agent| agent.id().clone())
 }
 
 /// Register the command as a job; the process spawns inside the starter, after admission.
@@ -380,17 +383,18 @@ fn start_job(
             call_id: exec.call_id.clone(),
             root_call_id: exec.root_call_id.clone(),
         }),
-        output: process_sources({
+        output_limit_bytes: None,
+        output: Some(process_sources({
             let process = process.clone();
             move || lock(&process).clone()
-        }),
+        })),
         run: Box::new({
             let process = process.clone();
             let stopped = stopped.clone();
             let failure = failure.clone();
             let shell = shared.shell.clone();
             let spec = spec.clone();
-            move || {
+            move |_handle| {
                 let job = process_job(
                     Box::new(move |signal| {
                         Box::pin(async move {
@@ -405,15 +409,15 @@ fn start_job(
                 );
                 *lock(&failure) = Some(job.failure);
                 let cancel = job.hooks.cancel;
-                JobHooks {
+                Ok(JobHooks {
                     done: job.hooks.done,
                     // A kill from outside this call (the human's, a parallel job_kill) reaches the
                     // process here; its reason is what the model reads.
                     cancel: Box::new(move |reason| {
                         *lock(&stopped) = reason.map(str::to_owned);
-                        cancel(reason);
+                        cancel(reason)
                     }),
-                }
+                })
             }
         }),
     })?;
@@ -582,7 +586,12 @@ fn resolve_sandbox_policy(
         return Ok(None);
     };
     let session = exec.agent.as_ref().map(|agent| agent.session());
-    policy.resolve(session.as_ref()).map(Some)
+    policy
+        .resolve(SandboxPolicyRequest {
+            session,
+            mode: None,
+        })
+        .map(Some)
 }
 
 pub(crate) async fn execute(
@@ -622,23 +631,12 @@ pub(crate) async fn execute(
     };
     let cwd = match &exec.agent {
         None => None,
-        Some(agent) => {
-            // SHIM(hoh-tools): `exec.agent` is the session-level seam; the working directory needs
-            // the whole Agent (context, inbox for its notice), which the registry holds by session.
-            let Some(working_agent) =
-                hoh_working_directory::live_agent(&shared.ctx, &agent.session())
-            else {
-                return Err(Box::new(ToolContextUnavailableError::new(
-                    "bash requires an agent registered in the agents registry",
-                )));
-            };
-            Some(
-                shared
-                    .working_directory
-                    .ensure(&working_agent, Some(&exec.signal()))
-                    .await?,
-            )
-        }
+        Some(agent) => Some(
+            shared
+                .working_directory
+                .ensure(agent, Some(&exec.signal()))
+                .await?,
+        ),
     };
     let workdir = resolve_workdir(args.workdir.as_deref(), cwd.as_deref());
     let dsh_env = shared.shell_env.collect(&exec)?;

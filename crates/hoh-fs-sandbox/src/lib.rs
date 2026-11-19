@@ -1,7 +1,6 @@
 //! Sandbox-enforcing host filesystem provider.
 
 pub mod containment;
-pub mod shim;
 
 use std::sync::Arc;
 
@@ -17,22 +16,22 @@ use hoh_fs_local::LocalFileSystem;
 use hoh_fs_patch::PatchHunk;
 use hoh_kernel::{Cfg, Context, Inject, Service, plugin};
 use hoh_sandbox::{SandboxExecutionPolicy, SandboxMode, writable_roots};
+use hoh_sandbox_policy::{SandboxPolicy, SandboxPolicyRequest, SandboxPolicyService};
 use hoh_timeout::AbortSignal;
 
 use crate::containment::is_path_under;
-use crate::shim::{SandboxPolicyApi, SandboxPolicyKey};
 
 /// The local filesystem backend with a per-mutation sandbox fence.
 pub struct SandboxedFileSystem {
     local: LocalFileSystem,
-    policy: Arc<dyn SandboxPolicyApi>,
+    policy: SandboxPolicyService,
     default_mode: SandboxMode,
 }
 
 impl SandboxedFileSystem {
     /// Construct a standalone provider over the local backend.
-    pub fn new(config: Config, policy: Arc<dyn SandboxPolicyApi>) -> Result<Self, BoxError> {
-        let default_mode = policy.resolve(None).mode;
+    pub fn new(config: Config, policy: SandboxPolicyService) -> Result<Self, BoxError> {
+        let default_mode = policy.resolve(SandboxPolicyRequest::default())?.mode;
         Ok(Self {
             local: LocalFileSystem::new(config)?,
             policy,
@@ -45,7 +44,10 @@ impl SandboxedFileSystem {
         target: &FsTarget,
         policy: Option<SandboxExecutionPolicy>,
     ) -> Result<FsTarget, BoxError> {
-        let policy = policy.unwrap_or_else(|| self.policy.resolve(None));
+        let policy = match policy {
+            Some(policy) => policy,
+            None => self.policy.resolve(SandboxPolicyRequest::default())?,
+        };
         match policy.mode {
             SandboxMode::DangerFullAccess => return Ok(target.clone()),
             SandboxMode::ReadOnly => {
@@ -257,25 +259,19 @@ impl FileSystem for SandboxedFileSystem {
     }
 }
 
-struct KernelPolicy(Service<SandboxPolicyKey>);
-
-impl SandboxPolicyApi for KernelPolicy {
-    fn resolve(&self, session: Option<&hoh_session::Session>) -> SandboxExecutionPolicy {
-        self.0.resolve(session)
-    }
-}
-
 /// Services required by the sandboxing filesystem provider.
 #[derive(Inject)]
 pub struct Deps {
-    sandbox_policy: Service<SandboxPolicyKey>,
+    sandbox_policy: Service<SandboxPolicy>,
 }
 
 /// Mount [`SandboxedFileSystem`] as the `fs` service.
 #[plugin(FsSandboxPlugin, name = "SandboxedFileSystem")]
 pub async fn apply(ctx: Context, deps: Deps, config: Cfg<Config>) -> Result<(), BoxError> {
-    let policy: Arc<dyn SandboxPolicyApi> = Arc::new(KernelPolicy(deps.sandbox_policy));
-    let provider = Arc::new(SandboxedFileSystem::new((*config.get()).clone(), policy)?);
+    let provider = Arc::new(SandboxedFileSystem::new(
+        (*config.get()).clone(),
+        (*deps.sandbox_policy).clone(),
+    )?);
     ctx.provide::<Fs>(provider).await?;
     Ok(())
 }

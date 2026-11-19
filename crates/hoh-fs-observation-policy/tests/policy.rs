@@ -1,6 +1,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use hoh_agent::{
+    Agent, AgentOptions, AgentStatus, CancelOptions, Inbox, InboxTarget, MaintenanceFuture,
+    MaintenanceTask, Model,
+};
 use hoh_error::{BoxError, HarnessError};
 use hoh_fs::{
     FileSystem, FsActor, FsDeleteIntent, FsEditIntent, FsErrorCode, FsObservation, FsObserved,
@@ -9,10 +13,12 @@ use hoh_fs::{
 use hoh_fs_local::{Config as LocalConfig, LocalFileSystem};
 use hoh_fs_observation_policy::{FsObservationActor, FsObservationAgent, FsObservationPolicy};
 use hoh_kernel::{Context, Fiber, Kernel};
+use hoh_llm::UserMessage;
 use hoh_scope::ScopeKey;
-use hoh_session::Session;
+use hoh_session::{AgentCancelCause, Session};
 use hoh_timeout::AbortController;
-use hoh_tools::{Agent, ToolExecution, ToolExecutionInput, ToolExecutionPipeline};
+use hoh_tools::shim::BoxFuture;
+use hoh_tools::{ToolExecution, ToolExecutionInput, ToolExecutionPipeline};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -64,15 +70,69 @@ fn unrelated_actor() -> Option<FsActor> {
 struct TestAgent {
     key: ScopeKey,
     session: Session,
+    ctx: Context,
+    options: AgentOptions,
 }
 
 impl Agent for TestAgent {
+    fn id(&self) -> &hoh_session::SessionId {
+        self.session.id()
+    }
+
     fn scope_key(&self) -> ScopeKey {
         self.key.clone()
     }
 
-    fn session(&self) -> Session {
-        self.session.clone()
+    fn options(&self) -> &AgentOptions {
+        &self.options
+    }
+
+    fn session(&self) -> &Session {
+        &self.session
+    }
+
+    fn model(&self) -> &dyn Model {
+        panic!("filesystem policy fixture has no model")
+    }
+
+    fn inbox(&self) -> &dyn Inbox {
+        panic!("filesystem policy fixture has no inbox")
+    }
+
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+
+    fn ctx(&self) -> &Context {
+        &self.ctx
+    }
+
+    fn cancel(&self, _: AgentCancelCause, _: CancelOptions) -> Result<(), BoxError> {
+        panic!("not used by filesystem policy")
+    }
+
+    fn when_idle(&self) -> BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
+
+    fn run_maintenance_erased(&self, _: MaintenanceTask) -> Result<MaintenanceFuture, BoxError> {
+        panic!("not used by filesystem policy")
+    }
+
+    fn send(&self, _: UserMessage, _: InboxTarget, _: bool) -> Result<(), BoxError> {
+        panic!("not used by filesystem policy")
+    }
+
+    fn followup(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("not used by filesystem policy")
+    }
+
+    fn steer(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("not used by filesystem policy")
+    }
+
+    fn inject(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("not used by filesystem policy")
     }
 }
 
@@ -84,10 +144,17 @@ async fn tool_execution(ctx: &Context, agent: Arc<dyn Agent>, call_id: &str) -> 
         AbortController::new().signal(),
     );
     input.agent = Some(agent);
-    ToolExecutionPipeline::new(ctx.clone())
+    // The execution is all this fixture needs: a source that resolves no tool keeps the lookup off the
+    // `tools` registry, which this kernel does not mount.
+    let source = hoh_tools::ToolExecutionSource {
+        get: Some(Arc::new(|_, _, _| None)),
+        reject: None,
+    };
+    ToolExecutionPipeline::with_source(ctx.clone(), source)
         .expect("pipeline")
         .prepare(input)
         .await
+        .expect("the tool lookup does not reject")
         .exec()
         .clone()
 }
@@ -599,6 +666,8 @@ async fn unread_existing_file_overwrite_is_denied_and_the_file_is_untouched() {
     let agent: Arc<dyn Agent> = Arc::new(TestAgent {
         key: ScopeKey::new(),
         session: session("owner"),
+        ctx: setup.ctx.clone(),
+        options: AgentOptions::default(),
     });
     let weak_agent = Arc::downgrade(&agent);
     let first_execution = tool_execution(&setup.ctx, agent.clone(), "first").await;

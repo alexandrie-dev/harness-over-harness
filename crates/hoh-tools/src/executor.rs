@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
+use hoh_agent::Agent;
 use hoh_error::{BoxError, HarnessError};
 use hoh_llm::{ToolCallBlock, ToolCallId, UserMessage};
 use hoh_system_prompt::ToolProviderResult;
 use hoh_timeout::AbortSignal;
 
 use crate::contracts::{ResolvedToolSet, ToolDefinition, ToolExecutionResult};
-use crate::shim::{Agent, BoxFuture};
+use crate::shim::BoxFuture;
 
 /// Model-call schemas produced by an executor (`schemas` and `knownNames` of the prompt provider result).
 pub type ToolModelInput = ToolProviderResult;

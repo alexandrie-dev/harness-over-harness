@@ -65,18 +65,6 @@ pub struct LoopProjections {
     pub inbox: ReadInbox,
 }
 
-/// The `Agent` of `hoh-tools` (a shim there): scope identity and session.
-struct ToolsAgent(Arc<dyn Agent>);
-
-impl hoh_tools::Agent for ToolsAgent {
-    fn scope_key(&self) -> ScopeKey {
-        self.0.scope_key()
-    }
-    fn session(&self) -> Session {
-        self.0.session().clone()
-    }
-}
-
 /// Counts the queue as seen when `turn_once` leaves before its steps ran (disarmed once the steps
 /// have returned and the driver has taken its decision): work queued before such an exit stays
 /// parked, as in the source.
@@ -689,7 +677,7 @@ impl ReactLoopAgent {
             .ok_or("tools service is unavailable")?;
         let tool_set = tools
             .resolve(ToolActivationContext {
-                agent: Arc::new(ToolsAgent(self.as_agent())),
+                agent: self.as_agent(),
                 model_selection: hoh_tools::ModelSelection {
                     provider: selection.provider.clone(),
                     model: selection.model.clone(),
@@ -1333,7 +1321,7 @@ impl ReactLoopAgent {
             calls,
             signal: signal.clone(),
             max_parallel_tool_calls: Some(max_parallel),
-            agent: Some(Arc::new(ToolsAgent(self.as_agent()))),
+            agent: Some(self.as_agent()),
             tool_set: Some(decision.tool_set.clone()),
             log: Some(ToolLogStep { turn, step }),
         };

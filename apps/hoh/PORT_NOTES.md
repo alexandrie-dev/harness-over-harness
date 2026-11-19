@@ -2,6 +2,71 @@
 
 ## Перенесено
 
+### Профиль окна
+
+`window` — встроенный самостоятельный профиль нативного движка окна (`@hoh/window`, файл
+`assets/bundle/window/cordis.patch.yml`): stdio JSON-RPC (`hoh-sdk-app` + `hoh-sdk-jsonrpc-server`),
+llm/session/agent-loop, `hoh-model-host` (модель и ключ через `hoh-credentials-local`),
+`hoh-user-approval` (host-режим), bash/read/write, working-directory, todo, ask-user и
+`session-persistence-jsonl`. Профиль создаётся только при отсутствии его manifest; существующий
+`profiles/window` пользователя не перезаписывается.
+
+Песочница, как в базовом профиле dsh: `sandbox` (`hoh-sandbox-local`: bwrap → Landlock),
+`sandbox-policy` (`workspace-write`, корень — рабочая папка сессии), `bash-sandbox`
+(`@deepseek-ai/dsh-bash-sandbox`: `bash -c <команда>` оборачивается в `sandbox.confine`; сломанный раннер даёт
+`SANDBOX_UNAVAILABLE`, а не запуск без ограничений) и `filesystem` = `@deepseek-ai/dsh-fs-sandbox`. Оба исполнителя
+сообщают режим по умолчанию, поэтому `tool-bash` и `tool-fs` предлагают модели `sandbox_permissions` и сами
+спрашивают пользователя (`approval/request` с mac) до выполнения. `workspace-write` всегда оставляет `/tmp`
+записываемым — тесты песочницы поэтому создают папки в `CARGO_TARGET_TMPDIR`.
+
+Склейка (`src/window_glue.rs`), которую не может сделать ни один крейт:
+- `provide_stdio` — один читатель stdin: отдельный `std::thread` (чтение tokio-пула нельзя прервать, и
+  закрытие рантайма ждало бы его после `shutdown`, пока клиент держит stdin) пересылает байты серверу через
+  канал в памяти. Конец ввода объявляется, когда читатель сервера принял все байты (как `end` в Node), и
+  его узнаёт `hoh-sdk-app` (закрыл stdin → выход 0). После `shutdown` сервер просит `request_exit`.
+  Вызывается из `run_profile` только для профиля `window`, до загрузки плагинов.
+- `WindowPrivilegedApprover` (`hoh:window-privileged-approver`) — подключает службу `HohPrivilegedApprover`,
+  которую сервер спрашивает перед привилегированным `hoh/*` вызовом, к `Approval::approve_privileged`.
+  Цикла зависимостей нет (сервер уже зависит от `hoh-user-approval`): сервер мог бы вызывать `approve_privileged`
+  сам, тогда строка не нужна. Адрес модели с логином/паролем/ключом (`user:KEY@`, `?api_key=`) отклоняется
+  до вопроса пользователю (`hoh/settings/set`, `hoh/model/key/set`, `hoh/model/probe`) и при восстановлении
+  из файла.
+- `WindowModelSettings` (`hoh:window-model-settings`) — адрес и имя модели переживают перезапуск:
+  при старте читает `<профиль>/model-settings.json` поверх конфига `model-host`, затем ждёт
+  `ModelHost::subscribe()` (`watch`) через `select!` по `token.cancelled()` и `changed()` и пишет файл
+  атомарно (0600, с `fsync` файла и каталога) из `borrow_and_update()`. Пишется только та часть, что
+  отличается от уже сохранённой. Ключ в файл не попадает. Ответ на `hoh/settings/set` приходит чуть раньше
+  записи; при отмене (`shutdown`) выполняется последняя запись, так что к выходу процесса файл уже на диске.
+  Ошибка записи уходит в журнал и повторяется через 1 с (`SAVE_RETRY`), пока не получится.
+  Тем же приёмом правила первого запуска (`hoh/settings/rules/set`: интернет и разрешённая папка)
+  хранятся в `<профиль>/window-rules.json` (атомарно, 0600): при старте `ModelHost::set_rules(saved)`,
+  затем запись при изменении `PersistedSettings.rules`.
+- `shutdown` во время ещё идущей загрузки дерева плагинов: освобождённый контекст даёт `InactiveContext`
+  из `hoh_loader::boot`. `run_profile` (`stopped_by_exit_request`) считает это запрошенным выходом, а не
+  ошибкой загрузки, если `request_exit` уже был вызван; иначе процесс выходил бы с кодом 1 при
+  `shutdown` сразу за `hoh/settings/set`.
+
+Имя модели в запросах: окно объявляет в `initialize` заглушку (`local`) и ждёт, что движок возьмёт имя из
+настроек; `HostedOpenAiAdapter::prepare_call` в `hoh-model-host` подставляет сохранённое имя в вызов
+(метаданные маршрута остаются прежними).
+
+Тесты `tests/window_profile.rs` (все через собранный `hoh` по stdio): состав профиля; initialize → prompt на
+mock (`model`/`stream` в запросе, порядок и `seq` событий, текст ответа) → shutdown при открытом stdin, код
+0, stderr пуст; выход при закрытии stdin; 3000 запросов с концом ввода сразу за ними — все отвечены;
+привилегированные вызовы в host-режиме (`approval/request`, mac, отказ ничего не меняет и не пишет файл,
+права 0600, перезапуск); адрес с секретом отклонён без вопроса; ключа нет ни в кадрах, ни в stderr, ни
+в файлах кроме `.credentials.yaml`; опасная команда bash: `approval/request` до запуска, `rejected` — файл на
+месте, `allowed-once` — выполнена; без подтверждения bash пишет внутри папки и не может писать вне неё;
+привилегированный вызов без host-режима отклонён; запись вне папки (`write` вне рабочей папки):
+без эскалации не пишет, с эскалацией — `approval/request`, `rejected` — файла нет, `allowed-once` —
+файл есть; ошибка записи настроек повторяется и в итоге файл содержит последнее значение (проверяется
+содержимое); после смены настроек и `shutdown` при открытом stdin процесс выходит с кодом 0 быстрее 500 мс
+(столько ядро Tauri ждёт до SIGKILL), файл настроек уже записан; смена модели через `hoh/settings/set` —
+следующий запрос в mock несёт новое имя.
+
+Требование к запускающему: `DSH_HOME` должен быть закрыт для других (0700), иначе
+`hoh-credentials-local` отказывается хранить ключ.
+
 Native binary `hoh`; source args, bin, profile-boot, dump-config,
 dump-config-schema, startup-diagnostics, process-shutdown map to same-named
 snake_case modules. Command parsing uses accepted hoh-commander, no new parser.

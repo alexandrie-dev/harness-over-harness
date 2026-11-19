@@ -236,15 +236,6 @@ impl Agent for StubAgent {
     }
 }
 
-impl hoh_tools::Agent for StubAgent {
-    fn scope_key(&self) -> ScopeKey {
-        self.scope.clone()
-    }
-    fn session(&self) -> Session {
-        self.session.clone()
-    }
-}
-
 pub fn live_signal() -> AbortSignal {
     AbortController::new().signal()
 }
@@ -254,7 +245,10 @@ pub async fn execute_tool(
     input: hoh_tools::ToolExecutionInput,
 ) -> hoh_tools::ToolExecutionResult {
     let pipeline = hoh_tools::ToolExecutionPipeline::new(ctx.clone()).unwrap();
-    let prepared = pipeline.prepare(input).await;
+    let prepared = pipeline
+        .prepare(input)
+        .await
+        .expect("the tool lookup does not reject");
     let exec = prepared.exec().clone();
     let outcome = match prepared {
         hoh_tools::ScheduledToolPreparation::Dispatch(exec) => pipeline.dispatch(exec).await,

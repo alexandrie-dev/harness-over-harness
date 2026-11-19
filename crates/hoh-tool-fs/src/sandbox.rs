@@ -23,7 +23,8 @@ use hoh_user_approval::{Approval, ApprovalOutcome, ApprovalRequest, DisplayReaso
 use hoh_util_values::js_trim;
 use serde_json::{Map, Value, json};
 
-use crate::shim::{SandboxPolicyKey, live_agent};
+use crate::shim::live_agent;
+use hoh_sandbox_policy::{SandboxPolicy, SandboxPolicyRequest};
 
 /// The escalation approver of this composition: the `approval` service behind the sandbox
 /// vocabulary's approver seam.
@@ -69,7 +70,7 @@ pub struct FsSandboxController {
     /// The escalation targets this composition advertises (empty when no confining backend is mounted).
     pub escalation_modes: Vec<SandboxMode>,
     /// Shared per-session policy resolver, required by a confining backend.
-    policy: Option<Service<SandboxPolicyKey>>,
+    policy: Option<Service<SandboxPolicy>>,
 }
 
 impl FsSandboxController {
@@ -87,7 +88,7 @@ impl FsSandboxController {
         let policy = if default_mode.is_none() {
             None
         } else {
-            ctx.get::<SandboxPolicyKey>()
+            ctx.get::<SandboxPolicy>()
         };
         if default_mode.is_some() && policy.is_none() {
             return Err(
@@ -161,7 +162,13 @@ impl FsSandboxController {
         let standing: Option<SandboxExecutionPolicy> = self
             .policy
             .as_ref()
-            .map(|policy| policy.resolve(session.as_ref()));
+            .map(|policy| {
+                policy.resolve(SandboxPolicyRequest {
+                    session,
+                    mode: None,
+                })
+            })
+            .transpose()?;
         if let (Some(requested), Some(standing)) = (permissions, &standing)
             && requested == standing.mode.as_str()
         {

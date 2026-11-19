@@ -10,6 +10,7 @@ use std::{
 };
 
 use hoh_error::BoxError;
+use hoh_jobs::{JobChannel, JobChunk, JobOutcome, JobOutcomeStatus, JobSourceRead};
 use hoh_sandbox::{SandboxMode, escalation_hint_marker, sandbox_denial_marker};
 use hoh_shell::{
     ShellExecution, ShellProcess, ShellProcessRead, ShellProcessStatus, ShellRunResult,
@@ -18,7 +19,6 @@ use hoh_shell::{
 };
 use hoh_subprocess::{SubprocessOutputRead, SubprocessOutputReader};
 use hoh_tool_bash::background::{process_job, process_outcome, process_sources, ring_delta};
-use hoh_tool_bash::shim::{JobChannel, JobChunk, JobOutcome, JobOutcomeStatus, JobSourceRead};
 use tokio::sync::oneshot;
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -303,7 +303,7 @@ mod process_sources_cases {
         assert_eq!(sources[0].channel, Some(JobChannel::Stdout));
         assert_eq!(sources[1].channel, Some(JobChannel::Stderr));
         assert_eq!(
-            (sources[0].read)(0),
+            (sources[0].read)(0).unwrap(),
             JobSourceRead {
                 text: String::new(),
                 next_offset: 0,
@@ -312,7 +312,7 @@ mod process_sources_cases {
             }
         );
         assert_eq!(
-            (sources[1].read)(3),
+            (sources[1].read)(3).unwrap(),
             JobSourceRead {
                 text: String::new(),
                 next_offset: 3,
@@ -360,7 +360,7 @@ mod process_sources_cases {
         let live: Arc<dyn ShellExecution> = Arc::new(ObservedOnly(observed, process));
         let sources = process_sources(move || Some(live.clone()));
         assert_eq!(
-            (sources[0].read)(2),
+            (sources[0].read)(2).unwrap(),
             JobSourceRead {
                 text: "out".into(),
                 next_offset: 5,
@@ -369,7 +369,7 @@ mod process_sources_cases {
             }
         );
         assert_eq!(
-            (sources[1].read)(7),
+            (sources[1].read)(7).unwrap(),
             JobSourceRead {
                 text: "err!".into(),
                 next_offset: 11,
@@ -415,7 +415,7 @@ mod process_sources_cases {
             Arc::new(ObservedOnly(observed, FakeProcess::running()));
         let sources = process_sources(move || Some(live.clone()));
         assert_eq!(
-            (sources[1].read)(0),
+            (sources[1].read)(0).unwrap(),
             JobSourceRead {
                 text: "tail".into(),
                 next_offset: 4,
@@ -502,6 +502,42 @@ mod process_job_cases {
         })
     }
 
+    /// `processJob`'s async function runs synchronously up to its first `await` (background.ts:117):
+    /// the starter's body has begun, and so the executor has been called, before `start` returns.
+    #[tokio::test]
+    async fn runs_the_starter_up_to_its_first_await_before_returning() {
+        let (publish, prepared) = oneshot::channel::<Arc<FakeProcess>>();
+        let begun = Arc::new(AtomicUsize::new(0));
+        let hooks = process_job(
+            Box::new({
+                let begun = begun.clone();
+                move |_signal| {
+                    Box::pin(async move {
+                        begun.fetch_add(1, Ordering::SeqCst); // `shell.execute(spec)` is called here
+                        let process: Arc<dyn ShellExecution> = prepared
+                            .await
+                            .map_err(|error| Box::new(error) as BoxError)?;
+                        Ok(process)
+                    })
+                }
+            }),
+            |process| process_outcome(process, &[]),
+        );
+        // No yield between `process_job` and the check.
+        assert_eq!(begun.load(Ordering::SeqCst), 1);
+        (hooks.hooks.cancel)(Some("stop")).unwrap();
+        drop(publish); // the preparation ends after the cancellation: a kill, not a failure
+        assert_eq!(
+            hooks.hooks.done.await.unwrap().status,
+            JobOutcomeStatus::Killed
+        );
+        assert_eq!(
+            begun.load(Ordering::SeqCst),
+            1,
+            "the starter body runs once"
+        );
+    }
+
     #[tokio::test]
     async fn keeps_observation_empty_during_preparation_and_reads_published_output_without_consuming_it()
      {
@@ -520,12 +556,12 @@ mod process_job_cases {
                 process_outcome(process, &[])
             }
         });
-        assert_eq!((sources[0].read)(0).text, "");
+        assert_eq!((sources[0].read)(0).unwrap().text, "");
         assert_eq!(outcome_calls.load(Ordering::SeqCst), 0);
         publish.send(child.clone()).map_err(|_| ()).unwrap();
         until(|| lock(&published).is_some()).await;
-        assert_eq!((sources[0].read)(0).text, "output");
-        assert_eq!((sources[0].read)(0).text, "output");
+        assert_eq!((sources[0].read)(0).unwrap().text, "output");
+        assert_eq!((sources[0].read)(0).unwrap().text, "output");
         assert_eq!(child.read_calls.load(Ordering::SeqCst), 0);
         {
             let mut facts = lock(&child.facts);
@@ -534,7 +570,7 @@ mod process_job_cases {
         }
         child.exit();
         assert_eq!(
-            hooks.hooks.done.await,
+            hooks.hooks.done.await.unwrap(),
             outcome(JobOutcomeStatus::Completed, "exit code: 5")
         );
     }
@@ -557,14 +593,14 @@ mod process_job_cases {
         );
         let signal = lock(&received).clone().expect("the starter ran");
         assert!(!signal.aborted());
-        (hooks.hooks.cancel)(Some("cancel pending confinement"));
-        (hooks.hooks.cancel)(Some("later cancellation"));
+        (hooks.hooks.cancel)(Some("cancel pending confinement")).unwrap();
+        (hooks.hooks.cancel)(Some("later cancellation")).unwrap();
         assert_eq!(
             signal.reason().unwrap().to_string(),
             "cancel pending confinement"
         );
         assert_eq!(
-            hooks.hooks.done.await,
+            hooks.hooks.done.await.unwrap(),
             outcome(JobOutcomeStatus::Killed, "cancel pending confinement")
         );
     }
@@ -580,12 +616,12 @@ mod process_job_cases {
         let done = tokio::spawn({
             let settled = settled.clone();
             async move {
-                let outcome = hooks.hooks.done.await;
+                let outcome = hooks.hooks.done.await.unwrap();
                 settled.fetch_add(1, Ordering::SeqCst);
                 outcome
             }
         });
-        (hooks.hooks.cancel)(Some("cancel before process publication"));
+        (hooks.hooks.cancel)(Some("cancel before process publication")).unwrap();
         publish.send(child.clone()).map_err(|_| ()).unwrap();
         until(|| child.kills() == 1).await;
         assert_eq!(child.kills(), 1);
@@ -612,7 +648,7 @@ mod process_job_cases {
         let done = tokio::spawn({
             let settled = settled.clone();
             async move {
-                let outcome = hooks.hooks.done.await;
+                let outcome = hooks.hooks.done.await.unwrap();
                 settled.fetch_add(1, Ordering::SeqCst);
                 outcome
             }
@@ -621,8 +657,8 @@ mod process_job_cases {
         for _ in 0..50 {
             tokio::task::yield_now().await;
         }
-        (hooks.hooks.cancel)(Some("stop"));
-        (hooks.hooks.cancel)(Some("stop again"));
+        (hooks.hooks.cancel)(Some("stop")).unwrap();
+        (hooks.hooks.cancel)(Some("stop again")).unwrap();
         until(|| child.kills() == 1).await;
         assert_eq!(child.kills(), 1);
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -644,12 +680,12 @@ mod process_job_cases {
         let done = tokio::spawn({
             let settled = settled.clone();
             async move {
-                let outcome = hooks.hooks.done.await;
+                let outcome = hooks.hooks.done.await.unwrap();
                 settled.fetch_add(1, Ordering::SeqCst);
                 outcome
             }
         });
-        (hooks.hooks.cancel)(Some("stop before publication"));
+        (hooks.hooks.cancel)(Some("stop before publication")).unwrap();
         publish.send(child.clone()).map_err(|_| ()).unwrap();
         until(|| child.kills() == 1).await;
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -679,7 +715,7 @@ mod process_job_cases {
             },
         );
         assert_eq!(
-            hooks.hooks.done.await,
+            hooks.hooks.done.await.unwrap(),
             outcome(JobOutcomeStatus::Failed, "remote sandbox unavailable")
         );
         assert_eq!(rendered.load(Ordering::SeqCst), 0);
@@ -703,7 +739,7 @@ mod process_job_cases {
             |process| process_outcome(process, &[]),
         );
         assert_eq!(
-            hooks.hooks.done.await,
+            hooks.hooks.done.await.unwrap(),
             outcome(JobOutcomeStatus::Failed, "upstream preparation stopped")
         );
     }

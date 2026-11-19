@@ -190,7 +190,7 @@ impl Plugin for ToolPresent {
                         .into());
                     };
                     let session = calling.session();
-                    let boundary = agents.turn_boundary_of(&session)?;
+                    let boundary = agents.turn_boundary_of(session)?;
                     if boundary.open_turn_start_seq.is_none() {
                         return Err(ToolContextUnavailableError::new(
                             "present requires an open turn",
@@ -209,7 +209,7 @@ impl Plugin for ToolPresent {
 
                     // SHIM(hoh-tools): ToolExecution currently carries the session-level Agent
                     // seam, while WorkingDirectoryService needs the live hoh-agent Agent.
-                    let Some(agent) = live_agent(&owner, &session) else {
+                    let Some(agent) = live_agent(&owner, session) else {
                         return Err(ToolContextUnavailableError::new(
                             "present requires an agent registered in the agents registry",
                         )
@@ -276,7 +276,7 @@ impl Plugin for ToolPresent {
                     lock(&pending).insert(
                         exec.token,
                         PendingDelivery {
-                            session,
+                            session: session.clone(),
                             turn: boundary.last_turn,
                             files: files.clone(),
                         },

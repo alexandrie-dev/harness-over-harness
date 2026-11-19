@@ -27,21 +27,7 @@ use crate::Env;
 use crate::image_error::{ImageInputError, ImageInputErrorCode};
 use crate::read_target::resolve_regular_read_target;
 use crate::shim::live_agent;
-
-/// Node's `path.extname` for a POSIX path: the last segment's text from its final dot, empty when
-/// the dot starts the segment or is absent.
-fn extname(path: &str) -> &str {
-    let base = path.trim_end_matches('/');
-    let base = base.rsplit('/').next().unwrap_or("");
-    match base.rfind('.') {
-        Some(0) | None => "",
-        Some(index) => &base[index..],
-    }
-}
-
-fn basename(path: &str) -> &str {
-    path.trim_end_matches('/').rsplit('/').next().unwrap_or("")
-}
+use hoh_util_workspace_path::node_path;
 
 /// Extensions `read_image` accepts; magic-byte validation at the attachment service stays
 /// authoritative.
@@ -86,7 +72,7 @@ pub fn sniff_image_media_type(data: &[u8]) -> Option<ImageMediaType> {
 /// `file_path` is the raw `file_path` argument (not yet resolved). Returns the declared media type,
 /// or `None` when the path does not claim an image.
 pub fn image_media_type_for_path(file_path: &str) -> Option<ImageMediaType> {
-    media_type_for_extension(&extname(file_path).to_lowercase())
+    media_type_for_extension(&node_path::extname(file_path).to_lowercase())
 }
 
 fn image_value_schema() -> Value {
@@ -459,7 +445,7 @@ async fn execute(env: &Env, args: &Value, exec: &Arc<ToolExecution>) -> Result<V
     // Every pre-read gate runs before any filesystem I/O so a refusal never leaks partial reads or
     // attachment writes. An extension-less path declares no format, so only its format and
     // deployment media-type checks wait for the bytes.
-    let extension = extname(file_path).to_lowercase();
+    let extension = node_path::extname(file_path).to_lowercase();
     let declared = media_type_for_extension(&extension);
     if declared.is_none() && !extension.is_empty() {
         return Err(ImageInputError::new(
@@ -509,7 +495,7 @@ async fn execute(env: &Env, args: &Value, exec: &Arc<ToolExecution>) -> Result<V
     let input = SaveImageAttachment {
         data,
         media_type,
-        name: Some(basename(&target.display_path).to_owned()),
+        name: Some(node_path::basename(&target.display_path)),
     };
     let reference = match attachments.save_image(&input).await {
         Ok(reference) => reference,

@@ -106,21 +106,6 @@ impl Agent for LiveAgent {
     }
 }
 
-/// The session-level seam `ToolExecution.agent` still carries.
-struct ToolSeam {
-    key: ScopeKey,
-    session: Session,
-}
-
-impl hoh_tools::Agent for ToolSeam {
-    fn scope_key(&self) -> ScopeKey {
-        self.key.clone()
-    }
-    fn session(&self) -> Session {
-        self.session.clone()
-    }
-}
-
 /// A parked `stat`: the test is told the call arrived and decides when it returns.
 struct Park {
     entered: oneshot::Sender<()>,
@@ -347,10 +332,7 @@ async fn agent_in(stack: &Stack, id: &str, cwd: &Path) -> Owner {
     // Kept registered for the stack's lifetime; the registry unwinds with the kernel.
     std::mem::forget(registry.enter(&stack.ctx, registered).unwrap());
     Owner {
-        seam: Arc::new(ToolSeam {
-            key: live.scope.clone(),
-            session,
-        }),
+        seam: live.clone(),
         live,
         fiber,
     }
@@ -369,7 +351,10 @@ async fn call(
     );
     input.agent = agent;
     let pipeline = ToolExecutionPipeline::new(ctx.clone()).expect("pipeline");
-    let prepared = pipeline.prepare(input).await;
+    let prepared = pipeline
+        .prepare(input)
+        .await
+        .expect("the tool lookup does not reject");
     let exec = prepared.exec().clone();
     let outcome = match prepared {
         ScheduledToolPreparation::Dispatch(exec) => pipeline.dispatch(exec).await,

@@ -9,7 +9,6 @@
 pub mod background;
 mod execute;
 pub mod render;
-pub mod shim;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -30,7 +29,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::shim::{Jobs, SandboxPolicyKey};
+use hoh_jobs::Jobs;
+use hoh_sandbox_policy::SandboxPolicy;
 
 /// Mount dependencies of the plugin (`inject` of the source).
 #[derive(Inject)]
@@ -84,7 +84,7 @@ pub(crate) struct Shared {
     pub background_enabled: bool,
     pub promote_on_timeout: bool,
     pub escalation_modes: Vec<SandboxMode>,
-    pub sandbox_policy: Option<Service<SandboxPolicyKey>>,
+    pub sandbox_policy: Option<Service<SandboxPolicy>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -377,7 +377,7 @@ impl Plugin for ToolBash {
         let sandbox_policy = if default_mode.is_none() {
             None
         } else {
-            ctx.get::<SandboxPolicyKey>()
+            ctx.get::<SandboxPolicy>()
         };
         if default_mode.is_some() && sandbox_policy.is_none() {
             return Err(

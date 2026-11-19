@@ -1,13 +1,21 @@
 use std::sync::Arc;
 
+use hoh_agent::{
+    AgentOptions, AgentStatus, CancelOptions, Inbox, InboxTarget, MaintenanceFuture,
+    MaintenanceTask, Model,
+};
+use hoh_error::BoxError;
 use hoh_kernel::{Context, Fiber, Kernel, Plugin};
-use hoh_llm::{ToolCallBlock, ToolCallId};
+use hoh_llm::{ToolCallBlock, ToolCallId, UserMessage};
 use hoh_scope::ScopeKey;
-use hoh_session::{Session, SessionLogOffset, SessionSeedEventState, SessionSeqCursor};
+use hoh_session::{
+    AgentCancelCause, Session, SessionId, SessionLogOffset, SessionSeedEventState, SessionSeqCursor,
+};
 use hoh_session_projection::SessionProjectionRegistry;
 use hoh_system_prompt::SystemPrompt;
 use hoh_timeout::AbortController;
 use hoh_tool_todo::{Config, ToolTodo};
+use hoh_tools::shim::BoxFuture;
 use hoh_tools::{
     GenericCallView, ToolBatchInput, ToolCallKind, ToolCallView, ToolExecutionPipeline,
     ToolExecutionResult, ToolRuntime, Tools, execute_tool_batch,
@@ -48,24 +56,80 @@ async fn setup(allow_parallel_in_progress: bool) -> Harness {
 struct TestAgent {
     key: ScopeKey,
     session: Session,
+    ctx: Context,
+    options: AgentOptions,
 }
 
 impl TestAgent {
-    fn new(id: &str) -> Arc<Self> {
+    fn new(ctx: &Context, id: &str) -> Arc<Self> {
         Arc::new(Self {
             key: ScopeKey::new(),
             session: Session::create(id.into(), None, None, None, None).unwrap(),
+            ctx: ctx.clone(),
+            options: AgentOptions::default(),
         })
     }
 }
 
 impl hoh_tools::Agent for TestAgent {
+    fn id(&self) -> &SessionId {
+        self.session.id()
+    }
+
     fn scope_key(&self) -> ScopeKey {
         self.key.clone()
     }
 
-    fn session(&self) -> Session {
-        self.session.clone()
+    fn options(&self) -> &AgentOptions {
+        &self.options
+    }
+
+    fn session(&self) -> &Session {
+        &self.session
+    }
+
+    fn model(&self) -> &dyn Model {
+        panic!("the todo tool does not read the model")
+    }
+
+    fn inbox(&self) -> &dyn Inbox {
+        panic!("the todo tool does not read the inbox")
+    }
+
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+
+    fn ctx(&self) -> &Context {
+        &self.ctx
+    }
+
+    fn cancel(&self, _: AgentCancelCause, _: CancelOptions) -> Result<(), BoxError> {
+        panic!("the todo tool does not cancel the agent")
+    }
+
+    fn when_idle(&self) -> BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
+
+    fn run_maintenance_erased(&self, _: MaintenanceTask) -> Result<MaintenanceFuture, BoxError> {
+        panic!("the todo tool does not run maintenance")
+    }
+
+    fn send(&self, _: UserMessage, _: InboxTarget, _: bool) -> Result<(), BoxError> {
+        panic!("the todo tool does not send input")
+    }
+
+    fn followup(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the todo tool does not send input")
+    }
+
+    fn steer(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the todo tool does not send input")
+    }
+
+    fn inject(&self, _: UserMessage) -> Result<(), BoxError> {
+        panic!("the todo tool does not send input")
     }
 }
 
@@ -207,7 +271,7 @@ async fn registers_exact_model_facing_schema() {
 #[tokio::test]
 async fn appends_whole_list_and_returns_counts() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("writer");
+    let agent = TestAgent::new(&harness.ctx, "writer");
     let todos = json!([
         { "content": "plan", "status": "in_progress" },
         { "content": "build", "status": "pending" }
@@ -236,7 +300,7 @@ async fn appends_whole_list_and_returns_counts() {
 #[tokio::test]
 async fn stores_trimmed_content() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("trim");
+    let agent = TestAgent::new(&harness.ctx, "trim");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [{ "content": "  plan the work  ", "status": "pending" }] }),
@@ -254,7 +318,7 @@ async fn stores_trimmed_content() {
 #[tokio::test]
 async fn stores_content_trimmed_with_the_ecmascript_character_set() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("ecmascript-trim");
+    let agent = TestAgent::new(&harness.ctx, "ecmascript-trim");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [
@@ -278,7 +342,7 @@ async fn stores_content_trimmed_with_the_ecmascript_character_set() {
 #[tokio::test]
 async fn bom_only_and_bom_trimmed_duplicate_content_are_rejected() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("ecmascript-trim-errors");
+    let agent = TestAgent::new(&harness.ctx, "ecmascript-trim-errors");
     let empty = execute(
         &harness.ctx,
         json!({ "todos": [{ "content": "\u{FEFF}", "status": "pending" }] }),
@@ -315,7 +379,7 @@ async fn bom_only_and_bom_trimmed_duplicate_content_are_rejected() {
 #[tokio::test]
 async fn latest_write_is_the_current_whole_list() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("writer-2");
+    let agent = TestAgent::new(&harness.ctx, "writer-2");
     execute(
         &harness.ctx,
         json!({ "todos": [{ "content": "a", "status": "pending" }] }),
@@ -341,7 +405,7 @@ async fn latest_write_is_the_current_whole_list() {
 #[tokio::test]
 async fn malformed_status_is_rejected_before_execute() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("bad-status");
+    let agent = TestAgent::new(&harness.ctx, "bad-status");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [{ "content": "x", "status": "doing" }] }),
@@ -356,7 +420,7 @@ async fn malformed_status_is_rejected_before_execute() {
 #[tokio::test]
 async fn non_array_todos_is_rejected() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("not-array");
+    let agent = TestAgent::new(&harness.ctx, "not-array");
     let result = execute(
         &harness.ctx,
         json!({ "todos": "nope" }),
@@ -370,7 +434,7 @@ async fn non_array_todos_is_rejected() {
 #[tokio::test]
 async fn parallel_policy_accepts_several_active_items() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("parallel");
+    let agent = TestAgent::new(&harness.ctx, "parallel");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [
@@ -389,7 +453,7 @@ async fn parallel_policy_accepts_several_active_items() {
 #[tokio::test]
 async fn single_policy_rejects_several_active_items_without_writing() {
     let harness = setup(false).await;
-    let agent = TestAgent::new("single-active");
+    let agent = TestAgent::new(&harness.ctx, "single-active");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [
@@ -415,7 +479,7 @@ async fn single_policy_rejects_several_active_items_without_writing() {
 #[tokio::test]
 async fn single_policy_accepts_one_active_item() {
     let harness = setup(false).await;
-    let agent = TestAgent::new("one-active");
+    let agent = TestAgent::new(&harness.ctx, "one-active");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [
@@ -461,7 +525,7 @@ async fn descriptions_follow_the_parallel_policy() {
 #[tokio::test]
 async fn empty_content_is_a_structured_args_error() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("empty");
+    let agent = TestAgent::new(&harness.ctx, "empty");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [{ "content": "   ", "status": "pending" }] }),
@@ -476,7 +540,7 @@ async fn empty_content_is_a_structured_args_error() {
 #[tokio::test]
 async fn duplicate_trimmed_content_is_a_structured_args_error() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("duplicate");
+    let agent = TestAgent::new(&harness.ctx, "duplicate");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [
@@ -500,7 +564,7 @@ async fn duplicate_trimmed_content_is_a_structured_args_error() {
 #[tokio::test]
 async fn unknown_item_keys_fail_at_the_schema_boundary() {
     let harness = setup(true).await;
-    let agent = TestAgent::new("unknown-key");
+    let agent = TestAgent::new(&harness.ctx, "unknown-key");
     let result = execute(
         &harness.ctx,
         json!({ "todos": [{ "content": "a", "status": "pending", "children": [] }] }),

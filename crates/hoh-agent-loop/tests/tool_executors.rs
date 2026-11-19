@@ -168,7 +168,7 @@ impl Independent {
             let arguments: Value = serde_json::from_str(&call.arguments)?;
             let prepared = self
                 .pipeline
-                .try_prepare(ToolExecutionInput {
+                .prepare(ToolExecutionInput {
                     call_id: call.id.clone(),
                     root_call_id: None,
                     name: call.name.clone(),

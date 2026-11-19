@@ -103,7 +103,10 @@ pub async fn execute_tool_fixture(
     input: ToolExecutionInput,
 ) -> Result<ToolExecutionResult, BoxError> {
     let pipeline = ToolExecutionPipeline::new(ctx.clone())?;
-    let prepared = pipeline.prepare(input).await;
+    let prepared = pipeline
+        .prepare(input)
+        .await
+        .expect("the tool lookup does not reject");
     let exec = prepared.exec().clone();
     let dispatched = match prepared {
         ScheduledToolPreparation::Dispatch(exec) => pipeline.dispatch(exec).await,

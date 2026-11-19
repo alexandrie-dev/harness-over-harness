@@ -13,6 +13,7 @@ fn mode(env: &Env, name: &str, args: Value) -> ToolExecutionMode {
     ToolExecutionPipeline::new(env.ctx.clone())
         .expect("pipeline")
         .execution_mode(&input("c1", name, args))
+        .expect("the registry is mounted")
 }
 
 fn empty(name: &str, parameters: Value, safe: Option<hoh_tools::ConcurrencyFn>) -> ToolDefinition {

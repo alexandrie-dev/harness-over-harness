@@ -24,6 +24,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+hoh-agent = { path = "../hoh-agent" }
 hoh-scope = { path = "../hoh-scope" }
 hoh-session = { path = "../hoh-session" }
 hoh-system-prompt = { path = "../hoh-system-prompt" }

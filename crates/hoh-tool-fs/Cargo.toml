@@ -16,11 +16,11 @@ hoh-brand = { path = "../hoh-brand" }
 hoh-error = { path = "../hoh-error" }
 hoh-fs = { path = "../hoh-fs" }
 hoh-fs-patch = { path = "../hoh-fs-patch" }
-hoh-fs-sandbox = { path = "../hoh-fs-sandbox" }
 hoh-jsdiff = { path = "../hoh-jsdiff" }
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-llm = { path = "../hoh-llm" }
 hoh-sandbox = { path = "../hoh-sandbox" }
+hoh-sandbox-policy = { path = "../hoh-sandbox-policy" }
 hoh-scope = { path = "../hoh-scope" }
 hoh-session = { path = "../hoh-session" }
 hoh-system-prompt = { path = "../hoh-system-prompt" }
@@ -39,6 +39,7 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+hoh-fs-sandbox = { path = "../hoh-fs-sandbox" }
 base64.workspace = true
 hoh-session-projection = { path = "../hoh-session-projection" }
 hoh-attachment-local = { path = "../hoh-attachment-local" }

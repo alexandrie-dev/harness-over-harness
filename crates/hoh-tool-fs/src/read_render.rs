@@ -87,8 +87,8 @@ fn utf16_prefix(text: &str, units: u64) -> (String, bool) {
     (text.to_owned(), false)
 }
 
-fn truncate_line(line: &str, line_units: u64, overflowed: bool, max_line_length: u64) -> String {
-    if overflowed || line_units > max_line_length {
+fn truncate_line(line: &str, line_units: u64, max_line_length: u64) -> String {
+    if line_units > max_line_length {
         format!(
             "{}... (line truncated to {max_line_length} chars)",
             utf16_prefix(line, max_line_length).0
@@ -98,13 +98,7 @@ fn truncate_line(line: &str, line_units: u64, overflowed: bool, max_line_length:
     }
 }
 
-fn consume_line(
-    acc: &mut Accumulator,
-    raw_line: &str,
-    line_units: u64,
-    overflowed: bool,
-    request: &ReadWindow,
-) {
+fn consume_line(acc: &mut Accumulator, raw_line: &str, line_units: u64, request: &ReadWindow) {
     acc.total_lines += 1;
     if acc.truncated_by_bytes
         || (acc.total_lines as f64) < request.offset
@@ -112,7 +106,7 @@ fn consume_line(
     {
         return;
     }
-    let text = truncate_line(raw_line, line_units, overflowed, request.max_line_length);
+    let text = truncate_line(raw_line, line_units, request.max_line_length);
     let bytes = text.len() as u64 + u64::from(!acc.lines.is_empty());
     if acc.output_bytes + bytes > request.max_bytes {
         acc.truncated_by_bytes = true;
@@ -152,13 +146,12 @@ fn finish(
 }
 
 /// The bounded text of the line being scanned: one UTF-16 unit past the truncation point is enough
-/// to prove that the line overflows.
+/// to prove that the line overflows. As in the source, the trailing `\r` is stripped from this
+/// bounded text, so a `\r` standing exactly on the cap position leaves a line that fits.
 struct LineBuffer {
     cap: u64,
     text: String,
     units: u64,
-    /// Whether text beyond the cap was dropped.
-    overflowed: bool,
 }
 
 impl LineBuffer {
@@ -167,7 +160,6 @@ impl LineBuffer {
             cap: max_line_length + 1,
             text: String::new(),
             units: 0,
-            overflowed: false,
         }
     }
 
@@ -176,20 +168,16 @@ impl LineBuffer {
             return;
         }
         if self.units >= self.cap {
-            self.overflowed = true;
             return;
         }
         let room = self.cap - self.units;
-        let (kept, cut) = utf16_prefix(segment, room);
-        if cut {
-            self.overflowed = true;
-        }
+        let (kept, _) = utf16_prefix(segment, room);
         self.units += kept.encode_utf16().count() as u64;
         self.text.push_str(&kept);
     }
 
     fn is_empty(&self) -> bool {
-        self.text.is_empty() && !self.overflowed
+        self.text.is_empty()
     }
 
     fn flush(&mut self, acc: &mut Accumulator, request: &ReadWindow) {
@@ -199,9 +187,8 @@ impl LineBuffer {
             Some(stripped) => (stripped, self.units - 1),
             None => (line.as_str(), self.units),
         };
-        consume_line(acc, line, units, self.overflowed, request);
+        consume_line(acc, line, units, request);
         self.units = 0;
-        self.overflowed = false;
     }
 }
 

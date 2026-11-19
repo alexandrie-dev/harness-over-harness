@@ -20,6 +20,7 @@ hoh-util-values = { path = "../hoh-util-values" }
 serde_json.workspace = true
 
 [dev-dependencies]
+hoh-agent = { path = "../hoh-agent" }
 hoh-session = { path = "../hoh-session" }
 hoh-timeout = { path = "../hoh-timeout" }
 hoh-tool-executor-native = { path = "../hoh-tool-executor-native" }

@@ -8,3 +8,4 @@ pub mod profile_boot;
 pub mod profile_initialization;
 pub mod registry;
 pub mod startup_diagnostics;
+mod window_glue;

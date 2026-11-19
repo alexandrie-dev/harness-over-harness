@@ -31,10 +31,22 @@ async fn guarded() -> T {
     .await
 }
 
+/// The guarded deployment over the real sandbox policy (`SandboxPolicyService` in workspace-write
+/// mode with the workspace as its root) and the sandboxing provider.
+async fn guarded_with_sandbox_policy() -> T {
+    setup(PatchOptions {
+        without_apply_patch: true,
+        mode: Some(hoh_sandbox::SandboxMode::WorkspaceWrite),
+        ..PatchOptions::default()
+    })
+    .await
+}
+
 async fn bare() -> T {
     setup(PatchOptions {
         without_policy: true,
         without_apply_patch: true,
+        ..PatchOptions::default()
     })
     .await
 }
@@ -876,7 +888,7 @@ mod current_working_directory {
 
     #[tokio::test]
     async fn routes_subsequent_files_to_the_new_directory_while_keeping_the_original_root() {
-        let t = guarded().await;
+        let t = guarded_with_sandbox_policy().await;
         let next = t.path("next");
         std::fs::create_dir(&next).unwrap();
         std::fs::write(t.path("note.txt"), "original").unwrap();
@@ -890,6 +902,16 @@ mod current_working_directory {
         support::ensure_live(&t.ctx, &dyn_agent);
         let owner = hoh_working_directory::live_agent(&t.ctx, &agent.session)
             .expect("the agent is registered");
+        let sandbox_policy = t
+            .ctx
+            .get::<hoh_sandbox_policy::SandboxPolicy>()
+            .expect("sandbox policy service");
+        let policy = sandbox_policy
+            .resolve(hoh_sandbox_policy::SandboxPolicyRequest {
+                session: Some(&agent.session),
+                mode: None,
+            })
+            .unwrap();
         t.env
             .working_directory
             .set(&owner, &next.to_string_lossy(), None)
@@ -942,6 +964,23 @@ mod current_working_directory {
             "edited"
         );
         assert!(!t.path("created.txt").exists());
+        // Moving the working directory neither moves the permission root nor rewrites the
+        // Session's original project directory.
+        assert_eq!(
+            sandbox_policy
+                .resolve(hoh_sandbox_policy::SandboxPolicyRequest {
+                    session: Some(&agent.session),
+                    mode: None,
+                })
+                .unwrap()
+                .workspace_root,
+            policy.workspace_root
+        );
+        assert_eq!(policy.workspace_root, t.workspace.to_string_lossy());
+        assert_eq!(
+            agent.session.header()["cwd"],
+            json!(t.workspace.to_string_lossy())
+        );
         t.kernel.shutdown().await;
     }
 }

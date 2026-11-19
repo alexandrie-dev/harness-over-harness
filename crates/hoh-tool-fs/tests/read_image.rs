@@ -301,6 +301,16 @@ mod image_media_type_for_path_mapping {
         assert_eq!(image_media_type_for_path("note.txt"), None);
         assert_eq!(image_media_type_for_path("png"), None);
     }
+
+    /// `read-image.ts:325` takes the shared Node `extname`: `..` and `a/..` have none (a
+    /// directory, not a ".": extension that declares no format).
+    #[test]
+    fn dot_dot_has_no_extension_like_node() {
+        assert_eq!(image_media_type_for_path(".."), None);
+        assert_eq!(image_media_type_for_path("a/.."), None);
+        assert_eq!(image_media_type_for_path("a/../"), None);
+        assert_eq!(image_media_type_for_path("dir/.png"), None);
+    }
 }
 
 mod sniffing {
@@ -1379,6 +1389,23 @@ mod image_admission_failures {
         assert!(directory.is_error());
         assert!(directory.text().contains("not a regular file"));
         assert_eq!(code(&directory), named("FsError", "FS_NOT_REGULAR_FILE"));
+
+        // `..` is a directory with no extension, not a file with a "." extension.
+        for dotted in ["..", "folder.png/.."] {
+            let parent = read_image(
+                t,
+                json!({ "file_path": dotted }),
+                Some(agent_on(t, Some("vision-model"))),
+            )
+            .await;
+            assert!(parent.is_error(), "{dotted}");
+            assert_eq!(
+                code(&parent),
+                named("FsError", "FS_NOT_REGULAR_FILE"),
+                "{dotted}: {}",
+                parent.text()
+            );
+        }
         t.kernel.shutdown().await;
     }
 
@@ -1616,6 +1643,7 @@ mod registration_surface {
                 json!({ "file_path": "a.png" }),
                 support::live_signal(),
             ))
+            .unwrap()
             .kind();
         assert_eq!(mode, "parallel");
         let definition = t.env.tools.get("read_image", None, None).unwrap();

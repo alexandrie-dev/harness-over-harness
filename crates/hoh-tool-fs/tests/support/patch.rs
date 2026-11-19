@@ -1,6 +1,6 @@
 //! Isolated real-provider fixtures for patch reports and observation state (`tests/patch/harness.ts`):
 //! the real `LocalFileSystem` over a temporary workspace, wrapped so a test can inject failures at
-//! the provider seam, plus the observation-policy stand-in.
+//! the provider seam, plus the real observation policy.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -305,6 +305,10 @@ pub struct PatchOptions {
     pub without_policy: bool,
     /// Leave `applyPatch` at its default (disabled).
     pub without_apply_patch: bool,
+    /// Mount the real `hoh-sandbox-policy` and the sandboxing filesystem (`hoh-fs-sandbox`, cwd =
+    /// the provider root) in this mode instead of the fault-injecting provider (`mode` of
+    /// `tests/patch/harness.ts`). Fault hooks do not apply to the sandboxing provider.
+    pub mode: Option<hoh_sandbox::SandboxMode>,
 }
 
 pub struct T {
@@ -349,23 +353,41 @@ pub async fn setup(options: PatchOptions) -> T {
         move_hunks: Mutex::default(),
         patch_text_guards: Mutex::default(),
     });
-    let provided = spy.clone();
-    ctx.inject(move |ctx, (): ()| {
-        let fs = provided.clone();
-        async move {
-            ctx.provide::<Fs>(fs).await?;
-            Ok(())
-        }
-    })
-    .unwrap()
-    .settled()
-    .await
-    .unwrap();
     ctx.plugin::<SessionProjectionRegistry>(json!({}))
         .unwrap()
         .settled()
         .await
         .unwrap();
+    if let Some(mode) = options.mode {
+        ctx.plugin::<hoh_sandbox_policy::SandboxPolicyService>(json!({
+            "mode": mode.as_str(),
+            "workspaceRoot": workspace_text,
+        }))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+        ctx.plugin::<hoh_fs_sandbox::FsSandboxPlugin>(json!({
+            "cwd": provider_root.to_string_lossy(),
+        }))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+    } else {
+        let provided = spy.clone();
+        ctx.inject(move |ctx, (): ()| {
+            let fs = provided.clone();
+            async move {
+                ctx.provide::<Fs>(fs).await?;
+                Ok(())
+            }
+        })
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+    }
     ctx.plugin::<hoh_agent::AgentRegistryPlugin>(json!({}))
         .unwrap()
         .settled()
@@ -392,7 +414,7 @@ pub async fn setup(options: PatchOptions) -> T {
         .await
         .unwrap();
     if !options.without_policy {
-        mount_policy(&ctx);
+        mount_policy(&ctx).await;
     }
     let tool_fs = ctx
         .plugin::<ToolFs>(json!({ "applyPatch": !options.without_apply_patch }))
@@ -405,11 +427,11 @@ pub async fn setup(options: PatchOptions) -> T {
         json!({}),
         controller.signal(),
     );
-    let agent: Arc<dyn hoh_tools::Agent> = TestAgent::new();
-    super::ensure_live(&ctx, &agent);
+    let seam: Arc<dyn hoh_tools::Agent> = TestAgent::new();
+    let agent = super::ensure_live(&ctx, &seam);
     input.agent = Some(agent.clone());
     let pipeline = ToolExecutionPipeline::new(ctx.clone()).unwrap();
-    let exec = pipeline.prepare(input).await.exec().clone();
+    let exec = pipeline.prepare(input).await.unwrap().exec().clone();
     let env = Env {
         ctx: ctx.clone(),
         fs: ctx.get::<Fs>().unwrap(),
@@ -549,6 +571,16 @@ impl T {
         }
     }
 
+    /// The per-call policy the tool layer would stamp for a standing `mode` over the workspace.
+    pub fn policy(&self, mode: hoh_sandbox::SandboxMode) -> SandboxExecutionPolicy {
+        SandboxExecutionPolicy {
+            mode,
+            workspace_root: self.workspace.to_string_lossy().into_owned(),
+            additional_writable_roots: None,
+            session_id: None,
+        }
+    }
+
     pub async fn run(&self, text: &str) -> Result<PatchExecutionReport, BoxError> {
         self.run_with(text, None).await
     }
@@ -580,7 +612,7 @@ impl T {
             self.controller.signal(),
         );
         let pipeline = ToolExecutionPipeline::new(self.ctx.clone()).unwrap();
-        let exec = pipeline.prepare(input).await.exec().clone();
+        let exec = pipeline.prepare(input).await.unwrap().exec().clone();
         hoh_tool_fs::patch::execute_patch(
             &self.env,
             &self.sandbox,
