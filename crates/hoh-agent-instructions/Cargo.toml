@@ -1,0 +1,40 @@
+[package]
+name = "hoh-agent-instructions"
+description = "Port of @deepseek-ai/dsh-agent-instructions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-error = { path = "../hoh-error" }
+hoh-fs = { path = "../hoh-fs" }
+hoh-home-paths = { path = "../hoh-home-paths" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-session = { path = "../hoh-session" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+hoh-working-directory = { path = "../hoh-working-directory" }
+futures-util.workspace = true
+indexmap.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-agent-loop-testkit = { path = "../hoh-agent-loop-testkit" }
+hoh-fs-patch = { path = "../hoh-fs-patch" }
+hoh-fs-local = { path = "../hoh-fs-local" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-tool-testkit = { path = "../hoh-tool-testkit" }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
