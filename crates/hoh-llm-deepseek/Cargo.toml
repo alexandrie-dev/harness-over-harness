@@ -1,0 +1,42 @@
+[package]
+name = "hoh-llm-deepseek"
+description = "Port of @deepseek-ai/dsh-llm-deepseek (packages/llm/llm-deepseek)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-anonymous-user-id = { path = "../hoh-anonymous-user-id" }
+hoh-atomic-write = { path = "../hoh-atomic-write" }
+hoh-attachment = { path = "../hoh-attachment" }
+hoh-credentials = { path = "../hoh-credentials" }
+hoh-deepseek-llm-api-extensions = { path = "../hoh-deepseek-llm-api-extensions" }
+hoh-error = { path = "../hoh-error" }
+hoh-home-paths = { path = "../hoh-home-paths" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-launch-environment = { path = "../hoh-launch-environment" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-package-manifest = { path = "../hoh-package-manifest" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-util-values = { path = "../hoh-util-values" }
+base64.workspace = true
+futures-util.workspace = true
+indexmap.workspace = true
+jiff.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+http.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
