@@ -341,3 +341,37 @@ sandbox: Tokio signal/unix.rs:250–258 использует такую запи
 compile/test/clippy также --offline. Ни один из девяти отказов не проигнорирован.
 R54 nonrecursive-$ref default остаётся прежним единственным ignore.
 
+
+## Профиль окна: подтверждение разрушающих команд внутри папки (`hoh-window-destructive-guard`)
+
+Отличие профиля окна от dsh, у которого такого плагина нет. В dsh песочница `workspace-write` пускает
+`rm` и перезапись файлов внутри папки сессии без вопроса. Для окна это решено иначе (условие вехи
+«опасные действия подтверждаются», экран `design/build-a/approval-1440.png`): bash-команда, которая
+может удалить или перезаписать существующий файл, сначала уходит на подтверждение.
+
+- Подключение: `hoh:window-destructive-guard` в `src/registry.rs` и в
+  `assets/bundle/window/cordis.patch.yml` (после `window-privileged-approver`). Только профиль окна;
+  профили, сверяемые с dsh, не затронуты.
+- Механика: `PreToolDecision::Ask` из слушателя `ToolsPreExecute` → `service_ask` → `hoh-user-approval`
+  → в режиме host `approval/request` с mac; `rejected` — команда не запускается, `allowed-once` —
+  запускается, следующий такой же вызов спрашивает снова. Правила и текст вопроса — в
+  `crates/hoh-window-destructive-guard/PORT_NOTES.md`.
+- `humanText` — русский текст под ключом `"en"` в `display_reason` (протокол хоста несёт один текст);
+  сырая команда — в `reason`.
+- Вызов с `sandbox_permissions: "danger-full-access"` (fix1): охрана задаёт вопрос сама, по-русски и в
+  том же виде, что остальные («Помощник просит выполнить команду без ограничений песочницы: …»), а
+  собственный вопрос bash об эскалации одобряется грантом `ApprovalService::pre_approve_escalation`
+  (`hoh-user-approval`), который охрана записывает только после `allowed-once` хоста; грант привязан к
+  (сессия, callId, `bash`, причина) и одноразовый (fix4). Один вопрос на вызов; `hoh-tool-bash` и
+  `hoh-sandbox` не менялись. Тесты fix4: отклонённый/разрешённый bash и `write` с тем же callId.
+- fix3: цель или опция со значением цели с подстановкой (`--file=$OUT`, `-o$OUT`, `-t$D`, `-$X`, маска) во всех ветках классификатора — вопрос, если режим команды может перезаписать/удалить.
+- fix2: файловые проверки охраны идут на блокирующем потоке (`spawn_blocking`); `tar` определяет режим после всех опций; `env -C` / `sudo -D` переносят проверку целей в новую папку.
+- fix1: ещё `curl -o/-O`, `wget -O`, `unzip` (без `-n`/`-l`), `patch`, `git apply`, `awk -i inplace`.
+- fix0: охрана спрашивает и про `sed -i` / `perl -i`, `rsync --delete*`, `tar x…`, `ln -f`, `install`,
+  `cp`/`mv` с `-f`, `python|node|perl|ruby` со встроенным кодом. Запуск файла-скрипта и сборки
+  (`python x.py`, `node x.js`, `make`, `npm run`, `cargo`, `pytest`) сознательно без вопроса: вторая
+  линия — песочница; внутри папки она ничего не спрашивает, и это принятое ограничение.
+- Тесты: `tests/window_guard.rs` (удаление: отклонить / разрешить / повтор; перезапись; двенадцать
+  обычных команд без единого `approval/request`; обе стороны эскалации) и два сценария в
+  `tests/window_e2e.rs`. Файлы `tests/window_profile.rs`, `src/profile_boot.rs`, `src/window_glue.rs`
+  этим изменением не тронуты.

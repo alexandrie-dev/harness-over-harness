@@ -99,7 +99,8 @@ pub fn registry() -> PluginRegistry {
         .add::<hoh_fs_sandbox::FsSandboxPlugin>("@deepseek-ai/dsh-fs-sandbox")
         .add::<hoh_model_host::ModelHostPlugin>("hoh:model-host")
         .add::<super::window_glue::WindowModelSettings>("hoh:window-model-settings")
-        .add::<super::window_glue::WindowPrivilegedApprover>("hoh:window-privileged-approver");
+        .add::<super::window_glue::WindowPrivilegedApprover>("hoh:window-privileged-approver")
+        .add::<hoh_window_destructive_guard::DestructiveGuard>("hoh:window-destructive-guard");
     #[cfg(debug_assertions)]
     if std::env::var_os("HOH_TEST_EXIT_THEN_FAIL").is_some() {
         registry.add::<ExitThenFailFixture>("hoh:test-exit-then-fail");

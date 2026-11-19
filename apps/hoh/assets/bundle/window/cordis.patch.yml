@@ -92,6 +92,11 @@
     - id: privileged-approver
       name: 'hoh:window-privileged-approver'
 
+    # Window profile only (no dsh counterpart): bash commands that may delete or overwrite an
+    # existing file are put to the user first.
+    - id: destructive-guard
+      name: 'hoh:window-destructive-guard'
+
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 

@@ -1259,3 +1259,107 @@ async fn allowed_dangerous_action_runs_after_a_valid_decision() {
     );
     host.shutdown().await;
 }
+
+// ---------------------------------------------------------------- deleting inside the folder
+
+fn delete_in_folder(id: &str, command: &str) -> ScenarioResponse {
+    call(
+        id,
+        "bash",
+        json!({"command": command, "description": "Remove old files in the folder"}),
+    )
+}
+
+fn seed_old_files(workspace: &Workspace) -> Vec<PathBuf> {
+    ["old1.txt", "old2.txt", "old3.txt"]
+        .iter()
+        .map(|name| {
+            let path = workspace.folder.join(name);
+            std::fs::write(&path, "старое\n").expect("old file");
+            path
+        })
+        .collect()
+}
+
+/// `rm` of files inside the session folder (no sandbox escalation) is put to the host: rejected,
+/// the files stay and the model is told; the question is worded for a person, not a shell.
+#[tokio::test]
+async fn deleting_files_in_the_folder_is_rejected_and_nothing_is_removed() {
+    let workspace = Workspace::new();
+    let old = seed_old_files(&workspace);
+    let mock = start_mock(vec![
+        delete_in_folder("call-rm", "rm old1.txt old2.txt old3.txt"),
+        text(&["Файлы оставил."]),
+    ])
+    .await;
+    let mut host = Host::start(&workspace, approval_key()).await;
+    host.initialize(&workspace).await;
+    configure_model(&mut host, &mock.base_url).await;
+
+    host.plan("bash", Verdict::Reject);
+    let start = host.prompt(SESSION, "Убери старые файлы").await;
+    let events = host.session_events(SESSION, start);
+    assert!(
+        old.iter().all(|path| path.exists()),
+        "a rejected delete removed files:\n{}",
+        brief(&events)
+    );
+    let asked = &host
+        .resolved
+        .last()
+        .expect("the delete was put to the host")
+        .request;
+    assert!(
+        asked
+            .human_text
+            .contains("удалить 3 файла: old1.txt, old2.txt, old3.txt")
+            && asked.human_text.contains("Файлы не попадут в корзину"),
+        "{}",
+        asked.human_text
+    );
+    assert!(
+        asked
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("rm old1.txt")),
+        "{:?}",
+        asked.reason
+    );
+    assert!(mentions(&events, "Файлы оставил."), "{}", brief(&events));
+    host.shutdown().await;
+}
+
+/// `allowed-once` removes the files, and the next identical delete asks again.
+#[tokio::test]
+async fn an_allowed_delete_in_the_folder_runs_once_and_the_next_asks_again() {
+    let workspace = Workspace::new();
+    let old = seed_old_files(&workspace);
+    let command = "rm old1.txt old2.txt old3.txt";
+    let mock = start_mock(vec![
+        delete_in_folder("call-rm-1", command),
+        delete_in_folder("call-rm-2", command),
+        text(&["Готово."]),
+    ])
+    .await;
+    let mut host = Host::start(&workspace, approval_key()).await;
+    host.initialize(&workspace).await;
+    configure_model(&mut host, &mock.base_url).await;
+
+    host.plan("bash", Verdict::Allow);
+    host.plan("bash", Verdict::Reject);
+    let before = host.resolved.len();
+    let start = host.prompt(SESSION, "Убери старые файлы").await;
+    let events = host.session_events(SESSION, start);
+    assert!(
+        old.iter().all(|path| !path.exists()),
+        "the allowed delete did not run:\n{}",
+        brief(&events)
+    );
+    assert_eq!(
+        host.resolved.len() - before,
+        2,
+        "the second identical call must ask again"
+    );
+    assert!(mentions(&events, "Готово."), "{}", brief(&events));
+    host.shutdown().await;
+}

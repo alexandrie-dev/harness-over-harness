@@ -60,6 +60,7 @@ hoh-tool-working-directory = { path = "../../crates/hoh-tool-working-directory" 
 hoh-tools = { path = "../../crates/hoh-tools" }
 hoh-user-questions = { path = "../../crates/hoh-user-questions" }
 hoh-user-approval = { path = "../../crates/hoh-user-approval" }
+hoh-window-destructive-guard = { path = "../../crates/hoh-window-destructive-guard" }
 hoh-working-directory = { path = "../../crates/hoh-working-directory" }
 futures-util.workspace = true
 indexmap.workspace = true

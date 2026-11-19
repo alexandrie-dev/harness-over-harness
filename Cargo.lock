@@ -680,6 +680,7 @@ dependencies = [
  "hoh-util-values",
  "hoh-web",
  "hoh-web-fetch-http",
+ "hoh-window-destructive-guard",
  "hoh-working-directory",
  "indexmap",
  "jiff",
