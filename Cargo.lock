@@ -2151,6 +2151,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-title-llm"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-session",
+ "hoh-session-title",
+ "hoh-timeout",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-shell"
 version = "0.1.0"
 dependencies = [
