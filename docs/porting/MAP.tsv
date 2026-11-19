@@ -166,7 +166,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/util/ripgrep	@deepseek-ai/dsh-util-ripgrep	hoh-util-ripgrep	109	189	done	
 2	port	packages/web/tool-web	@deepseek-ai/dsh-tool-web	hoh-tool-web	1054	1692	writing:x8	
 2	port	packages/web/web	@deepseek-ai/dsh-web	hoh-web	507	394	done	зависит от: dsh-typert-protocol=skip
-2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	accepted	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
+2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	done	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
 2	port	packages/web/web-fetch-http	@deepseek-ai/dsh-web-fetch-http	hoh-web-fetch-http	601	853	done	
 2	port	packages/web/web-search-deepseek	@deepseek-ai/dsh-web-search-deepseek	hoh-web-search-deepseek	696	1322	writing:x8	зависит от: dsh-deepseek-account=later
 3	port	packages/browser-use/browser-use	@deepseek-ai/dsh-browser-use	hoh-browser-use	65	51	todo	

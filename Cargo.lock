@@ -3154,6 +3154,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-web-deepseek-api"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-credentials",
+ "hoh-error",
+ "hoh-http-proxy",
+ "hoh-kernel",
+ "hoh-launch-environment",
+ "hoh-llm",
+ "hoh-llm-deepseek",
+ "hoh-llm-deepseek-api-key",
+ "hoh-loader",
+ "hoh-package-manifest",
+ "hoh-timeout",
+ "hoh-util-values",
+ "hoh-web",
+ "http",
+ "indexmap",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "hoh-web-fetch-http"
 version = "0.1.0"
 dependencies = [
