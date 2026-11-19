@@ -85,10 +85,19 @@ pub fn credential_key_id(key: &CredentialKey) -> &str {
     &value[value.find('/').map_or(0, |index| index + 1)..]
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedCredential {
     pub value: String,
     pub source: String,
+}
+
+impl std::fmt::Debug for ResolvedCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedCredential")
+            .field("value", &"[REDACTED]")
+            .field("source", &self.source)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

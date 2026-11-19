@@ -1,0 +1,58 @@
+/* Общие элементы окон первого запуска и подтверждения. Только var(--…) из tokens.css. */
+
+.hoh-page {
+  margin: 0;
+  min-width: 0;
+  min-height: var(--viewport-height);
+  background: var(--color-stage);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-feature-settings: var(--font-features);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}
+:where(.hoh-page) *:focus-visible { outline: var(--focus-width) solid var(--accent-hi); outline-offset: var(--focus-offset); }
+:where(.hoh-page) :is(button, input) { font: inherit; color: inherit; }
+:where(.hoh-page) button { cursor: pointer; }
+:where(.hoh-page) :is(h1, h2, p) { margin: 0; }
+
+.ic { width: var(--size-icon); height: var(--size-icon); fill: none; stroke: currentColor; stroke-width: var(--icon-stroke); stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.ic-sm { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+.ic-spin { animation: ic-spin var(--dur-spin) steps(8) infinite; }
+@keyframes ic-spin { to { transform: rotate(360deg); } }
+
+.mark {
+  width: var(--size-mark); height: var(--size-mark); border-radius: var(--radius-md);
+  background: var(--accent); display: grid; place-items: center;
+  font-weight: var(--font-weight-bold); font-size: var(--text-xs); letter-spacing: var(--tracking-tighter);
+  box-shadow: var(--shadow-inset-mark); color: var(--color-on-accent);
+}
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-3);
+  height: var(--size-control); padding: 0 var(--space-6);
+  border-radius: var(--radius); border: var(--border-width) solid var(--border-2);
+  background: var(--color-tint); color: var(--color-fg);
+  font-size: var(--text-sm); font-weight: var(--font-weight-medium); white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--color-tint-2); }
+.btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
+.btn-primary { background: var(--accent); border-color: var(--accent-border); color: var(--color-on-accent); box-shadow: var(--shadow-inset-top); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hi); }
+.btn-lg { height: var(--size-control-lg); padding: 0 var(--space-8); font-size: var(--text-base); }
+
+.field { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-7); }
+.field label { font-size: var(--text-xs); font-weight: var(--font-weight-medium); color: var(--color-fg-2); }
+.field input {
+  height: var(--size-control-field); padding: 0 var(--space-6);
+  border: var(--border-width) solid var(--border-2); border-radius: var(--radius);
+  background: var(--color-field); outline: 0; font-size: var(--text-base);
+}
+.field input:focus { border-color: var(--accent-field-focus); }
+.field input:focus-visible { outline: 0; }
+.field .help { font-size: var(--text-2xs); color: var(--color-dim); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ic-spin { animation: none; }
+}

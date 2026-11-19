@@ -1,0 +1,2452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RequestFrame",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "$ref": "#/$defs/Version"
+    },
+    "id": {
+      "$ref": "#/$defs/JsonRpcId"
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "id"
+  ],
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "initialize"
+        },
+        "params": {
+          "$ref": "#/$defs/InitializeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/prompt"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionPromptParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/query"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionQueryParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/resume"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/wait"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/working-directory/get"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/working-directory/set"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionWorkingDirectorySetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "shutdown"
+        }
+      },
+      "required": [
+        "method"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/list"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionListParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/events"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionEventsParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/cancel"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/list"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/get"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/create"
+        },
+        "params": {
+          "$ref": "#/$defs/EmployeeCreateParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/update"
+        },
+        "params": {
+          "$ref": "#/$defs/EmployeeUpdateParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/delete"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/memory/list"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/memory/put"
+        },
+        "params": {
+          "$ref": "#/$defs/MemoryPutParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/memory/delete"
+        },
+        "params": {
+          "$ref": "#/$defs/MemoryDeleteParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/employee/open"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/draft/start"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskDraftStartParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/draft/decide"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskDraftDecideParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/list"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/get"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/versions"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/rollback"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskRollbackParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/delete"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/run"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskRunParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/knowledge/get"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskIdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/task/knowledge/edit"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskKnowledgeEditParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/button/list"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/button/create"
+        },
+        "params": {
+          "$ref": "#/$defs/ButtonCreateParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/button/update"
+        },
+        "params": {
+          "$ref": "#/$defs/ButtonUpdateParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/button/delete"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/schedule/list"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/schedule/create"
+        },
+        "params": {
+          "$ref": "#/$defs/ScheduleCreateParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/schedule/update"
+        },
+        "params": {
+          "$ref": "#/$defs/ScheduleUpdateParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/schedule/delete"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/schedule/run-now"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/schedule/history"
+        },
+        "params": {
+          "$ref": "#/$defs/IdParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/artifact/list"
+        },
+        "params": {
+          "$ref": "#/$defs/ArtifactListParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/artifact/read"
+        },
+        "params": {
+          "$ref": "#/$defs/ArtifactReadParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/artifact/render"
+        },
+        "params": {
+          "$ref": "#/$defs/ArtifactRenderParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/model/key/set"
+        },
+        "params": {
+          "$ref": "#/$defs/ModelKeySetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/settings/rules/set"
+        },
+        "params": {
+          "$ref": "#/$defs/SettingsRulesSetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/model/probe"
+        },
+        "params": {
+          "$ref": "#/$defs/ModelProbeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/settings/get"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/settings/set"
+        },
+        "params": {
+          "$ref": "#/$defs/SettingsSetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/security/summary"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "approval/request"
+        },
+        "params": {
+          "$ref": "#/$defs/ApprovalRequestParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "user-question/ask"
+        },
+        "params": {
+          "$ref": "#/$defs/SdkUserQuestionRequest"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    }
+  ],
+  "$defs": {
+    "Version": {
+      "type": "string",
+      "enum": [
+        "2.0"
+      ]
+    },
+    "JsonRpcId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        }
+      ]
+    },
+    "InitializeParams": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "approvalRequests": {
+          "type": "boolean"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "type": "string"
+        },
+        "maxTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "userQuestions": {
+              "type": "boolean"
+            },
+            "approvals": {
+              "type": "string",
+              "enum": [
+                "host"
+              ]
+            }
+          }
+        },
+        "hoh": {
+          "type": "object",
+          "properties": {
+            "protocolVersion": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "approvalKey": {
+              "description": "64 lowercase hex characters, native host only; never forward to JS.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "protocolVersion"
+          ]
+        }
+      },
+      "required": [
+        "cwd",
+        "provider",
+        "model"
+      ]
+    },
+    "SessionPromptParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "contentBlocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SdkPromptContentBlock"
+          }
+        }
+      },
+      "required": [
+        "sessionId",
+        "contentBlocks"
+      ]
+    },
+    "SdkPromptContentBlock": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ContentBlock"
+        },
+        {
+          "$ref": "#/$defs/SdkEncodedImageBlock"
+        }
+      ]
+    },
+    "ContentBlock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "reasoning"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "image"
+            },
+            "attachment": {
+              "$ref": "#/$defs/ImageAttachmentRef"
+            },
+            "offloaded": {
+              "description": "Literal true, rather than a bool that would admit false.",
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "type",
+            "attachment"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "file"
+            },
+            "attachment": {
+              "$ref": "#/$defs/FileAttachmentRef"
+            }
+          },
+          "required": [
+            "type",
+            "attachment"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-call"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "arguments": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "name",
+            "arguments"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-addition"
+            },
+            "toolName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "toolName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-removal"
+            },
+            "toolName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "toolName"
+          ]
+        }
+      ]
+    },
+    "ImageAttachmentRef": {
+      "type": "object",
+      "properties": {
+        "attachmentId": {
+          "type": "string"
+        },
+        "mediaType": {
+          "$ref": "#/$defs/ImageMediaType"
+        },
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "originalDimensions": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "height": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ]
+        }
+      },
+      "required": [
+        "attachmentId",
+        "mediaType",
+        "bytes",
+        "width",
+        "height"
+      ]
+    },
+    "ImageMediaType": {
+      "type": "string",
+      "enum": [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif"
+      ]
+    },
+    "FileAttachmentRef": {
+      "type": "object",
+      "properties": {
+        "attachmentId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "attachmentId",
+        "name",
+        "bytes"
+      ]
+    },
+    "SdkEncodedImageBlock": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/ImageTag"
+        },
+        "data": {
+          "type": "string"
+        },
+        "mimeType": {
+          "$ref": "#/$defs/ImageMediaType"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data",
+        "mimeType"
+      ]
+    },
+    "ImageTag": {
+      "type": "string",
+      "enum": [
+        "image"
+      ]
+    },
+    "SessionQueryParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "contentBlocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SdkPromptContentBlock"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "contentBlocks"
+      ]
+    },
+    "SessionResumeParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ]
+    },
+    "SessionWorkingDirectorySetParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "path"
+      ]
+    },
+    "SessionListParams": {
+      "type": "object",
+      "properties": {
+        "employeeId": {
+          "type": "string"
+        }
+      }
+    },
+    "SessionEventsParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "afterSeq": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sessionId",
+        "limit"
+      ]
+    },
+    "Empty": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "IdParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "EmployeeCreateParams": {
+      "type": "object",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/EmployeeDraft"
+        }
+      },
+      "required": [
+        "draft"
+      ]
+    },
+    "EmployeeDraft": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "$ref": "#/$defs/Permissions"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "rules",
+        "taskIds",
+        "permissions"
+      ]
+    },
+    "Permissions": {
+      "type": "object",
+      "properties": {
+        "internet": {
+          "$ref": "#/$defs/InternetMode"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "writeFiles": {
+          "type": "boolean"
+        },
+        "programs": {
+          "type": "boolean"
+        },
+        "programNetwork": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actAsUser": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "internet",
+        "domains",
+        "folders",
+        "writeFiles",
+        "programs",
+        "programNetwork",
+        "actAsUser"
+      ]
+    },
+    "InternetMode": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "public",
+        "deny"
+      ]
+    },
+    "EmployeeUpdateParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "patch": {
+          "$ref": "#/$defs/EmployeePatch"
+        },
+        "rev": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "patch",
+        "rev"
+      ]
+    },
+    "EmployeePatch": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "type": "object",
+          "properties": {
+            "internet": {
+              "$ref": "#/$defs/InternetMode"
+            },
+            "domains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "folders": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "writeFiles": {
+              "type": "boolean"
+            },
+            "programs": {
+              "type": "boolean"
+            },
+            "programNetwork": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "actAsUser": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "internet",
+            "domains",
+            "folders",
+            "writeFiles",
+            "programs",
+            "programNetwork",
+            "actAsUser"
+          ]
+        }
+      }
+    },
+    "MemoryPutParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ]
+    },
+    "MemoryDeleteParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "itemId"
+      ]
+    },
+    "TaskDraftStartParams": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "employeeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ]
+    },
+    "TaskDraftDecideParams": {
+      "type": "object",
+      "properties": {
+        "draftId": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/DraftDecision"
+        },
+        "correction": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "draftId",
+        "decision"
+      ]
+    },
+    "DraftDecision": {
+      "type": "string",
+      "enum": [
+        "yes",
+        "fix",
+        "cancel"
+      ]
+    },
+    "TaskRollbackParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ]
+    },
+    "TaskRunParams": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "employeeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId",
+        "input"
+      ]
+    },
+    "TaskIdParams": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId"
+      ]
+    },
+    "TaskKnowledgeEditParams": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "instruction": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId",
+        "instruction"
+      ]
+    },
+    "ButtonCreateParams": {
+      "type": "object",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/ButtonDraft"
+        }
+      },
+      "required": [
+        "draft"
+      ]
+    },
+    "ButtonDraft": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ButtonTarget"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ButtonInput"
+          }
+        },
+        "employeeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "target"
+      ]
+    },
+    "ButtonTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "task"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "prompt"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        }
+      ]
+    },
+    "ButtonInput": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "label",
+        "required"
+      ]
+    },
+    "ButtonUpdateParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "patch": {
+          "$ref": "#/$defs/ButtonPatch"
+        }
+      },
+      "required": [
+        "id",
+        "patch"
+      ]
+    },
+    "ButtonPatch": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "target": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "task"
+                },
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "prompt"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "text"
+              ]
+            }
+          ]
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ButtonInput"
+          }
+        },
+        "employeeId": {
+          "type": "string"
+        }
+      }
+    },
+    "ScheduleCreateParams": {
+      "type": "object",
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/ScheduleDraft"
+        }
+      },
+      "required": [
+        "draft"
+      ]
+    },
+    "ScheduleDraft": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/ScheduleTarget"
+        },
+        "when": {
+          "$ref": "#/$defs/ScheduleWhen"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "target",
+        "when",
+        "enabled"
+      ]
+    },
+    "ScheduleTarget": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "employeeId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "taskId",
+            "employeeId"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "employeeId": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "employeeId",
+            "prompt"
+          ]
+        }
+      ]
+    },
+    "ScheduleWhen": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "once"
+            },
+            "at": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "at"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "interval"
+            },
+            "everyMs": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "everyMs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cron"
+            },
+            "expression": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "expression",
+            "timezone"
+          ]
+        }
+      ]
+    },
+    "ScheduleUpdateParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "patch": {
+          "$ref": "#/$defs/SchedulePatch"
+        }
+      },
+      "required": [
+        "id",
+        "patch"
+      ]
+    },
+    "SchedulePatch": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "employeeId": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "taskId",
+                "employeeId"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "employeeId": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "employeeId",
+                "prompt"
+              ]
+            }
+          ]
+        },
+        "when": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "once"
+                },
+                "at": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "kind",
+                "at"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "interval"
+                },
+                "everyMs": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "kind",
+                "everyMs"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "cron"
+                },
+                "expression": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "expression",
+                "timezone"
+              ]
+            }
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ArtifactListParams": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "runId"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "sessionId"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "employeeId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "employeeId"
+          ]
+        }
+      ]
+    },
+    "ArtifactReadParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "length": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "ArtifactRenderParams": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "as": {
+          "$ref": "#/$defs/ArtifactRenderAs"
+        },
+        "page": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "as"
+      ]
+    },
+    "ArtifactRenderAs": {
+      "type": "string",
+      "enum": [
+        "pages",
+        "table",
+        "text"
+      ]
+    },
+    "ModelKeySetParams": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiKey",
+        "baseUrl"
+      ]
+    },
+    "SettingsRulesSetParams": {
+      "type": "object",
+      "properties": {
+        "internet": {
+          "$ref": "#/$defs/SetupInternetMode"
+        },
+        "folder": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "internet",
+        "folder"
+      ]
+    },
+    "SetupInternetMode": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "public"
+      ]
+    },
+    "ModelProbeParams": {
+      "type": "object",
+      "properties": {
+        "baseUrl": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "baseUrl",
+        "model"
+      ]
+    },
+    "SettingsSetParams": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "object",
+          "properties": {
+            "baseUrl": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "baseUrl",
+            "model"
+          ]
+        },
+        "security": {
+          "type": "object",
+          "properties": {
+            "internet": {
+              "$ref": "#/$defs/InternetMode"
+            },
+            "domains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "folders": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "writeFiles": {
+              "type": "boolean"
+            },
+            "programs": {
+              "type": "boolean"
+            },
+            "programNetwork": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "actAsUser": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "internet",
+            "domains",
+            "folders",
+            "writeFiles",
+            "programs",
+            "programNetwork",
+            "actAsUser"
+          ]
+        },
+        "view": {
+          "type": "object",
+          "properties": {
+            "theme": {
+              "$ref": "#/$defs/Theme"
+            },
+            "fontSize": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "theme",
+            "fontSize"
+          ]
+        }
+      }
+    },
+    "Theme": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark",
+        "system"
+      ]
+    },
+    "ApprovalRequestParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "callId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "approvalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "risk": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "humanText": {
+          "type": "string"
+        },
+        "actionHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "sessionId",
+        "toolName"
+      ]
+    },
+    "SdkUserQuestionRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AskUserQuestionItem"
+          }
+        }
+      },
+      "required": [
+        "requestId",
+        "sessionId",
+        "questions"
+      ]
+    },
+    "AskUserQuestionItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "header": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AskUserQuestionOption"
+          }
+        },
+        "multiSelect": {
+          "type": "boolean"
+        },
+        "intent": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "plan-review"
+                },
+                "approve": {
+                  "type": "string"
+                },
+                "callId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "approve"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "approval"
+                },
+                "approve": {
+                  "type": "string"
+                },
+                "reject": {
+                  "type": "string"
+                },
+                "always": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                },
+                "display": {
+                  "type": "object",
+                  "properties": {
+                    "question": {
+                      "$ref": "#/$defs/LocalizedText"
+                    },
+                    "detail": {
+                      "type": "object",
+                      "properties": {
+                        "en": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "en"
+                      ],
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "approve": {
+                      "type": "object",
+                      "properties": {
+                        "en": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "en"
+                      ],
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "question"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "approve",
+                "reject"
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "question"
+      ]
+    },
+    "AskUserQuestionOption": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "LocalizedText": {
+      "type": "object",
+      "properties": {
+        "en": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "en"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

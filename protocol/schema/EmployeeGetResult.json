@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Employee",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "rev": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "name": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string"
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "taskIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "permissions": {
+      "$ref": "#/$defs/Permissions"
+    },
+    "status": {
+      "$ref": "#/$defs/EmployeeStatus"
+    },
+    "nextRunAt": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "id",
+    "rev",
+    "name",
+    "role",
+    "rules",
+    "taskIds",
+    "permissions",
+    "status"
+  ],
+  "$defs": {
+    "Permissions": {
+      "type": "object",
+      "properties": {
+        "internet": {
+          "$ref": "#/$defs/InternetMode"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "writeFiles": {
+          "type": "boolean"
+        },
+        "programs": {
+          "type": "boolean"
+        },
+        "programNetwork": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actAsUser": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "internet",
+        "domains",
+        "folders",
+        "writeFiles",
+        "programs",
+        "programNetwork",
+        "actAsUser"
+      ]
+    },
+    "InternetMode": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "public",
+        "deny"
+      ]
+    },
+    "EmployeeStatus": {
+      "type": "string",
+      "enum": [
+        "working",
+        "waiting",
+        "sleeping"
+      ]
+    }
+  },
+  "x-method": "hoh/employee/get"
+}

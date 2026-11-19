@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionEventsResult",
+  "type": "object",
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SessionEvent"
+      }
+    },
+    "nextSeq": {
+      "type": "integer",
+      "format": "int64"
+    }
+  },
+  "required": [
+    "events",
+    "nextSeq"
+  ],
+  "$defs": {
+    "SessionEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "time": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "data": true,
+        "ignorable": {
+          "description": "Literal true, rather than a bool that would admit false.",
+          "type": "boolean",
+          "const": true
+        },
+        "surfaceOp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Append"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "$ref": "#/$defs/Replace"
+                },
+                "startSeq": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "endSeq": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "op",
+                "startSeq",
+                "endSeq"
+              ]
+            }
+          ]
+        },
+        "sourceEventSeqs": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "time",
+        "data"
+      ],
+      "additionalProperties": true
+    },
+    "Append": {
+      "type": "string",
+      "enum": [
+        "append"
+      ]
+    },
+    "Replace": {
+      "type": "string",
+      "enum": [
+        "replace"
+      ]
+    }
+  },
+  "x-method": "session/events"
+}

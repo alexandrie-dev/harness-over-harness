@@ -1,5 +1,5 @@
 //! Field order and SDK names follow packages/sdk/protocol/src/types.ts.
-use crate::{Empty, JsonObject, choices, object, optional};
+use crate::{Empty, JsonObject, SecretString, choices, object, optional};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,7 +38,7 @@ optional!(HohInitialize {
     /// 64 lowercase hex characters, native host only; never forward to JS.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     #[schemars(required)]
-    approval_key: Option<String>,
+    approval_key: Option<SecretString>,
 });
 object!(ServerInfo {
     name: String,
@@ -340,7 +340,7 @@ optional!(ApprovalRequestResult {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     #[schemars(required)]
     #[schemars(length(min = 64, max = 64), regex(pattern = "^[0-9a-f]{64}$"))]
-    mac: Option<String>,
+    mac: Option<SecretString>,
 });
 // Plugin-extended event data is deliberately ordered JSON, like SessionEventMap.
 optional!(SessionEvent {

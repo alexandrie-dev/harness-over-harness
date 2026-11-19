@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","method":"task.example","params":{"draftId":"draft-1","input":{"url":"https://t.me/example"},"artifactId":"artifact-1"}}

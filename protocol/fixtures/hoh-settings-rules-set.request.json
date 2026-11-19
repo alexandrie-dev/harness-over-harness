@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/settings/rules/set","method":"hoh/settings/rules/set","params":{"internet":"ask","folder":"Документы/HoH"}}

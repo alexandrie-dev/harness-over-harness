@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"initialize","method":"initialize","params":{"cwd":"/workspace","approvalRequests":true,"provider":"deepseek-official","model":"deepseek-v4-flash","reasoningEffort":"high","maxTokens":4096,"capabilities":{"userQuestions":true,"approvals":"host"},"hoh":{"protocolVersion":1,"approvalKey":"2b60f8989cf1e8a3ddf60735427531e71bb462960be719332c43f0851c5e5484"}}}

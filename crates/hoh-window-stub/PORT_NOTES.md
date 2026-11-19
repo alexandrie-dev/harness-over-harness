@@ -1,5 +1,91 @@
 # hoh-window-stub — заметки переноса
 
+## Круг fix2e, 19.11
+
+humanText для rules/set называет конкретную папку и словами описывает режим
+интернета: с запросом разрешения либо к общедоступным сайтам. Подтверждение
+model/key/set называет адрес текущего провайдера без API-ключа; адрес берётся
+из baseUrl самого запроса и входит в подписанное действие рядом с keyHash.
+Первый запуск передаёт введённый адрес вместе с ключом. Model settings
+применяются только после MAC и отражаются в ответе set и последующем get.
+Текст probe называет baseUrl и модель из запроса. Значения заключены в кавычки
+с экранированием; общая проверка длины/невидимых символов остаётся обязательной.
+Отдельный тест сверяет тексты в approval/request и approval.pending.
+
+Подписанный rejected публикуется как rejected; отложенный эффект отбрасывается.
+Для replay отказ, отличающийся от записанного разрешения, отменяет действие;
+записанный отказ воспроизводится по-прежнему. Неверный MAC не позволяет выдать
+подтверждённый rejected; истечение продолжает публиковать cancelled.
+Тесты проверяют уведомления, отсутствие хранения отвергнутого ключа и остановку
+replay без ложного выполнения разрешённой ветки записи.
+
+ModelProbeResult.models возвращается из fixture, без GET /models и сети.
+Промышленный движок заполняет его из data[].id GET /models, либо [] при отсутствии
+списка. Проверка бинарника закрепляет тестовый список.
+cargo check -p hoh-protocol -p hoh-window-stub -p hoh-credentials --tests:
+exit 0 (31m 37s вместе с очередью). Jobs=2, offline, target-ui1.
+Экспортированы 109 схем, перепорождены protocol/core.ts и ui/src/protocol.ts;
+Node-генератор --check прошёл. cargo test: hoh-protocol 19/0,
+hoh-window-stub 23/0, hoh-credentials 20/0. Общий clippy --all-targets
+с -D warnings и fmt --check для трёх крейтов прошли. Независимый read-only
+review подтвердил закрытие runtime/security findings. T/Tl вручную не
+возобновлялись.
+
+## Сдача fix2, 19.11
+
+Каталог target-ui1 восстановлен ведущим. Общий cargo check -p hoh-protocol
+-p hoh-window-stub --tests завершился exit 0 (22m 53s, включая очередь).
+Собран и выполнен hoh-protocol-schema, экспортированы 109 схем; Node-генератор
+перепородил protocol/core.ts и ui/src/protocol.ts. Проверка генерации прошла.
+hoh-protocol сдан отдельно: 18 тестов, 0 ошибок, clippy и fmt-check чисты.
+Для заглушки fmt-check прошёл; cargo test: 3 unit + 18 integration = 21 passed,
+0 failed (18m 48s вместе с очередью). text-turn, approval и plan-review прошли
+через бинарник. cargo clippy -p hoh-window-stub --all-targets -- -D warnings:
+exit 0 (25m 56s вместе с очередью). cargo fmt -p hoh-window-stub -- --check:
+exit 0. node scripts/gen-protocol-ts.mjs --check: exit 0.
+Итоги предыдущих кругов ниже не заменяют результат fix2.
+
+Cargo-команды этого круга: CARGO_BUILD_JOBS=2, CARGO_NET_OFFLINE=true,
+CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-ui1. Прежний блокер создания
+удалённого каталога target устранён. Остановленные сборки T/Tl не возобновлялись.
+
+
+## Круг fix2, 19.11 — первый запуск и новые gate
+
+Initialize принимает только ключ длиной 32 байта, отличный от нулевого;
+не согласованный host-mode ключ не принимается. Тесты заглушки используют
+[0x42;32], а протокол имеет независимые Node-векторы с другим случайным ключом.
+
+Расширен gate: смена cwd, назначение taskIds сотруднику, model/baseUrl и probe.
+Добавлены hoh/model/key/set и hoh/settings/rules/set. Реестр действий единственный,
+PRIVILEGED_METHODS порождается из той же таблицы, что predicate.
+Все эффекты (ключ, правила, cwd и разрешение ключа для probe) происходят после MAC.
+Произвольного исходящего HTTP в replay-бинарнике нет: probe — mock с fixture
+latency/toolCalls, ok отражает наличие разрешённого сохранённого ключа.
+Подтверждение хранения ключа содержит keyHash=action_hash({apiKey}) и baseUrl,
+но не сам ключ.
+Секрет не возвращается, не журналируется и не включается в Debug.
+Приватный Deferred хранит SecretString, его Debug отсутствует.
+
+Новые методы и signed native fixtures проверяются типизированным кругом.
+Тесты подтверждают новый gate, отказ без MAC/replay, хранение ключа и использование
+при следующем probe, отсутствие секрета в исходящих кадрах, сохранение правил.
+Адаптер firstrun теперь вызывает методы протокола; pick_folder — команда Tauri.
+В docs/window.md §4 зафиксированы engine_request, approval_current, approval_decide,
+pick_folder с формами адаптеров. Реализация моста остаётся пакету 4.
+
+## Вопросы ведущему
+
+SHIM(hoh-credentials-local): credentials.rs — process-local CredentialProvider
+через настоящий seam hoh-credentials (он done). credentials-local имеет writing:w1,
+по interface-first его не меняли и не использовали нестабильный durable backend.
+Для replay-бинарника хранение живёт до конца процесса; производственный движок
+должен заменить shim на принятый durable provider. Ведущий разрешил memory-provider
+для текущей заглушки; durable credentials-local — отдельный последующий пакет.
+Пароль через JSON-RPC передаётся
+из поля ввода один раз; ядро обязано не журналировать args этого метода.
+
+
 Пакет 3: протокольная заглушка для окна, без модели, сети, запуска инструментов
 или исполнения программ из записи. Источники только читаются:
 `snapshots/sdk/{text-turn,approval,plan-review}/session.v4.jsonl`,

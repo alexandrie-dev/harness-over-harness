@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EmployeeCreateParams",
+  "type": "object",
+  "properties": {
+    "draft": {
+      "$ref": "#/$defs/EmployeeDraft"
+    }
+  },
+  "required": [
+    "draft"
+  ],
+  "$defs": {
+    "EmployeeDraft": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "$ref": "#/$defs/Permissions"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "rules",
+        "taskIds",
+        "permissions"
+      ]
+    },
+    "Permissions": {
+      "type": "object",
+      "properties": {
+        "internet": {
+          "$ref": "#/$defs/InternetMode"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "writeFiles": {
+          "type": "boolean"
+        },
+        "programs": {
+          "type": "boolean"
+        },
+        "programNetwork": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actAsUser": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "internet",
+        "domains",
+        "folders",
+        "writeFiles",
+        "programs",
+        "programNetwork",
+        "actAsUser"
+      ]
+    },
+    "InternetMode": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "public",
+        "deny"
+      ]
+    }
+  }
+}

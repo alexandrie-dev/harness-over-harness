@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/button/update","method":"hoh/button/update","params":{"id":"button-1","patch":{"label":"Открыть"}}}

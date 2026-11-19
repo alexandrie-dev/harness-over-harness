@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/task/rollback","result":{"id":"task-1","title":"Разобрать аккаунт","description":"Прочитать публичный аккаунт","version":1,"permissions":{"internet":"ask","domains":["t.me"],"folders":["Документы/HoH"],"writeFiles":false,"programs":false,"programNetwork":[],"actAsUser":false},"active":true}}

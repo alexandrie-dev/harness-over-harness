@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskRunResult",
+  "type": "object",
+  "properties": {
+    "runId": {
+      "type": "string"
+    },
+    "sessionId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "runId",
+    "sessionId"
+  ],
+  "x-method": "hoh/task/run"
+}

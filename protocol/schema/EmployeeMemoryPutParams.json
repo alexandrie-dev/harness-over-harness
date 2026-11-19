@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryPutParams",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "itemId": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "text"
+  ]
+}

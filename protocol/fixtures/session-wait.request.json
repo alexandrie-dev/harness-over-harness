@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/wait","method":"session/wait","params":{"sessionId":"session-1"}}

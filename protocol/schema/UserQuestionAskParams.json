@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SdkUserQuestionRequest",
+  "type": "object",
+  "properties": {
+    "requestId": {
+      "type": "string"
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AskUserQuestionItem"
+      }
+    }
+  },
+  "required": [
+    "requestId",
+    "sessionId",
+    "questions"
+  ],
+  "$defs": {
+    "AskUserQuestionItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "header": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AskUserQuestionOption"
+          }
+        },
+        "multiSelect": {
+          "type": "boolean"
+        },
+        "intent": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "plan-review"
+                },
+                "approve": {
+                  "type": "string"
+                },
+                "callId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "approve"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "approval"
+                },
+                "approve": {
+                  "type": "string"
+                },
+                "reject": {
+                  "type": "string"
+                },
+                "always": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                },
+                "display": {
+                  "type": "object",
+                  "properties": {
+                    "question": {
+                      "$ref": "#/$defs/LocalizedText"
+                    },
+                    "detail": {
+                      "type": "object",
+                      "properties": {
+                        "en": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "en"
+                      ],
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "approve": {
+                      "type": "object",
+                      "properties": {
+                        "en": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "en"
+                      ],
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "question"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "approve",
+                "reject"
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "question"
+      ]
+    },
+    "AskUserQuestionOption": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "LocalizedText": {
+      "type": "object",
+      "properties": {
+        "en": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "en"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

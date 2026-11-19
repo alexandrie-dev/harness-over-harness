@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/model/probe","method":"hoh/model/probe","params":{"baseUrl":"http://127.0.0.1:8000","model":"local"}}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskRunParams",
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "employeeId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "taskId",
+    "input"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskDraftDecideParams",
+  "type": "object",
+  "properties": {
+    "draftId": {
+      "type": "string"
+    },
+    "decision": {
+      "$ref": "#/$defs/DraftDecision"
+    },
+    "correction": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "draftId",
+    "decision"
+  ],
+  "$defs": {
+    "DraftDecision": {
+      "type": "string",
+      "enum": [
+        "yes",
+        "fix",
+        "cancel"
+      ]
+    }
+  }
+}

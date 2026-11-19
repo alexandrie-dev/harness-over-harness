@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SettingsRulesSetParams",
+  "type": "object",
+  "properties": {
+    "internet": {
+      "$ref": "#/$defs/SetupInternetMode"
+    },
+    "folder": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "internet",
+    "folder"
+  ],
+  "$defs": {
+    "SetupInternetMode": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "public"
+      ]
+    }
+  }
+}

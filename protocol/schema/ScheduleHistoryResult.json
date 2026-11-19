@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Array_of_ScheduleRun",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/ScheduleRun"
+  },
+  "$defs": {
+    "ScheduleRun": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "scheduledAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "firedAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/ScheduleRunStatus"
+        }
+      },
+      "required": [
+        "runId",
+        "scheduledAt",
+        "status"
+      ]
+    },
+    "ScheduleRunStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "error",
+        "missed",
+        "running"
+      ]
+    }
+  },
+  "x-method": "hoh/schedule/history"
+}

@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/employee/memory/put","method":"hoh/employee/memory/put","params":{"id":"employee-1","itemId":"memory-1","text":"Отвечать по-русски"}}

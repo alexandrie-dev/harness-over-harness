@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","method":"artifact.presented","params":{"artifactId":"artifact-1","title":"Как говорить","mime":"text/plain","runId":"run-1","sessionId":"session-1"}}

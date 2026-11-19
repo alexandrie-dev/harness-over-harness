@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionPromptParams",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "contentBlocks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SdkPromptContentBlock"
+      }
+    }
+  },
+  "required": [
+    "sessionId",
+    "contentBlocks"
+  ],
+  "$defs": {
+    "SdkPromptContentBlock": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ContentBlock"
+        },
+        {
+          "$ref": "#/$defs/SdkEncodedImageBlock"
+        }
+      ]
+    },
+    "ContentBlock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "reasoning"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "image"
+            },
+            "attachment": {
+              "$ref": "#/$defs/ImageAttachmentRef"
+            },
+            "offloaded": {
+              "description": "Literal true, rather than a bool that would admit false.",
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "type",
+            "attachment"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "file"
+            },
+            "attachment": {
+              "$ref": "#/$defs/FileAttachmentRef"
+            }
+          },
+          "required": [
+            "type",
+            "attachment"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-call"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "arguments": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "name",
+            "arguments"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-addition"
+            },
+            "toolName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "toolName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-removal"
+            },
+            "toolName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "toolName"
+          ]
+        }
+      ]
+    },
+    "ImageAttachmentRef": {
+      "type": "object",
+      "properties": {
+        "attachmentId": {
+          "type": "string"
+        },
+        "mediaType": {
+          "$ref": "#/$defs/ImageMediaType"
+        },
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "originalDimensions": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "height": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ]
+        }
+      },
+      "required": [
+        "attachmentId",
+        "mediaType",
+        "bytes",
+        "width",
+        "height"
+      ]
+    },
+    "ImageMediaType": {
+      "type": "string",
+      "enum": [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif"
+      ]
+    },
+    "FileAttachmentRef": {
+      "type": "object",
+      "properties": {
+        "attachmentId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "attachmentId",
+        "name",
+        "bytes"
+      ]
+    },
+    "SdkEncodedImageBlock": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/ImageTag"
+        },
+        "data": {
+          "type": "string"
+        },
+        "mimeType": {
+          "$ref": "#/$defs/ImageMediaType"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data",
+        "mimeType"
+      ]
+    },
+    "ImageTag": {
+      "type": "string",
+      "enum": [
+        "image"
+      ]
+    }
+  }
+}

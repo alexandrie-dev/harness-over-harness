@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/task/rollback","method":"hoh/task/rollback","params":{"id":"task-1","version":1}}

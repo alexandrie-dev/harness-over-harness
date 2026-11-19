@@ -14,6 +14,9 @@ pub fn key_from_hex(text: &str) -> Result<[u8; 32], String> {
         *byte =
             u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).map_err(|e| e.to_string())?;
     }
+    if key.iter().all(|byte| *byte == 0) {
+        return Err("approvalKey must not be all zero".into());
+    }
     Ok(key)
 }
 fn is_hash(text: &str) -> bool {
@@ -86,6 +89,10 @@ pub fn verify(expected: &str, actual: &str) -> bool {
             == 0
 }
 pub fn validate_host_request(request: &HostApprovalRequest) -> Result<(), String> {
+    validate_human_text(&request.human_text)?;
+    if !(1..=9_007_199_254_740_991).contains(&request.expires_at) {
+        return Err("expiresAt must be a positive safe integer".into());
+    }
     if !valid_id(&request.approval_id) {
         return Err("invalid approvalId".into());
     }
@@ -105,8 +112,43 @@ pub fn validate_host_request(request: &HostApprovalRequest) -> Result<(), String
     {
         return Err("action must contain exactly method and params".into());
     }
+    if action["method"] == "hoh/model/key/set" {
+        let params = action["params"].as_object().expect("validated object");
+        if params.len() != 2
+            || !params
+                .get("keyHash")
+                .and_then(Value::as_str)
+                .is_some_and(is_hash)
+            || !params
+                .get("baseUrl")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty())
+        {
+            return Err("model key action requires keyHash and baseUrl, never apiKey".into());
+        }
+    }
     if request.action_hash != action_hash(&request.action) {
         return Err("actionHash mismatch".into());
+    }
+    Ok(())
+}
+/// UI bound is in UTF-16 code units, matching the JavaScript dialog.
+pub fn validate_human_text(text: &str) -> Result<(), String> {
+    if !(1..=4096).contains(&text.encode_utf16().count()) {
+        return Err("humanText requires 1..4096 UTF-16 code units".into());
+    }
+    if text.chars().any(|c| {
+        c.is_control()
+            || (c.is_whitespace() && c != ' ')
+            || matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{115f}' | '\u{1160}' |
+            '\u{17b4}'..='\u{17b5}' | '\u{180e}' | '\u{200b}'..='\u{200f}' |
+            '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{3164}' |
+            '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{ffa0}' |
+            '\u{fff9}'..='\u{fffb}' | '\u{1bca0}'..='\u{1bca3}' |
+            '\u{1d173}'..='\u{1d17a}' | '\u{e0000}'..='\u{e007f}' |
+            '\u{e0100}'..='\u{e01ef}')
+    }) {
+        return Err("humanText contains invisible formatting or controls".into());
     }
     Ok(())
 }
@@ -130,6 +172,9 @@ pub fn verify_decision(
     decision: &HostApprovalDecision,
     now: u64,
 ) -> Result<(), String> {
+    if key.iter().all(|byte| *byte == 0) {
+        return Err("weak approval key".into());
+    }
     validate_host_request(request)?;
     validate_host_decision(decision)?;
     if request.approval_id != decision.approval_id {
@@ -137,6 +182,9 @@ pub fn verify_decision(
     }
     if now >= request.expires_at {
         return Err("approval expired".into());
+    }
+    if request.expires_at - now > 300_000 {
+        return Err("approval lifetime exceeds five minutes".into());
     }
     let outcome = serde_json::to_value(&decision.outcome).expect("outcome");
     if !verify(&mac(key, request, outcome.as_str().unwrap()), &decision.mac) {

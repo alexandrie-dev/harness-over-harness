@@ -4,10 +4,12 @@ pub mod framing;
 mod hoh;
 mod registry;
 mod sdk;
+mod secret;
 pub mod transport;
 pub use hoh::*;
 pub use registry::*;
 pub use sdk::*;
+pub use secret::SecretString;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

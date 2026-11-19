@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/task/draft/decide","method":"hoh/task/draft/decide","params":{"draftId":"draft-1","decision":"fix","correction":"Короче"}}

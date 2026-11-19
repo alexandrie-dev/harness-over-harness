@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/task/knowledge/get","result":{"rules":["Коротко"],"sources":[{"title":"Публичный аккаунт","uri":"https://t.me/example"}],"artifactIds":["artifact-1"]}}

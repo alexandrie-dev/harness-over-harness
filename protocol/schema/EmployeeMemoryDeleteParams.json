@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryDeleteParams",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "itemId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "itemId"
+  ]
+}

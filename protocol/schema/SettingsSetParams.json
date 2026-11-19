@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SettingsSetParams",
+  "type": "object",
+  "properties": {
+    "model": {
+      "type": "object",
+      "properties": {
+        "baseUrl": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "baseUrl",
+        "model"
+      ]
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "internet": {
+          "$ref": "#/$defs/InternetMode"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "writeFiles": {
+          "type": "boolean"
+        },
+        "programs": {
+          "type": "boolean"
+        },
+        "programNetwork": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actAsUser": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "internet",
+        "domains",
+        "folders",
+        "writeFiles",
+        "programs",
+        "programNetwork",
+        "actAsUser"
+      ]
+    },
+    "view": {
+      "type": "object",
+      "properties": {
+        "theme": {
+          "$ref": "#/$defs/Theme"
+        },
+        "fontSize": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "theme",
+        "fontSize"
+      ]
+    }
+  },
+  "$defs": {
+    "InternetMode": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "public",
+        "deny"
+      ]
+    },
+    "Theme": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark",
+        "system"
+      ]
+    }
+  }
+}

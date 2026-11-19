@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/list","result":{"sessions":[{"id":"session-1","title":"Чат","employeeId":"employee-1","updatedAt":1795000000000}]}}

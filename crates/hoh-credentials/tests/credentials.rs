@@ -24,6 +24,19 @@ async fn boot(seed: Value) -> (Kernel, Context) {
 }
 
 #[test]
+fn resolved_credential_debug_redacts_the_secret() {
+    let credential = ResolvedCredential {
+        value: "sk-secret-never-in-debug".into(),
+        source: "memory".into(),
+    };
+    for debug in [format!("{credential:?}"), format!("{credential:#?}")] {
+        assert!(!debug.contains(&credential.value));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(debug.contains(&credential.source));
+    }
+}
+
+#[test]
 fn brands_posix_shell_identifiers() {
     for value in ["DEEPSEEK_API_KEY", "_private", "lower_case9"] {
         assert_eq!(credential_ref(value).unwrap(), value);

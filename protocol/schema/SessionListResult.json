@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionListResult",
+  "type": "object",
+  "properties": {
+    "sessions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SessionSummary"
+      }
+    }
+  },
+  "required": [
+    "sessions"
+  ],
+  "$defs": {
+    "SessionSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "employeeId": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "employeeId",
+        "updatedAt"
+      ]
+    }
+  },
+  "x-method": "session/list"
+}

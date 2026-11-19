@@ -1,6 +1,9 @@
 use hoh_protocol::framing;
 
 fn privileged_case(method: &str) {
+    privileged_params_case(method, None);
+}
+fn privileged_params_case(method: &str, custom: Option<Value>) {
     let mut client = Client::new("text-turn", vec![], true);
     let stem = method.replace('/', "-");
     let request: Value = serde_json::from_str(
@@ -22,6 +25,9 @@ fn privileged_case(method: &str) {
     if method == "hoh/settings/set" {
         params["security"] = create["params"]["draft"]["permissions"].clone();
     }
+    if let Some(custom) = custom {
+        params = custom;
+    }
     assert!(hoh_protocol::PRIVILEGED_METHODS.contains(&method));
     let duplicate = client.call("initialize",json!({"cwd":CWD,"provider":"p","model":"m","capabilities":{"approvals":"host"},"hoh":{"protocolVersion":1,"approvalKey":"11".repeat(32)}}));
     assert!(duplicate.get("error").is_some());
@@ -41,8 +47,13 @@ fn privileged_case(method: &str) {
         };
         let native: hoh_protocol::HostApprovalRequest =
             serde_json::from_value(request["params"].clone()).unwrap();
-        assert_eq!(native.action, json!({"method":method,"params":params}));
-        let valid = json!({"approvalId":native.approval_id,"outcome":"allowed-once","mac":approval::mac(&[0;32],&native,"allowed-once")});
+        let expected = if method == "hoh/model/key/set" {
+            json!({"keyHash":approval::action_hash(&json!({"apiKey":params["apiKey"]})),"baseUrl":params["baseUrl"]})
+        } else {
+            params.clone()
+        };
+        assert_eq!(native.action, json!({"method":method,"params":expected}));
+        let valid = json!({"approvalId":native.approval_id,"outcome":"allowed-once","mac":approval::mac(&[0x42;32],&native,"allowed-once")});
         let answer = match attempt {
             0 => json!({"outcome":"allowed-once"}),
             1 => previous.clone().unwrap(),
@@ -80,6 +91,180 @@ privileged_test!(
 privileged_test!(task_consent_requires_mac, "hoh/task/draft/decide");
 privileged_test!(task_rollback_requires_mac, "hoh/task/rollback");
 privileged_test!(settings_security_requires_mac, "hoh/settings/set");
+
+privileged_test!(
+    working_directory_requires_mac,
+    "session/working-directory/set"
+);
+privileged_test!(probe_requires_mac, "hoh/model/probe");
+privileged_test!(model_key_requires_mac, "hoh/model/key/set");
+privileged_test!(setup_rules_requires_mac, "hoh/settings/rules/set");
+#[test]
+fn model_route_requires_mac() {
+    privileged_params_case(
+        "hoh/settings/set",
+        Some(json!({"model":{"baseUrl":"https://new.example","model":"m"}})),
+    )
+}
+#[test]
+fn employee_task_assignment_requires_mac() {
+    privileged_params_case(
+        "hoh/employee/update",
+        Some(json!({"id":"employee-1","rev":1,"patch":{"taskIds":["task-1"]}})),
+    )
+}
+#[test]
+fn saved_key_is_consumed_by_probe_without_leaking_into_frames() {
+    let mut client = Client::new(
+        "text-turn",
+        vec![json!({"outcome":"allowed-once"}); 4],
+        true,
+    );
+    let probe = json!({"baseUrl":"https://example.test","model":"m"});
+    assert_eq!(
+        client.call("hoh/model/probe", probe.clone())["result"]["ok"],
+        false
+    );
+    let secret = "test-provider-key-not-for-logs";
+    assert_eq!(
+        client.call(
+            "hoh/model/key/set",
+            json!({"apiKey":secret,"baseUrl":"https://example.test"})
+        )["result"],
+        json!({})
+    );
+    assert_eq!(client.call("hoh/model/probe", probe)["result"]["ok"], true);
+    assert_eq!(
+        client.call(
+            "hoh/settings/rules/set",
+            json!({"internet":"ask","folder":"/workspace"})
+        )["result"],
+        json!({})
+    );
+    assert_eq!(
+        client.call("hoh/settings/get", json!({}))["result"]["security"]["folders"],
+        json!(["/workspace"])
+    );
+    assert!(
+        !serde_json::to_string(&client.frames)
+            .unwrap()
+            .contains(secret)
+    );
+    client.shutdown();
+}
+
+#[test]
+fn setup_approval_text_names_the_folder_internet_policy_and_provider() {
+    let secret = "sk-private-not-in-the-dialog";
+    let mut client = Client::new(
+        "text-turn",
+        vec![json!({"outcome":"allowed-once"}); 6],
+        true,
+    );
+    let cases = [
+        (
+            "hoh/model/key/set",
+            json!({"apiKey":secret,"baseUrl":"https://new.example.test/v1"}),
+            "Сохранить API-ключ для провайдера \"https://new.example.test/v1\"?",
+        ),
+        (
+            "hoh/settings/rules/set",
+            json!({"internet":"ask","folder":"/home/Документы/Отчёты"}),
+            "Разрешить работу в папке \"/home/Документы/Отчёты\" и доступ в интернет с запросом разрешения?",
+        ),
+        (
+            "hoh/settings/rules/set",
+            json!({"internet":"public","folder":"/team/shared"}),
+            "Разрешить работу в папке \"/team/shared\" и доступ в интернет к общедоступным сайтам?",
+        ),
+        (
+            "hoh/model/probe",
+            json!({"baseUrl":"https://models.example.test/v1","model":"example-chat"}),
+            "Разрешить проверку модели \"example-chat\" у провайдера \"https://models.example.test/v1\"?",
+        ),
+    ];
+    for (method, params, expected_text) in cases {
+        let reply = client.call(method, params);
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert_eq!(
+            client.reverse.last().unwrap()["params"]["humanText"],
+            expected_text
+        );
+        assert_eq!(
+            client
+                .notifications()
+                .iter()
+                .rev()
+                .find(|f| f["method"] == "approval.pending")
+                .unwrap()["params"]["humanText"],
+            expected_text
+        );
+        if method == "hoh/model/probe" {
+            assert_eq!(
+                reply["result"]["models"],
+                json!(["local", "fixture-reasoner"])
+            );
+        }
+    }
+    let model = json!({"baseUrl":"https://saved.example.test/v1","model":"saved-chat"});
+    assert_eq!(
+        client.call("hoh/settings/set", json!({"model":model}))["result"]["model"],
+        model
+    );
+    assert_eq!(
+        client.call("hoh/settings/get", json!({}))["result"]["model"],
+        model
+    );
+    assert_eq!(
+        client.call(
+            "hoh/model/key/set",
+            json!({"apiKey":secret,"baseUrl":"https://saved.example.test/v1"})
+        )["result"],
+        json!({})
+    );
+    assert_eq!(
+        client.reverse.last().unwrap()["params"]["humanText"],
+        "Сохранить API-ключ для провайдера \"https://saved.example.test/v1\"?"
+    );
+    assert!(
+        !serde_json::to_string(&client.frames)
+            .unwrap()
+            .contains(secret)
+    );
+    client.shutdown();
+}
+
+#[test]
+fn signed_rejection_is_published_without_storing_the_key() {
+    let mut client = Client::new(
+        "text-turn",
+        vec![
+            json!({"outcome":"rejected"}),
+            json!({"outcome":"allowed-once"}),
+        ],
+        true,
+    );
+    let reply = client.call(
+        "hoh/model/key/set",
+        json!({"apiKey":"sk-rejected","baseUrl":"https://rejected.example.test/v1"}),
+    );
+    assert!(reply.get("error").is_some());
+    let resolved: Vec<_> = client
+        .notifications()
+        .into_iter()
+        .filter(|f| f["method"] == "approval.resolved")
+        .collect();
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0]["params"]["outcome"], "rejected");
+    assert_eq!(
+        client.call(
+            "hoh/model/probe",
+            json!({"baseUrl":"https://example.test","model":"m"})
+        )["result"]["ok"],
+        false
+    );
+    client.shutdown();
+}
 
 use hoh_window_stub::approval;
 use serde_json::{Value, json};
@@ -165,7 +350,7 @@ impl Client {
         let mut params = json!({"cwd":CWD,"approvalRequests":true,"provider":"deepseek-official","model":"deepseek-v4-flash","capabilities":{"userQuestions":true}});
         if host {
             params["capabilities"]["approvals"] = json!("host");
-            params["hoh"] = json!({"protocolVersion":1,"approvalKey":"00".repeat(32)});
+            params["hoh"] = json!({"protocolVersion":1,"approvalKey":"42".repeat(32)});
         }
         let result = client.call("initialize", params);
         assert_eq!(
@@ -213,7 +398,7 @@ impl Client {
             let params = &request["params"];
             answer["approvalId"] = params["approvalId"].clone();
             answer["mac"] = json!(approval::mac(
-                &[0; 32],
+                &[0x42; 32],
                 &serde_json::from_value(params.clone()).unwrap(),
                 answer["outcome"].as_str().unwrap()
             ));
@@ -520,7 +705,12 @@ fn host_approval_mac_is_required_and_valid_mac_replays() {
     );
     client.shutdown();
 
-    for failure in ["missing-mac", "invalid-mac", "wrong-outcome"] {
+    for failure in [
+        "missing-mac",
+        "invalid-mac",
+        "invalid-rejection",
+        "signed-rejection",
+    ] {
         let mut client = Client::new("approval", vec![], true);
         client.send(framing::request(
             json!("prompt"),
@@ -538,10 +728,12 @@ fn host_approval_mac_is_required_and_valid_mac_replays() {
             let params = &request["params"];
             answer["approvalId"] = params["approvalId"].clone();
             answer["mac"] = json!("f".repeat(64));
-            if failure == "wrong-outcome" {
+            if failure == "invalid-rejection" || failure == "signed-rejection" {
                 answer["outcome"] = json!("rejected");
+            }
+            if failure == "signed-rejection" {
                 answer["mac"] = json!(approval::mac(
-                    &[0; 32],
+                    &[0x42; 32],
                     &serde_json::from_value(params.clone()).unwrap(),
                     "rejected"
                 ));
@@ -549,23 +741,34 @@ fn host_approval_mac_is_required_and_valid_mac_replays() {
         }
         client.send(framing::success(request["id"].clone(), answer));
         let wait = client.call("session/wait", json!({"sessionId":SESSION}));
-        assert!(wait.get("error").is_some());
+        if failure == "signed-rejection" {
+            assert_eq!(wait["result"], json!({}));
+        } else {
+            assert!(wait.get("error").is_some());
+        }
         assert!(
             !client
                 .events()
                 .iter()
                 .any(|e| e["type"] == "approval/decided")
         );
+        assert!(client.events().iter().any(|e| e["data"]["reason"]["kind"]
+            == if failure == "signed-rejection" {
+                "aborted"
+            } else {
+                "error"
+            }));
         assert!(
             client
-                .events()
+                .notifications()
                 .iter()
-                .any(|e| e["data"]["reason"]["kind"] == "error")
-        );
-        assert!(
-            client.notifications().iter().any(
-                |n| n["method"] == "approval.resolved" && n["params"]["outcome"] == "cancelled"
-            )
+                .any(|n| n["method"] == "approval.resolved"
+                    && n["params"]["outcome"]
+                        == if failure == "signed-rejection" {
+                            "rejected"
+                        } else {
+                            "cancelled"
+                        })
         );
         client.shutdown();
     }

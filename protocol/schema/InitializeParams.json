@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InitializeParams",
+  "type": "object",
+  "properties": {
+    "cwd": {
+      "type": "string"
+    },
+    "approvalRequests": {
+      "type": "boolean"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "reasoningEffort": {
+      "type": "string"
+    },
+    "maxTokens": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "userQuestions": {
+          "type": "boolean"
+        },
+        "approvals": {
+          "type": "string",
+          "enum": [
+            "host"
+          ]
+        }
+      }
+    },
+    "hoh": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "approvalKey": {
+          "description": "64 lowercase hex characters, native host only; never forward to JS.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocolVersion"
+      ]
+    }
+  },
+  "required": [
+    "cwd",
+    "provider",
+    "model"
+  ]
+}

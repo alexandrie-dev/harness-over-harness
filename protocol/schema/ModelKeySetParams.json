@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ModelKeySetParams",
+  "type": "object",
+  "properties": {
+    "apiKey": {
+      "type": "string"
+    },
+    "baseUrl": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "apiKey",
+    "baseUrl"
+  ]
+}

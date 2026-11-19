@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","method":"session.query.completed","params":{"sessionId":"session-1","commandId":"command-1","finalResponse":"Готово","finishReason":"completed"}}

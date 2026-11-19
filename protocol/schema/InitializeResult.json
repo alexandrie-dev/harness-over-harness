@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InitializeResult",
+  "type": "object",
+  "properties": {
+    "serverInfo": {
+      "$ref": "#/$defs/ServerInfo"
+    },
+    "hoh": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "approvals": {
+          "$ref": "#/$defs/ApprovalHost"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "approvals"
+      ]
+    }
+  },
+  "required": [
+    "serverInfo"
+  ],
+  "$defs": {
+    "ServerInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "ApprovalHost": {
+      "type": "string",
+      "enum": [
+        "host"
+      ]
+    }
+  },
+  "x-method": "initialize"
+}

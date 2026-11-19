@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/list","method":"session/list","params":{"employeeId":"employee-1"}}

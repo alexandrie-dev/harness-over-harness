@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SdkUserQuestionResult",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/SdkUserQuestionAnswer"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "cancelled": {
+          "$ref": "#/$defs/True"
+        }
+      },
+      "required": [
+        "cancelled"
+      ]
+    }
+  ],
+  "$defs": {
+    "SdkUserQuestionAnswer": {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AskUserQuestionAnswerItem"
+          }
+        }
+      },
+      "required": [
+        "answers"
+      ]
+    },
+    "AskUserQuestionAnswerItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "selected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "custom": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "selected"
+      ]
+    },
+    "True": {
+      "description": "Literal true, rather than a bool that would admit false.",
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "x-method": "user-question/ask"
+}

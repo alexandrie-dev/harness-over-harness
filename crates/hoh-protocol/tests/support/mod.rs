@@ -2,6 +2,9 @@ use hoh_protocol::*;
 use serde_json::Value;
 pub fn typed_result(method: &str, value: Value) -> Value {
     match method {
+        "hoh/model/key/set" | "hoh/settings/rules/set" => {
+            serde_json::to_value(serde_json::from_value::<Empty>(value).unwrap()).unwrap()
+        }
         "initialize" => {
             serde_json::to_value(serde_json::from_value::<InitializeResult>(value).unwrap())
                 .unwrap()

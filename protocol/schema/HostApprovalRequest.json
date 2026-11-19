@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HostApprovalRequest",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "toolName": {
+      "type": "string"
+    },
+    "callId": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "risk": {
+      "$ref": "#/$defs/Risk"
+    },
+    "humanText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "actionHash": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "expiresAt": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "action": true
+  },
+  "required": [
+    "sessionId",
+    "toolName",
+    "approvalId",
+    "risk",
+    "humanText",
+    "actionHash",
+    "expiresAt",
+    "action"
+  ],
+  "$defs": {
+    "Risk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  }
+}

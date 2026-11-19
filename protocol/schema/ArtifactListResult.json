@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Array_of_Artifact",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/Artifact"
+  },
+  "$defs": {
+    "Artifact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "createdAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "mime",
+        "size",
+        "createdAt"
+      ]
+    }
+  },
+  "x-method": "hoh/artifact/list"
+}

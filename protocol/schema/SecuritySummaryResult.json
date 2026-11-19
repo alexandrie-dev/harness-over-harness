@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SecuritySummary",
+  "type": "object",
+  "properties": {
+    "model": {
+      "$ref": "#/$defs/SecurityModel"
+    },
+    "egress": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EgressSummary"
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PermissionSummary"
+      }
+    },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ApprovalSummary"
+      }
+    }
+  },
+  "required": [
+    "model",
+    "egress",
+    "permissions",
+    "approvals"
+  ],
+  "$defs": {
+    "SecurityModel": {
+      "type": "object",
+      "properties": {
+        "local": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "local",
+        "host"
+      ]
+    },
+    "EgressSummary": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "lastAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "domain",
+        "count",
+        "lastAt"
+      ]
+    },
+    "PermissionSummary": {
+      "type": "object",
+      "properties": {
+        "employeeId": {
+          "type": "string"
+        },
+        "permissions": {
+          "$ref": "#/$defs/Permissions"
+        }
+      },
+      "required": [
+        "employeeId",
+        "permissions"
+      ]
+    },
+    "Permissions": {
+      "type": "object",
+      "properties": {
+        "internet": {
+          "$ref": "#/$defs/InternetMode"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "writeFiles": {
+          "type": "boolean"
+        },
+        "programs": {
+          "type": "boolean"
+        },
+        "programNetwork": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actAsUser": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "internet",
+        "domains",
+        "folders",
+        "writeFiles",
+        "programs",
+        "programNetwork",
+        "actAsUser"
+      ]
+    },
+    "InternetMode": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "public",
+        "deny"
+      ]
+    },
+    "ApprovalSummary": {
+      "type": "object",
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "risk": {
+          "$ref": "#/$defs/Risk"
+        },
+        "humanText": {
+          "type": "string"
+        },
+        "actionHash": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "expiresAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "allowed-once",
+            "rejected",
+            "cancelled",
+            "unavailable"
+          ]
+        }
+      },
+      "required": [
+        "approvalId",
+        "sessionId",
+        "risk",
+        "humanText",
+        "actionHash",
+        "createdAt",
+        "expiresAt"
+      ]
+    },
+    "Risk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    }
+  },
+  "x-method": "hoh/security/summary"
+}

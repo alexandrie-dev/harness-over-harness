@@ -1,0 +1,51 @@
+{
+  "name": "@hoh/window",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "/bin/bash -p scripts/build.sh",
+    "snapshot": "python3 scripts/offline.py node scripts/snapshot.mjs",
+    "supply": "../scripts/ui-supply-check.sh",
+    "build:offline": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py /bin/sh -c 'pnpm install --frozen-lockfile --offline && ../scripts/ui-supply-check.sh && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/vite build && node scripts/check-dist.mjs'",
+    "test:chat:core": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py node tests/chat/run.mjs",
+    "test:chat": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py node tests/chat/behavior.mjs"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "@base-ui/react": "1.9.0",
+    "zustand": "5.1.0",
+    "marked": "18.2.0",
+    "lucide-react": "1.71.0",
+    "class-variance-authority": "0.7.1",
+    "tailwind-merge": "3.7.0",
+    "@fontsource-variable/inter": "5.3.0",
+    "@legendapp/list": "3.7.2",
+    "pdfjs-dist": "6.5.438",
+    "uplot": "1.6.32",
+    "@tauri-apps/api": "2.12.4"
+  },
+  "devDependencies": {
+    "vite": "8.3.7",
+    "@vitejs/plugin-react": "6.3.0",
+    "tailwindcss": "4.3.5",
+    "@tailwindcss/vite": "4.3.5",
+    "typescript": "6.0.3",
+    "playwright-core": "1.65.0",
+    "@tauri-apps/cli": "2.12.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/node": "24.19.2",
+    "@rolldown/binding-linux-x64-gnu": "1.2.19",
+    "@tailwindcss/oxide-linux-x64-gnu": "4.3.5",
+    "lightningcss-linux-x64-gnu": "1.33.0",
+    "@tauri-apps/cli-linux-x64-gnu": "2.12.4",
+    "oxc-transform-react": "0.156.0",
+    "@oxc-transform-react/binding-linux-x64-gnu": "0.156.0"
+  },
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": "12.21.0"
+  }
+}

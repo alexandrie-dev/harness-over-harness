@@ -39,7 +39,7 @@ pub struct NotificationFrame {
     #[serde(flatten)]
     pub notification: Notification,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct RpcError {
     #[serde(
         default,
@@ -57,7 +57,16 @@ pub struct RpcError {
     #[schemars(required)]
     pub data: Option<Value>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+impl std::fmt::Debug for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RpcError")
+            .field("code", &self.code)
+            .field("message", &self.message)
+            .field("data", &"[REDACTED]")
+            .finish()
+    }
+}
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ResponseFrame {
     Success {
@@ -71,12 +80,37 @@ pub enum ResponseFrame {
         error: RpcError,
     },
 }
+impl std::fmt::Debug for ResponseFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Success { jsonrpc, id, .. } => f
+                .debug_struct("Success")
+                .field("jsonrpc", jsonrpc)
+                .field("id", id)
+                .field("result", &"[REDACTED]")
+                .finish(),
+            Self::Error { jsonrpc, id, error } => f
+                .debug_struct("Error")
+                .field("jsonrpc", jsonrpc)
+                .field("id", id)
+                .field("error", error)
+                .finish(),
+        }
+    }
+}
 /// Typed admission with exact incoming object order, including extension data.
 /// Formatting is compact JSON; fixture files use this canonical encoding plus LF.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Wire<T> {
     typed: T,
     value: Value,
+}
+impl<T: std::fmt::Debug> std::fmt::Debug for Wire<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Wire")
+            .field("typed", &self.typed)
+            .finish_non_exhaustive()
+    }
 }
 impl<T> Wire<T> {
     pub fn typed(&self) -> &T {

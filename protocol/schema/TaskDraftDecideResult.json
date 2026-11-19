@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskDraftDecideResult",
+  "type": "object",
+  "properties": {
+    "state": {
+      "$ref": "#/$defs/DraftState"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "$defs": {
+    "DraftState": {
+      "type": "string",
+      "enum": [
+        "asking",
+        "researching",
+        "building",
+        "example_ready",
+        "checking",
+        "saved",
+        "failed"
+      ]
+    }
+  },
+  "x-method": "hoh/task/draft/decide"
+}

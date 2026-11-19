@@ -1,0 +1,4 @@
+#!/bin/sh
+# Use the already installed 12.21.0 binary directly; Corepack's temporary-HOME
+# bootstrap would otherwise try to resolve/download a package manager.
+exec /home/save/.cache/node/corepack/v1/pnpm/12.21.0/pnpm-native "$@"

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApprovalRequestResult",
+  "type": "object",
+  "properties": {
+    "outcome": {
+      "$ref": "#/$defs/ApprovalOutcome"
+    },
+    "approvalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "mac": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "outcome"
+  ],
+  "$defs": {
+    "ApprovalOutcome": {
+      "type": "string",
+      "enum": [
+        "allowed-once",
+        "rejected",
+        "cancelled",
+        "unavailable"
+      ]
+    }
+  },
+  "x-method": "approval/request"
+}

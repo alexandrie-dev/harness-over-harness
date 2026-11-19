@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/query","result":{"kind":"command","execution":{"commandId":"c","result":{"kind":"success","text":"Done","sourceEventSeq":1}}}}

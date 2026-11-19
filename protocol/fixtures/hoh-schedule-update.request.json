@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/schedule/update","method":"hoh/schedule/update","params":{"id":"schedule-1","patch":{"enabled":false}}}

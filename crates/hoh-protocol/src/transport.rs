@@ -8,7 +8,7 @@ use std::{
     io::{self, BufRead, Write},
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Incoming {
     Request {
         id: JsonRpcId,
@@ -24,6 +24,25 @@ pub enum Incoming {
         result: Value,
         error: Option<RpcError>,
     },
+}
+impl std::fmt::Debug for Incoming {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Request { id, method, .. } => f
+                .debug_struct("Request")
+                .field("id", id)
+                .field("method", method)
+                .finish_non_exhaustive(),
+            Self::Notification { method, .. } => f
+                .debug_struct("Notification")
+                .field("method", method)
+                .finish_non_exhaustive(),
+            Self::Response { id, .. } => f
+                .debug_struct("Response")
+                .field("id", id)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 fn object_params(value: Option<&Value>) -> Value {
     value

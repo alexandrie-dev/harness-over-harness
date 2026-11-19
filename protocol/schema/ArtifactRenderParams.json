@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ArtifactRenderParams",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "as": {
+      "$ref": "#/$defs/ArtifactRenderAs"
+    },
+    "page": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "id",
+    "as"
+  ],
+  "$defs": {
+    "ArtifactRenderAs": {
+      "type": "string",
+      "enum": [
+        "pages",
+        "table",
+        "text"
+      ]
+    }
+  }
+}

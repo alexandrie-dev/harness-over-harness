@@ -1,0 +1,24 @@
+import type { ChatEntry } from './projection.mjs';
+import type { ChatTransport } from './transport';
+export type ChatData = {
+  entries: ChatEntry[];
+  connection: 'connecting' | 'ready' | 'recovering' | 'error';
+  busy: boolean; canceling: boolean; error: string;
+  privacy: 'local' | 'remote' | 'unknown'; folderLabel: string; draft: string;
+};
+export type ChatState = ChatData & {
+  setDraft(value: string): void;
+  connect(): Promise<void>;
+  disconnect(): void;
+  send(): Promise<void>;
+  stop(): Promise<void>;
+};
+export class ChatController {
+  constructor(transportFactory: () => ChatTransport, changed?: (state: ChatData) => void, frame?: () => Promise<void>);
+  state: ChatData;
+  setDraft(value: string): void;
+  connect(): Promise<void>;
+  disconnect(): void;
+  send(): Promise<void>;
+  stop(): Promise<void>;
+}

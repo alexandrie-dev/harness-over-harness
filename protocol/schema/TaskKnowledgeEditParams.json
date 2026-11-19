@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskKnowledgeEditParams",
+  "type": "object",
+  "properties": {
+    "taskId": {
+      "type": "string"
+    },
+    "instruction": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "taskId",
+    "instruction"
+  ]
+}

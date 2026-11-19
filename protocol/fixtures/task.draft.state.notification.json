@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","method":"task.draft.state","params":{"draftId":"draft-1","state":"example_ready"}}

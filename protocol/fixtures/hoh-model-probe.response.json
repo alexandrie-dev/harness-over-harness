@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/model/probe","result":{"ok":true,"latencyMs":20,"toolCalls":true,"models":["local","fixture-reasoner"]}}

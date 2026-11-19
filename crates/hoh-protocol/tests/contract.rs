@@ -77,7 +77,15 @@ fn every_fixture_is_typed_and_round_trips_byte_for_byte() {
         }
         let bytes = fs::read_to_string(&path).unwrap();
         let value: Value = serde_json::from_str(&bytes).unwrap();
-        let encoded = if value.get("method").is_some() && value.get("id").is_some() {
+        let encoded = if path.file_name().unwrap() == "host-approval.request.json" {
+            let typed: HostApprovalRequest = serde_json::from_str(&bytes).unwrap();
+            approval::validate_host_request(&typed).unwrap();
+            serde_json::to_string(&typed).unwrap()
+        } else if path.file_name().unwrap() == "host-approval.response.json" {
+            let typed: HostApprovalDecision = serde_json::from_str(&bytes).unwrap();
+            approval::validate_host_decision(&typed).unwrap();
+            serde_json::to_string(&typed).unwrap()
+        } else if value.get("method").is_some() && value.get("id").is_some() {
             let wire: Wire<RequestFrame> =
                 serde_json::from_str(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             let method = wire.typed().request.method();

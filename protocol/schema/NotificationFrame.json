@@ -1,0 +1,965 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NotificationFrame",
+  "type": "object",
+  "properties": {
+    "jsonrpc": {
+      "$ref": "#/$defs/Version"
+    }
+  },
+  "required": [
+    "jsonrpc"
+  ],
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "user-question.cancelled"
+        },
+        "params": {
+          "$ref": "#/$defs/SdkUserQuestionCancelled"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session.event"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionEventNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session.status"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionStatusNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session.query.completed"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionQueryCompleted"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "subagent.started"
+        },
+        "params": {
+          "$ref": "#/$defs/SubagentStartedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "subagent.finished"
+        },
+        "params": {
+          "$ref": "#/$defs/SubagentFinishedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "employee.changed"
+        },
+        "params": {
+          "$ref": "#/$defs/EmployeeChanged"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "task.changed"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskChanged"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "task.draft.state"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskDraftState"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "task.example"
+        },
+        "params": {
+          "$ref": "#/$defs/TaskExample"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "schedule.fired"
+        },
+        "params": {
+          "$ref": "#/$defs/ScheduleFired"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "schedule.changed"
+        },
+        "params": {
+          "$ref": "#/$defs/ScheduleChanged"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "artifact.presented"
+        },
+        "params": {
+          "$ref": "#/$defs/ArtifactPresented"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "approval.pending"
+        },
+        "params": {
+          "$ref": "#/$defs/ApprovalPending"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "approval.resolved"
+        },
+        "params": {
+          "$ref": "#/$defs/ApprovalResolved"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "security.egress"
+        },
+        "params": {
+          "$ref": "#/$defs/SecurityEgress"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    }
+  ],
+  "$defs": {
+    "Version": {
+      "type": "string",
+      "enum": [
+        "2.0"
+      ]
+    },
+    "SdkUserQuestionCancelled": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "sessionId"
+      ]
+    },
+    "SessionEventNotification": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "event": {
+          "$ref": "#/$defs/SessionEvent"
+        }
+      },
+      "required": [
+        "sessionId",
+        "event"
+      ]
+    },
+    "SessionEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "time": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "data": true,
+        "ignorable": {
+          "description": "Literal true, rather than a bool that would admit false.",
+          "type": "boolean",
+          "const": true
+        },
+        "surfaceOp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Append"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "$ref": "#/$defs/Replace"
+                },
+                "startSeq": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "endSeq": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "op",
+                "startSeq",
+                "endSeq"
+              ]
+            }
+          ]
+        },
+        "sourceEventSeqs": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "type",
+        "seq",
+        "time",
+        "data"
+      ],
+      "additionalProperties": true
+    },
+    "Append": {
+      "type": "string",
+      "enum": [
+        "append"
+      ]
+    },
+    "Replace": {
+      "type": "string",
+      "enum": [
+        "replace"
+      ]
+    },
+    "SessionStatusNotification": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        }
+      },
+      "required": [
+        "sessionId",
+        "status"
+      ]
+    },
+    "SessionStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running"
+      ]
+    },
+    "SessionQueryCompleted": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "finalResponse": {
+          "type": "string"
+        },
+        "finishReason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "commandId",
+        "finalResponse",
+        "finishReason"
+      ]
+    },
+    "SubagentStartedNotification": {
+      "type": "object",
+      "properties": {
+        "parentSessionId": {
+          "type": "string"
+        },
+        "childSessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parentSessionId",
+        "childSessionId"
+      ]
+    },
+    "SubagentFinishedNotification": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "agentId": {
+          "type": "string"
+        },
+        "parentSessionId": {
+          "type": "string"
+        },
+        "childSessionId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SdkRunStatus"
+        },
+        "stopReason": {
+          "description": "Merge-extensible provider-owned stop reason."
+        },
+        "lastAssistantMessage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          }
+        }
+      },
+      "required": [
+        "provider",
+        "agentId",
+        "parentSessionId",
+        "childSessionId",
+        "status",
+        "stopReason"
+      ]
+    },
+    "SdkRunStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "error"
+      ]
+    },
+    "ContentBlock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "reasoning"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "image"
+            },
+            "attachment": {
+              "$ref": "#/$defs/ImageAttachmentRef"
+            },
+            "offloaded": {
+              "description": "Literal true, rather than a bool that would admit false.",
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "type",
+            "attachment"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "file"
+            },
+            "attachment": {
+              "$ref": "#/$defs/FileAttachmentRef"
+            }
+          },
+          "required": [
+            "type",
+            "attachment"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-call"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "arguments": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "name",
+            "arguments"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-addition"
+            },
+            "toolName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "toolName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tool-removal"
+            },
+            "toolName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "toolName"
+          ]
+        }
+      ]
+    },
+    "ImageAttachmentRef": {
+      "type": "object",
+      "properties": {
+        "attachmentId": {
+          "type": "string"
+        },
+        "mediaType": {
+          "$ref": "#/$defs/ImageMediaType"
+        },
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "originalDimensions": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "height": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ]
+        }
+      },
+      "required": [
+        "attachmentId",
+        "mediaType",
+        "bytes",
+        "width",
+        "height"
+      ]
+    },
+    "ImageMediaType": {
+      "type": "string",
+      "enum": [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif"
+      ]
+    },
+    "FileAttachmentRef": {
+      "type": "object",
+      "properties": {
+        "attachmentId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "attachmentId",
+        "name",
+        "bytes"
+      ]
+    },
+    "EmployeeChanged": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "change": {
+          "$ref": "#/$defs/ChangeKind"
+        }
+      },
+      "required": [
+        "id",
+        "rev",
+        "change"
+      ]
+    },
+    "ChangeKind": {
+      "type": "string",
+      "enum": [
+        "created",
+        "updated",
+        "deleted"
+      ]
+    },
+    "TaskChanged": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "change": {
+          "$ref": "#/$defs/ChangeKind"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "change"
+      ]
+    },
+    "TaskDraftState": {
+      "type": "object",
+      "properties": {
+        "draftId": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/DraftState"
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "draftId",
+        "state"
+      ]
+    },
+    "DraftState": {
+      "type": "string",
+      "enum": [
+        "asking",
+        "researching",
+        "building",
+        "example_ready",
+        "checking",
+        "saved",
+        "failed"
+      ]
+    },
+    "TaskExample": {
+      "type": "object",
+      "properties": {
+        "draftId": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "artifactId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "draftId",
+        "input",
+        "artifactId"
+      ]
+    },
+    "ScheduleFired": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "scheduledAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "firedAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "runId",
+        "scheduledAt",
+        "firedAt"
+      ]
+    },
+    "ScheduleChanged": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/ChangeKind"
+        }
+      },
+      "required": [
+        "id",
+        "change"
+      ]
+    },
+    "ArtifactPresented": {
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifactId",
+        "title",
+        "mime",
+        "runId",
+        "sessionId"
+      ]
+    },
+    "ApprovalPending": {
+      "type": "object",
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "risk": {
+          "$ref": "#/$defs/Risk"
+        },
+        "humanText": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "approvalId",
+        "sessionId",
+        "risk",
+        "humanText",
+        "expiresAt"
+      ]
+    },
+    "Risk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "ApprovalResolved": {
+      "type": "object",
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ApprovalOutcome"
+        }
+      },
+      "required": [
+        "approvalId",
+        "outcome"
+      ]
+    },
+    "ApprovalOutcome": {
+      "type": "string",
+      "enum": [
+        "allowed-once",
+        "rejected",
+        "cancelled",
+        "unavailable"
+      ]
+    },
+    "SecurityEgress": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "employeeId": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "at": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "domain",
+        "employeeId",
+        "size",
+        "at"
+      ]
+    }
+  }
+}

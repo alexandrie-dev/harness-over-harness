@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"approval/request","method":"approval/request","params":{"sessionId":"session-1","toolName":"web","callId":"call-1","reason":"Нужен открытый аккаунт","approvalId":"approval-1","risk":"high","humanText":"Открыть t.me?","actionHash":"0000000000000000000000000000000000000000000000000000000000000000"}}

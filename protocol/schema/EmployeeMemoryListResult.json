@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Array_of_MemoryItem",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/MemoryItem"
+  },
+  "$defs": {
+    "MemoryItem": {
+      "type": "object",
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "itemId",
+        "text",
+        "updatedAt"
+      ]
+    }
+  },
+  "x-method": "hoh/employee/memory/list"
+}

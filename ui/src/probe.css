@@ -1,0 +1,6 @@
+body { font: 16px sans-serif; }
+#oklch { color: oklch(0.6 0 0); }
+#mix { color: color-mix(in srgb, rgb(255, 0, 0) 50%, rgb(0, 0, 255)); }
+@layer first, second;
+@layer second { #layer { color: rgb(0, 128, 0); } }
+@layer first { #layer { color: rgb(255, 0, 0); } }

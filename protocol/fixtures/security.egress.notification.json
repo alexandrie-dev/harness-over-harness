@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","method":"security.egress","params":{"domain":"t.me","employeeId":"employee-1","size":1024,"at":1795000000000}}

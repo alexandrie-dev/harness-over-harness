@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Schedule",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/ScheduleTarget"
+    },
+    "when": {
+      "$ref": "#/$defs/ScheduleWhen"
+    },
+    "enabled": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "target",
+    "when",
+    "enabled"
+  ],
+  "$defs": {
+    "ScheduleTarget": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "employeeId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "taskId",
+            "employeeId"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "employeeId": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "employeeId",
+            "prompt"
+          ]
+        }
+      ]
+    },
+    "ScheduleWhen": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "once"
+            },
+            "at": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "at"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "interval"
+            },
+            "everyMs": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "everyMs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cron"
+            },
+            "expression": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "expression",
+            "timezone"
+          ]
+        }
+      ]
+    }
+  },
+  "x-method": "hoh/schedule/update"
+}

@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/working-directory/get","method":"session/working-directory/get","params":{"sessionId":"session-1"}}

@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/settings/set","method":"hoh/settings/set","params":{"view":{"theme":"dark","fontSize":16}}}

@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/employee/update","method":"hoh/employee/update","params":{"id":"employee-1","patch":{"role":"Советует"},"rev":1}}

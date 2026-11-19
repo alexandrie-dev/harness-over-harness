@@ -344,7 +344,8 @@ object!(ModelProbeParams {
 object!(ModelProbeResult {
     ok: bool,
     latency_ms: u64,
-    tool_calls: bool
+    tool_calls: bool,
+    models: Vec<String>
 });
 object!(ModelSettings {
     base_url: String,
@@ -460,16 +461,38 @@ optional!(HostApprovalRequest {
     #[schemars(length(min = 1, max = 128), regex(pattern = "^[A-Za-z0-9_.:-]+$"))]
     approval_id: String,
     risk: Risk,
+    #[schemars(length(min = 1, max = 4096))]
     human_text: String,
     #[schemars(length(min = 64, max = 64), regex(pattern = "^[0-9a-f]{64}$"))]
     action_hash: String,
+    #[schemars(range(min = 1, max = 9007199254740991u64))]
     expires_at: u64,
     action: Value,
 });
-optional!(HostApprovalDecision {
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HostApprovalDecision {
     #[schemars(length(min = 1, max = 128), regex(pattern = "^[A-Za-z0-9_.:-]+$"))]
-    approval_id: String,
-    outcome: ApprovalOutcome,
+    pub approval_id: String,
+    pub outcome: ApprovalOutcome,
     #[schemars(length(min = 64, max = 64), regex(pattern = "^[0-9a-f]{64}$"))]
-    mac: String
+    pub mac: String,
+}
+impl std::fmt::Debug for HostApprovalDecision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostApprovalDecision")
+            .field("approval_id", &self.approval_id)
+            .field("outcome", &self.outcome)
+            .field("mac", &"[REDACTED]")
+            .finish()
+    }
+}
+object!(ModelKeySetParams {
+    api_key: crate::SecretString,
+    base_url: String
+});
+choices!(SetupInternetMode { Ask => "ask", Public => "public" });
+object!(SettingsRulesSetParams {
+    internet: SetupInternetMode,
+    folder: String
 });

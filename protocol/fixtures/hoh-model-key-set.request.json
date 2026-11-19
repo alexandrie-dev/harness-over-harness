@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/model/key/set","method":"hoh/model/key/set","params":{"apiKey":"fixture-api-key","baseUrl":"https://api.example.test/v1"}}

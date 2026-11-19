@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ModelProbeResult",
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "latencyMs": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "toolCalls": {
+      "type": "boolean"
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "ok",
+    "latencyMs",
+    "toolCalls",
+    "models"
+  ],
+  "x-method": "hoh/model/probe"
+}

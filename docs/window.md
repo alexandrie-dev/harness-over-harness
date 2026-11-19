@@ -130,7 +130,7 @@
 | `hoh/artifact/list` | `{runId|sessionId|employeeId}` → `[{id,title,mime,size,createdAt}]` | `hoh-tool-present`, `hoh-attachment` |
 | `hoh/artifact/read` | `{id, offset?, length?}` → `{mime,size,encoding,data,truncated}` (кусками, предел размера) | `hoh-attachment` |
 | `hoh/artifact/render` | `{id, as:"pages"|"table"|"text", page?}` → страницы PNG, строки таблицы или текст | новый `hoh-tools-docs` (docx/pptx через системный `soffice`) |
-| `hoh/model/probe` | `{baseUrl, model}` → `{ok, latencyMs, toolCalls:bool}` | `hoh-llm` |
+| `hoh/model/probe` | `{baseUrl, model}` → `{ok, latencyMs, toolCalls:bool, models:string[]}`; `models` — `data[].id` из OpenAI `GET /models`, либо `[]` | `hoh-llm` |
 | `hoh/settings/get|set` | настройки без секретов | `hoh-settings`, `hoh-credentials` |
 | `hoh/security/summary` | `{}` → `{model:{local:bool,host}, egress:[{domain,count,lastAt}], permissions:[…], approvals:[…]}` | `hoh-sandbox-policy`, `hoh-web`, `hoh-user-approval` |
 
@@ -146,6 +146,29 @@
 6. Фильтр методов в ядре: из главного окна не проходят `approval/*` и `hoh/settings/set` для полей безопасности. Любой метод, который выдаёт или расширяет права (`permissions` в `hoh/employee/create|update`, `hoh/task/draft/decide` с согласием, `hoh/task/rollback` к версии с другими правами, `session/working-directory/set`, `hoh/settings/set` для адреса модели и полей безопасности, `hoh/model/probe` с произвольным адресом), движок выполняет только после `approval/request` с `mac`; перечень таких методов — `PRIVILEGED_METHODS` в `hoh-protocol`, по нему же фильтрует ядро. Повторный `initialize` отвергается: ключ задаётся один раз. `InitializeResult` подтверждает `hoh.approvals: "host"`; ядро, не получив подтверждения, не запускает задачи (иначе движок молча работал бы в старом режиме подтверждений). Захваченный интерфейс может попросить действие, но подтвердить его не может: ни кнопки, ни ключа у него нет.
 
 Остаточные риски: ложная страница в отдельном окне невозможна из окна, но пользователь может нажать «Разрешить» не читая; захваченная ОС. Запрет на нажатие без чтения (задержка кнопки 1 с, крупный текст риска) входит в пакет 4. Не проверено: изоляция webview разных меток в Tauri 2.12 (по `research/supply-chain-ts.md` права привязаны к метке окна), доставка `register_uri_scheme_protocol`.
+
+### Команды ядра Tauri (контракт адаптеров s14, 19.11)
+
+- `engine_request({method, params}) -> result`: команда главного окна. Типы MethodMap
+  из ui/src/protocol.ts; ядро проверяет разрешённые методы и подтверждение host handshake.
+  Привилегированные действия движок завершает только после отдельного host approval.
+- `approval_current() -> {approvalId,risk,humanText,reason?,expiresAt}`: только метка
+  approval; возвращается ожидающее подтверждение этой метки, без ключа и MAC.
+- `approval_decide({approvalId,outcome:"allowed-once"|"rejected"}) -> void`: только метка
+  approval; ядро проверяет актуальный id, подписывает собственную сохранённую запись,
+  а не данные от страницы. Закрытие окна означает rejected.
+- `pick_folder() -> string|null`: системный диалог выбора папки; null при отмене.
+  Выбор не выдаёт прав: их сохранение — отдельное подтверждаемое действие.
+
+Методы первого запуска: `hoh/model/key/set({apiKey,baseUrl}) -> {}` сохраняет модельный ключ
+через credentials, `hoh/settings/rules/set({internet:"ask"|"public",folder}) -> {}`
+сохраняет правила. Оба привилегированные. `hoh/model/probe({baseUrl,model})` использует
+сохранённый ключ; параметры и результаты хранения ключа не журналируются.
+Ключ живёт в окне только в поле ввода до передачи, не в общем состоянии и не в Debug.
+Для model/key/set подписываемое действие: {method,params:{keyHash,baseUrl}}, где keyHash —
+action_hash({apiKey}); само значение ключа не пересылается в approval/request.
+engine_request не должен записывать аргументы или секреты в диагностику/журнал.
+Это описание интерфейса; реализация команд ядра принадлежит пакету 4.
 
 ## 5. Безопасность, которую видит пользователь
 

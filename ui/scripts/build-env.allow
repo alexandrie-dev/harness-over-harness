@@ -1,0 +1,28 @@
+# Literal values only; no inherited values, expansion or shell evaluation.
+[build]
+PATH=/home/save/Alexandrie/HarnessOverHarness/ui/scripts/tools:/home/save/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin # Local shim calls the installed pnpm 12.21.0 native binary without Corepack; pinned Node and host tools, no caller PATH.
+HOME=@HOME@ # Fresh private /tmp directory for each command; never the real home or its npm config.
+LANG=C.UTF-8 # Deterministic UTF-8 diagnostics and filenames.
+LC_ALL=C.UTF-8 # Prevent inherited locale overrides.
+XDG_RUNTIME_DIR=@HOME@/runtime # Writable private pnpm operation locks; no /run/user dependency.
+
+# Separate fixed profile for the existing timeout/xvfb-run window probe, NOT builds.
+# This preserves its Mesa configuration without forwarding its inherited environment.
+[window]
+XDG_DATA_DIRS=/usr/local/share:/usr/share # GTK system resources with an otherwise empty HOME.
+GDK_BACKEND=x11 # xvfb-run provides X11 only.
+HOH_WEBKIT_PROBE=1 # Ask the already-built window to run its authored CSS probe.
+LIBGL_ALWAYS_SOFTWARE=1 # Mesa software rendering on this headless host.
+__GLX_VENDOR_LIBRARY_NAME=mesa # Avoid the host NVIDIA GLX loader.
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json # Select the local Mesa EGL manifest.
+WEBKIT_DISABLE_COMPOSITING_MODE=1 # Existing WebKitGTK headless probe requirement.
+GIO_USE_VFS=local # The probe only reads local assets, without GVfs services.
+
+# Separate fixed profile for the pre-existing offline.py cargo entrypoint; NOT npm builds.
+[cargo]
+CARGO_BUILD_JOBS=2 # CEO resource cap on the loaded host.
+CARGO_HOME=/mnt/toshiba/alexandrie/hoh/cargo-home-ui2 # Only writable UI Cargo home; no real-home config.
+CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-ui2 # UI artifacts stay outside the repository.
+CARGO_NET_OFFLINE=true # Subsequent native builds must use already acquired crates.
+RUSTUP_HOME=/home/save/.rustup # Read the already installed toolchains; HOME still stays disposable.
+RUSTUP_TOOLCHAIN=1.97.1-x86_64-unknown-linux-gnu # Existing pinned native toolchain; do not select one from caller environment.

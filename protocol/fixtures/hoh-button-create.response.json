@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/button/create","result":{"id":"button-1","label":"Разобрать аккаунт","icon":"file","target":{"kind":"task","id":"task-1"},"inputs":[{"name":"url","label":"Ссылка","required":true}],"employeeId":"employee-1"}}

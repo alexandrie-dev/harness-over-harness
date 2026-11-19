@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/events","result":{"events":[{"type":"turn/start","seq":0,"time":0,"data":{"turn":1}}],"nextSeq":0}}

@@ -1,0 +1,26 @@
+packages:
+  - '.'
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude: []
+allowBuilds: {}
+strictDepBuilds: true
+blockExoticSubdeps: true
+trustLockfile: false
+minimumReleaseAgeStrict: true
+ignoreScripts: true
+optional: false
+saveExact: true
+frozenLockfile: true
+offline: true
+updateNotifier: false
+registry: https://registry.npmjs.org/
+storeDir: /mnt/toshiba/alexandrie/hoh/pnpm-store
+cacheDir: /mnt/toshiba/alexandrie/hoh/pnpm-store/cache
+ignoredOptionalDependencies:
+  - '*'
+autoInstallPeers: false
+overrides:
+  rolldown: 1.2.19
+  lightningcss: 1.33.0
+nodeLinker: isolated
+verifyStoreIntegrity: true

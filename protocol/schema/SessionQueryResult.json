@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionQueryResult",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "prompt"
+        },
+        "messageId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "messageId"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "command"
+        },
+        "execution": {
+          "$ref": "#/$defs/CommandExecution"
+        }
+      },
+      "required": [
+        "kind",
+        "execution"
+      ]
+    }
+  ],
+  "$defs": {
+    "CommandExecution": {
+      "type": "object",
+      "properties": {
+        "commandId": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/CommandResult"
+        }
+      },
+      "required": [
+        "commandId",
+        "result"
+      ]
+    },
+    "CommandResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "success"
+            },
+            "text": {
+              "type": "string"
+            },
+            "sourceEventSeq": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "error"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        }
+      ]
+    }
+  },
+  "x-method": "session/query"
+}

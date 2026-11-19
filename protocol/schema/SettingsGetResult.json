@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Settings",
+  "type": "object",
+  "properties": {
+    "model": {
+      "$ref": "#/$defs/ModelSettings"
+    },
+    "security": {
+      "$ref": "#/$defs/Permissions"
+    },
+    "view": {
+      "$ref": "#/$defs/ViewSettings"
+    }
+  },
+  "required": [
+    "model",
+    "security",
+    "view"
+  ],
+  "$defs": {
+    "ModelSettings": {
+      "type": "object",
+      "properties": {
+        "baseUrl": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "baseUrl",
+        "model"
+      ]
+    },
+    "Permissions": {
+      "type": "object",
+      "properties": {
+        "internet": {
+          "$ref": "#/$defs/InternetMode"
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "writeFiles": {
+          "type": "boolean"
+        },
+        "programs": {
+          "type": "boolean"
+        },
+        "programNetwork": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actAsUser": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "internet",
+        "domains",
+        "folders",
+        "writeFiles",
+        "programs",
+        "programNetwork",
+        "actAsUser"
+      ]
+    },
+    "InternetMode": {
+      "type": "string",
+      "enum": [
+        "ask",
+        "public",
+        "deny"
+      ]
+    },
+    "ViewSettings": {
+      "type": "object",
+      "properties": {
+        "theme": {
+          "$ref": "#/$defs/Theme"
+        },
+        "fontSize": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "theme",
+        "fontSize"
+      ]
+    },
+    "Theme": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark",
+        "system"
+      ]
+    }
+  },
+  "x-method": "hoh/settings/get"
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ArtifactReadResult",
+  "type": "object",
+  "properties": {
+    "mime": {
+      "type": "string"
+    },
+    "size": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "encoding": {
+      "$ref": "#/$defs/ArtifactEncoding"
+    },
+    "data": {
+      "type": "string"
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "mime",
+    "size",
+    "encoding",
+    "data",
+    "truncated"
+  ],
+  "$defs": {
+    "ArtifactEncoding": {
+      "type": "string",
+      "enum": [
+        "utf8",
+        "base64"
+      ]
+    }
+  },
+  "x-method": "hoh/artifact/read"
+}

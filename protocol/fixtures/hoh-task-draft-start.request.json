@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/task/draft/start","method":"hoh/task/draft/start","params":{"description":"Прочитать публичный аккаунт","employeeId":"employee-1"}}

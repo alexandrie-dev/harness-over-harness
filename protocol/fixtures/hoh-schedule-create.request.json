@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/schedule/create","method":"hoh/schedule/create","params":{"draft":{"target":{"taskId":"task-1","employeeId":"employee-1"},"when":{"kind":"cron","expression":"0 9 * * 1-5","timezone":"Europe/Moscow"},"enabled":true}}}

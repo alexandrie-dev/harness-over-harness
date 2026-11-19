@@ -92,6 +92,10 @@ pub enum Request {
     ArtifactRead(ArtifactReadParams),
     #[serde(rename = "hoh/artifact/render")]
     ArtifactRender(ArtifactRenderParams),
+    #[serde(rename = "hoh/model/key/set")]
+    ModelKeySet(ModelKeySetParams),
+    #[serde(rename = "hoh/settings/rules/set")]
+    SettingsRulesSet(SettingsRulesSetParams),
     #[serde(rename = "hoh/model/probe")]
     ModelProbe(ModelProbeParams),
     #[serde(rename = "hoh/settings/get")]
@@ -151,6 +155,8 @@ impl Request {
             Self::ArtifactList(_) => "hoh/artifact/list",
             Self::ArtifactRead(_) => "hoh/artifact/read",
             Self::ArtifactRender(_) => "hoh/artifact/render",
+            Self::ModelKeySet(_) => "hoh/model/key/set",
+            Self::SettingsRulesSet(_) => "hoh/settings/rules/set",
             Self::ModelProbe(_) => "hoh/model/probe",
             Self::SettingsGet(_) => "hoh/settings/get",
             Self::SettingsSet(_) => "hoh/settings/set",
@@ -240,6 +246,8 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/artifact/list",
     "hoh/artifact/read",
     "hoh/artifact/render",
+    "hoh/model/key/set",
+    "hoh/settings/rules/set",
     "hoh/model/probe",
     "hoh/settings/get",
     "hoh/settings/set",
@@ -315,6 +323,8 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/artifact/list" => admit::<ArtifactListParams>(value),
         "hoh/artifact/read" => admit::<ArtifactReadParams>(value),
         "hoh/artifact/render" => admit::<ArtifactRenderParams>(value),
+        "hoh/model/key/set" => admit::<ModelKeySetParams>(value),
+        "hoh/settings/rules/set" => admit::<SettingsRulesSetParams>(value),
         "hoh/model/probe" => admit::<ModelProbeParams>(value),
         "hoh/settings/get" => admit::<Empty>(value),
         "hoh/settings/set" => admit::<SettingsSetParams>(value),
@@ -376,6 +386,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/artifact/list" => admit::<Vec<Artifact>>(value),
         "hoh/artifact/read" => admit::<ArtifactReadResult>(value),
         "hoh/artifact/render" => admit::<ArtifactRenderResult>(value),
+        "hoh/model/key/set" | "hoh/settings/rules/set" => admit::<Empty>(value),
         "hoh/model/probe" => admit::<ModelProbeResult>(value),
         "hoh/settings/get" => admit::<Settings>(value),
         "hoh/settings/set" => admit::<Settings>(value),
@@ -1026,6 +1037,25 @@ pub fn schemas() -> Vec<(String, Value)> {
             .insert("x-method".into(), Value::String("user-question/ask".into()));
         schemas.push(("UserQuestionAskResult".into(), schema));
     }
+    schemas.push((
+        "ModelKeySetParams".into(),
+        serde_json::to_value(schema_for!(ModelKeySetParams)).unwrap(),
+    ));
+    schemas.push((
+        "SettingsRulesSetParams".into(),
+        serde_json::to_value(schema_for!(SettingsRulesSetParams)).unwrap(),
+    ));
+    for (name, method) in [
+        ("ModelKeySetResult", "hoh/model/key/set"),
+        ("SettingsRulesSetResult", "hoh/settings/rules/set"),
+    ] {
+        let mut schema = serde_json::to_value(schema_for!(Empty)).unwrap();
+        schema
+            .as_object_mut()
+            .unwrap()
+            .insert("x-method".into(), Value::String(method.into()));
+        schemas.push((name.into(), schema));
+    }
     schemas
 }
 
@@ -1119,6 +1149,10 @@ enum RequestDecode {
     ArtifactRead(ArtifactReadParams),
     #[serde(rename = "hoh/artifact/render")]
     ArtifactRender(ArtifactRenderParams),
+    #[serde(rename = "hoh/model/key/set")]
+    ModelKeySet(ModelKeySetParams),
+    #[serde(rename = "hoh/settings/rules/set")]
+    SettingsRulesSet(SettingsRulesSetParams),
     #[serde(rename = "hoh/model/probe")]
     ModelProbe(ModelProbeParams),
     #[serde(rename = "hoh/settings/get")]
@@ -1161,24 +1195,25 @@ impl<'de> Deserialize<'de> for Request {
         RequestDecode::deserialize(value).map_err(serde::de::Error::custom)
     }
 }
-pub const PRIVILEGED_METHODS: &[&str] = &[
-    "hoh/employee/create",
-    "hoh/employee/update",
-    "hoh/task/draft/decide",
-    "hoh/task/rollback",
-    "hoh/settings/set",
-];
-pub fn requires_host_approval(method: &str, params: &Value) -> bool {
-    match method {
-        "hoh/employee/create" | "hoh/task/rollback" => true,
-        "hoh/employee/update" => params
-            .get("patch")
-            .and_then(|p| p.get("permissions"))
-            .is_some(),
-        "hoh/task/draft/decide" => params["decision"] == "yes",
-        "hoh/settings/set" => params.get("security").is_some(),
-        _ => false,
-    }
+// The exported filter and engine predicate are generated from one method table.
+macro_rules! privileged_methods {
+    ($($method:literal => $predicate:expr),* $(,)?) => {
+        pub const PRIVILEGED_METHODS: &[&str] = &[$($method),*];
+        pub fn requires_host_approval(method:&str,params:&Value)->bool {
+            match method { $($method => ($predicate)(params)),*, _=>false }
+        }
+    };
+}
+privileged_methods! {
+    "hoh/employee/create" => |_:&Value| true,
+    "hoh/employee/update" => |p:&Value| p.get("patch").is_some_and(|patch|patch.get("permissions").is_some() || patch.get("taskIds").is_some()),
+    "hoh/task/draft/decide" => |p:&Value| p["decision"]=="yes",
+    "hoh/task/rollback" => |_:&Value| true,
+    "hoh/settings/set" => |p:&Value| p.get("security").is_some() || p.get("model").is_some(),
+    "session/working-directory/set" => |_:&Value| true,
+    "hoh/model/probe" => |p:&Value| p.get("baseUrl").is_some(),
+    "hoh/model/key/set" => |_:&Value| true,
+    "hoh/settings/rules/set" => |_:&Value| true,
 }
 pub fn validate_params_host(method: &str, value: &Value) -> Result<(), String> {
     if method == "approval/request" {
