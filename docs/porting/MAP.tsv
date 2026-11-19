@@ -142,7 +142,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/preset/agent-preset	@deepseek-ai/dsh-agent-preset	hoh-agent-preset	30	271	todo	
 2	port	packages/preset/persona	@deepseek-ai/dsh-persona	hoh-persona	75	179	done	
 2	port	packages/session-query/session-query-sqlite	@deepseek-ai/dsh-session-query-sqlite	hoh-session-query-sqlite	1781	2215	todo	
-2	port	packages/session/session-telemetry	@deepseek-ai/dsh-session-telemetry	hoh-session-telemetry	479	910	todo	
+2	port	packages/session/session-telemetry	@deepseek-ai/dsh-session-telemetry	hoh-session-telemetry	479	910	writing:x5	
 2	port	packages/session/session-telemetry-otel	@deepseek-ai/dsh-session-telemetry-otel	hoh-session-telemetry-otel	278	1323	todo	
 2	port	packages/session/session-title-first-prompt-llm	@deepseek-ai/dsh-session-title-first-prompt-llm	hoh-session-title-first-prompt-llm	168	551	writing:x4	
 2	port	packages/session/session-title-llm	@deepseek-ai/dsh-session-title-llm	hoh-session-title-llm	291	569	writing:x4	

@@ -117,6 +117,30 @@ pub struct RequestRecord {
     pub authorized: bool,
 }
 
+/// How the configured pauses are taken. `Recorded` lets a test see them without waiting.
+#[derive(Clone, Debug, Default)]
+pub enum Sleeper {
+    /// Sleep for real.
+    #[default]
+    Real,
+    /// Do not sleep; append `(response index, milliseconds)` for every pause that was due.
+    Recorded(Arc<std::sync::Mutex<Vec<(usize, u64)>>>),
+}
+
+impl Sleeper {
+    async fn pause(&self, index: usize, milliseconds: u64) {
+        match self {
+            Self::Real => {
+                tokio::time::sleep(std::time::Duration::from_millis(milliseconds)).await;
+            }
+            Self::Recorded(log) => log
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((index, milliseconds)),
+        }
+    }
+}
+
 /// Listener and journal configuration.
 #[derive(Clone)]
 pub struct MockOptions {
@@ -129,6 +153,12 @@ pub struct MockOptions {
     /// Response index -> pause (ms) after the opening chunk and before the first delta, so a
     /// test can cancel a turn that is still being answered.
     pub delays_ms: std::collections::HashMap<usize, u64>,
+    /// Response index -> pause (ms) before every text delta of that response, so a streamed
+    /// answer lasts long enough to be stopped by hand. Kept here and not in `ScenarioResponse`
+    /// so that existing struct literals of the scenario types keep compiling.
+    pub part_delays_ms: std::collections::HashMap<usize, u64>,
+    /// How `delays_ms` and `part_delays_ms` are slept; real by default.
+    pub sleeper: Sleeper,
 }
 
 impl fmt::Debug for MockOptions {
@@ -141,6 +171,8 @@ impl fmt::Debug for MockOptions {
             .field("journal_path", &self.journal_path)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("delays_ms", &self.delays_ms)
+            .field("part_delays_ms", &self.part_delays_ms)
+            .field("sleeper", &self.sleeper)
             .finish()
     }
 }
@@ -155,6 +187,8 @@ impl MockOptions {
             journal_path: None,
             api_key: None,
             delays_ms: std::collections::HashMap::new(),
+            part_delays_ms: std::collections::HashMap::new(),
+            sleeper: Sleeper::Real,
         }
     }
 }
@@ -193,6 +227,8 @@ struct Shared {
     scenario: Scenario,
     api_key: Option<String>,
     delays_ms: std::collections::HashMap<usize, u64>,
+    part_delays_ms: std::collections::HashMap<usize, u64>,
+    sleeper: Sleeper,
     state: Mutex<State>,
 }
 
@@ -320,6 +356,8 @@ impl MockServer {
             scenario: options.scenario,
             api_key: options.api_key,
             delays_ms: options.delays_ms,
+            part_delays_ms: options.part_delays_ms,
+            sleeper: options.sleeper,
             state: Mutex::new(State {
                 cursor: 0,
                 records: Vec::new(),
@@ -516,6 +554,8 @@ async fn serve_connection(mut stream: TcpStream, shared: Arc<Shared>) -> Result<
                             index,
                             &response,
                             shared.delays_ms.get(&index).copied(),
+                            shared.part_delays_ms.get(&index).copied(),
+                            &shared.sleeper,
                         )
                         .await?
                     }
@@ -558,6 +598,8 @@ async fn write_stream(
     index: usize,
     response: &ScenarioResponse,
     delay_ms: Option<u64>,
+    part_delay_ms: Option<u64>,
+    sleeper: &Sleeper,
 ) -> Result<(), MockError> {
     stream
         .write_all(
@@ -572,9 +614,12 @@ async fn write_stream(
     )
     .await?;
     if let Some(delay) = delay_ms {
-        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        sleeper.pause(index, delay).await;
     }
     for text in &response.text {
+        if let Some(delay) = part_delay_ms {
+            sleeper.pause(index, delay).await;
+        }
         write_sse(
             stream,
             &json!({"id":id,"object":"chat.completion.chunk","created":0,"model":model,

@@ -1,8 +1,9 @@
 use hoh_llm_openai_mock::{
     MockOptions, MockServer, RequestRecord, Scenario, ScenarioResponse, ScenarioToolCall,
-    ScenarioUsage,
+    ScenarioUsage, Sleeper,
 };
 use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
 
 fn post_json(client: &reqwest::Client, url: &str, body: Value) -> reqwest::RequestBuilder {
     client
@@ -247,6 +248,47 @@ async fn configured_delay_comes_after_the_opening_chunk_and_before_the_text() {
         .await
         .expect("undelayed body");
     assert!(body.contains("Запускаю проверку."), "{body}");
+    server.close().await;
+}
+
+#[tokio::test]
+async fn a_part_delay_is_slept_before_every_part_of_that_response_only() {
+    let parts = ["первая ", "вторая ", "третья"];
+    let response = || ScenarioResponse {
+        text: parts.iter().map(|part| (*part).to_owned()).collect(),
+        tool_calls: Vec::new(),
+        usage: ScenarioUsage::default(),
+    };
+    let mut options = MockOptions::new(Scenario {
+        model: "mock-model".to_owned(),
+        responses: vec![response(), response()],
+    });
+    options.part_delays_ms.insert(0, 150);
+    // The pauses are recorded, not slept: the result does not depend on how loaded the machine is.
+    let slept = Arc::new(Mutex::new(Vec::new()));
+    options.sleeper = Sleeper::Recorded(slept.clone());
+    let mut server = start(options).await;
+    let client = reqwest::Client::new();
+    let url = format!("{}/chat/completions", server.base_url);
+    let log = || slept.lock().expect("sleep log").clone();
+
+    for (index, expected) in [
+        (0, vec![(0, 150), (0, 150), (0, 150)]),
+        (1, vec![(0, 150), (0, 150), (0, 150)]),
+    ] {
+        let body = post_json(&client, &url, json!({"stream":true,"messages":[]}))
+            .send()
+            .await
+            .expect("completion")
+            .text()
+            .await
+            .expect("body");
+        for part in parts {
+            assert!(body.contains(part), "response {index} lacks {part}: {body}");
+        }
+        // Response 0 slept three times (one per part); response 1 added nothing.
+        assert_eq!(log(), expected, "after response {index}");
+    }
     server.close().await;
 }
 

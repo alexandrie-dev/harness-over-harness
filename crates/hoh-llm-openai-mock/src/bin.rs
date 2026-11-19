@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -5,14 +6,15 @@ use std::process::ExitCode;
 use hoh_llm_openai_mock::{MockOptions, MockServer, Scenario};
 use serde_json::json;
 
-const USAGE: &str =
-    "Usage: hoh-llm-openai-mock --scenario FILE [--journal FILE] [--listen HOST:PORT]\n";
+const USAGE: &str = "Usage: hoh-llm-openai-mock --scenario FILE [--journal FILE] [--listen HOST:PORT] [--part-delay INDEX=MS]...\n";
 
 struct Args {
     scenario: PathBuf,
     journal: Option<PathBuf>,
     host: String,
     port: u16,
+    /// Response index -> pause (ms) before every text part of that response.
+    part_delays_ms: HashMap<usize, u64>,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -21,6 +23,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut journal = None;
     let mut host = "127.0.0.1".to_owned();
     let mut port = 0;
+    let mut part_delays_ms = HashMap::new();
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--scenario" => {
@@ -50,6 +53,22 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                     .parse()
                     .map_err(|_| "--listen port must be 0..65535".to_owned())?;
             }
+            "--part-delay" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--part-delay needs INDEX=MS".to_owned())?;
+                let (index, milliseconds) = value
+                    .split_once('=')
+                    .ok_or_else(|| "--part-delay must be INDEX=MS".to_owned())?;
+                part_delays_ms.insert(
+                    index
+                        .parse()
+                        .map_err(|_| "--part-delay INDEX must be a number".to_owned())?,
+                    milliseconds
+                        .parse()
+                        .map_err(|_| "--part-delay MS must be a number".to_owned())?,
+                );
+            }
             "--help" | "-h" => return Err(String::new()),
             _ => return Err(format!("unknown argument: {argument}")),
         }
@@ -59,6 +78,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         journal,
         host,
         port,
+        part_delays_ms,
     })
 }
 
@@ -82,6 +102,7 @@ async fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     options.host = args.host;
     options.port = args.port;
     options.journal_path = args.journal;
+    options.part_delays_ms = args.part_delays_ms;
     // Handlers first: a signal that follows the `ready` line must already find them.
     #[cfg(unix)]
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
@@ -186,5 +207,42 @@ mod tests {
         let args = parse_args(["--scenario", "s", "--listen", "[::1]:9"].map(str::to_owned))
             .expect("arguments");
         assert_eq!((args.host.as_str(), args.port), ("::1", 9));
+    }
+
+    #[test]
+    fn parses_part_delays_and_rejects_malformed_ones() {
+        let args = parse_args(
+            [
+                "--scenario",
+                "s",
+                "--part-delay",
+                "0=200",
+                "--part-delay",
+                "7=50",
+            ]
+            .map(str::to_owned),
+        )
+        .expect("arguments");
+        assert_eq!(args.part_delays_ms.get(&0), Some(&200));
+        assert_eq!(args.part_delays_ms.get(&7), Some(&50));
+        for (bad, message) in [
+            (vec!["--part-delay"], "--part-delay needs INDEX=MS"),
+            (vec!["--part-delay", "5"], "--part-delay must be INDEX=MS"),
+            (
+                vec!["--part-delay", "x=5"],
+                "--part-delay INDEX must be a number",
+            ),
+            (
+                vec!["--part-delay", "0=x"],
+                "--part-delay MS must be a number",
+            ),
+        ] {
+            let mut arguments = vec!["--scenario", "s"];
+            arguments.extend(bad);
+            let error = parse_args(arguments.into_iter().map(str::to_owned))
+                .err()
+                .expect("must fail");
+            assert_eq!(error, message);
+        }
     }
 }
