@@ -1,0 +1,11 @@
+{
+  "model": "window-mock",
+  "responses": [
+    {"text": ["Привет. ", "Это поток от mock."], "usage": {"prompt_tokens": 12, "completion_tokens": 6}},
+    {"text": ["Смотрю папку."], "tool_calls": [{"id": "call-bash", "name": "bash", "arguments": {"command": "pwd"}}], "usage": {"prompt_tokens": 20, "completion_tokens": 8}},
+    {"tool_calls": [{"id": "call-read", "name": "read", "arguments": {"file_path": "notes.txt"}}]},
+    {"tool_calls": [{"id": "call-write", "name": "write", "arguments": {"file_path": "result.txt", "content": "готово\n"}}]},
+    {"text": ["Удаляю каталог."], "tool_calls": [{"id": "call-danger", "name": "bash", "arguments": {"command": "rm -rf ./generated", "sandbox_permissions": "danger-full-access", "justification": "Очистка сгенерированных файлов."}}]},
+    {"text": ["Готово."], "usage": {"prompt_tokens": 40, "completion_tokens": 2}}
+  ]
+}
