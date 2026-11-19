@@ -1,0 +1,30 @@
+[package]
+name = "hoh-command-feedback"
+description = "Port of @deepseek-ai/dsh-command-feedback (packages/feedback/command-feedback)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-anonymous-user-id = { path = "../hoh-anonymous-user-id" }
+hoh-commands = { path = "../hoh-commands" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-session = { path = "../hoh-session" }
+hoh-util-values = { path = "../hoh-util-values" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+hoh-agent = { path = "../hoh-agent" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-timeout = { path = "../hoh-timeout" }
+tempfile.workspace = true
+

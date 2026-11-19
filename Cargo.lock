@@ -938,6 +938,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-command-feedback"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-anonymous-user-id",
+ "hoh-commands",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-timeout",
+ "hoh-util-values",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-commander"
 version = "0.1.0"
 dependencies = [
