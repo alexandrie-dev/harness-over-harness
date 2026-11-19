@@ -73,7 +73,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/session/session-format-v1-to-v2	@deepseek-ai/dsh-session-format-v1-to-v2	hoh-session-format-v1-to-v2	1256	1989	done	
 1	port	packages/session/session-format-v2-to-v3	@deepseek-ai/dsh-session-format-v2-to-v3	hoh-session-format-v2-to-v3	815	2057	done	
 1	port	packages/session/session-format-v3-to-v4	@deepseek-ai/dsh-session-format-v3-to-v4	hoh-session-format-v3-to-v4	1702	3119	done	
-1	port	packages/session/session-log-deepseek	@deepseek-ai/dsh-session-log-deepseek	hoh-session-log-deepseek	396	1083	writing:x5	
+1	port	packages/session/session-log-deepseek	@deepseek-ai/dsh-session-log-deepseek	hoh-session-log-deepseek	396	1083	done	
 1	port	packages/session/session-persistence	@deepseek-ai/dsh-session-persistence	hoh-session-persistence	636	1243	done	
 1	port	packages/session/session-persistence-jsonl	@deepseek-ai/dsh-session-persistence-jsonl	hoh-session-persistence-jsonl	5145	9634	done	
 1	port	packages/session/session-projection	@deepseek-ai/dsh-session-projection	hoh-session-projection	1031	2011	done	

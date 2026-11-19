@@ -1584,6 +1584,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-log-deepseek"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-deepseek-llm-api-extensions",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-session",
+ "hoh-timeout",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-session-persistence"
 version = "0.1.0"
 dependencies = [
