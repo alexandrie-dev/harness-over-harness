@@ -58,9 +58,12 @@ coalesced, bounded at five seconds, and escalates on repeated signals.
   overlays (`profile-context.ts:74-80`). Proxy policy is installed before boot reads.
 - Help, version, and argument rejection finish before resolving HOME/DSH_HOME,
   cwd, or the executable path, matching `apps/cli/src/bin.ts:24-27`. An appExit
-  calls the bounded shutdown controller immediately (`profile-boot.ts:349`); its
-  disposer waits only for the current mount result so a simultaneous row failure
-  remains the startup result, while a stuck mount still reaches the force deadline.
+  calls the bounded shutdown controller immediately (`profile-boot.ts:349`). To
+  reproduce the immediate `fiber.dispose()` at `profile-boot.ts:298` without losing
+  a row error racing that disposal, Rust immediately disposes active non-container
+  rows, then disposes the profile owner once the current mount reports its result.
+  Thus a stuck later mount cannot retain earlier rows and still reaches the bounded
+  force deadline with the appExit code; a reported row error remains exit code 1.
 - Schema-dump diagnostics deliberately retain `dsh: warning:`: the source writes
   `${NAME}: ${diagnostic.level}: ...` in `apps/cli/src/dump-config-schema.ts:43-45`
   and pins that exact warning in `dump-config-schema.expected.e2e.ts:346`.

@@ -528,3 +528,34 @@ async fn lets_a_profile_without_a_parser_ignore_app_arguments_and_dispose_on_a_s
     );
     assert!(result.stderr.is_empty());
 }
+
+#[tokio::test]
+async fn exits_one_when_app_exit_is_followed_by_a_row_failure() {
+    let root = tempfile::tempdir().unwrap();
+    hoh_loader::init_profile(&root.path().join("home/profiles/empty"), &[]).unwrap();
+    let overlay = root.path().join("exit-then-fail.yml");
+    std::fs::write(
+        &overlay,
+        "- insert: [{id: webserver, name: 'hoh:test-exit-then-fail'}]\n",
+    )
+    .unwrap();
+    let result = command(
+        root.path(),
+        &["empty", "--patch", overlay.to_str().unwrap()],
+    )
+    .env("HOH_TEST_EXIT_THEN_FAIL", "1")
+    .output()
+    .await
+    .unwrap();
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("failure after exit request"),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}

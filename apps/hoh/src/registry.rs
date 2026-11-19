@@ -1,5 +1,7 @@
 //! Compiled plugin table. Missing packages remain unresolved, never stand-in plugins.
 use hoh_kernel::{Cfg, Context, Error, NoConfig, Plugin, Service};
+#[cfg(debug_assertions)]
+use hoh_loader::cmdline::AppExitKey;
 use hoh_loader::{LoaderKey, PluginRegistry, ProfileContextKey};
 #[derive(hoh_kernel::Inject)]
 struct EditorDeps {
@@ -27,6 +29,20 @@ impl Plugin for ConfigEditor {
         Ok(())
     }
 }
+
+#[cfg(debug_assertions)]
+struct ExitThenFailFixture;
+#[cfg(debug_assertions)]
+impl Plugin for ExitThenFailFixture {
+    const NAME: &'static str = "hoh:test-exit-then-fail";
+    type Config = NoConfig;
+    type Deps = ();
+    async fn apply(ctx: Context, _: (), _: Cfg<NoConfig>) -> Result<(), Error> {
+        ctx.get::<AppExitKey>().ok_or("missing appExit")?.request(7);
+        Err("failure after exit request".into())
+    }
+}
+
 pub fn registry() -> PluginRegistry {
     let mut registry = PluginRegistry::default();
     registry
@@ -52,5 +68,9 @@ pub fn registry() -> PluginRegistry {
         .add::<hoh_deliverable_file_references::DeliverableFileReferences>(
             "@deepseek-ai/dsh-deliverable-file-references",
         );
+    #[cfg(debug_assertions)]
+    if std::env::var_os("HOH_TEST_EXIT_THEN_FAIL").is_some() {
+        registry.add::<ExitThenFailFixture>("hoh:test-exit-then-fail");
+    }
     registry
 }

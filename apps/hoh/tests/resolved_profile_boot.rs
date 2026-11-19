@@ -19,6 +19,7 @@ struct Seen {
     values: Mutex<Vec<Value>>,
     disposed: AtomicUsize,
     proxy: Mutex<Option<Arc<ProxyTransport>>>,
+    continue_mount: tokio::sync::Notify,
 }
 hoh_kernel::service!(SeenKey: Seen = "testSeen");
 struct Target;
@@ -76,8 +77,26 @@ impl Plugin for RequestsExitThenHangs {
     type Config = NoConfig;
     type Deps = ();
     async fn apply(ctx: Context, _: (), _: Cfg<NoConfig>) -> Result<(), Error> {
+        let seen = ctx.get::<SeenKey>().ok_or("missing test state")?;
+        seen.continue_mount.notified().await;
         ctx.get::<AppExitKey>().ok_or("missing appExit")?.request(9);
         std::future::pending::<()>().await;
+        Ok(())
+    }
+}
+
+struct MountedBeforeExit;
+impl Plugin for MountedBeforeExit {
+    const NAME: &'static str = "mounted-before-exit";
+    type Config = NoConfig;
+    type Deps = ();
+    async fn apply(ctx: Context, _: (), _: Cfg<NoConfig>) -> Result<(), Error> {
+        let seen = ctx.get::<SeenKey>().ok_or("missing test state")?;
+        ctx.effect("mounted row cleanup", move || {
+            Undo::sync(move || {
+                seen.disposed.fetch_add(1, Ordering::AcqRel);
+            })
+        })?;
         Ok(())
     }
 }
@@ -275,28 +294,67 @@ async fn a_successful_mount_honors_the_exit_requested_during_startup() {
     assert!(running.ctx.fiber().is_disposed());
 }
 #[tokio::test(start_paused = true)]
-async fn an_exit_request_starts_the_bounded_shutdown_while_mount_is_still_pending() {
+async fn an_exit_request_disposes_mounted_rows_while_a_later_mount_is_still_pending() {
     let root = tempfile::tempdir().unwrap();
     let mut profile = support::profile(root.path(), "desktop", &[]);
     let file = profile.dir.join("bundle.yml");
     profile.layers.push(layer(
         &file,
         LayerSource::Bundle("fixture".into()),
-        "- insert: [{id: webserver, name: requests-exit-then-hangs}]\n",
+        "- insert:\n    - {id: mounted, name: mounted-before-exit}\n    - {id: webserver, name: requests-exit-then-hangs}\n",
     ));
     let mut registry = PluginRegistry::default();
-    registry.add::<RequestsExitThenHangs>("requests-exit-then-hangs");
+    registry
+        .add::<MountedBeforeExit>("mounted-before-exit")
+        .add::<RequestsExitThenHangs>("requests-exit-then-hangs");
     let forced = Arc::new(Mutex::new(vec![]));
-    let observed = forced.clone();
+    let observed_force = forced.clone();
+    let completed = Arc::new(Mutex::new(vec![]));
+    let observed_complete = completed.clone();
     let host = ProfileHost::new(
-        Arc::new(move |code| observed.lock().unwrap().push(code)),
-        Arc::new(|code| panic!("pending mount completed unexpectedly with {code}")),
+        Arc::new(move |code| observed_force.lock().unwrap().push(code)),
+        Arc::new(move |code| observed_complete.lock().unwrap().push(code)),
     );
-    let cleanup = host.clone();
+    let kernel = host.kernel.clone();
+    let seen = Arc::new(Seen::default());
+    host.kernel
+        .root()
+        .provide::<SeenKey>(seen.clone())
+        .await
+        .unwrap();
     let launch = run_profile(options(root.path(), profile, registry), host);
     tokio::pin!(launch);
+    for _ in 0..256 {
+        tokio::select! {
+            result = &mut launch => panic!("mount settled before appExit: {}", result.is_ok()),
+            () = tokio::task::yield_now() => {}
+        }
+        if kernel.snapshot().await.fibers.iter().any(|fiber| {
+            fiber.name.as_ref() == "mounted-before-exit"
+                && fiber.state == hoh_kernel::FiberState::Active
+        }) {
+            break;
+        }
+    }
+    assert!(kernel.snapshot().await.fibers.iter().any(|fiber| {
+        fiber.name.as_ref() == "mounted-before-exit"
+            && fiber.state == hoh_kernel::FiberState::Active
+    }));
+    seen.continue_mount.notify_one();
+    for _ in 0..256 {
+        tokio::select! {
+            result = &mut launch => panic!("hanging mount unexpectedly settled: {}", result.is_ok()),
+            () = tokio::task::yield_now() => {}
+        }
+        if seen.disposed.load(Ordering::Acquire) == 1 {
+            break;
+        }
+    }
+    assert_eq!(seen.disposed.load(Ordering::Acquire), 1);
+    assert!(forced.lock().unwrap().is_empty());
+    assert!(completed.lock().unwrap().is_empty());
     tokio::select! {
-        result = &mut launch => panic!("pending mount unexpectedly settled: {}", result.is_ok()),
+        result = &mut launch => panic!("hanging mount unexpectedly settled: {}", result.is_ok()),
         () = tokio::time::sleep(Duration::from_millis(PROCESS_SHUTDOWN_TIMEOUT_MS)) => {}
     }
     for _ in 0..8 {
@@ -306,7 +364,6 @@ async fn an_exit_request_starts_the_bounded_shutdown_while_mount_is_still_pendin
         tokio::task::yield_now().await;
     }
     assert_eq!(*forced.lock().unwrap(), [9]);
-    cleanup.interrupt(9);
 }
 #[tokio::test(start_paused = true)]
 async fn uses_shared_layers_and_shutdown() {

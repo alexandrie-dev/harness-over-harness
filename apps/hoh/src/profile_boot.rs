@@ -227,14 +227,30 @@ impl ProfileHost {
             .expect("fresh profile context");
         let startup = Arc::new(StartupGate::new());
         let wait_for_startup = startup.clone();
-        let dispose = kernel.clone();
+        let dispose = context.clone();
         let shutdown = create_process_shutdown(
             Arc::new(move || {
-                let kernel = dispose.clone();
+                let context = dispose.clone();
                 let startup = wait_for_startup.clone();
                 Box::pin(async move {
+                    let active = context
+                        .get::<LoaderKey>()
+                        .map(|loader| {
+                            loader
+                                .entries()
+                                .into_iter()
+                                .filter(|entry| {
+                                    !entry.options.group && entry.name != "cordis:include"
+                                })
+                                .filter_map(|entry| entry.fiber)
+                                .filter(|fiber| fiber.state() == FiberState::Active)
+                                .map(|fiber| async move { fiber.dispose().await })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    futures_util::future::join_all(active).await;
                     startup.wait().await;
-                    kernel.shutdown().await;
+                    context.fiber().dispose().await;
                     Ok(())
                 })
             }),
