@@ -293,6 +293,12 @@ impl ProfileHost {
         self.startup.finish();
         self.shutdown.interrupt(code);
     }
+    /// Records that the exit is requested, without starting the shutdown. The window engine calls
+    /// it just before it disposes the kernel root, so a boot still finishing sees why the root went
+    /// away; `request_exit` follows once the disposal is done.
+    pub fn mark_exiting(&self) {
+        self.exit_requested.store(true, Ordering::Release);
+    }
     pub fn request_exit(&self, code: i32) {
         self.exit_requested.store(true, Ordering::Release);
         drop(self.shutdown.shutdown(code));
@@ -510,10 +516,14 @@ pub async fn run_profile(
         )
         .await?;
         if window_profile {
-            let exit_host = host.clone();
-            crate::window_glue::provide_stdio(&ctx, move |code| exit_host.request_exit(code))
-                .await
-                .map_err(|error| LoadError::Runtime(error.to_string()))?;
+            let (exiting_host, exit_host) = (host.clone(), host.clone());
+            crate::window_glue::provide_stdio(
+                &ctx,
+                move || exiting_host.mark_exiting(),
+                move |code| exit_host.request_exit(code),
+            )
+            .await
+            .map_err(|error| LoadError::Runtime(error.to_string()))?;
         }
         let base = hoh_loader::resolve_config_path(
             &path.to_string_lossy(),
@@ -562,14 +572,28 @@ pub async fn run_profile(
         }
     }
 }
-/// The window engine may be told to `shutdown` while the plugin tree is still finishing its boot;
-/// the disposed scope then fails the boot with `InactiveContext`, which is the requested exit, not
-/// a load failure.
-fn stopped_by_exit_request(host: &ProfileHost, error: &LoadError) -> bool {
+/// The window engine may be told to `shutdown` while the plugin tree is still finishing its boot.
+/// After the response the server raises the exit flag (`mark_exiting`) and only then disposes the
+/// kernel root, so the boot ends either with `InactiveContext` or, when the final audit finds every
+/// row closed, with a startup failure whose causes are all `Closed`. Both are the requested exit.
+/// Without the raised flag, and for any failure with another cause, the error stays an error.
+pub fn stopped_by_exit_request(host: &ProfileHost, error: &LoadError) -> bool {
+    if !host.exit_requested.load(Ordering::Acquire) {
+        return false;
+    }
     let mut error = error;
     while let LoadError::Boot(inner) = error {
         error = inner;
     }
-    host.exit_requested.load(Ordering::Acquire)
-        && matches!(error, LoadError::Kernel(hoh_kernel::KernelError::Inactive))
+    match error {
+        LoadError::Kernel(hoh_kernel::KernelError::Inactive) => true,
+        LoadError::Startup(startup) => startup.cause.as_ref().is_some_and(|cause| {
+            !cause.errors.is_empty()
+                && cause
+                    .errors
+                    .iter()
+                    .all(|error| matches!(error, hoh_kernel::KernelError::Closed))
+        }),
+        _ => false,
+    }
 }

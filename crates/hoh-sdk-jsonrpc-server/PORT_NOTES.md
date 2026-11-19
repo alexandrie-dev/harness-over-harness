@@ -37,7 +37,10 @@
 - TypeScript runtime hooks `input/output/exit` не сериализуются в Config: Rust хост
   предоставляет `JsonRpcRuntimeHooks`. Библиотека не зовёт `process::exit`:
   публикует `SdkProcessExit`, а app завершает процесс после disposal. Тестовый
-  callback сохранён. Стандартный stdin/stdout остался default.
+  callback сохранён. Стандартный stdin/stdout остался default. Необязательный
+  `JsonRpcRuntimeHooks::with_exiting` (Rust-добавка, не из source) вызывается один раз после сброса
+  ответа на `shutdown` и до disposal корня; `exit` по-прежнему идёт после него. Хост, ещё грузивший дерево,
+  так узнаёт, что корень закрыт по запросу выхода.
 - `Context`/Rust events заменяют JS declaration merging. Открытая граница
   `contentBlocks` до адмиссии удерживает `serde_json::Value`, потому что закрытый
   protocol enum не может сохранить чужой plugin block. Далее используются

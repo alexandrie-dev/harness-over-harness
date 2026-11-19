@@ -148,9 +148,11 @@ fn forward_stdin(mut writer: tokio::io::DuplexStream) -> std::io::Result<()> {
 /// Hand the process stdio to the window profile before its plugins mount.
 ///
 /// The server gets the bytes through an in-process pipe and the process stdout; `hoh-sdk-app`
-/// gets the end-of-input signal; after a successful `shutdown` the server asks `request_exit`.
+/// gets the end-of-input signal; after a successful `shutdown` the server calls `exiting` before it
+/// disposes the kernel root and `request_exit` once the disposal is done.
 pub async fn provide_stdio(
     ctx: &Context,
+    exiting: impl Fn() + Send + Sync + 'static,
     request_exit: impl Fn(i32) + Send + Sync + 'static,
 ) -> Result<(), BoxError> {
     let end = StdinEnd::default();
@@ -160,11 +162,14 @@ pub async fn provide_stdio(
         inner: reader,
         end: end.clone(),
     };
-    ctx.provide::<JsonRpcRuntime>(Arc::new(JsonRpcRuntimeHooks::new(
-        Box::new(BufReader::new(reader)),
-        Box::new(tokio::io::stdout()),
-        request_exit,
-    )))
+    ctx.provide::<JsonRpcRuntime>(Arc::new(
+        JsonRpcRuntimeHooks::new(
+            Box::new(BufReader::new(reader)),
+            Box::new(tokio::io::stdout()),
+            request_exit,
+        )
+        .with_exiting(exiting),
+    ))
     .await?;
     ctx.provide::<SdkAppRuntimeKey>(Arc::new(SdkAppRuntimeHooks::new(
         Arc::new(end),

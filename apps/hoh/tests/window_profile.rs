@@ -823,6 +823,39 @@ async fn a_model_address_with_credentials_is_refused_before_the_user_is_asked() 
         assert_eq!(answer["id"], id.as_str(), "the user was asked: {answer}");
         assert!(answer.get("error").is_some(), "{answer}");
     }
+    // The same gate covers the other two methods that take an address.
+    for (index, address) in [
+        "https://user:KEY@api.example.test/v1",
+        "https://api.example.test/v1?api_key=KEY",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (method, params) in [
+            (
+                "hoh/model/key/set",
+                json!({"apiKey":"sk-not-saved","baseUrl":address}),
+            ),
+            ("hoh/model/probe", json!({"baseUrl":address,"model":"m"})),
+        ] {
+            let id = format!("{method}-{index}");
+            send(
+                &mut engine.stdin,
+                json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}),
+            )
+            .await;
+            let answer = receive_until(&mut engine.stdout, &mut engine.seen, |f| {
+                f["id"] == id.as_str() || f["method"] == "approval/request"
+            })
+            .await;
+            assert_eq!(
+                answer["id"],
+                id.as_str(),
+                "{method}: the user was asked: {answer}"
+            );
+            assert!(answer.get("error").is_some(), "{method}: {answer}");
+        }
+    }
     send(
         &mut engine.stdin,
         json!({"jsonrpc":"2.0","id":"get","method":"hoh/settings/get","params":{}}),
@@ -830,6 +863,7 @@ async fn a_model_address_with_credentials_is_refused_before_the_user_is_asked() 
     .await;
     let settings = receive_until(&mut engine.stdout, &mut engine.seen, |f| f["id"] == "get").await;
     assert!(!settings.to_string().contains("KEY"), "{settings}");
+    assert!(!settings.to_string().contains("sk-not-saved"), "{settings}");
     engine.finish().await;
 }
 
@@ -1063,6 +1097,89 @@ async fn an_unescalated_write_stays_inside_the_folder_without_asking() {
         "the sandbox let a write out of the folder"
     );
     assert!(inside.exists(), "a write inside the folder was refused");
+    engine.finish().await;
+}
+
+fn edit_outside(target: &Path, escalate: bool) -> Value {
+    let mut args = json!({"file_path": target, "old_string": "old text", "new_string": "new text"});
+    if escalate {
+        args["sandbox_permissions"] = json!("danger-full-access");
+        args["justification"] = json!("The user asked for an edit outside the workspace.");
+    }
+    args
+}
+
+#[tokio::test]
+async fn an_edit_outside_the_folder_waits_for_the_host_and_a_rejection_leaves_the_file() {
+    let root = sandboxed_root();
+    let target = root.path().join("outside/existing.txt");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, "old text").unwrap();
+    let mut engine = start_engine(
+        root.path(),
+        vec![call_tool("edit", edit_outside(&target, true)), say("no")],
+    )
+    .await;
+    engine.prompt("edit it").await;
+    let asked = engine
+        .next_approval()
+        .await
+        .expect("an edit outside the folder did not ask the host");
+    assert_eq!(asked.tool_name, "edit");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "old text");
+    engine.answer("rejected").await;
+    assert!(engine.next_approval().await.is_none());
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "old text",
+        "a rejected edit must not land"
+    );
+    engine.finish().await;
+}
+
+#[tokio::test]
+async fn an_edit_outside_the_folder_lands_after_the_host_allows_it() {
+    let root = sandboxed_root();
+    let target = root.path().join("outside/existing.txt");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, "old text").unwrap();
+    let mut engine = start_engine(
+        root.path(),
+        vec![call_tool("edit", edit_outside(&target, true)), say("done")],
+    )
+    .await;
+    engine.prompt("edit it").await;
+    engine
+        .next_approval()
+        .await
+        .expect("the host was not asked");
+    engine.answer("allowed-once").await;
+    assert!(engine.next_approval().await.is_none());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "new text");
+    engine.finish().await;
+}
+
+#[tokio::test]
+async fn an_unescalated_edit_outside_the_folder_does_not_ask_and_changes_nothing() {
+    let root = sandboxed_root();
+    let target = root.path().join("outside/existing.txt");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, "old text").unwrap();
+    let mut engine = start_engine(
+        root.path(),
+        vec![call_tool("edit", edit_outside(&target, false)), say("done")],
+    )
+    .await;
+    engine.prompt("edit it").await;
+    assert!(
+        engine.next_approval().await.is_none(),
+        "an unescalated edit must not ask"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "old text",
+        "the sandbox let an edit out of the folder"
+    );
     engine.finish().await;
 }
 

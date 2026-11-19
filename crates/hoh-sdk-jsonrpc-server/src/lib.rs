@@ -60,13 +60,23 @@ pub type Output = Box<dyn AsyncWrite + Unpin + Send>;
 pub struct JsonRpcRuntimeHooks {
     streams: Mutex<Option<(Input, Output)>>,
     exit: Arc<dyn Fn(i32) + Send + Sync>,
+    exiting: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl JsonRpcRuntimeHooks {
     pub fn new(input: Input, output: Output, exit: impl Fn(i32) + Send + Sync + 'static) -> Self {
         Self {
             streams: Mutex::new(Some((input, output))),
             exit: Arc::new(exit),
+            exiting: None,
         }
+    }
+    /// Called once after a successful `shutdown` response is flushed, before the kernel root is
+    /// disposed. A host that is still booting learns that the disposal is the requested exit; the
+    /// `exit` hook itself only runs after the disposal has finished.
+    #[must_use]
+    pub fn with_exiting(mut self, exiting: impl Fn() + Send + Sync + 'static) -> Self {
+        self.exiting = Some(Arc::new(exiting));
+        self
     }
 }
 hoh_kernel::service!(pub JsonRpcRuntime: JsonRpcRuntimeHooks = "sdkJsonRpcRuntimeHooks");
@@ -160,6 +170,9 @@ impl Plugin for SdkJsonRpcServer {
                 // their responses before the writer's flush barrier.
                 tokio::task::yield_now().await;
                 let _ = transport.flush().await;
+                if let Some(exiting) = hooks.as_ref().and_then(|hooks| hooks.exiting.as_ref()) {
+                    exiting();
+                }
                 root.dispose().await;
                 signal.signal.send_replace(Some(0));
                 if let Some(hooks) = hooks {

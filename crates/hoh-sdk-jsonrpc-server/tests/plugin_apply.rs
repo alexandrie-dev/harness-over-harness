@@ -155,20 +155,24 @@ impl Harness {
         let exit_changed = capture.changed.clone();
         let exit_state = capture.state.clone();
         let root_state = capture.state.clone();
+        let exiting_state = capture.state.clone();
         ctx.root()
             .effect("test.root-disposed", move || {
                 Undo::sync(move || lock(&root_state).events.push("root-disposed".into()))
             })
             .unwrap();
-        ctx.provide::<JsonRpcRuntime>(Arc::new(JsonRpcRuntimeHooks::new(
-            Box::new(BufReader::new(server_input)),
-            Box::new(capture.clone()),
-            move |code| {
-                lock(&observed_exits).push(code);
-                lock(&exit_state).events.push("exit".into());
-                exit_changed.notify_waiters();
-            },
-        )))
+        ctx.provide::<JsonRpcRuntime>(Arc::new(
+            JsonRpcRuntimeHooks::new(
+                Box::new(BufReader::new(server_input)),
+                Box::new(capture.clone()),
+                move |code| {
+                    lock(&observed_exits).push(code);
+                    lock(&exit_state).events.push("exit".into());
+                    exit_changed.notify_waiters();
+                },
+            )
+            .with_exiting(move || lock(&exiting_state).events.push("exiting".into())),
+        ))
         .await
         .unwrap();
         let fiber = ctx.plugin::<SdkJsonRpcServer>(json!({})).unwrap();
@@ -479,8 +483,13 @@ async fn answers_racing_shutdowns_before_disposal_and_exits_zero_once() {
     let root = at("root-disposed").expect("root disposed");
     let exit = at("exit").expect("exit");
     assert!(flush > first && flush > second, "{events:?}");
+    // The host learns about the requested exit after the flush and before the root is disposed,
+    // so a boot that fails on the disposed root can tell the exit was requested.
+    let exiting = at("exiting").expect("exiting");
+    assert!(exiting > flush && exiting < root, "{events:?}");
     assert!(root > flush, "{events:?}");
     assert!(exit > root, "{events:?}");
+    assert_eq!(events.iter().filter(|e| *e == "exiting").count(), 1);
     assert_eq!(events.iter().filter(|e| *e == "root-disposed").count(), 1);
     assert_eq!(events.iter().filter(|e| *e == "exit").count(), 1);
     harness.assert_silent_after_exit().await;
