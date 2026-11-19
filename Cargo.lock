@@ -786,6 +786,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-commands"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-attachment",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-timeout",
+ "hoh-util-crypto",
+ "hoh-util-values",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-compaction-image-offload"
 version = "0.1.0"
 dependencies = [
