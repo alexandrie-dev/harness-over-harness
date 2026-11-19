@@ -130,7 +130,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/feedback/command-feedback	@deepseek-ai/dsh-command-feedback	hoh-command-feedback	197	388	todo	зависит от: dsh-typert-protocol=skip
 2	port	packages/feedback/message-feedback	@deepseek-ai/dsh-message-feedback	hoh-message-feedback	490	1061	todo	зависит от: dsh-typert-protocol=skip
 2	port	packages/fs/fs-observation-policy	@deepseek-ai/dsh-fs-observation-policy	hoh-fs-observation-policy	170	257	writing:x5	
-2	port	packages/fs/fs-sandbox	@deepseek-ai/dsh-fs-sandbox	hoh-fs-sandbox	257	404	writing:x5	
+2	port	packages/fs/fs-sandbox	@deepseek-ai/dsh-fs-sandbox	hoh-fs-sandbox	257	404	done	
 2	port	packages/fs/tool-fs-search	@deepseek-ai/dsh-tool-fs-search	hoh-tool-fs-search	1546	2017	todo	
 2	port	packages/goal/command-goal	@deepseek-ai/dsh-command-goal	hoh-command-goal	200	355	todo	
 2	port	packages/goal/goal-round-driver	@deepseek-ai/dsh-goal-round-driver	hoh-goal-round-driver	510	1300	todo	
