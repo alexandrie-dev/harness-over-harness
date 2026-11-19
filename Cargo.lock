@@ -1724,6 +1724,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-schedule"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-persistence-jsonl",
+ "hoh-session-projection",
+ "hoh-session-title",
+ "hoh-storage",
+ "hoh-storage-domain",
+ "hoh-storage-json",
+ "hoh-timeout",
+ "hoh-util-crypto",
+ "hoh-util-time",
+ "hoh-util-values",
+ "hoh-workspace",
+ "indexmap",
+ "jiff",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "hoh-scope"
 version = "0.1.0"
 dependencies = [
