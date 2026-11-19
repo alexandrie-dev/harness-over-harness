@@ -2503,6 +2503,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-spill-policy"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-attachment",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-output-retention",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-spill",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-token-meter",
+ "hoh-tool-executor-native",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-values",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-storage"
 version = "0.1.0"
 dependencies = [
