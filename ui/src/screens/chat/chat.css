@@ -60,6 +60,16 @@ html, body, #root { block-size: var(--chat-full); }
 .chat-error { inline-size: calc(var(--chat-full) - var(--space-8) - var(--space-8)); max-inline-size: var(--col); margin: var(--space-4) auto; color: var(--color-danger-text); font-size: var(--text-sm); }
 .chat-delivery-error { color: var(--color-danger-text); font-size: var(--text-xs); }
 
+.chat-question { flex: none; inline-size: calc(var(--chat-full) - var(--space-8) - var(--space-8)); max-inline-size: var(--col); margin: var(--space-4) auto var(--chat-zero); padding: var(--space-5) var(--space-7); border: var(--border-width) solid var(--accent-focus); border-radius: var(--radius-lg); background: var(--color-panel); }
+.chat-question-item { margin: var(--chat-zero) var(--chat-zero) var(--space-5); padding: var(--chat-zero); border: var(--chat-zero); min-inline-size: var(--chat-zero); }
+.chat-question-item legend { padding: var(--chat-zero); font-size: var(--text-md); color: var(--color-fg); }
+.chat-question-item legend small { display: block; font-size: var(--text-2xs); color: var(--color-dim); }
+.chat-question-detail { margin: var(--space-2) var(--chat-zero); font-size: var(--text-sm); color: var(--color-muted); }
+.chat-question-option { display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-2) var(--chat-zero); font-size: var(--text-sm); color: var(--color-fg); }
+.chat-question-option small { display: block; color: var(--color-dim); }
+.chat-question-custom { display: block; inline-size: var(--chat-full); margin-block-start: var(--space-3); padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border-2); border-radius: var(--radius); background: var(--chat-transparent); color: var(--color-fg); font-size: var(--text-sm); }
+.chat-question-actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
+
 .chat-composer { flex: none; padding: var(--space-4) var(--space-8) var(--space-7); }
 .chat-composer-column { max-inline-size: var(--col); margin-inline: auto; }
 .chat-input-box { border: var(--border-width) solid var(--border-2); border-radius: var(--radius-lg); background: var(--color-panel); backdrop-filter: var(--blur-md); padding: var(--space-5) var(--space-5) var(--space-4) var(--space-7); }

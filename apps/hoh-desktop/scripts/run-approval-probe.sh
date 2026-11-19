@@ -5,7 +5,7 @@ root=$(cd "$(dirname "$0")/../../.." && pwd)
 desktop="$root/apps/hoh-desktop"
 
 export CARGO_HOME="${CARGO_HOME:-/mnt/toshiba/alexandrie/hoh/cargo-home-ui2}"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/mnt/toshiba/alexandrie/hoh/target-cf1/desktop}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/mnt/toshiba/alexandrie/hoh/build-sg6/desktop}"
 export CARGO_NET_OFFLINE=true
 export CARGO_BUILD_JOBS=2
 
@@ -19,7 +19,9 @@ python3 "$desktop/scripts/stage-approval-probe.py" \
 
 (
   cd "$root"
-  timeout 10m cargo build -p hoh-window-stub --locked --offline
+  # The engine workspace has its own vendored registry; the desktop workspace uses CARGO_HOME.
+  CARGO_HOME="${HOH_ENGINE_CARGO_HOME:-$HOME/.cargo}" \
+    timeout 30m cargo build -p hoh-window-stub --locked --offline
 ) || fail "could not build hoh-window-stub"
 
 (
@@ -35,6 +37,7 @@ fi
 
 set +e
 python3 "$root/ui/scripts/run-isolated-window.py" \
+  /usr/bin/env "HOH_TEST_ENGINE=$CARGO_TARGET_DIR/debug/hoh-window-stub" \
   "$CARGO_TARGET_DIR/debug/hoh-desktop" --approval-probe
 probe_status=$?
 set -e

@@ -13,6 +13,8 @@ export function createChatStore(transportFactory: () => ChatTransport = chatTran
       disconnect: () => controller.disconnect(),
       send: () => controller.send(),
       stop: () => controller.stop(),
+      answerQuestion: (requestId, answer) => controller.answerQuestion(requestId, answer),
+      dismissQuestion: requestId => controller.dismissQuestion(requestId),
     };
   });
 }

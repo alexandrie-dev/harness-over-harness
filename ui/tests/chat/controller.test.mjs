@@ -344,3 +344,65 @@ test('ready retries a history load that failed while the engine was restarting',
     assert.equal(controller.state.error, ''); assert.equal(controller.state.busy, false);
   } finally { controller.disconnect(); await stub.close(); }
 });
+
+test('a window-profile engine without employees keeps one conversation and judges privacy by model address', async () => {
+  const stub = await StubClient.open(); const asked = [];
+  const missing = () => Promise.reject(new Error('method-unavailable'));
+  const address = { value: 'http://127.0.0.1:8080/v1' };
+  const client = transport(stub, (method, params) => {
+    asked.push({ method, params });
+    if (method === 'hoh/employee/open' || method === 'hoh/security/summary') return missing();
+    if (method === 'hoh/settings/get') return Promise.resolve({ model: { baseUrl: address.value, model: 'm' } });
+    return stub.request(method, params);
+  });
+  const controller = new ChatController(() => client);
+  try {
+    await controller.connect();
+    assert.equal(controller.sessionId, 'window-main');
+    assert(asked.some(r => r.method === 'session/working-directory/get' && r.params.sessionId === 'window-main'));
+    assert.equal(controller.state.privacy, 'local');
+    address.value = 'https://api.example.com/v1';
+    await controller.connect();
+    assert.equal(controller.state.privacy, 'remote');
+    address.value = 'http://localhost.evil.example/v1';
+    await controller.connect();
+    assert.equal(controller.state.privacy, 'remote');
+  } finally { controller.disconnect(); await stub.close(); }
+});
+
+test('only the missing-method marker triggers the fallback', async () => {
+  const stub = await StubClient.open();
+  const client = transport(stub, (method, params) => method === 'hoh/employee/open' ? Promise.reject(new Error('Помощник отклонил запрос')) : stub.request(method, params));
+  const controller = new ChatController(() => client);
+  try { await controller.connect(); assert.equal(controller.state.connection, 'error'); }
+  finally { controller.disconnect(); await stub.close(); }
+});
+
+test('questions from the assistant are shown, answered through the host, and withdrawn by the engine', async () => {
+  const stub = await StubClient.open(); let ask; const answered = [];
+  const client = { ...transport(stub),
+    subscribeQuestions: async listener => { ask = listener; return () => { ask = undefined; }; },
+    answerQuestion: async (requestId, answer) => { if (answer.answers?.[0]?.selected[0] === 'refused') throw new Error('x'); answered.push({ requestId, answer }); } };
+  let emit; client.subscribe = async listener => { emit = listener; return () => { emit = undefined; }; };
+  const controller = new ChatController(() => client);
+  try {
+    await controller.connect();
+    const question = { requestId: 'r1', sessionId: 'window-main', questions: [{ id: 'q1', question: 'Какой формат?', options: [{ label: 'PDF' }] }] };
+    ask(question); ask(question);
+    assert.equal(controller.state.questions.length, 1);
+    await controller.answerQuestion('r1', { answers: [{ id: 'q1', selected: ['PDF'] }] });
+    assert.deepEqual(answered, [{ requestId: 'r1', answer: { answers: [{ id: 'q1', selected: ['PDF'] }] } }]);
+    assert.equal(controller.state.questions.length, 0);
+    ask({ ...question, requestId: 'r2' }); ask({ ...question, requestId: 'r3' });
+    emit({ method: 'user-question.cancelled', params: { requestId: 'r2', sessionId: 'window-main' } });
+    assert.deepEqual(controller.state.questions.map(q => q.requestId), ['r3']);
+    await controller.answerQuestion('r3', { answers: [{ id: 'q1', selected: ['refused'] }] });
+    assert.equal(controller.state.questions.length, 1); assert.notEqual(controller.state.error, '');
+    await controller.dismissQuestion('r3');
+    assert.deepEqual(answered.at(-1), { requestId: 'r3', answer: { cancelled: true } });
+    assert.equal(controller.state.questions.length, 0);
+    ask({ ...question, requestId: 'r4' });
+    controller.engineStatus({ state: 'restarting' });
+    assert.equal(controller.state.questions.length, 0);
+  } finally { controller.disconnect(); await stub.close(); }
+});

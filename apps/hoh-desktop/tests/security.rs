@@ -23,6 +23,8 @@ fn capabilities_keep_main_and_approval_authority_disjoint() {
     let approval_permissions = strings(&approval, "permissions");
     assert!(!main_permissions.contains("allow-approval-current"));
     assert!(!main_permissions.contains("allow-approval-decide"));
+    assert!(main_permissions.contains("allow-question-answer"));
+    assert!(!approval_permissions.contains("allow-question-answer"));
     assert_eq!(
         approval_permissions,
         BTreeSet::from([
@@ -71,6 +73,13 @@ fn approval_probe_waits_for_ready_and_requires_native_close_marker() {
     let native = include_str!("../src/native.rs");
     assert!(probe.contains("APPROVAL_WINDOW_CLOSED.load"));
     assert!(native.contains("mark_approval_window_closed"));
+}
+
+#[test]
+fn approval_probe_marks_the_stub_as_a_test_engine() {
+    let script = include_str!("../scripts/run-approval-probe.sh");
+    assert!(script.contains("HOH_TEST_ENGINE="));
+    assert!(!script.contains("HOH_ENGINE_PATH="));
 }
 
 #[test]

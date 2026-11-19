@@ -78,6 +78,20 @@ impl Connector for MemoryConnector {
 impl Transport for MemoryTransport {
     fn send(&mut self, frame: Value) -> Result<(), String> {
         self.frames.lock().unwrap().push(frame.clone());
+        if frame["method"] == "hoh/test/missing" {
+            self.inbox
+                .send(Message::Incoming(
+                    self.generation,
+                    classify(framing::error(
+                        frame["id"].clone(),
+                        -32601,
+                        "method not found: /etc/secret",
+                    ))
+                    .unwrap(),
+                ))
+                .unwrap();
+            return Ok(());
+        }
         let result = if frame["method"] == "initialize" && self.host {
             json!({"serverInfo":{"name":"deepseek-harness-sdk-runtime","version":"test"},"hoh":{"protocolVersion":1,"approvals":"host"}})
         } else if frame["method"] == "initialize" {
@@ -133,6 +147,28 @@ fn privileged_catalog_and_conditional_boundaries_are_fail_closed() {
         "hoh/settings/set",
         &json!({"view":{"theme":"system","fontSize":16}})
     ));
+}
+
+#[test]
+fn missing_engine_method_is_marked_without_leaking_error_text() {
+    let (controls, _control_rx) = mpsc::channel();
+    let (events, event_rx) = mpsc::channel();
+    let engine = Engine::start(
+        Arc::new(MemoryConnector {
+            host: true,
+            frames: Arc::default(),
+            launches: Arc::default(),
+            controls,
+        }),
+        json!({}),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
+    );
+    wait_memory_ready(&event_rx);
+    let error = engine.request("hoh/test/missing", json!({})).unwrap_err();
+    assert_eq!(error, hoh_desktop::engine::METHOD_UNAVAILABLE);
+    engine.stop();
 }
 
 #[test]
@@ -368,6 +404,8 @@ fn real_stub_child_accepts_host_handshake_serves_settings_and_stops() {
         Arc::new(ProcessConfig {
             path: path.into(),
             args: vec![],
+            env: vec![],
+            stderr_file: None,
             cwd,
             provider: "mock".into(),
             model: "mock".into(),

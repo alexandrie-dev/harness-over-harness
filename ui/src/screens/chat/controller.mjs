@@ -2,6 +2,23 @@ import { assistantChunks, ChatProjection, humanFile, windowText } from './projec
 
 // Observable behavior without React or a particular transport. The production
 // frame scheduler is injectable so cancellation races can be tested deterministically.
+const WINDOW_SESSION = 'window-main';
+const METHOD_UNAVAILABLE = 'method-unavailable';
+/** The native host marks only "engine has no such method"; every other failure stays a failure. */
+async function unlessMissing(call, fallback) {
+  try { return await call(); } catch (error) {
+    if ((error?.message ?? String(error)) !== METHOD_UNAVAILABLE) throw error;
+    return fallback();
+  }
+}
+/** Model address on this computer (loopback or the local name) means data stays here. */
+function isLocalAddress(baseUrl) {
+  try {
+    const host = new URL(baseUrl).hostname;
+    return host === 'localhost' || host === '[::1]' || /^127(\.\d{1,3}){3}$/.test(host);
+  } catch { return false; }
+}
+
 export class ChatController {
   constructor(transportFactory, changed = () => {}, frame = () => new Promise(resolve => requestAnimationFrame(resolve))) {
     this.transportFactory = transportFactory; this.changed = changed; this.frame = frame;
@@ -10,7 +27,8 @@ export class ChatController {
     this.ignoreUntilNextTurn = false; this.allowNextTurn = false; this.cancelUnconfirmed = false;
     this.statusOff = undefined; this.statusPending = undefined; this.lifecycle = 0;
     this.active = false; this.reloading = false;
-    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', draft: '' };
+    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', draft: '', questions: [] };
+    this.questionsOff = undefined;
   }
   update(patch) { this.state = { ...this.state, ...patch }; this.changed(this.state); }
   publish() { this.update({ entries: this.projection.entries, busy: this.projection.running || this.cancelUnconfirmed }); }
@@ -83,7 +101,7 @@ export class ChatController {
     this.epoch++; this.generation++; this.queue = Promise.resolve(); this.reloading = false;
     this.unsubscribe?.(); this.unsubscribe = undefined;
     this.cancelUnconfirmed = false; this.projection.stop(); this.publish();
-    this.update({ connection: 'recovering', busy: false, canceling: false,
+    this.update({ questions: [], connection: 'recovering', busy: false, canceling: false,
       error: 'Связь с Помощником прервалась, восстанавливаю…' });
   }
   async listenStatus(transport) {
@@ -99,29 +117,57 @@ export class ChatController {
     }
     await this.statusPending;
   }
+  async listenQuestions(transport, ownEpoch) {
+    this.questionsOff?.(); this.questionsOff = undefined;
+    if (!transport.subscribeQuestions) return;
+    const off = await transport.subscribeQuestions(question => {
+      if (ownEpoch !== this.epoch || !this.active) return;
+      if (this.state.questions.some(q => q.requestId === question.requestId)) return;
+      this.update({ questions: [...this.state.questions, question] });
+    });
+    if (ownEpoch !== this.epoch) off(); else this.questionsOff = off;
+  }
+  dropQuestion(requestId) {
+    if (this.state.questions.some(q => q.requestId === requestId))
+      this.update({ questions: this.state.questions.filter(q => q.requestId !== requestId) });
+  }
+  /** `answer` is {answers:[{id,selected,custom?}]} or {cancelled:true}; the host checks it against the question. */
+  async answerQuestion(requestId, answer) {
+    const ownEpoch = this.epoch;
+    try {
+      await this.transport.answerQuestion(requestId, answer);
+      if (ownEpoch === this.epoch) this.dropQuestion(requestId);
+    } catch {
+      if (ownEpoch === this.epoch) this.update({ error: 'Ответ не отправлен. Проверьте выбор и попробуйте ещё раз.' });
+    }
+  }
+  dismissQuestion(requestId) { return this.answerQuestion(requestId, { cancelled: true }); }
   async connect(recovering = false) {
     this.flushReceived(); this.publish(); this.active = true; this.reloading = true;
     const ownEpoch = ++this.epoch; const loadGeneration = ++this.generation;
     this.queue = Promise.resolve(); this.ignoreUntilNextTurn = false; this.allowNextTurn = false; this.cancelUnconfirmed = false;
     this.unsubscribe?.(); this.unsubscribe = undefined;
     const projection = new ChatProjection(); this.sessionId = '';
-    this.update({ connection: recovering ? 'recovering' : 'connecting', busy: false, canceling: false,
+    this.update({ questions: [], connection: recovering ? 'recovering' : 'connecting', busy: false, canceling: false,
       error: recovering ? 'Связь с Помощником прервалась, восстанавливаю…' : '' });
     const buffered = []; let loading = true;
     try {
       const transport = this.transportFactory(); this.transport = transport;
       await this.listenStatus(transport);
       if (ownEpoch !== this.epoch) return;
+      await this.listenQuestions(transport, ownEpoch);
+      if (ownEpoch !== this.epoch) return;
       const off = await transport.subscribe(event => {
         if (ownEpoch !== this.epoch) return;
+        if (event.method === 'user-question.cancelled') { this.dropQuestion(event.params.requestId); return; }
         if (loading) buffered.push(event); else this.enqueue(event);
       });
       if (ownEpoch !== this.epoch) { off(); return; }
       this.unsubscribe = off;
-      // SHIM(hoh-desktop): the stub's default conversation is employee-1. Replace
-      // this identity with the host's selected conversation when package 4 lands.
+      // The replay stub offers per-employee conversations; the window-profile engine has no employees
+      // and keeps one conversation, so a missing method falls back to its fixed session id.
       // Nothing about employees is rendered by this screen.
-      const opened = await transport.request('hoh/employee/open', { id: 'employee-1' });
+      const opened = await unlessMissing(() => transport.request('hoh/employee/open', { id: 'employee-1' }), () => ({ sessionId: WINDOW_SESSION }));
       if (ownEpoch !== this.epoch) return;
       this.sessionId = opened.sessionId;
       const directory = await transport.request('session/working-directory/get', { sessionId: this.sessionId });
@@ -140,7 +186,10 @@ export class ChatController {
         if (afterSeq !== undefined && page.nextSeq <= afterSeq) throw new Error('History did not advance');
         afterSeq = page.nextSeq;
       }
-      const summary = await transport.request('hoh/security/summary', {});
+      const summary = await unlessMissing(() => transport.request('hoh/security/summary', {}), async () => {
+        const settings = await transport.request('hoh/settings/get', {});
+        return { model: { local: isLocalAddress(settings.model.baseUrl) } };
+      });
       if (ownEpoch !== this.epoch) return;
       // A new engine cannot still be executing the previous process's turn.
       // History may end mid-turn if termination prevented its closing event.
@@ -159,6 +208,7 @@ export class ChatController {
   disconnect() {
     this.flushReceived(); this.active = false; this.reloading = false;
     this.epoch++; this.generation++; this.unsubscribe?.(); this.unsubscribe = undefined;
+    this.questionsOff?.(); this.questionsOff = undefined;
     this.statusOff?.(); this.statusOff = undefined;
     this.lifecycle++; this.statusPending = undefined;
     this.queue = Promise.resolve();

@@ -5,6 +5,7 @@ import { useChatStore } from '../../lib/store';
 import { Icon } from '../shared/icons';
 import type { ChatEntry } from './projection.mjs';
 import { ChatIcon } from './icons';
+import { QuestionCard } from './QuestionCard';
 import '../shared/primitives.css';
 import './chat.css';
 
@@ -43,6 +44,7 @@ export function ChatScreen() {
   const privacy = useChatStore(state => state.privacy);
   const folderLabel = useChatStore(state => state.folderLabel);
   const draft = useChatStore(state => state.draft);
+  const question = useChatStore(state => state.questions[0]);
   const [compact, setCompact] = useState(false);
   const [estimate] = useState(() => Number.parseFloat(cssValue('--chat-estimated-row')) || undefined);
   const { connect, disconnect, send, stop, setDraft } = useChatStore.getState();
@@ -81,6 +83,7 @@ export function ChatScreen() {
         </section>
         <output className="chat-sr-only" aria-live="polite" data-chat-status>{connection === 'recovering' ? 'Связь с Помощником прервалась, восстанавливаю…' : canceling ? 'Останавливаю…' : busy ? 'Помощник отвечает…' : ready ? 'Можно написать сообщение' : ''}</output>
         {error && <div className="chat-error" role="alert">{error}{connection === 'error' && <button className="btn" type="button" onClick={() => void connect()}>Подключиться ещё раз</button>}</div>}
+        {question && <QuestionCard key={question.requestId} question={question} />}
         <form className="chat-composer" onSubmit={submit} aria-label="Написать Помощнику"><div className="chat-composer-column"><div className="chat-input-box">
           <label className="chat-sr-only" htmlFor="chat-message-input">Сообщение Помощнику</label>
           <textarea id="chat-message-input" className="chat-input" data-chat-input rows={1} value={draft}

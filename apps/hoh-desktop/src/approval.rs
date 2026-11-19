@@ -13,6 +13,233 @@ use std::{
 
 pub const ALLOW_DELAY: Duration = Duration::from_secs(1);
 const MAX_LIFETIME_MS: u64 = 300_000;
+/// A settings action the person confirmed lets the engine's own approval request for that very
+/// action through, once, within this time counted from the confirmation (arming the outgoing
+/// request does not extend it).
+///
+/// Known limitation (accepted): while the confirmed outgoing request is in flight, an engine
+/// approval/request with the same generation, method, action and session and no call id cannot be
+/// told apart from the genuine one without a protocol change; it means the same action the person
+/// already confirmed, so it takes the grant.
+pub const GRANT_TTL_MS: u64 = 30_000;
+/// The expiry timer fires this long before `expiresAt`, so the signed `cancelled` is still valid.
+/// Known limitation (accepted): if the timer wakes after `expiresAt` (the machine slept), the protocol
+/// forbids signing; the engine cancels the request by its own deadline and the journal says `expired`.
+pub const EXPIRY_MARGIN_MS: u64 = 5_000;
+const MAX_AUDIT_ENTRIES: usize = 1_000;
+
+const MASK: &str = "•••";
+const SECRET_WORDS: [&str; 8] = [
+    "key",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "sig",
+    "credential",
+];
+
+/// An address may carry a secret (`https://user:pass@host/v1`, `?api_key=...`). The engine refuses
+/// such an address, but the person must never see or journal the secret part: it is shown closed.
+pub fn redact_address(address: &str) -> String {
+    let (scheme, rest) = match address.split_once("://") {
+        Some((scheme, rest)) => (format!("{scheme}://"), rest),
+        None => (String::new(), address),
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let authority = match authority.rsplit_once('@') {
+        Some((userinfo, host)) => {
+            let user = userinfo.split_once(':').map_or("", |(user, _)| user);
+            format!(
+                "{user}{}{MASK}@{host}",
+                if user.is_empty() { "" } else { ":" }
+            )
+        }
+        None => authority.to_owned(),
+    };
+    let (path, rest) = match tail.find(['?', '#']) {
+        Some(at) => tail.split_at(at),
+        None => (tail, ""),
+    };
+    let (query, fragment) = match rest.split_once('#') {
+        Some((query, fragment)) => (query, Some(fragment)),
+        None => (rest, None),
+    };
+    let mut out = format!("{scheme}{authority}{path}");
+    if let Some(query) = query.strip_prefix('?') {
+        out.push('?');
+        out.push_str(&redact_query(query));
+    }
+    // A fragment is never needed to reach a model and can hold anything: it is closed whole.
+    if fragment.is_some_and(|fragment| !fragment.is_empty()) {
+        out.push('#');
+        out.push_str(MASK);
+    }
+    out
+}
+
+fn redact_query(query: &str) -> String {
+    // Encoded again and again: what the receiver finally decodes cannot be judged here.
+    if percent_decode_stable(query).is_none() {
+        return MASK.to_owned();
+    }
+    let mut out = String::with_capacity(query.len());
+    let mut pair = String::new();
+    for ch in query.chars() {
+        if matches!(ch, '&' | ';') {
+            out.push_str(&redact_pair(&pair));
+            out.push(ch);
+            pair.clear();
+        } else {
+            pair.push(ch);
+        }
+    }
+    out.push_str(&redact_pair(&pair));
+    out
+}
+
+fn redact_pair(pair: &str) -> String {
+    if let Some((name, _)) = pair.split_once('=')
+        && is_secret_name(name)
+    {
+        return format!("{name}={MASK}");
+    }
+    // A separator written as %26 / %3B / %3D (also encoded twice, %2526) hides a second parameter.
+    let Some(decoded) = percent_decode_stable(pair) else {
+        return MASK.to_owned();
+    };
+    if decoded != pair
+        && decoded
+            .split(['&', ';'])
+            .any(|inner| inner.split('=').next().is_some_and(is_secret_name))
+    {
+        return MASK.to_owned();
+    }
+    pair.to_owned()
+}
+
+fn is_secret_name(name: &str) -> bool {
+    let name = percent_decode_stable(name)
+        .unwrap_or_else(|| percent_decode(name))
+        .to_ascii_lowercase();
+    SECRET_WORDS.iter().any(|word| name.contains(word))
+}
+
+/// Every address inside a text (`scheme://...` up to a space or quote) with its secret part closed.
+pub fn redact_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        let start = rest[..at]
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')))
+            .map_or(0, |i| {
+                i + rest[i..].chars().next().map_or(1, char::len_utf8)
+            });
+        let after = at + 3;
+        let end = rest[after..]
+            .find(|c: char| {
+                c.is_whitespace() || matches!(c, '«' | '»' | '"' | '\'' | '<' | '>' | '“' | '”')
+            })
+            .map_or(rest.len(), |i| after + i);
+        out.push_str(&rest[..start]);
+        out.push_str(&redact_address(&rest[start..end]));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+const MAX_DECODE_LAYERS: usize = 5;
+
+/// Decodes until nothing changes. `None` when `%XX` sequences remain after `MAX_DECODE_LAYERS`
+/// layers: such text is deliberately obscure and the caller closes it whole.
+fn percent_decode_stable(text: &str) -> Option<String> {
+    let mut current = text.to_owned();
+    for _ in 0..MAX_DECODE_LAYERS {
+        let next = percent_decode(&current);
+        if next == current {
+            return Some(current);
+        }
+        current = next;
+    }
+    (percent_decode(&current) == current).then_some(current)
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(high), Some(low)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
+        {
+            out.push((high * 16 + low) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A window action the person confirmed; it waits for its outgoing request to be sent.
+struct Confirmed {
+    method: String,
+    action: Value,
+    session: String,
+    expires_at: u64,
+}
+
+/// The confirmation, bound to the one outgoing JSON-RPC request the window action became. It
+/// exists only while that request is in flight.
+struct InFlight {
+    generation: u64,
+    id: String,
+    method: String,
+    action: Value,
+    session: String,
+    expires_at: u64,
+}
+
+/// The session the engine puts into the approval request of a method call.
+fn session_of(action: &Value) -> String {
+    action
+        .pointer("/params/sessionId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .unwrap_or("host")
+        .to_owned()
+}
+
+/// One line of the approval journal: who confirmed what, where and when. No secrets: the model key
+/// appears only as its hash inside `actionHash`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditEntry {
+    pub at: u64,
+    pub who: &'static str,
+    pub via: &'static str,
+    pub method: String,
+    pub action_hash: String,
+    pub human_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub outcome: String,
+    pub note: &'static str,
+}
+
+/// What the core does with an approval request of the engine.
+pub enum Begun {
+    /// Ask the person in a window.
+    Window(OpenApproval),
+    /// The person already confirmed exactly this action in the settings window: signed, no window.
+    Signed(Resolution),
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +290,10 @@ pub struct Broker {
     key: [u8; 32],
     next: AtomicU64,
     pending: Mutex<Option<Pending>>,
+    confirmed: Mutex<Vec<Confirmed>>,
+    in_flight: Mutex<Vec<InFlight>>,
+    audit: Mutex<Vec<AuditEntry>>,
+    audit_file: Option<std::path::PathBuf>,
 }
 
 impl Broker {
@@ -72,7 +303,148 @@ impl Broker {
             key,
             next: AtomicU64::new(0),
             pending: Mutex::new(None),
+            confirmed: Mutex::new(Vec::new()),
+            in_flight: Mutex::new(Vec::new()),
+            audit: Mutex::new(Vec::new()),
+            audit_file: None,
         })
+    }
+
+    /// Also append every journal entry to this file (owner-only).
+    pub fn with_audit_file(mut self, path: std::path::PathBuf) -> Self {
+        self.audit_file = Some(path);
+        self
+    }
+
+    pub fn audit_log(&self) -> Vec<AuditEntry> {
+        self.audit.lock().map(|log| log.clone()).unwrap_or_default()
+    }
+
+    fn log(
+        &self,
+        now: u64,
+        who: &'static str,
+        via: &'static str,
+        request: &HostApprovalRequest,
+        outcome: &str,
+        note: &'static str,
+    ) {
+        let entry = AuditEntry {
+            at: now,
+            who,
+            via,
+            method: request.tool_name.clone(),
+            action_hash: request.action_hash.clone(),
+            human_text: redact_text(&request.human_text),
+            reason: request.reason.as_deref().map(redact_text),
+            outcome: outcome.to_owned(),
+            note,
+        };
+        if let Some(path) = &self.audit_file {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(path)
+            {
+                // `mode` applies only when the file is created: make an older file private too.
+                let _ = file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600));
+                let _ = writeln!(
+                    file,
+                    "{}",
+                    serde_json::to_string(&entry).unwrap_or_default()
+                );
+            }
+        }
+        if let Ok(mut log) = self.audit.lock() {
+            if log.len() >= MAX_AUDIT_ENTRIES {
+                log.remove(0);
+            }
+            log.push(entry);
+        }
+    }
+
+    /// Engine restart or a lost connection: nothing the person confirmed earlier is valid any more.
+    pub fn clear_grants(&self) {
+        if let Ok(mut confirmed) = self.confirmed.lock() {
+            confirmed.clear();
+        }
+        if let Ok(mut in_flight) = self.in_flight.lock() {
+            in_flight.clear();
+        }
+    }
+
+    /// The person allowed a window action. The confirmation waits for the outgoing request that
+    /// carries exactly this action; it is not usable by anything yet.
+    fn confirm(&self, request: &HostApprovalRequest, now: u64) {
+        if let Ok(mut confirmed) = self.confirmed.lock() {
+            confirmed.retain(|c| c.expires_at > now);
+            confirmed.push(Confirmed {
+                method: request.tool_name.clone(),
+                session: session_of(&request.action),
+                action: request.action.clone(),
+                expires_at: now.saturating_add(GRANT_TTL_MS),
+            });
+        }
+    }
+
+    /// Called as the outgoing request leaves for the engine, before its frame is written:
+    /// binds the matching confirmation to this request's generation and JSON-RPC id. At most one
+    /// grant exists per outgoing request.
+    pub fn arm_in_flight(&self, method: &str, params: &Value, generation: u64, id: &str, now: u64) {
+        let Ok(action) = redacted_action(method, params) else {
+            return;
+        };
+        let Ok(mut confirmed) = self.confirmed.lock() else {
+            return;
+        };
+        confirmed.retain(|c| c.expires_at > now);
+        let Some(index) = confirmed
+            .iter()
+            .position(|c| c.method == method && c.action == action)
+        else {
+            return;
+        };
+        let c = confirmed.remove(index);
+        drop(confirmed);
+        // the remaining time of the original confirmation, not a fresh one
+        if let Ok(mut in_flight) = self.in_flight.lock() {
+            in_flight.retain(|g| g.expires_at > now && !(g.generation == generation && g.id == id));
+            in_flight.push(InFlight {
+                generation,
+                id: id.to_owned(),
+                method: c.method,
+                action: c.action,
+                session: c.session,
+                expires_at: c.expires_at,
+            });
+        }
+    }
+
+    /// The outgoing request was answered, failed or timed out: its confirmation dies with it.
+    pub fn disarm(&self, generation: u64, id: &str) {
+        if let Ok(mut in_flight) = self.in_flight.lock() {
+            in_flight.retain(|g| !(g.generation == generation && g.id == id));
+        }
+    }
+
+    /// Consumes the confirmation of the outgoing request this approval request belongs to: the same
+    /// engine run, the same method, the same action and the same session, while that request is in flight.
+    fn take_grant(&self, generation: u64, request: &HostApprovalRequest, now: u64) -> bool {
+        let Ok(mut in_flight) = self.in_flight.lock() else {
+            return false;
+        };
+        in_flight.retain(|g| g.expires_at > now);
+        let found = in_flight.iter().position(|g| {
+            g.generation == generation
+                && g.method == request.tool_name
+                && g.action == request.action
+                && g.session == request.session_id
+                && request.call_id.is_none()
+        });
+        found.map(|index| in_flight.remove(index)).is_some()
     }
 
     pub fn begin_preflight(
@@ -93,7 +465,7 @@ impl Broker {
             reason: None,
             approval_id: format!("native-preflight-{sequence}"),
             risk: Risk::High,
-            human_text: preflight_text(method, params)?,
+            human_text: redact_text(&preflight_text(method, params)?),
             action_hash: hoh_protocol::approval::action_hash(&action),
             expires_at: now.saturating_add(MAX_LIFETIME_MS),
             action,
@@ -103,14 +475,11 @@ impl Broker {
         Ok((open, receiver))
     }
 
-    pub fn begin_engine(
-        &self,
-        generation: u64,
-        id: Value,
+    fn parse_engine_request(
         method: &str,
         params: Value,
         now: u64,
-    ) -> Result<OpenApproval, String> {
+    ) -> Result<HostApprovalRequest, String> {
         if method != "approval/request" {
             return Err("Обратный метод не поддерживается".into());
         }
@@ -119,7 +488,61 @@ impl Broker {
         let request: HostApprovalRequest = serde_json::from_value(params)
             .map_err(|_| "Движок прислал некорректное подтверждение".to_owned())?;
         validate_time(&request, now)?;
+        Ok(request)
+    }
+
+    /// The engine's request always gets a window.
+    pub fn begin_engine(
+        &self,
+        generation: u64,
+        id: Value,
+        method: &str,
+        params: Value,
+        now: u64,
+    ) -> Result<OpenApproval, String> {
+        let request = Self::parse_engine_request(method, params, now)?;
         self.insert(request, Destination::Engine { generation, id })
+    }
+
+    /// The engine's request gets a window, except the one the person has just confirmed in the
+    /// settings window (same method and same canonical action, once, within `GRANT_TTL_MS`):
+    /// that one is signed here. Requests of the model's tools never match a grant.
+    pub fn begin_engine_or_grant(
+        &self,
+        generation: u64,
+        id: Value,
+        method: &str,
+        params: Value,
+        now: u64,
+    ) -> Result<Begun, String> {
+        let request = Self::parse_engine_request(method, params, now)?;
+        hoh_protocol::approval::validate_host_request(&request)
+            .map_err(|_| "Некорректное подтверждение".to_owned())?;
+        if !self.take_grant(generation, &request, now) {
+            return self
+                .insert(request, Destination::Engine { generation, id })
+                .map(Begun::Window);
+        }
+        let decision = HostApprovalDecision {
+            approval_id: request.approval_id.clone(),
+            outcome: ApprovalOutcome::AllowedOnce,
+            mac: hoh_protocol::approval::mac(&self.key, &request, "allowed-once"),
+        };
+        hoh_protocol::approval::verify_decision(&self.key, &request, &decision, now)
+            .map_err(|_| "Подтверждение недействительно".to_owned())?;
+        self.log(
+            now,
+            "core",
+            "settings-window",
+            &request,
+            "allowed-once",
+            "подписано ядром без второго окна: то же действие подтверждено человеком в окне настройки",
+        );
+        Ok(Begun::Signed(Resolution::Engine {
+            generation,
+            id,
+            decision: Ok(decision),
+        }))
     }
 
     fn insert(
@@ -134,8 +557,8 @@ impl Broker {
         let view = ApprovalView {
             approval_id: request.approval_id.clone(),
             risk: request.risk.clone(),
-            human_text: request.human_text.clone(),
-            reason: request.reason.clone(),
+            human_text: redact_text(&request.human_text),
+            reason: request.reason.as_deref().map(redact_text),
             expires_at: request.expires_at,
         };
         let mut slot = self
@@ -168,8 +591,8 @@ impl Broker {
         Ok(ApprovalView {
             approval_id: pending.request.approval_id.clone(),
             risk: pending.request.risk.clone(),
-            human_text: pending.request.human_text.clone(),
-            reason: pending.request.reason.clone(),
+            human_text: redact_text(&pending.request.human_text),
+            reason: pending.request.reason.as_deref().map(redact_text),
             expires_at: pending.request.expires_at,
         })
     }
@@ -240,7 +663,57 @@ impl Broker {
         now: u64,
     ) -> Result<DecisionOutcome, String> {
         let pending = self.take_exact(label, approval_id)?;
-        match hoh_protocol::approval::verify_decision(&self.key, &pending.request, &decision, now) {
+        let settings_window = matches!(pending.destination, Destination::Preflight(_));
+        let verified =
+            hoh_protocol::approval::verify_decision(&self.key, &pending.request, &decision, now);
+        match (&verified, &decision.outcome) {
+            (Ok(()), ApprovalOutcome::AllowedOnce) => {
+                if settings_window {
+                    self.confirm(&pending.request, now);
+                }
+                self.log(
+                    now,
+                    "human",
+                    if settings_window {
+                        "settings-window"
+                    } else {
+                        "approval-window"
+                    },
+                    &pending.request,
+                    "allowed-once",
+                    if settings_window {
+                        "подтверждено человеком в окне настройки"
+                    } else {
+                        "подтверждено человеком в окне подтверждения"
+                    },
+                );
+            }
+            (Ok(()), _) => self.log(
+                now,
+                "human",
+                if settings_window {
+                    "settings-window"
+                } else {
+                    "approval-window"
+                },
+                &pending.request,
+                "rejected",
+                "отклонено человеком",
+            ),
+            (Err(_), _) => self.log(
+                now,
+                "core",
+                if settings_window {
+                    "settings-window"
+                } else {
+                    "approval-window"
+                },
+                &pending.request,
+                "invalid",
+                "подтверждение недействительно",
+            ),
+        }
+        match verified {
             Ok(()) => Ok(DecisionOutcome {
                 resolution: resolve(
                     pending.destination,
@@ -260,8 +733,63 @@ impl Broker {
         }
     }
 
+    /// The window was not answered in time: the engine gets `cancelled`, signed while the request
+    /// is still valid (so it must run before `expiresAt`, see `EXPIRY_MARGIN_MS`). A settings-window
+    /// question simply fails.
+    pub fn expire(&self, label: &str, now: u64) -> Option<Resolution> {
+        let pending = self.take_label(label)?;
+        let settings_window = matches!(pending.destination, Destination::Preflight(_));
+        let via = if settings_window {
+            "settings-window"
+        } else {
+            "approval-window"
+        };
+        let decision = HostApprovalDecision {
+            approval_id: pending.request.approval_id.clone(),
+            outcome: ApprovalOutcome::Cancelled,
+            mac: hoh_protocol::approval::mac(&self.key, &pending.request, "cancelled"),
+        };
+        let verified =
+            hoh_protocol::approval::verify_decision(&self.key, &pending.request, &decision, now)
+                .map(|()| decision)
+                .map_err(|_| "Подтверждение истекло".to_owned());
+        // The journal tells what really happened: after the deadline nothing valid can be signed.
+        if verified.is_ok() {
+            self.log(
+                now,
+                "core",
+                via,
+                &pending.request,
+                "cancelled",
+                "срок подтверждения вышел: отменено",
+            );
+        } else {
+            self.log(
+                now,
+                "core",
+                via,
+                &pending.request,
+                "expired",
+                "истёк без ответа, подпись невозможна",
+            );
+        }
+        Some(resolve(pending.destination, verified, false))
+    }
+
     pub fn reject(&self, label: &str, now: u64) -> Option<Resolution> {
         let pending = self.take_label(label)?;
+        self.log(
+            now,
+            "human",
+            if matches!(pending.destination, Destination::Preflight(_)) {
+                "settings-window"
+            } else {
+                "approval-window"
+            },
+            &pending.request,
+            "rejected",
+            "окно закрыто или срок вышел: отклонено",
+        );
         let decision = HostApprovalDecision {
             approval_id: pending.request.approval_id.clone(),
             outcome: ApprovalOutcome::Rejected,
@@ -275,6 +803,7 @@ impl Broker {
     }
 
     pub fn cancel(&self) -> Option<(String, Resolution)> {
+        self.clear_grants();
         let pending = self.pending.lock().ok()?.take()?;
         let label = pending.label;
         Some((

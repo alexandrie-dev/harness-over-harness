@@ -49,7 +49,10 @@ try {
         request: (method, params) => window.__hohChatRequest(method, params),
         subscribe: async listener => { listeners.add(listener); return () => listeners.delete(listener); },
         subscribeStatus: async listener => { statusListeners.add(listener); return () => statusListeners.delete(listener); },
+        subscribeQuestions: async listener => { window.__hohAsk = listener; return () => { window.__hohAsk = undefined; }; },
+        answerQuestion: async (requestId, answer) => { window.__hohAnswers.push({ requestId, answer }); },
       };
+      window.__hohAnswers = [];
       window.__hohChatNotify = notification => { for (const listener of listeners) listener(notification); };
       window.__hohChatEngineStatus = status => { for (const listener of statusListeners) listener(status); };
       window.__chatTextSamples = [];
@@ -183,6 +186,30 @@ try {
     const visible = await page.locator('body').innerText();
     assert(!visible.includes('/workspace/') && !visible.includes('/tmp'), 'external absolute paths must be hidden');
   }, [], { viewport: { width: 1440, height: 900 }, shot: 'chat-1440.png' });
+
+  await check('assistant-question', 'text-turn', async page => {
+    await page.evaluate(() => window.__hohAsk({ requestId: 'r1', sessionId: 'employee-1', questions: [
+      { id: 'format', question: 'Какой формат отчёта?', options: [{ label: 'PDF' }, { label: 'Word', description: 'Для правок' }] },
+      { id: 'note', question: 'Что подчеркнуть? <b>тег</b>', multiSelect: true, options: [{ label: 'Сроки' }, { label: 'Цена' }] }] }));
+    const card = page.locator('[data-chat-question]');
+    await card.waitFor();
+    assert.equal(await card.locator('b').count(), 0, 'question text is plain text');
+    const send = card.locator('[data-question-send]');
+    assert.equal(await send.isDisabled(), true);
+    await card.getByLabel('PDF').check();
+    await card.getByLabel('Сроки').check(); await card.getByLabel('Цена').check();
+    await card.locator('[data-question-id="note"] .chat-question-custom').fill('  и ещё про риски ');
+    assert.equal(await send.isDisabled(), false);
+    await send.click();
+    await card.waitFor({ state: 'detached' });
+    const answers = await page.evaluate(() => window.__hohAnswers);
+    assert.deepEqual(answers, [{ requestId: 'r1', answer: { answers: [
+      { id: 'format', selected: ['PDF'] }, { id: 'note', selected: ['Сроки', 'Цена'], custom: 'и ещё про риски' }] } }]);
+    await page.evaluate(() => window.__hohAsk({ requestId: 'r2', sessionId: 'employee-1', questions: [{ id: 'q', question: 'Продолжать?' }] }));
+    await page.locator('[data-question-skip]').click();
+    await page.locator('[data-chat-question]').waitFor({ state: 'detached' });
+    assert.deepEqual((await page.evaluate(() => window.__hohAnswers)).at(-1), { requestId: 'r2', answer: { cancelled: true } });
+  });
 
   // Extended recording is a planted test input, based on text-turn, to keep an
   // observable playback window for a real click. Original source is untouched.

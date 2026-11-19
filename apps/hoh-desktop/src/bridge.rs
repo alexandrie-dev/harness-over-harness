@@ -88,9 +88,23 @@ pub fn request_with_approval(
     params: Value,
     approve: impl FnOnce(&Value) -> Result<(), String>,
 ) -> Result<Value, String> {
+    request_with_approval_armed(engine, label, method, params, approve, None)
+}
+
+/// Same, and `on_send` is told the id of the outgoing request (only when a confirmation was needed
+/// and given), so that confirmation can be bound to that request.
+pub fn request_with_approval_armed(
+    engine: &Arc<Engine>,
+    label: &str,
+    method: &str,
+    params: Value,
+    approve: impl FnOnce(&Value) -> Result<(), String>,
+    on_send: Option<crate::engine::OnSend>,
+) -> Result<Value, String> {
     check_main(label, method, &params)?;
-    if needs_approval(method, &params) {
+    let confirmed = needs_approval(method, &params);
+    if confirmed {
         approve(&params)?;
     }
-    engine.request(method, params)
+    engine.request_with(method, params, if confirmed { on_send } else { None })
 }

@@ -22,6 +22,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             hoh_desktop::native::engine_request,
             hoh_desktop::native::pick_folder,
+            hoh_desktop::native::question_answer,
             hoh_desktop::native::approval_current,
             hoh_desktop::native::approval_decide
         ])

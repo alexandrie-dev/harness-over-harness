@@ -1,0 +1,61 @@
+{
+  "model": "window-mock",
+  "responses": [
+    {
+      "text": [
+        "Удаляю."
+      ],
+      "tool_calls": [
+        {
+          "id": "call-rm-1",
+          "name": "bash",
+          "arguments": {
+            "command": "rm -rf ./generated",
+            "description": "Удаление папки generated"
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 5
+      }
+    },
+    {
+      "text": [
+        "Не удалил: вы отклонили."
+      ],
+      "usage": {
+        "prompt_tokens": 30,
+        "completion_tokens": 3
+      }
+    },
+    {
+      "text": [
+        "Удаляю ещё раз."
+      ],
+      "tool_calls": [
+        {
+          "id": "call-rm-2",
+          "name": "bash",
+          "arguments": {
+            "command": "rm -rf ./generated",
+            "description": "Удаление папки generated"
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 40,
+        "completion_tokens": 5
+      }
+    },
+    {
+      "text": [
+        "Готово."
+      ],
+      "usage": {
+        "prompt_tokens": 50,
+        "completion_tokens": 2
+      }
+    }
+  ]
+}

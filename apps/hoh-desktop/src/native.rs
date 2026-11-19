@@ -1,12 +1,15 @@
 //! Tauri command adapters. Security decisions live in Rust, never in the page.
 use crate::{
-    approval::{ApprovalView, Broker, OpenApproval, Resolution, now_ms},
+    approval::{ApprovalView, Begun, Broker, OpenApproval, Resolution, now_ms},
     bridge,
     engine::{Engine, HostEvent, ProcessConfig},
+    questions::QuestionBroker,
+    workspace,
 };
 use hoh_protocol::ApprovalOutcome;
 use serde_json::{Value, json};
 use std::{
+    ffi::OsString,
     path::PathBuf,
     sync::{
         Arc,
@@ -19,10 +22,85 @@ use tauri::{Emitter, Manager};
 #[cfg(target_os = "linux")]
 use webkit2gtk::WebViewExt;
 
+/// Where the session's folder comes from and is remembered.
+#[derive(Clone)]
+struct Workspace {
+    default: PathBuf,
+    config_dir: PathBuf,
+}
+
 pub struct Host {
     pub engine: Arc<Engine>,
     pub approvals: Arc<Broker>,
+    pub questions: Arc<QuestionBroker>,
+    workspace: Workspace,
     ready: Arc<AtomicBool>,
+}
+
+/// How the native host starts the engine. The real `hoh` needs the window profile and its own
+/// data folder; the replay stub (tests only) takes no arguments.
+#[derive(Debug, PartialEq, Eq)]
+struct EngineLaunch {
+    path: PathBuf,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+    /// Provider and model announced in `initialize`; the real engine registers its OpenAI-compatible
+    /// provider under this id and takes the model name from its settings afterwards.
+    provider: &'static str,
+    model: &'static str,
+}
+
+fn select_engine_launch(
+    test_engine: Option<OsString>,
+    configured_engine: Option<OsString>,
+    engine_home: &std::path::Path,
+) -> Result<EngineLaunch, String> {
+    let is_test = test_engine.is_some();
+    let value = test_engine
+        .or(configured_engine)
+        .ok_or_else(|| "Путь к движку не задан при сборке. Переустановите приложение".to_owned())?;
+    if value.is_empty() {
+        return Err("Путь к движку пуст. Переустановите приложение".into());
+    }
+    if is_test {
+        return Ok(EngineLaunch {
+            path: PathBuf::from(value),
+            args: Vec::new(),
+            env: Vec::new(),
+            provider: "mock",
+            model: "mock",
+        });
+    }
+    Ok(EngineLaunch {
+        path: PathBuf::from(value),
+        args: vec!["--profile".into(), "window".into()],
+        env: vec![(
+            "DSH_HOME".into(),
+            engine_home
+                .to_str()
+                .ok_or("Папка данных должна быть в UTF-8")?
+                .to_owned(),
+        )],
+        provider: "openai-compatible",
+        model: "local",
+    })
+}
+
+/// The engine's data folder (DSH_HOME) must be owner-only: the engine refuses to store the model
+/// key in a folder others can read, so the launcher creates it.
+fn create_private_dir(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+fn engine_launch(engine_home: &std::path::Path) -> Result<EngineLaunch, String> {
+    let configured = std::env::var_os("HOH_ENGINE_PATH")
+        .or_else(|| option_env!("HOH_ENGINE_PATH").map(OsString::from));
+    select_engine_launch(std::env::var_os("HOH_TEST_ENGINE"), configured, engine_home)
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -31,45 +109,76 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let mut key = [0_u8; 32];
     use std::io::Read;
     std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
-    let approvals = Arc::new(Broker::new(key)?);
+    let approvals = Arc::new(
+        Broker::new(key)?.with_audit_file(app.path().app_data_dir()?.join("approvals.log")),
+    );
+    let questions = Arc::new(QuestionBroker::default());
     let ready = Arc::new(AtomicBool::new(false));
-    let path = app.path().app_config_dir()?.join("engine.json");
-    let config = if path.exists() {
+    let engine_home = app.path().app_data_dir()?.join("engine");
+    create_private_dir(&engine_home)?;
+    let launch = engine_launch(&engine_home)?;
+    let config_dir = app.path().app_config_dir()?;
+    // Without XDG user dirs (a fresh account, a container) there is no Documents entry: use ~/Documents.
+    let documents = match app.path().document_dir() {
+        Ok(path) => path,
+        Err(_) => app.path().home_dir()?.join("Documents"),
+    };
+    let default_folder = workspace::default_folder(&documents);
+    // The sandbox of the session is rooted in this folder: the one chosen on the first run, else
+    // the app's own folder in Documents. Never the home folder.
+    let session_folder = workspace::startup_folder(&config_dir, &default_folder)?;
+    let path = config_dir.join("engine.json");
+    let mut config = if path.exists() {
         serde_json::from_slice::<ProcessConfig>(&std::fs::read(path)?)?
     } else {
-        let folder = std::env::current_exe()?
-            .parent()
-            .ok_or("Нет каталога приложения")?
-            .to_owned();
-        let engine = folder.join("hoh");
         ProcessConfig {
-            path: std::env::var_os("HOH_ENGINE_PATH")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    if engine.exists() {
-                        engine
-                    } else {
-                        folder.join("hoh-window-stub")
-                    }
-                }),
+            path: launch.path.clone(),
             args: Vec::new(),
-            cwd: app.path().home_dir()?,
-            provider: "mock".into(),
-            model: "mock".into(),
+            env: Vec::new(),
+            stderr_file: None,
+            cwd: engine_home.clone(),
+            provider: launch.provider.into(),
+            model: launch.model.into(),
         }
     };
+    // A writable settings file must never redirect the native host to another
+    // executable or change how it is started. Production receives the path from
+    // its build/runtime variable; tests can opt into the replay stub only through
+    // HOH_TEST_ENGINE.
+    config.path = launch.path;
+    config.args = launch.args;
+    config.env = launch.env;
+    config.stderr_file = None;
+    config.provider = launch.provider.into();
+    config.model = launch.model.into();
+    // The engine process lives in its private folder; only the session is rooted in the work folder.
+    config.cwd = engine_home.clone();
     let handle = app.handle().clone();
     let event_approvals = approvals.clone();
+    let event_questions = questions.clone();
     let event_ready = ready.clone();
-    let init = json!({"cwd":config.cwd,"provider":config.provider,"model":config.model,"capabilities":{"approvals":"host"},"hoh":{"protocolVersion":1,"approvalKey":hoh_protocol::approval::hex(&key)}});
+    let init = json!({"cwd":session_folder,"provider":config.provider,"model":config.model,"capabilities":{"approvals":"host","userQuestions":true},"hoh":{"protocolVersion":1,"approvalKey":hoh_protocol::approval::hex(&key)}});
     let engine = Engine::start(
         Arc::new(config),
         init,
-        Arc::new(move |event| handle_event(&handle, &event_approvals, &event_ready, event)),
+        Arc::new(move |event| {
+            handle_event(
+                &handle,
+                &event_approvals,
+                &event_questions,
+                &event_ready,
+                event,
+            )
+        }),
     );
     app.manage(Host {
         engine,
         approvals,
+        questions,
+        workspace: Workspace {
+            default: default_folder,
+            config_dir,
+        },
         ready,
     });
     #[cfg(feature = "probe")]
@@ -80,11 +189,27 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 fn handle_event(
     handle: &tauri::AppHandle,
     approvals: &Arc<Broker>,
+    questions: &Arc<QuestionBroker>,
     ready: &Arc<AtomicBool>,
     event: HostEvent,
 ) {
     match event {
         HostEvent::Notification(frame) => {
+            if frame["method"] == "user-question.cancelled"
+                && let Some(id) = frame["params"]["requestId"].as_str()
+            {
+                questions.cancel(id);
+            }
+            let mut frame = frame;
+            if frame["method"] == "approval.pending"
+                && let Some(text) = frame["params"]["humanText"].as_str()
+            {
+                // The window is told only that a decision waits; an address in it stays closed.
+                frame["params"]["humanText"] = Value::String(crate::approval::redact_text(text));
+                if let Some(reason) = frame["params"]["reason"].as_str() {
+                    frame["params"]["reason"] = Value::String(crate::approval::redact_text(reason));
+                }
+            }
             let _ = handle.emit_to("main", "engine-notification", frame);
         }
         HostEvent::Status(status) => {
@@ -96,6 +221,9 @@ fn handle_event(
                 "engine:status:not-ready"
             });
             ready.store(is_ready, Ordering::Release);
+            if !is_ready {
+                questions.clear();
+            }
             if let Some((label, resolution)) = cancel_for_status(approvals, is_ready) {
                 dispatch_resolution(handle, resolution);
                 destroy_window(handle, &label);
@@ -118,10 +246,28 @@ fn handle_event(
             id,
             method,
             params,
-        } => match approvals.begin_engine(generation, id.clone(), &method, params, now_ms()) {
-            Ok(open) => schedule_window(handle, approvals, open),
-            Err(_) => respond_error(handle, generation, id, "Подтверждение недоступно"),
-        },
+        } if method == "user-question/ask" => {
+            match questions.begin(generation, id.clone(), params) {
+                Ok(question) => {
+                    let _ = handle.emit_to("main", "engine-question", question);
+                }
+                Err(_) => respond_error(handle, generation, id, "Вопрос недоступен"),
+            }
+        }
+        HostEvent::Request {
+            generation,
+            id,
+            method,
+            params,
+        } => {
+            match approvals.begin_engine_or_grant(generation, id.clone(), &method, params, now_ms())
+            {
+                Ok(Begun::Window(open)) => schedule_window(handle, approvals, open),
+                // Confirmed by the person a moment ago in the settings window: no second window.
+                Ok(Begun::Signed(resolution)) => dispatch_resolution(handle, resolution),
+                Err(_) => respond_error(handle, generation, id, "Подтверждение недоступно"),
+            }
+        }
     }
 }
 
@@ -251,7 +397,10 @@ fn open_window(
     let expires_at = open.view.expires_at;
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(
-            expires_at.saturating_sub(now_ms()).min(300_000),
+            expires_at
+                .saturating_sub(now_ms())
+                .saturating_sub(crate::approval::EXPIRY_MARGIN_MS)
+                .min(300_000),
         ));
         if let Some(resolution) = expire_approval(&expiry_broker, &label, now_ms()) {
             dispatch_resolution(&expiry_app, resolution);
@@ -358,7 +507,7 @@ fn cancel_for_status(approvals: &Broker, is_ready: bool) -> Option<(String, Reso
 }
 
 fn expire_approval(approvals: &Broker, label: &str, now: u64) -> Option<Resolution> {
-    approvals.reject(label, now)
+    approvals.expire(label, now)
 }
 
 #[cfg(feature = "probe")]
@@ -420,46 +569,119 @@ pub async fn engine_request(
     let engine = state.engine.clone();
     let approvals = state.approvals.clone();
     let ready = state.ready.clone();
+    let workspace = state.workspace.clone();
     let handle = window.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        bridge::request_with_approval(&engine, &label, &method, params, |params| {
-            #[cfg(feature = "probe")]
-            crate::probe::trace(format!("preflight:{method}:start"));
-            if !ready.load(Ordering::Acquire) {
+        let mut params = params;
+        let chosen_folder = if method == "hoh/settings/rules/set" && label == "main" {
+            Some(normalize_rules_folder(&mut params, &workspace)?)
+        } else {
+            None
+        };
+        // The confirmation is bound to this outgoing request: armed as it leaves, dropped as soon as
+        // it is answered, fails or times out.
+        let sent = Arc::new(std::sync::Mutex::new(None::<(u64, String)>));
+        let arm = {
+            let (approvals, sent, method, params) = (
+                approvals.clone(),
+                sent.clone(),
+                method.clone(),
+                params.clone(),
+            );
+            Box::new(move |generation: u64, id: &str| {
+                approvals.arm_in_flight(&method, &params, generation, id, now_ms());
+                *sent.lock().unwrap_or_else(|p| p.into_inner()) = Some((generation, id.to_owned()));
+            })
+        };
+        let answer = bridge::request_with_approval_armed(
+            &engine,
+            &label,
+            &method,
+            params,
+            |params| {
                 #[cfg(feature = "probe")]
-                crate::probe::trace(format!("preflight:{method}:engine-not-ready"));
-                return Err("Помощник ещё подключается".into());
-            }
-            let (open, receiver) = approvals.begin_preflight(&method, params, now_ms())?;
-            let approval_label = open.label.clone();
-            #[cfg(feature = "probe")]
-            crate::probe::trace(format!("preflight:{method}:begun:{approval_label}"));
-            schedule_window(&handle, &approvals, open);
-            match receiver.recv_timeout(Duration::from_secs(305)) {
-                Ok(true) => {
+                crate::probe::trace(format!("preflight:{method}:start"));
+                if !ready.load(Ordering::Acquire) {
                     #[cfg(feature = "probe")]
-                    crate::probe::trace(format!("preflight:{method}:complete:allowed"));
-                    Ok(())
+                    crate::probe::trace(format!("preflight:{method}:engine-not-ready"));
+                    return Err("Помощник ещё подключается".into());
                 }
-                Ok(false) => {
-                    #[cfg(feature = "probe")]
-                    crate::probe::trace(format!("preflight:{method}:complete:rejected"));
-                    Err("Действие отклонено".into())
-                }
-                Err(_) => {
-                    #[cfg(feature = "probe")]
-                    crate::probe::trace(format!("preflight:{method}:complete:timeout"));
-                    if let Some(resolution) = approvals.reject(&approval_label, now_ms()) {
-                        dispatch_resolution(&handle, resolution);
-                        destroy_window(&handle, &approval_label);
+                let (open, receiver) = approvals.begin_preflight(&method, params, now_ms())?;
+                let approval_label = open.label.clone();
+                #[cfg(feature = "probe")]
+                crate::probe::trace(format!("preflight:{method}:begun:{approval_label}"));
+                schedule_window(&handle, &approvals, open);
+                match receiver.recv_timeout(Duration::from_secs(305)) {
+                    Ok(true) => {
+                        #[cfg(feature = "probe")]
+                        crate::probe::trace(format!("preflight:{method}:complete:allowed"));
+                        Ok(())
                     }
-                    Err("Подтверждение не получено".into())
+                    Ok(false) => {
+                        #[cfg(feature = "probe")]
+                        crate::probe::trace(format!("preflight:{method}:complete:rejected"));
+                        Err("Действие отклонено".into())
+                    }
+                    Err(_) => {
+                        #[cfg(feature = "probe")]
+                        crate::probe::trace(format!("preflight:{method}:complete:timeout"));
+                        if let Some(resolution) = approvals.reject(&approval_label, now_ms()) {
+                            dispatch_resolution(&handle, resolution);
+                            destroy_window(&handle, &approval_label);
+                        }
+                        Err("Подтверждение не получено".into())
+                    }
                 }
-            }
-        })
+            },
+            Some(arm),
+        );
+        if let Some((generation, id)) = sent.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            approvals.disarm(generation, &id);
+        }
+        let answer = answer?;
+        if let Some(folder) = chosen_folder {
+            // The rules were allowed: remember the folder and reopen the session in it, so the
+            // sandbox is rooted there and only leaving it needs a question.
+            workspace::save(&workspace.config_dir, &folder)
+                .map_err(|_| "Не удалось запомнить папку".to_owned())?;
+            engine.restart_in(&folder)?;
+        }
+        Ok(answer)
     })
     .await
     .map_err(|_| "Запрос прерван".to_owned())?
+}
+
+/// The window sends a display name or a picked path; the engine and the person's confirmation
+/// must see the real, existing folder.
+fn normalize_rules_folder(params: &mut Value, workspace: &Workspace) -> Result<PathBuf, String> {
+    let choice = params["folder"].as_str().unwrap_or_default();
+    let folder = workspace::resolve_choice(choice, &workspace.default)?;
+    if folder == workspace.default {
+        std::fs::create_dir_all(&folder).map_err(|_| "Не удалось создать папку HoH".to_owned())?;
+    } else if !folder.is_dir() {
+        return Err("Папка не найдена".into());
+    }
+    params["folder"] = json!(folder);
+    Ok(folder)
+}
+
+/// The person answered (or dismissed) a question of the assistant. Only the main window may.
+#[tauri::command]
+pub fn question_answer(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    request_id: String,
+    answer: Value,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Ответ доступен только главному окну".into());
+    }
+    let (generation, frame) = state.questions.answer(&request_id, &answer)?;
+    state
+        .engine
+        .respond(generation, frame)
+        .map_err(|_| "Помощник недоступен".to_owned())
 }
 
 #[tauri::command]
@@ -557,7 +779,7 @@ pub async fn pick_folder(window: tauri::WebviewWindow) -> Result<Option<String>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
+    use std::{ffi::OsString, sync::mpsc};
 
     fn begin(broker: &Broker, now: u64) -> (OpenApproval, mpsc::Receiver<bool>) {
         broker
@@ -613,5 +835,94 @@ mod tests {
         deliver_preflight(expire_approval(&broker, &open.label, 310_000).unwrap());
         assert!(!receiver.recv_timeout(Duration::from_millis(50)).unwrap());
         let _next = begin(&broker, 310_000);
+    }
+
+    #[test]
+    fn engine_data_folder_is_owner_only_even_when_it_already_exists() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("hoh-desktop-private-{}", std::process::id()));
+        let folder = base.join("engine");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+        create_private_dir(&folder).unwrap();
+        assert_eq!(
+            std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        std::fs::remove_dir_all(&base).unwrap();
+        create_private_dir(&folder).unwrap();
+        assert_eq!(
+            std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn rules_folder_is_made_real_before_the_engine_and_the_person_see_it() {
+        let base = std::env::temp_dir().join(format!("hoh-desktop-rules-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let workspace = Workspace {
+            default: base.join("Documents/HoH"),
+            config_dir: base.join("config"),
+        };
+        let mut params = json!({"internet":"ask","folder":workspace::DEFAULT_LABEL});
+        let folder = normalize_rules_folder(&mut params, &workspace).unwrap();
+        assert_eq!(folder, workspace.default);
+        assert!(folder.is_dir());
+        assert_eq!(params["folder"], json!(folder));
+        let picked = base.join("project");
+        std::fs::create_dir_all(&picked).unwrap();
+        let mut params = json!({"internet":"public","folder":picked});
+        assert_eq!(
+            normalize_rules_folder(&mut params, &workspace).unwrap(),
+            picked
+        );
+        for refused in [
+            json!("Документы/Другая"),
+            json!("/нет/такой/папки"),
+            json!(null),
+        ] {
+            let mut params = json!({"internet":"ask","folder":refused});
+            assert!(normalize_rules_folder(&mut params, &workspace).is_err());
+        }
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn engine_path_requires_the_real_build_variable() {
+        let home = std::path::Path::new("/data/engine");
+        assert!(select_engine_launch(None, None, home).is_err());
+        assert_eq!(
+            select_engine_launch(None, Some(OsString::from("/opt/hoh/bin/hoh")), home).unwrap(),
+            EngineLaunch {
+                path: PathBuf::from("/opt/hoh/bin/hoh"),
+                args: vec!["--profile".into(), "window".into()],
+                env: vec![("DSH_HOME".into(), "/data/engine".into())],
+                provider: "openai-compatible",
+                model: "local",
+            }
+        );
+    }
+
+    #[test]
+    fn test_engine_is_the_only_stub_override_and_gets_no_profile_arguments() {
+        let home = std::path::Path::new("/data/engine");
+        assert_eq!(
+            select_engine_launch(
+                Some(OsString::from("/tmp/hoh-window-stub")),
+                Some(OsString::from("/opt/hoh/bin/hoh")),
+                home,
+            )
+            .unwrap(),
+            EngineLaunch {
+                path: PathBuf::from("/tmp/hoh-window-stub"),
+                args: Vec::new(),
+                env: Vec::new(),
+                provider: "mock",
+                model: "mock",
+            }
+        );
+        assert!(select_engine_launch(Some(OsString::new()), None, home).is_err());
     }
 }

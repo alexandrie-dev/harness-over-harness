@@ -3,7 +3,7 @@
 // Движок: если задан HOH_WINDOW_STUB — настоящая заглушка hoh-window-stub по stdio, иначе подмена в этом файле.
 // Снимки 1440×900 — в design/build-a/. Ничего не ходит в сеть: всё кроме file:// блокируется.
 import { chromium } from 'playwright-core';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -55,7 +55,7 @@ const fake = async (method, params) => {
   if (stub) return stub.request(method, params);
   if (method === 'hoh/settings/get') return { model: { baseUrl: 'http://127.0.0.1:8000', model: 'local' }, security: {}, view: {} };
   if (method === 'hoh/model/probe') return { ok: true, latencyMs: 2100, toolCalls: true, models: ['local', 'other'] };
-  if (method === 'hoh/settings/set' || method === 'hoh/settings/rules/set') return {};
+  if (method === 'hoh/settings/set' || method === 'hoh/settings/rules/set' || method === 'hoh/model/key/set') return {};
   throw new Error('нет такого метода');
 };
 const SECRET = 'sk-test-SECRET-4242';
@@ -75,10 +75,19 @@ const withExtras = () => {
     pickFolder: () => window.__hoh_call('pickFolder'),
   };
 };
+// The production path: the key goes out as the params of `hoh/model/key/set` through `request`,
+// there is no special key hook to hide behind.
+const realPath = () => {
+  window.__HOH_ENGINE__ = {
+    request: (m, p) => window.__hoh_call('request', m, p),
+    saveRules: r => window.__hoh_call('saveRules', r),
+    pickFolder: () => window.__hoh_call('pickFolder'),
+  };
+};
 const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.__hoh_call('request', m, p) }; };
 
 {
-  const { page, context, errors, outside } = await open('firstrun', { init: withExtras, hook: firstrunHook });
+  const { page, context, errors, outside } = await open('firstrun', { init: realPath, hook: firstrunHook });
   const next = page.getByRole('button', { name: 'Дальше' });
   await page.getByRole('heading', { name: 'Подключите модель' }).waitFor();
   assert.equal(await page.getByLabel('Название модели').isHidden(), true, 'ручное имя только в закрытом «Дополнительно»');
@@ -95,15 +104,21 @@ const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.
   await page.getByLabel('Адрес').fill('https://api.example.test/v1');
   await page.getByRole('button', { name: 'Проверить' }).click();
   await page.getByText('Для облачного сервиса нужен API-ключ').waitFor();
+  await page.getByLabel('Адрес').fill('https://api.example.test/v1');
   await page.getByLabel('API-ключ').fill(SECRET);
   await page.getByRole('button', { name: 'Проверить' }).click();
   await page.getByText(/Отвечает за/).waitFor();
-  assert.deepEqual(keys, [SECRET], 'ключ передан функции сохранения ровно один раз');
+  // Ключ неизбежно есть в параметрах key/set (так он попадает в хранилище движка) и больше нигде.
+  const keySets = engineCalls.filter(call => call.method === 'hoh/model/key/set');
+  assert.equal(keySets.length, 1, 'key/set вызван ровно один раз');
+  assert.deepEqual(keySets[0].params, { apiKey: SECRET, baseUrl: 'https://api.example.test/v1' });
+  assert(!JSON.stringify(engineCalls.filter(call => call.method !== 'hoh/model/key/set')).includes(SECRET), 'в других запросах ключа нет');
   assert.equal(await page.getByLabel('API-ключ').inputValue(), '', 'после сохранения поле ключа очищено');
   assert(!(await page.content()).includes(SECRET), 'ключа нет в разметке страницы');
-  assert(!JSON.stringify(engineCalls).includes(SECRET), 'ключа нет ни в одном запросе протокола');
+  const stored = await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }]));
+  assert(!stored.includes(SECRET), 'ключа нет в localStorage и sessionStorage');
   assert.equal(await next.isEnabled(), true);
-  ok('облачный режим: ключ уходит движку один раз, в окне и в запросах протокола его нет');
+  ok('облачный режим: ключ уходит движку один раз (key/set), в окне, хранилищах и других запросах его нет');
 
   // правка адреса снимает проверку
   await page.getByLabel('Адрес').fill('https://api.example.test/v2');
@@ -186,8 +201,8 @@ const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.
 // Регрессии хранения ключа и блокировки сохранения. Только внешний прогон.
 {
   let fail = true; const saved = [];
-  const { page, context } = await open('firstrun', { init: withExtras, hook: async (kind, a, b) => {
-    if (kind === 'storeApiKey') { saved.push(a); if (fail) throw new Error('Сохранение недоступно'); return; }
+  const { page, context } = await open('firstrun', { init: realPath, hook: async (kind, a, b) => {
+    if (kind === 'request' && a === 'hoh/model/key/set') { saved.push(b.apiKey); if (fail) throw new Error('Сохранение недоступно'); return {}; }
     return firstrunHook(kind, a, b);
   } });
   await page.getByRole('button', { name: 'Облачный сервис' }).click();
@@ -328,6 +343,24 @@ async function openApproval(view, viewport, options = {}) {
   await page.getByText('<img src=x onerror=alert(1)>Открыть сайт').waitFor();
   await context.close();
   ok('текст запроса и объяснение модели выводятся как текст, не как разметка');
+}
+
+{
+  // The view is what the native core hands the window for an address with a secret in it
+  // (apps/hoh-desktop/tests/grants.rs checks the core produces exactly this view from `raw`).
+  const fixture = JSON.parse(await readFile(new URL('./secret-address-view.json', import.meta.url), 'utf8'));
+  const { page, context } = await openApproval(request({ humanText: fixture.view.humanText, reason: fixture.view.reason }));
+  await page.getByRole('alertdialog').waitFor();
+  const shown = await page.locator('body').innerText();
+  assert.match(shown, /user:•••@host\.example\/v1\?api_key=•••#•••/, 'в адресе на экране секрет закрыт');
+  assert.match(shown, /token=•••/, 'в объяснении на экране секрет закрыт');
+  const html = await page.content();
+  for (const secret of fixture.secrets) {
+    assert(!shown.includes(secret), `${secret} виден на экране`);
+    assert(!html.includes(secret), `${secret} есть в DOM`);
+  }
+  await context.close();
+  ok('окно подтверждения с секретным адресом: на экране •••, секрета нет ни в тексте, ни в DOM');
 }
 
 {

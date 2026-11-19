@@ -51,6 +51,8 @@ fn real_stub_rejects_bad_mac_then_accepts_the_native_broker_mac() {
         Arc::new(ProcessConfig {
             path: path.into(),
             args: vec![],
+            env: vec![],
+            stderr_file: None,
             cwd: cwd.clone(),
             provider: "mock".into(),
             model: "mock".into(),

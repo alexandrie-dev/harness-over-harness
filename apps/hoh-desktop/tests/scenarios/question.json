@@ -1,0 +1,7 @@
+{
+  "model": "window-mock",
+  "responses": [
+    {"text": ["Уточню."], "tool_calls": [{"id": "call-ask", "name": "ask_user_question", "arguments": {"questions": [{"id": "format", "question": "Какой формат отчёта?", "options": [{"label": "PDF"}, {"label": "Word"}]}]}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+    {"text": ["Принято, делаю."], "usage": {"prompt_tokens": 30, "completion_tokens": 3}}
+  ]
+}

@@ -15,6 +15,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Marker the window checks to tell "engine has no such method" from other failures.
+pub const METHOD_UNAVAILABLE: &str = "method-unavailable";
+
+/// Runs on the engine thread as an outgoing request gets its id, before its frame is written.
+pub type OnSend = Box<dyn FnOnce(u64, &str) + Send>;
 pub type Reply = mpsc::Sender<Result<Value, String>>;
 pub type Sink = Arc<dyn Fn(HostEvent) + Send + Sync>;
 #[derive(Clone)]
@@ -33,6 +38,7 @@ pub enum Message {
         method: String,
         params: Value,
         reply: Reply,
+        on_send: Option<OnSend>,
     },
     Respond {
         generation: u64,
@@ -40,6 +46,7 @@ pub enum Message {
     },
     Incoming(u64, Incoming),
     Disconnected(u64),
+    Restart,
     Stop,
 }
 /// Future transports supply frames and lifecycle, without changing bridge/approval code.
@@ -61,6 +68,12 @@ pub struct ProcessConfig {
     pub path: PathBuf,
     #[serde(default)]
     pub args: Vec<String>,
+    /// Extra child environment (e.g. the engine's private data folder).
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+    /// Where the engine's stderr goes (tests only; production discards it, it can hold secrets).
+    #[serde(default)]
+    pub stderr_file: Option<PathBuf>,
     pub cwd: PathBuf,
     pub provider: String,
     pub model: String,
@@ -74,10 +87,19 @@ impl Connector for ProcessConfig {
         let mut command = Command::new(&self.path);
         command
             .args(&self.args)
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
             .current_dir(&self.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(match &self.stderr_file {
+                Some(path) => std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .map(Stdio::from)
+                    .map_err(|_| "Не удалось открыть журнал ошибок движка".to_owned())?,
+                None => Stdio::null(),
+            });
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -179,25 +201,39 @@ impl Drop for StdioTransport {
 
 pub struct Engine {
     tx: mpsc::Sender<Message>,
+    initialize: Arc<std::sync::Mutex<Value>>,
     join: std::sync::Mutex<Option<thread::JoinHandle<()>>>,
 }
 impl Engine {
     pub fn start(connector: Arc<dyn Connector>, initialize: Value, sink: Sink) -> Arc<Self> {
         let (tx, rx) = mpsc::channel();
         let inbox = tx.clone();
-        let join = thread::spawn(move || supervise(connector, initialize, sink, inbox, rx));
+        let initialize = Arc::new(std::sync::Mutex::new(initialize));
+        let shared = initialize.clone();
+        let join = thread::spawn(move || supervise(connector, shared, sink, inbox, rx));
         Arc::new(Self {
             tx,
+            initialize,
             join: std::sync::Mutex::new(Some(join)),
         })
     }
     pub fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.request_with(method, params, None)
+    }
+    /// Like `request`; `on_send` learns the generation and JSON-RPC id of this very request.
+    pub fn request_with(
+        &self,
+        method: &str,
+        params: Value,
+        on_send: Option<OnSend>,
+    ) -> Result<Value, String> {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(Message::Request {
                 method: method.into(),
                 params,
                 reply,
+                on_send,
             })
             .map_err(|_| "Помощник остановлен")?;
         rx.recv_timeout(Duration::from_secs(310))
@@ -206,6 +242,14 @@ impl Engine {
     pub fn respond(&self, generation: u64, frame: Value) -> Result<(), String> {
         self.tx
             .send(Message::Respond { generation, frame })
+            .map_err(|_| "Помощник остановлен".into())
+    }
+    /// Starts the engine again; the session folder of the new run is `cwd`. Calls in flight end
+    /// with an error and are not repeated.
+    pub fn restart_in(&self, cwd: &std::path::Path) -> Result<(), String> {
+        self.initialize.lock().unwrap_or_else(|p| p.into_inner())["cwd"] = json!(cwd);
+        self.tx
+            .send(Message::Restart)
             .map_err(|_| "Помощник остановлен".into())
     }
     pub fn stop(&self) {
@@ -227,7 +271,7 @@ struct Pending {
 }
 fn supervise(
     connector: Arc<dyn Connector>,
-    initialize: Value,
+    initialize: Arc<std::sync::Mutex<Value>>,
     sink: Sink,
     inbox: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
@@ -255,7 +299,7 @@ fn supervise(
             .send(framing::request(
                 json!(initialize_id),
                 "initialize",
-                initialize.clone(),
+                initialize.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ))
             .is_err()
         {
@@ -293,6 +337,7 @@ fn supervise(
                     method,
                     params,
                     reply,
+                    on_send,
                 }) => {
                     if !ready {
                         let _ =
@@ -305,6 +350,9 @@ fn supervise(
                     }
                     next += 1;
                     let id = format!("native-{generation}-{next}");
+                    if let Some(on_send) = on_send {
+                        on_send(generation, &id);
+                    }
                     if transport
                         .send(framing::request(json!(id), &method, params))
                         .is_err()
@@ -345,8 +393,14 @@ fn supervise(
                             ));
                         } else if let Some(p) = pending.remove(&id.key()) {
                             // Error text and arbitrary error data can contain secrets; never expose them.
-                            let answer = if error.is_some() {
-                                Err("Помощник отклонил запрос".into())
+                            let answer = if let Some(error) = error {
+                                // Only the "no such method" code is told apart, so the window can
+                                // pick its fallback; error text and data can hold secrets.
+                                Err(if error.code == Some(-32601) {
+                                    METHOD_UNAVAILABLE.into()
+                                } else {
+                                    "Помощник отклонил запрос".into()
+                                })
                             } else {
                                 hoh_protocol::validate_result(&p.method, &result)
                                     .map(|()| result)
@@ -375,6 +429,19 @@ fn supervise(
                     _ => {}
                 },
                 Ok(Message::Disconnected(g)) if g == generation => break,
+                Ok(Message::Restart) => {
+                    // Let the engine flush what it keeps (settings) before it is replaced.
+                    let _ = transport.send(framing::request(
+                        json!("native-restart"),
+                        "shutdown",
+                        json!({}),
+                    ));
+                    let until = Instant::now() + Duration::from_millis(500);
+                    while !transport.exited() && Instant::now() < until {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    break;
+                }
                 _ => {}
             }
             if transport.exited() || (!ready && started.elapsed() > Duration::from_secs(10)) {

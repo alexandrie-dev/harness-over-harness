@@ -201,6 +201,12 @@
           "markdownDescription": "Enables the pick_folder command without any pre-configured scope."
         },
         {
+          "description": "Enables the question_answer command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-question-answer",
+          "markdownDescription": "Enables the question_answer command without any pre-configured scope."
+        },
+        {
           "description": "Denies the approval_current command without any pre-configured scope.",
           "type": "string",
           "const": "deny-approval-current",
@@ -223,6 +229,12 @@
           "type": "string",
           "const": "deny-pick-folder",
           "markdownDescription": "Denies the pick_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the question_answer command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-question-answer",
+          "markdownDescription": "Denies the question_answer command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
