@@ -100,7 +100,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	infra	packages/test-support/loader-smoke	@deepseek-ai/dsh-loader-smoke	hoh-loader-smoke	375	742	writing:x2	нужное переносится в hoh-conformance и тестовые помощники
 1	infra	packages/test-support/session-snapshot	@deepseek-ai/dsh-session-snapshot	hoh-conformance	4819	6449	done	прогон и сверка сценариев: внутрь hoh-conformance (описание в crates/hoh-conformance/README.md)
 1	infra	packages/test-support/tool-testkit	@deepseek-ai/dsh-tool-testkit	hoh-tool-testkit	92	42	writing:x4	нужное переносится в hoh-conformance и тестовые помощники
-1	port	packages/todo/tool-todo	@deepseek-ai/dsh-tool-todo	hoh-tool-todo	271	683	writing:x4	
+1	port	packages/todo/tool-todo	@deepseek-ai/dsh-tool-todo	hoh-tool-todo	271	683	done	
 1	port	packages/util/atomic-write	@deepseek-ai/dsh-atomic-write	hoh-atomic-write	293	513	done	
 1	port	packages/util/brand	@deepseek-ai/dsh-brand	hoh-brand	39	13	done	
 1	port	packages/util/chunked-list	@deepseek-ai/dsh-chunked-list	hoh-chunked-list	58	59	done	
