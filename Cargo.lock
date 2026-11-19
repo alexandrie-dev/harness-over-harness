@@ -1366,6 +1366,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-sandbox-policy"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-sandbox",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-scope"
 version = "0.1.0"
 dependencies = [

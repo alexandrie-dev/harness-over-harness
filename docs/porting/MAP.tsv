@@ -60,7 +60,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/preset/agent-preset-registry	@deepseek-ai/dsh-agent-preset-registry	hoh-agent-preset-registry	1082	928	writing:x6	зависит от: dsh-typert-protocol=skip
 1	port	packages/sandbox/sandbox	@deepseek-ai/dsh-sandbox	hoh-sandbox	759	494	done	
 1	port	packages/sandbox/sandbox-local	@deepseek-ai/dsh-sandbox-local	hoh-sandbox-local	686	1811	writing:w4	
-1	port	packages/sandbox/sandbox-policy	@deepseek-ai/dsh-sandbox-policy	hoh-sandbox-policy	328	388	writing:x1	
+1	port	packages/sandbox/sandbox-policy	@deepseek-ai/dsh-sandbox-policy	hoh-sandbox-policy	328	388	done	
 1	port	packages/schedule/schedule	@deepseek-ai/dsh-schedule	hoh-schedule	3569	7346	writing:x4	зависит от: dsh-api-session-controller=skip, dsh-typert-protocol=skip
 1	port	packages/schedule/tool-schedule	@deepseek-ai/dsh-tool-schedule	hoh-tool-schedule	496	664	writing:x4	
 1	port	packages/sdk/protocol	@deepseek-ai/dsh-sdk-protocol	hoh-sdk-protocol	571	310	writing:w4	
