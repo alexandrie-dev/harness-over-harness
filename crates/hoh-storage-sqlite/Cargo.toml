@@ -1,0 +1,26 @@
+[package]
+name = "hoh-storage-sqlite"
+description = "Port of @deepseek-ai/dsh-storage-sqlite (packages/storage/storage-sqlite)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-storage = { path = "../hoh-storage" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+indexmap.workspace = true
+rusqlite.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

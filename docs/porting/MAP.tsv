@@ -185,7 +185,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 3	port	packages/session/message-quotes	@deepseek-ai/dsh-message-quotes	hoh-message-quotes	230	325	writing:x3	
 3	port	packages/session/session-stats	@deepseek-ai/dsh-session-stats	hoh-session-stats	299	450	writing:x3	
 3	port	packages/session/session-turn-outline	@deepseek-ai/dsh-session-turn-outline	hoh-session-turn-outline	229	377	writing:x3	
-3	port	packages/storage/storage-sqlite	@deepseek-ai/dsh-storage-sqlite	hoh-storage-sqlite	516	499	todo	
+3	port	packages/storage/storage-sqlite	@deepseek-ai/dsh-storage-sqlite	hoh-storage-sqlite	516	499	accepted
 3	port	packages/util/text-search	@deepseek-ai/dsh-util-text-search	hoh-util-text-search	301	203	done	
 4	port4	packages/acp/acp	@deepseek-ai/dsh-acp	hoh-acp	1782	3583	todo	
 4	port4	packages/bundle/acp-app	@deepseek-ai/dsh-acp-app	hoh-acp-app	48	97	todo	профиль ACP

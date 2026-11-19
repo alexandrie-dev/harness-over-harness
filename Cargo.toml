@@ -20,6 +20,7 @@ quick-xml = "0.41.0" # XML responses in hoh-web-search-yandex; cached, no extern
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 html5ever = "0.40.1" # hoh-tool-web: порт turndown (DEPS.md §14)
 markup5ever_rcdom = "0.40.1+unofficial" # hoh-tool-web
+rusqlite = { version = "0.43.0", features = ["bundled"] } # hoh-storage-sqlite, hoh-session-query-sqlite (DEPS.md решение 9)
 getrandom = "0.4.3"
 http = "1.5.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
