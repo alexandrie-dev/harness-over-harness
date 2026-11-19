@@ -1367,6 +1367,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-harness-dev-context"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop-testkit",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-shell-env",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-util-values",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-home-paths"
 version = "0.1.0"
 dependencies = [
