@@ -792,6 +792,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-agent-tool-presentation"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
+ "hoh-system-prompt",
+ "hoh-tool-executor-native",
+ "hoh-tools",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-anonymous-user-id"
 version = "0.1.0"
 dependencies = [
