@@ -1173,6 +1173,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-llm-deepseek-api-key"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-brand",
+ "hoh-credentials",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-launch-environment",
+ "hoh-llm",
+ "hoh-package-manifest",
+ "hoh-timeout",
+ "hoh-util-values",
+ "indexmap",
+ "reqwest",
+ "schemars",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "hoh-llm-openai"
 version = "0.1.0"
 dependencies = [
