@@ -3,9 +3,18 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 
 use hoh_node_addon_system::try_lock_exclusive;
 use tempfile::TempDir;
+
+static FLOCK_TEST_GATE: Mutex<()> = Mutex::new(());
+
+fn flock_test_gate() -> MutexGuard<'static, ()> {
+    FLOCK_TEST_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn open(path: &std::path::Path) -> File {
     OpenOptions::new()
@@ -124,6 +133,7 @@ impl Drop for Fixture {
 
 #[test]
 fn flock_child() {
+    let _test_gate = flock_test_gate();
     let Some(path) = std::env::var_os("HOH_FLOCK_CHILD") else {
         return;
     };
@@ -163,6 +173,7 @@ fn flock_child() {
 
 #[test]
 fn acquisition_resolves_to_void_and_the_same_fd_can_reacquire() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let owner = open(&root.path().join("lock"));
     try_lock_exclusive(&owner).unwrap();
@@ -171,6 +182,7 @@ fn acquisition_resolves_to_void_and_the_same_fd_can_reacquire() {
 
 #[test]
 fn separate_opens_of_one_file_contend() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let path = root.path().join("lock");
     let owner = open(&path);
@@ -181,6 +193,7 @@ fn separate_opens_of_one_file_contend() {
 
 #[test]
 fn different_files_can_be_locked_concurrently() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let first = open(&root.path().join("first"));
     let second = open(&root.path().join("second"));
@@ -192,6 +205,7 @@ fn different_files_can_be_locked_concurrently() {
 
 #[test]
 fn closing_the_locked_fd_allows_an_already_open_contender_to_acquire() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let path = root.path().join("lock");
     let owner = open(&path);
@@ -204,6 +218,7 @@ fn closing_the_locked_fd_allows_an_already_open_contender_to_acquire() {
 
 #[test]
 fn closing_another_fd_for_the_same_file_does_not_release_the_lock() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let path = root.path().join("lock");
     let owner = open(&path);
@@ -218,6 +233,7 @@ fn closing_another_fd_for_the_same_file_does_not_release_the_lock() {
 
 #[test]
 fn invalid_fd_rejects_with_ebadf_and_positive_errno() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     // An O_PATH fd is safely constructible but invalid for flock (EBADF).
     let fd = rustix::fs::open(
@@ -236,6 +252,7 @@ fn invalid_fd_rejects_with_ebadf_and_positive_errno() {
 
 #[test]
 fn concurrent_calls_retain_their_own_syscall_errno() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let path = root.path().join("lock");
     let owner = open(&path);
@@ -263,6 +280,7 @@ fn concurrent_calls_retain_their_own_syscall_errno() {
 
 #[test]
 fn two_child_processes_exclude_each_other_and_normal_close_transfers_ownership() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let path = root.path().join("lock");
     let observer = open(&path);
@@ -285,6 +303,7 @@ fn two_child_processes_exclude_each_other_and_normal_close_transfers_ownership()
 
 #[test]
 fn sigkill_releases_a_child_lock_after_exit() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let path = root.path().join("lock");
     let observer = open(&path);
@@ -307,10 +326,12 @@ fn sigkill_releases_a_child_lock_after_exit() {
 
 #[test]
 fn an_addon_exclusive_lock_blocks_an_independent_exclusive_flock_until_its_fd_closes() {
+    let _test_gate = flock_test_gate();
     independent_contender(false);
 }
 #[test]
 fn an_addon_exclusive_lock_blocks_an_independent_shared_flock_until_its_fd_closes() {
+    let _test_gate = flock_test_gate();
     independent_contender(true);
 }
 fn independent_contender(shared: bool) {
@@ -327,10 +348,12 @@ fn independent_contender(shared: bool) {
 
 #[test]
 fn an_independent_exclusive_flock_blocks_the_addon_until_explicit_unlock() {
+    let _test_gate = flock_test_gate();
     independent_holder(false);
 }
 #[test]
 fn an_independent_shared_flock_blocks_the_addon_until_explicit_unlock() {
+    let _test_gate = flock_test_gate();
     independent_holder(true);
 }
 fn independent_holder(shared: bool) {
@@ -349,6 +372,7 @@ fn independent_holder(shared: bool) {
 
 #[test]
 fn an_advisory_exclusive_lock_permits_another_process_to_read_and_write_without_locking() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let path = root.path().join("lock");
     fs::write(&path, "written before locking").unwrap();
@@ -376,6 +400,7 @@ fn an_advisory_exclusive_lock_permits_another_process_to_read_and_write_without_
 
 #[test]
 fn an_inherited_fd_shares_the_lock_after_parent_close_until_the_child_closes_its_last_reference() {
+    let _test_gate = flock_test_gate();
     let root = TempDir::new().unwrap();
     let path = root.path().join("lock");
     let owner = open(&path);
