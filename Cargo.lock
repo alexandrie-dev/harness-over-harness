@@ -1736,6 +1736,73 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-fs"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "futures-util",
+ "hoh-agent",
+ "hoh-attachment",
+ "hoh-attachment-local",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-fs-observation-policy",
+ "hoh-fs-patch",
+ "hoh-fs-sandbox",
+ "hoh-jsdiff",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-sandbox",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tools",
+ "hoh-user-approval",
+ "hoh-util-code-language",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "hoh-working-directory",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "hoh-tool-working-directory"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-fs-patch",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-sandbox",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tools",
+ "hoh-working-directory",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tools"
 version = "0.1.0"
 dependencies = [
@@ -1872,6 +1939,33 @@ dependencies = [
  "hoh-protocol",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "hoh-working-directory"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-patch",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-sandbox",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

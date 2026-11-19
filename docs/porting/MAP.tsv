@@ -39,7 +39,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/fs/fs	@deepseek-ai/dsh-fs	hoh-fs	640	248	done	
 1	port	packages/fs/fs-local	@deepseek-ai/dsh-fs-local	hoh-fs-local	1401	2552	done	
 1	port	packages/fs/fs-patch	@deepseek-ai/dsh-fs-patch	hoh-fs-patch	350	334	done	
-1	port	packages/fs/tool-fs	@deepseek-ai/dsh-tool-fs	hoh-tool-fs	2444	4566	review	
+1	port	packages/fs/tool-fs	@deepseek-ai/dsh-tool-fs	hoh-tool-fs	2444	4566	done	
 1	port	packages/goal/goal	@deepseek-ai/dsh-goal	hoh-goal	1309	1250	writing:x2	зависит от: dsh-typert-protocol=skip
 1	port	packages/identity/anonymous-user-id	@deepseek-ai/dsh-anonymous-user-id	hoh-anonymous-user-id	100	105	done	
 1	port	packages/interaction/commands	@deepseek-ai/dsh-commands	hoh-commands	734	716	done	зависит от: dsh-typert-protocol=skip
@@ -79,8 +79,8 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/session/session-projection	@deepseek-ai/dsh-session-projection	hoh-session-projection	1031	2011	done	
 1	port	packages/session/session-projection-cache	@deepseek-ai/dsh-session-projection-cache	hoh-session-projection-cache	579	2076	writing:w5	
 1	port	packages/session/session-title	@deepseek-ai/dsh-session-title	hoh-session-title	1027	1851	writing:x5	
-1	port	packages/session/tool-working-directory	@deepseek-ai/dsh-tool-working-directory	hoh-tool-working-directory	43	0	review	
-1	port	packages/session/working-directory	@deepseek-ai/dsh-working-directory	hoh-working-directory	290	456	review	
+1	port	packages/session/tool-working-directory	@deepseek-ai/dsh-tool-working-directory	hoh-tool-working-directory	43	0	done	
+1	port	packages/session/working-directory	@deepseek-ai/dsh-working-directory	hoh-working-directory	290	456	done	
 1	port	packages/settings/settings	@deepseek-ai/dsh-settings	hoh-settings	704	800	writing:w5	
 1	port	packages/shell/shell	@deepseek-ai/dsh-shell	hoh-shell	377	125	done	
 1	port	packages/shell/tool-bash-persistent	@deepseek-ai/dsh-tool-bash-persistent	hoh-tool-bash-persistent	488	989	writing:w4	
