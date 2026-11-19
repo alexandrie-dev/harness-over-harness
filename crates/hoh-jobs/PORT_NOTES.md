@@ -8,10 +8,10 @@
 | src/view.ts | src/view.rs | Перенесён полностью |
 | src/brand.ts | src/brand.rs | Перенесён через `hoh_brand::branded_string!` |
 | src/error.ts | src/error.rs | Перенесён по общему контракту `HarnessError` |
-| src/archive-admission.ts | src/archive_admission.rs | Перенесён через временный приватный Workspace shim |
+| src/archive-admission.ts | src/archive_admission.rs | Перенесён на публичных типах событий `hoh-workspace` |
 | tests/service.spec.ts | tests/service.rs | 5 из 5 случаев перенесены |
 | tests/error.spec.ts | tests/error.rs | 6 параметризованных вариантов перенесены отдельными тестами |
-| tests/archive-admission.spec.ts | tests/archive_admission.rs | 3 из 3 случаев перенесены; файл подключён как unit module для доступа к приватному shim |
+| tests/archive-admission.spec.ts | tests/archive_admission.rs | 3 из 3 случаев перенесены; типы событий импортируются от владельца `hoh-workspace` |
 | README.md, README.zh.md, package.json | Cargo.toml, эти заметки | Прочитаны; `/types` и `/view` сохранены публичными модулями |
 
 Отдельного LICENSE и каталога `locale/` в пакете нет.
@@ -19,6 +19,9 @@
 ## Отличия от образца
 - Cordis-класс `JobRegistry` разделён по идиоме ядра на сервисный trait `JobRegistryApi`, ключ `Jobs = "jobs"` и fail-loud plugin `JobRegistry`. Методы, создающие эффекты или читающие scope вызывающего (`JobEvents::subscribe`, `attach_controller`), явно получают `&Context` по `docs/kernel.md` §7.
 - `provide_jobs` — обязательная точка регистрации реализации: она безусловно устанавливает оба archive-admission listener до предоставления сервиса, как конструктор абстрактного класса в образце.
+- Archive-admission использует непосредственно `SessionActivity`, `WorkspaceSessionActivity` и
+  `WorkspaceSessionStop` из `hoh-workspace`; прежний приватный дубль удалён. Три исходных
+  archive-admission теста отправляют события владельца и тем самым проверяют общий `TypeId`.
 - Promise/callback, способные бросить, представлены `Result`: `JobSpec::run`, `JobHooks::cancel`, `JobHooks::done`, `JobOutputSource::read` и `JobEventListener`. `wait` — boxed future для object-safe сервиса.
 - Открытые `JobKindMap` и workspace declaration merging представлены строками; сам интерфейс `JobKindMap` как TypeScript-механизм отдельного Rust-символа не имеет (PORTING.md §4/8). Именованный Rust-тип `JobOutcomeStatus` представляет inline union поля `JobOutcome.status`; `JobEventOwners`, `KillOutcome`, `JobFuture`, `JobCancel`, `JobOutputView`, `JobHandle::new` и `append_with_options` — необходимые Rust-пары структурных TS-типов и optional-аргумента.
 - `JobStatus::{is_live,is_terminal}` — Rust helpers для повторного использования потребителями; новых статусов они не вводят.
@@ -35,5 +38,10 @@
 Экспорты, которыми не пользуется переносимый пакет вне группы jobs: `JobRegisteredData`, `JobSettledData` (их использует только `jobs-local`); остальные экспорты имеют потребителей в `jobs-local`, `tool-jobs`, `tool-workflow` либо shell producers. Клиентские/api/host пакеты при аудите не учитывались.
 
 ## Вопросы ведущему
-- **SHIM(hoh-workspace):** crate `hoh-workspace` ещё отсутствует (`MAP.tsv`: todo). В `archive_admission.rs` приватно объявлены точные `SessionActivity`, `workspace/session-activity` и `workspace/session-stop`. После появления владельца нужно заменить shim его типами; иначе TypeId событий двух crates не совпадёт.
-- `hoh-tool-bash/src/shim.rs` должен быть заменён на `hoh-jobs`: текущий shim не передаёт `JobHandle` в `JobSpec::run`, не содержит `output_limit_bytes`, считает `read_at` целым и делает source/cancel/done infallible. Чужой crate по границам задания не изменялся.
+Нет.
+
+## Проверки
+- `cargo test -p hoh-jobs --offline` — unit `3 passed; 0 failed`, integration
+  `11 passed; 0 failed`, doc-tests `0 passed; 0 failed`: всего 14/0.
+- `cargo clippy -p hoh-jobs --all-targets --no-deps --offline -- -D warnings` — exit 0.
+- `cargo fmt -p hoh-jobs -- --check` — exit 0.

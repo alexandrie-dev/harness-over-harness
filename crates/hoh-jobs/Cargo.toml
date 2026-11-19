@@ -17,6 +17,7 @@ hoh-kernel = { path = "../hoh-kernel" }
 hoh-llm = { path = "../hoh-llm" }
 hoh-session = { path = "../hoh-session" }
 hoh-timeout = { path = "../hoh-timeout" }
+hoh-workspace = { path = "../hoh-workspace" }
 serde.workspace = true
 serde_json.workspace = true
 

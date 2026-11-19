@@ -1207,6 +1207,7 @@ dependencies = [
  "hoh-llm",
  "hoh-session",
  "hoh-timeout",
+ "hoh-workspace",
  "serde",
  "serde_json",
  "tokio",

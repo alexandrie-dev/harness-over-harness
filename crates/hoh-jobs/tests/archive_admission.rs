@@ -1,4 +1,3 @@
-use super::shim;
 use crate::{
     JobEventFilter, JobEventListener, JobEvents, JobFuture, JobId, JobOutputRead, JobOutputView,
     JobRead, JobRegistryApi, JobSpec, JobStatus, Jobs, KillOutcome, provide_jobs,
@@ -7,6 +6,9 @@ use hoh_error::BoxError;
 use hoh_kernel::{Context, Disposer, Kernel, KernelError, NoConfig, Plugin, Undo};
 use hoh_session::SessionId;
 use hoh_timeout::AbortSignal;
+use hoh_workspace::{
+    SessionActivity, SessionActivityItem, WorkspaceSessionActivity, WorkspaceSessionStop,
+};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
@@ -194,9 +196,9 @@ async fn harness() -> (Kernel, Context, hoh_kernel::Fiber) {
     (kernel, ctx, fiber)
 }
 
-async fn ask(ctx: &Context, session_id: SessionId) -> Vec<shim::SessionActivity> {
-    ctx.waterfall::<shim::WorkspaceSessionActivity, Vec<shim::SessionActivity>, _>(
-        shim::WorkspaceSessionActivity { session_id },
+async fn ask(ctx: &Context, session_id: SessionId) -> Vec<SessionActivity> {
+    ctx.waterfall::<WorkspaceSessionActivity, Vec<SessionActivity>, _>(
+        WorkspaceSessionActivity { session_id },
         |_| async { Ok(Vec::new()) },
     )
     .await
@@ -204,7 +206,7 @@ async fn ask(ctx: &Context, session_id: SessionId) -> Vec<shim::SessionActivity>
 }
 
 async fn stop(ctx: &Context, session_id: SessionId) {
-    ctx.parallel::<shim::WorkspaceSessionStop>(shim::WorkspaceSessionStop { session_id })
+    ctx.parallel::<WorkspaceSessionStop>(WorkspaceSessionStop { session_id })
         .await
         .expect("session stop should succeed");
 }
@@ -234,10 +236,10 @@ async fn reports_running_or_stopping_owned_jobs_never_unowned_foreign_or_settled
         row("bash-5", "unowned", None, JobStatus::Running),
     ]);
     let turn = ctx
-        .on_waterfall::<shim::WorkspaceSessionActivity, Vec<shim::SessionActivity>, _>(
+        .on_waterfall::<WorkspaceSessionActivity, Vec<SessionActivity>, _>(
             |_request, next| async move {
                 let mut rest = next.run().await?;
-                rest.push(shim::SessionActivity {
+                rest.push(SessionActivity {
                     kind: "turn".to_owned(),
                     items: None,
                 });
@@ -249,20 +251,20 @@ async fn reports_running_or_stopping_owned_jobs_never_unowned_foreign_or_settled
     assert_eq!(
         activity,
         vec![
-            shim::SessionActivity {
+            SessionActivity {
                 kind: "job".to_owned(),
                 items: Some(vec![
-                    shim::SessionActivityItem {
+                    SessionActivityItem {
                         id: "bash-1".to_owned(),
                         label: Some("pnpm run build".to_owned()),
                     },
-                    shim::SessionActivityItem {
+                    SessionActivityItem {
                         id: "bash-2".to_owned(),
                         label: Some("pnpm test".to_owned()),
                     },
                 ]),
             },
-            shim::SessionActivity {
+            SessionActivity {
                 kind: "turn".to_owned(),
                 items: None,
             },
@@ -270,7 +272,7 @@ async fn reports_running_or_stopping_owned_jobs_never_unowned_foreign_or_settled
     );
     assert_eq!(
         ask(&ctx, "nobody".into()).await,
-        vec![shim::SessionActivity {
+        vec![SessionActivity {
             kind: "turn".to_owned(),
             items: None,
         }]
@@ -339,9 +341,9 @@ async fn stops_answering_once_the_registry_fiber_is_disposed() {
     )]);
     assert_eq!(
         ask(&ctx, owner.clone()).await,
-        vec![shim::SessionActivity {
+        vec![SessionActivity {
             kind: "job".to_owned(),
-            items: Some(vec![shim::SessionActivityItem {
+            items: Some(vec![SessionActivityItem {
                 id: "bash-1".to_owned(),
                 label: Some("pnpm run build".to_owned()),
             }]),
