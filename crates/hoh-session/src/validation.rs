@@ -19,7 +19,7 @@ pub(crate) fn validate_header(id: &SessionId, h: &Value) -> Result<()> {
     if h.get("seedLength").is_some() {
         return Err(fail("session header has invalid field \"seedLength\""));
     }
-    if h["version"] != SESSION_FORMAT_VERSION {
+    if h.get("version").and_then(Value::as_f64) != Some(SESSION_FORMAT_VERSION as f64) {
         return Err(fail(&format!(
             "session header version must be {SESSION_FORMAT_VERSION}, got {}",
             js_field(h.get("version"))

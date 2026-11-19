@@ -68,7 +68,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/session-query/session-query	@deepseek-ai/dsh-session-query	hoh-session-query	2241	3066	todo	
 1	port	packages/session/session-checkpoint-policy	@deepseek-ai/dsh-session-checkpoint-policy	hoh-session-checkpoint-policy	83	453	todo	
 1	port	packages/session/session-format	@deepseek-ai/dsh-session-format	hoh-session-format	945	758	done	
-1	port	packages/session/session-format-catalog	@deepseek-ai/dsh-session-format-catalog	hoh-session-format-catalog	154	563	review	
+1	port	packages/session/session-format-catalog	@deepseek-ai/dsh-session-format-catalog	hoh-session-format-catalog	154	563	done	
 1	port	packages/session/session-format-v0-to-v1	@deepseek-ai/dsh-session-format-v0-to-v1	hoh-session-format-v0-to-v1	2879	2509	done	
 1	port	packages/session/session-format-v1-to-v2	@deepseek-ai/dsh-session-format-v1-to-v2	hoh-session-format-v1-to-v2	1256	1989	done	
 1	port	packages/session/session-format-v2-to-v3	@deepseek-ai/dsh-session-format-v2-to-v3	hoh-session-format-v2-to-v3	815	2057	done	
@@ -91,7 +91,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/storage/storage-domain	@deepseek-ai/dsh-storage-domain	hoh-storage-domain	910	714	done	
 1	port	packages/subagent/subagent	@deepseek-ai/dsh-subagent	hoh-subagent	5057	11365	todo	зависит от: dsh-typert-protocol=skip
 1	port	packages/subprocess/subprocess	@deepseek-ai/dsh-subprocess	hoh-subprocess	576	334	done	
-1	port	packages/subprocess/subprocess-local	@deepseek-ai/dsh-subprocess-local	hoh-subprocess-local	5104	8920	todo	
+1	port	packages/subprocess/subprocess-local	@deepseek-ai/dsh-subprocess-local	hoh-subprocess-local	5104	8920	review	
 1	port	packages/terminal/terminal	@deepseek-ai/dsh-terminal	hoh-terminal	694	634	todo	
 1	port	packages/terminal/terminal-bash	@deepseek-ai/dsh-terminal-bash	hoh-terminal-bash	1369	3391	todo	
 1	infra	packages/test-support/agent-loop-testkit	@deepseek-ai/dsh-agent-loop-testkit	hoh-agent-loop-testkit	211	174	todo	нужное переносится в hoh-conformance и тестовые помощники; зависит от: dsh-tool-executor-ptc=redesign

@@ -128,36 +128,77 @@ fn appends_one_hundred_thousand_events_within_fifteen_seconds() {
 }
 
 #[test]
-#[ignore = "blocked: shared JSON clone/equality and Value ownership need stack-safe support for 4096 on 2 MiB"]
-fn depth_4096_append_seed_fork_derive_and_drop_use_the_default_thread_stack() {
-    let mut content = json!("leaf");
-    for _ in 0..4096 {
-        content = Value::Array(vec![content]);
-    }
-    let mut message = message("user", "deep");
-    message["extension"] = content;
-    let s = session();
-    s.append("user/message", message, Some(SurfaceIntent::append()))
+fn depth_4096_append_seed_fork_derive_and_drop_on_the_application_stack() {
+    std::thread::Builder::new()
+        .name("session-depth-4096".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut content = json!("leaf");
+            for _ in 0..4096 {
+                content = Value::Array(vec![content]);
+            }
+            let mut message = message("user", "deep");
+            message["extension"] = content;
+            let s = session();
+            s.append("user/message", message, Some(SurfaceIntent::append()))
+                .unwrap();
+            let seed = s.snapshot_events(None, None);
+            let restored =
+                Session::create("restored".into(), Some(&seed), None, None, None).unwrap();
+            let fork_seed = build_fork_seed(&seed, seq(0)).unwrap();
+            let mut h = header("child");
+            h["isSeeded"] = json!(true);
+            let child = Session::create(
+                "child".into(),
+                Some(&fork_seed),
+                Some(h),
+                Some(offset(1)),
+                None,
+            )
+            .unwrap();
+            assert_eq!(restored.derive_messages().unwrap().len(), 1);
+            assert_eq!(child.derive_messages().unwrap().len(), 1);
+            assert!(hoh_util_values::deep_equal_json(
+                seed[0].data(),
+                restored.event_at(seq(0)).unwrap().data()
+            ));
+        })
+        .expect("spawn the application-sized stack")
+        .join()
+        .expect("depth 4096 operations and drops must succeed");
+}
+
+#[test]
+fn validates_header_version_as_a_javascript_number() {
+    for version in [json!(4), Value::from(4.0)] {
+        let mut h = header("test");
+        h["version"] = version;
+        Session::from_restore(
+            "test".into(),
+            &[],
+            h,
+            offset(0),
+            SessionSeedEventState::Detached,
+            None,
+        )
         .unwrap();
-    let seed = s.snapshot_events(None, None);
-    let restored = Session::create("restored".into(), Some(&seed), None, None, None).unwrap();
-    let fork_seed = build_fork_seed(&seed, seq(0)).unwrap();
-    let mut h = header("child");
-    h["isSeeded"] = json!(true);
-    let child = Session::create(
-        "child".into(),
-        Some(&fork_seed),
-        Some(h),
-        Some(offset(1)),
-        None,
-    )
-    .unwrap();
-    assert_eq!(restored.derive_messages().unwrap().len(), 1);
-    assert_eq!(child.derive_messages().unwrap().len(), 1);
-    assert!(hoh_util_values::deep_equal_json(
-        seed[0].data(),
-        restored.event_at(seq(0)).unwrap().data()
-    ));
+    }
+    for (version, expected) in [
+        (json!(4.5), "session header version must be 4, got 4.5"),
+        (json!("4"), "session header version must be 4, got 4"),
+    ] {
+        let mut h = header("test");
+        h["version"] = version;
+        let result = Session::from_restore(
+            "test".into(),
+            &[],
+            h,
+            offset(0),
+            SessionSeedEventState::Detached,
+            None,
+        );
+        assert_eq!(result.expect_err("invalid version").to_string(), expected);
+    }
 }
 
 #[test]

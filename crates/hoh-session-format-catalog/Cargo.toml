@@ -1,0 +1,24 @@
+[package]
+name = "hoh-session-format-catalog"
+description = "Port of @deepseek-ai/dsh-session-format-catalog (packages/session/session-format-catalog)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-brand = { path = "../hoh-brand" }
+hoh-compaction-image-offload = { path = "../hoh-compaction-image-offload" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-format = { path = "../hoh-session-format" }
+hoh-session-format-v0-to-v1 = { path = "../hoh-session-format-v0-to-v1" }
+hoh-session-format-v1-to-v2 = { path = "../hoh-session-format-v1-to-v2" }
+hoh-session-format-v2-to-v3 = { path = "../hoh-session-format-v2-to-v3" }
+hoh-session-format-v3-to-v4 = { path = "../hoh-session-format-v3-to-v4" }
+hoh-error = { path = "../hoh-error" }
+hoh-util-values = { path = "../hoh-util-values" }
+serde_json.workspace = true
+thiserror.workspace = true

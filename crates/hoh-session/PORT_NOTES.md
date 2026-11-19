@@ -206,22 +206,25 @@ Property generators воспроизводимы, но не имеют fast-chec
 
 ## Вопросы ведущему
 
-По итогам повторного ревью остаются две зависимости, которые нельзя исправить в границах w8:
+По итогам повторного ревью остаётся зависимость от ядра; вопрос стека закрыт решением ведущего:
 
 1. `hoh-kernel/src/events.rs:138–234`: поля Callbacks private, единственный invoke всегда продолжает
    loop после sync Err/panic; callback report возвращает (). Для source `index.ts:1378–1390`
    нужен kernel API, прекращающий snapshot на первом синхронном отказе и возвращающий исходный BoxError,
    но сохраняющий prefix/ownership/logging асинхронных observers. Raw listener не проходит через
    session adapter, поэтому `on_created` не закрывает этот контракт. Шину ядра не копировали и не меняли.
-2. Гарантия 4096 на стандартном test stack 2 MiB блокируется общим JSON-представлением:
-   `hoh-util-values/src/lib.rs:48–49` копирует рекурсивным Value::clone,
-   `:64–76` рекурсивно сравнивает; Clone/Drop у serde_json::Value также рекурсивны.
-   Нужны общие stack-safe snapshot/equality/ownership операции либо согласованная смена stack policy.
-   PORTING §4 разрешал эту рекурсию на application stack 64 MiB; новое требование 2 MiB воспроизведено
-   отдельно и не объявляется выполненным. Собственной копии общих JSON helpers и правок чужих crates нет.
+2. Закрыто решением ведущего по PORTING §4: рекурсивные Value::clone/eq/drop разрешены
+   на стеке приложения 64 МиБ; отдельные stack-safe helpers не нужны. Тест depth_4096
+   снят с ignore и выполняет append, seed, fork, derive, сравнение и уничтожение всех
+   глубоких значений внутри std::thread::Builder::stack_size(64 * 1024 * 1024).
+   На стандартный test stack глубокие значения не передаются.
+   Проверен apps/hoh/src/main.rs: run запускается на отдельном потоке со stack_size
+   64 МиБ; Tokio new_multi_thread задаёт thread_stack_size 64 МиБ. В Tokio 1.54.1
+   эта настройка применяется также к blocking pool. Правки l1 не требуются;
+   приложение и зависимости w7 не менял.
 
-Оба executable reproducer сохранены с явным ignore и причиной в tests/review_fixes.rs.
-Ожидающие вопросы ведущему: kernel stop-on-sync-error API и общий контракт глубины/владения JSON.
+С ignore и прежней причиной остаётся только raw_creation_veto_stops_the_next_raw_listener.
+Ожидающий вопрос ведущему: kernel stop-on-sync-error API. Контракт глубины/владения JSON закрыт.
 Следующим писателям важно соблюдать on_created/on_flush/validation.reject adapters выше:
 они выражают source exceptions и awaitable checkpoint поверх существующего kernel Contained.
 
@@ -247,7 +250,8 @@ CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=/mnt/toshiba/alexandr
 или debug-print macros.
 
 Итог повторного ревью и повторных проверок записывается ниже; прежние 294 tests не являются
-результатом текущего fix round. Открытые runtime gaps — raw creation veto и глубина на 2 MiB.
+результатом того fix round. На том этапе открытыми оставались raw creation veto и глубина на 2 MiB;
+последующее решение ведущего о стеке 64 МиБ записано выше и в разделе depth ниже.
 
 ## Повторное ревью w8
 
@@ -274,9 +278,13 @@ bound **15 секунд** в debug build. Предположение: хотя �
 без длительного descheduling; рабочие данные помещаются в RAM. Это проверка runtime, без дискового I/O.
 Отказавшая baseline была даже легче (только log-only events). Выигрыш не получен ослаблением нагрузки.
 
-Замечание review №5 про `version: 4.0`: persisted readers обязаны вызывать общий `js_json_parse`;
-он нормализует integral F64 в integer Value. Парсерный regression test принимает такой header.
-Это не потеря wire-совместимости; отдельно сконструированный F64 Value не считается прошедшим этот parse boundary.
+Замечание review №5 про `version: 4.0` дополнено по rv-catalog и указанию ведущего:
+публичный Session принимает и отдельно сконструированный `Value::from(4.0)`, как
+TS `record.version === SESSION_FORMAT_VERSION` (core/session/src/index.ts:106).
+Проверка сравнивает числовое значение без coercion: строка "4" и число 4.5
+по-прежнему отвергаются с прежними текстами. Регрессия
+`validates_header_version_as_a_javascript_number` покрывает integer/float 4 и
+оба отказа; прежний parser regression сохранён. Другие проверки этим исправлением не менялись.
 
 Focused fix-round command (с тем же offline/JOBS=4/TARGET_DIR окружением выше):
 
@@ -309,3 +317,58 @@ Unit: **2 passed**; integration: **300 passed, 2 ignored** в 22 файлах; d
 добавлена полная фиксация их содержимого. **Не завершены пункт 2 и глубина из пункта 6**:
 их failing reproducers сохранены с ignore, причины и требуемые dependency API указаны выше.
 Никакая замена стека на 64 MiB в этих тестах не выполнялась. Чужие crates и source не редактировались.
+
+## Исправление числовой версии по rv-catalog (w3)
+
+По отдельному указанию ведущего изменено только сравнение version в
+src/validation.rs; добавлен validates_header_version_as_a_javascript_number в
+tests/review_fixes.rs. Принимаются 4 и отдельно сконструированный Value::from(4.0),
+как TS core/session/src/index.ts:106. Для 4.5 и строки "4" проверены прежние
+полные сообщения отказа. В catalog добавлен прямой вызов обоих current-валидаторов
+с float 4.0 и пустым artifact. Другую логику Session это исправление не меняет.
+
+Все команды: CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2,
+CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w3.
+`cargo check -p hoh-session -p hoh-session-format-catalog --tests`: exit 0, 5.93s.
+`RUST_TEST_THREADS=2 cargo test -p hoh-session -p hoh-session-format-catalog`:
+exit 0, Finished test profile, 64m 22s. Session — 304 passed, 0 failed, 1 ignored;
+catalog — 32 passed, 0 failed, 0 ignored. Новый Session regression прошёл в
+review_fixes: `test result: ok. 8 passed; 0 failed; 1 ignored`; новый catalog
+regression — в current: `test result: ok. 3 passed; 0 failed; 0 ignored`.
+Суммы — сумма строк Cargo, а не отдельная строка его вывода.
+`cargo clippy -p hoh-session -p hoh-session-format-catalog --all-targets -- -D warnings`:
+exit 0, без диагностик; финальный повтор по текущему дереву — 29m 32s.
+`cargo fmt -p hoh-session -p hoh-session-format-catalog -- --check`: exit 0.
+
+Параллельная правка depth-теста на application stack была внесена другим
+исполнителем во время ожидания прогона и мной не менялась. Единственный ignored
+текущего прогона — прежний kernel raw-creation-veto reproducer. Проверки этого
+отдельного исправления version полностью завершены; исторические результаты
+предыдущих кругов выше не переписывались.
+
+## Depth: решение ведущего по PORTING §4
+
+Последующее решение закрывает прежний блокер глубины: рекурсивные операции над Value
+разрешены при стеке приложения 64 МиБ, stack-safe clone/eq не добавляются.
+`depth_4096_append_seed_fork_derive_and_drop_on_the_application_stack` выполняется без ignore:
+весь прежний сценарий, включая создание и Drop глубоких значений, перенесён внутрь
+`std::thread::Builder::stack_size(64 * 1024 * 1024)`. Основной тестовый поток получает только ().
+Ignore и тело `raw_creation_veto_stops_the_next_raw_listener` не изменены.
+
+Read-only проверка apps/hoh/src/main.rs: `main` запускает `run` на потоке со стеком
+64 МиБ, а Tokio `new_multi_thread` задаёт `thread_stack_size(64 * 1024 * 1024)`
+для worker threads и blocking pool. Требуемая настройка уже есть, действий l1 не нужно.
+apps/hoh не редактировался и не запускался.
+
+Проверки этого круга выполняются с CARGO_NET_OFFLINE=true, CARGO_BUILD_JOBS=2,
+CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w7 и явным `cargo --offline`.
+
+`cargo --offline test -p hoh-session -- --quiet --test-threads=2`: exit 0,
+суммарно 24 result lines: **304 passed; 0 failed; 1 ignored**. Depth 4096 выполнен,
+единственный ignored — прежний raw listener veto, ожидающий kernel API.
+Все 284 ранее перенесённых source cases сохранены; добавленное здесь покрытие —
+тот же depth regression, теперь на согласованном стеке, без ослабления тела теста.
+`cargo --offline clippy -p hoh-session --all-targets -- -D warnings`: exit 0,
+`Finished dev profile [unoptimized + debuginfo] target(s) in 19m 34s`.
+`cargo --offline fmt -p hoh-session -- --check`: exit 0, без вывода.
+Логи: /tmp/w7-depth-test.log и /tmp/w7-depth-clippy.log.
