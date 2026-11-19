@@ -59,7 +59,9 @@ async fn bwrap_usable() -> bool {
 }
 
 fn home() -> String {
-    std::env::var("HOME").expect("HOME is set")
+    std::env::var("HOH_NATIVE_SANDBOX_TEST_ROOT")
+        .or_else(|_| std::env::var("HOME"))
+        .expect("HOH_NATIVE_SANDBOX_TEST_ROOT or HOME is set")
 }
 
 fn temp_dir(base: &str) -> tempfile::TempDir {

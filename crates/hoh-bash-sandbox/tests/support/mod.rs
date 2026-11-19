@@ -21,9 +21,9 @@ use hoh_shell::{
     Shell, ShellExecRequest, ShellExecSpec, ShellExecution, ShellExpiryPolicy, ShellRunResult,
 };
 use hoh_subprocess::{
-    Subprocess, SubprocessFuture, SubprocessHandle, SubprocessRuntime, SubprocessSpawnRejection,
-    SubprocessSpawnSpec, SubprocessTerminalEnvironment, SubprocessTerminalHandle,
-    SubprocessTerminalSpawnSpec, provide_subprocess,
+    Subprocess, SubprocessForeignError, SubprocessFuture, SubprocessHandle, SubprocessRuntime,
+    SubprocessSpawnRejection, SubprocessSpawnSpec, SubprocessTerminalEnvironment,
+    SubprocessTerminalHandle, SubprocessTerminalSpawnSpec, provide_subprocess,
 };
 use hoh_subprocess_local::LocalSubprocessRuntime;
 use hoh_timeout::AbortSignal;
@@ -214,15 +214,23 @@ pub fn spawn_failure(errno: i32, file: &str) -> BoxError {
 
 /// The errno code of a (possibly shared) provider failure.
 pub fn error_code(error: &BoxError) -> Option<String> {
-    let inner: &(dyn std::error::Error + 'static) =
-        match error.downcast_ref::<hoh_error::SharedError>() {
-            Some(shared) => shared.get_ref(),
-            None => error.as_ref(),
-        };
-    inner
-        .downcast_ref::<SubprocessSpawnRejection>()
-        .and_then(SubprocessSpawnRejection::code)
-        .map(str::to_owned)
+    fn find(error: &(dyn std::error::Error + 'static), depth: usize) -> Option<String> {
+        if depth == 16 {
+            return None;
+        }
+        if let Some(rejection) = error.downcast_ref::<SubprocessSpawnRejection>() {
+            return rejection.code().map(str::to_owned);
+        }
+        if let Some(SubprocessForeignError::Coded { code, .. }) = error.downcast_ref() {
+            return code.as_str().map(str::to_owned);
+        }
+        if let Some(shared) = error.downcast_ref::<hoh_error::SharedError>() {
+            return find(shared.get_ref(), depth + 1);
+        }
+        error.source().and_then(|source| find(source, depth + 1))
+    }
+
+    find(error.as_ref(), 0)
 }
 
 /// The `name` and `code` of a harness error, however the error is shared.

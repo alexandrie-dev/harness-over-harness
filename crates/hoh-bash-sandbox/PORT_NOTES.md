@@ -42,6 +42,18 @@
 - Ветка «malformed executable» в `partial_landlock.rs` пишется под обе возможные реакции ОС (прямой `ENOEXEC` или повтор через `/bin/sh`); на этой машине фактически выполняется одна.
 - `cargo check --workspace` проверяет сборку, но `apps/hoh` (замена `window_bash_sandbox.rs`) — работа sg1, не проверялось.
 
+## Стабилизация полного workspace-прогона 2026-11-19
+
+- Два теста отсутствующего `workdir` зависели от выбранного `LocalSubprocessRuntime` пути запуска.
+  Прямой путь возвращает `SubprocessSpawnRejection`, а helper-путь под параллельной нагрузкой
+  возвращает тот же типизированный errno как `SubprocessForeignError::Coded`; прежний тестовый
+  `error_code` распознавал только первый вариант. Извлечение теперь проходит типизированную цепочку
+  `SharedError`/`source` и принимает обе контрактные формы, не разбирая текст и по-прежнему требуя
+  точный `ENOENT`. Отдельная регрессия фиксирует helper-форму, которая падала на старом helper.
+- Native e2e-тесты допускают отдельный `HOH_NATIVE_SANDBOX_TEST_ROOT` для окружений, где настоящий
+  `$HOME` намеренно read-only; по умолчанию, как и раньше, используется `$HOME`. Это меняет только
+  место временного workspace, не режим sandbox и не проверяемую границу записи.
+
 ## Вопросы ведущему
 - `hoh-shell`: `ShellExecutor::resolve` с `Result` (как и для `hoh-tool-bash`).
 - `hoh-subprocess`: чтобы `SubprocessForeignError::Coded` нёс `syscall`/`path`, как ошибка Node, — тогда `spawn_error_facts` не придётся разбирать текст сообщения (сейчас разбирается в этом крейте; `hoh-subprocess` не менялся).

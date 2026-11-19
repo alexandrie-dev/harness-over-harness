@@ -599,6 +599,16 @@ mod fail_closed {
         s.close().await;
     }
 
+    #[test]
+    fn structured_errno_reader_accepts_the_spawn_helpers_coded_form() {
+        let helper = SubprocessForeignError::Coded {
+            message: "spawn /usr/bin/env ENOENT".into(),
+            code: json!("ENOENT"),
+        };
+        let error: BoxError = Box::new(SharedError::new(Box::new(helper) as BoxError));
+        assert_eq!(error_code(&error).as_deref(), Some("ENOENT"));
+    }
+
     #[tokio::test]
     async fn keeps_node_shaped_synchronous_enoexec_ordinary_in_run_and_start() {
         let runner = canonical(std::env::temp_dir().join("malformed-runner"));
