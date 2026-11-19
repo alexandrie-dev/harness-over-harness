@@ -1423,6 +1423,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-checkpoint-policy"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tools",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-session-format"
 version = "0.1.0"
 dependencies = [

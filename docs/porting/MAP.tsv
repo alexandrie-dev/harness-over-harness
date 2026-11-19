@@ -66,7 +66,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/sdk/protocol	@deepseek-ai/dsh-sdk-protocol	hoh-sdk-protocol	571	310	writing:w4	
 1	port	packages/sdk/server	@deepseek-ai/dsh-sdk-jsonrpc-server	hoh-sdk-jsonrpc-server	1049	4674	accepted	
 1	port	packages/session-query/session-query	@deepseek-ai/dsh-session-query	hoh-session-query	2241	3066	writing:x3	
-1	port	packages/session/session-checkpoint-policy	@deepseek-ai/dsh-session-checkpoint-policy	hoh-session-checkpoint-policy	83	453	writing:x6	
+1	port	packages/session/session-checkpoint-policy	@deepseek-ai/dsh-session-checkpoint-policy	hoh-session-checkpoint-policy	83	453	done	
 1	port	packages/session/session-format	@deepseek-ai/dsh-session-format	hoh-session-format	945	758	done	
 1	port	packages/session/session-format-catalog	@deepseek-ai/dsh-session-format-catalog	hoh-session-format-catalog	154	563	done	
 1	port	packages/session/session-format-v0-to-v1	@deepseek-ai/dsh-session-format-v0-to-v1	hoh-session-format-v0-to-v1	2879	2509	done	
