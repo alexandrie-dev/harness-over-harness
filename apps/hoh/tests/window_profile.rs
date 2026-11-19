@@ -1183,6 +1183,102 @@ async fn an_unescalated_edit_outside_the_folder_does_not_ask_and_changes_nothing
     engine.finish().await;
 }
 
+fn patch_outside(target: &Path, escalate: bool) -> Value {
+    let mut args = json!({"input": format!(
+        "*** Begin Patch\n*** Update File: {}\n@@\n-old text\n+new text\n*** End Patch",
+        target.display()
+    )});
+    if escalate {
+        args["sandbox_permissions"] = json!("danger-full-access");
+        args["justification"] = json!("The user asked for a patch outside the workspace.");
+    }
+    args
+}
+
+fn existing_outside(root: &Path) -> std::path::PathBuf {
+    let target = root.join("outside/patched.txt");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, "old text\n").unwrap();
+    target
+}
+
+#[tokio::test]
+async fn an_apply_patch_outside_the_folder_waits_for_the_host_and_a_rejection_leaves_the_file() {
+    let root = sandboxed_root();
+    let target = existing_outside(root.path());
+    let mut engine = start_engine(
+        root.path(),
+        vec![
+            call_tool("apply_patch", patch_outside(&target, true)),
+            say("no"),
+        ],
+    )
+    .await;
+    engine.prompt("patch it").await;
+    let asked = engine
+        .next_approval()
+        .await
+        .expect("a patch outside the folder did not ask the host");
+    assert_eq!(asked.tool_name, "apply_patch");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "old text\n");
+    engine.answer("rejected").await;
+    assert!(engine.next_approval().await.is_none());
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "old text\n",
+        "a rejected patch must not land"
+    );
+    engine.finish().await;
+}
+
+#[tokio::test]
+async fn an_apply_patch_outside_the_folder_lands_after_the_host_allows_it() {
+    let root = sandboxed_root();
+    let target = existing_outside(root.path());
+    let mut engine = start_engine(
+        root.path(),
+        vec![
+            call_tool("apply_patch", patch_outside(&target, true)),
+            say("done"),
+        ],
+    )
+    .await;
+    engine.prompt("patch it").await;
+    engine
+        .next_approval()
+        .await
+        .expect("the host was not asked");
+    engine.answer("allowed-once").await;
+    assert!(engine.next_approval().await.is_none());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "new text\n");
+    engine.finish().await;
+}
+
+#[tokio::test]
+async fn an_unescalated_apply_patch_outside_the_folder_does_not_ask_and_changes_nothing() {
+    let root = sandboxed_root();
+    let target = existing_outside(root.path());
+    let mut engine = start_engine(
+        root.path(),
+        vec![
+            call_tool("apply_patch", patch_outside(&target, false)),
+            say("done"),
+        ],
+    )
+    .await;
+    engine.prompt("patch it").await;
+    assert!(
+        engine.next_approval().await.is_none(),
+        "an unescalated patch must not ask"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "old text\n",
+        "the sandbox let a patch out of the folder"
+    );
+    engine.finish().await;
+}
+
 #[tokio::test]
 async fn shutdown_with_an_unsaved_change_ends_in_time_and_the_file_is_already_written() {
     let root = tempfile::tempdir().unwrap();

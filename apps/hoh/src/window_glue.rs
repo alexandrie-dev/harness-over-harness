@@ -22,7 +22,7 @@ use std::{
     task::{Context as TaskContext, Poll},
     time::Duration,
 };
-use tokio::io::{AsyncRead, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 
 /// The only profile that takes its stdio through this seam.
 pub const WINDOW_PROFILE: &str = "window";
@@ -145,30 +145,43 @@ fn forward_stdin(mut writer: tokio::io::DuplexStream) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Hand the process stdio to the window profile before its plugins mount.
+/// The byte streams the window engine talks over: the process stdio unless a host supplies others.
+pub struct WindowStdio {
+    pub input: Box<dyn AsyncRead + Unpin + Send>,
+    pub output: Box<dyn AsyncWrite + Unpin + Send>,
+}
+
+/// Hand the window profile its stdio before its plugins mount: the process stdio, or `stdio` when
+/// an embedding host supplies its own streams.
 ///
-/// The server gets the bytes through an in-process pipe and the process stdout; `hoh-sdk-app`
+/// The server gets the bytes through an in-process pipe and the output stream; `hoh-sdk-app`
 /// gets the end-of-input signal; after a successful `shutdown` the server calls `exiting` before it
 /// disposes the kernel root and `request_exit` once the disposal is done.
 pub async fn provide_stdio(
     ctx: &Context,
+    stdio: Option<WindowStdio>,
     exiting: impl Fn() + Send + Sync + 'static,
     request_exit: impl Fn(i32) + Send + Sync + 'static,
 ) -> Result<(), BoxError> {
     let end = StdinEnd::default();
-    let (writer, reader) = tokio::io::duplex(PIPE_CAPACITY);
-    forward_stdin(writer)?;
+    let (source, output): (
+        Box<dyn AsyncRead + Unpin + Send>,
+        Box<dyn AsyncWrite + Unpin + Send>,
+    ) = match stdio {
+        Some(stdio) => (stdio.input, stdio.output),
+        None => {
+            let (writer, reader) = tokio::io::duplex(PIPE_CAPACITY);
+            forward_stdin(writer)?;
+            (Box::new(reader), Box::new(tokio::io::stdout()))
+        }
+    };
     let reader = EndAnnouncing {
-        inner: reader,
+        inner: source,
         end: end.clone(),
     };
     ctx.provide::<JsonRpcRuntime>(Arc::new(
-        JsonRpcRuntimeHooks::new(
-            Box::new(BufReader::new(reader)),
-            Box::new(tokio::io::stdout()),
-            request_exit,
-        )
-        .with_exiting(exiting),
+        JsonRpcRuntimeHooks::new(Box::new(BufReader::new(reader)), output, request_exit)
+            .with_exiting(exiting),
     ))
     .await?;
     ctx.provide::<SdkAppRuntimeKey>(Arc::new(SdkAppRuntimeHooks::new(

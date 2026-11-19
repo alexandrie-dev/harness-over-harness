@@ -88,16 +88,20 @@ fn options(root: &Path, id: &str, name: &str, registry: PluginRegistry) -> RunPr
     }
 }
 
-async fn boot_with<P: Plugin>(
+async fn boot_logged<P: Plugin>(
     id: &str,
     name: &str,
     closer: impl FnOnce(ProfileHost) -> Option<tokio::task::JoinHandle<()>>,
-) -> Result<RunningProfile, Box<dyn std::error::Error + Send + Sync>> {
+) -> (
+    Result<RunningProfile, Box<dyn std::error::Error + Send + Sync>>,
+    Vec<String>,
+) {
     let root = tempfile::tempdir().unwrap();
     let mut registry = PluginRegistry::default();
     registry.add::<P>(name);
     let host = ProfileHost::new(Arc::new(|_| {}), Arc::new(|_| {}));
-    host.kernel
+    let kernel = host.kernel.clone();
+    kernel
         .root()
         .provide::<GuestKey>(Arc::new(Guest(host.clone())))
         .await
@@ -107,7 +111,22 @@ async fn boot_with<P: Plugin>(
     if let Some(closer) = closer {
         closer.await.unwrap();
     }
-    result
+    let logged = kernel
+        .root()
+        .logger()
+        .buffer()
+        .into_iter()
+        .map(|record| record.message)
+        .collect();
+    (result, logged)
+}
+
+async fn boot_with<P: Plugin>(
+    id: &str,
+    name: &str,
+    closer: impl FnOnce(ProfileHost) -> Option<tokio::task::JoinHandle<()>>,
+) -> Result<RunningProfile, Box<dyn std::error::Error + Send + Sync>> {
+    boot_logged::<P>(id, name, closer).await.0
 }
 
 /// Closes the kernel root from outside while a row is still mounting, as the server does after a
@@ -136,6 +155,27 @@ async fn a_root_disposed_after_the_exit_flag_is_a_requested_exit() {
 }
 
 // The root is closed from outside, as the server does, while a required row is still mounting.
+// The error that the requested exit explains away is not lost: it goes to the log as a warning.
+#[tokio::test(start_paused = true)]
+async fn the_load_error_of_a_requested_exit_is_logged_as_a_warning() {
+    let (result, logged) = boot_logged::<ExitsMidBoot>("exiting", "exits-mid-boot", |_| None).await;
+    assert!(result.is_ok());
+    assert!(
+        logged
+            .iter()
+            .any(|line| line.contains("requested exit") && line.contains("inactive context")),
+        "{logged:?}"
+    );
+    // A boot that is not stopped by an exit request logs no such line.
+    let (result, logged) =
+        boot_logged::<ExitsThenFails>("webserver", "exits-then-fails", |_| None).await;
+    assert!(result.is_err());
+    assert!(
+        !logged.iter().any(|line| line.contains("requested exit")),
+        "{logged:?}"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_root_closed_from_outside_after_the_exit_flag_is_a_requested_exit() {
     let running = boot_with::<Hangs>("agent-loop", "hangs", closes_the_root(true))

@@ -212,6 +212,7 @@ impl Readiness {
         }
     }
 }
+pub use crate::window_glue::WindowStdio;
 pub type Reporter = Arc<dyn Fn(&str) -> Result<(), BoxError> + Send + Sync>;
 #[derive(Clone)]
 pub struct ProfileHost {
@@ -223,6 +224,7 @@ pub struct ProfileHost {
     startup: Arc<StartupGate>,
     report: Reporter,
     context: Context,
+    window_stdio: Arc<Mutex<Option<WindowStdio>>>,
 }
 impl ProfileHost {
     pub fn new(force_exit: Exit, complete: Exit) -> Self {
@@ -278,11 +280,25 @@ impl ProfileHost {
                 Ok(())
             }),
             context,
+            window_stdio: Arc::default(),
         }
     }
     /// The disposable profile scope; uid 0 remains Active by kernel rule R15.
     pub fn context(&self) -> &Context {
         &self.context
+    }
+    /// Streams for the window profile instead of the process stdio (for an embedding host or a test).
+    #[must_use]
+    pub fn with_window_stdio(self, stdio: WindowStdio) -> Self {
+        *self
+            .window_stdio
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(stdio);
+        self
+    }
+    /// Whether the exit has been requested (`mark_exiting` or `request_exit`).
+    pub fn exit_requested(&self) -> bool {
+        self.exit_requested.load(Ordering::Acquire)
     }
     pub fn with_reporter(mut self, report: Reporter) -> Self {
         self.report = report;
@@ -517,8 +533,14 @@ pub async fn run_profile(
         .await?;
         if window_profile {
             let (exiting_host, exit_host) = (host.clone(), host.clone());
+            let stdio = host
+                .window_stdio
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
             crate::window_glue::provide_stdio(
                 &ctx,
+                stdio,
                 move || exiting_host.mark_exiting(),
                 move |code| exit_host.request_exit(code),
             )
@@ -560,7 +582,17 @@ pub async fn run_profile(
         Err(error) => {
             host.finish_startup();
             host.kernel.shutdown().await;
-            if host.interrupted.load(Ordering::Acquire) || stopped_by_exit_request(&host, &error) {
+            if host.interrupted.load(Ordering::Acquire) {
+                Ok(RunningProfile {
+                    ctx,
+                    loader: None,
+                    host,
+                })
+            } else if stopped_by_exit_request(&host, &error) {
+                // The error is dropped as a consequence of the requested exit; keep its text.
+                host.kernel.root().logger().warn(format!(
+                    "plugin tree load ended by the requested exit: {error}"
+                ));
                 Ok(RunningProfile {
                     ctx,
                     loader: None,
