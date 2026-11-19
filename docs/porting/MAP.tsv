@@ -33,7 +33,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/core/tools	@deepseek-ai/dsh-tools	hoh-tools	3797	5419	done	
 1	port	packages/credentials/credentials	@deepseek-ai/dsh-credentials	hoh-credentials	409	176	done	
 1	port	packages/deliverables/deliverable-file-references	@deepseek-ai/dsh-deliverable-file-references	hoh-deliverable-file-references	30	42	done	
-1	port	packages/deliverables/tool-present	@deepseek-ai/dsh-tool-present	hoh-tool-present	127	282	writing:x3	
+1	port	packages/deliverables/tool-present	@deepseek-ai/dsh-tool-present	hoh-tool-present	127	282	done	
 1	port	packages/document/office-kit	@deepseek-ai/dsh-office-kit	hoh-office-kit	1399	2071	writing:x6	зависит от: dsh-typert-protocol=skip
 1	port	packages/document/tool-office	@deepseek-ai/dsh-tool-office	hoh-tool-office	761	1082	writing:x6	
 1	port	packages/fs/fs	@deepseek-ai/dsh-fs	hoh-fs	640	248	done	

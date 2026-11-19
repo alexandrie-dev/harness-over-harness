@@ -1816,6 +1816,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-present"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-fs-patch",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-sandbox",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tools",
+ "hoh-util-values",
+ "hoh-working-directory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-testkit"
 version = "0.1.0"
 dependencies = [
