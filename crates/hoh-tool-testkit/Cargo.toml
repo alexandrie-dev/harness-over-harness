@@ -1,0 +1,24 @@
+[package]
+name = "hoh-tool-testkit"
+description = "Port of @deepseek-ai/dsh-tool-testkit (packages/test-support/tool-testkit)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-util-values = { path = "../hoh-util-values" }
+serde_json.workspace = true
+
+[dev-dependencies]
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+tokio.workspace = true
+
