@@ -289,3 +289,33 @@ CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-cf1`.
   Отдельно прочитан TSV: 242 строки, 192 session + 41 sdk + 9 acp, все status=fail:
   192 phase=exit (headless), 50 phase=launch (SDK/ACP без initialize).
   Все строки имеют пять полей; RESULTS.runner-errors.tsv пуст.
+
+## Папка прогона через симлинк (sg2-conformance, 19.11)
+
+Симптом полного `cargo test --workspace` чистой выгрузки HEAD (7403/2): `corpus` —
+`session compaction-recovery fail setup fixed cwd length mismatch`, `runner_process` —
+`fake: spill root is not isolated`. Причина не в выгрузке и не в длине её пути: тесты запускали
+прогонщик с `--runs /mnt/toshiba/alexandrie/hoh/target-cf1/runs`, а `target-cf1` с 16:29 —
+симлинк на `/dev/shm/hoh/target-cf1`. Прогонщик строил из этого пути (1) префикс `cwd-----…` для
+сценариев с cwd фиксированной длины 192 и (2) каталог `spill-*`, а cwd потом канонизировал
+(`fs::canonicalize`). С симлинком канонический cwd (`/dev/shm/hoh/…`) отличался от
+построенного по неканоническому пути: длина cwd ≠ 192 (проверка в `runner.rs`), родитель
+spill ≠ родитель cwd (проверка двойника в `bin/fake/contract.rs`). Пока `target-cf1` был обычной
+папкой, обе проверки проходили, поэтому в приёмке тесты были зелёными.
+
+Исправление (`runner.rs`, `run`): `dir` прогона канонизируется один раз, до создания `run-*`,
+cwd и spill; всё остальное строится от него. Оракул сравнивает пути, которые видит дочерний
+процесс, с путями, построенными прогонщиком, и написание `--runs` (симлинк, `..`) на них
+влиять не должно.
+Тесты: `corpus.rs` и `runner_process.rs` больше не берут жёсткий путь `target-cf1/runs`, а
+создают папку под `CARGO_TARGET_TMPDIR` и проходят к ней ЧЕРЕЗ симлинк `l → real` (имена разной
+длины, как macOS `/var` → `/private/var`); сами тесты проверяют, что длина `canonicalize(root)`
+отличается от длины `root`. Поэтому случай воспроизводится при любом `CARGO_TARGET_DIR`, в том
+числе без симлинков. Без канонизации в `runner.rs` (проверено временным удалением строки при
+канонической `CARGO_TARGET_DIR`): `corpus.rs` падает с `session compaction-recovery fail setup
+fixed cwd length mismatch`, `runner_process.rs` — со «fake: spill root is not isolated» на
+сценариях с `spill` (до identity-проверок). Оба теста с симлинком только под `cfg(unix)`
+(`runner_process.rs` целиком, `corpus.rs` — один тест); Windows не проверялся.
+Остаётся фиксированным только расположение `refs` (`/mnt/toshiba/alexandrie/hoh/refs/…`) — это
+данные образца, а не выгрузка. Ограничение прежнее: если `CARGO_TARGET_TMPDIR` внутри `/tmp`,
+сценарии `outside-temp` честно отвечают «falls within temporary write grant».

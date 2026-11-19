@@ -64,10 +64,26 @@ fn manifest_expected_inventory_and_patches_entire_corpus() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn bin_false_all_three_suites_are_failures_without_runner_errors() {
-    std::fs::create_dir_all("/mnt/toshiba/alexandrie/hoh/target-cf1/runs").unwrap();
-    let root = tempfile::tempdir_in("/mnt/toshiba/alexandrie/hoh/target-cf1/runs").unwrap();
+    // `--runs` deliberately goes through a symlink (as a target dir linked into tmpfs does): the
+    // oracle's paths must not depend on how the runs folder is spelled.
+    let base = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let base_path = std::fs::canonicalize(base.path()).unwrap();
+    std::fs::create_dir(base_path.join("real")).unwrap();
+    // The link name and its target differ in length, as macOS `/var` -> `/private/var` does: the
+    // fixed-length cwd text is wrong unless the runs folder is canonicalised before it is built.
+    std::os::unix::fs::symlink(base_path.join("real"), base_path.join("l")).unwrap();
+    let root = tempfile::tempdir_in(base_path.join("l")).unwrap();
+    assert_ne!(
+        std::fs::canonicalize(root.path())
+            .unwrap()
+            .as_os_str()
+            .len(),
+        root.path().as_os_str().len(),
+        "the runs folder must be spelled with a path of another length than its canonical form"
+    );
     let results = root.path().join("false.tsv");
     let output = Command::new(env!("CARGO_BIN_EXE_hoh-conformance"))
         .arg("--hoh")

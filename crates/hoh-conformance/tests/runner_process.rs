@@ -1,3 +1,5 @@
+// The runs folder is reached through a symlink (`std::os::unix::fs::symlink`).
+#![cfg(unix)]
 #[path = "support/plans.rs"]
 mod plans;
 use hoh_conformance::{
@@ -12,6 +14,8 @@ use std::{
 
 struct Harness {
     root: tempfile::TempDir,
+    /// Owns the symlinked parent of `root` (dropped after it).
+    _base: tempfile::TempDir,
     refs: PathBuf,
     all: Vec<Scenario>,
 }
@@ -20,14 +24,32 @@ impl Harness {
         let refs = PathBuf::from("/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness");
         let all = corpus::discover(&refs).unwrap();
         assert_eq!(all.len(), 242);
-        let runs = Path::new("/mnt/toshiba/alexandrie/hoh/target-cf1/runs");
-        std::fs::create_dir_all(runs).unwrap();
+        // The runs folder is reached through a symlink on purpose (a target dir linked into tmpfs):
+        // the oracle's paths must not depend on how it is spelled.
+        let base = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+        let base_path = std::fs::canonicalize(base.path()).unwrap();
+        std::fs::create_dir(base_path.join("real")).unwrap();
+        // The link name and its target differ in length (as macOS `/var` -> `/private/var`).
+        std::os::unix::fs::symlink(base_path.join("real"), base_path.join("l")).unwrap();
         let root = tempfile::Builder::new()
             .prefix("round-")
-            .tempdir_in(runs)
+            .tempdir_in(base_path.join("l"))
             .unwrap();
+        assert_ne!(
+            std::fs::canonicalize(root.path())
+                .unwrap()
+                .as_os_str()
+                .len(),
+            root.path().as_os_str().len(),
+            "the runs folder must be spelled with a path of another length than its canonical form"
+        );
         plans::write(&root.path().join("plans"), &refs, &all);
-        Self { root, refs, all }
+        Self {
+            root,
+            _base: base,
+            refs,
+            all,
+        }
     }
     fn run(
         &self,

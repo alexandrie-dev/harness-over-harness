@@ -966,6 +966,10 @@ pub async fn run(options: &Options, all: &[Scenario], s: &Scenario) -> Outcome {
     let dir = options.runs.join(&s.suite).join(&s.name);
     let perform = async {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        // The oracle compares paths the child sees (cwd is canonical, the fixed-length cwd text and
+        // the spill root's parent) with paths built here: a symlinked or non-normalised `--runs`
+        // (a target dir that is a link into tmpfs, `..`) would make them differ for no reason.
+        let dir = fs::canonicalize(&dir).map_err(|e| e.to_string())?;
         let attempt = tempfile::Builder::new()
             .prefix("run-")
             .tempdir_in(&dir)
