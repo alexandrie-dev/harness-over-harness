@@ -1,11 +1,95 @@
 mod support;
 
-use hoh_agent::{Agent, AgentAssistantStream, AssistantStreamFrame, agent_events};
-use hoh_llm::{LlmAttemptId, StreamChunk};
+use futures_util::future::BoxFuture;
+use hoh_agent::{
+    Agent, AgentAssistantStream, AgentOptions, AgentStatus, AssistantStreamFrame, CancelOptions,
+    Inbox, InboxTarget, MaintenanceFuture, MaintenanceTask, Model, agent_events,
+};
+use hoh_error::BoxError;
+use hoh_kernel::Context;
+use hoh_llm::{LlmAttemptId, StreamChunk, UserMessage};
+use hoh_scope::ScopeKey;
 use hoh_sdk_jsonrpc_server::{HarnessSdkJsonRpcServer, HarnessSdkJsonRpcServerOptions};
+use hoh_session::{AgentCancelCause, Session};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use support::{Env, Peer, lock};
+
+struct SessionReadProbe {
+    inner: Arc<dyn Agent>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl Agent for SessionReadProbe {
+    fn id(&self) -> &hoh_session::SessionId {
+        self.inner.id()
+    }
+
+    fn scope_key(&self) -> ScopeKey {
+        self.inner.scope_key()
+    }
+
+    fn options(&self) -> &AgentOptions {
+        self.inner.options()
+    }
+
+    fn session(&self) -> &Session {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.inner.session()
+    }
+
+    fn model(&self) -> &dyn Model {
+        self.inner.model()
+    }
+
+    fn inbox(&self) -> &dyn Inbox {
+        self.inner.inbox()
+    }
+
+    fn status(&self) -> AgentStatus {
+        self.inner.status()
+    }
+
+    fn ctx(&self) -> &Context {
+        self.inner.ctx()
+    }
+
+    fn cancel(&self, cause: AgentCancelCause, options: CancelOptions) -> Result<(), BoxError> {
+        self.inner.cancel(cause, options)
+    }
+
+    fn when_idle(&self) -> BoxFuture<'static, ()> {
+        self.inner.when_idle()
+    }
+
+    fn run_maintenance_erased(&self, task: MaintenanceTask) -> Result<MaintenanceFuture, BoxError> {
+        self.inner.run_maintenance_erased(task)
+    }
+
+    fn send(
+        &self,
+        message: UserMessage,
+        target: InboxTarget,
+        wakeup: bool,
+    ) -> Result<(), BoxError> {
+        self.inner.send(message, target, wakeup)
+    }
+
+    fn followup(&self, message: UserMessage) -> Result<(), BoxError> {
+        self.inner.followup(message)
+    }
+
+    fn steer(&self, message: UserMessage) -> Result<(), BoxError> {
+        self.inner.steer(message)
+    }
+
+    fn inject(&self, message: UserMessage) -> Result<(), BoxError> {
+        self.inner.inject(message)
+    }
+}
 
 fn emit_start(env: &Env, agent: &Arc<dyn Agent>, attempt: u64) {
     agent_events(&env.ctx, agent).emit(|agent| {
@@ -278,12 +362,22 @@ async fn removes_the_stream_subscription_when_the_server_stops() {
     let env = Env::new().await;
     env.initialize().await;
     let agent = env.open("stopped").await;
+    let reads = Arc::new(AtomicUsize::new(0));
+    let probe: Arc<dyn Agent> = Arc::new(SessionReadProbe {
+        inner: agent,
+        reads: reads.clone(),
+    });
     lock(&env.peer.notices).clear();
+
+    emit_start(&env, &probe, 1);
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "listener precondition");
+    reads.store(0, Ordering::SeqCst);
 
     env.server.shutdown().await.unwrap();
     let before = lock(&env.peer.notices).len();
-    emit_start(&env, &agent, 1);
+    emit_start(&env, &probe, 2);
 
+    assert_eq!(reads.load(Ordering::SeqCst), 0, "listener was not removed");
     assert_eq!(lock(&env.peer.notices).len(), before);
     env.close().await;
 }

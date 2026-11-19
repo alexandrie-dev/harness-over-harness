@@ -399,6 +399,13 @@ pub enum SessionAssistantStreamFrame {
         time: i64,
         chunk: SessionAssistantStreamChunk,
     },
+    /// The transport omitted this and every later live chunk of the attempt. The durable session
+    /// event remains authoritative; clients must keep any visible prefix explicitly incomplete.
+    Gap {
+        attempt_id: String,
+        revision: u64,
+        index: u64,
+    },
     End {
         attempt_id: String,
         revision: u64,

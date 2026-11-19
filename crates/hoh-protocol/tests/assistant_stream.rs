@@ -36,6 +36,16 @@ fn validates_start_text_delta_and_terminal_frames() {
         })
     );
 
+    let gap = validates(json!({
+        "sessionId":"s", "frame":{
+            "type":"gap", "attemptId":"s:1", "revision":2, "index":1
+        }
+    }));
+    assert!(matches!(
+        gap.frame,
+        SessionAssistantStreamFrame::Gap { index: 1, .. }
+    ));
+
     for outcome in ["committed", "abandoned"] {
         validates(json!({
             "sessionId":"s", "frame":{
@@ -51,6 +61,7 @@ fn rejects_incomplete_or_non_text_frames() {
     for invalid in [
         json!({"sessionId":"s", "frame":{"type":"start", "attemptId":"s:1", "revision":1, "turn":1}}),
         json!({"sessionId":"s", "frame":{"type":"chunk", "attemptId":"s:1", "revision":2, "index":0, "time":1, "chunk":{"type":"reasoning-delta", "text":"secret"}}}),
+        json!({"sessionId":"s", "frame":{"type":"gap", "attemptId":"s:1", "revision":2}}),
         json!({"sessionId":"s", "frame":{"type":"end", "attemptId":"s:1", "revision":3, "index":1, "outcome":"cancelled"}}),
     ] {
         assert!(

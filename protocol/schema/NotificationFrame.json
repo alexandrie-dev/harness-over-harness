@@ -492,6 +492,35 @@
           ]
         },
         {
+          "description": "The transport omitted this and every later live chunk of the attempt. The durable session\nevent remains authoritative; clients must keep any visible prefix explicitly incomplete.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "gap"
+            },
+            "attemptId": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "index": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "attemptId",
+            "revision",
+            "index"
+          ]
+        },
+        {
           "type": "object",
           "properties": {
             "type": {
