@@ -18,6 +18,8 @@ publish = false
 base64 = "0.23.1"
 quick-xml = "0.41.0" # XML responses in hoh-web-search-yandex; cached, no external entity resolution
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+html5ever = "0.40.1" # hoh-tool-web: порт turndown (DEPS.md §14)
+markup5ever_rcdom = "0.40.1+unofficial" # hoh-tool-web
 getrandom = "0.4.3"
 http = "1.5.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
@@ -36,6 +38,7 @@ nix = { version = "0.28.0", default-features = false }  # safe close(2) wrapper 
 portable-pty = "0.9.0"  # PTY (DEPS.md decision 10), hoh-subprocess-local
 procfs = "0.18.0"  # /proc walk instead of process-inspector.ts (research/v1-shortcuts.md)
 zstd = "0.13.5"  # session log frames (DEPS.md decision 8, CEO 18.11: point crates); same version as async-compression uses
+rmcp = { version = "=3.10.0", default-features = false, features = ["base64", "client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }  # hoh-mcp-client (DEPS.md: @modelcontextprotocol/client); server/transport-io только в dev-dependencies
 landlock = "0.4.7"
 moxcms = "0.8.1"
 rustix = { version = "1.1.6", features = ["fs", "process"] }
