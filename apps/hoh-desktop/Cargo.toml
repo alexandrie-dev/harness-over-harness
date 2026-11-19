@@ -1,0 +1,38 @@
+[package]
+name = "hoh-desktop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+# Deliberately independent of the engine and its dependency graph.
+[workspace]
+resolver = "3"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:webkit2gtk", "dep:gtk", "dep:tauri-build"]
+probe = ["desktop"]
+
+[[bin]]
+name = "hoh-desktop"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", default-features = false, features = ["config-json"], optional = true }
+
+[dependencies]
+tauri = { version = "=2.12.5", default-features = false, features = ["wry", "x11", "custom-protocol"], optional = true }
+webkit2gtk = { version = "=2.0.2", default-features = false, features = ["v2_40"], optional = true }
+hoh-protocol = { path = "../../crates/hoh-protocol" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+libc = "=0.2.191"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "=0.18.2", optional = true }
+
+[profile.dev]
+debug = 0
+incremental = false

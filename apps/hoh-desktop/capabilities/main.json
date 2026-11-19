@@ -1,0 +1,6 @@
+{
+  "identifier": "main",
+  "description": "Main UI: filtered engine requests and native folder selection; no approval decision, filesystem, shell or window creation.",
+  "windows": ["main"],
+  "permissions": ["allow-engine-request", "allow-pick-folder", "core:event:allow-listen", "core:event:allow-unlisten"]
+}

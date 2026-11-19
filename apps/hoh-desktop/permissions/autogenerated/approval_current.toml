@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-approval-current"
+description = "Enables the approval_current command without any pre-configured scope."
+commands.allow = ["approval_current"]
+
+[[permission]]
+identifier = "deny-approval-current"
+description = "Denies the approval_current command without any pre-configured scope."
+commands.deny = ["approval_current"]

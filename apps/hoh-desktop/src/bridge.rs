@@ -1,0 +1,96 @@
+//! The only window -> engine boundary. No raw RPC, initialization or shutdown from JS.
+use crate::engine::Engine;
+use serde_json::Value;
+use std::sync::Arc;
+
+pub const WINDOW_METHODS: &[&str] = &[
+    "session/prompt",
+    "session/query",
+    "session/resume",
+    "session/wait",
+    "session/list",
+    "session/events",
+    "session/cancel",
+    "session/working-directory/get",
+    "session/working-directory/set",
+    "hoh/employee/list",
+    "hoh/employee/get",
+    "hoh/employee/create",
+    "hoh/employee/update",
+    "hoh/employee/delete",
+    "hoh/employee/open",
+    "hoh/employee/memory/list",
+    "hoh/employee/memory/put",
+    "hoh/employee/memory/delete",
+    "hoh/task/draft/start",
+    "hoh/task/draft/decide",
+    "hoh/task/list",
+    "hoh/task/get",
+    "hoh/task/versions",
+    "hoh/task/rollback",
+    "hoh/task/delete",
+    "hoh/task/run",
+    "hoh/task/knowledge/get",
+    "hoh/task/knowledge/edit",
+    "hoh/button/list",
+    "hoh/button/create",
+    "hoh/button/update",
+    "hoh/button/delete",
+    "hoh/schedule/list",
+    "hoh/schedule/create",
+    "hoh/schedule/update",
+    "hoh/schedule/delete",
+    "hoh/schedule/run-now",
+    "hoh/schedule/history",
+    "hoh/artifact/list",
+    "hoh/artifact/read",
+    "hoh/artifact/render",
+    "hoh/model/probe",
+    "hoh/model/key/set",
+    "hoh/settings/get",
+    "hoh/settings/set",
+    "hoh/settings/rules/set",
+    "hoh/security/summary",
+];
+pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), String> {
+    if label != "main" {
+        return Err("Команда доступна только главному окну".into());
+    }
+    if !WINDOW_METHODS.contains(&method) {
+        return Err("Метод не разрешён окну".into());
+    }
+    hoh_protocol::validate_params(method, params)
+        .map_err(|_| "Некорректные параметры запроса".to_owned())
+}
+pub fn needs_approval(method: &str, params: &Value) -> bool {
+    hoh_protocol::PRIVILEGED_METHODS.contains(&method)
+        && hoh_protocol::requires_host_approval(method, params)
+}
+pub fn request(
+    engine: &Arc<Engine>,
+    label: &str,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    check_main(label, method, &params)?;
+    if needs_approval(method, &params) {
+        return Err("Нужно подтверждение в отдельном окне".into());
+    }
+    engine.request(method, params)
+}
+
+/// The Tauri adapter supplies the native preflight. The original RPC is not
+/// handed to the transport until that callback has returned successfully.
+pub fn request_with_approval(
+    engine: &Arc<Engine>,
+    label: &str,
+    method: &str,
+    params: Value,
+    approve: impl FnOnce(&Value) -> Result<(), String>,
+) -> Result<Value, String> {
+    check_main(label, method, &params)?;
+    if needs_approval(method, &params) {
+        approve(&params)?;
+    }
+    engine.request(method, params)
+}
