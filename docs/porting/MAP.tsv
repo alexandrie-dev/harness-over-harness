@@ -133,7 +133,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/fs/fs-sandbox	@deepseek-ai/dsh-fs-sandbox	hoh-fs-sandbox	257	404	done	
 2	port	packages/fs/tool-fs-search	@deepseek-ai/dsh-tool-fs-search	hoh-tool-fs-search	1546	2017	writing:x7	
 2	port	packages/goal/command-goal	@deepseek-ai/dsh-command-goal	hoh-command-goal	200	355	done	
-2	port	packages/goal/goal-round-driver	@deepseek-ai/dsh-goal-round-driver	hoh-goal-round-driver	510	1300	accepted	
+2	port	packages/goal/goal-round-driver	@deepseek-ai/dsh-goal-round-driver	hoh-goal-round-driver	510	1300	done	
 2	port	packages/goal/tool-goal	@deepseek-ai/dsh-tool-goal	hoh-tool-goal	482	751	done	
 2	port	packages/guard/repeat-tool-reminder	@deepseek-ai/dsh-repeat-tool-reminder	hoh-repeat-tool-reminder	234	415	writing:x7	
 2	port	packages/guard/timeout-policy	@deepseek-ai/dsh-tool-call-timeout-policy	hoh-tool-call-timeout-policy	81	252	done	
