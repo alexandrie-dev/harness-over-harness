@@ -97,6 +97,29 @@
 `tests/settlement_notice.rs`; без правки (ожидание заменено на `break`) тест падает: 0 уведомлений
 вместо 1.
 
+## Уведомление родителя: куда оно попадает (s1, 21.11)
+
+`notifySettlement` в источнике (`manager.ts:1119`) выбирает адресата по состоянию родителя: закрывающееся
+дерево — `inject`, простаивающий родитель — `followup` (next-turn), работающий — `steer` (next-step).
+Порт всегда звал `followup`, поэтому уведомление работающему родителю попадало в next-turn, а
+`wait_agent` (смотрит только next-step) ждал до таймаута (`session/subagent-parallel`: зависание).
+Теперь все три места (continuable, resumed, external) идут через `SubagentManager::notify_parent`;
+тест: `manager::tests::a_running_parent_is_steered_and_an_idle_parent_is_queued` (с прежним
+`followup` для работающего родителя падает: `left: ["followup"], right: ["steer"]`).
+Не перенесено: `sendWaking` для родителя, сам являющегося резидентным потомком (`deliver` + `wake`):
+порт отдаёт сообщение агенту напрямую.
+
+## Причина 2 разбора сценариев (s1, 21.11)
+
+- Имя активации потомка — полный адрес `agentAddress(path, id)` (`agent-1/agent-1` для внука), как
+  `receipt()` в `manager.ts:1161`; раньше возвращалось короткое имя каталога. Тем же адресом
+  названы уведомления об окончании (continuable и resumed).
+- Контекст `subagent:delegation` получает `order + 0.75`: в источнике он регистрируется при
+  создании потомка, после контекстов плагинов с тем же `order`; здесь плагины стартуют конкурентно,
+  и равный `order` дал бы гонку (см. PORT_NOTES `hoh-tool-subagent`).
+- Имя ошибки глубины `SubagentDepthError` для модели восстанавливает `hoh-tool-subagent`
+  (`depth_failure`): принятый тест `hoh-subagent-spawn-in-process` закрепляет `SubagentError`.
+
 ## Проверки
 
 Все команды выполнялись offline, jobs=2, с target

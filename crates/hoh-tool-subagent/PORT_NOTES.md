@@ -131,3 +131,16 @@ delegation-инструменты по маркеру описания и име
   `dispose()`. Остаются без изменений: определение видимых delegation-инструментов по тексту
   описания; сортировка имён по байтам UTF-8 (TS — по UTF-16); `register_list_subagent_models`
   выполняется до validate-слушателя (в TS порядок обратный).
+
+## Причина 2 разбора сценариев (s1, 21.11)
+
+- Контекст `tool:<имя>:depth` получает `order + 0.25` для `subagent` и `+ 0.5` для остальных имён
+  (`depth_order_offset`). В источнике контексты равного `order` идут в порядке регистрации = порядку
+  строк профиля: `subagent:identity` (tool-subagent-control), `tool:subagent:depth`,
+  `tool:subagent_fork:depth`, затем `subagent:delegation`. Плагины Rust стартуют конкурентно, порядок
+  был гонкой (сценарии проходили через раз), поэтому последовательность закреплена дробями.
+- Отказ по глубине доходит до модели как `SubagentDepthError` (`depth_failure`); тест
+  `tests/depth_error.rs`.
+- Не решено в этих крейтах: `agent-preset-registry` монтирует плагины пресета через
+  `PresetRuntime::fallback()` с пустым реестром (`hoh-agent-preset-registry/src/lib.rs:832`), поэтому
+  `persona`/`tool-fs`/`tool-subagent` внутри пресета «never started» (`session/subagent-agent-preset`).

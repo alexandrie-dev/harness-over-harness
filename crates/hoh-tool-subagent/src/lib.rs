@@ -25,9 +25,10 @@ use hoh_kernel::{Cfg, Context, Disposer, Inject, Plugin, Service};
 use hoh_llm::{ContentBlock, Llm, ReasoningEffortId};
 use hoh_session_projection::{ProjectionHandle, SessionProjections};
 use hoh_subagent::{
-    ConfiguredMaxDepth, SubagentActivationSpec, SubagentDeliveryTarget, SubagentError,
-    SubagentErrorCode, SubagentProvider, SubagentProviderAdded, SubagentProviderRemoved,
-    SubagentStartRequest, Subagents, delegation_depth_of, parent_agent_options_for_delegation,
+    ConfiguredMaxDepth, SubagentActivationSpec, SubagentDeliveryTarget, SubagentDepthError,
+    SubagentError, SubagentErrorCode, SubagentProvider, SubagentProviderAdded,
+    SubagentProviderRemoved, SubagentStartRequest, Subagents, delegation_depth_of,
+    parent_agent_options_for_delegation,
 };
 use hoh_system_prompt::{
     PromptContext, PromptContextOrderName, PromptSection, PromptSectionOrderName, PromptText,
@@ -434,6 +435,7 @@ fn build_definition(
                 let max_depth = subagents.resolve_max_depth(configured_depth(&config)?)?;
                 let prompt = string_arg(&args, "prompt").unwrap_or_default();
                 let label = string_arg(&args, "description").unwrap_or_default();
+                let depth_parent = parent.clone();
                 let started = subagents
                     .start_activation(SubagentActivationSpec {
                         provider: config.provider.clone(),
@@ -453,13 +455,40 @@ fn build_definition(
                             max_depth,
                         },
                     })
-                    .await?;
+                    .await
+                    .map_err(|error| depth_failure(error, &depth_parent, max_depth))?;
                 Ok::<Value, BoxError>(json!({ "kind": "activation", "name": started.name }))
             })
         },
     );
     options.is_concurrency_safe = Some(Arc::new(|_| true));
     define_tool(options)
+}
+
+/// The source's depth refusal is a `SubagentDepthError`; the shared start path reports the same
+/// refusal as a plain `SubagentError` (`DEPTH_EXCEEDED`), which the in-process providers' accepted
+/// tests pin, so the tool restores the subclass name the model sees.
+fn depth_failure(
+    error: BoxError,
+    parent: &Arc<dyn hoh_agent::Agent>,
+    max_depth: Option<u64>,
+) -> BoxError {
+    let refused = hoh_error::HarnessError::of(error.as_ref())
+        .is_some_and(|routed| routed.code() == SubagentErrorCode::DepthExceeded.as_str());
+    match (refused, max_depth) {
+        (true, Some(max_depth)) => Box::new(SubagentDepthError::new(
+            delegation_depth_of(parent.as_ref()) + 1,
+            max_depth,
+        )),
+        _ => error,
+    }
+}
+
+/// The source orders contexts of equal `order` by registration, which follows the profile rows
+/// (`subagent:identity` of tool-subagent-control, then `subagent`, then `subagent_fork`). Plugins
+/// here start concurrently, so that tie is a race; a fixed fraction keeps the same sequence.
+fn depth_order_offset(tool_name: &str) -> f64 {
+    if tool_name == "subagent" { 0.25 } else { 0.5 }
 }
 
 fn is_delegation_definition(definition: &ToolDefinition) -> bool {
@@ -677,7 +706,8 @@ impl Plugin for ToolSubagent {
             &ctx,
             PromptContext {
                 name: format!("tool:{}:depth", config.tool_name),
-                order: SystemPrompt::get_context_order(PromptContextOrderName::SubagentDelegation),
+                order: SystemPrompt::get_context_order(PromptContextOrderName::SubagentDelegation)
+                    + depth_order_offset(&config.tool_name),
                 text: PromptText::provider(move |assemble| {
                     let Some(agent) = assemble.extension::<AssembleAgent>() else {
                         return Ok(String::new());

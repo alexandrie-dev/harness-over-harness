@@ -129,6 +129,27 @@ impl SubagentManager {
         }
     }
 
+    /// Deliver a settlement notice to its parent as `notifySettlement` does: a closing tree injects
+    /// it, an idle parent queues it, a running parent is steered so it reads it at its next step.
+    pub(crate) fn notify_parent(
+        &self,
+        parent: &Arc<dyn Agent>,
+        message: hoh_llm::UserMessage,
+    ) -> Result<(), BoxError> {
+        let root = self.root_of(parent).ok().map(|root| agent_key(&root));
+        let closing = {
+            let state = lock(&self.state);
+            state.draining || root.is_some_and(|root| state.closing_roots.contains(&root))
+        };
+        if closing {
+            parent.inject(message)
+        } else if parent.status() == hoh_agent::AgentStatus::Idle {
+            parent.followup(message)
+        } else {
+            parent.steer(message)
+        }
+    }
+
     pub fn new(ctx: Context, max_active: impl Fn() -> usize + Send + Sync + 'static) -> Self {
         let manager = Self {
             ctx,
@@ -587,6 +608,7 @@ impl SubagentManager {
         let parent = spec.request.parent.clone();
         let delivery = spec.delivery;
         let child_id_for_task = child_id.clone();
+        let name = agent_address(resident.path.as_deref(), child_id.as_str());
         let name_for_task = name.clone();
         let child = handle.agent.clone();
         let lifecycle = resident.run.clone();
@@ -630,7 +652,7 @@ impl SubagentManager {
                     true,
                     false,
                 );
-                let _ = parent.followup(notice);
+                let _ = settle_manager.notify_parent(&parent, notice);
             }
             emit_subagent_end(
                 &lifecycle_ctx,
@@ -1213,18 +1235,11 @@ impl SubagentManager {
                 .last()
                 .and_then(|id| manager.ctx.get::<Agents>()?.get(id));
             if let Some(parent) = parent {
-                let name = resident
-                    .path
-                    .as_deref()
-                    .and_then(|path| path.rsplit('/').next())
-                    .unwrap_or(child.id().as_str());
-                let _ = parent.followup(create_settlement_message(
-                    child.id(),
-                    name,
-                    &terminal,
-                    true,
-                    false,
-                ));
+                let name = agent_address(resident.path.as_deref(), child.id().as_str());
+                let _ = manager.notify_parent(
+                    &parent,
+                    create_settlement_message(child.id(), &name, &terminal, true, false),
+                );
             }
             emit_subagent_end(
                 resident.root.ctx(),
@@ -1473,9 +1488,126 @@ fn subagent_error(message: impl Into<String>, code: SubagentErrorCode) -> BoxErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hoh_agent::{
+        AgentOptions, AgentStatus, CancelOptions, InboxTarget, MaintenanceFuture, MaintenanceTask,
+        Model,
+    };
+    use hoh_agent_loop_testkit::{
+        AgentLoopTestDependenciesOptions, mount_agent_loop_test_dependencies,
+        mount_agent_loop_test_harness,
+    };
+    use hoh_kernel::Kernel;
+    use hoh_scope::ScopeKey;
+    use hoh_session::{AgentCancelCause, Session};
+    use std::sync::Mutex as StdMutex;
 
     #[test]
     fn catalog_reader_preserves_committed_names_only() {
         assert_eq!(ROOT_AGENT_NAME, "lead");
+    }
+
+    /// A live agent that reports a chosen status and records how a notice was routed to it.
+    struct Probe {
+        inner: Arc<dyn Agent>,
+        status: AgentStatus,
+        routes: StdMutex<Vec<&'static str>>,
+    }
+
+    impl Agent for Probe {
+        fn id(&self) -> &SessionId {
+            self.inner.id()
+        }
+        fn scope_key(&self) -> ScopeKey {
+            self.inner.scope_key()
+        }
+        fn options(&self) -> &AgentOptions {
+            self.inner.options()
+        }
+        fn session(&self) -> &Session {
+            self.inner.session()
+        }
+        fn model(&self) -> &dyn Model {
+            self.inner.model()
+        }
+        fn inbox(&self) -> &dyn hoh_agent::Inbox {
+            self.inner.inbox()
+        }
+        fn status(&self) -> AgentStatus {
+            self.status
+        }
+        fn ctx(&self) -> &Context {
+            self.inner.ctx()
+        }
+        fn cancel(&self, cause: AgentCancelCause, options: CancelOptions) -> Result<(), BoxError> {
+            self.inner.cancel(cause, options)
+        }
+        fn when_idle(&self) -> futures_util::future::BoxFuture<'static, ()> {
+            self.inner.when_idle()
+        }
+        fn run_maintenance_erased(
+            &self,
+            task: MaintenanceTask,
+        ) -> Result<MaintenanceFuture, BoxError> {
+            self.inner.run_maintenance_erased(task)
+        }
+        fn send(
+            &self,
+            message: hoh_llm::UserMessage,
+            target: InboxTarget,
+            wakeup: bool,
+        ) -> Result<(), BoxError> {
+            self.inner.send(message, target, wakeup)
+        }
+        fn followup(&self, _message: hoh_llm::UserMessage) -> Result<(), BoxError> {
+            lock_std(&self.routes).push("followup");
+            Ok(())
+        }
+        fn steer(&self, _message: hoh_llm::UserMessage) -> Result<(), BoxError> {
+            lock_std(&self.routes).push("steer");
+            Ok(())
+        }
+        fn inject(&self, _message: hoh_llm::UserMessage) -> Result<(), BoxError> {
+            lock_std(&self.routes).push("inject");
+            Ok(())
+        }
+    }
+
+    fn lock_std<T>(mutex: &StdMutex<T>) -> std::sync::MutexGuard<'_, T> {
+        mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    async fn route_of(status: AgentStatus) -> Vec<&'static str> {
+        let kernel = Kernel::start();
+        let ctx = kernel.root();
+        mount_agent_loop_test_dependencies(&ctx, AgentLoopTestDependenciesOptions::default())
+            .await
+            .unwrap();
+        let harness = mount_agent_loop_test_harness(&ctx).await.unwrap();
+        let inner = harness.create(SessionId::from("parent")).await.unwrap();
+        let probe = Arc::new(Probe {
+            inner,
+            status,
+            routes: StdMutex::new(Vec::new()),
+        });
+        let manager = SubagentManager::new(ctx.clone(), || 1);
+        let parent: Arc<dyn Agent> = probe.clone();
+        let message = hoh_llm::create_user_message(NewUserMessage {
+            content: vec![ContentBlock::text("notice")],
+            source: MessageSource::new("subagent-settled"),
+        });
+        manager.notify_parent(&parent, message).unwrap();
+        let routes = lock_std(&probe.routes).clone();
+        kernel.shutdown().await;
+        routes
+    }
+
+    /// `notifySettlement`: a parent that is mid-turn is steered so `wait_agent` and the next step
+    /// see the notice; an idle parent gets it as a queued follow-up.
+    #[tokio::test]
+    async fn a_running_parent_is_steered_and_an_idle_parent_is_queued() {
+        assert_eq!(route_of(AgentStatus::Running).await, ["steer"]);
+        assert_eq!(route_of(AgentStatus::Idle).await, ["followup"]);
     }
 }

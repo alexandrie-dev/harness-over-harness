@@ -83,7 +83,10 @@ pub async fn apply_child_composition(
         child_ctx,
         PromptContext {
             name: "subagent:delegation".into(),
-            order: SystemPrompt::get_context_order(PromptContextOrderName::SubagentDelegation),
+            // Registered per child, after every plugin's contexts of the same order in the source;
+            // the tool plugins start concurrently here, so their tie is pinned by fractions (< 0.75).
+            order: SystemPrompt::get_context_order(PromptContextOrderName::SubagentDelegation)
+                + 0.75,
             text: SUBAGENT_DELEGATION_CONTEXT.into(),
             ..PromptContext::default()
         },

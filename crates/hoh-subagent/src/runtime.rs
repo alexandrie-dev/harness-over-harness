@@ -460,7 +460,8 @@ impl SubagentRuntime {
             match &result {
                 Ok(result) => {
                     if delivery == SubagentDeliveryTarget::Parent {
-                        let _ = parent.followup(
+                        let _ = manager.notify_parent(
+                            &parent,
                             crate::continuation_messages::create_settlement_message(
                                 &result_child_id,
                                 &result_name,
