@@ -1745,6 +1745,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-loader-smoke"
+version = "0.1.0"
+dependencies = [
+ "hoh-agent",
+ "hoh-error",
+ "hoh-http-proxy",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-mcp-client"
 version = "0.1.0"
 dependencies = [

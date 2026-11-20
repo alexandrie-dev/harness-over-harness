@@ -1,0 +1,29 @@
+[package]
+name = "hoh-loader-smoke"
+description = "Port of @deepseek-ai/dsh-loader-smoke (packages/test-support/loader-smoke)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-error = { path = "../hoh-error" }
+hoh-http-proxy = { path = "../hoh-http-proxy" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-session = { path = "../hoh-session" }
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-scope = { path = "../hoh-scope" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+tokio = { workspace = true, features = ["test-util"] }
+
