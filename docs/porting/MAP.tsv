@@ -125,7 +125,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/bundle/headless	@deepseek-ai/dsh-headless	hoh-headless	992	2273	writing:x4	профиль как данные
 2	port	packages/compaction/command-compact	@deepseek-ai/dsh-command-compact	hoh-command-compact	109	469	done	
 2	port	packages/context/agent-instructions	@deepseek-ai/dsh-agent-instructions	hoh-agent-instructions	2114	6711	done	
-2	port	packages/credentials/authorization	@deepseek-ai/dsh-authorization	hoh-authorization	541	603	writing:x4	
+2	port	packages/credentials/authorization	@deepseek-ai/dsh-authorization	hoh-authorization	541	603	done	
 2	port	packages/credentials/credentials-local	@deepseek-ai/dsh-credentials-local	hoh-credentials-local	930	1577	done	
 2	port	packages/feedback/command-feedback	@deepseek-ai/dsh-command-feedback	hoh-command-feedback	197	388	done	зависит от: dsh-typert-protocol=skip
 2	port	packages/feedback/message-feedback	@deepseek-ai/dsh-message-feedback	hoh-message-feedback	490	1061	done	зависит от: dsh-typert-protocol=skip
