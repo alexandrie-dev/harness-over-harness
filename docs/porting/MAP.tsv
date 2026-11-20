@@ -19,7 +19,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/compaction/compaction	@deepseek-ai/dsh-compaction	hoh-compaction	504	605	done	
 1	port	packages/compaction/compaction-basic	@deepseek-ai/dsh-compaction-basic	hoh-compaction-basic	1789	4434	writing:x4	
 1	port	packages/compaction/compaction-image-offload	@deepseek-ai/dsh-compaction-image-offload	hoh-compaction-image-offload	197	614	done	
-1	port	packages/compaction/compaction-tool-result-pruner	@deepseek-ai/dsh-compaction-tool-result-pruner	hoh-compaction-tool-result-pruner	303	356	writing:x4	
+1	port	packages/compaction/compaction-tool-result-pruner	@deepseek-ai/dsh-compaction-tool-result-pruner	hoh-compaction-tool-result-pruner	303	356	done	
 1	port	packages/context/file-reference	@deepseek-ai/dsh-file-reference	hoh-file-reference	112	21	done	
 1	port	packages/context/file-reference-local	@deepseek-ai/dsh-file-reference-local	hoh-file-reference-local	523	541	writing:x7	
 1	port	packages/context/time-context	@deepseek-ai/dsh-time-context	hoh-time-context	377	977	done	

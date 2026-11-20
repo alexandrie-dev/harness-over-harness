@@ -1279,6 +1279,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-compaction-tool-result-pruner"
+version = "0.1.0"
+dependencies = [
+ "hoh-brand",
+ "hoh-compaction",
+ "hoh-compaction-image-offload",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-loader",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-token-meter",
+ "hoh-util-values",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-computer-use"
 version = "0.1.0"
 dependencies = [
