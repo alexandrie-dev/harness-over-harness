@@ -55,7 +55,7 @@ html, body, #root { block-size: var(--chat-full); }
 .chat-feed-end { block-size: var(--space-4); }
 .chat-entry { overflow-wrap: anywhere; }
 .chat-message-user { display: flex; flex-direction: column; align-items: flex-end; padding-block-start: var(--space-4); }
-.chat-user-bubble { max-inline-size: var(--chat-user-max); background: var(--color-raised); border: var(--border-width) solid var(--border); border-radius: var(--radius); padding: var(--space-2) var(--space-4); font-size: var(--text-md); line-height: var(--lh-prose); }
+.chat-user-bubble { max-inline-size: var(--chat-user-max); background: var(--color-raised); border: var(--border-width) solid var(--border); border-radius: var(--radius-card) var(--radius-card) var(--radius-key) var(--radius-card); padding: var(--space-2) var(--space-4); font-size: var(--text-md); line-height: var(--lh-prose); }
 .chat-user-text { white-space: pre-wrap; }
 .chat-message-time { margin-block-start: var(--space-1); font-size: var(--text-sm); line-height: var(--lh-sm); color: var(--color-dim); font-variant-numeric: tabular-nums; }
 .chat-message-assistant { padding-block: var(--space-4) var(--chat-zero); font-size: var(--text-md); line-height: var(--lh-prose); }
@@ -81,8 +81,8 @@ html, body, #root { block-size: var(--chat-full); }
 /* ——— ошибки и вопрос: красным только то, что ждёт человека ——— */
 .chat-error { display: flex; align-items: center; gap: var(--space-3); margin-block: var(--space-2); color: var(--color-wait); font-size: var(--text-md); line-height: var(--lh-md); }
 .chat-delivery-error { color: var(--color-wait); font-size: var(--text-sm); line-height: var(--lh-sm); }
-.chat-question { flex: none; margin-block: var(--space-2) var(--chat-zero); padding: var(--space-4); border-radius: var(--radius-card); background: var(--color-raised); }
-.chat-question-head { margin-block-end: var(--space-2); font-size: var(--text-sm); line-height: var(--lh-sm); font-weight: var(--font-weight-medium); color: var(--color-wait); }
+.chat-question { flex: none; margin-block: var(--space-2) var(--chat-zero); padding: var(--space-4); border: var(--border-width) solid var(--border-card); border-radius: var(--radius-card); background: var(--color-raised); }
+.chat-question-head { margin-block-end: var(--space-2); font-size: var(--text-sm); line-height: var(--lh-sm); font-weight: var(--font-weight-medium); color: var(--color-muted); }
 .chat-question-item { margin: var(--chat-zero) var(--chat-zero) var(--space-4); padding: var(--chat-zero); border: var(--chat-zero); min-inline-size: var(--chat-zero); }
 .chat-question-item legend { padding: var(--chat-zero); font-size: var(--text-title); line-height: var(--lh-title); font-weight: var(--font-weight-semibold); color: var(--color-fg); }
 .chat-question-item legend small { display: block; font-size: var(--text-sm); line-height: var(--lh-sm); font-weight: var(--font-weight-regular); color: var(--color-muted); }
@@ -105,7 +105,7 @@ html, body, #root { block-size: var(--chat-full); }
 .chat-pick > span { min-inline-size: var(--chat-zero); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.chat-pick:hover:not(:disabled) { background: var(--color-row-hover); color: var(--color-fg); }
 button.chat-pick:disabled { opacity: var(--opacity-disabled); cursor: default; }
-.chat-pick-text { color: var(--color-dim); }
+.chat-pick-text { color: var(--color-muted); }
 .chat-composer-actions .chat-send { margin-inline-start: auto; }
 .chat-stop-square { fill: currentColor; stroke: none; }
 .chat-send { display: grid; place-items: center; flex: none; inline-size: var(--size-row); block-size: var(--size-row); border: var(--chat-zero); border-radius: var(--radius-round); background: var(--color-work); color: var(--color-on-light); transition: background-color var(--dur) ease-out, color var(--dur) ease-out; }
@@ -153,7 +153,7 @@ button.chat-pick:disabled { opacity: var(--opacity-disabled); cursor: default; }
 [data-compact='true'] .chat-sidebar[data-open='false'] { display: none; }
 [data-compact='true'] .chat-privacy-text { display: none; }
 [data-compact='true'] .chat-col, [data-compact='true'] .chat-entry, [data-compact='true'] .chat-question, [data-compact='true'] .chat-error, [data-compact='true'] .chat-notice { inline-size: calc(var(--chat-full) - 2 * var(--space-4)); }
-[data-compact='true'] .chat-pick-text { display: none; }
+[data-compact='true'] [data-chat-permissions], [data-compact='true'] [data-chat-model] { display: none; }
 
 /* Ссылки в ответе (как в T3: цвет ссылки, подчёркивание при наведении; файл — со своим действием «в папке»). */
 .chat-link { display: inline; padding: var(--chat-zero); border: var(--chat-zero); background: var(--chat-transparent); color: var(--color-work); font: inherit; text-align: start; cursor: pointer; text-decoration: underline; text-decoration-color: var(--color-work-line); text-underline-offset: var(--space-0); }
@@ -167,3 +167,4 @@ button.chat-pick:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .chat-notice > span { flex: 1; min-inline-size: var(--chat-zero); }
 .chat-key-note { margin-block-start: var(--space-3); font-size: var(--text-sm); line-height: var(--lh-sm); color: var(--color-dim); }
 .chat-scrim { position: absolute; z-index: 1; inset: var(--chat-zero); background: var(--color-scrim); }
+.chat-state-text { min-inline-size: var(--chat-zero); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

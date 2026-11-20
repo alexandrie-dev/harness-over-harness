@@ -10,50 +10,20 @@
       "path.ts",
       "image.ts",
       "video.ts",
-      {
-        "file": "markdownPipeline.ts",
-        "deferred": true
-      },
+      "markdownPipeline.ts",
       {
         "file": "markdownMath.ts",
         "deferred": true
       },
-      {
-        "file": "markdownTaskList.ts",
-        "deferred": true
-      },
-      {
-        "file": "markdownWindowsPaths.ts",
-        "deferred": true
-      },
-      {
-        "file": "markdownGithubAlerts.ts",
-        "deferred": true
-      },
-      {
-        "file": "markdownLeadingWhitespace.ts",
-        "deferred": true
-      },
-      {
-        "file": "markdownListIndentation.ts",
-        "deferred": true
-      },
-      {
-        "file": "markdownOrderedListNumbers.ts",
-        "deferred": true
-      },
-      {
-        "file": "codexMarkdownDirectives.ts",
-        "deferred": true
-      },
-      {
-        "file": "codexArtifactTemplates.ts",
-        "deferred": true
-      },
-      {
-        "file": "codexFileCitations.ts",
-        "deferred": true
-      }
+      "markdownTaskList.ts",
+      "markdownWindowsPaths.ts",
+      "markdownGithubAlerts.ts",
+      "markdownLeadingWhitespace.ts",
+      "markdownListIndentation.ts",
+      "markdownOrderedListNumbers.ts",
+      "codexMarkdownDirectives.ts",
+      "codexArtifactTemplates.ts",
+      "codexFileCitations.ts"
     ],
     "client-runtime": [
       "markdownImages.ts",

@@ -47,7 +47,7 @@ function seededEngine() {
   engine.cwd = '/home/me/Проекты/сайт';
   engine.append(main, 'tool/call', { name: 'write_file', callId: 'c3', arguments: { path: '../итог.txt', content: 'x' } });
   engine.append(main, 'tool/result', { message: { toolCallId: 'c3', isError: true, content: [{ type: 'text', text: '[sandbox: file access denied under workspace-write mode]' }] } });
-  engine.append(main, 'assistant/message', { message: { id: 'a1', content: [{ type: 'text', text: 'План готов: **три дела** на понедельник и два на среду.\n\n1. Позвонить в банк — см. [заметки](zametki.md:1), [чужой файл](../итог.txt)\n2. Купить билеты — [сайт](https://example.com/tickets)\n\n![схема недели](https://example.com/week.png)\n\nИтог записан в `plan.md`.' }] } });
+  engine.append(main, 'assistant/message', { message: { id: 'a1', content: [{ type: 'text', text: 'План готов: **три дела** на понедельник и два на среду.\n\n1. Позвонить в банк — см. [заметки](zametki.md:1), [чужой файл](../итог.txt)\n2. Купить билеты — [сайт](https://example.com/tickets)\n\n![схема недели](https://example.com/week.png)\n\nИтог записан в `plan.md`.\n\nПлощадь: $S=\\pi r^2$.\n\n| День | Дел |\n|---|---|\n| Пн | 3 |\n| Ср | 2 |' }] } });
   engine.seed('chat-2', { title: 'Отчёт по расходам', user: 'Отчёт по расходам', assistant: 'Готово.' });
   engine.seed('chat-3', { title: 'Письмо в налоговую', user: 'Письмо в налоговую', assistant: 'Черновик готов.' });
   engine.seed('chat-4', { title: 'Сравнить два договора', user: 'Сравнить два договора', assistant: 'Различия перечислены.' });
@@ -83,6 +83,7 @@ for (const [size, viewport] of sizes) {
     const { page, context } = await openChat(viewport);
     await page.waitForSelector('[data-chat-screen][data-connection="ready"]');
     await page.getByText('План готов').waitFor();
+    await page.waitForSelector('[data-math="inline"] .katex', { timeout: 5000 }).catch(() => undefined); // формула рисуется, когда включён рендер T3
     await page.locator('[data-chat-folder]').waitFor();
     await shot(page, 'chat', size);
     // список чатов: раскрыт шаг и открыт другой чат

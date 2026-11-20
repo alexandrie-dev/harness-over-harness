@@ -73,6 +73,7 @@
   --color-work: #4dacf6;
   --color-work-soft: color-mix(in oklab, #4dacf6 14%, transparent);
   --color-work-line: color-mix(in oklab, #4dacf6 38%, transparent);
+  --color-provider-claude: #d97757;
   --color-focus: color-mix(in oklab, #4dacf6 70%, transparent);
 
   /* ───── радиусы: 4 клавиша, 6 строка списка, 8 кнопка и меню, 16 карточка и поле ввода, круг ───── */

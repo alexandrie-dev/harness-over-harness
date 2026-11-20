@@ -94,7 +94,7 @@ try {
     try {
       await page.goto(pathToFileURL(INDEX).href);
       if (options.firstRun) await page.getByRole('heading', { name: 'Подключите модель' }).waitFor();
-      else await page.waitForSelector('[data-chat-screen][data-connection="ready"]');
+      else await page.waitForSelector(`[data-chat-screen][data-connection="${options.connection ?? 'ready'}"]`);
       await callback(page, stub);
       await Promise.all(deliveries);
       assert.deepEqual(errors, [], 'renderer exceptions'); assert.deepEqual(remote, [], 'unexpected resource loads');
@@ -164,7 +164,8 @@ try {
     const { sessionId } = await page.evaluate(() => window.__HOH_CHAT_TEST_TRANSPORT__.request('hoh/employee/open', { id: 'employee-1' }));
     const send = (method, params) => page.evaluate(([m, p]) => window.__hohChatNotify({ method: m, params: p }), [method, { sessionId, ...params }]);
     const frame = (index, text) => send('session.assistant-stream', { frame: { type: 'chunk', attemptId: 'a1', revision: index + 2, index, time: 1, chunk: { type: 'text-delta', text } } });
-    const answer = () => page.locator('[data-chat-entry="assistant"]').last().innerText();
+    // the markdown chunk loads lazily: read the text only once the T3 render has replaced the plain placeholder
+    const answer = async () => { await page.locator('[data-chat-entry="assistant"]').last().locator('[data-renderer="t3"]').waitFor(); return page.locator('[data-chat-entry="assistant"]').last().innerText(); };
     await send('session.status', { status: 'running' });
     await send('session.assistant-stream', { frame: { type: 'start', attemptId: 'a1', revision: 1, turn: 1, step: 1 } });
     await frame(0, 'Я умею читать ');
@@ -194,7 +195,7 @@ try {
     await answer.locator('em').waitFor();
     assert.equal(await answer.locator('em').textContent(), 'Ответ получен не полностью.');
     assert.equal(await answer.locator('pre em').count(), 0, 'the marker must render outside an unfinished code fence');
-    assert.equal(await answer.locator('pre code').textContent(), 'alert(1)');
+    assert.equal((await answer.locator('pre code').textContent()).trimEnd(), 'alert(1)');
     assert.equal(await answer.getAttribute('data-streaming'), 'false');
   });
 
@@ -312,9 +313,8 @@ try {
   }, [], { fake: twoChats, viewport: { width: 1440, height: 900 } });
   await check('model-label-follows-the-executor', '', async page => {
     await page.locator('[data-chat-model]').waitFor();
-    assert.equal(await page.locator('[data-chat-model]').textContent(), '192.168.1.5:8000', 'не «Локальная модель» для модели по сети');
+    assert.equal(await page.locator('[data-chat-model]').textContent(), 'Локальная модель в сети', 'частная сеть названа сетью, не этим компьютером');
     assert.match(await page.locator('.chat-privacy').textContent(), /на другом компьютере/);
-    assert.equal(await page.getByText('Локальная модель').count(), 0);
   }, [], { fake: () => { const engine = twoChats(); engine.baseUrl = 'http://192.168.1.5:8000/v1'; return engine; }, viewport: { width: 1440, height: 900 } });
   await check('narrow-sidebar-closes', '', async page => {
     const sidebar = page.locator('[data-chat-sidebar]');
@@ -331,11 +331,43 @@ try {
     await page.locator('[data-chat-menu]').click();
     await page.screenshot({ path: join(RESULTS, 'shots', 'narrow-menu-800x640.png'), animations: 'disabled' });
   }, [], { fake: twoChats, viewport: { width: 800, height: 640 } });
+  await check('assistant-state-label-not-cut-on-the-left', '', async page => {
+    await page.evaluate(() => window.__hohChatEngineStatus({ state: 'restarting' }));
+    await page.waitForSelector('[data-chat-screen][data-connection="recovering"]');
+    const box = await page.evaluate(() => {
+      const row = document.querySelector('[data-nav-chat]').getBoundingClientRect();
+      const text = document.querySelector('[data-nav-chat] .chat-state-text');
+      const rect = text.getBoundingClientRect();
+      return { rowLeft: row.left, rowRight: row.right, left: rect.left, right: rect.right, ellipsis: getComputedStyle(text).textOverflow, full: text.textContent };
+    });
+    assert.equal(box.full, 'восстанавливаю связь');
+    assert(box.left >= box.rowLeft && box.right <= box.rowRight, 'подпись целиком внутри строки: ' + JSON.stringify(box));
+    assert.equal(box.ellipsis, 'ellipsis', 'лишнее обрезается справа многоточием');
+  }, [], { fake: twoChats, viewport: { width: 1440, height: 900 } });
+  await check('command-steps-differ', '', async page => {
+    await page.locator('[data-operation="command"]').nth(2).waitFor();
+    const labels = await page.locator('[data-operation="command"] [data-step-label]').allTextContents();
+    assert.deepEqual(labels, ['Команда завершена: список файлов', 'Команда завершена: поиск в файлах', 'Команда завершена']);
+    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Работа только в этой папке');
+  }, [], { fake: () => {
+    const engine = new FakeEngine();
+    const main = engine.seed('window-main', { user: 'Что в папке?' });
+    for (const [id, command] of [['c1', 'ls -la'], ['c2', 'grep -r план .'], ['c3', 'curl https://x.example/y']]) {
+      engine.append(main, 'tool/call', { name: 'bash', callId: id, arguments: { command } });
+      engine.append(main, 'tool/result', { message: { toolCallId: id, content: [{ type: 'text', text: 'ok' }] } });
+    }
+    engine.append(main, 'assistant/message', { message: { id: 'a1', content: [{ type: 'text', text: 'Готово.' }] } });
+    return engine;
+  }, viewport: { width: 1440, height: 900 }, shot: 'p2-command-steps-1440.png' });
+  await check('no-engine-says-so', '', async page => {
+    assert.match(await page.locator('.chat-privacy').textContent(), /Нет связи: не знаю, где обрабатываются данные/);
+    assert.equal(await page.getByText('Проверяю, где обрабатываются данные').count(), 0, 'не «проверяю» навсегда');
+  }, [], { fake: () => new FakeEngine({ unavailable: ['session/working-directory/get'] }), connection: 'error', viewport: { width: 1440, height: 900 }, shot: 'p2-no-engine-1440.png' });
   await check('composer-line', '', async (page, engine) => {
     await page.locator('[data-chat-folder]').waitFor();
     assert.equal(await page.getByText(/Enter отправляет|Shift\+Enter/).count(), 0, 'подсказки про Enter нет');
     assert.equal(await page.getByRole('button', { name: 'Стоп', exact: true }).count(), 0, 'отдельной кнопки «Стоп» нет');
-    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Только чтение');
+    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Работа только в этой папке');
     assert.equal(await page.locator('[data-chat-model]').textContent(), 'Локальная модель');
     assert.equal(await page.locator('[data-chat-sidebar] [data-chat-folder], .chat-side-foot').count(), 0, 'папки нет в боковой колонке');
     await page.evaluate(() => { window.__HOH_ENGINE__ = { request: async () => ({}), pickFolder: async () => '/home/me/Проекты/сайт' }; });
@@ -393,10 +425,10 @@ try {
     const after = await page.locator('[data-chat-entry="assistant"] [data-markdown]').textContent();
     await page.waitForTimeout(150);
     assert.equal(await page.locator('[data-chat-entry="assistant"] [data-markdown]').textContent(), after);
-    assert.equal(after, longText, 'Stop retains all text received before cancellation');
+    assert.equal(after.trimEnd(), longText.trimEnd(), 'Stop retains all text received before cancellation');
     await page.reload();
     await page.waitForSelector('[data-chat-screen][data-connection="ready"]');
-    assert.equal(await page.locator('[data-chat-entry="assistant"] [data-markdown]').textContent(), after);
+    assert.equal((await page.locator('[data-chat-entry="assistant"] [data-markdown]').textContent()).trimEnd(), after.trimEnd());
     assert.equal(await page.locator('[data-chat-entry="assistant"]').count(), 1);
     assert.equal(await page.locator('[data-chat-entry="user"]').count(), 1);
     assert.equal(stub.requests.filter(r => r.method === 'session/cancel').length, 1);
@@ -434,7 +466,7 @@ try {
     engine.append(main, 'tool/result', { message: { toolCallId: 'w2', isError: true, content: [{ type: 'text', text: 'disk full' }] } });
     engine.append(main, 'tool/call', { name: 'read_file', callId: 'r1', arguments: { path: 'notes.txt' } });
     engine.append(main, 'tool/result', { message: { toolCallId: 'r1', content: [{ type: 'text', text: '<path>notes.txt</path>\n<type>file</type>\n<content>\n1: alpha\n2: beta\n\n(End of file - total 2 lines)\n</content>' }] } });
-    engine.append(main, 'assistant/message', { message: { id: 'a1', content: [{ type: 'text', text: 'Файлы: [заметки](notes.txt), [чужой](/etc/passwd), [снаружи](../qa-outside.txt), [сайт](https://example.com/a), [плохо](javascript:1) и [удалённый](file:///etc/passwd)' }] } });
+    engine.append(main, 'assistant/message', { message: { id: 'a1', content: [{ type: 'text', text: 'Файлы: [заметки](notes.txt), [внутри](sub/inner.txt), [чужой](/etc/passwd), [снаружи](../qa-outside.txt), [сайт](https://example.com/a), [плохо](javascript:1) и [удалённый](file:///etc/passwd)' }] } });
     return engine;
   };
   await check('denied-step-and-links', '', async page => {
@@ -456,13 +488,19 @@ try {
     // F-03: links look like links and open only through the host
     const opened = () => page.evaluate(() => window.__hohOpened);
     await page.locator('[data-markdown-link="url"]').click();
-    await page.locator('[data-markdown-link="file"]').click();
-    await page.locator('[data-markdown-reveal]').click();
+    await page.locator('[data-markdown-link="file"]').first().click();
+    await page.locator('[data-markdown-reveal]').first().click();
     assert.deepEqual(await opened(), [
       { kind: 'url', target: 'https://example.com/a', sessionId: 'window-main' },
       { kind: 'file', target: 'notes.txt', sessionId: 'window-main' },
       { kind: 'reveal', target: 'notes.txt', sessionId: 'window-main' },
     ]);
+    // P1-3: a file in a sub-folder keeps its path and its name on the chip
+    const inner = page.locator('[data-markdown-link="file"]', { hasText: 'inner.txt' });
+    assert.equal(await inner.textContent(), 'inner.txt');
+    await inner.click();
+    assert.deepEqual((await opened()).at(-1), { kind: 'file', target: 'sub/inner.txt', sessionId: 'window-main' });
+    await page.evaluate(() => { window.__hohOpened.length = 3; });
     const outside = page.locator('[data-markdown-link="file-outside"]');
     assert.equal(await outside.count(), 3, 'внешние файлы помечены: чужой, снаружи и file: вне папки');
     await outside.first().click();
@@ -472,7 +510,7 @@ try {
     assert.equal(await page.locator('[data-markdown] a').count(), 0);
     // a refusal of the host is shown in words
     await page.evaluate(() => { window.__hohOpenFail = 'Файл не найден'; });
-    await page.locator('[data-markdown-link="file"]').click();
+    await page.locator('[data-markdown-link="file"]').first().click();
     await page.waitForFunction(() => document.querySelector('[data-link-notice]')?.textContent.startsWith('Файл не найден'));
     // N-2: a blocked link says why, and opens nothing
     const before = (await opened()).length;
@@ -487,6 +525,29 @@ try {
     await page.locator('[data-link-notice]').getByRole('button', { name: 'Закрыть' }).click();
     assert.equal(await page.locator('[data-link-notice]').count(), 0);
   }, [], { fake: linkEngine, viewport: { width: 1440, height: 900 }, shot: 'links-1440.png' });
+
+  const richFile = await historyFile('rich', ['Формула $E=mc^2$ в строке.\n\n$$\\int_0^1 x\\,dx = \\frac12$$\n\n| Имя | Число |\n|---|---|\n| один | 1 |\n| два | 2 |\n\n```js\nconst a = 1;\n```\n\n- [x] сделано\n- [ ] ждёт']);
+  await check('markdown-formula-table-code', 'text-turn', async page => {
+    const markdown = page.locator('[data-markdown]').last();
+    await markdown.locator('table').waitFor();
+    assert.deepEqual(await markdown.locator('th').allTextContents(), ['Имя', 'Число']);
+    assert.deepEqual(await markdown.locator('td').allTextContents(), ['один', '1', 'два', '2']);
+    assert.equal((await markdown.locator('pre code').textContent()).trim(), 'const a = 1;');
+    await markdown.locator('[data-renderer="t3"]').or(markdown).first().waitFor();
+    await page.waitForSelector('[data-math="inline"] math', { timeout: 20000 });
+    await page.waitForSelector('[data-math="display"] math[display="block"]');
+    assert.equal(await markdown.locator('[data-math] [style]').count(), 0, 'в формулах нет встроенных style (CSP окна их запрещает)');
+    assert.equal(await markdown.locator('[data-math]').count(), 2);
+    assert.equal(await markdown.locator('[data-math="pending"]').count(), 0);
+    assert.match(await markdown.locator('[data-math="inline"]').textContent(), /E=mc/);
+    assert.equal(await markdown.locator('a, img, script').count(), 0);
+    const shots = join(UI, 'test-results/t3-exact'); await mkdir(shots, { recursive: true });
+    for (const [name, viewport] of [['1440', { width: 1440, height: 900 }], ['800x640', { width: 800, height: 640 }]]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(shots, `t3md-formula-table-code-${name}.png`), animations: 'disabled' });
+    }
+  }, ['--recording', richFile]);
 
   const harmful = harmfulMarkdownCases.map(({ source }) => source);
   const markdownFile = await historyFile('markdown', harmful);

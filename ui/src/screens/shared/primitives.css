@@ -62,3 +62,8 @@
   .ic-spin { animation: none; }
   .btn { transition: none; }
 }
+
+/* Значок поставщика модели (набор T3): один размер, цвет текста. */
+.provider-mark { display: inline-grid; place-items: center; flex: none; inline-size: var(--size-icon); block-size: var(--size-icon); color: var(--color-fg); }
+.provider-mark > svg { inline-size: var(--size-icon-sm); block-size: var(--size-icon-sm); }
+.provider-mark > .ic { color: var(--color-muted); }

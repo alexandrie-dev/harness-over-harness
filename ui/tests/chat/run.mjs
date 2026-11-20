@@ -4,3 +4,5 @@ import './controller.test.mjs';
 import './dist-check.test.mjs';
 import './styles.test.mjs';
 import './t3.test.mjs';
+import './providers.test.mjs';
+import './guard.test.mjs';

@@ -131,7 +131,6 @@ export function ApprovalWindow() {
   return (
     <div className="hoh-page ap-page" data-screen="approval" data-phase={expired ? 'done' : phase.kind}>
       <div className="ap-guard" role="alertdialog" aria-labelledby="ap-what" aria-describedby="ap-why">
-        <div className="ap-tape" aria-hidden="true" />
         <div className="ap-title"><Icon name="alert" small />Защита HoH<small>Отдельное окно, не часть чата</small></div>
 
         {phase.kind === 'loading' && <div className="ap-done" role="status">Загружаю запрос…</div>}

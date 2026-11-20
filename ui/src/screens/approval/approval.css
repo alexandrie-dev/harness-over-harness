@@ -1,4 +1,4 @@
-/* Окно защиты в системе вида: тёмная карточка, красный — потому что ждут человека. Только var(--…) из tokens.css. */
+/* Окно защиты, вид как у панели разрешения в T3: спокойная карточка и кнопки; красным остаётся только маленькая метка риска. Только var(--…) из tokens.css. */
 
 .ap-page {
   display: flex; align-items: center; justify-content: center;
@@ -7,7 +7,7 @@
 }
 .ap-guard {
   width: 100%; max-width: var(--width-guard);
-  border: var(--border-width) solid var(--color-wait-line); border-radius: var(--radius-card);
+  border: var(--border-width) solid var(--border-card); border-radius: var(--radius-card);
   background: var(--color-raised); overflow: hidden;
 }
 .ap-title {
@@ -15,7 +15,7 @@
   border-bottom: var(--border-width) solid var(--border);
   font-size: var(--text-md); line-height: var(--lh-md); font-weight: var(--font-weight-semibold);
 }
-.ap-title .ic { color: var(--color-wait); }
+.ap-title .ic { color: var(--color-muted); }
 .ap-title small { margin-left: auto; font-weight: var(--font-weight-regular); font-size: var(--text-sm); line-height: var(--lh-sm); color: var(--color-dim); }
 
 .ap-body { padding: var(--space-4) var(--space-4) var(--space-1); }
@@ -24,8 +24,8 @@
 .ap-risk[data-risk='high'] { background: var(--color-wait-soft); color: var(--color-wait); font-weight: var(--font-weight-semibold); }
 .ap-what { font-size: var(--text-lg); line-height: var(--lh-lg); font-weight: var(--font-weight-semibold); margin-bottom: var(--space-4); overflow-wrap: anywhere; }
 
-.ap-why { display: flex; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius); background: var(--color-wait-soft); margin-bottom: var(--space-3); font-size: var(--text-md); line-height: var(--lh-md); color: var(--color-fg-2); }
-.ap-why .ic { color: var(--color-wait); margin-top: var(--space-0); }
+.ap-why { display: flex; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius); background: var(--color-raised-hi); margin-bottom: var(--space-3); font-size: var(--text-md); line-height: var(--lh-md); color: var(--color-fg-2); }
+.ap-why .ic { color: var(--color-muted); margin-top: var(--space-0); }
 .ap-why[data-risk='low'] { background: var(--color-raised-hi); }
 .ap-why[data-risk='low'] .ic { color: var(--color-muted); }
 .ap-why h2, .ap-said h2 { font-size: var(--text-md); line-height: var(--lh-md); font-weight: var(--font-weight-semibold); color: var(--color-fg); margin-bottom: var(--space-0); }
@@ -41,15 +41,15 @@
 .ap-timer .ic { color: var(--color-muted); }
 .ap-timer b { font-variant-numeric: tabular-nums; font-weight: var(--font-weight-semibold); color: var(--color-fg); }
 .ap-bar { height: var(--size-bar); border-radius: var(--radius-key); background: var(--color-row-active); overflow: hidden; margin-bottom: var(--space-1); }
-.ap-bar i { display: block; height: 100%; width: 100%; background: var(--color-wait); transform-origin: left; transform: scaleX(var(--share)); transition: transform var(--dur-timer) linear; }
+.ap-bar i { display: block; height: 100%; width: 100%; background: var(--color-fg-2); transform-origin: left; transform: scaleX(var(--share)); transition: transform var(--dur-timer) linear; }
 .ap-timer-note { font-size: var(--text-sm); line-height: var(--lh-sm); color: var(--color-dim); margin-bottom: var(--space-4); }
 
 .ap-actions { display: flex; gap: var(--space-2); padding: 0 var(--space-4) var(--space-4); }
 .ap-actions .btn { flex: 1; height: var(--size-main); font-size: var(--text-md); }
-/* Главное действие — безопасное: отказ. Разрешение — тихая кнопка с красным текстом, пока ждут решения. */
+/* Главное действие — безопасное: отказ. Разрешение — тихая кнопка, как в T3. */
 .ap-safe { background: var(--color-fg); color: var(--color-on-light); font-weight: var(--font-weight-semibold); }
 .ap-safe:hover:not(:disabled) { background: var(--color-fg-hover); }
-.ap-risky { color: var(--color-wait); }
+.ap-risky { color: var(--color-fg); }
 
 .ap-foot { display: flex; gap: var(--space-2); align-items: flex-start; padding: var(--space-3) var(--space-4); border-top: var(--border-width) solid var(--border); font-size: var(--text-sm); color: var(--color-dim); line-height: var(--lh-sm); }
 .ap-foot .ic { width: var(--size-icon-xs); height: var(--size-icon-xs); margin-top: var(--space-0); color: var(--color-muted); }

@@ -130,17 +130,7 @@
     }
   },
   "exclude": [
-    "shared/markdownPipeline.ts",
     "shared/markdownMath.ts",
-    "shared/markdownTaskList.ts",
-    "shared/markdownWindowsPaths.ts",
-    "shared/markdownGithubAlerts.ts",
-    "shared/markdownLeadingWhitespace.ts",
-    "shared/markdownListIndentation.ts",
-    "shared/markdownOrderedListNumbers.ts",
-    "shared/codexMarkdownDirectives.ts",
-    "shared/codexArtifactTemplates.ts",
-    "shared/codexFileCitations.ts",
     "client-runtime/assemblyHighlighting.ts",
     "web/components/ChatMarkdown.tsx",
     "web/components/chat/MarkdownCodeBlock.tsx",

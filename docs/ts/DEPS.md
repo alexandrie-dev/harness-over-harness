@@ -27,7 +27,6 @@
     "react-dom": "19.3.1",
     "@base-ui/react": "1.9.0",
     "zustand": "5.1.0",
-    "marked": "18.2.0",
     "lucide-react": "1.71.0",
     "class-variance-authority": "0.7.1",
     "tailwind-merge": "3.7.0",
@@ -124,7 +123,6 @@
 | `react-dom` | 19.3.1 | 2026-10-14 | MIT | DOM-рендер React |
 | `@base-ui/react` | 1.9.0 | 2026-10-09 | MIT | Доступные элементы управления для следующих экранов |
 | `zustand` | 5.1.0 | 2026-11-06 | MIT | Состояние экранов и история |
-| `marked` | 18.2.0 | 2026-11-09 | MIT | Лексер Markdown без innerHTML |
 | `lucide-react` | 1.71.0 | 2026-11-10 | ISC | Только именованные иконки, tree shaking |
 | `class-variance-authority` | 0.7.1 | 2024-11-26 | Apache-2.0 | Варианты компонентов |
 | `tailwind-merge` | 3.7.0 | 2026-09-12 | MIT | Слияние классов Tailwind |
@@ -184,6 +182,10 @@ prepare не выполняется при установке из реестр�
 Лицензионное исключение `dompurify@3.4.17`: двойная лицензия `(MPL-2.0 OR Apache-2.0)`, используется ветка Apache-2.0; допускается только эта строка для этой версии, решение CEO 20.11.2026.
 
 Шрифт окна (не npm-пакет): Inter Regular, Medium и SemiBold, woff, урезаны до латиницы и кириллицы, лежат в `ui/src/assets/fonts/` и подключаются из `ui/src/styles/tokens.css`; источник — Inter 4 из `~/.local/share/fonts/Inter`, лицензия SIL OFL 1.1, текст — `ui/src/assets/fonts/LICENSE-Inter.txt`. Пакет `@fontsource-variable/inter` остаётся в списке выше, но окно его больше не подключает.
+
+## Изменения
+
+- marked удалён: отображение чата перешло на конвейер T3, решение CEO 20.11.2026.
 
 ## Rust оболочки
 

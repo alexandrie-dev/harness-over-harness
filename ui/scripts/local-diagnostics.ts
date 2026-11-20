@@ -8,8 +8,8 @@ export function localDiagnostics(): Plugin {
   return {
     name: 'hoh-local-diagnostics', enforce: 'pre',
     transform(code, id) {
-      if (id.includes('/node_modules/marked/') && code.includes('https://github.com/markedjs/marked.'))
-        return { code: code.replaceAll('https://github.com/markedjs/marked.', 'the marked issue tracker.'), map: null };
+      if (id.includes('/node_modules/hast-util-to-jsx-runtime/') && code.includes('https://github.com/syntax-tree/hast-util-to-jsx-runtime'))
+        return { code: code.replaceAll('https://github.com/syntax-tree/hast-util-to-jsx-runtime', 'the hast-util-to-jsx-runtime issue tracker'), map: null };
       if (!(id.includes('/node_modules/react/') || id.includes('/node_modules/react-dom/'))) return;
       if (!code.includes('https://react.dev/errors/')) return;
       return { code: code.replaceAll('https://react.dev/errors/', 'React error '), map: null };

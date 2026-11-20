@@ -1,3 +1,4 @@
+import { detectProvider } from '../../lib/providers.mjs';
 import { assistantChunks, ChatProjection, humanFile, windowText } from './projection.mjs';
 
 // Observable behavior without React or a particular transport. The production
@@ -19,14 +20,6 @@ function isLocalAddress(baseUrl) {
   } catch { return false; }
 }
 
-/** The engine's placeholder name for the model on this computer reads as words. */
-function modelLabel(name, baseUrl) {
-  const clean = windowText(name, '', '');
-  if (clean.toLowerCase() !== 'local') return clean;
-  if (isLocalAddress(baseUrl)) return 'Локальная модель';
-  // The engine's default name «local» on a model reached over the network: name the machine that really answers.
-  try { return new URL(baseUrl).host; } catch { return clean; }
-}
 /** Why the window could not reach the assistant, in words, and what to do. The host's own Russian refusals are passed on. */
 function connectionProblem(error) {
   const message = (error?.message ?? (typeof error === 'string' ? error : '')).trim();
@@ -44,7 +37,7 @@ export class ChatController {
     this.ignoreUntilNextTurn = false; this.allowNextTurn = false; this.cancelUnconfirmed = false;
     this.statusOff = undefined; this.statusPending = undefined; this.lifecycle = 0;
     this.active = false; this.reloading = false;
-    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', model: '', permissions: '', notice: '', folderPath: '', draft: '', questions: [],
+    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', model: '', modelIcon: '', modelScope: '', permissions: '', notice: '', folderPath: '', draft: '', questions: [],
       sessions: [], currentId: '', working: [] };
     this.questionsOff = undefined;
     // `link` counts real connections of the window to the engine; opening another chat keeps the same link.
@@ -95,6 +88,9 @@ export class ChatController {
   async newChat() {
     if (!this.active || this.state.connection === 'connecting') return;
     if (this.sessionId && this.state.connection === 'ready' && this.projection.entries.length === 0) return;
+    // Another chat that was never written to already exists: go there instead of piling up empty ones.
+    const empty = this.state.sessions.find(row => row.id !== this.sessionId && row.title === '');
+    if (empty) { await this.openSession(empty.id); return; }
     const id = globalThis.crypto?.randomUUID ? `chat-${globalThis.crypto.randomUUID()}` : `chat-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     this.update({ notice: '' });
     await this.connect(false, id);
@@ -183,6 +179,12 @@ export class ChatController {
     this.epoch++; this.generation++; this.queue = Promise.resolve(); this.reloading = false;
     this.unsubscribe?.(); this.unsubscribe = undefined;
     this.cancelUnconfirmed = false; this.projection.stop(); this.publish();
+    // The host gave up starting the engine: a final state with the reason (the button below tries again), not an endless «восстанавливаю».
+    if (status.state === 'failed') {
+      const reason = typeof status.message === 'string' && status.message.trim() ? status.message.trim().slice(0, 300) : 'Помощник не запускается.';
+      this.update({ questions: [], connection: 'error', busy: false, canceling: false, error: reason });
+      return;
+    }
     this.update({ questions: [], connection: 'recovering', busy: false, canceling: false,
       error: 'Связь с Помощником прервалась, восстанавливаю…' });
   }
@@ -301,8 +303,9 @@ export class ChatController {
       const settings = await transport.request('hoh/settings/get', {});
       if (ownEpoch !== this.epoch) return;
       const security = settings.security;
-      const permissions = security ? (security.writeFiles || security.programs ? 'Запись и программы с разрешения' : 'Только чтение') : '';
-      this.update({ model: typeof settings.model?.model === 'string' ? modelLabel(settings.model.model, settings.model.baseUrl) : '', permissions });
+      const permissions = security ? (security.writeFiles || security.programs ? 'Запись и программы с разрешения' : 'Работа только в этой папке') : '';
+      const found = detectProvider(settings.model?.baseUrl, settings.model?.model);
+      this.update({ model: windowText(found.label, '', ''), modelIcon: found.icon ?? '', modelScope: found.scope, permissions });
     } catch { /* the line simply shows less */ }
   }
   /** A link of an answer: the host opens it, or says why it will not. Nothing opens without the host's own checks. */

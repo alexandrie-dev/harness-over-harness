@@ -88,3 +88,41 @@ fn an_engine_that_ignores_shutdown_is_killed_after_the_grace_period_without_orph
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn an_engine_that_cannot_be_started_ends_in_a_reported_failure_with_a_reason() {
+    let dir = std::env::temp_dir().join(format!("hoh-nostart-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (events, rx) = mpsc::channel();
+    let engine = Engine::start(
+        Arc::new(ProcessConfig {
+            path: dir.join("no-such-engine"),
+            args: vec![],
+            env: vec![],
+            stderr_file: None,
+            cwd: dir.clone(),
+            provider: "mock".into(),
+            model: "mock".into(),
+        }),
+        json!({"cwd":dir}),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let message = loop {
+        assert!(Instant::now() < deadline, "no failure was ever reported");
+        if let Ok(HostEvent::Status(v)) = rx.recv_timeout(Duration::from_secs(1))
+            && v["state"] == "failed"
+        {
+            break v["message"].as_str().unwrap().to_owned();
+        }
+    };
+    assert!(message.contains("файл движка не найден"), "{message}");
+    assert!(
+        !message.contains("no-such-engine"),
+        "the path must not reach the window"
+    );
+    engine.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

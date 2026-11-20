@@ -31,6 +31,18 @@ function fileAddress(value) {
     return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
   } catch { return ''; }
 }
+/** `sub/inner.txt`: a '/' that continues a word is the middle of a relative path (it stays inside the chat folder), not the start of an absolute one.
+ *  A path with `..` or a leading '/' is never relative-inside; those are redacted as before. */
+function relativeInside(address, offset, whole) {
+  if (!address.startsWith('/') || offset === 0 || !/[\p{L}\p{N}_.-]/u.test(whole[offset - 1])) return false;
+  let start = offset;
+  while (start > 0 && /[\p{L}\p{N}_.\-/]/u.test(whole[start - 1])) start--;
+  const token = whole.slice(start, offset) + address;
+  const parts = token.split('/');
+  // It must look like a file inside a folder (last part has an extension) and not start like a system folder.
+  return !token.startsWith('/') && !parts.includes('..') && !/^[.\-_]/.test(token) && /\.[A-Za-z0-9]{1,8}(?::\d+)*$/.test(parts.at(-1))
+    && !/^(?:etc|usr|var|home|root|tmp|mnt|opt|bin|sbin|lib|proc|dev|sys|boot|srv|run|media|Users|workspace)$/i.test(parts[0]);
+}
 function redactPaths(value, folder) {
   const file = path => humanFile(fileAddress(path), folder);
   let result = value;
@@ -44,7 +56,7 @@ function redactPaths(value, folder) {
   // A data URI's MIME header is not a path; its payload is still filtered.
   return result.replace(
     /data:[-\w!#$%&'*+.^`|~]+\/[-\w!#$%&'*+.^`|~]+(?=[;,])|[A-Za-z][A-Za-z\d+.-]*:\/{2}[^\s<>"'`()\[\]{};,]*|(?:[A-Za-z]:[\\/]|\\\\|\/|\.\.[\\/])[^\s<>"'`()\[\]{};,]*/gimu,
-    address => /^data:/i.test(address) || /^[A-Za-z][A-Za-z\d+.-]*:\/{2}/.test(address) && !/^file:\/{2}/i.test(address) ? address : file(address),
+    (address, offset, whole) => /^data:/i.test(address) || /^[A-Za-z][A-Za-z\d+.-]*:\/{2}/.test(address) && !/^file:\/{2}/i.test(address) || relativeInside(address, offset, whole) ? address : file(address),
   );
 }
 export function visibleText(value, folder) {
@@ -102,6 +114,17 @@ function readContent(value) {
   const inner = value.split(/<content>\s*\n?/)[1]?.split(/<\/content>/)[0] ?? '';
   return inner.split('\n').filter(line => !/^\(End of file - total \d+ lines\)\s*$/.test(line)).map(line => line.replace(/^\s*\d+[:|]\s?/, '')).join('\n').trim();
 }
+/** What a shell command does, in words, from its first word only; the arguments (names, paths, text) are never shown. */
+const COMMAND_WORDS = {
+  ls: 'список файлов', dir: 'список файлов', tree: 'дерево папок', cat: 'чтение файла', head: 'чтение файла', tail: 'чтение файла', less: 'чтение файла',
+  echo: 'вывод текста', printf: 'вывод текста', pwd: 'текущая папка', mkdir: 'создание папки', touch: 'создание файла', cp: 'копирование', mv: 'перемещение',
+  rm: 'удаление', rmdir: 'удаление папки', grep: 'поиск в файлах', rg: 'поиск в файлах', find: 'поиск файлов', sed: 'правка текста', awk: 'обработка текста',
+  sort: 'сортировка', wc: 'подсчёт', diff: 'сравнение файлов', tar: 'архив', unzip: 'распаковка', zip: 'архив', date: 'дата и время', chmod: 'права файла',
+};
+function commandWhat(command) {
+  const first = text(command).trim().split(/\s+/)[0]?.replace(/^.*\//, '') ?? '';
+  return Object.hasOwn(COMMAND_WORDS, first) ? COMMAND_WORDS[first] : '';
+}
 function operationOf(name, args) {
   if (['read', 'read_file', 'file_read', 'read_image'].includes(name) || (name === 'str_replace_editor' && args.command === 'view')) return 'read';
   if (['write', 'write_file', 'file_write', 'str_replace_editor', 'edit_file'].includes(name)) return 'write';
@@ -128,11 +151,12 @@ const DENIAL = /\[sandbox: file access denied under ([a-z-]+) mode\]/;
 const deniedLabels = { read: 'Чтение запрещено за пределами папки', write: 'Запись запрещена за пределами папки', command: 'Команда вышла за пределы папки', action: 'Действие запрещено за пределами папки' };
 function labelFor(step, status, code) {
   if (status === 'error' && step.denied) return deniedLabels[step.operation] ?? deniedLabels.action;
-  if (step.operation === 'command' && status === 'done' && code === undefined) return 'Команда завершена';
+  const what = step.operation === 'command' && step.what ? ': ' + step.what : '';
+  if (step.operation === 'command' && status === 'done' && code === undefined) return 'Команда завершена' + what;
   if (status === 'error' && step.operation === 'command' && code !== undefined && code !== 0)
-    return 'Команда завершилась с ошибкой: код ' + numberInWords(code);
+    return 'Команда завершилась с ошибкой: код ' + numberInWords(code) + what;
   const index = { running: 0, done: 1, error: 2, stopped: 3 }[status];
-  return verbs[step.operation][index] + (['read', 'write'].includes(step.operation) && status !== 'stopped' ? ' ' + step.file : '');
+  return verbs[step.operation][index] + (['read', 'write'].includes(step.operation) && status !== 'stopped' ? ' ' + step.file : '') + (status === 'done' ? what : '');
 }
 export function assistantChunks(event) {
   const result = [];
@@ -317,7 +341,7 @@ export class ChatProjection {
       const rawId = text(data.callId); if (!rawId) return;
       const callId = String(data.turn ?? '') + ':' + rawId; if (this.calls.has(callId)) return;
       const args = argumentsOf(data.arguments); const operation = operationOf(data.name, args);
-      const step = { id: 'step-' + callId, kind: 'step', operation, status: 'running',
+      const step = { id: 'step-' + callId, kind: 'step', operation, status: 'running', what: operation === 'command' ? commandWhat(args.command ?? args.cmd) : '',
         file: windowText(humanFile(args.file_path ?? args.path ?? args.filePath, this.folder), this.folder, 'файл', text(data.name)), detail: '' };
       step.label = labelFor(step, 'running');
       this.calls.set(callId, this.append(step)); this.arguments.set(callId, { name: text(data.name), preview: text(args.file_text ?? args.content ?? args.new_str).slice(0, 1200) });

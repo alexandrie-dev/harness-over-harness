@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Lexer } from 'marked';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
+
+const lex = text => unified().use(remarkParse).use(remarkGfm).parse(text).children;
 import { harmfulMarkdownCases } from './markdown-cases.mjs';
 import { ChatProjection, assistantChunks, humanFile, numberInWords, visibleText } from '../../src/screens/chat/projection.mjs';
 import { StubClient, recordedPrompt, WORKSPACE } from './stub-client.mjs';
@@ -183,9 +187,9 @@ test('an incomplete marker is italic outside an unterminated Markdown fence', ()
   p.liveFrame({ type: 'gap', attemptId: 'fenced', revision: 3, index: 1 });
   p.finishGaps();
   assert.equal(p.entries[0].text, 'Пример:\n```js\nalert(1)\n```\n\n*Ответ получен не полностью.*');
-  const tokens = Lexer.lex(p.entries[0].text, { gfm: true });
+  const tokens = lex(p.entries[0].text);
   assert.equal(tokens.at(-1).type, 'paragraph');
-  assert.equal(tokens.at(-1).tokens[0].type, 'em');
+  assert.equal(tokens.at(-1).children[0].type, 'emphasis');
 
   const crlf = new ChatProjection();
   const closed = 'Пример:\r\n```js\r\nalert(1)\r\n```\r\nПосле';
@@ -194,8 +198,8 @@ test('an incomplete marker is italic outside an unterminated Markdown fence', ()
   crlf.liveFrame({ type: 'gap', attemptId: 'crlf', revision: 3, index: 1 });
   crlf.finishGaps();
   assert.equal(crlf.entries[0].text, closed + '\n\n*Ответ получен не полностью.*');
-  const crlfTokens = Lexer.lex(crlf.entries[0].text, { gfm: true });
-  assert.equal(crlfTokens.at(-1).tokens[0].type, 'em');
+  const crlfTokens = lex(crlf.entries[0].text);
+  assert.equal(crlfTokens.at(-1).children[0].type, 'emphasis');
 });
 
 test('an empty canonical message removes a gapped prefix like an ordinary empty message', () => {
@@ -349,4 +353,26 @@ test('a read step shows the file text, not the engine markup around it', () => {
   projection.event(event('tool/call', 10, { callId: 'r', name: 'read_file', arguments: { path: 'n.txt' } }));
   projection.event(event('tool/result', 11, { message: { toolCallId: 'r', content: [{ type: 'text', text: '<path>/work/n.txt</path>\n<type>file</type>\n<content>\n1: alpha\n2: beta\n\n(End of file - total 2 lines)\n</content>' }] } }));
   assert.equal(projection.entries[0].detail, 'alpha\nbeta');
+});
+
+test('a relative path into a sub-folder keeps its folder part; absolute and escaping paths are still hidden', () => {
+  assert.equal(visibleText('[внутри](sub/inner.txt)', '/work'), '[внутри](sub/inner.txt)');
+  assert.equal(visibleText('см. src/a.ts:12 и docs/x/y.md', '/work'), 'см. src/a.ts:12 и docs/x/y.md');
+  assert.equal(visibleText('[x](/etc/passwd)', '/work'), '[x](файл)');
+  assert.equal(visibleText('[x](sub/../../etc/passwd)', '/work'), '[x](subфайл)');
+  assert.equal(visibleText('[x](../out.txt)', '/work'), '[x](файл)');
+  assert.equal(visibleText('Ошибка:/etc/passwd', '/work'), 'Ошибка:файл');
+});
+
+test('a finished command is told apart by what it does, from its first word only; arguments never appear', () => {
+  const projection = new ChatProjection(); projection.folder = '/work';
+  let seq = 100;
+  const run = (id, command) => {
+    projection.event(event('tool/call', seq++, { callId: id, name: 'bash', arguments: { command } }));
+    projection.event(event('tool/result', seq++, { message: { toolCallId: id, content: [{ type: 'text', text: 'ok' }] } }));
+  };
+  run('a', 'ls -la'); run('b', 'rm secret-plan.txt'); run('c', 'curl https://x.example/y'); run('d', '/bin/cat notes.txt');
+  const labels = projection.entries.map(e => e.label);
+  assert.deepEqual(labels, ['Команда завершена: список файлов', 'Команда завершена: удаление', 'Команда завершена', 'Команда завершена: чтение файла']);
+  assert(!labels.join(' ').includes('secret'));
 });

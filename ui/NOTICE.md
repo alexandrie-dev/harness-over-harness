@@ -30,3 +30,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+### Значки поставщиков моделей
+
+Рисунки значков OpenAI, Claude, OpenRouter и Ollama в `src/screens/shared/providerIcons.tsx` взяты из `apps/web/src/components/Icons.tsx` проекта T3 Code (MIT, полный текст лицензии выше). Рисунок не менялся; вместо вспомогательной функции классов подставлена строка.

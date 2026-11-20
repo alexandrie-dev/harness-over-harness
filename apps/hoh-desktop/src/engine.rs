@@ -107,7 +107,7 @@ impl Connector for ProcessConfig {
         }
         let mut child = command
             .spawn()
-            .map_err(|_| "Не удалось запустить движок".to_owned())?;
+            .map_err(|error| spawn_problem(error.kind()))?;
         let stdout = child.stdout.take().ok_or("Нет stdout движка")?;
         let stdin = child.stdin.take().ok_or("Нет stdin движка")?;
         let (tx, rx) = mpsc::sync_channel::<Value>(64);
@@ -269,6 +269,18 @@ struct Pending {
     reply: Reply,
     started: Instant,
 }
+/// Why the engine could not be started, in plain words (no paths: the text reaches the window and stderr).
+pub fn spawn_problem(kind: std::io::ErrorKind) -> String {
+    match kind {
+        std::io::ErrorKind::NotFound => {
+            "файл движка не найден: программа повреждена или установлена не полностью".to_owned()
+        }
+        std::io::ErrorKind::PermissionDenied => "нет прав на запуск движка".to_owned(),
+        _ => "движок не запускается".to_owned(),
+    }
+}
+/// After this many failed starts in a row the window is told the assistant is not starting, with the reason.
+pub const START_FAILURES_BEFORE_REPORT: u32 = 4;
 fn supervise(
     connector: Arc<dyn Connector>,
     initialize: Arc<std::sync::Mutex<Value>>,
@@ -280,14 +292,27 @@ fn supervise(
     let mut next = 0_u64;
     let mut pending = HashMap::<String, Pending>::new();
     let mut stopping = false;
+    let mut failures = 0_u32;
     while !stopping {
         generation += 1;
         let mut transport = match connector.connect(generation, inbox.clone()) {
-            Ok(t) => t,
-            Err(_) => {
-                sink(HostEvent::Status(
-                    json!({"state":"unavailable","message":"Помощник пока недоступен. Подключаюсь снова…"}),
-                ));
+            Ok(t) => {
+                failures = 0;
+                t
+            }
+            Err(reason) => {
+                failures += 1;
+                if failures <= START_FAILURES_BEFORE_REPORT || failures.is_multiple_of(20) {
+                    eprintln!(
+                        "hoh-desktop: the engine did not start (attempt {failures}): {reason}"
+                    );
+                }
+                let status = if failures >= START_FAILURES_BEFORE_REPORT {
+                    json!({"state":"failed","message":format!("Помощник не запускается: {reason}. Закройте HoH и откройте снова; если не помогает, переустановите программу.")})
+                } else {
+                    json!({"state":"unavailable","message":"Помощник пока недоступен. Подключаюсь снова…"})
+                };
+                sink(HostEvent::Status(status));
                 if drain_backoff(&rx) {
                     break;
                 }

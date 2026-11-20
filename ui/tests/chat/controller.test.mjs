@@ -749,7 +749,7 @@ test('an engine without session/list keeps the open chat usable', async () => {
 
 test('the composer line gets model and permission mode from the engine, and a chosen folder is sent to it', async () => {
   await withChats(async (controller, engine) => {
-    assert.equal(controller.state.model, 'Локальная модель'); assert.equal(controller.state.permissions, 'Только чтение');
+    assert.equal(controller.state.model, 'Локальная модель'); assert.equal(controller.state.permissions, 'Работа только в этой папке');
     await controller.setFolder('/home/me/Проекты/сайт');
     assert.equal(controller.state.folderLabel, 'сайт');
     assert.deepEqual(engine.requests.find(r => r.method === 'session/working-directory/set')?.params, { sessionId: 'window-main', path: '/home/me/Проекты/сайт' });
@@ -764,4 +764,32 @@ test('when the engine cannot be reached the person is told why and what to do', 
     assert.match(controller.state.error, expected); assert.match(controller.state.error, /нажмите «Подключиться ещё раз»/);
     controller.disconnect();
   }
+});
+
+test('F-3: a new chat while another empty chat exists goes to that one instead of creating one more', async () => {
+  await withChats(async controller => {
+    await controller.newChat();                                   // the first empty chat
+    const empty = controller.state.currentId;
+    await waitUntil(() => controller.state.sessions.some(s => s.id === empty));
+    await controller.openSession('chat-old');                      // back to a chat with messages
+    const before = controller.state.sessions.length;
+    await controller.newChat();                                   // must land in the existing empty one
+    assert.equal(controller.state.currentId, empty);
+    await controller.openSession('chat-old'); await controller.newChat();
+    assert.equal(controller.state.sessions.length, before, 'no further empty chats');
+    assert.equal(controller.state.sessions.filter(s => s.title === '').length, 1);
+  });
+});
+
+test('F-1: when the host reports that the engine does not start, the window ends in an error with the reason, and recovers when it is ready', async () => {
+  await withChats(async controller => {
+    controller.engineStatus({ state: 'restarting' });
+    assert.equal(controller.state.connection, 'recovering');
+    controller.engineStatus({ state: 'failed', message: 'Помощник не запускается: файл движка не найден. Закройте HoH и откройте снова.' });
+    assert.equal(controller.state.connection, 'error');
+    assert.match(controller.state.error, /файл движка не найден/);
+    controller.engineStatus({ state: 'ready' });
+    await waitUntil(() => controller.state.connection === 'ready');
+    assert.equal(controller.state.error, '');
+  });
 });

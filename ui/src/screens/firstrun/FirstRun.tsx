@@ -1,3 +1,5 @@
+import { detectProvider } from '../../lib/providers.mjs';
+import { ProviderMark } from '../shared/ProviderMark';
 import { keyNote } from '../../lib/keyNote';
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../shared/icons';
@@ -52,6 +54,9 @@ export function FirstRun({ onFinish }: FirstRunProps) {
   // The default folder is shown as the real path on this computer; until it is known (or if it cannot be) no folder name is invented.
   const [workFolder, setWorkFolder] = useState<string | null>(null);
   useEffect(() => { void loadWorkFolder().then(setWorkFolder); }, []);
+  const detected = detectProvider(address, manualModel.trim() || model);
+  // The engine's default model name «local» says nothing about a cloud service, so it is not shown beside its name.
+  const shownModel = [manualModel.trim() || model].find(name => name && name.toLowerCase() !== 'local') ?? '';
   const folderShown = folder === DEFAULT_FOLDER ? (workFolder ?? 'Папка HoH') : folder;
   const [folderNote, setFolderNote] = useState('');
   const [problem, setProblem] = useState('');
@@ -209,8 +214,9 @@ export function FirstRun({ onFinish }: FirstRunProps) {
               <div className="field">
                 <label htmlFor="fr-address">Адрес</label>
                 <input id="fr-address" type="text" value={address} spellCheck={false} autoComplete="off" onChange={e => { setAddress(e.target.value); invalidate(); }} />
-                <span className="help">{cloud ? 'Адрес из личного кабинета сервиса, обычно заканчивается на /v1.' : 'Модель на этом компьютере: данные никуда не уходят.'}</span>
+                <span className="help">{cloud ? 'Адрес из личного кабинета сервиса, обычно заканчивается на /v1.' : (detected.scope === 'private' ? 'Модель в вашей сети: данные уходят с этого компьютера на другой в вашей сети, но не в интернет.' : 'Модель на этом компьютере: данные никуда не уходят.')}</span>
               </div>
+              <p className="fr-provider" data-provider-line data-provider={detected.id}><ProviderMark icon={detected.icon ?? ''} /><span>{detected.scope === 'cloud' || detected.scope === 'unknown' ? detected.name : detected.label}</span>{shownModel && detected.scope === 'cloud' && <span className="fr-provider-model">{shownModel}</span>}</p>
               <details className="fr-advanced">
                 <summary>Дополнительно</summary>
                 <div className="field">

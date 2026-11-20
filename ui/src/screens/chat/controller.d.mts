@@ -4,7 +4,7 @@ export type ChatData = {
   entries: ChatEntry[];
   connection: 'connecting' | 'ready' | 'recovering' | 'error';
   busy: boolean; canceling: boolean; error: string;
-  privacy: 'local' | 'remote' | 'unknown'; folderLabel: string; model: string; permissions: string; notice: string; folderPath: string; draft: string;
+  privacy: 'local' | 'remote' | 'unknown'; folderLabel: string; model: string; modelIcon: string; modelScope: string; permissions: string; notice: string; folderPath: string; draft: string;
   questions: PendingQuestion[];
   /** Chats of the engine, newest first; the open one is always present. */
   sessions: ChatSessionRow[]; currentId: string; working: string[];

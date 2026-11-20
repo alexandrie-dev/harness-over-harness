@@ -30,10 +30,10 @@ for root in ('web', 'shared', 'client-runtime', 'shims'):
             m = re.match(r'// Прослойка окна HoH вместо (\S+)(?: \([^)]*\))?:? ?(.*)', head)
             shims.append(f'| `ui/src/t3/{rel}` | {("`" + m.group(1) + "`") if m else "—"} | {(m.group(2) if m else head.lstrip("/ ").strip())} |')
 deps = [
- ('react-markdown', '10.1.0', 'разбор и вывод Markdown (основа ChatMarkdown)', 'ChatMarkdown.tsx, MarkdownCodeBlock.logic.ts', 'частично: marked 18.2.0 (нынешний рендер) даёт блоки, но не hast-слой, на котором стоят код, таблицы, формулы и ссылки T3'),
+ ('react-markdown', '10.1.0', 'разбор и вывод Markdown (основа ChatMarkdown)', 'ChatMarkdown.tsx, MarkdownCodeBlock.logic.ts', 'да: основа рендера чата; прежний marked удалён 20.11.2026'),
  ('unified', '11.0.5', 'конвейер разбора', 'markdownPipeline.ts, markdownRenderer.ts, markdownSyntaxGates.ts, markdownMath.ts, markdownTaskList.ts, markdownWindowsPaths.ts, markdown-incremental.ts, codexMarkdownDirectives.ts и др.', 'нет'),
  ('remark-parse', '11.0.0', 'разбор Markdown в mdast', 'markdownPipeline.ts, markdownRenderer.ts, markdownMath.ts, markdownTaskList.ts, codexMarkdownDirectives.ts', 'нет'),
- ('remark-gfm', '4.0.1', 'таблицы, списки задач, зачёркивание', 'markdownPipeline.ts, markdownMath.ts, markdownTaskList.ts', 'marked разбирает GFM сам, но вывод T3 строится на этом плагине'),
+ ('remark-gfm', '4.0.1', 'таблицы, списки задач, зачёркивание', 'markdownPipeline.ts, markdownMath.ts, markdownTaskList.ts', 'да: GFM-разбор рендера чата; прежний marked удалён 20.11.2026'),
  ('remark-math', '6.0.0', 'формулы $…$ (с подменой micromark-extension-math → micromark-extension-llm-math 3.1.0)', 'ChatMarkdown.tsx, markdownMath.ts', 'нет'),
  ('remark-breaks', '4.0.0', 'переводы строк как в чате', 'markdownPipeline.ts', 'нет (не было в списке ведущего)'),
  ('remark-rehype', '11.1.2', 'mdast → hast', 'markdownPipeline.ts, markdownRenderer.ts', 'нет'),
@@ -66,7 +66,7 @@ text = f"""# Карта кода T3 Code в окне HoH
 
 ## Состояние
 
-- **В сборке сейчас:** рендер ответов на marked (`ui/src/lib/markdown.tsx`) через переключатель `ui/src/t3/render.tsx`. Файлы T3 из первой таблицы проверены компилятором (`tsc --noEmit`), но чат их пока не вызывает.
+- **В сборке сейчас:** рендер ответов на конвейере T3 (marked удалён 20.11.2026) через переключатель `ui/src/t3/render.tsx`. Файлы T3 из первой таблицы проверены компилятором (`tsc --noEmit`), но чат их пока не вызывает.
 - **Отложено:** вторая таблица — файлы T3, которым нужны пакеты, которых нет в lock окна. До установки tsc их пропускает (`deferredEnabled: false`), vite их не видит, Tailwind не сканирует (`@source not "../t3"` в tokens.css). Компилятором они не проверены: проверены только адресаты импортов (`t3-check.py`).
 - **Не перенесено из запрошенного:** шаги инструментов (`TimelineWorkEntryRow` тянет за собой подтверждения и поле ввода T3; нынешние строки шагов окна остаются) и картинки-вложения (`ComposerImageThumbnail`, `GuestMessageAttachments`; в протоколе окна пока нет вложений). Файлов T3 для них в дереве нет.
 
@@ -100,7 +100,7 @@ text = f"""# Карта кода T3 Code в окне HoH
 
 **Патчи T3 в этой цепочке** (`t3code/patches/`, подключены через `patchedDependencies`): {', '.join('`' + p + '`' for p in patches)}. Без них поведение формул, таблиц и подсветки может отличаться от T3; решение о переносе патчей (в `ui/patches/` и `pnpm-workspace.yaml`) тоже за основателем. Подмена `remark-math>micromark-extension-math → micromark-extension-llm-math@3.1.0` задаётся там же (`overrides`).
 
-Уже есть у окна и подходит: `react`, `react-dom`, `lucide-react`, `@base-ui/react` (кнопка, подсказка, меню T3 стоят на нём), `class-variance-authority`, `tailwind-merge`, `zustand`. `marked` и `uplot` T3 не использует. `@legendapp/list` у T3 тот же, что у нас.
+Уже есть у окна и подходит: `react`, `react-dom`, `lucide-react`, `@base-ui/react` (кнопка, подсказка, меню T3 стоят на нём), `class-variance-authority`, `tailwind-merge`, `zustand`. `uplot` T3 не использует (`marked` из окна удалён 20.11.2026). `@legendapp/list` у T3 тот же, что у нас.
 
 Прочие импорты T3 (`effect`, `@effect/atom-react`, `gt-react`, `@t3tools/*`, `@tiptap/*`, `@tanstack/*`) заменены прослойками или в перенесённую часть не попадают.
 """

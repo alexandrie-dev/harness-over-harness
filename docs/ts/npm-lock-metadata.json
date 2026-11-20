@@ -1,7 +1,7 @@
 {
-  "lockSha256": "8e5f474b393fb8daaa5bbf6e51dd274ac2232d318a3b40775a831f96cb3dccdc",
+  "lockSha256": "01d9aa5f1f5848d5683cbbd3599f7f19e779b90635aa9c4729a453d49e390bf0",
   "registry": "https://registry.npmjs.org/",
-  "checkedAt": "2026-11-20T17:26:13.549605+00:00",
+  "checkedAt": "2026-11-20T18:54:13.723414+00:00",
   "packages": {
     "@babel/runtime": {
       "versions": {
@@ -2995,62 +2995,6 @@
       },
       "time": {
         "3.0.4": "2024-10-22T11:58:39.972Z"
-      }
-    },
-    "marked": {
-      "versions": {
-        "18.2.0": {
-          "license": "MIT",
-          "scripts": {
-            "lint": "eslint --fix",
-            "test": "npm run build:reset && npm run build:docs && npm run test:specs && npm run test:unit && npm run test:umd && npm run test:cjs && npm run test:types && npm run test:lint",
-            "bench": "npm run build && node test/bench.js",
-            "build": "npm run build:esbuild && npm run build:types && npm run build:man",
-            "rules": "node test/rules.js",
-            "test:cjs": "node test/cjs-test.cjs",
-            "test:umd": "node test/umd-test.js",
-            "build:man": "marked-man man/marked.1.md > man/marked.1",
-            "test:lint": "eslint",
-            "test:only": "npm run build && npm run test:specs:only && npm run test:unit:only",
-            "test:unit": "node --test --test-reporter=spec test/unit/*.test.js",
-            "build:docs": "npm run build && node docs/build.js",
-            "test:specs": "node --test --test-reporter=spec test/run-spec-tests.js",
-            "test:types": "tsc --project tsconfig-type-test.json && attw -P --entrypoints . --profile esm-only",
-            "build:reset": "rimraf ./lib ./public",
-            "build:types": "tsc && dts-bundle-generator --export-referenced-types --project tsconfig.json -o lib/marked.d.ts src/marked.ts",
-            "test:update": "node test/update-specs.js",
-            "test:recheck": "node test/recheck.ts > vuln.js",
-            "build:esbuild": "node esbuild.config.js",
-            "test:unit:only": "node --test --test-only --test-reporter=spec test/unit/*.test.js",
-            "test:specs:only": "node --test --test-only --test-reporter=spec test/run-spec-tests.js"
-          },
-          "dist": {
-            "shasum": "58d7f91aa57cab1591bce1be264b1251694a63f3",
-            "tarball": "https://registry.npmjs.org/marked/-/marked-18.2.0.tgz",
-            "fileCount": 12,
-            "integrity": "sha512-KaeL+tAbtvI930q7HE2PN5lYXYdT8EiSmxHlN6F3rsfb57wd5mp5W5TLazpdj4inTQBJdgjYwbs40W/0VUGU+Q==",
-            "signatures": [
-              {
-                "sig": "MEUCIQCTFL3s7SpL3cVFFnY0H+AEkPwVuw/74kMyRlRNS5az4wIgc9hv9ivYay2hRXxTQJ99MI7SLLhL7zoeqcCxFTipDj8=",
-                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
-              },
-              {
-                "sig": "MEUCIQDpgmkub+/vBEkNrsHL5tgCszFGnyifbe3ZmczISvgwegIgffOOvrBJ+lUFFKhIPUwniISkxkUPZAUCfC1sGWA2sAo=",
-                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
-              }
-            ],
-            "attestations": {
-              "url": "https://registry.npmjs.org/-/npm/v1/attestations/marked@18.2.0",
-              "provenance": {
-                "predicateType": "https://slsa.dev/provenance/v1"
-              }
-            },
-            "unpackedSize": 569026
-          }
-        }
-      },
-      "time": {
-        "18.2.0": "2026-11-09T23:05:41.759Z"
       }
     },
     "mdast-util-directive": {

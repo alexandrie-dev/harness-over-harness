@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 // Only Node built-ins. Executes the authored Rust replay stub, never a model or
 // the programs mentioned in its read-only recordings.
 import { spawn } from 'node:child_process';
@@ -7,7 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export const SOURCE = '/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness/snapshots/sdk';
-export const STUB = process.env.HOH_WINDOW_STUB ?? '/mnt/toshiba/alexandrie/hoh/target-accept-b/debug/hoh-window-stub';
+// The replay stub is built from crates/hoh-window-stub; the first existing build is used (HOH_WINDOW_STUB wins).
+const STUB_CANDIDATES = ['/mnt/toshiba/alexandrie/hoh/target-accept-b/debug/hoh-window-stub', '/mnt/toshiba/alexandrie/hoh/build-lead/debug/hoh-window-stub', '/mnt/toshiba/alexandrie/hoh/headtest-target/debug/hoh-window-stub'];
+export const STUB = process.env.HOH_WINDOW_STUB ?? STUB_CANDIDATES.find(path => existsSync(path)) ?? STUB_CANDIDATES[0];
 export const WORKSPACE = '/workspace/chat';
 export async function recording(name) {
   return (await readFile(join(SOURCE, name, 'session.v4.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));

@@ -4,6 +4,7 @@ import { ChatMarkdown, LinkContext, type LinkActions } from '../../t3/render';
 import { useChatStore } from '../../lib/store';
 import { keyNote } from '../../lib/keyNote';
 import { Icon } from '../shared/icons';
+import { ProviderMark } from '../shared/ProviderMark';
 import { pickFolder } from '../firstrun/engine';
 import type { ChatEntry } from './projection.mjs';
 import { ChatIcon } from './icons';
@@ -64,6 +65,7 @@ export function ChatScreen() {
   const folderLabel = useChatStore(state => state.folderLabel);
   const model = useChatStore(state => state.model);
   const permissions = useChatStore(state => state.permissions);
+  const modelIcon = useChatStore(state => state.modelIcon);
   const notice = useChatStore(state => state.notice);
   const folderPath = useChatStore(state => state.folderPath);
   const draft = useChatStore(state => state.draft);
@@ -111,7 +113,7 @@ export function ChatScreen() {
   }
   const ready = connection === 'ready';
   const state = ready ? busy ? 'работает' : 'готов к работе' : connection === 'recovering' ? 'восстанавливаю связь' : connection === 'error' ? 'нет связи' : 'подключаюсь';
-  const privacyText = privacy === 'local' ? 'Данные на этом компьютере' : privacy === 'remote' ? 'Ответы готовятся на другом компьютере' : 'Проверяю, где обрабатываются данные…';
+  const privacyText = privacy === 'local' ? 'Данные на этом компьютере' : privacy === 'remote' ? 'Ответы готовятся на другом компьютере' : connection === 'error' ? 'Нет связи: не знаю, где обрабатываются данные' : 'Проверяю, где обрабатываются данные…';
   const title = sessions.find(row => row.id === currentId)?.title || 'Новый чат';
   return <LinkContext.Provider value={links}><main className="chat-screen" data-chat-screen data-connection={connection} data-compact={compact ? 'true' : 'false'}>
     <aside className="chat-sidebar" data-chat-sidebar data-open={menuOpen ? 'true' : 'false'} aria-label="Навигация">
@@ -130,7 +132,7 @@ export function ChatScreen() {
           <button type="button" className="chat-row chat-member" data-nav-chat onClick={() => { setSection('chat'); setMenuOpen(false); }}>
             <span className="chat-avatar"><ChatIcon name="star" small /></span>
             <span className="chat-row-label">Помощник</span>
-            <span className="chat-state" data-working={ready && busy ? 'true' : 'false'}>{ready && busy && <Icon name="spinner" small spin />}{state}</span>
+            <span className="chat-state" data-working={ready && busy ? 'true' : 'false'}>{ready && busy && <Icon name="spinner" small spin />}<span className="chat-state-text" title={state}>{state}</span></span>
           </button>
         </section>
         <section className="chat-group chat-group-chats" aria-labelledby="chat-recent-head">
@@ -175,9 +177,9 @@ export function ChatScreen() {
           <textarea id="chat-message-input" className="chat-input" data-chat-input rows={1} value={draft}
             onChange={event => setDraft(event.target.value)} onKeyDown={keyDown} disabled={!ready} placeholder="Напишите, что нужно сделать" />
           <div className="chat-composer-actions">
-            <button className="chat-pick" type="button" data-chat-folder disabled={!ready || busy} onClick={() => void chooseFolder()} title="Выбрать рабочую папку"><Icon name="folder" small /><span>{folderLabel}</span></button>
+            {model && <span className="chat-pick chat-pick-text chat-pick-model" data-chat-model-chip title={model}><ProviderMark icon={modelIcon} /><span data-chat-model>{model}</span></span>}
             {permissions && <span className="chat-pick chat-pick-text" data-chat-permissions><Icon name="shield" small /><span>{permissions}</span></span>}
-            {model && <span className="chat-pick chat-pick-text chat-pick-model" data-chat-model title={model}>{model}</span>}
+            <button className="chat-pick" type="button" data-chat-folder disabled={!ready || busy} onClick={() => void chooseFolder()} title="Выбрать рабочую папку"><Icon name="folder" small /><span>{folderLabel}</span></button>
             {busy
               ? <button className="chat-send" type="submit" data-chat-stop aria-label="Стоп" disabled={canceling}><ChatIcon name="stop" /></button>
               : <button className="chat-send" type="submit" data-chat-send aria-label="Отправить" disabled={!ready || canceling || !draft.trim()}><ChatIcon name="up" /></button>}

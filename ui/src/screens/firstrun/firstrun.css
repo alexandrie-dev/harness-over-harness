@@ -83,3 +83,7 @@
 .fr-advanced { margin-bottom: var(--space-4); font-size: var(--text-md); color: var(--color-muted); }
 .fr-advanced summary { cursor: pointer; }
 .fr-advanced .field { margin-top: var(--space-2); }
+
+/* Поставщик модели, определённый по адресу и имени: значок T3 и понятное имя. */
+.fr-provider { display: flex; align-items: center; gap: var(--space-2); margin: calc(-1 * var(--space-2)) 0 var(--space-4); font-size: var(--text-md); line-height: var(--lh-md); color: var(--color-fg-2); }
+.fr-provider-model { color: var(--color-dim); }

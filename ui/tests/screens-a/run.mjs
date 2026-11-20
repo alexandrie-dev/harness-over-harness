@@ -98,11 +98,29 @@ const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.
   assert.equal(await page.getByLabel('API-ключ').isDisabled(), true, 'для локальной модели ключ не нужен');
   ok('шаг 1: «Дальше» закрыта до проверки, ключ локальной модели отключён');
 
+  // P2: слова о том, куда уходят данные, не противоречат подписи исполнителя
+  const addressHelp = page.locator('.field', { has: page.getByLabel('Адрес') }).locator('.help');
+  assert.match(await addressHelp.innerText(), /данные никуда не уходят/, 'этот компьютер');
+  await page.getByLabel('Адрес').fill('http://10.99.13.1:8000/v1');
+  assert.match(await page.locator('[data-provider-line]').innerText(), /Локальная модель в сети/);
+  assert.doesNotMatch(await addressHelp.innerText(), /никуда не уходят/, 'частная сеть: данные уходят с этого компьютера');
+  assert.match(await addressHelp.innerText(), /в вашей сети/);
+  await page.getByLabel('Адрес').fill('http://localhost:8000/v1');
   // облачный режим: ключ обязателен, уходит только движку и не остаётся в окне
   await page.getByRole('button', { name: 'Облачный сервис' }).click();
   assert.equal(await page.getByLabel('Адрес').inputValue(), 'https://');
   assert.equal(await page.getByLabel('API-ключ').getAttribute('type'), 'password');
   assert.match(await page.locator('[data-key-note]').innerText(), /Ключ хранится в файле на этом компьютере\. Читать его может только ваша учётная запись\./, 'фраза о хранении ключа уже при вводе');
+  const providerLine = page.locator('[data-provider-line]');
+  assert.equal(await providerLine.getAttribute('data-provider'), 'unknown', 'неизвестный адрес — нейтральный значок');
+  await page.getByLabel('Адрес').fill('https://api.openai.com/v1');
+  assert.equal(await providerLine.getAttribute('data-provider'), 'openai');
+  assert.equal(await providerLine.locator('[data-provider-icon]').getAttribute('data-provider-icon'), 'openai');
+  assert.match(await providerLine.innerText(), /OpenAI/);
+  assert.doesNotMatch(await providerLine.innerText(), /local/i, 'имя модели по умолчанию «local» не стоит у облачного сервиса');
+  await page.getByLabel('Адрес').fill('http://192.168.1.9:8000/v1');
+  assert.equal(await providerLine.getAttribute('data-provider'), 'local');
+  assert.match(await providerLine.innerText(), /Локальная модель в сети/);
   await page.getByLabel('Адрес').fill('https://api.example.test/v1');
   await page.getByRole('button', { name: 'Проверить' }).click();
   await page.getByText('Для облачного сервиса нужен API-ключ').waitFor();
