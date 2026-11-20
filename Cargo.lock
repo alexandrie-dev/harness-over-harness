@@ -823,6 +823,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-agent-default-model"
+version = "0.1.0"
+dependencies = [
+ "hoh-agent",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-loader",
+ "hoh-settings",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-agent-instructions"
 version = "0.1.0"
 dependencies = [

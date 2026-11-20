@@ -17,14 +17,14 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/bundle/sdk-app	@deepseek-ai/dsh-sdk-app	hoh-sdk-app	62	100	done	профиль как данные; зависит от: dsh-client-connection=skip, dsh-client-file-upload=skip
 1	port	packages/bundle/sdk-minimal	@deepseek-ai/dsh-sdk-minimal	hoh-sdk-minimal	9	92	writing:x8	профиль как данные
 1	port	packages/compaction/compaction	@deepseek-ai/dsh-compaction	hoh-compaction	504	605	done	
-1	port	packages/compaction/compaction-basic	@deepseek-ai/dsh-compaction-basic	hoh-compaction-basic	1789	4434	writing:x7	
+1	port	packages/compaction/compaction-basic	@deepseek-ai/dsh-compaction-basic	hoh-compaction-basic	1789	4434	writing:x4	
 1	port	packages/compaction/compaction-image-offload	@deepseek-ai/dsh-compaction-image-offload	hoh-compaction-image-offload	197	614	done	
-1	port	packages/compaction/compaction-tool-result-pruner	@deepseek-ai/dsh-compaction-tool-result-pruner	hoh-compaction-tool-result-pruner	303	356	writing:x7	
+1	port	packages/compaction/compaction-tool-result-pruner	@deepseek-ai/dsh-compaction-tool-result-pruner	hoh-compaction-tool-result-pruner	303	356	writing:x4	
 1	port	packages/context/file-reference	@deepseek-ai/dsh-file-reference	hoh-file-reference	112	21	done	
-1	port	packages/context/file-reference-local	@deepseek-ai/dsh-file-reference-local	hoh-file-reference-local	523	541	writing:x8	
+1	port	packages/context/file-reference-local	@deepseek-ai/dsh-file-reference-local	hoh-file-reference-local	523	541	writing:x7	
 1	port	packages/context/time-context	@deepseek-ai/dsh-time-context	hoh-time-context	377	977	done	
 1	port	packages/core/agent	@deepseek-ai/dsh-agent	hoh-agent	1791	1677	done	зависит от: dsh-typert-protocol=skip
-1	port	packages/core/agent-default-model	@deepseek-ai/dsh-agent-default-model	hoh-agent-default-model	98	70	writing:x6	
+1	port	packages/core/agent-default-model	@deepseek-ai/dsh-agent-default-model	hoh-agent-default-model	98	70	done	
 1	port	packages/core/agent-loop	@deepseek-ai/dsh-agent-loop	hoh-agent-loop	2149	15523	done	
 1	port	packages/core/scope	@deepseek-ai/dsh-scope	hoh-scope	471	511	done	
 1	port	packages/core/session	@deepseek-ai/dsh-session	hoh-session	3485	6855	done	
@@ -65,7 +65,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/schedule/tool-schedule	@deepseek-ai/dsh-tool-schedule	hoh-tool-schedule	496	664	done	
 1	port	packages/sdk/protocol	@deepseek-ai/dsh-sdk-protocol	hoh-sdk-protocol	571	310	done	
 1	port	packages/sdk/server	@deepseek-ai/dsh-sdk-jsonrpc-server	hoh-sdk-jsonrpc-server	1049	4674	done	
-1	port	packages/session-query/session-query	@deepseek-ai/dsh-session-query	hoh-session-query	2241	3066	writing:x9	
+1	port	packages/session-query/session-query	@deepseek-ai/dsh-session-query	hoh-session-query	2241	3066	accepted	
 1	port	packages/session/session-checkpoint-policy	@deepseek-ai/dsh-session-checkpoint-policy	hoh-session-checkpoint-policy	83	453	done	
 1	port	packages/session/session-format	@deepseek-ai/dsh-session-format	hoh-session-format	945	758	done	
 1	port	packages/session/session-format-catalog	@deepseek-ai/dsh-session-format-catalog	hoh-session-format-catalog	154	563	done	
