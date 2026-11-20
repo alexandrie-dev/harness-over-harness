@@ -198,9 +198,21 @@ pub fn image_ref_from_value(image: &Value) -> Option<ImageAttachmentRef> {
     })
 }
 
-/// JS `Number.prototype.toFixed(2)` for a positive ratio.
+/// JS `Number.prototype.toFixed(2)` for a positive ratio. `toFixed` rounds an exact tie up;
+/// `format!` rounds it to even (9x9 → 8x8 is 1.125: JS says 1.13, `{:.2}` says 1.12).
 fn fixed2(value: f64) -> String {
-    format!("{value:.2}")
+    let exact = format!("{value:.40}");
+    let Some((whole, fraction)) = exact.split_once('.') else {
+        return format!("{value:.2}");
+    };
+    let tie = fraction.as_bytes()[2] == b'5' && fraction[3..].bytes().all(|b| b == b'0');
+    match (tie, whole.parse::<u64>(), fraction[..2].parse::<u64>()) {
+        (true, Ok(whole), Ok(cents)) => {
+            let total = whole * 100 + cents + 1;
+            format!("{}.{:02}", total / 100, total % 100)
+        }
+        _ => format!("{value:.2}"),
+    }
 }
 
 /// Format an image read as the model-facing envelope beside its image block. A downscaled read

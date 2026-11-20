@@ -280,7 +280,15 @@ async fn persist(
     logger: &hoh_kernel::Logger,
 ) -> bool {
     let mut ok = true;
-    if current.model != saved.model {
+    if current.model != saved.model && address_carries_credentials(&current.model.base_url) {
+        // The address is saved in clear: a secret in it never reaches the disk, whatever route put
+        // it into the live settings (an address from the profile, a caller that skipped the
+        // approval gate). It stays in memory only, and the next change is looked at again.
+        logger.warn(format!(
+            "model settings were not saved to {}: the model address carries credentials",
+            model_path.display()
+        ));
+    } else if current.model != saved.model {
         match save(model_path, &current.model).await {
             Ok(()) => saved.model = current.model.clone(),
             Err(error) => {
@@ -432,5 +440,43 @@ impl Plugin for WindowPrivilegedApprover {
         ctx.provide::<HohPrivilegedApprover>(Arc::new(Bridge(deps.approval)))
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    fn settings(base_url: &str, model: &str) -> PersistedSettings {
+        PersistedSettings {
+            model: serde_json::from_value(serde_json::json!({"baseUrl": base_url, "model": model}))
+                .unwrap(),
+            rules: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_address_with_a_secret_never_reaches_the_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("model-settings.json");
+        let rules_path = dir.path().join("rules.json");
+        let logger = hoh_kernel::Kernel::start().root().logger();
+        let mut saved = settings("http://127.0.0.1:9/v1", "old");
+
+        let mut current = settings(
+            "https://user:sk-live-123@host/v1?api_key=sk-live-123",
+            "new",
+        );
+        assert!(persist(&current, &mut saved, &model_path, &rules_path, &logger).await);
+        assert!(
+            !model_path.exists(),
+            "a credential-bearing address was written"
+        );
+
+        // The same path writes an ordinary address, so the guard is what held the first back.
+        current = settings("http://127.0.0.1:9/v1", "new");
+        assert!(persist(&current, &mut saved, &model_path, &rules_path, &logger).await);
+        let on_disk = std::fs::read_to_string(&model_path).unwrap();
+        assert!(on_disk.contains("127.0.0.1:9") && !on_disk.contains("sk-live"));
     }
 }

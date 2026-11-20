@@ -18,13 +18,16 @@ hoh-sandbox = { path = "../hoh-sandbox" }
 hoh-session = { path = "../hoh-session" }
 hoh-session-projection = { path = "../hoh-session-projection" }
 hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-timeout = { path = "../hoh-timeout" }
 hoh-util-values = { path = "../hoh-util-values" }
 hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+hoh-working-directory = { path = "../hoh-working-directory" }
 indexmap.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true

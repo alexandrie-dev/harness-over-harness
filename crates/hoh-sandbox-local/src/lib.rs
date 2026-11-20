@@ -262,6 +262,20 @@ impl LocalSandboxProvider {
         }
     }
 
+    async fn select_protected_runner(&self) -> Selection {
+        let internals = lock(&self.internals).clone();
+        match Self::probe_runner(LocalRunner::Bwrap, &internals, self.probe_timeout)
+            .await
+            .enforcement()
+        {
+            Some(enforcement) => Selection::Selected(SelectedRunner {
+                runner: LocalRunner::Bwrap,
+                enforcement,
+            }),
+            None => Selection::Unavailable,
+        }
+    }
+
     async fn chain_verdict(internals: SandboxInternals, timeout: Duration) -> Selection {
         let chain = internals.chain.clone().unwrap_or_else(|| {
             let platform = internals
@@ -396,7 +410,18 @@ impl SandboxProvider for LocalSandboxProvider {
                     }],
                 });
             }
-            let selected = self.select_runner().await;
+            let selected = if policy
+                .protected_roots
+                .as_ref()
+                .is_some_and(|roots| !roots.is_empty())
+            {
+                // Landlock is allow-only and cannot safely subtract a mutable same-user path from
+                // a host-wide read grant without a path-open race. Protected roots therefore
+                // require bwrap's mount-namespace mask or fail closed.
+                self.select_protected_runner().await
+            } else {
+                self.select_runner().await
+            };
             check_abort(signal.as_ref())?;
             let Selection::Selected(selected) = selected else {
                 return Err(SandboxUnavailableError::new(policy.mode, None).into());
@@ -405,7 +430,17 @@ impl SandboxProvider for LocalSandboxProvider {
             check_abort(signal.as_ref())?;
             wrapped.push("--".into());
             wrapped.extend_from_slice(argv);
-            let (denial_signatures, runner_failure_rules) = runner_facts(selected.runner);
+            let (mut denial_signatures, runner_failure_rules) = runner_facts(selected.runner);
+            if policy
+                .protected_roots
+                .as_ref()
+                .is_some_and(|roots| !roots.is_empty())
+                && !denial_signatures
+                    .iter()
+                    .any(|value| value == "permission denied")
+            {
+                denial_signatures.push("permission denied".into());
+            }
             Ok(ConfinedArgv {
                 argv: wrapped,
                 enforcement: selected.enforcement,
@@ -429,6 +464,9 @@ async fn default_probe_bwrap(timeout: Duration, executable: PathBuf) -> bool {
         workspace_root: "/".into(),
         additional_writable_roots: None,
         session_id: None,
+        protected_roots: None,
+        unrestricted_writes: false,
+        ready_dir: None,
     };
     let Ok(profile) = bwrap_profile_args(&policy).await else {
         return false;

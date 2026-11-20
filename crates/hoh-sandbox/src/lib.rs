@@ -11,10 +11,15 @@ use hoh_error::{BoxError, HarnessError};
 use hoh_session::SessionId;
 use hoh_timeout::AbortSignal;
 pub use roots::{
-    SandboxInvalidRootError, canonical_path, workspace_writable_roots, writable_roots,
+    SandboxInvalidRootError, canonical_path, canonical_path_checked, workspace_writable_roots,
+    writable_roots,
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt, future::Future, pin::Pin};
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
 
 pub type SandboxFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, BoxError>> + Send + 'a>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -66,6 +71,8 @@ pub struct SandboxExecutionPolicy {
     pub additional_writable_roots: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_roots: Option<Vec<String>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,6 +83,16 @@ pub struct SandboxPolicy {
     pub additional_writable_roots: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protected_roots: Option<Vec<String>>,
+    /// Preserve host-wide writes while enforcing the non-escalatable protected-root mask.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unrestricted_writes: bool,
+    /// A host directory the runner binds read-write at the same path. The confined process creates
+    /// `ready` in it as its first act, after the runner finished its path-based setup: the caller
+    /// learns exactly when the paths it checked stopped mattering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_dir: Option<String>,
 }
 impl From<SandboxPolicy> for SandboxExecutionPolicy {
     fn from(p: SandboxPolicy) -> Self {
@@ -84,6 +101,7 @@ impl From<SandboxPolicy> for SandboxExecutionPolicy {
             workspace_root: p.workspace_root,
             additional_writable_roots: p.additional_writable_roots,
             session_id: p.session_id,
+            protected_roots: p.protected_roots,
         }
     }
 }

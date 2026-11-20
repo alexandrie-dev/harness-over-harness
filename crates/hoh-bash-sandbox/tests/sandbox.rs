@@ -66,6 +66,7 @@ fn execution_policy(mode: SandboxMode, workspace_root: &str) -> SandboxExecution
         workspace_root: workspace_root.to_owned(),
         additional_writable_roots: None,
         session_id: None,
+        protected_roots: None,
     }
 }
 
@@ -862,6 +863,55 @@ mod danger_full_access {
         assert!(s.sandbox.calls().is_empty());
         s.close().await;
     }
+
+    #[tokio::test]
+    async fn protected_engine_storage_remains_confined_after_danger_full_access_approval() {
+        let s = setup(Options {
+            mode: Some("danger-full-access"),
+            protected_roots: vec!["/engine".into()],
+            ..Options::default()
+        })
+        .await;
+        let result = run(
+            &s,
+            s.resolve(with_policy(
+                "echo still-confined",
+                execution_policy(SandboxMode::DangerFullAccess, "/caller-root"),
+            )),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stdout.text, "still-confined\n");
+        assert_eq!(
+            result.sandbox,
+            Some(full(SandboxMode::DangerFullAccess, false))
+        );
+        let calls = s.sandbox.calls();
+        assert_eq!(calls.len(), 1);
+        // The ready directory is per call; everything else is fixed.
+        let mut policy = policy_json(&calls[0].policy);
+        let ready = policy
+            .as_object_mut()
+            .unwrap()
+            .remove("readyDir")
+            .expect("a protected call carries its ready directory");
+        let ready = std::path::Path::new(ready.as_str().unwrap());
+        assert!(
+            !ready.starts_with("/tmp"),
+            "the marker lives outside /tmp: {ready:?}"
+        );
+        assert_eq!(ready.parent().unwrap().file_name().unwrap(), "hoh-ready");
+        assert_eq!(
+            policy,
+            json!({
+                "mode":"workspace-write",
+                "workspaceRoot":"/",
+                "protectedRoots":["/engine"],
+                "unrestrictedWrites":true
+            })
+        );
+        s.close().await;
+    }
 }
 
 mod per_call_sandbox_policy_the_session_and_escalation_carrier {
@@ -1388,3 +1438,308 @@ mod background_sandbox_facts {
 
 #[allow(dead_code)]
 fn unused(_: &SandboxPolicy) {}
+
+mod protected_effect_wait {
+    use super::*;
+
+    /// The holder is a process whose runner never signals readiness (it ignores the command), so it
+    /// keeps the lock for as long as it lives: the situation a waiting call has to be able to leave.
+    async fn protected() -> Setup {
+        setup(Options {
+            mode: Some("workspace-write"),
+            protected_roots: vec!["/engine".into()],
+            behavior: immediate(|_, _| Ok(wrap(strings(&["sh", "-c", "sleep 30"])))),
+            ..Options::default()
+        })
+        .await
+    }
+
+    async fn error_of(
+        pending: impl std::future::Future<Output = Result<Arc<dyn hoh_shell::ShellExecution>, BoxError>>,
+    ) -> BoxError {
+        match pending.await {
+            Ok(_) => panic!("the call must not start"),
+            Err(error) => error,
+        }
+    }
+
+    /// A background process holds the effect lock; a second call cannot sit behind it forever.
+    #[tokio::test]
+    async fn a_call_waiting_for_the_effect_lock_ends_at_its_own_deadline() {
+        let s = protected().await;
+        let holder = start(&s, s.resolve(request("sleep 30"))).await.unwrap();
+        let mut waiting = request("true");
+        waiting.timeout_ms = Some(150.0);
+        let began = std::time::Instant::now();
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            error_of(s.shell.execute(s.resolve(waiting))),
+        )
+        .await
+        .expect("the wait must end at the deadline, not at the holder's exit");
+        assert!(began.elapsed() < Duration::from_secs(5), "{error}");
+        holder.kill();
+        s.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_call_waiting_for_the_effect_lock_ends_when_its_signal_aborts() {
+        let s = protected().await;
+        let holder = start(&s, s.resolve(request("sleep 30"))).await.unwrap();
+        let controller = AbortController::new();
+        let mut waiting = request("true");
+        waiting.signal = Some(controller.signal());
+        let spec = s.resolve(waiting);
+        let pending = s.shell.execute(spec);
+        let abort = async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            controller.abort();
+        };
+        let (error, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(error_of(pending), abort)
+        })
+        .await
+        .expect("an abort must end the wait");
+        assert!(hoh_timeout::is_abort_error(error.as_ref()) || !error.to_string().is_empty());
+        holder.kill();
+        s.close().await;
+    }
+
+    #[tokio::test]
+    async fn an_already_aborted_signal_never_waits_for_the_effect_lock() {
+        let s = protected().await;
+        let holder = start(&s, s.resolve(request("sleep 30"))).await.unwrap();
+        let controller = AbortController::new();
+        controller.abort();
+        let mut waiting = request("true");
+        waiting.signal = Some(controller.signal());
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            error_of(s.shell.execute(s.resolve(waiting))),
+        )
+        .await
+        .expect("a pre-aborted call fails at once");
+        assert!(!error.to_string().is_empty());
+        holder.kill();
+        s.close().await;
+    }
+}
+
+mod protected_effect_second_call {
+    use super::*;
+
+    async fn protected() -> Setup {
+        setup(Options {
+            mode: Some("workspace-write"),
+            protected_roots: vec!["/engine".into()],
+            ..Options::default()
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn two_sequential_calls_both_finish() {
+        let s = protected().await;
+        for word in ["first", "second"] {
+            let result = tokio::time::timeout(
+                Duration::from_secs(10),
+                run(&s, s.resolve(request(&format!("echo {word}")))),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("the {word} call hung"))
+            .unwrap();
+            assert_eq!(result.stdout.text, format!("{word}\n"));
+        }
+        s.close().await;
+    }
+
+    #[tokio::test]
+    async fn two_parallel_calls_both_finish() {
+        let s = protected().await;
+        let (a, b) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                run(&s, s.resolve(request("echo a"))),
+                run(&s, s.resolve(request("echo b")))
+            )
+        })
+        .await
+        .expect("the parallel calls hung");
+        assert_eq!(a.unwrap().stdout.text, "a\n");
+        assert_eq!(b.unwrap().stdout.text, "b\n");
+        s.close().await;
+    }
+
+    /// A call that is only started (never awaited to the end) still gives the lock back once the
+    /// process is done, as the tool layer does for a command it backgrounds.
+    #[tokio::test]
+    async fn a_finished_background_call_releases_the_lock_without_being_awaited() {
+        let s = protected().await;
+        let first = start(&s, s.resolve(request("echo bg"))).await.unwrap();
+        first.done().await;
+        let second = tokio::time::timeout(
+            Duration::from_secs(10),
+            run(&s, s.resolve(request("echo after"))),
+        )
+        .await
+        .expect("the call after a finished background call hung")
+        .unwrap();
+        assert_eq!(second.stdout.text, "after\n");
+        s.close().await;
+    }
+}
+
+mod protected_effect_long_running_holder {
+    use super::*;
+
+    /// The live-model case: a command that outlives its call (a server, a watcher, a long build) must
+    /// not freeze every later tool call behind the protected-effect lock.
+    #[tokio::test]
+    async fn a_second_call_does_not_wait_for_a_long_running_first_one() {
+        let s = setup(Options {
+            mode: Some("workspace-write"),
+            protected_roots: vec!["/engine".into()],
+            ..Options::default()
+        })
+        .await;
+        let holder = start(&s, s.resolve(request("sleep 30"))).await.unwrap();
+        let second = tokio::time::timeout(
+            Duration::from_secs(10),
+            run(&s, s.resolve(request("echo second"))),
+        )
+        .await
+        .expect("the second call hung behind the first call's long-running process")
+        .unwrap();
+        assert_eq!(second.stdout.text, "second\n");
+        holder.kill();
+        s.close().await;
+    }
+
+    /// Two calls that start together while a long process runs both finish.
+    #[tokio::test]
+    async fn two_parallel_calls_finish_behind_a_long_running_one() {
+        let s = setup(Options {
+            mode: Some("workspace-write"),
+            protected_roots: vec!["/engine".into()],
+            ..Options::default()
+        })
+        .await;
+        let holder = start(&s, s.resolve(request("sleep 30"))).await.unwrap();
+        let (a, b) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                run(&s, s.resolve(request("echo a"))),
+                run(&s, s.resolve(request("echo b")))
+            )
+        })
+        .await
+        .expect("the parallel calls hung behind the long-running process");
+        assert_eq!(a.unwrap().stdout.text, "a\n");
+        assert_eq!(b.unwrap().stdout.text, "b\n");
+        holder.kill();
+        s.close().await;
+    }
+}
+
+mod protected_effect_runner_setup {
+    use super::*;
+
+    /// A runner that needs `delay` seconds before it starts the command, as a bwrap setup would.
+    fn slow_runner(delay: &'static str) -> Behavior {
+        immediate(move |argv, _| {
+            let mut wrapped = strings(&[
+                "sh",
+                "-c",
+                &format!("sleep {delay}; exec \"$@\""),
+                "slow-runner",
+            ]);
+            wrapped.extend_from_slice(argv);
+            Ok(wrap(wrapped))
+        })
+    }
+
+    /// A runner that never starts the command's own first line, so no ready signal ever arrives.
+    fn silent_runner() -> Behavior {
+        immediate(|_, _| Ok(wrap(strings(&["sh", "-c", "sleep 1.2"]))))
+    }
+
+    async fn protected(behavior: Behavior) -> Setup {
+        setup(Options {
+            mode: Some("workspace-write"),
+            protected_roots: vec!["/engine".into()],
+            behavior,
+            ..Options::default()
+        })
+        .await
+    }
+
+    /// While the runner is still setting up, the lock is held: no other call can change a path the
+    /// setup is about to use. Once the command signals, the next call goes through at once.
+    #[tokio::test]
+    async fn the_lock_is_held_exactly_until_the_runner_has_finished_its_setup() {
+        let s = protected(slow_runner("0.7")).await;
+        let began = std::time::Instant::now();
+        let holder = start(&s, s.resolve(request("sleep 30"))).await.unwrap();
+        let early = tokio::time::timeout(
+            Duration::from_millis(300),
+            s.shell.execute(s.resolve(request("echo early"))),
+        )
+        .await;
+        assert!(
+            early.is_err(),
+            "a call got the lock during the runner's setup"
+        );
+        let second = tokio::time::timeout(
+            Duration::from_secs(10),
+            run(&s, s.resolve(request("echo second"))),
+        )
+        .await
+        .expect("the call after the setup hung")
+        .unwrap();
+        assert_eq!(second.stdout.text, "second\n");
+        assert!(
+            began.elapsed() >= Duration::from_millis(600),
+            "the second call ran before the setup was over: {:?}",
+            began.elapsed()
+        );
+        holder.kill();
+        s.close().await;
+    }
+
+    /// A runner that never signals keeps the lock until the process ends: no timer lets go.
+    #[tokio::test]
+    async fn a_runner_that_never_signals_keeps_the_lock_until_its_process_ends() {
+        let s = protected(silent_runner()).await;
+        let holder = start(&s, s.resolve(request("echo ignored"))).await.unwrap();
+        let early = tokio::time::timeout(
+            Duration::from_millis(500),
+            s.shell.execute(s.resolve(request("echo early"))),
+        )
+        .await;
+        assert!(early.is_err(), "the lock was released without a signal");
+        holder.done().await;
+        // The process ended: its settlement gives the lock back.
+        let next = tokio::time::timeout(
+            Duration::from_secs(10),
+            s.shell.execute(s.resolve(request("echo next"))),
+        )
+        .await
+        .expect("the lock was not released when the process ended");
+        assert!(next.is_ok());
+        s.close().await;
+    }
+
+    /// The directory the signal goes through is gone once the call is over.
+    #[tokio::test]
+    async fn the_ready_directory_is_removed_after_the_signal() {
+        let s = protected(passthrough_behavior()).await;
+        let first = run(&s, s.resolve(request("echo ready"))).await.unwrap();
+        assert_eq!(first.stdout.text, "ready\n");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let calls = s.sandbox.calls();
+        let dir = calls[0].policy.ready_dir.clone().expect("ready dir");
+        assert!(
+            !std::path::Path::new(&dir).exists(),
+            "{dir} was left behind"
+        );
+        s.close().await;
+    }
+}

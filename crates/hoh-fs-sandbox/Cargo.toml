@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+futures-util.workspace = true
 hoh-error = { path = "../hoh-error" }
 hoh-fs = { path = "../hoh-fs" }
 hoh-fs-local = { path = "../hoh-fs-local" }
@@ -18,6 +19,7 @@ hoh-kernel = { path = "../hoh-kernel" }
 hoh-sandbox = { path = "../hoh-sandbox" }
 hoh-sandbox-policy = { path = "../hoh-sandbox-policy" }
 hoh-timeout = { path = "../hoh-timeout" }
+rustix.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

@@ -37,6 +37,9 @@ async fn bwrap_usable() -> bool {
         workspace_root: "/".into(),
         additional_writable_roots: None,
         session_id: None,
+        protected_roots: None,
+        unrestricted_writes: false,
+        ready_dir: None,
     })
     .await
     .unwrap();
@@ -199,6 +202,7 @@ async fn an_approved_escalated_retry_the_spec_level_workspace_write_override_lan
                 workspace_root: root.clone(),
                 additional_writable_roots: None,
                 session_id: None,
+                protected_roots: None,
             }),
             ..request(&command)
         }))
@@ -210,5 +214,41 @@ async fn an_approved_escalated_retry_the_spec_level_workspace_write_override_lan
         fs::read_to_string(workdir.path().join("escalated.txt")).unwrap(),
         "escalated"
     );
+    bash.close().await;
+}
+
+#[tokio::test]
+async fn a_protected_command_that_outlives_its_call_does_not_hold_the_effect_lock() {
+    if !bwrap_usable().await {
+        return;
+    }
+    let workdir = temp_dir(&home());
+    let engine = temp_dir(&home());
+    let root = text(workdir.path());
+    let bash = sandboxed_bash(&root, "workspace-write").await;
+    let protected = |command: &str| ShellExecRequest {
+        sandbox_policy: Some(SandboxExecutionPolicy {
+            mode: SandboxMode::WorkspaceWrite,
+            workspace_root: root.clone(),
+            additional_writable_roots: None,
+            session_id: None,
+            protected_roots: Some(vec![text(engine.path())]),
+        }),
+        ..request(command)
+    };
+    let background = bash
+        .start(bash.resolve(protected("sleep 30")))
+        .await
+        .unwrap();
+    let second = tokio::time::timeout(
+        Duration::from_secs(10),
+        bash.run(bash.resolve(protected("printf second"))),
+    )
+    .await
+    .expect("the second protected call is not held behind the running one")
+    .unwrap();
+    assert_eq!(second.exit_code, Some(0));
+    background.kill();
+    background.done().await;
     bash.close().await;
 }

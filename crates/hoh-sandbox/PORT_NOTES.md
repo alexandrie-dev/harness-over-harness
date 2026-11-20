@@ -22,6 +22,10 @@
 - `is_runner_spawn_failure` принимает `&serde_json::Value`: это представление исходных неизвестных полей code/path/syscall. Отсутствующее поле соответствует undefined; неструктурированный null не совпадает. Сам Error вызывающий не сериализует автоматически: передаёт его факты. Синтетическое значение undefined целиком не представимо отдельно от null.
 - Закрытые строки — enums; ошибки-наследники HarnessError возвращают непосредственно общий `HarnessError` с исходными name/code/message. У preparation error причина задаётся `with_cause`.
 - Дополнительные публичные Rust-имена: `Sandbox` (ключ), `SandboxFuture`, `RunnerFailureMatch` (именованный результат), `EscalationAsk` (анонимный аргумент request), методы as_str/Display/преобразования enum. `EscalationAsk` всегда содержит display_reason, поскольку approveEscalation всегда его передаёт; generic A/C сохраняют структурную независимость approval. Модули открыты как пары исходных src-путей.
+- Оконное HoH-расширение относительно dsh добавляет сериализуемые поля `protectedRoots` в
+  `SandboxExecutionPolicy`/`SandboxPolicy` и `unrestrictedWrites` в provider-facing
+  `SandboxPolicy`: первое несёт неэскалируемые deployment-owned пути, второе сохраняет
+  host-wide запись approved `danger-full-access`, пока provider маскирует protected paths.
 - Некорректный EscalationOutcome невозможно вернуть из trait: защитный исходный тест `bogus as never` проверяет отказ serde при разборе неизвестного варианта, а не исполняет недостижимый match.
 - Таблицы it.each представлены циклами. Подмена realpathSync в одном исходном roots-тесте заменена unit-инъекцией EACCES в тот же обработчик inspection_error. Все остальные файловые проверки используют временные каталоги; системный `/tmp` только канонизируется.
 - Проверено употребление экспортов другими переносимыми пакетами: sandbox-local, sandbox-policy, bash/pwsh-sandbox, fs-sandbox, shell/tool-*, PTC/SSH/terminal/permission-presets. Внешних production-импортов нет у SANDBOX_UNAVAILABLE, SANDBOX_PREPARATION_ERROR_CODES, SandboxPreparationErrorCode, SANDBOX_ESCALATION_ERROR_CODES, SandboxEscalationError, SandboxEscalationErrorCode, WIDER_MODES, EscalationApprover, EscalationApproval, EscalationOutcome, EscalationRequest; они сохранены. `locales::{en,zh,ja,es,fr,de,ru,pt}` и escalation_display_reason также не импортируются извне. Исходные объекты словарей en.escalation и т. п. представлены одноимёнными функциями-рендерерами, поскольку каждый объект имеет только эту функцию.
@@ -42,3 +46,15 @@
 - После переполнения диска проверены целостность файлов, JSON/TOML и окончания файлов; повреждений не обнаружено. `cargo fmt -p hoh-sandbox -p hoh-fs -p hoh-fs-local -- --check`: exit 0.
 - `cargo clippy -p hoh-sandbox -p hoh-fs -p hoh-fs-local --all-targets -- -D warnings`: exit 0; `Finished dev profile [unoptimized + debuginfo] target(s) in 8m 41s`. После ENOSPC запуск повторён, замечание items_after_test_module исправлено переносом модуля в конец roots.rs без изменения поведения.
 - Заключительный `cargo fmt -p hoh-sandbox -p hoh-fs -p hoh-fs-local -- --check` после lint-правок: exit 0.
+
+## canonical_path (круг исправлений credguard)
+
+- `canonical_path` повторяет образец (`roots.ts:62-73`): родной realpath, а при отказе — исходная запись как
+  есть. Несуществующий корень за симлинком не приводится к физическому пути и не совпадает ни с чем, пока не
+  появится. Ранее он разворачивал существующий префикс, что расходилось с образцом для `writableRoots`.
+- Физический префикс нужен только защите: `canonical_path_checked` разворачивает существующий префикс, чтобы
+  защищённый путь, которого ещё нет, нельзя было создать через симлинк. Эта функция сохранена как есть.
+
+## ready_dir (credguard, круг 5)
+
+- `SandboxPolicy.ready_dir: Option<String>` — каталог маркера готовности для исполнителя оболочки. Только `hoh-sandbox-local` (bwrap) монтирует его на запись `--bind d d` после корней рабочей области и перед защищёнными путями. Образца нет: расширение для замка `protected_effect` (см. PORT_NOTES `hoh-bash-sandbox`).

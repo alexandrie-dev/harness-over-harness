@@ -26,6 +26,9 @@ fn policy(mode: ConfinedSandboxMode, root: impl AsRef<Path>) -> SandboxPolicy {
         workspace_root: root.as_ref().to_string_lossy().into_owned(),
         additional_writable_roots: None,
         session_id: None,
+        protected_roots: None,
+        unrestricted_writes: false,
+        ready_dir: None,
     }
 }
 
@@ -117,6 +120,34 @@ async fn bwrap_workspace_write_adds_ephemeral_tmp_and_workspace_bind() {
 }
 
 #[tokio::test]
+async fn bwrap_binds_the_ready_directory_writable_after_the_workspace_roots() {
+    let mut policy = ww();
+    policy.ready_dir = Some("/ready".into());
+    assert_eq!(
+        bwrap_profile_args(&policy).await.unwrap(),
+        [
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--unshare-pid",
+            "--proc",
+            "/proc",
+            "--die-with-parent",
+            "--tmpfs",
+            "/tmp",
+            "--bind",
+            "/ws",
+            "/ws",
+            "--bind",
+            "/ready",
+            "/ready",
+        ]
+    );
+}
+
+#[tokio::test]
 async fn landlock_profiles_keep_grant_order_and_dev_null_scope() {
     assert_eq!(
         landlock_profile_args(&ro()).await.unwrap(),
@@ -176,6 +207,89 @@ async fn explicit_roots_follow_workspace_and_are_deduplicated() {
 }
 
 #[tokio::test]
+async fn protected_roots_are_masked_by_bwrap_and_rejected_by_landlock() {
+    let base = TempDir::new().unwrap();
+    let workspace = base.path().join("workspace");
+    let engine = base.path().join("engine");
+    fs::create_dir(&workspace).unwrap();
+    fs::create_dir(&engine).unwrap();
+    let workspace = fs::canonicalize(workspace).unwrap();
+    let engine = fs::canonicalize(engine).unwrap();
+    let mut policy = policy(ConfinedSandboxMode::WorkspaceWrite, &workspace);
+    policy.protected_roots = Some(vec![engine.to_string_lossy().into_owned()]);
+
+    let bwrap = bwrap_profile_args(&policy).await.unwrap();
+    assert_eq!(
+        &bwrap[bwrap.len() - 5..],
+        [
+            "--tmpfs",
+            engine.to_str().unwrap(),
+            "--chmod",
+            "000",
+            engine.to_str().unwrap(),
+        ]
+    );
+
+    assert!(
+        landlock_profile_args(&policy)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("require the race-free bwrap backend")
+    );
+}
+
+#[tokio::test]
+async fn a_missing_protected_root_fails_closed_without_masking_its_existing_parent() {
+    let base = TempDir::new().unwrap();
+    let engine = base.path().join("not-created/engine");
+    let workspace = base.path().join("work");
+    fs::create_dir_all(&workspace).unwrap();
+    let mut policy = policy(ConfinedSandboxMode::WorkspaceWrite, &workspace);
+    policy.protected_roots = Some(vec![engine.to_string_lossy().into_owned()]);
+    let error = bwrap_profile_args(&policy)
+        .await
+        .expect_err("a missing protected mountpoint must not broaden to the common parent");
+    let message = error.to_string();
+    assert!(
+        message.contains("protected path does not exist"),
+        "{message}"
+    );
+    assert!(message.contains("refusing to broaden"), "{message}");
+    assert!(workspace.is_dir());
+    assert!(!engine.exists());
+}
+
+#[tokio::test]
+async fn a_protected_policy_never_falls_back_to_landlock() {
+    let provider = provider_with(internals(|| false, |_| ProbeVerdict::Full));
+    let mut policy = ww();
+    policy.protected_roots = Some(vec!["/engine".into()]);
+    let error = provider
+        .confine(&["true".into()], policy, None)
+        .await
+        .expect_err("protected policy must fail closed without bwrap");
+    assert!(error.to_string().contains("no sandbox backend is usable"));
+}
+
+#[tokio::test]
+async fn unrestricted_bwrap_keeps_host_tmp_and_masks_only_protected_roots() {
+    let engine = TempDir::new().unwrap();
+    let engine = fs::canonicalize(engine.path()).unwrap();
+    let mut policy = ww();
+    policy.workspace_root = "/".into();
+    policy.unrestricted_writes = true;
+    policy.protected_roots = Some(vec![engine.to_string_lossy().into_owned()]);
+    let args = bwrap_profile_args(&policy).await.unwrap();
+    assert_eq!(&args[..3], ["--bind", "/", "/"]);
+    assert!(!args.windows(2).any(|pair| pair == ["--tmpfs", "/tmp"]));
+    assert!(
+        args.windows(2)
+            .any(|pair| { pair == ["--tmpfs", engine.to_str().unwrap()] })
+    );
+}
+
+#[tokio::test]
 async fn read_only_ignores_even_invalid_additional_roots() {
     let mut policy = ro();
     policy.additional_writable_roots = Some(vec!["/definitely/missing/root".into()]);
@@ -231,11 +345,14 @@ async fn configured_runner_skips_selection_and_uses_bwrap_profile() {
         confined.runner_failure_rules[0].fatal_signatures,
         ["fake-runner: profile rejected"]
     );
-    assert_eq!(&confined.argv[..2], ["fake-runner", "--flag"]);
-    assert_eq!(
-        &confined.argv[confined.argv.len() - 4..],
-        ["--", "bash", "-c", "echo hi"]
-    );
+    let mut expected = vec!["fake-runner".to_owned(), "--flag".to_owned()];
+    expected.extend(bwrap_profile_args(&ww()).await.unwrap());
+    expected.extend(["--", "bash", "-c", "echo hi"].map(String::from));
+    assert_eq!(confined.argv, expected);
+    let rule = &confined.runner_failure_rules[0];
+    assert_eq!(rule.allowed_exit_codes, None);
+    assert_eq!(rule.informational_lines, None);
+    assert_eq!(confined.runner_failure_rules.len(), 1);
 }
 
 #[test]
@@ -320,13 +437,17 @@ async fn linux_prefers_bwrap_and_does_not_probe_landlock() {
         .confine(&["true".into()], ro(), None)
         .await
         .unwrap();
-    assert_eq!(confined.argv[0], "bwrap");
+    let mut expected = vec!["bwrap".to_owned()];
+    expected.extend(bwrap_profile_args(&ro()).await.unwrap());
+    expected.extend(["--", "true"].map(String::from));
+    assert_eq!(confined.argv, expected);
     assert_eq!(confined.enforcement, SandboxEnforcement::Full);
     assert_eq!(confined.denial_signatures, ["read-only file system"]);
-    assert_eq!(
-        confined.runner_failure_rules[0].fatal_signatures,
-        ["bwrap: "]
-    );
+    assert_eq!(confined.runner_failure_rules.len(), 1);
+    let rule = &confined.runner_failure_rules[0];
+    assert_eq!(rule.fatal_signatures, ["bwrap: "]);
+    assert_eq!(rule.allowed_exit_codes, None);
+    assert_eq!(rule.informational_lines, None);
 }
 
 #[tokio::test]
@@ -352,7 +473,11 @@ async fn linux_falls_back_to_landlock_and_keeps_full_or_partial_probe_fact() {
             seen_launcher.lock().unwrap().as_deref(),
             Some(Path::new("/fake/landlock-run"))
         );
-        assert_eq!(confined.argv[0], "/fake/landlock-run");
+        let mut expected = vec!["/fake/landlock-run".to_owned()];
+        expected.extend(landlock_profile_args(&ww()).await.unwrap());
+        expected.extend(["--", "bash", "-c", "echo hi"].map(String::from));
+        assert_eq!(confined.argv, expected);
+        assert_eq!(confined.runner_failure_rules.len(), 1);
         assert_eq!(confined.enforcement, enforcement);
         assert_eq!(confined.denial_signatures, ["permission denied"]);
         let rule = &confined.runner_failure_rules[0];

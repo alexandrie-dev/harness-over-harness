@@ -5,6 +5,7 @@ fn policy(root: &str, extra: Option<Vec<String>>, mode: SandboxMode) -> SandboxE
         workspace_root: root.into(),
         additional_writable_roots: extra,
         session_id: None,
+        protected_roots: None,
     }
 }
 #[tokio::test]
@@ -29,6 +30,29 @@ async fn returns_the_spelling_as_is_when_the_path_cannot_be_resolved() {
     assert_eq!(
         canonical_path(p.to_str().unwrap()).await,
         p.to_str().unwrap()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resolves_a_symlinked_existing_ancestor_of_a_missing_protected_suffix() {
+    let d = tempfile::tempdir().unwrap();
+    let physical = d.path().join("physical");
+    tokio::fs::create_dir(&physical).await.unwrap();
+    let alias = d.path().join("alias");
+    tokio::fs::symlink(&physical, &alias).await.unwrap();
+    let missing = alias.join("future/nested/.env");
+    assert_eq!(
+        canonical_path_checked(missing.to_str().unwrap())
+            .await
+            .unwrap(),
+        physical.join("future/nested/.env").to_string_lossy()
+    );
+    assert_eq!(
+        canonical_path_checked(alias.join("future/../.env").to_str().unwrap())
+            .await
+            .unwrap(),
+        physical.join(".env").to_string_lossy()
     );
 }
 #[tokio::test]
@@ -167,5 +191,21 @@ async fn workspace_write_includes_an_explicit_extra_directory_beside_the_temp_ar
         .await
         .unwrap()
         .contains(&extra.to_str().unwrap().to_owned())
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn keeps_the_alias_spelling_of_a_missing_path_behind_a_symlinked_prefix() {
+    let d = tempfile::tempdir().unwrap();
+    let physical = d.path().join("physical");
+    tokio::fs::create_dir(&physical).await.unwrap();
+    let alias = d.path().join("alias");
+    tokio::fs::symlink(&physical, &alias).await.unwrap();
+    let missing = alias.join("future/x");
+    // Source `roots.ts:62-73`: realpath fails, so the spelling comes back unchanged.
+    assert_eq!(
+        canonical_path(missing.to_str().unwrap()).await,
+        missing.to_str().unwrap()
     );
 }

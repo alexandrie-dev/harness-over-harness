@@ -1511,6 +1511,37 @@ mod image_admission_failures {
     }
 }
 
+mod tie_rounding {
+    use super::*;
+
+    fn advice(from: (u64, u64), to: (u64, u64)) -> String {
+        format_image_read_output(
+            "/img/photo.png",
+            &ImageAttachmentRef {
+                attachment_id: AttachmentId::from("sha256:feed"),
+                media_type: ImageMediaType::Png,
+                bytes: 9,
+                width: to.0,
+                height: to.1,
+                name: None,
+                original_dimensions: Some(ProjectedDimensions {
+                    width: from.0,
+                    height: from.1,
+                }),
+            },
+        )
+    }
+
+    /// `toFixed(2)` rounds an exact tie up: 9/8 = 1.125 is 1.13, not the even 1.12.
+    #[test]
+    fn rounds_an_exact_binary_tie_up_like_to_fixed() {
+        assert!(advice((9, 9), (8, 8)).contains("multiply coordinates by 1.13 "));
+        assert!(advice((2250, 1125), (2000, 1000)).contains("multiply coordinates by 1.13 "));
+        // Not a tie: unchanged.
+        assert!(advice((4, 2), (2, 1)).contains("by 2.00 "));
+    }
+}
+
 mod registration_surface {
     use super::*;
 

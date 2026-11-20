@@ -460,6 +460,25 @@ impl OutputQueue {
         self.ready.notify_waiters();
     }
 
+    /// Wait until the frames still queued plus the requests being answered leave room in the
+    /// queue for the answers the next requests will add. The reader stops taking input meanwhile,
+    /// so a burst of requests waits in the input pipe (as with a slow stdout consumer in the
+    /// source) instead of overflowing the bounded output queue and losing answers.
+    async fn wait_room(&self, in_flight: &watch::Sender<usize>) {
+        let mut count = in_flight.subscribe();
+        loop {
+            let notified = self.ready.notified();
+            {
+                let state = lock(&self.state);
+                let busy = state.frames + *count.borrow_and_update();
+                if !state.accepting || state.failure.is_some() || busy < self.limits.frames / 2 {
+                    return;
+                }
+            }
+            tokio::select! { () = notified => {}, _ = count.changed() => {} }
+        }
+    }
+
     fn finish(&self) {
         let mut state = lock(&self.state);
         state.accepting = false;
@@ -582,7 +601,10 @@ impl JsonRpcLineTransport {
             loop {
                 line.clear();
                 let stopped = reader.inner.reader_shutdown.signal();
-                let read = tokio::select! { biased; _ = token.cancelled() => break, _ = stopped.cancelled() => break, read = input.read_until(b'\n', &mut line) => read };
+                let read = tokio::select! { biased; _ = token.cancelled() => break, _ = stopped.cancelled() => break, read = async {
+                    reader.inner.output.wait_room(&reader.inner.in_flight).await;
+                    input.read_until(b'\n', &mut line).await
+                } => read };
                 match read {
                     Err(e) => { reader.fail(SharedError::new(e)); break; }
                     Ok(0) => { reader.fail(SharedError::new(error("JSON-RPC input closed"))); break; }

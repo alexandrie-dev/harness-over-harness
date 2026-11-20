@@ -82,7 +82,7 @@ impl Plugin for SandboxBashExecutor {
 /// diagnostic dialect between overlapping calls, so a shared latest-wrap value would classify a
 /// process against the wrong facts; each call owns its own. Unconfined processes have none.
 struct ProcessFacts {
-    mode: ConfinedSandboxMode,
+    mode: SandboxMode,
     enforcement: SandboxEnforcement,
     denial_signatures: Vec<String>,
     runner_failure_rules: Vec<RunnerFailureRule>,
@@ -178,6 +178,132 @@ fn spawn_error_facts(error: Option<&SharedError>) -> Value {
     Value::Null
 }
 
+/// The process's own signal that its runner finished the path-based setup: the confined command's
+/// first act is to create `ready` in a directory the runner binds into the sandbox. Until then the
+/// protected-effect lock stays held, so no other tool call can swap a checked path under the
+/// setup; after it the lock goes back at once instead of waiting for the process to end, which a
+/// long or backgrounded command may never do. A runner that never signals keeps the lock until the
+/// process ends (fail closed): no timer ever releases it.
+struct ReadyMarker {
+    dir: std::path::PathBuf,
+}
+
+/// The per-user directory under which every call gets its own private subdirectory: the runtime
+/// directory, else the state directory, else (last resort) a per-user directory in the temporary
+/// one. Never a shared, predictable place: callers verify owner and mode before using it.
+fn ready_base() -> std::path::PathBuf {
+    let absolute = |name: &str| {
+        std::env::var_os(name)
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    if let Some(runtime) = absolute("XDG_RUNTIME_DIR") {
+        return runtime.join("hoh-ready");
+    }
+    if let Some(state) = absolute("XDG_STATE_HOME") {
+        return state.join("hoh").join("ready");
+    }
+    if let Some(home) = absolute("HOME") {
+        return home.join(".local").join("state").join("hoh").join("ready");
+    }
+    std::env::temp_dir().join(format!("hoh-ready-{}", rustix::process::geteuid().as_raw()))
+}
+
+/// `path` is a real directory (not a link) owned by this user that nobody else can enter.
+fn require_private_dir(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("{} is not a private directory of this user", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+/// 128 random bits as hex, from the system generator.
+fn random_name() -> std::io::Result<String> {
+    use std::io::Read;
+    let mut bytes = [0u8; 16];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// `text` as one shell word in single quotes.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+impl ReadyMarker {
+    fn create() -> std::io::Result<Self> {
+        Self::create_in(&ready_base())
+    }
+
+    fn create_in(base: &std::path::Path) -> std::io::Result<Self> {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(base)?;
+        // The directory is bind-mounted by path: a spelling through a symlink (a `HOME` or state
+        // directory reached by a link) cannot be created inside the sandbox, so use the real path.
+        let base = std::fs::canonicalize(base)?;
+        require_private_dir(&base)?;
+        let dir = base.join(random_name()?);
+        std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+        require_private_dir(&dir)?;
+        Ok(Self { dir })
+    }
+
+    fn dir_text(&self) -> String {
+        self.dir.to_string_lossy().into_owned()
+    }
+
+    /// `command` preceded by the signal. Same first line, so `bash: line 1:` reports stay as they were.
+    fn wrap(&self, command: &str) -> String {
+        let flag = self.dir.join("ready");
+        format!(
+            ": > {} 2>/dev/null; {command}",
+            shell_quote(&flag.to_string_lossy())
+        )
+    }
+
+    /// The signal is a regular file of this user; anything else in its place is not the command's.
+    fn signalled(dir: &std::path::Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::symlink_metadata(dir.join("ready")).is_ok_and(|metadata| {
+            metadata.is_file() && metadata.uid() == rustix::process::geteuid().as_raw()
+        })
+    }
+
+    /// Give the lock back when the signal appears, or drop the directory when the process ended
+    /// first (its own settlement then released the lock).
+    fn release_on_signal(self, guard: Arc<Mutex<Option<tokio::sync::OwnedMutexGuard<()>>>>) {
+        tokio::spawn(async move {
+            loop {
+                if lock(&guard).is_none() {
+                    break;
+                }
+                if Self::signalled(&self.dir) {
+                    lock(&guard).take();
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        });
+    }
+}
+
+impl Drop for ReadyMarker {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 impl ShellExecutor for SandboxBashExecutor {
     /// The configured default mode — the capability fact the tool layer reads.
     fn sandbox_mode(&self) -> Option<SandboxMode> {
@@ -199,16 +325,37 @@ impl ShellExecutor for SandboxBashExecutor {
 
     fn execute(&self, spec: ShellExecSpec) -> ShellFuture<'_, Arc<dyn ShellExecution>> {
         Box::pin(async move {
-            let policy: SandboxExecutionPolicy = match spec.sandbox_policy.clone() {
+            let mut policy: SandboxExecutionPolicy = match spec.sandbox_policy.clone() {
                 Some(policy) => policy,
                 None => self.policy.resolve(SandboxPolicyRequest::default())?,
             };
+            policy.protected_roots = (!self.policy.protected_roots().is_empty())
+                .then(|| self.policy.protected_roots().to_vec());
+            // Waiting for another model effect is part of this call: its signal and deadline end
+            // the wait, and an already-cancelled call never queues.
+            let protected_guard = Arc::new(Mutex::new(
+                self.policy
+                    .lock_protected_effect_within(spec.signal.as_ref(), Some(spec.timeout_ms))
+                    .await?,
+            ));
+            self.policy.validate_protected_root_identities().await?;
             let mode = policy.mode;
-            let Some(confined_mode) = confined_mode(mode) else {
+            let protected = policy
+                .protected_roots
+                .as_ref()
+                .is_some_and(|roots| !roots.is_empty());
+            let confined_mode = confined_mode(mode).or_else(|| {
+                // Deployment-protected roots are non-escalatable. Represent otherwise-unlimited
+                // writes as workspace-write rooted at `/`; sandbox-local then subtracts its
+                // matching protectedRoots before the command starts.
+                protected.then_some(ConfinedSandboxMode::WorkspaceWrite)
+            });
+            let Some(confined_mode) = confined_mode else {
                 let process = self.local.execute_spec(spec).await?;
                 return Ok(Arc::new(SandboxExecution::new(
                     process,
                     Decorate::Unconfined { mode },
+                    protected_guard,
                 )) as Arc<dyn ShellExecution>);
             };
             let confined: Arc<Mutex<Option<ConfinedArgv>>> = Arc::default();
@@ -220,13 +367,30 @@ impl ShellExecutor for SandboxBashExecutor {
                 signal: spec.signal.clone(),
                 workdir: spec.workdir.clone(),
             };
+            let ready = if protected {
+                Some(ReadyMarker::create()?)
+            } else {
+                None
+            };
             let sandbox = self.sandbox.clone();
-            let command = spec.command.clone();
+            let command = match &ready {
+                Some(ready) => ready.wrap(&spec.command),
+                None => spec.command.clone(),
+            };
             let sandbox_policy = SandboxPolicy {
                 mode: confined_mode,
-                workspace_root: policy.workspace_root.clone(),
-                additional_writable_roots: policy.additional_writable_roots.clone(),
+                workspace_root: if mode == SandboxMode::DangerFullAccess && protected {
+                    "/".into()
+                } else {
+                    policy.workspace_root.clone()
+                },
+                additional_writable_roots: (mode != SandboxMode::DangerFullAccess)
+                    .then(|| policy.additional_writable_roots.clone())
+                    .flatten(),
                 session_id: policy.session_id.clone(),
+                protected_roots: policy.protected_roots.clone(),
+                unrestricted_writes: mode == SandboxMode::DangerFullAccess,
+                ready_dir: ready.as_ref().map(ReadyMarker::dir_text),
             };
             let prepared_into = confined.clone();
             let prepare: hoh_bash_local::PrepareArgv = Box::new(move |signal| {
@@ -245,13 +409,14 @@ impl ShellExecutor for SandboxBashExecutor {
             let started_confined = confined.clone();
             let started_facts = facts.clone();
             let done_facts = facts.clone();
+            let done_guard = protected_guard.clone();
             let hooks = ExecuteHooks {
                 on_started: Some(Box::new(move |_process: &BashExecution| {
                     let prepared = lock(&started_confined)
                         .clone()
                         .expect("on_started runs only after confinement completed");
                     *lock(&started_facts) = Some(ProcessFacts {
-                        mode: confined_mode,
+                        mode,
                         enforcement: prepared.enforcement,
                         denial_signatures: prepared.denial_signatures.clone(),
                         runner_failure_rules: prepared.runner_failure_rules.clone(),
@@ -262,6 +427,7 @@ impl ShellExecutor for SandboxBashExecutor {
                 on_process_done: Some(Arc::new(
                     move |process, stderr, provider_rejected, error| {
                         stamp_sandbox(&done_facts, process, stderr, provider_rejected, error);
+                        lock(&done_guard).take();
                     },
                 )),
             };
@@ -269,7 +435,13 @@ impl ShellExecutor for SandboxBashExecutor {
                 .local
                 .execute_argv(spec, ArgvSource::Prepare(prepare), hooks)
                 .await?;
-            Ok(Arc::new(SandboxExecution::new(process, decorate)) as Arc<dyn ShellExecution>)
+            if let Some(ready) = ready {
+                ready.release_on_signal(protected_guard.clone());
+            }
+            Ok(
+                Arc::new(SandboxExecution::new(process, decorate, protected_guard))
+                    as Arc<dyn ShellExecution>,
+            )
         })
     }
 }
@@ -300,7 +472,7 @@ fn stamp_sandbox(
         classify_runner_failure(exit_code, stderr, &facts.runner_failure_rules).is_some()
     };
     process.set_sandbox(Some(ShellSandboxInfo {
-        mode: facts.mode.into(),
+        mode: facts.mode,
         denied: !runner_failed && matches_signature(exit_code, stderr, &facts.denial_signatures),
         enforcement: Some(facts.enforcement),
         runner_failed: runner_failed.then_some(true),
@@ -329,14 +501,20 @@ struct SandboxExecution {
     process: BashExecution,
     decorate: Arc<Decorate>,
     projection: Mutex<Option<Projection>>,
+    _protected_guard: Arc<Mutex<Option<tokio::sync::OwnedMutexGuard<()>>>>,
 }
 
 impl SandboxExecution {
-    fn new(process: BashExecution, decorate: Decorate) -> Self {
+    fn new(
+        process: BashExecution,
+        decorate: Decorate,
+        protected_guard: Arc<Mutex<Option<tokio::sync::OwnedMutexGuard<()>>>>,
+    ) -> Self {
         Self {
             process,
             decorate: Arc::new(decorate),
             projection: Mutex::new(None),
+            _protected_guard: protected_guard,
         }
     }
 }
@@ -481,5 +659,99 @@ impl Decorate {
             ));
         }
         error
+    }
+}
+
+#[cfg(test)]
+mod ready_marker_tests {
+    use super::*;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    fn base() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_directory_name_is_random_and_the_directory_private() {
+        let base = base();
+        let a = ReadyMarker::create_in(base.path()).unwrap();
+        let b = ReadyMarker::create_in(base.path()).unwrap();
+        let name = |m: &ReadyMarker| m.dir.file_name().unwrap().to_string_lossy().into_owned();
+        assert_ne!(name(&a), name(&b));
+        assert_eq!(name(&a).len(), 32);
+        assert!(name(&a).bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert!(!name(&a).contains(&std::process::id().to_string()));
+        assert_eq!(
+            std::fs::metadata(&a.dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn the_default_base_is_not_a_shared_temporary_directory() {
+        let base = ready_base();
+        assert!(base.is_absolute());
+        // Only the last-resort branch lives under the temporary directory, and it is per user.
+        if base.starts_with(std::env::temp_dir()) {
+            assert!(base.to_string_lossy().contains("hoh-ready-"));
+        }
+    }
+
+    #[test]
+    fn a_base_other_users_can_enter_is_refused() {
+        let base = base();
+        std::fs::set_permissions(base.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let error = ReadyMarker::create_in(base.path()).err().expect("refused");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn a_forged_marker_that_is_not_a_regular_file_does_not_signal() {
+        let base = base();
+        let marker = ReadyMarker::create_in(base.path()).unwrap();
+        assert!(!ReadyMarker::signalled(&marker.dir));
+        symlink("/dev/null", marker.dir.join("ready")).unwrap();
+        assert!(!ReadyMarker::signalled(&marker.dir));
+        std::fs::remove_file(marker.dir.join("ready")).unwrap();
+        std::fs::create_dir(marker.dir.join("ready")).unwrap();
+        assert!(!ReadyMarker::signalled(&marker.dir));
+        std::fs::remove_dir(marker.dir.join("ready")).unwrap();
+        std::fs::write(marker.dir.join("ready"), "").unwrap();
+        assert!(ReadyMarker::signalled(&marker.dir));
+    }
+
+    /// A state directory reached through a symlink gives a marker directory at its real path, the
+    /// spelling a sandbox runner can mount.
+    #[test]
+    fn a_base_reached_through_a_symlink_yields_a_real_path() {
+        let outer = base();
+        let real = outer.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let link = outer.path().join("link");
+        symlink(&real, &link).unwrap();
+        let marker = ReadyMarker::create_in(&link).unwrap();
+        assert_eq!(
+            marker.dir.parent().unwrap(),
+            std::fs::canonicalize(&real).unwrap()
+        );
+    }
+
+    /// A base directory whose path holds a single quote must not break the wrapped command.
+    #[test]
+    fn a_quote_in_the_base_path_leaves_the_command_intact() {
+        let outer = base();
+        let quoted = outer.path().join("it's a 'dir'");
+        let marker = ReadyMarker::create_in(&quoted).unwrap();
+        let wrapped = marker.wrap("printf 'out:%s' \"$((1+1))\"");
+        let output = std::process::Command::new("bash")
+            .args(["-c", &wrapped])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "out:2");
+        assert!(ReadyMarker::signalled(&marker.dir));
     }
 }

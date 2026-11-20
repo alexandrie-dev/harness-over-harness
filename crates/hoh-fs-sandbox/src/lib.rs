@@ -2,8 +2,13 @@
 
 pub mod containment;
 
-use std::sync::Arc;
+use std::{
+    os::fd::{AsFd, AsRawFd, OwnedFd},
+    path::Path,
+    sync::Arc,
+};
 
+use futures_util::StreamExt;
 use hoh_error::BoxError;
 use hoh_fs::{
     FileSystem, Fs, FsByteRange, FsChanged, FsDeleteOutcome, FsDirEntry, FsEditOutcome,
@@ -21,56 +26,363 @@ use hoh_timeout::AbortSignal;
 
 use crate::containment::is_path_under;
 
+struct AnchoredTarget {
+    target: FsTarget,
+    physical: String,
+    _anchor: Option<OwnedFd>,
+    _effect_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+impl FileIdentity {
+    #[cfg(unix)]
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        }
+    }
+
+    fn from_fd(fd: &impl AsFd) -> Result<Self, BoxError> {
+        let stat = rustix::fs::fstat(fd)?;
+        Ok(Self {
+            device: stat.st_dev,
+            inode: stat.st_ino,
+        })
+    }
+}
+
 /// The local filesystem backend with a per-mutation sandbox fence.
 pub struct SandboxedFileSystem {
     local: LocalFileSystem,
     policy: SandboxPolicyService,
     default_mode: SandboxMode,
+    protected_identities: Arc<[FileIdentity]>,
 }
 
 impl SandboxedFileSystem {
     /// Construct a standalone provider over the local backend.
     pub fn new(config: Config, policy: SandboxPolicyService) -> Result<Self, BoxError> {
         let default_mode = policy.resolve(SandboxPolicyRequest::default())?.mode;
+        let mut protected_identities = Vec::new();
+        for root in policy.protected_roots() {
+            match std::fs::metadata(root) {
+                Ok(metadata) => {
+                    let identity = FileIdentity::from_metadata(&metadata);
+                    if !protected_identities.contains(&identity) {
+                        protected_identities.push(identity);
+                    }
+                }
+                Err(error) if matches!(error.raw_os_error(), Some(2 | 20)) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         Ok(Self {
             local: LocalFileSystem::new(config)?,
             policy,
             default_mode,
+            protected_identities: protected_identities.into(),
         })
     }
 
-    async fn checked_target(
-        &self,
-        target: &FsTarget,
-        policy: Option<SandboxExecutionPolicy>,
-    ) -> Result<FsTarget, BoxError> {
-        let policy = match policy {
-            Some(policy) => policy,
-            None => self.policy.resolve(SandboxPolicyRequest::default())?,
-        };
-        match policy.mode {
-            SandboxMode::DangerFullAccess => return Ok(target.clone()),
-            SandboxMode::ReadOnly => {
-                return Err(FsError::new(
-                    format!(
-                        "cannot write \"{}\": file access denied under read-only mode",
-                        target.display_path
-                    ),
-                    FsErrorCode::SandboxDenied,
-                )
-                .into());
-            }
-            SandboxMode::WorkspaceWrite => {}
-        }
+    fn protected_error(target: &FsTarget) -> BoxError {
+        FsError::new(
+            format!(
+                "cannot access \"{}\": protected engine storage is unavailable to model tools",
+                target.display_path
+            ),
+            FsErrorCode::SandboxDenied,
+        )
+        .into()
+    }
 
-        // Re-resolve immediately before delegation and mutate this fresh identity,
-        // never the possibly stale key supplied by the caller.
+    fn is_protected(&self, path: &str) -> bool {
+        self.policy
+            .protected_roots()
+            .iter()
+            .any(|root| Path::new(path).starts_with(root))
+            || self
+                .path_reaches_protected_identity(Path::new(path))
+                .unwrap_or(true)
+    }
+
+    fn is_protected_fd(&self, fd: &impl AsFd) -> Result<bool, BoxError> {
+        let identity = FileIdentity::from_fd(fd)?;
+        Ok(self.protected_identities.contains(&identity))
+    }
+
+    fn directory_chain_reaches_protected(&self, mut directory: OwnedFd) -> Result<bool, BoxError> {
+        loop {
+            let identity = FileIdentity::from_fd(&directory)?;
+            if self.protected_identities.contains(&identity) {
+                return Ok(true);
+            }
+            let parent = rustix::fs::openat(
+                &directory,
+                "..",
+                rustix::fs::OFlags::PATH
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )?;
+            if FileIdentity::from_fd(&parent)? == identity {
+                return Ok(false);
+            }
+            directory = parent;
+        }
+    }
+
+    /// Inspect an existing target (or its nearest existing directory ancestor) without reopening
+    /// any already selected component by name. Opening the parent first and the basename through
+    /// `openat` keeps target/parent identity coherent; walking `..` from directory fds survives
+    /// ancestor renames and therefore still finds a protected root by `(dev, ino)`.
+    fn path_reaches_protected_identity(&self, path: &Path) -> Result<bool, BoxError> {
+        if self.protected_identities.is_empty() {
+            return Ok(false);
+        }
+        let mut candidate = path;
+        loop {
+            let Some(parent_path) = candidate.parent() else {
+                let root = rustix::fs::open(
+                    candidate,
+                    rustix::fs::OFlags::PATH
+                        | rustix::fs::OFlags::DIRECTORY
+                        | rustix::fs::OFlags::CLOEXEC,
+                    rustix::fs::Mode::empty(),
+                )?;
+                return self.directory_chain_reaches_protected(root);
+            };
+            let parent = match rustix::fs::open(
+                parent_path,
+                rustix::fs::OFlags::PATH
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            ) {
+                Ok(parent) => parent,
+                Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR) => {
+                    if parent_path == candidate {
+                        return Ok(false);
+                    }
+                    candidate = parent_path;
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let target_is_protected = match candidate.file_name() {
+                Some(name) => match rustix::fs::openat(
+                    &parent,
+                    name,
+                    rustix::fs::OFlags::PATH | rustix::fs::OFlags::CLOEXEC,
+                    rustix::fs::Mode::empty(),
+                ) {
+                    Ok(target) => self.is_protected_fd(&target)?,
+                    Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR) => false,
+                    Err(error) => return Err(error.into()),
+                },
+                None => self.is_protected_fd(&parent)?,
+            };
+            return Ok(target_is_protected || self.directory_chain_reaches_protected(parent)?);
+        }
+    }
+
+    async fn checked_resolved_target(&self, target: FsTarget) -> Result<FsTarget, BoxError> {
+        for root in self.policy.protected_roots() {
+            if is_path_under(target.target_key.as_str(), root, None).await? {
+                return Err(Self::protected_error(&target));
+            }
+        }
+        if self.path_reaches_protected_identity(Path::new(target.target_key.as_str()))? {
+            return Err(Self::protected_error(&target));
+        }
+        Ok(target)
+    }
+
+    async fn open_anchor(&self, path: &str) -> Result<(OwnedFd, String), BoxError> {
+        let fd = rustix::fs::open(
+            path,
+            rustix::fs::OFlags::PATH | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )?;
+        let process_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
+        let physical = tokio::fs::read_link(&process_path)
+            .await?
+            .to_string_lossy()
+            .into_owned();
+        Ok((fd, physical))
+    }
+
+    async fn check_physical_path(&self, physical: &str, target: &FsTarget) -> Result<(), BoxError> {
+        for root in self.policy.protected_roots() {
+            if is_path_under(physical, root, None).await? {
+                return Err(Self::protected_error(target));
+            }
+        }
+        if self.path_reaches_protected_identity(Path::new(physical))? {
+            return Err(Self::protected_error(target));
+        }
+        Ok(())
+    }
+
+    /// A target handed through unchanged: with no protected storage there is nothing to anchor,
+    /// so reads and watches take the source's plain path (no procfs, no descriptor).
+    fn plain_target(target: &FsTarget) -> AnchoredTarget {
+        AnchoredTarget {
+            physical: target.target_key.to_string(),
+            target: target.clone(),
+            _anchor: None,
+            _effect_guard: None,
+        }
+    }
+
+    async fn checked_access_target(&self, target: &FsTarget) -> Result<AnchoredTarget, BoxError> {
+        if self.policy.protected_roots().is_empty() {
+            return Ok(Self::plain_target(target));
+        }
+        let effect_guard = self.policy.lock_protected_effect().await;
         let fresh = self
             .local
             .resolve(&target.display_path, FsResolveOptions::default())
             .await?;
+        self.checked_resolved_target(fresh.clone()).await?;
+        match self.open_anchor(fresh.target_key.as_str()).await {
+            Ok((anchor, physical)) => {
+                self.check_physical_path(&physical, &fresh).await?;
+                Ok(AnchoredTarget {
+                    target: FsTarget {
+                        target_key: format!("/proc/self/fd/{}", anchor.as_raw_fd()).into(),
+                        display_path: fresh.display_path,
+                    },
+                    physical,
+                    _anchor: Some(anchor),
+                    _effect_guard: effect_guard,
+                })
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<rustix::io::Errno>()
+                    .is_some_and(|errno| {
+                        matches!(*errno, rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR)
+                    }) =>
+            {
+                // `stat`/preflight must preserve LocalFileSystem's ordinary missing-target
+                // contract. Anchor the nearest existing parent for the protection check, but
+                // let the delegated operation observe absence at the physical target spelling.
+                let mut anchored = self.checked_mutation_target(&fresh).await?;
+                anchored._effect_guard = effect_guard;
+                Ok(anchored)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn checked_mutation_target(&self, target: &FsTarget) -> Result<AnchoredTarget, BoxError> {
+        let fresh = self
+            .local
+            .resolve(&target.display_path, FsResolveOptions::default())
+            .await?;
+        let physical = Path::new(fresh.target_key.as_str());
+        let Some(mut ancestor) = physical.parent() else {
+            // The filesystem root has no parent to anchor. Without protected storage nothing is
+            // there to guard, so the mode check and the delegate answer as in the source.
+            if self.policy.protected_roots().is_empty() {
+                return Ok(AnchoredTarget {
+                    physical: fresh.target_key.to_string(),
+                    target: fresh,
+                    _anchor: None,
+                    _effect_guard: None,
+                });
+            }
+            return Err(Self::protected_error(&fresh));
+        };
+        let (anchor, anchored_parent) = loop {
+            match self.open_anchor(&ancestor.to_string_lossy()).await {
+                Ok(opened) => break opened,
+                Err(error)
+                    if error
+                        .downcast_ref::<rustix::io::Errno>()
+                        .is_some_and(|errno| {
+                            matches!(*errno, rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR)
+                        }) =>
+                {
+                    ancestor = ancestor
+                        .parent()
+                        .ok_or_else(|| Self::protected_error(&fresh))?;
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        self.check_physical_path(&anchored_parent, &fresh).await?;
+        let suffix = physical
+            .strip_prefix(ancestor)
+            .map_err(|_| Self::protected_error(&fresh))?;
+        let physical_target = Path::new(&anchored_parent)
+            .join(suffix)
+            .to_string_lossy()
+            .into_owned();
+        self.check_physical_path(&physical_target, &fresh).await?;
+        Ok(AnchoredTarget {
+            target: FsTarget {
+                // `hoh-fs-local` implements atomic replacement with sibling temp files and
+                // rename. Linux does not preserve those semantics through a `/proc/self/fd`
+                // magic-link pathname, so mutation must retain the freshly resolved physical
+                // spelling. The parent descriptor remains alive through the call and the shared
+                // protected-effect lock prevents another model tool from swapping the suffix.
+                target_key: physical_target.clone().into(),
+                display_path: fresh.display_path,
+            },
+            physical: physical_target,
+            _anchor: Some(anchor),
+            _effect_guard: None,
+        })
+    }
+
+    async fn checked_target_unlocked(
+        &self,
+        target: &FsTarget,
+        policy: Option<SandboxExecutionPolicy>,
+    ) -> Result<AnchoredTarget, BoxError> {
+        let policy = match policy {
+            Some(policy) => policy,
+            None => self.policy.resolve(SandboxPolicyRequest::default())?,
+        };
+        // The mode decides first, as in the source: a read-only call is refused and a
+        // danger-full-access call is delegated before any path is opened or anchored.
+        if policy.mode == SandboxMode::ReadOnly {
+            return Err(FsError::new(
+                format!(
+                    "cannot write \"{}\": file access denied under read-only mode",
+                    target.display_path
+                ),
+                FsErrorCode::SandboxDenied,
+            )
+            .into());
+        }
+        let protecting = !self.policy.protected_roots().is_empty();
+        if policy.mode == SandboxMode::DangerFullAccess && !protecting {
+            return Ok(Self::plain_target(target));
+        }
+        let fresh = if protecting {
+            self.checked_mutation_target(target).await?
+        } else {
+            let fresh = self
+                .local
+                .resolve(&target.display_path, FsResolveOptions::default())
+                .await?;
+            Self::plain_target(&fresh)
+        };
+        if policy.mode == SandboxMode::DangerFullAccess {
+            return Ok(fresh);
+        }
+
         for root in writable_roots(&policy).await? {
-            if is_path_under(fresh.target_key.as_str(), &root, None).await? {
+            if is_path_under(&fresh.physical, &root, None).await? {
                 return Ok(fresh);
             }
         }
@@ -83,6 +395,17 @@ impl SandboxedFileSystem {
         )
         .into())
     }
+
+    async fn checked_target(
+        &self,
+        target: &FsTarget,
+        policy: Option<SandboxExecutionPolicy>,
+    ) -> Result<AnchoredTarget, BoxError> {
+        let effect_guard = self.policy.lock_protected_effect().await;
+        let mut target = self.checked_target_unlocked(target, policy).await?;
+        target._effect_guard = effect_guard;
+        Ok(target)
+    }
 }
 
 impl FileSystem for SandboxedFileSystem {
@@ -92,7 +415,17 @@ impl FileSystem for SandboxedFileSystem {
         changed: FsChanged,
         signal: AbortSignal,
     ) -> FsFuture<'_, Arc<dyn FsWatcher>> {
-        self.local.watch(target, changed, signal)
+        let target = target.clone();
+        Box::pin(async move {
+            let checked = self.checked_access_target(&target).await?;
+            // The watcher belongs to the real path (as in the source), never to a descriptor
+            // number that is closed, and may be reused, once this call returns.
+            let real = FsTarget {
+                target_key: checked.physical.clone().into(),
+                display_path: checked.target.display_path.clone(),
+            };
+            self.local.watch(&real, changed, signal).await
+        })
     }
 
     fn sandbox_mode(&self) -> Option<SandboxMode> {
@@ -100,19 +433,36 @@ impl FileSystem for SandboxedFileSystem {
     }
 
     fn resolve<'a>(&'a self, path: &'a str, options: FsResolveOptions) -> FsFuture<'a, FsTarget> {
-        self.local.resolve(path, options)
+        Box::pin(async move {
+            let _effect_guard = self.policy.lock_protected_effect().await;
+            let target = self.local.resolve(path, options).await?;
+            self.checked_resolved_target(target).await
+        })
     }
 
     fn process_path(&self, target: &FsTarget) -> String {
-        self.local.process_path(target)
+        if self.is_protected(target.target_key.as_str()) {
+            String::new()
+        } else {
+            self.local.process_path(target)
+        }
     }
 
     fn process_path_from_host_path(&self, host_path: &str) -> Option<String> {
-        self.local.process_path_from_host_path(host_path)
+        if self.is_protected(host_path) {
+            return None;
+        }
+        self.local
+            .process_path_from_host_path(host_path)
+            .filter(|path| !self.is_protected(path))
     }
 
     fn file_url(&self, target: &FsTarget) -> String {
-        self.local.file_url(target)
+        if self.is_protected(target.target_key.as_str()) {
+            String::new()
+        } else {
+            self.local.file_url(target)
+        }
     }
 
     fn contains(&self, parent: &FsTarget, child: &FsTarget) -> bool {
@@ -124,7 +474,10 @@ impl FileSystem for SandboxedFileSystem {
         target: &'a FsTarget,
         signal: Option<AbortSignal>,
     ) -> FsFuture<'a, Option<FsInfo>> {
-        self.local.stat(target, signal)
+        Box::pin(async move {
+            let target = self.checked_access_target(target).await?;
+            self.local.stat(&target.target, signal).await
+        })
     }
 
     fn lstat<'a>(
@@ -133,7 +486,31 @@ impl FileSystem for SandboxedFileSystem {
         cwd: Option<&'a str>,
         signal: Option<AbortSignal>,
     ) -> FsFuture<'a, Option<FsPathInfo>> {
-        self.local.lstat(path, cwd, signal)
+        Box::pin(async move {
+            let target = self
+                .local
+                .resolve(
+                    path,
+                    FsResolveOptions {
+                        cwd: cwd.map(str::to_owned),
+                        signal: signal.clone(),
+                    },
+                )
+                .await?;
+            if self.policy.protected_roots().is_empty() {
+                return self
+                    .local
+                    .lstat(target.target_key.as_str(), None, signal)
+                    .await;
+            }
+            self.checked_resolved_target(target.clone()).await?;
+            let effect_guard = self.policy.lock_protected_effect().await;
+            let mut anchored = self.checked_mutation_target(&target).await?;
+            anchored._effect_guard = effect_guard;
+            self.local
+                .lstat(anchored.target.target_key.as_str(), None, signal)
+                .await
+        })
     }
 
     fn read_text<'a>(
@@ -141,7 +518,10 @@ impl FileSystem for SandboxedFileSystem {
         target: &'a FsTarget,
         signal: Option<AbortSignal>,
     ) -> FsFuture<'a, String> {
-        self.local.read_text(target, signal)
+        Box::pin(async move {
+            let target = self.checked_access_target(target).await?;
+            self.local.read_text(&target.target, signal).await
+        })
     }
 
     fn stream_text<'a>(
@@ -149,7 +529,14 @@ impl FileSystem for SandboxedFileSystem {
         target: &'a FsTarget,
         signal: Option<AbortSignal>,
     ) -> FsFuture<'a, FsTextStream> {
-        self.local.stream_text(target, signal)
+        Box::pin(async move {
+            let target = self.checked_access_target(target).await?;
+            let stream = self.local.stream_text(&target.target, signal).await?;
+            Ok(Box::pin(stream.map(move |item| {
+                let _keep_anchor_open = &target;
+                item
+            })) as FsTextStream)
+        })
     }
 
     fn read_bytes<'a>(
@@ -158,7 +545,12 @@ impl FileSystem for SandboxedFileSystem {
         signal: Option<AbortSignal>,
         max_bytes: u64,
     ) -> FsFuture<'a, Vec<u8>> {
-        self.local.read_bytes(target, signal, max_bytes)
+        Box::pin(async move {
+            let target = self.checked_access_target(target).await?;
+            self.local
+                .read_bytes(&target.target, signal, max_bytes)
+                .await
+        })
     }
 
     fn read_byte_range<'a>(
@@ -167,7 +559,12 @@ impl FileSystem for SandboxedFileSystem {
         range: FsByteRange,
         signal: Option<AbortSignal>,
     ) -> FsFuture<'a, Vec<u8>> {
-        self.local.read_byte_range(target, range, signal)
+        Box::pin(async move {
+            let target = self.checked_access_target(target).await?;
+            self.local
+                .read_byte_range(&target.target, range, signal)
+                .await
+        })
     }
 
     fn list_dir<'a>(
@@ -175,7 +572,10 @@ impl FileSystem for SandboxedFileSystem {
         target: &'a FsTarget,
         signal: Option<AbortSignal>,
     ) -> FsFuture<'a, Vec<FsDirEntry>> {
-        self.local.list_dir(target, signal)
+        Box::pin(async move {
+            let target = self.checked_access_target(target).await?;
+            self.local.list_dir(&target.target, signal).await
+        })
     }
 
     fn write_text<'a>(
@@ -189,7 +589,7 @@ impl FileSystem for SandboxedFileSystem {
         Box::pin(async move {
             let target = self.checked_target(target, policy).await?;
             self.local
-                .write_text(&target, content, expected, signal, None)
+                .write_text(&target.target, content, expected, signal, None)
                 .await
         })
     }
@@ -205,7 +605,7 @@ impl FileSystem for SandboxedFileSystem {
         Box::pin(async move {
             let target = self.checked_target(target, policy).await?;
             self.local
-                .edit_text(&target, edit, expected, signal, None)
+                .edit_text(&target.target, edit, expected, signal, None)
                 .await
         })
     }
@@ -221,7 +621,7 @@ impl FileSystem for SandboxedFileSystem {
         Box::pin(async move {
             let target = self.checked_target(target, policy).await?;
             self.local
-                .patch_text(&target, hunks, expected, signal, None)
+                .patch_text(&target.target, hunks, expected, signal, None)
                 .await
         })
     }
@@ -236,7 +636,7 @@ impl FileSystem for SandboxedFileSystem {
         Box::pin(async move {
             let target = self.checked_target(target, policy).await?;
             self.local
-                .delete_file(&target, expected, signal, None)
+                .delete_file(&target.target, expected, signal, None)
                 .await
         })
     }
@@ -250,10 +650,11 @@ impl FileSystem for SandboxedFileSystem {
         policy: Option<SandboxExecutionPolicy>,
     ) -> FsFuture<'a, FsMoveOutcome> {
         Box::pin(async move {
-            let source = self.checked_target(source, policy.clone()).await?;
-            let destination = self.checked_target(destination, policy).await?;
+            let _effect_guard = self.policy.lock_protected_effect().await;
+            let source = self.checked_target_unlocked(source, policy.clone()).await?;
+            let destination = self.checked_target_unlocked(destination, policy).await?;
             self.local
-                .move_file(&source, &destination, options, signal, None)
+                .move_file(&source.target, &destination.target, options, signal, None)
                 .await
         })
     }

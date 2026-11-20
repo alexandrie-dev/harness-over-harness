@@ -310,6 +310,7 @@ pub struct Options {
     pub workspace_root: Option<String>,
     pub executor: Value,
     pub behavior: Behavior,
+    pub protected_roots: Vec<String>,
 }
 
 impl Default for Options {
@@ -319,6 +320,7 @@ impl Default for Options {
             workspace_root: None,
             executor: json!({}),
             behavior: passthrough_behavior(),
+            protected_roots: Vec::new(),
         }
     }
 }
@@ -345,6 +347,7 @@ pub async fn setup(options: Options) -> Setup {
     if let Some(root) = &options.workspace_root {
         policy["workspaceRoot"] = json!(root);
     }
+    policy["protectedRoots"] = json!(options.protected_roots);
     ctx.plugin::<hoh_sandbox_policy::SandboxPolicyService>(policy)
         .unwrap()
         .settled()

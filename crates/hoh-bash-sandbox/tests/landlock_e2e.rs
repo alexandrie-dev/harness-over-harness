@@ -204,6 +204,7 @@ async fn an_approved_escalated_retry_the_spec_level_workspace_write_override_lan
                 workspace_root: root.clone(),
                 additional_writable_roots: None,
                 session_id: None,
+                protected_roots: None,
             }),
             ..request(&command)
         }))

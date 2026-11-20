@@ -21,6 +21,7 @@ hoh-timeout = { path = "../hoh-timeout" }
 futures-util.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 hoh-node-addon-system = { path = "../hoh-node-addon-system" }

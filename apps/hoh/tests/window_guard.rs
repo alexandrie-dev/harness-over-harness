@@ -125,8 +125,27 @@ fn bash(n: usize, command: &str) -> hoh_llm_openai_mock::ScenarioResponse {
 
 /// A scratch folder outside `/tmp`: `workspace-write` always leaves `/tmp` writable, so a folder
 /// there would make "outside the workspace" meaningless.
+/// A fresh directory the sandbox can see. The cargo target directory is the default home, but it may
+/// sit on a mount that bubblewrap's private `/dev` hides (`/dev/shm`); then the process temporary
+/// directory serves, and a root nobody can use fails the test at once instead of making sandboxed
+/// commands silently miss their files.
 fn sandboxed_root() -> tempfile::TempDir {
-    tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
+    let hidden = |path: &Path| {
+        let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        real.starts_with("/dev") || real.starts_with("/tmp") || real.starts_with("/proc")
+    };
+    let target = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let temporary = std::env::temp_dir();
+    let base = if !hidden(target) {
+        target.to_path_buf()
+    } else {
+        temporary
+    };
+    assert!(
+        !hidden(&base),
+        "no test directory outside /dev, /tmp and /proc: set TMPDIR to a regular directory"
+    );
+    tempfile::tempdir_in(base).unwrap()
 }
 
 struct Engine {

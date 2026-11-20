@@ -66,3 +66,8 @@
 ## Вопросы ведущему
 - `src/shim.rs`: SHIM(hoh-sandbox-policy) снят — ключ `sandboxPolicy` и `SandboxPolicyRequest` берутся из `hoh-sandbox-policy`, как у `hoh-fs-sandbox`. Остался только `live_agent` (возвращает тот же `Arc`; можно убрать при следующей правке `src/`, вне объёма ревью тестов).
 - `tests/real_composition.rs` идёт с настоящими `hoh-fs-sandbox`, `hoh-fs-observation-policy`, одним `sandboxPolicy`: запись вне папки, через `..`, через симлинк запрещена, непрочитанный файл не перезаписывается.
+
+## read_image: округление (круг исправлений credguard)
+
+- `fixed2` повторяет `toFixed(2)`: точная ничья округляется вверх (9x9 → 8x8 даёт 1.13), а не к чётному, как
+  делает `format!`.

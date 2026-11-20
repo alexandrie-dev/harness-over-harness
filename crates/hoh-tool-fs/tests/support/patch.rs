@@ -578,6 +578,7 @@ impl T {
             workspace_root: self.workspace.to_string_lossy().into_owned(),
             additional_writable_roots: None,
             session_id: None,
+            protected_roots: None,
         }
     }
 

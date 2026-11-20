@@ -14,6 +14,9 @@ fn policy(mode: ConfinedSandboxMode, root: &Path) -> SandboxPolicy {
         workspace_root: root.to_string_lossy().into_owned(),
         additional_writable_roots: None,
         session_id: None,
+        protected_roots: None,
+        unrestricted_writes: false,
+        ready_dir: None,
     }
 }
 
@@ -23,6 +26,9 @@ async fn bwrap_usable() -> bool {
         workspace_root: "/".into(),
         additional_writable_roots: None,
         session_id: None,
+        protected_roots: None,
+        unrestricted_writes: false,
+        ready_dir: None,
     })
     .await
     .unwrap();
@@ -55,8 +61,12 @@ fn native_unavailable(reason: &str) {
 }
 
 fn bwrap_provider() -> LocalSandboxProvider {
+    bwrap_provider_with(Config::default())
+}
+
+fn bwrap_provider_with(config: Config) -> LocalSandboxProvider {
     LocalSandboxProvider::new_with_internals(
-        Config::default(),
+        config,
         SandboxInternals {
             platform: Some("linux".into()),
             ..Default::default()
@@ -66,6 +76,10 @@ fn bwrap_provider() -> LocalSandboxProvider {
 }
 
 fn landlock_provider() -> Option<(LocalSandboxProvider, SandboxEnforcement)> {
+    landlock_provider_with(Config::default())
+}
+
+fn landlock_provider_with(config: Config) -> Option<(LocalSandboxProvider, SandboxEnforcement)> {
     let launcher = match launcher_path() {
         Ok(launcher) => launcher,
         Err(cause) => {
@@ -83,7 +97,7 @@ fn landlock_provider() -> Option<(LocalSandboxProvider, SandboxEnforcement)> {
     };
     Some((
         LocalSandboxProvider::new_with_internals(
-            Config::default(),
+            config,
             SandboxInternals {
                 platform: Some("linux".into()),
                 probe_bwrap: Some(Arc::new(|| false)),
@@ -175,8 +189,10 @@ async fn real_bwrap_workspace_write_is_scoped_and_tmp_is_ephemeral_when_availabl
     let outside = workspace_temp();
     let allowed = workspace.path().join("allowed.txt");
     let denied = outside.path().join("denied.txt");
+    // The profile replaces `/tmp` only (as in the source), so the ephemeral area is the literal
+    // `/tmp`, not whatever `TMPDIR` names: a `TMPDIR` under `/dev/shm` stays the read-only host path.
     let host_tmp =
-        std::env::temp_dir().join(format!("hoh-sandbox-local-bwrap-{}", std::process::id()));
+        Path::new("/tmp").join(format!("hoh-sandbox-local-bwrap-{}", std::process::id()));
     let _ = std::fs::remove_file(&host_tmp);
     let provider = bwrap_provider();
     let command = format!(
@@ -289,6 +305,138 @@ async fn real_landlock_workspace_write_grants_workspace_and_host_tmp_when_availa
     .await;
     assert!(!output.status.success());
     assert!(!denied.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn real_backends_deny_cat_grep_ls_cp_and_symlink_access_to_a_protected_engine_root() {
+    if bwrap_usable().await {
+        let engine = workspace_temp();
+        let provider = bwrap_provider_with(Config::default());
+        check_protected_engine_root_at(&provider, engine).await;
+    }
+
+    let engine = workspace_temp();
+    if let Some((provider, _)) = landlock_provider_with(Config::default()) {
+        let mut protected = policy(ConfinedSandboxMode::WorkspaceWrite, engine.path());
+        protected.protected_roots = Some(vec![engine.path().to_string_lossy().into_owned()]);
+        let error = provider
+            .confine(&["true".into()], protected, None)
+            .await
+            .expect_err("Landlock-only protected-root confinement must fail closed");
+        assert!(error.to_string().contains("no sandbox backend is usable"));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn protected_bwrap_fails_closed_after_a_danger_command_moves_the_roots_parent() {
+    if !bwrap_usable().await {
+        return;
+    }
+    let base = workspace_temp();
+    let data_parent = base.path().join("application-data");
+    let engine = data_parent.join("engine");
+    fs::create_dir_all(&engine).unwrap();
+    fs::write(engine.join(".credentials.yaml"), "never-leak").unwrap();
+    let moved_parent = base.path().join("application-data-moved");
+    let marker = base.path().join("second-command-ran");
+    let provider = bwrap_provider_with(Config::default());
+    let guarded_policy = || {
+        let mut policy = policy(ConfinedSandboxMode::WorkspaceWrite, Path::new("/"));
+        policy.protected_roots = Some(vec![engine.to_string_lossy().into_owned()]);
+        policy.unrestricted_writes = true;
+        policy
+    };
+
+    let (moved, _) = run(
+        &provider,
+        &format!("mv {} {}", quote(&data_parent), quote(&moved_parent)),
+        guarded_policy(),
+    )
+    .await;
+    assert!(
+        moved.status.success(),
+        "approved danger command did not move the protected root's parent: {}",
+        String::from_utf8_lossy(&moved.stderr)
+    );
+    assert!(!engine.exists());
+    assert!(moved_parent.join("engine/.credentials.yaml").exists());
+
+    let error = provider
+        .confine(
+            &[
+                "bash".into(),
+                "-c".into(),
+                format!("printf ran > {}", quote(&marker)),
+            ],
+            guarded_policy(),
+            None,
+        )
+        .await
+        .expect_err("a missing original protected mountpoint must fail closed before execution");
+    let message = error.to_string();
+    assert!(
+        message.contains("protected path does not exist"),
+        "{message}"
+    );
+    assert!(message.contains("refusing to broaden"), "{message}");
+    assert!(!marker.exists(), "the second bash command unexpectedly ran");
+}
+
+#[cfg(unix)]
+async fn check_protected_engine_root_at(provider: &LocalSandboxProvider, engine: TempDir) {
+    use std::os::unix::fs::symlink;
+
+    let workspace = workspace_temp();
+    let secret = engine.path().join(".credentials.yaml");
+    let environment = engine.path().join(".env");
+    fs::write(&secret, "OPENAI_API_KEY: never-leak").unwrap();
+    let alias = workspace.path().join("engine-link");
+    symlink(engine.path(), &alias).unwrap();
+    let copied = workspace.path().join("copied-secret");
+    let guarded_policy = || {
+        let mut policy = policy(ConfinedSandboxMode::WorkspaceWrite, workspace.path());
+        policy.protected_roots = Some(vec![alias.to_string_lossy().into_owned()]);
+        policy
+    };
+    for command in [
+        format!("cat {}", quote(&secret)),
+        format!("grep never-leak {}", quote(&secret)),
+        format!("ls {}", quote(engine.path())),
+        format!("cp {} {}", quote(&secret), quote(&copied)),
+        format!("cat {}", quote(&alias.join(".credentials.yaml"))),
+        format!("printf stolen > {}", quote(&environment)),
+        format!("printf stolen > {}", quote(&alias.join(".env"))),
+    ] {
+        let (output, signatures) = run(provider, &command, guarded_policy()).await;
+        assert!(
+            !output.status.success(),
+            "protected command succeeded: {command}"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+        assert!(
+            signatures
+                .iter()
+                .any(|signature| stderr.contains(signature)),
+            "protected denial was not explicit for {command}: {stderr}"
+        );
+    }
+    assert!(!copied.exists());
+    assert!(!environment.exists());
+    let ordinary = workspace.path().join("ordinary.txt");
+    let (output, _) = run(
+        provider,
+        &format!(
+            "printf workspace-ok > {}; cat {}",
+            quote(&ordinary),
+            quote(&ordinary)
+        ),
+        guarded_policy(),
+    )
+    .await;
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"workspace-ok");
 }
 
 async fn check_extra_roots_and_redirect(provider: &LocalSandboxProvider) {

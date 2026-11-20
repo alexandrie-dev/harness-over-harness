@@ -40,6 +40,20 @@
   `new_with_internals` — Rust-имена source test seam.
 - Один source test для sole-candidate selection перенесён на Landlock вместо
   macOS Seatbelt: проверяется сама общая механика «единственная ступень без probe».
+- Оконное расширение относительно dsh: каталоги из `protectedRoots` маскируются последними bwrap
+  mount-ами (`tmpfs` + mode 000), а существующие файлы — read-only bind `/dev/null`. Отсутствующий
+  protected mountpoint даёт ясный fail-closed отказ подготовки: маска никогда не расширяется до
+  предка, который мог бы накрыть sibling-workspace. Window передаёт уже созданный целый DSH_HOME,
+  поэтому ещё отсутствующие файлы внутри него закрывает directory-mask. Пересечение workspace с
+  таким каталогом раньше отклоняет `hoh-sandbox-policy`. Для approved full access
+  корень `/` остаётся host-rw и `/tmp` не
+  подменяется. Landlock не умеет безопасно вычесть same-user path из широкого read grant без
+  гонки открытия, поэтому такая policy требует bwrap и при его отсутствии даёт
+  `SANDBOX_UNAVAILABLE`, а не запускает команду.
+- Если предыдущая approved full-access команда переименовала предка protected root, следующая
+  команда не запускается: отсутствие исходного mountpoint либо несовпадение сохранённой startup
+  identity после его подмены даёт явный fail-closed отказ вместо маскировки ложного объекта или
+  ослабления маски до предка.
 
 ## Не перенесено
 
@@ -67,3 +81,7 @@
 
 Нет отсутствующих Linux API в зависимостях. Для будущего полного cross-platform
 переноса нужны владельцы Windows ACL и отдельная macOS-приёмка Seatbelt.
+
+## ready_dir (credguard, круг 5)
+
+- `SandboxPolicy.ready_dir: Option<String>` — каталог маркера готовности для исполнителя оболочки. Только `hoh-sandbox-local` (bwrap) монтирует его на запись `--bind d d` после корней рабочей области и перед защищёнными путями. Образца нет: расширение для замка `protected_effect` (см. PORT_NOTES `hoh-bash-sandbox`).

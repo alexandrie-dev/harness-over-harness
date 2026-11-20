@@ -3,6 +3,7 @@ use hoh_error::{HarnessError, node_fs_error_message};
 use hoh_util_values::js_json_stringify;
 use hoh_util_workspace_path::node_path;
 use indexmap::IndexSet;
+use std::path::Path;
 pub struct SandboxInvalidRootError;
 impl SandboxInvalidRootError {
     pub const NAME: &str = "SandboxInvalidRootError";
@@ -19,12 +20,49 @@ impl SandboxInvalidRootError {
         )
     }
 }
+fn is_missing(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(2 | 20))
+}
+
+/// Resolve every existing symlink component while preserving a not-yet-created suffix.
+///
+/// Unlike `std::fs::canonicalize`, this is useful for protected paths that the model must not be
+/// able to create later. Errors other than a missing/non-directory suffix remain fail-closed.
+pub async fn canonical_path_checked(path: &str) -> std::io::Result<String> {
+    match tokio::fs::canonicalize(path).await {
+        Ok(path) => return Ok(path.to_string_lossy().into_owned()),
+        Err(error) if !is_missing(&error) => return Err(error),
+        Err(_) => {}
+    }
+
+    let original = Path::new(path);
+    let mut ancestor = original;
+    let physical = loop {
+        match tokio::fs::canonicalize(ancestor).await {
+            Ok(path) => break path,
+            Err(error) if is_missing(&error) => {
+                ancestor = ancestor.parent().ok_or(error)?;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    let suffix = original
+        .strip_prefix(ancestor)
+        .expect("an ancestor selected from the same path is always a prefix");
+    Ok(node_path::normalize(
+        &physical.join(suffix).to_string_lossy(),
+    ))
+}
+
+/// The source's `canonicalPath` (`roots.ts:62-73`): the native realpath, or the spelling as-is when
+/// resolution fails. A missing root therefore matches nothing until it exists, even behind a
+/// symlinked prefix. Protected storage needs the physical prefix instead and uses
+/// [`canonical_path_checked`].
 pub async fn canonical_path(path: &str) -> String {
-    tokio::fs::canonicalize(path)
-        .await
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.into())
+    match tokio::fs::canonicalize(path).await {
+        Ok(physical) => physical.to_string_lossy().into_owned(),
+        Err(_) => path.to_owned(),
+    }
 }
 fn inspection_error(
     path: &str,

@@ -10,6 +10,7 @@ use hoh_llm::UserMessage;
 use hoh_scope::ScopeKey;
 use hoh_session::{AgentCancelCause, SESSION_FORMAT_VERSION};
 use hoh_system_prompt::{AssembleContext, PromptAssembly, render_context_snapshot, render_prompt};
+use hoh_timeout::AbortController;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -23,6 +24,175 @@ struct Mounted {
     kernel: Kernel,
     ctx: Context,
     policy_fiber: Fiber,
+}
+
+#[tokio::test]
+async fn deployment_protected_roots_are_deduplicated_and_cannot_be_relative() {
+    let mounted = Mounted::new(
+        json!({"protectedRoots":["/engine","/engine","/other"]}),
+        false,
+    )
+    .await;
+    assert_eq!(mounted.policy().protected_roots(), ["/engine", "/other"]);
+    assert_eq!(
+        mounted
+            .policy()
+            .resolve(SandboxPolicyRequest::default())
+            .unwrap()
+            .protected_roots,
+        Some(vec!["/engine".into(), "/other".into()])
+    );
+    let first = mounted
+        .policy()
+        .lock_protected_effect()
+        .await
+        .expect("protected configuration owns an effect lock");
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            mounted.policy().lock_protected_effect(),
+        )
+        .await
+        .is_err(),
+        "a second model-controlled filesystem effect must wait"
+    );
+    drop(first);
+    assert!(mounted.policy().lock_protected_effect().await.is_some());
+    mounted.close().await;
+
+    let kernel = Kernel::start();
+    let ctx = kernel.root();
+    load::<hoh_session_projection::SessionProjectionRegistry>(&ctx, json!({})).await;
+    let fiber = ctx
+        .plugin::<SandboxPolicyService>(json!({"protectedRoots":["relative/engine"]}))
+        .unwrap();
+    let error = fiber.settled().await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("protected paths must be absolute")
+    );
+    kernel.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rejects_a_recreated_protected_path_after_its_original_identity_moves() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("application-data");
+    let engine = data.join("engine");
+    let moved = root.path().join("application-data-moved");
+    let work = root.path().join("work");
+    std::fs::create_dir_all(&engine).unwrap();
+    std::fs::create_dir(&work).unwrap();
+    let mounted = Mounted::new(
+        json!({
+            "workspaceRoot": work,
+            "protectedRoots": [engine],
+        }),
+        false,
+    )
+    .await;
+
+    std::fs::rename(&data, &moved).unwrap();
+    std::fs::create_dir_all(&engine).unwrap();
+    let error = mounted
+        .policy()
+        .validate_protected_root_identities()
+        .await
+        .expect_err("a replacement at the configured pathname must fail closed");
+    let message = error.to_string();
+    assert!(
+        message.contains("protected path identity changed"),
+        "{message}"
+    );
+    assert!(message.contains("refusing to run"), "{message}");
+    mounted.close().await;
+}
+
+#[tokio::test]
+async fn rejects_equal_nested_and_parent_workspaces_before_a_working_directory_change_commits() {
+    let root = tempfile::tempdir().unwrap();
+    let engine = root.path().join("engine");
+    let engine_child = engine.join("sessions/work");
+    let safe = root.path().join("safe");
+    std::fs::create_dir_all(&engine_child).unwrap();
+    std::fs::create_dir(&safe).unwrap();
+    let mounted = Mounted::new(
+        json!({
+            "workspaceRoot": safe,
+            "protectedRoots": [engine],
+        }),
+        false,
+    )
+    .await;
+
+    for workspace in [root.path(), engine.as_path(), engine_child.as_path()] {
+        let error = mounted
+            .policy()
+            .validate_workspace_root(&workspace.to_string_lossy())
+            .await
+            .expect_err("overlapping workspace must be rejected");
+        let error = hoh_error::HarnessError::of(error.as_ref()).unwrap();
+        assert_eq!(error.name(), WorkingDirectoryError::NAME);
+        assert_eq!(error.code(), "WORKING_DIRECTORY_INVALID");
+        assert!(error.message().contains("папкой данных HoH"));
+    }
+
+    let active = session("sess-overlap", Some(safe.to_str().unwrap()));
+    let agent: Arc<dyn Agent> = Arc::new(FakeAgent::new(mounted.ctx.clone(), active));
+    let reached_tail = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let tail_reached = reached_tail.clone();
+    let result = mounted
+        .ctx
+        .waterfall(
+            WorkingDirectoryAccess {
+                agent,
+                path: Some(engine.to_string_lossy().into_owned()),
+                signal: AbortController::new().signal(),
+            },
+            move |_| async move {
+                tail_reached.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok("committed".to_owned())
+            },
+        )
+        .await;
+    let error = result.expect_err("listener must reject before the working-directory tail");
+    assert!(!reached_tail.load(std::sync::atomic::Ordering::SeqCst));
+    let error = hoh_error::HarnessError::of(error.as_ref()).unwrap();
+    assert_eq!(error.name(), WorkingDirectoryError::NAME);
+    assert_eq!(error.code(), "WORKING_DIRECTORY_INVALID");
+    mounted.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn canonicalizes_a_symlinked_protected_home_before_overlap_checks() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    let physical = root.path().join("physical-engine");
+    let workspace = physical.join("work");
+    let safe = root.path().join("safe");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir(&safe).unwrap();
+    let alias = root.path().join("engine-alias");
+    symlink(&physical, &alias).unwrap();
+    let mounted = Mounted::new(
+        json!({"workspaceRoot":safe,"protectedRoots":[alias]}),
+        false,
+    )
+    .await;
+    let error = mounted
+        .policy()
+        .validate_workspace_root(&workspace.to_string_lossy())
+        .await
+        .expect_err("physical descendant of symlinked DSH_HOME must be rejected");
+    assert_eq!(
+        hoh_error::HarnessError::of(error.as_ref()).unwrap().code(),
+        "WORKING_DIRECTORY_INVALID"
+    );
+    mounted.close().await;
 }
 
 impl Mounted {
@@ -938,4 +1108,38 @@ fn set_sandbox_mode_appends_exactly_one_event_per_switch() {
         .collect();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].data(), &json!({"mode":"danger-full-access"}));
+}
+
+#[tokio::test]
+async fn reads_the_session_projection_only_when_no_mode_is_explicit() {
+    let mounted = Mounted::new(
+        json!({"mode":"workspace-write","workspaceRoot":"/ws"}),
+        false,
+    )
+    .await;
+    let broken = session("sess-broken", Some("/ws"));
+    broken
+        .append("sandbox/mode", json!({"mode": "not-a-mode"}), None)
+        .unwrap();
+    // The setup is only meaningful if the projection really fails on this session.
+    assert!(mounted.policy().override_of(&broken).is_err());
+    assert!(
+        mounted
+            .policy()
+            .resolve(SandboxPolicyRequest {
+                session: Some(&broken),
+                mode: None,
+            })
+            .is_err()
+    );
+    // An explicit mode never consults it (source `index.ts:215`).
+    let policy = mounted
+        .policy()
+        .resolve(SandboxPolicyRequest {
+            session: Some(&broken),
+            mode: Some(SandboxMode::ReadOnly),
+        })
+        .unwrap();
+    assert_eq!(policy.mode, SandboxMode::ReadOnly);
+    mounted.close().await;
 }

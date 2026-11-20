@@ -65,6 +65,19 @@ fn window_profile_composes_every_required_engine_service() {
     ] {
         assert!(ids.contains(&required), "missing {required}: {ids:#?}");
     }
+    let policy = composition
+        .entries
+        .iter()
+        .find(|entry| entry.id == "sandbox-policy")
+        .unwrap();
+    assert_eq!(
+        policy.config["protectedRoots"]
+            .as_array()
+            .expect("window sandbox policy protectedRoots")
+            .len(),
+        1,
+        "the window must protect the whole DSH_HOME as one root"
+    );
 }
 
 async fn send(stdin: &mut tokio::process::ChildStdin, frame: Value) {
@@ -97,14 +110,15 @@ async fn receive_until(
 /// A user profile that points the model host at the scenario mock; the real key flow is the
 /// window end-to-end test's business, the mock needs no key.
 fn write_profile(root: &Path, base_url: &str) {
-    let dir = root.join("home").join("profiles").join("window");
+    write_profile_at(&root.join("home"), &root.join("work"), base_url);
+}
+
+fn write_profile_at(home: &Path, workspace: &Path, base_url: &str) {
+    std::fs::create_dir_all(workspace).unwrap();
+    let dir = home.join("profiles").join("window");
     std::fs::create_dir_all(&dir).unwrap();
     // The credentials store refuses a home that others can read: the launcher creates it private.
-    std::fs::set_permissions(
-        root.join("home"),
-        std::os::unix::fs::PermissionsExt::from_mode(0o700),
-    )
-    .unwrap();
+    std::fs::set_permissions(home, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
     std::fs::write(
         dir.join("package.json"),
         json!({"name":"dsh-profile-window","private":true,"dependencies":{},"dsh":{"profile":{"bundles":["@hoh/window"]}}}).to_string(),
@@ -117,13 +131,23 @@ fn write_profile(root: &Path, base_url: &str) {
     .unwrap();
 }
 
+fn window_workspace(root: &Path) -> std::path::PathBuf {
+    let workspace = root.join("work");
+    std::fs::create_dir_all(&workspace).unwrap();
+    workspace
+}
+
 fn command(root: &Path) -> tokio::process::Command {
+    command_with_home(root, &root.join("home"))
+}
+
+fn command_with_home(root: &Path, dsh_home: &Path) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_hoh"));
     command
         .args(["--profile", "window"])
         .env_clear()
         .env("HOME", root)
-        .env("DSH_HOME", root.join("home"))
+        .env("DSH_HOME", dsh_home)
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -168,7 +192,7 @@ async fn window_profile_initializes_streams_a_mock_prompt_and_shuts_down() {
             "id":"initialize",
             "method":"initialize",
             "params":{
-                "cwd":root.path(),
+                "cwd":window_workspace(root.path()),
                 "provider":"openai-compatible",
                 // The window announces a placeholder: the engine uses the model it was configured with.
                 "model":"local",
@@ -272,7 +296,7 @@ async fn window_profile_exits_with_code_zero_when_the_client_closes_stdin() {
             "jsonrpc":"2.0",
             "id":"initialize",
             "method":"initialize",
-            "params":{"cwd":root.path(),"provider":"openai-compatible","model":"window-mock"}
+            "params":{"cwd":window_workspace(root.path()),"provider":"openai-compatible","model":"window-mock"}
         }),
     )
     .await;
@@ -363,7 +387,7 @@ async fn window_profile_asks_the_host_before_privileged_calls_and_keeps_the_mode
     let mut child = command(root.path()).spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
-    send(&mut stdin, host_initialize(root.path())).await;
+    send(&mut stdin, host_initialize(&window_workspace(root.path()))).await;
     let initialized =
         receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "initialize").await;
     assert_eq!(
@@ -453,7 +477,7 @@ async fn window_profile_asks_the_host_before_privileged_calls_and_keeps_the_mode
     let mut child = command(root.path()).spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
-    send(&mut stdin, host_initialize(root.path())).await;
+    send(&mut stdin, host_initialize(&window_workspace(root.path()))).await;
     receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "initialize").await;
     send(
         &mut stdin,
@@ -481,7 +505,7 @@ async fn window_profile_refuses_privileged_calls_without_host_approvals() {
         &mut stdin,
         json!({
             "jsonrpc":"2.0","id":"initialize","method":"initialize",
-            "params":{"cwd":root.path(),"provider":"openai-compatible","model":"window-mock"}
+            "params":{"cwd":window_workspace(root.path()),"provider":"openai-compatible","model":"window-mock"}
         }),
     )
     .await;
@@ -531,10 +555,18 @@ fn call_bash(arguments: Value) -> hoh_llm_openai_mock::ScenarioResponse {
 }
 
 fn call_tool(name: &str, arguments: Value) -> hoh_llm_openai_mock::ScenarioResponse {
+    call_tool_with_id(&format!("call-{name}"), name, arguments)
+}
+
+fn call_tool_with_id(
+    id: &str,
+    name: &str,
+    arguments: Value,
+) -> hoh_llm_openai_mock::ScenarioResponse {
     hoh_llm_openai_mock::ScenarioResponse {
         text: vec![],
         tool_calls: vec![hoh_llm_openai_mock::ScenarioToolCall {
-            id: format!("call-{name}"),
+            id: id.to_owned(),
             name: name.to_owned(),
             arguments,
         }],
@@ -545,10 +577,44 @@ fn call_tool(name: &str, arguments: Value) -> hoh_llm_openai_mock::ScenarioRespo
     }
 }
 
+fn tool_result_text(body: &Value, call_id: &str) -> String {
+    let message = body["messages"]
+        .as_array()
+        .and_then(|messages| {
+            messages
+                .iter()
+                .rev()
+                .find(|message| message["role"] == "tool" && message["tool_call_id"] == call_id)
+        })
+        .unwrap_or_else(|| panic!("missing tool result {call_id}: {body}"));
+    message["content"]
+        .as_str()
+        .map_or_else(|| message["content"].to_string(), str::to_owned)
+}
+
 /// A scratch folder outside `/tmp`: `workspace-write` always leaves `/tmp` writable, so a folder
 /// there would make "outside the workspace" meaningless.
+/// A fresh directory the sandbox can see. The cargo target directory is the default home, but it may
+/// sit on a mount that bubblewrap's private `/dev` hides (`/dev/shm`); then the process temporary
+/// directory serves, and a root nobody can use fails the test at once instead of making sandboxed
+/// commands silently miss their files.
 fn sandboxed_root() -> tempfile::TempDir {
-    tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
+    let hidden = |path: &Path| {
+        let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        real.starts_with("/dev") || real.starts_with("/tmp") || real.starts_with("/proc")
+    };
+    let target = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let temporary = std::env::temp_dir();
+    let base = if !hidden(target) {
+        target.to_path_buf()
+    } else {
+        temporary
+    };
+    assert!(
+        !hidden(&base),
+        "no test directory outside /dev, /tmp and /proc: set TMPDIR to a regular directory"
+    );
+    tempfile::tempdir_in(base).unwrap()
 }
 
 struct Engine {
@@ -567,17 +633,25 @@ async fn start_engine(
     root: &Path,
     responses: Vec<hoh_llm_openai_mock::ScenarioResponse>,
 ) -> Engine {
+    start_engine_with_home(root, &root.join("home"), responses).await
+}
+
+async fn start_engine_with_home(
+    root: &Path,
+    dsh_home: &Path,
+    responses: Vec<hoh_llm_openai_mock::ScenarioResponse>,
+) -> Engine {
     let mock = hoh_llm_openai_mock::MockServer::start(hoh_llm_openai_mock::MockOptions::new(
         scenario(responses),
     ))
     .await
     .unwrap();
-    write_profile(root, &mock.base_url);
     let work = root.join("work");
+    write_profile_at(dsh_home, &work, &mock.base_url);
     let outside = root.join("outside");
     std::fs::create_dir_all(&work).unwrap();
     std::fs::create_dir_all(&outside).unwrap();
-    let mut child = command(root).spawn().unwrap();
+    let mut child = command_with_home(root, dsh_home).spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
     let mut seen = Vec::new();
@@ -798,6 +872,350 @@ async fn the_key_never_reaches_stderr_or_the_session_files() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn model_tools_cannot_read_list_or_copy_engine_credentials_directly_or_via_symlink() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let root = sandboxed_root();
+    let home = root.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let credentials = home.join(".credentials.yaml");
+    let key = "sk-window-model-must-never-see-this";
+    std::fs::write(
+        &credentials,
+        format!("version: 1\nrefs:\n  model_api_key: {key}\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&credentials, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let copied = root.path().join("work/copied-key");
+    let archive = root.path().join("work/engine.tar");
+    let ordinary = root.path().join("work/ordinary.txt");
+    let alias = root.path().join("work/engine-link");
+    let bash = |id: &str, command: String| {
+        call_tool_with_id(
+            id,
+            "bash",
+            json!({
+                "command": command,
+                "description": "verify the model-facing filesystem boundary"
+            }),
+        )
+    };
+    let mut engine = start_engine(
+        root.path(),
+        vec![
+            call_tool_with_id("read-direct", "read", json!({"file_path": credentials})),
+            call_tool_with_id(
+                "read-symlink",
+                "read",
+                json!({"file_path": alias.join(".credentials.yaml")}),
+            ),
+            bash("bash-cat", format!("cat {}", credentials.display())),
+            bash(
+                "bash-grep",
+                format!("grep OPENAI_API_KEY {}", credentials.display()),
+            ),
+            bash("bash-ls", format!("ls {}", home.display())),
+            bash(
+                "bash-cp",
+                format!("cp {} {}", credentials.display(), copied.display()),
+            ),
+            bash(
+                "bash-find",
+                format!("find {} -maxdepth 3 -type f", home.display()),
+            ),
+            bash(
+                "bash-tar",
+                format!("tar -cf {} -C {} .", archive.display(), home.display()),
+            ),
+            call_tool_with_id(
+                "read-session",
+                "read",
+                json!({"file_path": home.join("sessions/conversation.jsonl")}),
+            ),
+            call_tool_with_id(
+                "read-model-settings",
+                "read",
+                json!({"file_path": home.join("profiles/window/model-settings.json")}),
+            ),
+            bash(
+                "workspace-write",
+                format!("printf workspace-ok > {}", ordinary.display()),
+            ),
+            say("done"),
+        ],
+    )
+    .await;
+    std::fs::create_dir_all(home.join("sessions")).unwrap();
+    std::fs::write(
+        home.join("sessions/conversation.jsonl"),
+        "private conversation",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join("profiles/window/model-settings.json"),
+        r#"{"baseUrl":"https://must-not-leak.invalid","model":"private"}"#,
+    )
+    .unwrap();
+    symlink(&home, &alias).unwrap();
+    engine.prompt("try every file access").await;
+    assert!(
+        engine.next_approval().await.is_none(),
+        "ordinary denied accesses must not become an escalation prompt"
+    );
+    assert!(!copied.exists());
+    assert_eq!(std::fs::read_to_string(&ordinary).unwrap(), "workspace-ok");
+    let requests = engine.mock.requests().await;
+    assert_eq!(
+        requests.len(),
+        12,
+        "all eleven tool calls and the final response ran"
+    );
+    for request in &requests {
+        if let Some(body) = &request.body {
+            assert!(
+                !body.to_string().contains(key),
+                "model saw credential: {body}"
+            );
+        }
+    }
+    let body = requests
+        .last()
+        .and_then(|request| request.body.as_ref())
+        .expect("final model request body");
+    for id in [
+        "read-direct",
+        "read-symlink",
+        "read-session",
+        "read-model-settings",
+    ] {
+        let result = tool_result_text(body, id);
+        assert!(
+            result.contains("protected engine storage") || result.contains("FS_SANDBOX_DENIED"),
+            "{id} was not an explicit protected-storage refusal: {result}"
+        );
+    }
+    for id in [
+        "bash-cat",
+        "bash-grep",
+        "bash-ls",
+        "bash-cp",
+        "bash-find",
+        "bash-tar",
+    ] {
+        let result = tool_result_text(body, id).to_lowercase();
+        assert!(
+            [
+                "permission denied",
+                "operation not permitted",
+                "access denied"
+            ]
+            .iter()
+            .any(|needle| result.contains(needle)),
+            "{id} was not an explicit sandbox refusal: {result}"
+        );
+    }
+    let workspace_result = tool_result_text(body, "workspace-write").to_lowercase();
+    assert!(
+        !workspace_result.contains("denied") && !workspace_result.contains("error"),
+        "ordinary workspace write failed: {workspace_result}"
+    );
+    engine.finish().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn moving_the_engine_parent_keeps_fs_blocked_and_makes_the_next_bash_fail_closed() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let root = sandboxed_root();
+    let data_parent = root.path().join("application-data");
+    let home = data_parent.join("engine");
+    let moved_parent = root.path().join("application-data-moved");
+    let moved_home = moved_parent.join("engine");
+    let credentials = home.join(".credentials.yaml");
+    let moved_credentials = moved_home.join(".credentials.yaml");
+    let marker = root.path().join("work/second-bash-ran");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let key = "sk-moved-engine-must-remain-secret";
+    std::fs::write(
+        &credentials,
+        format!("version: 1\nrefs:\n  model_api_key: {key}\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&credentials, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let original_home = std::fs::metadata(&home).unwrap();
+    let original_identity = (original_home.dev(), original_home.ino());
+
+    let move_command = format!(
+        "mv '{}' '{}'; mkdir -p '{}'",
+        data_parent.display(),
+        moved_parent.display(),
+        home.display()
+    );
+    let second_bash = format!(
+        "printf ran > '{}'; ls '{}'; grep never-leak '{}'",
+        marker.display(),
+        moved_home.display(),
+        moved_credentials.display()
+    );
+    let mut engine = start_engine_with_home(
+        root.path(),
+        &home,
+        vec![
+            call_tool_with_id("move-parent", "bash", escalated(&move_command)),
+            call_tool_with_id(
+                "read-moved-secret",
+                "read",
+                json!({"file_path":moved_credentials}),
+            ),
+            call_tool_with_id("read-moved-root", "read", json!({"file_path":moved_home})),
+            call_tool_with_id(
+                "bash-after-move",
+                "bash",
+                json!({
+                    "command": second_bash,
+                    "description": "list and search the moved engine directory"
+                }),
+            ),
+            say("done"),
+        ],
+    )
+    .await;
+    engine.prompt("move the engine data and inspect it").await;
+    engine
+        .next_approval()
+        .await
+        .expect("danger-full-access parent rename ran without host approval");
+    engine.answer("allowed-once").await;
+    assert!(
+        engine.next_approval().await.is_none(),
+        "protected follow-up accesses must fail without another approval"
+    );
+
+    assert!(
+        home.exists(),
+        "the approved command did not recreate the configured mountpoint"
+    );
+    assert!(
+        !home.join(".credentials.yaml").exists(),
+        "the replacement unexpectedly contains the protected secret"
+    );
+    let replacement_home = std::fs::metadata(&home).unwrap();
+    assert_ne!(
+        (replacement_home.dev(), replacement_home.ino()),
+        original_identity,
+        "the configured mountpoint was not replaced with a different object"
+    );
+    assert!(moved_credentials.exists());
+    assert!(
+        !marker.exists(),
+        "the post-rename bash command unexpectedly ran"
+    );
+    let requests = engine.mock.requests().await;
+    assert_eq!(
+        requests.len(),
+        5,
+        "four tool calls and the final response must all run"
+    );
+    for request in &requests {
+        if let Some(body) = &request.body {
+            assert!(
+                !body.to_string().contains(key),
+                "model saw credential: {body}"
+            );
+        }
+    }
+    let body = requests
+        .last()
+        .and_then(|request| request.body.as_ref())
+        .expect("final model request body");
+    for id in ["read-moved-secret", "read-moved-root"] {
+        let result = tool_result_text(body, id);
+        assert!(
+            result.contains("protected engine storage") || result.contains("FS_SANDBOX_DENIED"),
+            "{id} was not an explicit moved-storage refusal: {result}"
+        );
+    }
+    let bash_result = tool_result_text(body, "bash-after-move");
+    assert!(
+        bash_result.contains("protected path identity changed")
+            && bash_result.contains("refusing to run"),
+        "post-rename bash did not fail closed before execution: {bash_result}"
+    );
+    engine.finish().await;
+}
+
+#[tokio::test]
+async fn session_start_and_working_directory_change_reject_engine_home_overlap() {
+    let root = sandboxed_root();
+    write_profile(root.path(), "http://127.0.0.1:9/v1");
+    let workspace = window_workspace(root.path());
+    let home = root.path().join("home");
+
+    let mut child = command(root.path()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut seen = Vec::new();
+    send(&mut stdin, host_initialize(&workspace)).await;
+    let initialized = receive_until(&mut stdout, &mut seen, |f| f["id"] == "initialize").await;
+    assert!(initialized.get("result").is_some(), "{initialized}");
+    send(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":"get","method":"session/working-directory/get",
+            "params":{"sessionId":"safe-session"}}),
+    )
+    .await;
+    let current = receive_until(&mut stdout, &mut seen, |f| f["id"] == "get").await;
+    assert_eq!(
+        current["result"]["cwd"],
+        workspace.to_string_lossy().as_ref()
+    );
+    let refused = call_privileged(
+        &mut stdin,
+        &mut stdout,
+        &mut seen,
+        "overlap-change",
+        "session/working-directory/set",
+        json!({"sessionId":"safe-session","path":home}),
+        "allowed-once",
+    )
+    .await;
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("папкой данных HoH")),
+        "{refused}"
+    );
+    drop(stdin);
+    assert_eq!(child.wait().await.unwrap().code(), Some(0));
+
+    let mut child = command(root.path()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut seen = Vec::new();
+    send(&mut stdin, host_initialize(&home)).await;
+    receive_until(&mut stdout, &mut seen, |f| f["id"] == "initialize").await;
+    send(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":"overlap-start","method":"session/working-directory/get",
+            "params":{"sessionId":"overlap-session"}}),
+    )
+    .await;
+    let refused = receive_until(&mut stdout, &mut seen, |f| f["id"] == "overlap-start").await;
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("папкой данных HoH")),
+        "{refused}"
+    );
+    drop(stdin);
+    assert_eq!(child.wait().await.unwrap().code(), Some(0));
+}
+
 #[tokio::test]
 async fn a_model_address_with_credentials_is_refused_before_the_user_is_asked() {
     let root = tempfile::tempdir().unwrap();
@@ -877,7 +1295,7 @@ async fn requests_piped_in_before_end_of_input_are_all_answered() {
     send(
         &mut stdin,
         json!({"jsonrpc":"2.0","id":"initialize","method":"initialize",
-            "params":{"cwd":root.path(),"provider":"openai-compatible","model":"local"}}),
+            "params":{"cwd":window_workspace(root.path()),"provider":"openai-compatible","model":"local"}}),
     )
     .await;
     receive_until(&mut stdout, &mut seen, |f| f["id"] == "initialize").await;
@@ -890,13 +1308,23 @@ async fn requests_piped_in_before_end_of_input_are_all_answered() {
                 + "\n"
         })
         .collect::<String>();
+    // A client reads while it writes (the desktop core does): the engine's output queue is bounded
+    // (1024 frames), so a peer that reads nothing until the whole batch is out is a slow consumer
+    // the engine is allowed to cut off, and under load it did.
+    let reader = tokio::spawn(async move {
+        let mut output = String::new();
+        while let Some(line) = stdout.next_line().await.unwrap() {
+            output.push_str(&line);
+            output.push('\n');
+        }
+        output
+    });
     stdin.write_all(batch.as_bytes()).await.unwrap();
     drop(stdin);
-    let mut output = String::new();
-    while let Some(line) = stdout.next_line().await.unwrap() {
-        output.push_str(&line);
-        output.push('\n');
-    }
+    let output = tokio::time::timeout(Duration::from_secs(60), reader)
+        .await
+        .expect("the engine kept its output open")
+        .unwrap();
     let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
         .await
         .expect("engine exit timeout")
@@ -917,7 +1345,7 @@ async fn first_run_rules_survive_an_engine_restart() {
     let mut child = command(root.path()).spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
-    send(&mut stdin, host_initialize(root.path())).await;
+    send(&mut stdin, host_initialize(&window_workspace(root.path()))).await;
     receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "initialize").await;
     let stored = call_privileged(
         &mut stdin,
@@ -953,7 +1381,7 @@ async fn first_run_rules_survive_an_engine_restart() {
     let mut child = command(root.path()).spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
-    send(&mut stdin, host_initialize(root.path())).await;
+    send(&mut stdin, host_initialize(&window_workspace(root.path()))).await;
     receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "initialize").await;
     send(
         &mut stdin,
@@ -983,7 +1411,7 @@ async fn a_failed_save_of_the_model_is_retried_until_it_succeeds() {
     let mut child = command(root.path()).spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
-    send(&mut stdin, host_initialize(root.path())).await;
+    send(&mut stdin, host_initialize(&window_workspace(root.path()))).await;
     receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "initialize").await;
     let permissions = |mode| std::os::unix::fs::PermissionsExt::from_mode(mode);
     // The profile folder stops accepting files, then the user changes the model.
@@ -1288,7 +1716,7 @@ async fn shutdown_with_an_unsaved_change_ends_in_time_and_the_file_is_already_wr
     let mut child = command(root.path()).spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
-    send(&mut stdin, host_initialize(root.path())).await;
+    send(&mut stdin, host_initialize(&window_workspace(root.path()))).await;
     receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "initialize").await;
     let changed = call_privileged(
         &mut stdin,

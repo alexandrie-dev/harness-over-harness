@@ -51,6 +51,10 @@
       config:
         mode: workspace-write
         workspaceRoot: !!js process.cwd()
+        # Shared by filesystem and bash policy; danger-full-access cannot remove this fence.
+        # An overlapping workspace is rejected by the policy before a Session can use it.
+        protectedRoots:
+          - !!js dshHomePath('')
 
     - id: filesystem
       name: '@deepseek-ai/dsh-fs-sandbox'

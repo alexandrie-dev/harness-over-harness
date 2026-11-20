@@ -1005,3 +1005,17 @@ async fn names_a_missing_or_non_string_provider_like_the_source() {
     h.initialize().await;
     h.close().await;
 }
+
+#[tokio::test]
+async fn reads_a_non_object_or_non_boolean_user_questions_capability_as_disabled() {
+    let h = Env::new().await;
+    for capabilities in [Value::Null, json!({"userQuestions": "yes"})] {
+        let h = Env::new().await;
+        let mut params = serde_json::to_value(h.params()).unwrap();
+        params["capabilities"] = capabilities.clone();
+        let result = h.server.handle_request("initialize", params).await;
+        assert!(result.is_ok(), "{capabilities}: {:?}", result.err());
+        h.close().await;
+    }
+    h.close().await;
+}

@@ -1176,6 +1176,24 @@ impl HarnessSdkJsonRpcServer {
                     )));
                 }
                 let mut normalized = params;
+                // Source: `params.capabilities?.userQuestions === true` reads any other shape as
+                // "not enabled" instead of rejecting the request.
+                match normalized.get_mut("capabilities") {
+                    Some(Value::Object(capabilities)) => {
+                        if capabilities
+                            .get("userQuestions")
+                            .is_some_and(|v| !v.is_boolean())
+                        {
+                            capabilities.remove("userQuestions");
+                        }
+                    }
+                    Some(_) => {
+                        normalized
+                            .as_object_mut()
+                            .map(|object| object.remove("capabilities"));
+                    }
+                    None => {}
+                }
                 if let Some(n) = normalized.get("maxTokens").and_then(Value::as_f64) {
                     normalized["maxTokens"] = Value::from(n as u64);
                 }

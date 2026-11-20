@@ -3,19 +3,27 @@
 use hoh_agent::AssembleAgent;
 use hoh_error::BoxError;
 use hoh_kernel::{Cfg, Context, Disposer, Inject, Plugin, Service, Undo};
-use hoh_sandbox::{SandboxExecutionPolicy, SandboxInvalidRootError, SandboxMode};
+use hoh_sandbox::{
+    SandboxExecutionPolicy, SandboxInvalidRootError, SandboxMode, canonical_path_checked,
+};
 use hoh_session::{Session, SessionHeader};
 use hoh_session_projection::{ProjectionDefinition, ProjectionHandle, SessionProjections};
 use hoh_system_prompt::{
     PromptContext, PromptContextOrderName, PromptText, SystemPrompt, SystemPromptKey,
 };
+use hoh_timeout::AbortSignal;
 use hoh_util_values::js_json_stringify;
 use hoh_util_workspace_path::node_path;
+use hoh_working_directory::{
+    WorkingDirectoryAccess, WorkingDirectoryError, WorkingDirectoryErrorCode, WorkingDirectoryKey,
+};
 use indexmap::IndexSet;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 /// Every supported sandbox mode, in source advertisement order.
 pub const SANDBOX_MODES: [SandboxMode; 3] = [
@@ -39,6 +47,9 @@ pub struct Config {
     pub workspace_root: Option<String>,
     /// Extra absolute directories granted by workspace-write.
     pub additional_writable_roots: Vec<String>,
+    /// Deployment-owned files or directories that model-facing filesystem and shell capabilities must never
+    /// expose, even for an approved `danger-full-access` call.
+    pub protected_roots: Vec<String>,
 }
 
 impl Default for Config {
@@ -47,6 +58,7 @@ impl Default for Config {
             mode: SandboxMode::ReadOnly,
             workspace_root: None,
             additional_writable_roots: Vec::new(),
+            protected_roots: Vec::new(),
         }
     }
 }
@@ -97,6 +109,10 @@ enum PolicyError {
         "sandbox-policy: writable directories must be absolute execution-world paths without NUL bytes"
     )]
     WritableRoot,
+    #[error(
+        "sandbox-policy: protected paths must be absolute execution-world paths without NUL bytes"
+    )]
+    ProtectedRoot,
     #[error("sandbox-policy: sandboxMode projection state must be null or a sandbox mode")]
     ProjectionState,
 }
@@ -142,6 +158,74 @@ fn resolve_additional_writable_roots(
     } else {
         Ok(Some(distinct.into_iter().collect::<Vec<_>>().into()))
     }
+}
+
+async fn resolve_protected_roots(
+    roots: impl IntoIterator<Item = String>,
+) -> Result<(Arc<[String]>, Arc<[Option<FileIdentity>]>), BoxError> {
+    let mut distinct = IndexSet::new();
+    for root in roots {
+        if !is_execution_world_path(&root) {
+            return Err(PolicyError::ProtectedRoot.into());
+        }
+        distinct.insert(canonical_path_checked(&root).await?);
+    }
+    let roots = distinct.into_iter().collect::<Vec<_>>();
+    let mut identities = Vec::with_capacity(roots.len());
+    for root in &roots {
+        identities.push(match tokio::fs::metadata(root).await {
+            Ok(metadata) => file_identity(&metadata),
+            Err(error) if is_missing(&error) => None,
+            Err(error) => return Err(error.into()),
+        });
+    }
+    Ok((roots.into(), identities.into()))
+}
+
+fn is_missing(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(2 | 20))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+fn file_identity(metadata: &std::fs::Metadata) -> Option<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    Some(FileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(not(unix))]
+fn file_identity(_metadata: &std::fs::Metadata) -> Option<FileIdentity> {
+    None
+}
+
+const WORKSPACE_OVERLAP_MESSAGE: &str = "working-directory: рабочая папка не может совпадать с папкой данных HoH, находиться внутри неё или содержать её";
+
+fn roots_overlap(left: &str, right: &str) -> bool {
+    let left = Path::new(left);
+    let right = Path::new(right);
+    left.starts_with(right) || right.starts_with(left)
+}
+
+fn reject_workspace_overlap(workspace: &str, protected_roots: &[String]) -> Result<(), BoxError> {
+    if protected_roots
+        .iter()
+        .any(|protected| roots_overlap(workspace, protected))
+    {
+        return Err(WorkingDirectoryError::new(
+            WORKSPACE_OVERLAP_MESSAGE,
+            WorkingDirectoryErrorCode::Invalid,
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn sandbox_mode_state(raw: Option<&Value>) -> Result<Arc<SandboxModeProjectionState>, BoxError> {
@@ -237,6 +321,9 @@ pub struct SandboxPolicyService {
     pub default_mode: SandboxMode,
     pub workspace_root: String,
     pub additional_writable_roots: Option<Arc<[String]>>,
+    protected_roots: Arc<[String]>,
+    protected_root_identities: Arc<[Option<FileIdentity>]>,
+    protected_effect_lock: Arc<AsyncMutex<()>>,
     writable_root_registrations: Arc<WritableRoots>,
     sandbox_mode_projection: ProjectionHandle<SandboxModeProjectionState>,
 }
@@ -248,15 +335,114 @@ impl SandboxPolicyService {
         default_mode: SandboxMode,
         workspace_root: String,
         additional_writable_roots: Option<Arc<[String]>>,
+        protected_roots: Arc<[String]>,
+        protected_root_identities: Arc<[Option<FileIdentity>]>,
         sandbox_mode_projection: ProjectionHandle<SandboxModeProjectionState>,
     ) -> Self {
         Self {
             default_mode,
             workspace_root,
             additional_writable_roots,
+            protected_roots,
+            protected_root_identities,
+            protected_effect_lock: Arc::new(AsyncMutex::new(())),
             writable_root_registrations: Arc::new(WritableRoots::default()),
             sandbox_mode_projection,
         }
+    }
+
+    /// Deployment-owned roots hidden from every model-facing file capability.
+    pub fn protected_roots(&self) -> &[String] {
+        &self.protected_roots
+    }
+
+    /// Ensure an existing deployment-owned root is still the object captured at startup.
+    ///
+    /// A model-approved full-access command may rename a root or one of its ancestors, but it
+    /// must not be able to recreate the old pathname and make the next process sandbox mask that
+    /// replacement while leaving the original storage visible at its new name.
+    pub async fn validate_protected_root_identities(&self) -> Result<(), BoxError> {
+        for (root, expected) in self
+            .protected_roots
+            .iter()
+            .zip(self.protected_root_identities.iter())
+        {
+            let Some(expected) = expected else {
+                continue;
+            };
+            let metadata = tokio::fs::metadata(root).await.map_err(|error| {
+                if is_missing(&error) {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!(
+                            "sandbox-policy: protected path does not exist: {root}; refusing to run with a stale protected-root identity"
+                        ),
+                    )
+                } else {
+                    error
+                }
+            })?;
+            if file_identity(&metadata).as_ref() != Some(expected) {
+                return Err(std::io::Error::other(format!(
+                    "sandbox-policy: protected path identity changed: {root}; refusing to run with a replacement protected root"
+                ))
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Serialize model-controlled shell and filesystem effects while protected roots are active.
+    /// This prevents one model tool from swapping a checked path underneath another.
+    pub async fn lock_protected_effect(&self) -> Option<OwnedMutexGuard<()>> {
+        if self.protected_roots.is_empty() {
+            None
+        } else {
+            Some(self.protected_effect_lock.clone().lock_owned().await)
+        }
+    }
+
+    /// [`lock_protected_effect`](Self::lock_protected_effect) for a caller that can be cancelled or
+    /// has a deadline. A signal that is already aborted never waits for the lock, and an abort or
+    /// timeout while waiting returns its reason instead of queueing behind a long-lived holder.
+    pub async fn lock_protected_effect_within(
+        &self,
+        signal: Option<&AbortSignal>,
+        timeout_ms: Option<f64>,
+    ) -> Result<Option<OwnedMutexGuard<()>>, BoxError> {
+        if let Some(signal) = signal {
+            signal.throw_if_aborted()?;
+        }
+        if self.protected_roots.is_empty() {
+            return Ok(None);
+        }
+        let mut cancel: Vec<AbortSignal> = signal.cloned().into_iter().collect();
+        if let Some(ms) = timeout_ms.filter(|ms| ms.is_finite() && *ms > 0.0) {
+            cancel.push(AbortSignal::timeout(ms));
+        }
+        if cancel.is_empty() {
+            return Ok(self.lock_protected_effect().await);
+        }
+        let cancel = AbortSignal::any(cancel);
+        let lock = self.protected_effect_lock.clone().lock_owned();
+        tokio::select! {
+            guard = lock => Ok(Some(guard)),
+            reason = cancel.cancelled() => Err(Box::new(reason) as BoxError),
+        }
+    }
+
+    /// Reject a model workspace that could expose or overwrite deployment-owned storage.
+    pub async fn validate_workspace_root(&self, workspace: &str) -> Result<(), BoxError> {
+        if !is_execution_world_path(workspace) {
+            return Err(SandboxInvalidRootError::new(
+                workspace,
+                "the Session working directory must be an absolute execution-world path without NUL bytes",
+                Some("sandbox workspace root"),
+            )
+            .into());
+        }
+        let workspace = canonical_path_checked(workspace).await?;
+        reject_workspace_overlap(&workspace, &self.protected_roots)
     }
 
     /// Resolve one complete snapshot. Explicit mode outranks session override, then default.
@@ -275,15 +461,19 @@ impl SandboxPolicyService {
                 .chain(session_roots),
         )?
         .map(|roots| roots.to_vec());
-        let mode = request.mode.or(match request.session {
-            Some(session) => self.override_of(session)?,
-            None => None,
-        });
+        // The session projection is read only without an explicit mode (source `index.ts:215`).
+        let mode = match (request.mode, request.session) {
+            (Some(mode), _) => Some(mode),
+            (None, Some(session)) => self.override_of(session)?,
+            (None, None) => None,
+        };
         Ok(SandboxExecutionPolicy {
             mode: mode.unwrap_or(self.default_mode),
             workspace_root: self.session_workspace_root(request.session)?,
             additional_writable_roots,
             session_id: request.session.map(|session| session.id().clone()),
+            protected_roots: (!self.protected_roots.is_empty())
+                .then(|| self.protected_roots.to_vec()),
         })
     }
 
@@ -387,7 +577,8 @@ impl Plugin for SandboxPolicyService {
         }
         let additional_writable_roots =
             resolve_additional_writable_roots(config.additional_writable_roots)?;
-
+        let (protected_roots, protected_root_identities) =
+            resolve_protected_roots(config.protected_roots).await?;
         let projection = deps
             .projections
             .register(&ctx, sandbox_mode_definition())
@@ -399,8 +590,38 @@ impl Plugin for SandboxPolicyService {
             config.mode,
             workspace_root,
             additional_writable_roots,
+            protected_roots,
+            protected_root_identities,
             projection,
         );
+        let workspace_guard = service.clone();
+        ctx.listen()
+            .prepend()
+            .on_waterfall::<WorkingDirectoryAccess, String, _>(move |event, next| {
+                let service = workspace_guard.clone();
+                async move {
+                    let directory = event.agent.ctx().get::<WorkingDirectoryKey>();
+                    let current = directory.map_or_else(
+                        || service.session_workspace_root(Some(event.agent.session())),
+                        |directory| Ok(directory.get(event.agent.session())),
+                    )?;
+                    let candidate = event.path.as_deref().map_or_else(
+                        || current.clone(),
+                        |path| node_path::resolve(&current, &[path]),
+                    );
+                    service.validate_workspace_root(&candidate).await?;
+                    if event.path.is_none() {
+                        let header: SessionHeader =
+                            serde_json::from_value((*event.agent.session().header()).clone())?;
+                        if let Some(original) = header.cwd
+                            && original != candidate
+                        {
+                            service.validate_workspace_root(&original).await?;
+                        }
+                    }
+                    next.run().await
+                }
+            })?;
         let for_prompt = service.clone();
         let prompt = ctx.inject::<PromptDeps, _>(move |scope, deps| {
             let service = for_prompt.clone();
