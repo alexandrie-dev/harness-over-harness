@@ -3687,6 +3687,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-subagent"
+version = "0.1.0"
+dependencies = [
+ "hoh-agent",
+ "hoh-agent-loop-testkit",
+ "hoh-agent-preset-registry",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-fs-local",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-subagent",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-working-directory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-subagent-control"
 version = "0.1.0"
 dependencies = [

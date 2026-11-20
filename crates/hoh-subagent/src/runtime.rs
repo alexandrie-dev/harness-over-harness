@@ -311,7 +311,7 @@ impl SubagentRuntime {
         let request = ResolvedSubagentStartRequest {
             cwd,
             agent_preset: spec.request.agent_preset.clone(),
-            label: spec.request.label.clone(),
+            label: Some(spec.label.clone()),
             prompt: spec.request.prompt.clone(),
             parent: spec.request.parent.clone(),
             signal: spec.request.signal.clone(),
@@ -443,7 +443,9 @@ impl SubagentRuntime {
         let result_child_id = child_id.clone();
         let manager = self.manager.clone();
         let registered_run = run.clone();
+        let settling = self.manager.begin_settling(&root);
         tokio::spawn(async move {
+            let _settling = settling;
             let result = result_run.result().await.map_err(SharedError::new);
             let teardown_failed = if let Err(error) = result_run.dispose().await {
                 lifecycle_ctx.logger().warn(format_args!(

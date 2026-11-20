@@ -88,6 +88,15 @@
 - Если будет портирован typert invocation/principal, добавить не-owner
   `principal` в `MessageSource` для `SubagentRuntime::prompt`.
 
+## Ожидание уведомления родителя (s1, 20.11)
+
+`wait_for_tree_work` раньше возвращался, когда потомок завершён, не дожидаясь, пока родитель получит
+«Background subagent … finished» (в TS `waitForTreeWork` ждёт `result.promise`). Теперь задача
+результата держит `SettlingGuard` (`begin_settling`, счётчик на корень дерева; `Drop` уменьшает
+счётчик и будит ожидающих), а `wait_for_tree_work` ждёт обнуления счётчика. Регрессия:
+`tests/settlement_notice.rs`; без правки (ожидание заменено на `break`) тест падает: 0 уведомлений
+вместо 1.
+
 ## Проверки
 
 Все команды выполнялись offline, jobs=2, с target

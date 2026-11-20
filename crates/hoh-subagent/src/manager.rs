@@ -80,6 +80,8 @@ struct ManagerState {
     active_by_root: HashMap<usize, usize>,
     closing_roots: HashSet<usize>,
     draining: bool,
+    /// Settlement tasks (child result, parent notice) still running, per tree root.
+    settling: HashMap<usize, usize>,
 }
 
 type ChildAncestry = (Arc<dyn Agent>, Vec<SessionId>, Option<String>);
@@ -90,15 +92,50 @@ pub struct SubagentManager {
     state: Arc<Mutex<ManagerState>>,
     names: SiblingNameReservations,
     max_active: Arc<dyn Fn() -> usize + Send + Sync>,
+    settled: Arc<tokio::sync::Notify>,
+}
+
+/// Keeps a settlement task visible to `wait_for_tree_work` until its parent notice was sent: the source
+/// joins each child's result promise, which resolves only after that notice.
+pub(crate) struct SettlingGuard {
+    state: Arc<Mutex<ManagerState>>,
+    settled: Arc<tokio::sync::Notify>,
+    root: usize,
+}
+
+impl Drop for SettlingGuard {
+    fn drop(&mut self) {
+        {
+            let mut state = lock(&self.state);
+            if let Some(count) = state.settling.get_mut(&self.root) {
+                *count -= 1;
+                if *count == 0 {
+                    state.settling.remove(&self.root);
+                }
+            }
+        }
+        self.settled.notify_waiters();
+    }
 }
 
 impl SubagentManager {
+    pub(crate) fn begin_settling(&self, root: &Arc<dyn Agent>) -> SettlingGuard {
+        let root = agent_key(root);
+        *lock(&self.state).settling.entry(root).or_default() += 1;
+        SettlingGuard {
+            state: self.state.clone(),
+            settled: self.settled.clone(),
+            root,
+        }
+    }
+
     pub fn new(ctx: Context, max_active: impl Fn() -> usize + Send + Sync + 'static) -> Self {
         let manager = Self {
             ctx,
             state: Arc::default(),
             names: SiblingNameReservations::default(),
             max_active: Arc::new(max_active),
+            settled: Arc::default(),
         };
         let state = manager.state.clone();
         let ancestors = Arc::new(move |agent: &Arc<dyn Agent>| {
@@ -556,7 +593,9 @@ impl SubagentManager {
         let lifecycle_ctx = root.ctx().clone();
         let settle_manager = self.clone();
         let settle_resident = resident.clone();
+        let settling = self.begin_settling(&root);
         tokio::spawn(async move {
+            let _settling = settling;
             child.when_idle().await;
             let events = child.session().snapshot_events(Some(output_start), None);
             let stop_reason = epoch_stop_reason(&events);
@@ -1148,7 +1187,9 @@ impl SubagentManager {
         output_start: hoh_session::SessionLogOffset,
     ) {
         let manager = self.clone();
+        let settling = self.begin_settling(&resident.root);
         tokio::spawn(async move {
+            let _settling = settling;
             let child = resident.handle.agent.clone();
             child.when_idle().await;
             let events = child.session().snapshot_events(Some(output_start), None);
@@ -1266,7 +1307,22 @@ impl SubagentManager {
         for run in &external {
             let _ = run.result().await;
         }
-        Ok(!progressing.is_empty() || !external.is_empty())
+        let mut settled_work = false;
+        loop {
+            let notified = self.settled.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if lock(&self.state)
+                .settling
+                .get(&agent_key(root))
+                .is_none_or(|count| *count == 0)
+            {
+                break;
+            }
+            settled_work = true;
+            notified.await;
+        }
+        Ok(!progressing.is_empty() || !external.is_empty() || settled_work)
     }
 
     pub async fn drain(&self) -> Result<(), BoxError> {
