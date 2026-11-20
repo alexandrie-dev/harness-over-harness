@@ -1741,6 +1741,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-jobs-local"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-error",
+ "hoh-jobs",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-timeout",
+ "hoh-util-crypto",
+ "hoh-util-values",
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-jsdiff"
 version = "0.1.0"
 dependencies = [

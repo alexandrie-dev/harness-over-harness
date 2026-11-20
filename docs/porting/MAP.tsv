@@ -48,7 +48,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/interaction/user-approval	@deepseek-ai/dsh-user-approval	hoh-user-approval	430	761	done	
 1	port	packages/interaction/user-questions	@deepseek-ai/dsh-user-questions	hoh-user-questions	964	1370	done	зависит от: dsh-typert-protocol=skip
 1	port	packages/jobs/jobs	@deepseek-ai/dsh-jobs	hoh-jobs	714	312	done	
-1	port	packages/jobs/jobs-local	@deepseek-ai/dsh-jobs-local	hoh-jobs-local	1050	2117	writing:x9	
+1	port	packages/jobs/jobs-local	@deepseek-ai/dsh-jobs-local	hoh-jobs-local	1050	2117	done	
 1	port	packages/llm/deepseek-llm-api-extensions	@deepseek-ai/dsh-deepseek-llm-api-extensions	hoh-deepseek-llm-api-extensions	203	182	review	
 1	port	packages/llm/llm	@deepseek-ai/dsh-llm	hoh-llm	4245	4172	done	зависит от: dsh-typert-protocol=skip
 1	port	packages/llm/llm-deepseek	@deepseek-ai/dsh-llm-deepseek	hoh-llm-deepseek	3737	9293	done	
