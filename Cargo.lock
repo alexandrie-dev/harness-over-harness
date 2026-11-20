@@ -1885,6 +1885,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-message-quotes"
+version = "0.1.0"
+dependencies = [
+ "hoh-util-values",
+]
+
+[[package]]
 name = "hoh-model-host"
 version = "0.1.0"
 dependencies = [
