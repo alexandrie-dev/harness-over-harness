@@ -169,7 +169,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	done	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
 2	port	packages/web/web-fetch-http	@deepseek-ai/dsh-web-fetch-http	hoh-web-fetch-http	601	853	done	
 2	port	packages/web/web-search-deepseek	@deepseek-ai/dsh-web-search-deepseek	hoh-web-search-deepseek	696	1322	done	зависит от: dsh-deepseek-account=later
-3	port	packages/browser-use/browser-use	@deepseek-ai/dsh-browser-use	hoh-browser-use	65	51	writing:x5	
+3	port	packages/browser-use/browser-use	@deepseek-ai/dsh-browser-use	hoh-browser-use	65	51	done	
 3	port	packages/computer-use/computer-use	@deepseek-ai/dsh-computer-use	hoh-computer-use	65	51	done	
 3	port	packages/context/harness-dev-context	@deepseek-ai/dsh-harness-dev-context	hoh-harness-dev-context	158	231	done	
 3	port	packages/context/session-reference	@deepseek-ai/dsh-session-reference	hoh-session-reference	1011	1545	writing:x4	
