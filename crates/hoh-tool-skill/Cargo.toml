@@ -1,0 +1,36 @@
+[package]
+name = "hoh-tool-skill"
+description = "Port of @deepseek-ai/dsh-tool-skill (packages/skill/tool-skill)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-session = { path = "../hoh-session" }
+hoh-skill = { path = "../hoh-skill" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-working-directory = { path = "../hoh-working-directory" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+hoh-agent-loop-testkit = { path = "../hoh-agent-loop-testkit" }
+hoh-skill-filesystem = { path = "../hoh-skill-filesystem" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-tool-testkit = { path = "../hoh-tool-testkit" }
+tempfile.workspace = true
+tokio.workspace = true

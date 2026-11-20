@@ -3043,6 +3043,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-skill"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop-testkit",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-skill",
+ "hoh-skill-filesystem",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-values",
+ "hoh-working-directory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-str-replace-editor"
 version = "0.1.0"
 dependencies = [
