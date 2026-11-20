@@ -1,0 +1,32 @@
+[package]
+name = "hoh-skill-filesystem"
+description = "Port of @deepseek-ai/dsh-skill-filesystem (packages/skill/skill-filesystem)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+feruca.workspace = true
+futures-util.workspace = true
+hoh-error = { path = "../hoh-error" }
+hoh-fs = { path = "../hoh-fs" }
+hoh-home-paths = { path = "../hoh-home-paths" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-skill = { path = "../hoh-skill" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+indexmap.workspace = true
+notify.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-fs-local = { path = "../hoh-fs-local" }
+tempfile.workspace = true

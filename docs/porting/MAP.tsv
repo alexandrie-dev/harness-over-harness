@@ -150,7 +150,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/shell/bash-sandbox	@deepseek-ai/dsh-bash-sandbox	hoh-bash-sandbox	206	1565	done	
 2	port	packages/shell/shell-env	@deepseek-ai/dsh-shell-env	hoh-shell-env	255	249	done	
 2	port	packages/shell/tool-bash	@deepseek-ai/dsh-tool-bash	hoh-tool-bash	871	2569	done	
-2	port	packages/skill/skill-filesystem	@deepseek-ai/dsh-skill-filesystem	hoh-skill-filesystem	1064	1530	writing:x4	
+2	port	packages/skill/skill-filesystem	@deepseek-ai/dsh-skill-filesystem	hoh-skill-filesystem	1064	1530	done	
 2	port	packages/skill/tool-skill	@deepseek-ai/dsh-tool-skill	hoh-tool-skill	452	1240	accepted
 2	port	packages/spill/spill	@deepseek-ai/dsh-spill	hoh-spill	138	61	done	
 2	port	packages/spill/spill-local	@deepseek-ai/dsh-spill-local	hoh-spill-local	727	663	done	

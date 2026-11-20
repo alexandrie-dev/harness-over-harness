@@ -2538,6 +2538,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-skill-filesystem"
+version = "0.1.0"
+dependencies = [
+ "feruca",
+ "futures-util",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-home-paths",
+ "hoh-kernel",
+ "hoh-skill",
+ "hoh-timeout",
+ "hoh-tools",
+ "hoh-util-workspace-path",
+ "indexmap",
+ "notify",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-spill"
 version = "0.1.0"
 dependencies = [
