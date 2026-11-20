@@ -122,7 +122,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/util/workspace-path	@deepseek-ai/dsh-util-workspace-path	hoh-util-workspace-path	236	251	done	в образце используется только окном; перенесён, пригодится hoh-client
 1	port	packages/workspace/workspace	@deepseek-ai/dsh-workspace	hoh-workspace	1448	1587	done	зависит от: dsh-typert-protocol=skip
 2	port	packages/bundle/base	@deepseek-ai/dsh-base	hoh-base	9	85	done	профиль как данные; строки pwsh подключаются на этапе 5
-2	port	packages/bundle/headless	@deepseek-ai/dsh-headless	hoh-headless	992	2273	writing:x4	профиль как данные
+2	port	packages/bundle/headless	@deepseek-ai/dsh-headless	hoh-headless	992	2273	accepted	профиль как данные
 2	port	packages/compaction/command-compact	@deepseek-ai/dsh-command-compact	hoh-command-compact	109	469	done	
 2	port	packages/context/agent-instructions	@deepseek-ai/dsh-agent-instructions	hoh-agent-instructions	2114	6711	done	
 2	port	packages/credentials/authorization	@deepseek-ai/dsh-authorization	hoh-authorization	541	603	done	
@@ -156,10 +156,10 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/spill/spill-local	@deepseek-ai/dsh-spill-local	hoh-spill-local	727	663	done	
 2	port	packages/spill/spill-policy	@deepseek-ai/dsh-spill-policy	hoh-spill-policy	346	1235	done	
 2	port	packages/storage/storage-json	@deepseek-ai/dsh-storage-json	hoh-storage-json	844	839	done	
-2	port	packages/subagent/subagent-fork-in-process	@deepseek-ai/dsh-subagent-fork-in-process	hoh-subagent-fork-in-process	83	347	accepted	
+2	port	packages/subagent/subagent-fork-in-process	@deepseek-ai/dsh-subagent-fork-in-process	hoh-subagent-fork-in-process	83	347	done	
 2	port	packages/subagent/subagent-spawn-in-process	@deepseek-ai/dsh-subagent-spawn-in-process	hoh-subagent-spawn-in-process	59	525	done	
 2	port	packages/subagent/tool-subagent	@deepseek-ai/dsh-tool-subagent	hoh-tool-subagent	965	3380	writing:x5	
-2	port	packages/subagent/tool-subagent-control	@deepseek-ai/dsh-tool-subagent-control	hoh-tool-subagent-control	373	1468	accepted	
+2	port	packages/subagent/tool-subagent-control	@deepseek-ai/dsh-tool-subagent-control	hoh-tool-subagent-control	373	1468	done	
 2	port	packages/team/agent-team	@deepseek-ai/dsh-agent-team	hoh-agent-team	1109	1862	writing:x8	зависит от: dsh-typert-protocol=skip
 2	port	packages/team/tool-agent-team	@deepseek-ai/dsh-tool-agent-team	hoh-tool-agent-team	235	1064	writing:x8	
 2	port	packages/telemetry/otel	@deepseek-ai/dsh-otel	hoh-otel	475	466	writing:x8	

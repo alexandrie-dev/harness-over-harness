@@ -1,0 +1,41 @@
+[package]
+name = "hoh-headless"
+description = "Port of @deepseek-ai/dsh-headless (packages/bundle/headless)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+futures-util.workspace = true
+hoh-agent = { path = "../hoh-agent" }
+hoh-agent-default-model = { path = "../hoh-agent-default-model" }
+hoh-commander = { path = "../hoh-commander" }
+hoh-error = { path = "../hoh-error" }
+hoh-fs = { path = "../hoh-fs" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-loader = { path = "../hoh-loader" }
+hoh-permission-presets = { path = "../hoh-permission-presets" }
+hoh-sandbox-policy = { path = "../hoh-sandbox-policy" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-session-query = { path = "../hoh-session-query" }
+hoh-subagent = { path = "../hoh-subagent" }
+hoh-user-approval = { path = "../hoh-user-approval" }
+hoh-util-crypto = { path = "../hoh-util-crypto" }
+hoh-util-values = { path = "../hoh-util-values" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-scope = { path = "../hoh-scope" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-timeout = { path = "../hoh-timeout" }
+tokio = { workspace = true, features = ["test-util"] }
+

@@ -1522,6 +1522,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-goal-round-driver"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-agent-loop-testkit",
+ "hoh-error",
+ "hoh-goal",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-subagent",
+ "hoh-timeout",
+ "hoh-util-values",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-harness-dev-context"
 version = "0.1.0"
 dependencies = [
@@ -1538,6 +1560,37 @@ dependencies = [
  "hoh-system-prompt",
  "hoh-timeout",
  "hoh-util-values",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "hoh-headless"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-default-model",
+ "hoh-commander",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-loader",
+ "hoh-permission-presets",
+ "hoh-sandbox-policy",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-projection",
+ "hoh-session-query",
+ "hoh-subagent",
+ "hoh-timeout",
+ "hoh-user-approval",
+ "hoh-util-crypto",
+ "hoh-util-values",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",
@@ -2910,6 +2963,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-subagent-fork-in-process"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop-testkit",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-subagent",
+ "hoh-subagent-spawn-in-process",
+ "hoh-timeout",
+ "hoh-tools",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-subagent-spawn-in-process"
 version = "0.1.0"
 dependencies = [
@@ -3357,6 +3432,31 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "hoh-tool-subagent-control"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop-testkit",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-query",
+ "hoh-subagent",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-values",
+ "schemars",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
