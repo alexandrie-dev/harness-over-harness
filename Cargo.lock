@@ -2834,6 +2834,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-skill-office"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-skill",
+ "hoh-timeout",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "saphyr-parser",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-spill"
 version = "0.1.0"
 dependencies = [
