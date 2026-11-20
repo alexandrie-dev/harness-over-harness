@@ -2372,6 +2372,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-log-export"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "futures-util",
+ "hoh-attachment",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-session",
+ "hoh-session-format",
+ "hoh-session-persistence",
+ "hoh-session-query",
+ "hoh-timeout",
+ "hoh-util-values",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "hoh-session-persistence"
 version = "0.1.0"
 dependencies = [

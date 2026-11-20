@@ -181,7 +181,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 3	port	packages/mcp/mcp-manager	@deepseek-ai/dsh-mcp-manager	hoh-mcp-manager	652	1349	writing:x8	
 3	port	packages/preset/agent-preset/skills/dsh-doc/templates/decoration	@local/my-decoration	hoh-my-decoration	0	0	todo	
 3	port	packages/preset/agent-preset/skills/dsh-doc/templates/mcp	@local/demo-mcp	hoh-demo-mcp	0	0	todo	
-3	port	packages/session-query/session-log-export	@deepseek-ai/dsh-session-log-export	hoh-session-log-export	2013	3283	accepted	
+3	port	packages/session-query/session-log-export	@deepseek-ai/dsh-session-log-export	hoh-session-log-export	2013	3283	done	
 3	port	packages/session/message-quotes	@deepseek-ai/dsh-message-quotes	hoh-message-quotes	230	325	done	
 3	port	packages/session/session-stats	@deepseek-ai/dsh-session-stats	hoh-session-stats	299	450	writing:x9	
 3	port	packages/session/session-turn-outline	@deepseek-ai/dsh-session-turn-outline	hoh-session-turn-outline	229	377	writing:x4	
