@@ -37,6 +37,10 @@
 
 ## Не перенесено
 
+- Повторный вызов одной и той же cleanup-функции из `registry.spec.ts:23` не имеет прямого выражения:
+  `hoh_kernel::Disposer::dispose(self)` потребляет affine-значение, а `Disposer` не реализует `Clone`.
+  Kernel выполняет Undo ровно один раз; identity-check дополнительно гарантирует, что cleanup старой
+  регистрации не снимет новую.
 - TypeScript default export не имеет отдельного Rust-механизма; ему соответствует публичный plugin type
   `BrowserUseRegistry`.
 - README и README i18n metadata не копируются как runtime-ресурсы; их контракт отражён в rustdoc и заметках.
@@ -49,6 +53,18 @@
 ## Вопросы ведущему
 
 Нет. SHIM, новые внешние зависимости и правки чужих API не понадобились.
+
+## Круг исправлений 021432
+
+- Точный текст без дефиса проверяют оба полных `assert_eq!` в
+  `rejects_a_second_provider_and_permits_registration_after_disposal`; старый текст ревью не проходит.
+- `releases_a_provider_contribution_when_its_plugin_unloads` использует настоящий
+  `TestBrowserUseProvider` с `Inject<Service<BrowserUse>>` и снимает регистрацию через dispose plugin fiber.
+- `duplicate_diagnostic_precedes_an_inactive_callers_error` фиксирует исходный порядок: занятый слот
+  диагностируется до попытки создать effect даже для уже неактивного caller.
+- `exports_the_source_identity_and_brands_without_validation` проверяет service/plugin имена и branded API;
+  runtime использует точную метку `browserUse.register()` из `src/index.ts:44`.
+- Повторный вызов disposer учтён как Rust-адаптация выше; это не пропущенная доступная ветвь API.
 
 ## Проверка
 

@@ -72,6 +72,7 @@ async fn rejects_a_second_provider_and_permits_registration_after_disposal() {
     };
     assert_eq!(
         same.to_string(),
+        // Exact source diagnostic: src/index.ts:37.
         "browser use provider \"playwright-mcp\" is already registered"
     );
     let different = match registry.register(&root, native()) {
@@ -80,6 +81,7 @@ async fn rejects_a_second_provider_and_permits_registration_after_disposal() {
     };
     assert_eq!(
         different.to_string(),
+        // Exact source diagnostic: src/index.ts:37.
         "browser use provider \"playwright-mcp\" is already registered"
     );
 
