@@ -227,3 +227,26 @@ async fn rejects_the_entire_group_when_dispatch_validation_vetoes_its_last_event
     assert_eq!(*lock(&seen), vec![seq(0)]);
     k.shutdown().await;
 }
+#[test]
+fn an_atomic_run_of_appends_is_not_interleaved_with_another_threads_append() {
+    let s = session();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let other = s.clone();
+    let intruder = std::thread::spawn(move || {
+        entered_rx.recv().unwrap();
+        other.append("turn/start", json!({"turn":2}), None).unwrap();
+    });
+    s.atomic(|| {
+        s.append("turn/start", json!({"turn":0}), None).unwrap();
+        entered_tx.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        s.append("turn/start", json!({"turn":1}), None).unwrap();
+    });
+    intruder.join().unwrap();
+    let turns: Vec<_> = s
+        .snapshot_events(None, None)
+        .iter()
+        .map(|event| event.data()["turn"].clone())
+        .collect();
+    assert_eq!(turns, vec![json!(0), json!(1), json!(2)]);
+}

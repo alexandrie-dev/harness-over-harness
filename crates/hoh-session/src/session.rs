@@ -3,7 +3,8 @@ use crate::surface::{FoldBatchPlan, FoldState, validate_session_event_data};
 use crate::*;
 use hoh_kernel::Context;
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::thread::ThreadId;
 
 #[derive(Clone)]
 pub struct Session(pub(crate) Arc<SessionInner>);
@@ -15,6 +16,7 @@ pub(crate) struct SessionInner {
     first_lifecycle: SessionLogOffset,
     pub projections: MessageProjections,
     pub state: Mutex<SessionState>,
+    section: Section,
 }
 pub(crate) struct SessionState {
     log: Arc<Vec<Arc<SessionEvent>>>,
@@ -197,6 +199,7 @@ impl Session {
             first_live,
             first_lifecycle,
             projections,
+            section: Section::default(),
             state: Mutex::new(SessionState {
                 log: Arc::new(log),
                 snapshot: None,
@@ -369,6 +372,12 @@ impl Session {
         }
         Ok(s.attachment.clone())
     }
+    /// Run a synchronous sequence of appends without another thread's append in between,
+    /// as code between two awaits is in the source.
+    pub fn atomic<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _section = self.0.section.enter();
+        f()
+    }
     pub fn append(
         &self,
         t: &str,
@@ -392,6 +401,7 @@ impl Session {
         batch: bool,
         record: bool,
     ) -> Result<Vec<Arc<SessionEvent>>> {
+        let _section = self.0.section.enter();
         let definitions = lock(&self.0.projections).clone();
         // Declared before planning views: error unwinding releases them before detach callbacks.
         let mut guard = AppendGuard(None);
@@ -513,6 +523,40 @@ impl Session {
         }
         drop(guard);
         Ok(events)
+    }
+}
+/// Stand-in for the JavaScript guarantee that code between two awaits is indivisible: the owner
+/// thread may append any number of times, every other thread's append waits for the section to end.
+/// A nested append on the owner thread still meets the `busy` check ("cannot reenter").
+#[derive(Default)]
+struct Section {
+    owner: Mutex<(Option<ThreadId>, usize)>,
+    free: Condvar,
+}
+struct SectionGuard<'a>(&'a Section);
+impl Section {
+    fn enter(&self) -> SectionGuard<'_> {
+        let me = std::thread::current().id();
+        let mut owner = lock(&self.owner);
+        while owner.0.is_some_and(|other| other != me) {
+            owner = self
+                .free
+                .wait(owner)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        owner.0 = Some(me);
+        owner.1 += 1;
+        SectionGuard(self)
+    }
+}
+impl Drop for SectionGuard<'_> {
+    fn drop(&mut self) {
+        let mut owner = lock(&self.0.owner);
+        owner.1 -= 1;
+        if owner.1 == 0 {
+            owner.0 = None;
+            self.0.free.notify_all();
+        }
     }
 }
 struct AppendGuard(Option<Session>);

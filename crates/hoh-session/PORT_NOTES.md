@@ -372,3 +372,16 @@ CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w7 и явным `cargo --of
 `Finished dev profile [unoptimized + debuginfo] target(s) in 19m 34s`.
 `cargo --offline fmt -p hoh-session -- --check`: exit 0, без вывода.
 Логи: /tmp/w7-depth-test.log и /tmp/w7-depth-clippy.log.
+
+## Неделимая серия append между потоками (s1, 20.11)
+
+В dsh код между двумя `await` неделим: задача-соседка (например, запасной заголовок `session/title`)
+не может вставить запись посреди синхронной серии `session.append(...)`. В Rust спавн идёт на другой
+поток, и такая вставка давала для цикла агента ошибку «session append cannot reenter …»: шаг
+терял `user/message` рабочего контекста и каталога навыков, ход кончался `turn/end` с ошибкой
+(`sdk/text-turn`). Добавлено: `Session::atomic(|| …)` и секция владельца-потока внутри
+`append_inputs`: чужой поток ждёт конца секции, вложенный append на том же потоке по-прежнему
+получает «cannot reenter». Цикл агента (`hoh-agent-loop`, `step`) выполняет серию
+`system/message` + `user/message` внутри `atomic`. Тест: `an_atomic_run_of_appends_is_not_interleaved_with_another_threads_append`.
+Остаётся: `session/title` вставляется до `request/header`, а в dsh после `request/context` — те же
+append вне секции; цикл агента не охватывает путь до записи заголовка запроса.

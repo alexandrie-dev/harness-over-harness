@@ -1026,41 +1026,46 @@ impl ReactLoopAgent {
                     starts_series,
                 },
             )?;
-            for commit in commits {
-                self.session.append(
-                    "system/message",
-                    json!({ "turn": turn, "step": step, "message": serde_json::to_value(&commit.message)? }),
-                    Some(commit.intent),
-                )?;
-            }
-            let mut context_admitted = false;
-            if first_attempt {
-                for message in &decision.messages {
-                    if message.source.kind == "runtime-context" {
-                        if let (Some(context), false) = (&context, context_admitted) {
+            // One indivisible run, as between two awaits in the source: a task on another thread
+            // (the title fallback) must not append in the middle.
+            self.session.atomic(|| -> Result<(), BoxError> {
+                for commit in commits {
+                    self.session.append(
+                        "system/message",
+                        json!({ "turn": turn, "step": step, "message": serde_json::to_value(&commit.message)? }),
+                        Some(commit.intent),
+                    )?;
+                }
+                let mut context_admitted = false;
+                if first_attempt {
+                    for message in &decision.messages {
+                        if message.source.kind == "runtime-context" {
+                            if let (Some(context), false) = (&context, context_admitted) {
+                                self.session.append(
+                                    "user/message",
+                                    serde_json::to_value(context)?,
+                                    Some(SurfaceIntent::append()),
+                                )?;
+                                context_admitted = true;
+                            }
+                        } else {
                             self.session.append(
                                 "user/message",
-                                serde_json::to_value(context)?,
+                                serde_json::to_value(message)?,
                                 Some(SurfaceIntent::append()),
                             )?;
-                            context_admitted = true;
                         }
-                    } else {
-                        self.session.append(
-                            "user/message",
-                            serde_json::to_value(message)?,
-                            Some(SurfaceIntent::append()),
-                        )?;
                     }
                 }
-            }
-            if let (Some(context), false) = (&context, context_admitted) {
-                self.session.append(
-                    "user/message",
-                    serde_json::to_value(context)?,
-                    Some(SurfaceIntent::append()),
-                )?;
-            }
+                if let (Some(context), false) = (&context, context_admitted) {
+                    self.session.append(
+                        "user/message",
+                        serde_json::to_value(context)?,
+                        Some(SurfaceIntent::append()),
+                    )?;
+                }
+                Ok(())
+            })?;
             first_attempt = false;
             let request = self.build_request(
                 &config,
