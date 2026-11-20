@@ -3415,6 +3415,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-office"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-attachment",
+ "hoh-error",
+ "hoh-fs",
+ "hoh-fs-local",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-office-kit",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tools",
+ "hoh-util-values",
+ "hoh-working-directory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-present"
 version = "0.1.0"
 dependencies = [
