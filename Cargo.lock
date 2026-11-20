@@ -2050,6 +2050,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-office-kit"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-home-paths",
+ "hoh-kernel",
+ "hoh-session",
+ "hoh-timeout",
+ "hoh-util-values",
+ "indexmap",
+ "rustix",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-official-bundles"
 version = "0.1.0"
 dependencies = [
