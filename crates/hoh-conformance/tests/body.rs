@@ -983,3 +983,40 @@ fn packed_comparison_sees_chunk_contents_but_not_clocks() {
         base
     );
 }
+
+/// Tail p.7 (`sdk.snapshot.ts:1288`): a manifest without attachments declares no id, so the
+/// expected image block carries no `attachmentId` key (never `null`); a log that carries one differs.
+#[test]
+fn command_attachments_without_a_declared_attachment_omits_the_id_key() {
+    let id = "\"attachmentId\":\"sha256:b1ff9c8ea3a780bad09b346c423d2d0e46815926879b18e841d928376a946640\",";
+    let mut run = Run::recorded("sdk", "command-attachments");
+    run.actual = run.actual.iter().map(|l| l.replace(id, "")).collect();
+    run.expected = run.actual.clone();
+    let check = |run: &Run<'_>, manifest: &Value| {
+        let actual = run.actual.clone();
+        let harvest = move || -> hoh_conformance::Result<Vec<String>> { Ok(actual.clone()) };
+        let env = BTreeMap::new();
+        let ctx = BodyContext {
+            dir: &scenario_dir(run.suite, run.name),
+            manifest,
+            actual: &run.actual,
+            expected: &run.expected,
+            notifications: &run.notifications,
+            cwd: &run.cwd,
+            harvest: &harvest,
+            launch: Launch {
+                hoh: Path::new("/nonexistent"),
+                profile: "headless",
+                patches: &[],
+                env: &env,
+                task: "task",
+                timeout: std::time::Duration::from_secs(60),
+            },
+        };
+        body_check(run.suite, run.name, &ctx)
+    };
+    assert!(matches!(check(&run, &json!({})), Some(Ok(()))));
+    // The same stripped log against a manifest that declares an attachment is a mismatch.
+    let declared = json!({"input": {"attachments": [{"id": "sha256:x"}]}});
+    assert!(matches!(check(&run, &declared), Some(Err(_))));
+}

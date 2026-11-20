@@ -75,7 +75,15 @@ impl Rpc {
             .ok_or("RPC input is closed")?
             .write_all((hoh_util_values::js_json_stringify(value) + "\n").as_bytes())
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| {
+                // A child that already closed its stream is the first error; the failed write to it
+                // is only its echo (harness.ts keeps the child's own error).
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    "protocol stdout closed before completion".to_owned()
+                } else {
+                    e.to_string()
+                }
+            })
     }
     pub async fn begin(&mut self, method: &str, params: Value) -> Result<u64> {
         self.next_id += 1;
@@ -486,42 +494,11 @@ pub async fn wait_file(cwd: &Path, step: &Value, default: Duration) -> Result<()
     })?
 }
 pub async fn wait_boundary(root: &Path, id: &str, end: bool, timeout: Duration) -> Result<()> {
-    let wait = async {
-        loop {
-            // Directory walk and file reads must not stall the runtime's workers.
-            let owned = root.to_path_buf();
-            let logs = tokio::task::spawn_blocking(move || {
-                crate::runner::harvest(&owned, "acp").unwrap_or_default()
-            })
-            .await
-            .map_err(|e| e.to_string())?;
-            if let Some(log) = logs.iter().find(|log| {
-                crate::records(log)
-                    .ok()
-                    .and_then(|r| r.first().cloned())
-                    .is_some_and(|h| h["id"] == id)
-            }) {
-                let complete = &log[..log.rfind('\n').map_or(0, |i| i + 1)];
-                let start = complete.rfind("\n{\"type\":\"turn/start\",");
-                let finish = complete.rfind("\n{\"type\":\"turn/end\",");
-                if if end {
-                    finish.is_some() && finish > start
-                } else {
-                    start.is_some() && start > finish
-                } {
-                    return Ok(());
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    };
-    tokio::time::timeout(timeout, wait).await.map_err(|_| {
-        format!(
-            "snapshot-harness: session \"{id}\" did not persist turn/{} within {}ms",
-            if end { "end" } else { "start" },
-            timeout.as_millis()
-        )
-    })?
+    if end {
+        crate::waits::turn_end(root, id, timeout).await
+    } else {
+        crate::waits::turn_start(root, id, timeout, None).await
+    }
 }
 
 pub async fn acp(
@@ -612,11 +589,120 @@ pub async fn acp(
                 wait_boundary(sessions_root, &session, true, limit(step, timeout)).await?
             }
             "waitForFile" => wait_file(cwd, step, timeout).await?,
-            op => return Err(format!("check acp.input.{op} not implemented")),
+            "promptAndWaitForAgentMessage" => {
+                let id = prompt_id(rpc, &session, step, "promptAndWaitForAgentMessage").await?;
+                let wanted = step["waitForText"].clone();
+                rpc.finish(id).await?;
+                rpc.until(|frames| {
+                    frames.iter().any(|f| {
+                        let update = &f["params"]["update"];
+                        update["sessionUpdate"] == "agent_message_chunk"
+                            && update["content"]["type"] == "text"
+                            && update["content"]["text"] == wanted
+                    })
+                })
+                .await?;
+            }
+            "promptExpectError" => {
+                let id = prompt_id(rpc, &session, step, "promptExpectError").await?;
+                match rpc.finish(id).await {
+                    Err(e) if e.starts_with("RPC error:") => {}
+                    Err(e) => return Err(e),
+                    Ok(_) => {
+                        return Err(
+                            "snapshot-harness: expected the prompt to fail but it succeeded".into(),
+                        );
+                    }
+                }
+            }
+            "cancel" => {
+                need_session(&session, "cancel")?;
+                if let Some(file) = step.get("waitForFile") {
+                    rpc.serving(wait_file(cwd, file, timeout)).await?;
+                }
+                rpc.notify("session/cancel", json!({"sessionId":session}))
+                    .await?;
+            }
+            "waitForTurnStart" => {
+                need_session(&session, "waitForTurnStart")?;
+                crate::waits::turn_start(
+                    sessions_root,
+                    &session,
+                    limit(step, timeout),
+                    step["minimumTurn"].as_u64(),
+                )
+                .await?
+            }
+            "waitForGoalPhase" => {
+                need_session(&session, "waitForGoalPhase")?;
+                let phase = step["phase"]
+                    .as_str()
+                    .ok_or("waitForGoalPhase lacks phase")?;
+                crate::waits::goal_phase(sessions_root, &session, phase, limit(step, timeout))
+                    .await?
+            }
+            "waitForInboxMessage" => {
+                need_session(&session, "waitForInboxMessage")?;
+                let text = step["text"]
+                    .as_str()
+                    .ok_or("waitForInboxMessage lacks text")?;
+                crate::waits::inbox_message(sessions_root, &session, text, limit(step, timeout))
+                    .await?
+            }
+            "waitForTitleAfterTurnEnd" => {
+                need_session(&session, "waitForTitleAfterTurnEnd")?;
+                crate::waits::title_after_turn_end(sessions_root, &session, limit(step, timeout))
+                    .await?
+            }
+            "waitForEventAfterTurnEnd" => {
+                need_session(&session, "waitForEventAfterTurnEnd")?;
+                let kind = step["type"]
+                    .as_str()
+                    .ok_or("waitForEventAfterTurnEnd lacks type")?;
+                crate::waits::event_after_turn_end(
+                    sessions_root,
+                    &session,
+                    kind,
+                    limit(step, timeout),
+                )
+                .await?
+            }
+            "waitForSubagentTurnEnd" => {
+                crate::waits::child_turn_end(
+                    sessions_root,
+                    step["child"].as_u64().unwrap_or(1) as usize,
+                    limit(step, timeout),
+                    step["minimumTurn"].as_u64().unwrap_or(1),
+                )
+                .await?
+            }
+            _ => {
+                return Err(format!(
+                    "snapshot-harness: unknown input op {}",
+                    hoh_util_values::js_json_stringify(step)
+                ));
+            }
         }
         if let Some(error) = rpc.script_error.take() {
             return Err(error);
         }
     }
     Ok(())
+}
+
+fn need_session(session: &str, op: &str) -> Result<()> {
+    if session.is_empty() {
+        return Err(format!("snapshot-harness: {op} before newSession"));
+    }
+    Ok(())
+}
+
+/// Send a text prompt and return its request id (the reply is read by the caller).
+async fn prompt_id(rpc: &mut Rpc, session: &str, step: &Value, op: &str) -> Result<u64> {
+    need_session(session, op)?;
+    rpc.begin(
+        "session/prompt",
+        json!({"sessionId":session,"prompt":[{"type":"text","text":step["text"]}]}),
+    )
+    .await
 }

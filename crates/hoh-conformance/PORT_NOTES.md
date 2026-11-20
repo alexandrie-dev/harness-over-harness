@@ -537,11 +537,11 @@ exit 9+1, frames 2, input 2): `error-finish` и `multi-turn` теперь дох
 
 | спек | перенесён | отложен | всего |
 |---|---|---|---|
-| normalize.spec.ts | 30 | 58 | 88 |
-| identity.spec.ts | 0 | 4 | 4 |
-| storage-policy.spec.ts | 0 | 8 | 8 |
-| harness.spec.ts | 0 | 72 | 72 |
-| suite.spec.ts | 11 | 106 | 117 |
+| normalize.spec.ts | 88 | 0 | 88 |
+| identity.spec.ts | 4 | 0 | 4 |
+| storage-policy.spec.ts | 8 | 0 | 8 |
+| harness.spec.ts | 70 | 2 | 72 |
+| suite.spec.ts | 113 | 4 | 117 |
 
 Примечание: `describe` без `it` в suite.spec.ts (строки 173, 179, 183) лишь регистрируют defineAcpSnapshotSuite в режимах replay/record/refresh; их динамические случаи не пронумерованы и не учтены (mode record/refresh не портирован, replay-аналог — прогон корпуса `hoh-conformance`).
 
@@ -712,98 +712,98 @@ exit 9+1, frames 2, input 2): `error-finish` и `multi-turn` теперь дох
 
 #### suite.spec.ts
 
-| строка | случай | статус | причина/тест |
+| строка | случай | статус | тест Rust / категория §10 |
 |---|---|---|---|
-| 188 | rewrites stdout and comparable logs from a replay-mode child run | отложен | режимы record/refresh и write-back в defineAcpSnapshotSuite (vitest, запись фикстур) не портированы: Rust-прогон replay-only (PORT_NOTES «Не перенесено»: «Vitest record/refresh…») |
-| 234 | uses complete UUIDs for the shared parent and child system message | отложен | режимы record/refresh и write-back в defineAcpSnapshotSuite (vitest, запись фикстур) не портированы: Rust-прогон replay-only (PORT_NOTES «Не перенесено»: «Vitest record/refresh…») |
-| 244 | creates a missing primary fixture and preserves generations for a retired child role | отложен | режимы record/refresh и write-back в defineAcpSnapshotSuite (vitest, запись фикстур) не портированы: Rust-прогон replay-only (PORT_NOTES «Не перенесено»: «Vitest record/refresh…») |
-| 255 | retains an unchanged message relationship across the recorded parent and child fixtures | отложен | режимы record/refresh и write-back в defineAcpSnapshotSuite (vitest, запись фикстур) не портированы: Rust-прогон replay-only (PORT_NOTES «Не перенесено»: «Vitest record/refresh…») |
-| 270 | throws when a scenario's header class has no pinning scenario | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
-| 293 | throws when two scenarios pin the same header class | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
-| 307 | throws when scenario names are duplicated | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
-| 321 | rejects %s away from a header pin (строк в таблице: 4) | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
-| 345 | rejects an unknown or non-pinning sidecar source | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
-| 380 | rejects a sidecar source that redirects the same artifact | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
-| 409 | rejects shared sidecars with different header-change counts | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
-| 436 | rejects shared prompt sidecars with different prompt-change counts | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
-| 465 | accepts identical claims and rejects order-dependent shared output | отложен | проверка общего содержимого shared-снимков при регистрации сьюта не портирована (TS-only corpus guard) |
-| 478 | rejects identical committed content under different paths | отложен | проверка общего содержимого shared-снимков при регистрации сьюта не портирована (TS-only corpus guard) |
-| 493 | keeps native writer expectations outside historical replay selection | отложен | writerSnapshotName не портирована (имена файлов записи, режим record) |
-| 500 | rejects invalid role %s (строк в таблице: 4) | отложен | writerSnapshotName не портирована (имена файлов записи, режим record) |
-| 506 | selects the highest generation for each contiguous role while ignoring other files | перенесён | tests/normalization.rs::fixture_selection_generations_roles_and_header_mismatch (corpus::fixture_files: старшее поколение по роли; посторонние файлы в каталоге отдельно не проверены) |
-| 519 | accepts a primary-only scenario | перенесён | tests/normalization.rs::review_220412::a_primary_only_scenario_is_accepted_and_a_missing_primary_rejected |
-| 523 | rejects a directory without the primary fixture | перенесён | tests/normalization.rs::review_220412::a_primary_only_scenario_is_accepted_and_a_missing_primary_rejected |
-| 527 | rejects gapped child fixtures | перенесён | tests/normalization.rs::fixture_selection_generations_roles_and_header_mismatch (session.3 без session.2 -> ошибка про contiguous) |
-| 532 | rejects invalid fixture name %s (строк в таблице: 7) | отложен | логика есть (corpus::fixture_files, regex имён и «invalid session fixture name»), теста на 7 невалидных имён нет; session.0/session.01/session.v0 корректно отсеиваются regex только по умолчанию |
-| 548 | rejects duplicate role generations | отложен | duplicate role generations: в Rust проверки нет (на ФС дубликата имени быть не может; TS работает со списком имён) |
-| 555 | renders canonical parent, child, raw, and compressed names | отложен | sessionFixtureName/persistedSessionFilename/parse*/latestPersistedSessionPaths не портированы (генерация имён — для record; Rust только читает) |
-| 564 | rejects invalid numeric filename components (строк в таблице: 5) | отложен | sessionFixtureName/persistedSessionFilename/parse*/latestPersistedSessionPaths не портированы (генерация имён — для record; Rust только читает) |
-| 574 | parses canonical fixture and persistence names without admitting lookalikes | отложен | sessionFixtureName/persistedSessionFilename/parse*/latestPersistedSessionPaths не портированы (генерация имён — для record; Rust только читает) |
-| 585 | selects one highest persisted generation per directory and compression | отложен | sessionFixtureName/persistedSessionFilename/parse*/latestPersistedSessionPaths не портированы (генерация имён — для record; Rust только читает) |
-| 599 | validates filename and header generation equality | отложен | частично: fixture_selection_generations_roles_and_header_mismatch проверяет только «имя v4, заголовок v3 -> ошибка» (без текста сообщения); остальные assert* функции (assertSessionFixtureVersion/assertPersistedSessionVersion/sessionHeaderVersion) не портированы |
-| 618 | rejects malformed header %j (строк в таблице: 8) | отложен | sessionHeaderVersion не портирована; в Rust заголовок проверяется внутри fixture_files (type=session, version) без теста на 8 вариантов |
-| 640 | adds the native sidecar after the shared golden on Windows | отложен | stdoutExpectedVariants не портирована: stdout.expected.windows.jsonl и native cwdPathMode в Rust не используются |
-| 647 | keeps only the shared golden on other platforms or without the declaration | отложен | stdoutExpectedVariants не портирована: stdout.expected.windows.jsonl и native cwdPathMode в Rust не используются |
-| 668 | skips authored scenarios only while recording | отложен | scenarioSkipped не портирована (пропуск по recording/posixOnly/pwshOnly); manifest.platform только валидируется (src/manifest.rs:199) |
-| 673 | skips a retained historical generation while recording but replays and refreshes it | отложен | scenarioSkipped не портирована (пропуск по recording/posixOnly/pwshOnly); manifest.platform только валидируется (src/manifest.rs:199) |
-| 678 | skips posixOnly scenarios on Windows and nowhere else | отложен | scenarioSkipped не портирована (пропуск по recording/posixOnly/pwshOnly); manifest.platform только валидируется (src/manifest.rs:199) |
-| 685 | skips pwshOnly scenarios when the host lacks pwsh, and runs them otherwise | отложен | scenarioSkipped не портирована (пропуск по recording/posixOnly/pwshOnly); manifest.platform только валидируется (src/manifest.rs:199) |
-| 694 | reads the fixture header id and cwd | отложен | fixtureContext не портирована как отдельная функция; близкий compare::context (src/compare.rs:216) без unit-теста, sentinel-cwd не воспроизводится |
-| 699 | yields no session ids for a header without a string id | отложен | fixtureContext не портирована как отдельная функция; близкий compare::context (src/compare.rs:216) без unit-теста, sentinel-cwd не воспроизводится |
-| 703 | falls back to an impossible sentinel cwd (never the empty string) | отложен | fixtureContext не портирована как отдельная функция; близкий compare::context (src/compare.rs:216) без unit-теста, sentinel-cwd не воспроизводится |
-| 709 | treats an empty fixture as an empty header | отложен | fixtureContext не портирована как отдельная функция; близкий compare::context (src/compare.rs:216) без unit-теста, sentinel-cwd не воспроизводится |
-| 719 | extracts every request/header payload in log order, normalized | отложен | normalizedHeaders не портирована как функция; compare::header_values приватна, без unit-теста (e2e через compare::headers) |
-| 730 | yields nothing for a log without header events | отложен | normalizedHeaders не портирована как функция; compare::header_values приватна, без unit-теста (e2e через compare::headers) |
-| 739 | extracts every system/message text in log order, normalized, and reads empty content as no prompt | отложен | normalizedSystemPrompts не портирована; Rust сравнивает промпты через сайдкар compare::prompt_parts/headers только e2e |
-| 751 | omits system/message records without a text block | отложен | normalizedSystemPrompts не портирована; Rust сравнивает промпты через сайдкар compare::prompt_parts/headers только e2e |
-| 769 | accepts a log whose first request/header follows a system/message | отложен | systemPromptPrecedesRequests не портирована (grep в src пуст); проверка порядка system/message и request/header в Rust отсутствует |
-| 773 | accepts a log without any request/header | отложен | systemPromptPrecedesRequests не портирована (grep в src пуст); проверка порядка system/message и request/header в Rust отсутствует |
-| 778 | rejects a request/header with no preceding system/message | отложен | systemPromptPrecedesRequests не портирована (grep в src пуст); проверка порядка system/message и request/header в Rust отсутствует |
-| 785 | extracts normalized schema arrays, preserves empty headers, and omits invalid fields | отложен | normalizedToolSchemas не портирована; compare::schema_sets (src/compare.rs:235) без unit-теста |
-| 803 | adds a missing terminal newline without changing an existing one | перенесён | tests/normalization.rs::satellites_prompt_changes_and_exact_strings (compare::format_prompts: "one" -> "one\n", "two\n" не удваивается) |
-| 808 | renders readable changed-prompt sections | перенесён | tests/normalization.rs::satellites_prompt_changes_and_exact_strings ("one\n\n<!-- system/message change 1 -->\n\ntwo\n") |
-| 813 | does not double the newline of a changed prompt | перенесён | tests/normalization.rs::satellites_prompt_changes_and_exact_strings (изменённый промпт "two\n" без двойного перевода строки) |
-| 820 | splits a formatted sidecar back into its initial prompt and each replacement | отложен | частично: satellites_prompt_changes_and_exact_strings делает round-trip реального system-prompt.expected.md через compare::prompt_parts + format_prompts, но разбиение на initial и changes явно не утверждается |
-| 828 | reads a single-prompt sidecar as having no changes | отложен | нет теста: parse одиночного промпта -> без изменений (compare::prompt_parts) |
-| 836 | accepts a distinct non-empty canonical child prompt | отложен | assertChildSystemPromptSnapshot не портирована (проверка сайдкаров потомков при записи) |
-| 842 | rejects an empty or non-canonical child prompt | отложен | assertChildSystemPromptSnapshot не портирована (проверка сайдкаров потомков при записи) |
-| 849 | rejects a child prompt that duplicates its class pin | отложен | assertChildSystemPromptSnapshot не портирована (проверка сайдкаров потомков при записи) |
-| 862 | counts changed request headers, ignoring anchors, blanks, and other lines | отложен | headerChangeCount не портирована (grep в src пуст) |
-| 877 | formats and parses canonical structured JSON | отложен | formatToolSchemasSnapshot/parseToolSchemasSnapshot не портированы; Rust читает tool-schemas.expected.json через compare::schema_sets без теста |
-| 883 | rejects invalid top-level and field shapes | отложен | parseToolSchemasSnapshot не портирована; валидации формы («must be an object»/«array-valued») нет |
-| 892 | restores initial schemas into the pinned header token | перенесён | tests/round1.rs::a_pinned_header_accepts_the_token_or_the_ordered_names_and_gets_the_schemas (токен {{tools}} -> схемы) |
-| 897 | preserves absent tools only for an empty sidecar | перенесён | tests/round1.rs: a_pinned_header_accepts_… (заголовок без tools и пустой сайдкар не меняется) + a_corrupted_pin_is_an_error (без tools при непустом сайдкаре -> ошибка) |
-| 903 | restores ordered tool names only when they match the sidecar | перенесён | tests/round1.rs: a_pinned_header_… (["read","write"] принимается) + a_corrupted_pin_is_an_error (перестановка, неполный список, "other", [1,2]); варианты с отсутствующим именем и невалидным элементом сайдкара не проверены |
-| 914 | rejects invalid headers and a missing tool token | отложен | частично: a_corrupted_pin_is_an_error проверяет заголовок-массив [] и tools-значения; null/строка в качестве заголовка и tools:[] при непустом сайдкаре не проверены |
-| 923 | returns structured UNKNOWN_TOOL call ids and ignores other results | отложен | unknownToolCallIds не портирована как функция: проверка inline в src/runner.rs:825 («ACP snapshot contains UNKNOWN_TOOL») без unit-теста; список callId и «<missing callId>» не проверяются |
-| 938 | returns no failures for ordinary tool results | отложен | unknownToolCallIds не портирована как функция: проверка inline в src/runner.rs:825 («ACP snapshot contains UNKNOWN_TOOL») без unit-теста; список callId и «<missing callId>» не проверяются |
-| 944 | reuses one committed message UUID across fixture-ready parent and child logs | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
-| 967 | stabilizes developer message identities through their explicit surface case | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
-| 976 | rewrites only complete messages carried by surface events or durable inbox splices | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
-| 1033 | matches cwd-bearing messages only after the fresh log reaches fixture-ready form | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
-| 1060 | rejects a fingerprint connected to an id that also identifies different content | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
-| 1079 | leaves fresh fixtures unchanged when no committed counterpart exists | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
-| 1086 | maps fresh ids and cwd values to the existing fixture values, skipping non-replacements | отложен | refreshFixtureReplacements (refresh) не портирована |
-| 1103 | stabilizes moved snapshot spill paths by filename while skipping unchanged or unmatched names | отложен | refreshFixtureReplacements (refresh) не портирована |
-| 1126 | leaves complete message ids out of the literal refresh replacement list | отложен | refreshFixtureReplacements (refresh) не портирована |
-| 1152 | preserves unpacked member times when refresh first packs a chunk run | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1176 | preserves packed member times without flattening fresh chunk boundaries | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1195 | reads projected packed fixtures while retaining their data gaps | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1214 | keeps fresh packed gaps when %s (строк в таблице: 4) | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1240 | aligns volatile times across a newly inserted log event | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1270 | retains unchanged message ids across an unrelated inserted event | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1320 | leaves an aligned complete message id to the fixture-ready structural pass | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1339 | keeps volatile fixture fields while preserving fresh meaningful payloads | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1371 | keeps job identities consistent across registration, tool text, and later calls during refresh | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1388 | preserves normalized volatile fields while accepting fresh semantic fields | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1491 | normalizes fresh cwd aliases before reusing existing paths | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1519 | preserves one correlated volatile id through a consistent log-wide mapping | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1543 | keeps fresh correlated ids when record alignment is structurally ambiguous | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1567 | keeps fresh ids when existing records remain unmatched | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1587 | keeps fresh ids when $name (строк в таблице: 2) | отложен | stabilizeRefreshLog (режим refresh) не портирована |
-| 1626 | rejects mismatched raw clocks before normalization can erase them | перенесён | tests/normalization.rs::review_220412::a_catalog_creation_time_that_disagrees_with_the_child_header_is_rejected |
-| 1631 | keeps retained child clocks in newly generated catalog fixtures | отложен | режим reconcile preserve-headers (запись фикстур) не портирован |
-| 1638 | preserves partial corpora and unrelated rows verbatim | отложен | reconcileCatalogCreationTimes не портирована; сохранность частичных корпусов не проверена |
+| 188 | rewrites stdout and comparable logs from a replay-mode child run | не переносится | проверки генераторов: refresh-режим defineAcpSnapshotSuite: читает файлы, которые refresh-запуск записал в каталог снимков (результат записи fake-агентом) |
+| 234 | uses complete UUIDs for the shared parent and child system message | не переносится | проверки генераторов: record-режим: проверяет входные данные behavior.json фикстуры record-suite, из которых генератор записи пишет фикстуры |
+| 244 | creates a missing primary fixture and preserves generations for a retired child role | не переносится | проверки генераторов: record-режим: проверяет файлы, которые record-запуск записал (создание первичной фикстуры, сохранение поколений) |
+| 255 | retains an unchanged message relationship across the recorded parent and child fixtures | не переносится | проверки генераторов: record-режим: проверяет фикстуры, записанные record-запуском (сохранность связи сообщений) |
+| 270 | throws when a scenario's header class has no pinning scenario | перенесён | tests/registration.rs::throws_when_a_scenarios_header_class_has_no_pinning_scenario |
+| 293 | throws when two scenarios pin the same header class | перенесён | tests/registration.rs::throws_when_two_scenarios_pin_the_same_header_class |
+| 307 | throws when scenario names are duplicated | перенесён | tests/registration.rs::throws_when_scenario_names_are_duplicated |
+| 321 | rejects %s away from a header pin (строк в таблице: 4) | перенесён | tests/registration.rs::rejects_sources_and_counts_away_from_a_header_pin |
+| 345 | rejects an unknown or non-pinning sidecar source | перенесён | tests/registration.rs::rejects_an_unknown_or_non_pinning_sidecar_source |
+| 380 | rejects a sidecar source that redirects the same artifact | перенесён | tests/registration.rs::rejects_a_sidecar_source_that_redirects_the_same_artifact |
+| 409 | rejects shared sidecars with different header-change counts | перенесён | tests/registration.rs::rejects_shared_sidecars_with_different_header_change_counts |
+| 436 | rejects shared prompt sidecars with different prompt-change counts | перенесён | tests/registration.rs::rejects_shared_prompt_sidecars_with_different_prompt_change_counts |
+| 465 | accepts identical claims and rejects order-dependent shared output | перенесён | tests/registration.rs::accepts_identical_claims_and_rejects_order_dependent_shared_output |
+| 478 | rejects identical committed content under different paths | перенесён | tests/registration.rs::rejects_identical_committed_content_under_different_paths |
+| 493 | keeps native writer expectations outside historical replay selection | перенесён | tests/session_files.rs::keeps_native_writer_expectations_outside_historical_replay_selection |
+| 500 | stdout.expected.jsonl (строк в таблице: 4) | перенесён | tests/session_files.rs::rejects_invalid_writer_snapshot_roles |
+| 506 | selects the highest generation for each contiguous role while ignoring other files | перенесён | tests/session_files.rs::selects_the_highest_generation_for_each_contiguous_role_while_ignoring_other_files |
+| 519 | accepts a primary-only scenario | перенесён | tests/session_files.rs::accepts_a_primary_only_scenario_and_rejects_a_missing_primary_or_a_gap |
+| 523 | rejects a directory without the primary fixture | перенесён | tests/session_files.rs::accepts_a_primary_only_scenario_and_rejects_a_missing_primary_or_a_gap |
+| 527 | rejects gapped child fixtures | перенесён | tests/session_files.rs::accepts_a_primary_only_scenario_and_rejects_a_missing_primary_or_a_gap |
+| 532 | session.0.jsonl (строк в таблице: 7) | перенесён | tests/session_files.rs::rejects_invalid_fixture_names |
+| 548 | rejects duplicate role generations | перенесён | tests/session_files.rs::rejects_duplicate_role_generations |
+| 555 | renders canonical parent, child, raw, and compressed names | перенесён | tests/session_files.rs::renders_canonical_parent_child_raw_and_compressed_names |
+| 564 | b/session.v1.jsonl (строк в таблице: 5) | перенесён | tests/session_files.rs::rejects_invalid_numeric_filename_components |
+| 574 | parses canonical fixture and persistence names without admitting lookalikes | перенесён | tests/session_files.rs::parses_canonical_fixture_and_persistence_names_without_admitting_lookalikes |
+| 585 | selects one highest persisted generation per directory and compression | перенесён | tests/session_files.rs::selects_one_highest_persisted_generation_per_directory_and_compression |
+| 599 | validates filename and header generation equality | перенесён | tests/session_files.rs::validates_filename_and_header_generation_equality |
+| 618 | ? (строк в таблице: 8) | перенесён | tests/session_files.rs::rejects_malformed_headers |
+| 640 | adds the native sidecar after the shared golden on Windows | перенесён | tests/sidecars.rs::adds_the_native_sidecar_after_the_shared_golden_on_windows |
+| 647 | keeps only the shared golden on other platforms or without the declaration | перенесён | tests/sidecars.rs::keeps_only_the_shared_golden_on_other_platforms_or_without_the_declaration |
+| 668 | skips authored scenarios only while recording | перенесён | tests/sidecars.rs::skips_authored_scenarios_only_while_recording |
+| 673 | skips a retained historical generation while recording but replays and refreshes it | перенесён | tests/sidecars.rs::skips_a_retained_generation_while_recording_but_replays_it |
+| 678 | skips posixOnly scenarios on Windows and nowhere else | перенесён | tests/sidecars.rs::skips_posix_only_scenarios_on_windows_and_nowhere_else |
+| 685 | skips pwshOnly scenarios when the host lacks pwsh, and runs them otherwise | перенесён | tests/sidecars.rs::skips_pwsh_only_scenarios_when_the_host_lacks_pwsh |
+| 694 | reads the fixture header id and cwd | перенесён | tests/sidecars.rs::fixture_context_reads_the_header_id_and_cwd |
+| 699 | yields no session ids for a header without a string id | перенесён | tests/sidecars.rs::fixture_context_yields_no_session_ids_without_a_string_id |
+| 703 | falls back to an impossible sentinel cwd (never the empty string) | перенесён | tests/sidecars.rs::fixture_context_falls_back_to_an_impossible_sentinel_cwd |
+| 709 | treats an empty fixture as an empty header | перенесён | tests/sidecars.rs::fixture_context_treats_an_empty_fixture_as_an_empty_header |
+| 719 | extracts every request/header payload in log order, normalized | перенесён | tests/sidecars.rs::extracts_every_request_header_payload_in_log_order_normalized |
+| 730 | yields nothing for a log without header events | перенесён | tests/sidecars.rs::yields_nothing_for_a_log_without_header_events |
+| 739 | extracts every system/message text in log order, normalized, and reads empty content as no prompt | перенесён | tests/sidecars.rs::extracts_every_system_message_text_and_reads_empty_content_as_no_prompt |
+| 751 | omits system/message records without a text block | перенесён | tests/sidecars.rs::omits_system_messages_without_a_text_block |
+| 769 | accepts a log whose first request/header follows a system/message | перенесён | tests/sidecars.rs::accepts_a_log_whose_first_request_header_follows_a_system_message |
+| 773 | accepts a log without any request/header | перенесён | tests/sidecars.rs::accepts_a_log_without_any_request_header |
+| 778 | rejects a request/header with no preceding system/message | перенесён | tests/sidecars.rs::rejects_a_request_header_with_no_preceding_system_message |
+| 785 | extracts normalized schema arrays, preserves empty headers, and omits invalid fields | перенесён | tests/sidecars.rs::extracts_normalized_schema_arrays_preserves_empty_headers_and_omits_invalid_fields |
+| 803 | adds a missing terminal newline without changing an existing one | перенесён | tests/sidecars.rs::adds_a_missing_terminal_newline_without_changing_an_existing_one |
+| 808 | renders readable changed-prompt sections | перенесён | tests/sidecars.rs::renders_readable_changed_prompt_sections |
+| 813 | does not double the newline of a changed prompt | перенесён | tests/sidecars.rs::does_not_double_the_newline_of_a_changed_prompt |
+| 820 | splits a formatted sidecar back into its initial prompt and each replacement | перенесён | tests/sidecars.rs::splits_a_formatted_sidecar_back_into_its_initial_prompt_and_each_replacement |
+| 828 | reads a single-prompt sidecar as having no changes | перенесён | tests/sidecars.rs::reads_a_single_prompt_sidecar_as_having_no_changes |
+| 836 | accepts a distinct non-empty canonical child prompt | перенесён | tests/sidecars.rs::accepts_a_distinct_non_empty_canonical_child_prompt |
+| 842 | rejects an empty or non-canonical child prompt | перенесён | tests/sidecars.rs::rejects_an_empty_or_non_canonical_child_prompt |
+| 849 | rejects a child prompt that duplicates its class pin | перенесён | tests/sidecars.rs::rejects_a_child_prompt_that_duplicates_its_class_pin |
+| 862 | counts changed request headers, ignoring anchors, blanks, and other lines | перенесён | tests/sidecars.rs::counts_changed_request_headers_ignoring_anchors_blanks_and_other_lines |
+| 877 | formats and parses canonical structured JSON | перенесён | tests/sidecars.rs::formats_and_parses_canonical_structured_json |
+| 883 | rejects invalid top-level and field shapes | перенесён | tests/sidecars.rs::rejects_invalid_top_level_and_field_shapes |
+| 892 | restores initial schemas into the pinned header token | перенесён | tests/sidecars.rs::restores_initial_schemas_into_the_pinned_header_token |
+| 897 | preserves absent tools only for an empty sidecar | перенесён | tests/sidecars.rs::preserves_absent_tools_only_for_an_empty_sidecar |
+| 903 | restores ordered tool names only when they match the sidecar | перенесён | tests/sidecars.rs::restores_ordered_tool_names_only_when_they_match_the_sidecar |
+| 914 | rejects invalid headers and a missing tool token | перенесён | tests/sidecars.rs::rejects_invalid_headers_and_a_missing_tool_token |
+| 923 | returns structured UNKNOWN_TOOL call ids and ignores other results | перенесён | tests/sidecars.rs::returns_structured_unknown_tool_call_ids_and_ignores_other_results |
+| 938 | returns no failures for ordinary tool results | перенесён | tests/sidecars.rs::returns_no_failures_for_ordinary_tool_results |
+| 944 | reuses one committed message UUID across fixture-ready parent and child logs | перенесён | tests/refresh.rs::reuses_one_committed_message_uuid_across_fixture_ready_parent_and_child_logs |
+| 967 | stabilizes developer message identities through their explicit surface case | перенесён | tests/refresh.rs::stabilizes_developer_message_identities_through_their_explicit_surface_case |
+| 976 | rewrites only complete messages carried by surface events or durable inbox splices | перенесён | tests/refresh.rs::rewrites_only_complete_messages_carried_by_surface_events_or_durable_inbox_splices |
+| 1033 | matches cwd-bearing messages only after the fresh log reaches fixture-ready form | перенесён | tests/refresh.rs::matches_cwd_bearing_messages_only_after_the_fresh_log_reaches_fixture_ready_form |
+| 1060 | rejects a fingerprint connected to an id that also identifies different content | перенесён | tests/refresh.rs::rejects_a_fingerprint_connected_to_an_id_that_also_identifies_different_content |
+| 1079 | leaves fresh fixtures unchanged when no committed counterpart exists | перенесён | tests/refresh.rs::leaves_fresh_fixtures_unchanged_when_no_committed_counterpart_exists |
+| 1086 | maps fresh ids and cwd values to the existing fixture values, skipping non-replacements | перенесён | tests/refresh.rs::maps_fresh_ids_and_cwd_values_to_the_existing_fixture_values_skipping_non_replacements |
+| 1103 | stabilizes moved snapshot spill paths by filename while skipping unchanged or unmatched names | перенесён | tests/refresh.rs::stabilizes_moved_snapshot_spill_paths_by_filename_while_skipping_unchanged_or_unmatched_names |
+| 1126 | leaves complete message ids out of the literal refresh replacement list | перенесён | tests/refresh.rs::leaves_complete_message_ids_out_of_the_literal_refresh_replacement_list |
+| 1152 | preserves unpacked member times when refresh first packs a chunk run | перенесён | tests/refresh.rs::preserves_unpacked_member_times_when_refresh_first_packs_a_chunk_run |
+| 1176 | preserves packed member times without flattening fresh chunk boundaries | перенесён | tests/refresh.rs::preserves_packed_member_times_without_flattening_fresh_chunk_boundaries |
+| 1195 | reads projected packed fixtures while retaining their data gaps | перенесён | tests/refresh.rs::reads_projected_packed_fixtures_while_retaining_their_data_gaps |
+| 1214 | {"type":"session","id":"same","createdAt":200} (строк в таблице: 4) | перенесён | tests/refresh.rs::keeps_fresh_packed_gaps_when_the_old_run_cannot_supply_them |
+| 1240 | aligns volatile times across a newly inserted log event | перенесён | tests/refresh.rs::aligns_volatile_times_across_a_newly_inserted_log_event |
+| 1270 | retains unchanged message ids across an unrelated inserted event | перенесён | tests/refresh.rs::retains_unchanged_message_ids_across_an_unrelated_inserted_event |
+| 1320 | leaves an aligned complete message id to the fixture-ready structural pass | перенесён | tests/refresh.rs::leaves_an_aligned_complete_message_id_to_the_fixture_ready_structural_pass |
+| 1339 | keeps volatile fixture fields while preserving fresh meaningful payloads | перенесён | tests/refresh.rs::keeps_volatile_fixture_fields_while_preserving_fresh_meaningful_payloads |
+| 1371 | keeps job identities consistent across registration, tool text, and later calls during refresh | перенесён | tests/refresh.rs::keeps_job_identities_consistent_across_registration_tool_text_and_later_calls_during_refresh |
+| 1388 | preserves normalized volatile fields while accepting fresh semantic fields | перенесён | tests/refresh.rs::preserves_normalized_volatile_fields_while_accepting_fresh_semantic_fields |
+| 1491 | normalizes fresh cwd aliases before reusing existing paths | перенесён | tests/refresh.rs::normalizes_fresh_cwd_aliases_before_reusing_existing_paths |
+| 1519 | preserves one correlated volatile id through a consistent log-wide mapping | перенесён | tests/refresh.rs::preserves_one_correlated_volatile_id_through_a_consistent_log_wide_mapping |
+| 1543 | keeps fresh correlated ids when record alignment is structurally ambiguous | перенесён | tests/refresh.rs::keeps_fresh_correlated_ids_when_record_alignment_is_structurally_ambiguous |
+| 1567 | keeps fresh ids when existing records remain unmatched | перенесён | tests/refresh.rs::keeps_fresh_ids_when_existing_records_remain_unmatched |
+| 1587 | {"type":"session","id":"same","createdAt":100,"cwd":"/old"} (строк в таблице: 2) | перенесён | tests/refresh.rs::keeps_fresh_ids_when_the_mapping_would_not_be_a_bijection |
+| 1626 | rejects mismatched raw clocks before normalization can erase them | перенесён | tests/refresh.rs::rejects_mismatched_raw_clocks_before_normalization_can_erase_them |
+| 1631 | keeps retained child clocks in newly generated catalog fixtures | перенесён | tests/refresh.rs::keeps_retained_child_clocks_in_newly_generated_catalog_fixtures |
+| 1638 | preserves partial corpora and unrelated rows verbatim | перенесён | tests/refresh.rs::preserves_partial_corpora_and_unrelated_rows_verbatim |
 
 - `--scenario` при `--v1` теперь сужает список (раньше список его затирал и запускался весь прогон): `main.rs`.
 
@@ -892,3 +892,72 @@ exit 9+1, frames 2, input 2): `error-finish` и `multi-turn` теперь дох
 - №6 `toolcall-unused-args`: `!result.isError` с JS-истинностью (`js_truthy`); тест `toolcall_unused_args_accepts_a_tool_result_without_is_error`.
 - №8 `run_bounded`: выход потомка наблюдается через `waitid(WNOWAIT)`, группа убивается до `wait()`; пока процесс не собран,
   его pid не может быть переиспользован. Отличие от источника: `snapshotGit` — `spawnSync` без таймаута, здесь каждый процесс тела ограничен.
+
+
+## Перенос тестов образца (s2, fix7)
+
+Новые модули: `storage.rs` (`unknown_tool_call_ids`, `system_prompt_precedes_requests`,
+`assert_session_fixture_storage`), `session_files.rs` (имена поколений Session), `sidecars.rs`
+(`scenario_skipped`, `stdout_expected_variants`, `fixture_context`, `normalized_headers/system_prompts/
+tool_schemas`, форматы `system-prompt.*.md` и `tool-schemas.*.json`, `header_change_count`).
+Тесты: `tests/identity.rs` (4), `storage_policy.rs` (8 случаев), `normalize_spec.rs`, `session_files.rs` (12),
+`sidecars.rs` (35, строки suite.spec 640–940), `harness_harvest.rs` (4), добавки в `protocol.rs` (1408, 1425).
+У каждой функции комментарий `/// :NNN` — строка случая в TS-спеке.
+
+Найдено тестами и исправлено в коде: `runner::harvest` сообщал `empty persisted session` /
+`filename/header version mismatch`; теперь использует `session_files::assert_persisted_session_version`
+(тексты образца `session.jsonl: session fixture is empty`, `filename declares Session format vN, header declares vM`).
+Из хвоста: `command-attachments` без `attachments` в манифесте не требует `attachmentId: null` (ключ опускается);
+`yaml.rs` сохраняет `-0` числом -0, поэтому `sessionFormat.version: -0` отвергается.
+
+### Не перенесено (с причиной из PORTING.md §10)
+
+- suite.spec: не перенесены 4 случая — 188, 234, 244, 255 (категория §10 «проверки генераторов»): они читают файлы,
+  которые записали record- и refresh-запуски `defineAcpSnapshotSuite`, либо входные данные фикстуры записи. Остальные
+  113 перенесены: функции, которые выполняет и воспроизведение или вызывают сами тесты (`stabilize*`,
+  `refreshFixtureReplacements`, `stabilizeRefreshLog`, `reconcileCatalogCreationTimes`, контракт регистрации,
+  общие снимки), портированы в `src/refresh.rs` и `src/registration.rs` и проверены тестами `tests/refresh.rs`
+  (27) и `tests/registration.rs` (11). Построчная таблица — выше (`#### suite.spec.ts`).
+- harness.spec: 2 случая НЕ перенесены как тест — 1228 («сбой сценария и сбой очистки вместе») и 1246
+  («сбой очистки после успешного сценария»). Это `AggregateError` над очисткой TS `runScenario`; в Rust очистки,
+  которая может упасть, нет: корни прогона (`cwd-*`, `spill-*`) намеренно остаются для разбора (`runner.rs`,
+  «Persist run data for diagnosis»), группа процессов убивается в `Drop` без результата. Поэтому вердикт сценария
+  не может быть заменён или склеен с ошибкой очистки; единственная ошибка прогона не теряет остальных артефактов.
+  Наблюдаемое поведение покрывают `a_failed_run_keeps_its_roots_and_records_the_failure`,
+  `a_run_with_a_protocol_error_still_writes_every_artifact` и `an_unallocatable_runs_directory_is_a_runner_error…`.
+  Причина по §10 — подмена `node:fs/promises` (приём TS-тестов, не поведение продукта).
+- Перенесены наблюдаемым поведением в `tests/harness_process.rs`: 96 (`spill_locator_root`, длина `/tmp` ↔ `/t`),
+  596 (сбой выделения: ошибка выделения без мусора; сбойный прогон оставляет корни), 615 (приватные корни
+  каждого прогона), 670 (рабочий каталог — потомок каталога прогона), 131/178 (целый прогон через
+  `hoh-conformance-fake`, материализация патчей, перенос относительных модулей, текст ошибки патча), 646
+  (setup после копирования), 306/426 (застрявший потомок убит вместе с группой, `exit`: `process timeout`),
+  335/358/380 (смерть по сигналу: `frames`, `protocol stdout closed before completion`, exit `None`), 456
+  (запрос «в полёте» при закрытии потока). Часть 178 про ссылки `node_modules` пакетов — механика Node
+  (`hoh` собственных пакетов Node не резолвит), в Rust не существует.
+- Найдено и исправлено: запись в умершего ребёнка (`Broken pipe`) подменяла первую ошибку; теперь она
+  равна `protocol stdout closed before completion`. `yaml::materialize` для не-массива теперь говорит
+  `snapshot profile patch must be a top-level array: <путь>`.
+- Перенесены через двойник `hoh` (`tests/harness_process.rs`): 115, 499 (сбой запуска), 491, 282, 404.
+  Найдено тестом 491: отказ при старте не включал stderr агента; теперь причина `launch` содержит
+  `agent stderr:\n…` (меняет только текст причины).
+- Живые wait-операции перенесены: `src/waits.rs` + операции `protocol::acp` (`cancel`, `promptExpectError`,
+  `promptAndWaitForAgentMessage`, `waitForTurnStart`, `waitForGoalPhase`, `waitForInboxMessage`,
+  `waitForTitleAfterTurnEnd`, `waitForEventAfterTurnEnd`, `waitForSubagentTurnEnd`); тесты `tests/harness_steps.rs` (28).
+  Различие: журналы заранее лежат в корне сессий (fake-агент TS пишет их при отмене), а неизвестная
+  операция теперь даёт текст образца `snapshot-harness: unknown input op {…}`.
+
+
+## Ревью конвейера 000320 (s2, 21.11, fix9): suite.spec
+
+- Блокирующее: 59 случаев `suite.spec` были записаны целыми диапазонами «генераторы». Теперь перенесено 113 из 117,
+  не перенесено 4 (188, 234, 244, 255 — «проверки генераторов»), таблица построчная.
+- `src/refresh.rs`: `stabilize_fixture_message_ids`, `refresh_fixture_replacements`, `stabilize_refresh_log`,
+  `reconcile_catalog_creation_times` (`ClockPolicy::{Validate, PreserveHeaders}`). Вызов `Validate` добавлен в раннер
+  после сбора журналов (`runner.rs`, фаза `log`) — как `reconcileCatalogCreationTimes(..., 'validate')` в suite.ts:1349;
+  до этого расхождение сырых часов каталога родителя и потомка при воспроизведении не проверялось.
+- `src/registration.rs`: `validate_registration` (дубликаты имён, класс заголовка без пина и пин-дубль, источники и
+  счётчики сайдкаров), `claim_shared_snapshot`, `assert_unique_snapshot_contents`. Таблица `Declaration` собирается
+  вручную: в Rust сценарии берутся из манифестов, а `corpus::pin` не проверяет уникальность пина — это известное
+  отличие, строка в вопросы ведущему.
+- Различие: `stabilize*` в TS вызываются только режимом refresh, но функции чистые и их поведение сохранено полностью
+  (порядок ключей JSON, числа, ограничение безопасных целых для времён пакетных строк).

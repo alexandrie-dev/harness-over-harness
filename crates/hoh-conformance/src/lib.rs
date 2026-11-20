@@ -6,8 +6,14 @@ pub mod fixtures;
 pub mod manifest;
 pub mod normalize;
 pub mod protocol;
+pub mod refresh;
+pub mod registration;
 pub mod runner;
+pub mod session_files;
+pub mod sidecars;
+pub mod storage;
 pub mod v1;
+pub mod waits;
 pub mod workspace;
 pub mod yaml;
 

@@ -29,9 +29,17 @@ pub struct Normalizer {
     event_end: Regex,
     event_time: Regex,
     omitted: Regex,
+    /// `cwdPathMode: "native"`: keep the captured separators of cwd-rooted paths.
+    native_cwd_paths: bool,
 }
 
 impl Normalizer {
+    /// The same normalizer with `cwdPathMode: "native"` (a platform-specific golden).
+    pub fn with_native_cwd_paths(mut self) -> Self {
+        self.native_cwd_paths = true;
+        self
+    }
+
     pub fn new() -> Result<Self> {
         fn re(s: &str) -> Result<Regex> {
             Regex::new(s).map_err(|e| e.to_string())
@@ -61,6 +69,7 @@ impl Normalizer {
             event_end: re(r"\r?\n```(?:\r?\n|$)|\r?\n\r?\n\(Omitted ")?,
             event_time: re(r#"(?m)^(  "time": )[0-9]+(,\r?$)"#)?,
             omitted: re(r"(\r?\n\r?\n\(Omitted )[0-9]+( bytes\.)")?,
+            native_cwd_paths: false,
         })
     }
 
@@ -170,7 +179,8 @@ impl Normalizer {
         }
     }
 
-    pub fn string(&self, text: &str, ctx: &Context, legacy: bool) -> String {
+    /// Every known spelling of the cwd (and its macOS `/private` forms), longest first.
+    fn replace_known_cwd(text: &str, ctx: &Context) -> String {
         let mut spellings = vec![ctx.cwd.clone()];
         spellings.extend(ctx.aliases.iter().cloned());
         spellings.extend(
@@ -187,23 +197,29 @@ impl Normalizer {
         for spelling in spellings {
             out = replace_cwd(&out, &spelling);
         }
-        out = out.replace("/private{{cwd}}", "{{cwd}}");
-        out = self
-            .cwd_path
-            .replace_all(&out, |c: &Captures<'_>| c[0].replace('\\', "/"))
-            .into_owned();
-        out = self
-            .path_tag
-            .replace_all(&out, |c: &Captures<'_>| {
-                format!("{}{}{}", &c[1], c[2].replace('\\', "/"), &c[3])
-            })
-            .into_owned();
-        out = self
-            .instructions
-            .replace_all(&out, |c: &Captures<'_>| {
-                format!("{}{}", &c[1], c[2].replace('\\', "/"))
-            })
-            .into_owned();
+        out.replace("/private{{cwd}}", "{{cwd}}")
+    }
+
+    pub fn string(&self, text: &str, ctx: &Context, legacy: bool) -> String {
+        let mut out = Self::replace_known_cwd(text, ctx);
+        if !self.native_cwd_paths {
+            out = self
+                .cwd_path
+                .replace_all(&out, |c: &Captures<'_>| c[0].replace('\\', "/"))
+                .into_owned();
+            out = self
+                .path_tag
+                .replace_all(&out, |c: &Captures<'_>| {
+                    format!("{}{}{}", &c[1], c[2].replace('\\', "/"), &c[3])
+                })
+                .into_owned();
+            out = self
+                .instructions
+                .replace_all(&out, |c: &Captures<'_>| {
+                    format!("{}{}", &c[1], c[2].replace('\\', "/"))
+                })
+                .into_owned();
+        }
         out = self
             .spill
             .replace_all(&out, |c: &Captures<'_>| {
@@ -261,7 +277,7 @@ impl Normalizer {
                 "{{messageId}}".into()
             } else {
                 let out = self.string(s, ctx, legacy);
-                if key == Some("path") {
+                if key == Some("path") && !self.native_cwd_paths {
                     out.replace('\\', "/")
                 } else {
                     out
@@ -336,7 +352,20 @@ impl Normalizer {
         Ok(rows)
     }
 
+    /// `normalizeSessionSnapshots(raw, ctx, {nativeWriterOutput: true})`: the logs are writer output,
+    /// so a delivery marker of the log's own generation is tokenized.
     pub fn logs(&self, raw: &[String], ctx: &Context) -> Result<Logs> {
+        self.logs_with(raw, ctx, true)
+    }
+
+    /// `normalizeSessionSnapshots`; without `native_writer_output` delivery markers keep their
+    /// generation (the source-versus-migrated-artifact comparison is generation-exact).
+    pub fn logs_with(
+        &self,
+        raw: &[String],
+        ctx: &Context,
+        native_writer_output: bool,
+    ) -> Result<Logs> {
         let mut logs = raw
             .iter()
             .map(|s| crate::records(s))
@@ -373,7 +402,8 @@ impl Normalizer {
                 o.shift_remove("version");
             }
             for event in log.iter_mut().skip(1) {
-                if event["type"] == "session-log-deepseek/delivery-accepted"
+                if native_writer_output
+                    && event["type"] == "session-log-deepseek/delivery-accepted"
                     && version.as_ref() == event["data"].get("sessionFormatVersion")
                     && version.is_some()
                 {
@@ -431,28 +461,8 @@ impl Normalizer {
             "job/registered" | "job/settled" => data(&["startedAt", "finishedAt"]),
             "goal/change" => data(&["createdAt", "updatedAt"]),
             "subagent/catalog" => data(&["childCreatedAt"]),
-            "feedback/message-put" => {
-                if let Some(item) = record.pointer_mut("/data/item") {
-                    zero(item, &["createdAt", "updatedAt"], false);
-                }
-            }
-            "plugin:timeline/tree" => {
-                if let Some(tree) = record.pointer_mut("/data/tree") {
-                    zero(tree, &["createdAt", "lastTaskUpdate"], true);
-                    if let Some(tasks) = tree["tasks"].as_array_mut() {
-                        for task in tasks {
-                            zero(task, &["createdAt", "updatedAt"], true);
-                        }
-                    }
-                }
-                if let Some(receipt) = record.pointer_mut("/data/receipt") {
-                    zero(receipt, &["at", "previousAt"], true);
-                }
-            }
-            "tool/result" => {
-                if let Some(timeline) = record.pointer_mut("/data/meta/timeline") {
-                    zero(timeline, &["at", "previousAt"], true);
-                }
+            "feedback/message-put" | "plugin:timeline/tree" | "tool/result" => {
+                service_clocks(record, &kind)
             }
             _ => {}
         }
@@ -552,7 +562,8 @@ impl Normalizer {
     }
 }
 
-pub fn scrub_bulk(record: &mut Value, retain_names: bool) {
+/// `scrubSystemPrompts` of one record: the prompt text of a `system/message` becomes `{{system}}`.
+pub fn scrub_system(record: &mut Value) {
     if record["type"] == "system/message"
         && let Some(text) = record
             .pointer_mut("/data/message/content/0/text")
@@ -560,6 +571,11 @@ pub fn scrub_bulk(record: &mut Value, retain_names: bool) {
     {
         *text = json!("{{system}}");
     }
+}
+
+/// `scrubToolSchemas` of one record: the tools of a `request/header` become `{{tools}}`
+/// (or their names, when the log carries developer messages).
+pub fn scrub_tools(record: &mut Value, retain_names: bool) {
     if record["type"] == "request/header"
         && let Some(tools) = record.pointer_mut("/data/header/tools")
     {
@@ -582,6 +598,11 @@ pub fn scrub_bulk(record: &mut Value, retain_names: bool) {
             json!("{{tools}}")
         };
     }
+}
+
+pub fn scrub_bulk(record: &mut Value, retain_names: bool) {
+    scrub_system(record);
+    scrub_tools(record, retain_names);
 }
 
 fn zeros(v: Option<&mut Value>) {
@@ -838,4 +859,299 @@ pub mod v1 {
             None => set.clone(),
         }
     }
+}
+
+/// `normalizeSessionFormatMetadata`: the header generation is omitted; with a validated source
+/// generation the delivery markers of that generation are tokenized. Other lines are untouched.
+pub fn normalize_session_format_metadata(raw: &str, source_version: Option<u64>) -> Result<String> {
+    raw.split('\n')
+        .map(|line| {
+            if hoh_util_values::js_trim(line).is_empty() {
+                return Ok(line.to_owned());
+            }
+            let mut record = hoh_util_values::js_json_parse(line).map_err(|e| e.to_string())?;
+            if record["type"] == "session" && record.get("version").is_some() {
+                if let Some(object) = record.as_object_mut() {
+                    object.shift_remove("version");
+                }
+            } else if let Some(source) = source_version
+                && record["type"] == "session-log-deepseek/delivery-accepted"
+            {
+                if record["data"]["sessionFormatVersion"].as_u64() != Some(source) {
+                    return Ok(line.to_owned());
+                }
+                record["data"]["sessionFormatVersion"] = json!("{{sourceSessionFormatVersion}}");
+            } else {
+                return Ok(line.to_owned());
+            }
+            Ok(hoh_util_values::js_json_stringify(&record))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|lines| lines.join("\n"))
+}
+
+fn scrub_lines(raw: &str, scrub: impl Fn(&mut Value, bool)) -> Result<String> {
+    let lines: Vec<&str> = raw.split('\n').collect();
+    let records: Vec<Option<Value>> = lines
+        .iter()
+        .map(|line| {
+            if hoh_util_values::js_trim(line).is_empty() {
+                Ok(None)
+            } else {
+                hoh_util_values::js_json_parse(line)
+                    .map(Some)
+                    .map_err(|e| e.to_string())
+            }
+        })
+        .collect::<Result<_>>()?;
+    let retain = records
+        .iter()
+        .flatten()
+        .any(|r| r["type"] == "developer/message");
+    Ok(lines
+        .iter()
+        .zip(records)
+        .map(|(line, record)| match record {
+            None => (*line).to_owned(),
+            Some(mut record) => {
+                let before = record.clone();
+                scrub(&mut record, retain);
+                if record == before {
+                    (*line).to_owned()
+                } else {
+                    hoh_util_values::js_json_stringify(&record)
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+/// `scrubSystemPrompts`: only `system/message` text; every other line is byte-identical.
+pub fn scrub_system_prompts(raw: &str) -> Result<String> {
+    scrub_lines(raw, |r, _| scrub_system(r))
+}
+/// `scrubToolSchemas`: only request-header tools; every other line is byte-identical.
+pub fn scrub_tool_schemas(raw: &str) -> Result<String> {
+    scrub_lines(raw, scrub_tools)
+}
+/// `scrubModelRequestBulk`: both.
+pub fn scrub_model_request_bulk(raw: &str) -> Result<String> {
+    scrub_lines(raw, scrub_bulk_with)
+}
+fn scrub_bulk_with(record: &mut Value, retain: bool) {
+    scrub_bulk(record, retain);
+}
+
+/// The feedback and Timeline clocks that `scrubSessionSnapshot` and the log normalizer both zero
+/// (`normalizeFeedbackClocks`, `normalizeTimelineClocks`).
+fn service_clocks(record: &mut Value, kind: &str) {
+    match kind {
+        "feedback/message-put" => {
+            if let Some(item) = record.pointer_mut("/data/item") {
+                zero(item, &["createdAt", "updatedAt"], false);
+            }
+        }
+        "plugin:timeline/tree" => {
+            if let Some(tree) = record.pointer_mut("/data/tree") {
+                zero(tree, &["createdAt", "lastTaskUpdate"], true);
+                if let Some(tasks) = tree["tasks"].as_array_mut() {
+                    for task in tasks {
+                        zero(task, &["createdAt", "updatedAt"], true);
+                    }
+                }
+            }
+            if let Some(receipt) = record.pointer_mut("/data/receipt") {
+                zero(receipt, &["at", "previousAt"], true);
+            }
+        }
+        "tool/result" => {
+            if let Some(timeline) = record.pointer_mut("/data/meta/timeline") {
+                zero(timeline, &["at", "previousAt"], true);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `scrubSessionSnapshot`: the header line is kept byte for byte; every body record is scrubbed,
+/// loses its persistence envelope, expands `sourceEventSeqs` and gets stable service clocks.
+pub fn scrub_session_snapshot(raw: &str) -> Result<String> {
+    let scrubbed = scrub_model_request_bulk(raw)?;
+    let mut first = true;
+    scrubbed
+        .split('\n')
+        .map(|line| {
+            if hoh_util_values::js_trim(line).is_empty() {
+                return Ok(line.to_owned());
+            }
+            let mut record = hoh_util_values::js_json_parse(line).map_err(|e| e.to_string())?;
+            if std::mem::take(&mut first) {
+                if record["type"] != "session" {
+                    return Err("session snapshot must start with a session header".into());
+                }
+                return Ok(line.to_owned());
+            }
+            if let Some(object) = record.as_object_mut() {
+                for key in ["seq", "time", "seq0", "time0"] {
+                    object.shift_remove(key);
+                }
+            }
+            if let Some(ranges) = record.get_mut("sourceEventSeqs") {
+                *ranges = decode_ranges(ranges)?;
+            }
+            let kind = record["type"].as_str().unwrap_or("").to_owned();
+            service_clocks(&mut record, &kind);
+            Ok(hoh_util_values::js_json_stringify(&record))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|lines| lines.join("\n"))
+}
+
+/// `extractSnapshotSpillPaths`: every snapshot-mode spill path of a log keyed by spill filename;
+/// the last match wins per name.
+pub fn extract_snapshot_spill_paths(
+    content: &str,
+) -> Result<std::collections::BTreeMap<String, String>> {
+    let prefix = Regex::new(
+        r"(?:[A-Za-z]:)?[\\/]+(?:tmp|t)[\\/]+(?:dsh-acp-snap-[0-9a-f]{9}|dsh-acp-snapshot-spill)[\\/]+session-[0-9a-f]{12}[\\/]+[0-9a-f]{12}-",
+    )
+    .map_err(|e| e.to_string())?;
+    let mut result = std::collections::BTreeMap::new();
+    let mut from = 0;
+    while let Some(found) = prefix.find_at(content, from) {
+        let rest = &content[found.end()..];
+        let run = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || "._~-".contains(c)))
+            .unwrap_or(rest.len());
+        // The name is the shortest run of at least one character followed by a delimiter.
+        let end = (1..=run).filter(|n| rest.is_char_boundary(*n)).find(|n| {
+            let after = &rest[*n..];
+            after.starts_with(". Use read with offset/limit")
+                || after.starts_with(|c: char| {
+                    hoh_util_values::is_js_white_space(c) || matches!(c, ')' | '"')
+                })
+                || after.trim_start_matches('\\').starts_with('"') && after.starts_with('\\')
+                || after.is_empty()
+        });
+        match end {
+            Some(length) => {
+                result.insert(
+                    rest[..length].to_owned(),
+                    content[found.start()..found.end() + length].to_owned(),
+                );
+                from = found.end() + length;
+            }
+            None => from = found.start() + 1,
+        }
+    }
+    Ok(result)
+}
+
+/// `tokenizeSessionFixtureCwd`: store one generated workspace as `{{cwd}}` while retaining every
+/// other session value (the fixture writer of record/refresh runs).
+pub fn tokenize_session_fixture_cwd(raw: &str) -> Result<String> {
+    let lines: Vec<&str> = raw.split('\n').collect();
+    let first = lines
+        .iter()
+        .find(|l| !hoh_util_values::js_trim(l).is_empty());
+    let header = match first {
+        Some(line) => hoh_util_values::js_json_parse(line).map_err(|e| e.to_string())?,
+        None => Value::Null,
+    };
+    let cwd = header["cwd"].as_str().unwrap_or("").to_owned();
+    let basename = cwd.rsplit(['\\', '/']).next().unwrap_or("").to_owned();
+    if basename.is_empty() {
+        return Err("acp-snapshot: cannot tokenize a cwd without a basename".into());
+    }
+    let ctx = Context {
+        cwd,
+        ..Context::default()
+    };
+    lines
+        .iter()
+        .map(|line| {
+            if hoh_util_values::js_trim(line).is_empty() {
+                return Ok((*line).to_owned());
+            }
+            let mut value = hoh_util_values::js_json_parse(line).map_err(|e| e.to_string())?;
+            map_strings(&mut value, &mut |text, _| {
+                tokenize_fixture_string(text, &ctx, &basename)
+            });
+            Ok(hoh_util_values::js_json_stringify(&value))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|lines| lines.join("\n"))
+}
+
+/// Replace any absolute spelling whose final segment is the generated cwd basename.
+fn tokenize_fixture_string(text: &str, ctx: &Context, basename: &str) -> String {
+    let exact = Normalizer::replace_known_cwd(text, ctx);
+    let delimiter = |c: char| {
+        matches!(
+            c,
+            '\\' | '/'
+                | '\''
+                | '"'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | ','
+                | ';'
+                | ':'
+                | '!'
+                | '?'
+                | '='
+                | '<'
+                | '>'
+        ) || hoh_util_values::is_js_white_space(c)
+    };
+    let prefix =
+        Regex::new(r#"(?:[A-Za-z]:)?[\\/](?:[^\\/\s<>"]+[\\/])*"#).expect("static pattern");
+    let mut out = String::new();
+    let mut cursor = 0;
+    let bytes = exact.as_str();
+    while cursor < bytes.len() {
+        // The longest candidate starting here whose basename is followed by a delimiter.
+        let start = cursor;
+        let mut best = None;
+        if let Some(head) = prefix.find_at(bytes, start).filter(|m| m.start() == start) {
+            // Candidates: every occurrence of `basename` reachable through whole segments.
+            let region_end = bytes[start..]
+                .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"'))
+                .map_or(bytes.len(), |i| start + i);
+            let _ = head;
+            let mut search = start;
+            while let Some(at) = bytes[search..region_end].find(basename) {
+                let name_start = search + at;
+                let name_end = name_start + basename.len();
+                let before_ok = bytes[..name_start].ends_with(['\\', '/'])
+                    && prefix.is_match(&bytes[start..name_start])
+                    && prefix
+                        .find(&bytes[start..name_start])
+                        .is_some_and(|m| m.start() == 0 && m.end() == name_start - start);
+                let after_ok = name_end == bytes.len()
+                    || bytes[name_end..].chars().next().is_some_and(delimiter);
+                if before_ok && after_ok {
+                    best = Some(name_end);
+                }
+                search = name_start + 1;
+            }
+        }
+        match best {
+            Some(end) => {
+                out.push_str("{{cwd}}");
+                cursor = end;
+            }
+            None => {
+                let ch = bytes[cursor..].chars().next().expect("in range");
+                out.push(ch);
+                cursor += ch.len_utf8();
+            }
+        }
+    }
+    out.replace("/private{{cwd}}", "{{cwd}}")
 }

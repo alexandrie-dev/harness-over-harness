@@ -165,16 +165,15 @@ pub fn harvest(root: &Path, suite: &str) -> Result<Vec<String>> {
         }
     }
     let mut logs = Vec::new();
-    for (_, (version, path)) in selected {
+    for (_, (_, path)) in selected {
         let text = read(&path)?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        crate::session_files::assert_persisted_session_version(name, &text)?;
         let rows = records(&text)?;
         let header = rows.first().ok_or("empty persisted session")?;
-        if header["type"] != "session" || header["version"].as_u64() != Some(version) {
-            return Err(format!(
-                "{}: filename/header version mismatch",
-                path.display()
-            ));
-        }
         logs.push((header.clone(), text));
     }
     let catalog: BTreeMap<String, BTreeMap<String, usize>> = logs
@@ -243,6 +242,17 @@ fn checked(dir: &Path, name: &str, result: Check) -> Result<Check> {
     Ok(result)
 }
 
+/// The scenario-owned spill locator root; the Windows spelling is exactly two bytes shorter.
+pub fn spill_locator_root(name: &str, windows: bool) -> String {
+    let hash = Sha256::digest(name.as_bytes());
+    let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    format!(
+        "{}/dsh-acp-snap-{}",
+        if windows { "/t" } else { "/tmp" },
+        &hex[..9]
+    )
+}
+
 pub fn environment(
     s: &Scenario,
     fixture_files: &[PathBuf],
@@ -300,15 +310,9 @@ pub fn environment(
             "DSH_SNAPSHOT_SPILL_ROOT".into(),
             spill.to_string_lossy().into_owned(),
         );
-        let hash = Sha256::digest(s.name.as_bytes());
-        let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
         env.insert(
             "DSH_SNAPSHOT_SPILL_LOCATOR_ROOT".into(),
-            format!(
-                "{}/dsh-acp-snap-{}",
-                if cfg!(windows) { "/t" } else { "/tmp" },
-                &hex[..9]
-            ),
+            spill_locator_root(&s.name, cfg!(windows)),
         );
     }
     if s.suite == "acp" {
@@ -737,6 +741,13 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
     if s.name == "subagent-dsh-sdk-dynamic-route" {
         actual.extend(harvest(&cwd.join(".child-dsh/sessions"), "sdk")?);
     }
+    // suite.ts: raw parent and child catalog clocks must agree before normalization can erase them.
+    if let Err(e) = crate::refresh::reconcile_catalog_creation_times(
+        &actual,
+        crate::refresh::ClockPolicy::Validate,
+    ) {
+        return Ok(Err(Failure::new("log", e)));
+    }
     let expected_code = compare::expected_exit(&rows);
     // Headless asserts its exit code. SDK client.ts:263–267,494–510 and dispose.ts:82–98,
     // like ACP launcher.ts:271–294,445–448, only await termination after protocol completion.
@@ -752,7 +763,14 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
             ),
         )));
     }
-    if let Some(error) = rpc_error {
+    if let Some(mut error) = rpc_error {
+        // harness.ts: a connection that closes during startup reports what the agent wrote to stderr.
+        if !initialized
+            && let Ok(stderr) = fs::read_to_string(dir.join("stderr.txt"))
+            && !stderr.trim().is_empty()
+        {
+            error = format!("{error}\nagent stderr:\n{}", stderr.trim_end());
+        }
         return Ok(Err(Failure::new(
             if initialized { "frames" } else { "launch" },
             error,
@@ -815,13 +833,10 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
     if s.suite == "acp"
         && actual
             .iter()
-            .map(|log| records(log))
+            .map(|log| crate::storage::unknown_tool_call_ids(log))
             .collect::<Result<Vec<_>>>()?
             .iter()
-            .flatten()
-            .any(|row| {
-                row["type"] == "tool/result" && row["data"]["error"]["code"] == "UNKNOWN_TOOL"
-            })
+            .any(|ids| !ids.is_empty())
     {
         return Ok(Err(Failure::new(
             "log",

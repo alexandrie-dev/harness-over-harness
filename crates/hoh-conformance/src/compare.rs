@@ -896,6 +896,23 @@ pub fn normalized_session(raw: &str) -> std::result::Result<Value, Failure> {
     Ok(json!(logs))
 }
 
+/// `prepareSessionSnapshotFixtureForComparison`: the fixture strictly migrated to the current
+/// generation and rendered back as JSONL (header first, events with their `seq`/`time`).
+pub fn prepare_fixture_for_comparison(raw: &str) -> std::result::Result<String, Failure> {
+    let artifact = migrate_fixture(raw)?;
+    let mut header = artifact.header;
+    header
+        .entry("type")
+        .or_insert_with(|| Value::String("session".into()));
+    let mut text = hoh_util_values::js_json_stringify(&Value::Object(header));
+    text.push('\n');
+    for event in artifact.events {
+        text.push_str(&hoh_util_values::js_json_stringify(&Value::Object(event)));
+        text.push('\n');
+    }
+    Ok(text)
+}
+
 /// `fixtureFormatError`'s line choice for an error raised by `finish`: a `released Session row N`
 /// message points at the Nth physical body row, an event/seq/cut index at the line of that event,
 /// anything else at the header (`llm-replay/src/index.ts:410-431`).

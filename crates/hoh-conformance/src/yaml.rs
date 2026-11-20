@@ -116,6 +116,10 @@ fn scalar(text: &str) -> Value {
             number
                 .filter(|n| n.is_finite())
                 .and_then(|n| {
+                    // js-yaml keeps `-0` as the number -0; its decimal rendering would lose the sign.
+                    if n == 0.0 && n.is_sign_negative() {
+                        return serde_json::Number::from_f64(n).map(Value::Number);
+                    }
                     hoh_util_values::js_json_parse(&hoh_util_values::js_number_string(n)).ok()
                 })
                 .unwrap_or_else(|| Value::String(text.into()))
@@ -149,7 +153,12 @@ pub fn materialize(text: &str, source: &std::path::Path, refs: &std::path::Path)
         }
         Ok(())
     }
-    let patches = value.as_array_mut().ok_or("patch must be an array")?;
+    let patches = value.as_array_mut().ok_or_else(|| {
+        format!(
+            "snapshot profile patch must be a top-level array: {}",
+            source.display()
+        )
+    })?;
     for patch in patches {
         if let Some(items) = patch["insert"].as_array_mut() {
             for item in items {

@@ -133,7 +133,7 @@ async fn a_new_session_that_should_have_been_rejected_says_so() {
     );
 }
 
-/// harness.ts:316-319: the agent is answered `cancelled`, the run is rejected after the step.
+/// :1434 harness.ts:316-319: the agent is answered `cancelled`, the run is rejected after the step.
 #[tokio::test]
 async fn a_scripted_permission_kind_the_agent_never_offered_is_answered_cancelled_and_rejects_the_run()
  {
@@ -231,4 +231,49 @@ sleep 5"#,
         .unwrap_or_else(|_| panic!("round {round}: the agent never got its answer"))
         .unwrap();
     }
+}
+
+const OFFER: &str = r#"printf '%s\n' '{"jsonrpc":"2.0","id":"p","method":"session/request_permission","params":{"options":[{"kind":"allow_once","optionId":"opt-allow"},{"kind":"reject_once","optionId":"opt-reject"}]}}'"#;
+
+/// harness.spec.ts:1408: the scripted queue answers by option kind; the exhausted queue falls back to cancelled.
+#[tokio::test]
+async fn permission_requests_are_answered_from_the_scripted_queue_by_option_kind_then_cancelled() {
+    let script = format!(
+        r#"read l
+{OFFER}
+read first
+case "$first" in *selected*opt-allow*) ;; *) exit 9;; esac
+{OFFER}
+read second
+case "$second" in *cancelled*) ;; *) exit 8;; esac
+printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"sessionId":"s"}}}}'
+sleep 5"#
+    );
+    run_steps(
+        &script,
+        json!({"permissionAnswers":[{"kind":"allow_once"}]}),
+        json!([{"op":"newSession"}]),
+    )
+    .await
+    .unwrap();
+}
+
+/// harness.spec.ts:1425: a non-first offered option is selected by kind.
+#[tokio::test]
+async fn a_non_first_offered_option_is_selected_by_kind() {
+    let script = format!(
+        r#"read l
+{OFFER}
+read answer
+case "$answer" in *selected*opt-reject*) ;; *) exit 9;; esac
+printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"sessionId":"s"}}}}'
+sleep 5"#
+    );
+    run_steps(
+        &script,
+        json!({"permissionAnswers":[{"kind":"reject_once"}]}),
+        json!([{"op":"newSession"}]),
+    )
+    .await
+    .unwrap();
 }

@@ -148,13 +148,16 @@ fn command_attachments(ctx: &BodyContext<'_>) -> Check {
     expect(users.len() == 1, || {
         format!("expected 1 user message, got {}", users.len())
     })?;
-    let attachment = &ctx.manifest["input"]["attachments"][0]["id"];
+    // A manifest without attachments declares no id: the key is omitted, never `null`.
+    let mut image = json!({"mediaType": "image/png", "bytes": 69, "width": 1, "height": 1});
+    if let Some(id) = ctx.manifest["input"]["attachments"][0]["id"].as_str() {
+        image["attachmentId"] = json!(id);
+    }
     expect_eq(
         "user message content",
         &users[0]["data"]["content"],
         &json!([
-            {"type": "image", "attachment": {"attachmentId": attachment,
-                "mediaType": "image/png", "bytes": 69, "width": 1, "height": 1}},
+            {"type": "image", "attachment": image},
             {"type": "text", "text": "Reply SDK_COMMAND_IMAGE_OK without tools."},
         ]),
     )?;

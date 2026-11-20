@@ -262,3 +262,17 @@ fn rejects_invalid_metadata() {
         );
     }
 }
+
+/// Tail: js-yaml reads `-0` as the number -0, which `Object.is` rejects as a generation.
+#[test]
+fn a_negative_zero_session_format_version_is_rejected() {
+    let error = parse(
+        "version: 1\nprofile: acp\nsessionFormat:\n  version: -0\n  coverage: [multi-hop]\n",
+        "snapshot.yml",
+    )
+    .unwrap_err();
+    assert!(
+        error.ends_with("manifest.sessionFormat.version must be a non-negative safe integer"),
+        "{error}"
+    );
+}
