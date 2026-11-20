@@ -81,7 +81,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/session/session-title	@deepseek-ai/dsh-session-title	hoh-session-title	1027	1851	done	
 1	port	packages/session/tool-working-directory	@deepseek-ai/dsh-tool-working-directory	hoh-tool-working-directory	43	0	done	
 1	port	packages/session/working-directory	@deepseek-ai/dsh-working-directory	hoh-working-directory	290	456	done	
-1	port	packages/settings/settings	@deepseek-ai/dsh-settings	hoh-settings	704	800	writing:x6	
+1	port	packages/settings/settings	@deepseek-ai/dsh-settings	hoh-settings	704	800	done	
 1	port	packages/shell/shell	@deepseek-ai/dsh-shell	hoh-shell	377	125	done	
 1	port	packages/shell/tool-bash-persistent	@deepseek-ai/dsh-tool-bash-persistent	hoh-tool-bash-persistent	488	989	writing:x8	
 1	port	packages/skill/skill	@deepseek-ai/dsh-skill	hoh-skill	902	1275	done	
