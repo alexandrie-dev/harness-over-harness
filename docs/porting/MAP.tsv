@@ -65,7 +65,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/schedule/tool-schedule	@deepseek-ai/dsh-tool-schedule	hoh-tool-schedule	496	664	done	
 1	port	packages/sdk/protocol	@deepseek-ai/dsh-sdk-protocol	hoh-sdk-protocol	571	310	done	
 1	port	packages/sdk/server	@deepseek-ai/dsh-sdk-jsonrpc-server	hoh-sdk-jsonrpc-server	1049	4674	done	
-1	port	packages/session-query/session-query	@deepseek-ai/dsh-session-query	hoh-session-query	2241	3066	writing:x4	
+1	port	packages/session-query/session-query	@deepseek-ai/dsh-session-query	hoh-session-query	2241	3066	writing:x9	
 1	port	packages/session/session-checkpoint-policy	@deepseek-ai/dsh-session-checkpoint-policy	hoh-session-checkpoint-policy	83	453	done	
 1	port	packages/session/session-format	@deepseek-ai/dsh-session-format	hoh-session-format	945	758	done	
 1	port	packages/session/session-format-catalog	@deepseek-ai/dsh-session-format-catalog	hoh-session-format-catalog	154	563	done	
@@ -158,8 +158,8 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/storage/storage-json	@deepseek-ai/dsh-storage-json	hoh-storage-json	844	839	done	
 2	port	packages/subagent/subagent-fork-in-process	@deepseek-ai/dsh-subagent-fork-in-process	hoh-subagent-fork-in-process	83	347	accepted	
 2	port	packages/subagent/subagent-spawn-in-process	@deepseek-ai/dsh-subagent-spawn-in-process	hoh-subagent-spawn-in-process	59	525	accepted	
-2	port	packages/subagent/tool-subagent	@deepseek-ai/dsh-tool-subagent	hoh-tool-subagent	965	3380	todo	
-2	port	packages/subagent/tool-subagent-control	@deepseek-ai/dsh-tool-subagent-control	hoh-tool-subagent-control	373	1468	writing:x5	
+2	port	packages/subagent/tool-subagent	@deepseek-ai/dsh-tool-subagent	hoh-tool-subagent	965	3380	writing:x5	
+2	port	packages/subagent/tool-subagent-control	@deepseek-ai/dsh-tool-subagent-control	hoh-tool-subagent-control	373	1468	accepted	
 2	port	packages/team/agent-team	@deepseek-ai/dsh-agent-team	hoh-agent-team	1109	1862	writing:x8	зависит от: dsh-typert-protocol=skip
 2	port	packages/team/tool-agent-team	@deepseek-ai/dsh-tool-agent-team	hoh-tool-agent-team	235	1064	writing:x8	
 2	port	packages/telemetry/otel	@deepseek-ai/dsh-otel	hoh-otel	475	466	writing:x8	
@@ -183,7 +183,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 3	port	packages/preset/agent-preset/skills/dsh-doc/templates/mcp	@local/demo-mcp	hoh-demo-mcp	0	0	todo	
 3	port	packages/session-query/session-log-export	@deepseek-ai/dsh-session-log-export	hoh-session-log-export	2013	3283	accepted	
 3	port	packages/session/message-quotes	@deepseek-ai/dsh-message-quotes	hoh-message-quotes	230	325	writing:x4	
-3	port	packages/session/session-stats	@deepseek-ai/dsh-session-stats	hoh-session-stats	299	450	writing:x4	
+3	port	packages/session/session-stats	@deepseek-ai/dsh-session-stats	hoh-session-stats	299	450	writing:x9	
 3	port	packages/session/session-turn-outline	@deepseek-ai/dsh-session-turn-outline	hoh-session-turn-outline	229	377	writing:x4	
 3	port	packages/storage/storage-sqlite	@deepseek-ai/dsh-storage-sqlite	hoh-storage-sqlite	516	499	accepted
 3	port	packages/util/text-search	@deepseek-ai/dsh-util-text-search	hoh-util-text-search	301	203	done	
