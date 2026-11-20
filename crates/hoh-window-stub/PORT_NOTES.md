@@ -228,3 +228,18 @@ Wire<T> остаётся отдельным API сохранения чужог�
 ui/src/protocol.ts — только разрешённые окну методы и достижимые типы.
 Никакого импорта core-модуля из window-модуля нет.
 
+
+## 20.11, u1: проверки окна с заглушкой и режим доступа Claude
+
+- `--approvals local` (по умолчанию `host`): заглушка без хоста применяет привилегированные методы окна сразу, как если бы хост разрешил. Нужно проверкам UI (`ui/tests/screens-a/stub-engine.mjs`), которые говорят с заглушкой напрямую: раньше `hoh/model/key/set` и `hoh/model/probe` отвечали «host approval required», и экран ждал «Отвечает за» до таймаута. С хостом (`approvalKey`) путь не менялся.
+- `hoh/executor/access/get` и `/set` (контракт движка o1): режим хранится в памяти (`confirm` по умолчанию), `get` отдаёт `{mode, effective:{mode, flags}}` с фиктивными flags, `set` — привилегированный (через одобрение хоста или `--approvals local`). Методов пока нет в `hoh-protocol`, поэтому они проверяются в самой заглушке до `validate_params`; когда o1 добавит их в `PRIVILEGED_METHODS`, путь с хостом (`approval/request`) заработает без правок.
+- Тесты: `claude_access_mode_defaults_to_confirm_and_changes_only_through_set`, `without_a_host_privileged_methods_are_refused_unless_local_approvals_are_on`.
+
+## 20.11, u1: Claude как поставщик (контракт o1: o1-modes-add.txt)
+
+- `hoh/executor/discover {executor:"claude"}` — только чтение, каждый вызов настоящий. Четыре состояния: `found` (по умолчанию), `noauth`, `missing`, `unknown` (версия неизвестна, вход есть). Переключение: файл `HOH_STUB_CLAUDE_FILE` (читается при каждом discover, проверка меняет его между двумя вызовами) или переменная `HOH_STUB_CLAUDE` (читается при старте).
+- `hoh/executor/select {executor:"claude"|null, model}` — привилегированная (одобрение хоста, как `hoh/settings/set`; с `--approvals local` применяется сразу). Выбор хранится в памяти; `hoh/executor/access/get` отдаёт `selected` (`null` — модель движка).
+- Пока выбран Claude, `session/prompt|query` не идёт по записи: заглушка пишет вызов в журнал, отвечает короткой синтетической сессией. В `confirm` (если окно сказало `capabilities.userQuestions`) ход стоит на вопросе подтверждения «…Разрешить?», в `full` вопроса нет. Журнал вызовов — только для проверок окна: `hoh/stub/executor-calls` → `{calls:[{executor,model,mode,sessionId,text}]}` (этого метода у настоящего движка нет).
+- Методов нет в `hoh-protocol` моего дерева (у o1 есть): заглушка проверяет их сама до `validate_params`. Имена и формы взяты из `protocol/fixtures/hoh-executor-*.json` дерева o1, расхождений нет.
+- Окно: умолчание режима доступа — одна константа `DEFAULT_ACCESS_MODE` в `ui/src/lib/executor.mjs` (сейчас `confirm`); окно берёт её, только если движок не назвал действующий режим.
+- Тесты: `claude_executor_is_discovered_selected_and_runs_new_chats`.

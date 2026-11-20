@@ -502,3 +502,52 @@ object!(SettingsRulesSetParams {
     internet: SetupInternetMode,
     folder: String
 });
+// External agent harnesses in the window (HOH-18): the access mode of an executor (Claude Code),
+// chosen only by the user; discovery and the choice of the executor that new chats go to.
+choices!(ExecutorAccessMode { Confirm => "confirm", Full => "full" });
+choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
+choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
+object!(ExecutorParams { executor: String });
+object!(ExecutorAccessSetParams {
+    executor: String,
+    mode: ExecutorAccessMode
+});
+object!(ExecutorAccessSetResult {
+    executor: String,
+    mode: ExecutorAccessMode
+});
+object!(ExecutorEffectiveAccess {
+    mode: ExecutorAccessMode,
+    flags: Vec<String>,
+    text: String
+});
+object!(ExecutorSelection {
+    executor: Option<String>,
+    model: Option<String>
+});
+object!(ExecutorAccessGetResult {
+    executor: String,
+    mode: ExecutorAccessMode,
+    effective: ExecutorEffectiveAccess,
+    selected: ExecutorSelection
+});
+object!(ExecutorSelectParams {
+    executor: Option<String>,
+    model: String
+});
+optional!(ExecutorModel {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    is_default: Option<bool>,
+});
+object!(ExecutorDiscoverResult {
+    executor: String,
+    installed: bool,
+    version: Option<String>,
+    version_status: ExecutorVersionStatus,
+    auth: ExecutorAuth,
+    models: Vec<ExecutorModel>,
+    detail: Option<String>
+});

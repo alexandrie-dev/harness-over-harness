@@ -87,10 +87,13 @@ fn deleting_commands_name_the_files_and_say_why_it_hurts() {
     let dir = folder();
     let found = risks(dir.path(), "rm old1.txt old2.txt old3.txt");
     let ask = question(&found, "rm old1.txt old2.txt old3.txt", Some(dir.path()));
-    assert!(ask.headline.contains("удалить 3 файла"), "{}", ask.headline);
-    assert!(ask.headline.contains("old1.txt, old2.txt, old3.txt"));
+    assert!(
+        ask.headline
+            .starts_with("Удалить 3 файла: old1.txt, old2.txt, old3.txt (папка "),
+        "{}",
+        ask.headline
+    );
     assert!(ask.headline.contains("не попадут в корзину"));
-    assert!(ask.headline.starts_with("Выполнить команду в папке "));
     assert_eq!(ask.details, "Команда: rm old1.txt old2.txt old3.txt");
     assert!(
         !ask.headline.contains("rm old1"),
@@ -99,7 +102,7 @@ fn deleting_commands_name_the_files_and_say_why_it_hurts() {
     // A-03: the window's explanation is words and the files, never the raw command.
     assert!(
         ask.explanation
-            .contains("удалить 3 файла: old1.txt, old2.txt, old3.txt")
+            .contains("Удалить 3 файла: old1.txt, old2.txt, old3.txt")
             && ask.explanation.contains("не попадут в корзину"),
         "{}",
         ask.explanation
@@ -462,7 +465,7 @@ fn text_is_one_clean_line_with_a_bounded_list() {
     let ask = question(&risks(dir.path(), command), command, Some(dir.path()));
     assert!(
         ask.headline
-            .contains("удалить 7 файлов: f1, f2, f3, f4 и ещё 3"),
+            .contains("Удалить 7 файлов: f1, f2, f3, f4 и ещё 3"),
         "{}",
         ask.headline
     );
@@ -788,7 +791,7 @@ fn escalated_questions_are_worded_like_the_guards() {
     let ask = escalation_question(&found, command, "clean the build output");
     assert!(
         ask.headline.starts_with(
-            "Помощник просит выполнить команду без ограничений песочницы: удалить 1 элемент вместе со всем содержимым: dir"
+            "Помощник просит разрешения работать за пределами своей папки: удалить 1 элемент вместе со всем содержимым: dir"
         ),
         "{}",
         ask.headline
@@ -798,15 +801,8 @@ fn escalated_questions_are_worded_like_the_guards() {
         ask.details,
         "Команда: rm -rf dir\nОбоснование Помощника: clean the build output"
     );
-    assert!(
-        ask.explanation.contains("вместе со всем содержимым: dir")
-            && ask.explanation.contains("Файлы не попадут в корзину")
-            && ask
-                .explanation
-                .ends_with("Обоснование Помощника — в подробностях"),
-        "{}",
-        ask.explanation
-    );
+    // Everything the headline says is not said again: only where the reasons are.
+    assert_eq!(ask.explanation, "Обоснование Помощника — в подробностях");
     assert!(
         !ask.explanation.contains("rm -rf")
             && !ask.explanation.contains("clean")
@@ -817,7 +813,7 @@ fn escalated_questions_are_worded_like_the_guards() {
     let plain = escalation_question(&[], "ls /", "look around");
     assert_eq!(
         plain.headline,
-        "Помощник просит выполнить команду без ограничений песочницы: она сможет читать и менять любые файлы на этом компьютере"
+        "Помощник просит разрешения работать за пределами своей папки: он сможет читать и менять любые файлы на этом компьютере"
     );
 }
 

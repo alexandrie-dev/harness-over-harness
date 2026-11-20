@@ -6,11 +6,11 @@ import { PROVIDERS } from '../../src/lib/providers.data.mjs';
 test('this computer and the private network are a local model, by the address alone', () => {
   for (const url of ['http://localhost:8000/v1', 'http://127.0.0.1:8000', 'http://[::1]:8000/v1']) {
     const found = detectProvider(url, 'qwen3-32b');
-    assert.equal(found.scope, 'loopback', url); assert.equal(found.label, 'Локальная модель'); assert.equal(found.icon, 'local');
+    assert.equal(found.scope, 'loopback', url); assert.equal(found.label, 'Модель на этом компьютере'); assert.equal(found.icon, 'local');
   }
   for (const url of ['http://192.168.1.5:8000/v1', 'http://10.0.0.7/v1', 'http://172.20.3.4:9000', 'http://gpu-box:8000/v1', 'http://spark.local/v1', 'http://100.101.1.1:8000']) {
     const found = detectProvider(url, 'local');
-    assert.equal(found.scope, 'private', url); assert.equal(found.label, 'Локальная модель в сети');
+    assert.equal(found.scope, 'private', url); assert.equal(found.label, 'Модель на другом компьютере в вашей сети');
   }
   assert.equal(addressScope('172.32.0.1'), ''); assert.equal(addressScope('8.8.8.8'), '');
   assert.equal(detectProvider('http://localhost:11434/v1', 'llama3').icon, 'ollama');

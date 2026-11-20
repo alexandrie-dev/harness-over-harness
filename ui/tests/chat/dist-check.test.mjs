@@ -35,5 +35,5 @@ test('dist gate rejects dynamic execution', async () => {
   await check({ 'app.js': 'new Function("return 1")' }, 'dynamic code');
 });
 test('dist gate enforces the single-asset cap', () => check({ 'app.js': 'x'.repeat(600000) }, 'individual text asset'));
-test('dist gate enforces the aggregate raw cap', () => check({ 'a.js': 'x'.repeat(450000), 'b.js': 'y'.repeat(450000), 'c.js': 'z'.repeat(450000) }, 'window text assets'));
+test('dist gate enforces the aggregate raw cap', () => check({ 'a.js': 'x'.repeat(450000), 'b.js': 'y'.repeat(450000), 'c.js': 'z'.repeat(450000), 'd.js': 'w'.repeat(450000) }, 'window text assets'));
 test('dist gate enforces the compressed payload cap', () => check(Object.fromEntries(['a', 'b', 'c', 'd'].map(name => [name + '.js', JSON.stringify(randomBytes(110000).toString('hex'))])), 'compressed text assets'));

@@ -6,11 +6,6 @@
 //! Only the `bash` tool is looked at. The file tools (`write`, `edit`, `apply_patch`) work inside
 //! the folder without a question, as before. See `PORT_NOTES.md`.
 
-mod classify;
-mod fs;
-mod shell;
-mod text;
-
 use std::{path::PathBuf, sync::Arc};
 
 use hoh_error::BoxError;
@@ -22,9 +17,12 @@ use hoh_tools::{
 use hoh_user_approval::{Approval, ApprovalOutcome, ApprovalRequest, DisplayReason};
 use hoh_working_directory::WorkingDirectoryKey;
 
-pub use classify::{GitKind, Risk, Source, assess, assess_blocking, assess_with};
-pub use fs::{Fs, RealFs};
-pub use text::{Question, escalation_question, question};
+// The classifier lives in `hoh-destructive-classifier` (shared with the external harness slot);
+// its public names stay reachable here unchanged.
+pub use hoh_destructive_classifier::{
+    Fs, GitKind, Question, RealFs, Risk, Source, assess, assess_blocking, assess_with,
+    escalation_question, question,
+};
 
 /// Mount dependencies of the plugin.
 #[derive(Inject)]
@@ -138,11 +136,7 @@ fn full_access_justification(arguments: &serde_json::Value) -> Option<&str> {
 /// The question for one bash command run in `cwd`: `None` leaves it to the next listener. The
 /// file system is only touched on a blocking thread.
 pub async fn decide(command: &str, cwd: Option<PathBuf>, fs: Arc<dyn Fs>) -> Option<Question> {
-    let risks = assess_blocking(command.to_owned(), cwd.clone(), fs).await;
-    if risks.is_empty() {
-        return None;
-    }
-    Some(question(&risks, command, cwd.as_deref()))
+    hoh_destructive_classifier::decide_command(command, cwd, fs).await
 }
 
 /// What the bash tool asks the host when the call escalates (`hoh-sandbox`'s

@@ -27,3 +27,7 @@ export type ScopedThreadRef = { readonly environmentId: EnvironmentId; readonly 
 export type ServerProviderSkill = Record<string, unknown>;
 export type ThreadPullRequestKey = string;
 export class AssetWorkspaceAssetNotFoundError extends Error {}
+
+/** Режимы доступа T3. Окно показывает два: «approval-required» (с подтверждением) и «full-access» (полный доступ). */
+export type RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
+export type ManagedPolicySummary = { readonly organization: string; readonly limits?: { readonly maxRuntimeMode?: RuntimeMode } };

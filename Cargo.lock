@@ -863,12 +863,15 @@ dependencies = [
  "hoh-llm",
  "hoh-scope",
  "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-persistence-jsonl",
  "hoh-session-projection",
  "hoh-system-prompt",
  "hoh-timeout",
  "hoh-util-values",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -1471,6 +1474,17 @@ name = "hoh-deque"
 version = "0.1.0"
 
 [[package]]
+name = "hoh-destructive-classifier"
+version = "0.1.0"
+dependencies = [
+ "hoh-error",
+ "hoh-kernel",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-error"
 version = "0.1.0"
 dependencies = [
@@ -1478,6 +1492,42 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "hoh-external-harness"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-atomic-write",
+ "hoh-brand",
+ "hoh-destructive-classifier",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-loader",
+ "hoh-protocol",
+ "hoh-scope",
+ "hoh-sdk-jsonrpc-server",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-persistence-jsonl",
+ "hoh-session-projection",
+ "hoh-timeout",
+ "hoh-user-approval",
+ "hoh-user-questions",
+ "hoh-util-values",
+ "hoh-working-directory",
+ "regex",
+ "rustix",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1666,6 +1716,26 @@ dependencies = [
  "hoh-timeout",
  "hoh-util-values",
  "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "hoh-harness-claude"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "getrandom 0.4.3",
+ "hoh-destructive-classifier",
+ "hoh-error",
+ "hoh-external-harness",
+ "hoh-harness-claude",
+ "hoh-kernel",
+ "hoh-util-values",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -4109,6 +4179,7 @@ dependencies = [
 name = "hoh-window-destructive-guard"
 version = "0.1.0"
 dependencies = [
+ "hoh-destructive-classifier",
  "hoh-error",
  "hoh-kernel",
  "hoh-protocol",

@@ -56,11 +56,11 @@ fn select_engine_launch(
     engine_home: &std::path::Path,
 ) -> Result<EngineLaunch, String> {
     let is_test = test_engine.is_some();
-    let value = test_engine
-        .or(configured_engine)
-        .ok_or_else(|| "Путь к движку не задан при сборке. Переустановите приложение".to_owned())?;
+    let value = test_engine.or(configured_engine).ok_or_else(|| {
+        "Путь к Помощнику не задан при сборке. Переустановите приложение".to_owned()
+    })?;
     if value.is_empty() {
-        return Err("Путь к движку пуст. Переустановите приложение".into());
+        return Err("Путь к Помощнику пуст. Переустановите приложение".into());
     }
     if is_test {
         return Ok(EngineLaunch {
@@ -322,6 +322,8 @@ fn open_window(
     .min_inner_size(520.0, 520.0)
     .resizable(true)
     .focused(true)
+    // The protection window stays above the main window while a decision is waiting for the person.
+    .always_on_top(true)
     .parent(&parent)?
     .on_navigation(|url| {
         let allowed = approval_navigation_allowed(url);

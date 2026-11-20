@@ -275,14 +275,16 @@ async fn deleting_files_asks_with_a_human_text_and_a_rejection_keeps_them() {
         .expect("deleting files must reach the host as approval/request");
     assert_eq!(asked.tool_name, "bash");
     assert!(
-        asked.human_text.starts_with("Выполнить команду в папке "),
+        asked
+            .human_text
+            .starts_with("Удалить 3 файла: old1.txt, old2.txt, old3.txt (папка "),
         "{}",
         asked.human_text
     );
     assert!(
         asked
             .human_text
-            .contains("удалить 3 файла: old1.txt, old2.txt, old3.txt"),
+            .contains("Удалить 3 файла: old1.txt, old2.txt, old3.txt"),
         "{}",
         asked.human_text
     );
@@ -294,7 +296,7 @@ async fn deleting_files_asks_with_a_human_text_and_a_rejection_keeps_them() {
     // A-03: the window's "Объяснение Помощника" is Russian words and the files, not the command.
     let reason = asked.reason.as_deref().unwrap_or_default();
     assert!(
-        reason.contains("удалить 3 файла: old1.txt, old2.txt, old3.txt")
+        reason.contains("Удалить 3 файла: old1.txt, old2.txt, old3.txt")
             && reason.contains("Файлы не попадут в корзину"),
         "{reason}"
     );
@@ -539,7 +541,7 @@ async fn a_full_access_escalation_is_one_russian_question() {
         .expect("the escalation must ask");
     assert!(
         asked.human_text.starts_with(
-            "Помощник просит выполнить команду без ограничений песочницы: удалить 1 файл: old.txt"
+            "Помощник просит разрешения работать за пределами своей папки: удалить 1 файл: old.txt"
         ),
         "{}",
         asked.human_text
@@ -551,9 +553,7 @@ async fn a_full_access_escalation_is_one_russian_question() {
     );
     let reason = asked.reason.as_deref().unwrap_or_default();
     assert!(
-        reason.contains("удалить 1 файл: old.txt")
-            && reason.contains("Обоснование Помощника — в подробностях")
-            && !reason.contains("the user asked for it"),
+        reason == "Обоснование Помощника — в подробностях",
         "{reason}"
     );
     assert!(
@@ -576,7 +576,7 @@ async fn a_full_access_escalation_is_one_russian_question() {
     assert!(
         asked
             .human_text
-            .starts_with("Помощник просит выполнить команду без ограничений песочницы: она сможет"),
+            .starts_with("Помощник просит разрешения работать за пределами своей папки: он сможет"),
         "{}",
         asked.human_text
     );
@@ -632,7 +632,7 @@ async fn naming_the_standing_mode_does_not_skip_the_guard() {
     engine.prompt("clean up").await;
     let asked = engine.next_approval().await.expect("the guard must ask");
     assert!(
-        asked.human_text.contains("удалить 1 файл: old.txt"),
+        asked.human_text.contains("Удалить 1 файл: old.txt"),
         "{}",
         asked.human_text
     );

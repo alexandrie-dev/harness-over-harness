@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { MethodMap, Notification } from '../../protocol';
+import type { DiscoverResult } from '../../lib/executor.mjs';
 
 export type ChatMethod = Extract<keyof MethodMap,
   'hoh/employee/open' | 'hoh/security/summary' | 'hoh/settings/get' | 'session/resume' | 'session/events' |
@@ -17,8 +18,18 @@ export interface ApprovalRecord {
   at: number; asker: 'assistant' | 'you'; method: string; humanText: string;
   outcome: string; reason?: string; details?: string;
 }
+export type AccessMode = 'confirm' | 'full';
+/** `hoh/executor/access/get` (the engine's contract; not in the generated protocol yet): the mode asked for and the one in effect. */
+export interface AccessState { mode: AccessMode; effective: { mode: AccessMode; flags: string[] }; selected: { executor: 'claude'; model: string } | null }
 export interface ChatTransport {
   request<M extends ChatMethod>(method: M, params: MethodMap[M]['params']): Promise<MethodMap[M]['result']>;
+  request(method: 'hoh/executor/access/get', params: { executor: 'claude' }): Promise<AccessState>;
+  /** Privileged: the host asks the person in the guard window before the engine applies it. */
+  request(method: 'hoh/executor/access/set', params: { executor: 'claude'; mode: AccessMode }): Promise<unknown>;
+  /** Read-only, a real check every time: is `claude` there, signed in, which models. */
+  request(method: 'hoh/executor/discover', params: { executor: 'claude' }): Promise<DiscoverResult>;
+  /** Privileged: new chats run through Claude with this model (`executor: null`: back on the engine's own model). */
+  request(method: 'hoh/executor/select', params: { executor: 'claude' | null; model: string }): Promise<unknown>;
   subscribe(listener: (event: Notification) => void): Promise<() => void>;
   subscribeStatus(listener: (status: EngineStatus) => void): Promise<() => void>;
   subscribeQuestions?(listener: (question: PendingQuestion) => void): Promise<() => void>;
@@ -36,9 +47,7 @@ export function chatTransport(): ChatTransport {
   if (!isTauri() && window.__HOH_CHAT_TEST_TRANSPORT__) return window.__HOH_CHAT_TEST_TRANSPORT__;
   // Native bridge delivers protocol frames and process lifecycle separately.
   return {
-    request<M extends ChatMethod>(method: M, params: MethodMap[M]['params']) {
-      return invoke<MethodMap[M]['result']>('engine_request', { method, params });
-    },
+    request: ((method: string, params: unknown) => invoke('engine_request', { method, params })) as ChatTransport['request'],
     subscribe: listener => listen<Notification>('engine-notification', event => listener(event.payload)),
     subscribeStatus: listener => listen<EngineStatus>('engine-status', event => listener(event.payload)),
     subscribeQuestions: listener => listen<PendingQuestion>('engine-question', event => listener(event.payload)),

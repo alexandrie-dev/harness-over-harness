@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutorSelectParams",
+  "type": "object",
+  "properties": {
+    "executor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "model"
+  ]
+}

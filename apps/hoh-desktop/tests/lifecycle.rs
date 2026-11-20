@@ -118,7 +118,7 @@ fn an_engine_that_cannot_be_started_ends_in_a_reported_failure_with_a_reason() {
             break v["message"].as_str().unwrap().to_owned();
         }
     };
-    assert!(message.contains("файл движка не найден"), "{message}");
+    assert!(message.contains("файл Помощника не найден"), "{message}");
     assert!(
         !message.contains("no-such-engine"),
         "the path must not reach the window"

@@ -16,6 +16,7 @@ hoh-kernel = { path = "../hoh-kernel" }
 hoh-llm = { path = "../hoh-llm" }
 hoh-scope = { path = "../hoh-scope" }
 hoh-session = { path = "../hoh-session" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
 hoh-session-projection = { path = "../hoh-session-projection" }
 hoh-system-prompt = { path = "../hoh-system-prompt" }
 hoh-timeout = { path = "../hoh-timeout" }
@@ -28,3 +29,6 @@ tokio.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+# HOH-18 seam tests: a stored session bound to an external harness.
+hoh-session-persistence-jsonl = { path = "../hoh-session-persistence-jsonl" }
+tempfile.workspace = true

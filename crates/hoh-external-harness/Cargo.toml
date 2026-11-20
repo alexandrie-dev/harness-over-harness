@@ -1,0 +1,58 @@
+[package]
+name = "hoh-external-harness"
+description = "HoH: the slot for an external agent harness (Claude Code, Codex) that drives a session instead of the agent loop (HOH-18, no dsh counterpart)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# `approval: never` (answers without a question inside the session folder) stays off until it
+# passes its own review (CEO, 20.11 21:52). Off: the slot refuses to start a native session under
+# `never`. There is no way to turn it on from the window or the settings; only a build can.
+never-mode = []
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-atomic-write = { path = "../hoh-atomic-write" }
+hoh-brand = { path = "../hoh-brand" }
+hoh-destructive-classifier = { path = "../hoh-destructive-classifier" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-loader = { path = "../hoh-loader" }
+hoh-protocol = { path = "../hoh-protocol" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-sdk-jsonrpc-server = { path = "../hoh-sdk-jsonrpc-server" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-user-approval = { path = "../hoh-user-approval" }
+hoh-user-questions = { path = "../hoh-user-questions" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-working-directory = { path = "../hoh-working-directory" }
+futures-util.workspace = true
+regex.workspace = true
+rustix = { workspace = true, features = ["process"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+hoh-session-persistence-jsonl = { path = "../hoh-session-persistence-jsonl" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+tempfile.workspace = true
+
+# The stub harness of the tests: a program that speaks the contract over stdio (tests/stub/).
+[[bin]]
+name = "hoh-external-harness-stub"
+path = "tests/stub/harness.rs"
+test = false
+doc = false

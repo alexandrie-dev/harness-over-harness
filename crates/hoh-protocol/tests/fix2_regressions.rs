@@ -87,6 +87,20 @@ fn privileged_filter_and_predicate_cannot_drift_and_cover_rights_expansion() {
             "hoh/settings/rules/set",
             json!({"internet":"public","folder":"/work"}),
         ),
+        // The access mode of an external harness and the executor of new chats: only the user.
+        (
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"full"}),
+        ),
+        (
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"confirm"}),
+        ),
+        (
+            "hoh/executor/select",
+            json!({"executor":"claude","model":"default"}),
+        ),
+        ("hoh/executor/select", json!({"executor":null,"model":"m"})),
     ] {
         assert!(listed.contains(method));
         assert!(requires_host_approval(method, &params), "{method}");
@@ -99,6 +113,13 @@ fn privileged_filter_and_predicate_cannot_drift_and_cover_rights_expansion() {
         "hoh/settings/set",
         &json!({"view":{"theme":"dark","fontSize":16}})
     ));
+    // Reading what is chosen and what is installed changes nothing.
+    for method in ["hoh/executor/access/get", "hoh/executor/discover"] {
+        assert!(!requires_host_approval(
+            method,
+            &json!({"executor":"claude"})
+        ));
+    }
 }
 #[test]
 fn dialog_text_and_expiry_admission_prevent_spoofing_and_unbounded_grants() {

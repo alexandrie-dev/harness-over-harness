@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/executor/select","method":"hoh/executor/select","params":{"executor":"claude","model":"default"}}

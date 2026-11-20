@@ -1,6 +1,7 @@
 // Единственное место, где первый запуск говорит с движком.
 // Тип запросов — из ui/src/protocol.ts (порождается из hoh-protocol, здесь не правится).
 import { invoke } from '@tauri-apps/api/core';
+import type { DiscoverResult } from '../../lib/executor.mjs';
 import type { MethodMap, ModelProbeResult, ModelSettings } from '../../protocol';
 
 type Method = keyof MethodMap;
@@ -24,11 +25,24 @@ interface EngineHook {
 }
 declare global { interface Window { __HOH_ENGINE__?: EngineHook; __TAURI_INTERNALS__?: unknown } }
 
-async function call<M extends Method>(method: M, params: MethodMap[M]['params']): Promise<MethodMap[M]['result']> {
+async function send(method: string, params: unknown): Promise<unknown> {
   const hook = window.__HOH_ENGINE__;
-  if (hook) return (await hook.request(method, params)) as MethodMap[M]['result'];
-  if (window.__TAURI_INTERNALS__) return invoke<MethodMap[M]['result']>('engine_request', { method, params });
-  throw new Error('нет связи с движком');
+  if (hook) return hook.request(method, params);
+  if (window.__TAURI_INTERNALS__) return invoke('engine_request', { method, params });
+  throw new Error('нет связи с Помощником');
+}
+async function call<M extends Method>(method: M, params: MethodMap[M]['params']): Promise<MethodMap[M]['result']> {
+  return (await send(method, params)) as MethodMap[M]['result'];
+}
+
+/** `hoh/executor/discover` (контракт движка; в сгенерированном протоколе окна его пока нет): только чтение, настоящая проверка при каждом вызове. */
+export async function discoverClaude(): Promise<DiscoverResult> {
+  return (await send('hoh/executor/discover', { executor: 'claude' })) as DiscoverResult;
+}
+
+/** `hoh/executor/select`: привилегированная, хост спрашивает человека. После неё новые чаты идут через Claude с этой моделью. */
+export async function selectClaude(model: string): Promise<void> {
+  await send('hoh/executor/select', { executor: 'claude', model });
 }
 
 /** Настройки модели, уже записанные в движке (адрес и название), чтобы заполнить поля. */

@@ -1,13 +1,16 @@
 import { detectProvider } from '../../lib/providers.mjs';
 import { ProviderMark } from '../shared/ProviderMark';
+import { Emblem } from '../shared/Emblem';
 import { keyNote } from '../../lib/keyNote';
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../shared/icons';
-import { MethodMissing, loadModelSettings, loadWorkFolder, modelsFromProbe, pickFolder, probeModel, saveModel, saveRules, storeApiKey } from './engine';
+import { discoverView } from '../../lib/executor.mjs';
+import { ClaudeConnect } from '../shared/ClaudeConnect';
+import { MethodMissing, discoverClaude, loadModelSettings, loadWorkFolder, modelsFromProbe, pickFolder, probeModel, saveModel, saveRules, selectClaude, storeApiKey } from './engine';
 import '../shared/primitives.css';
 import './firstrun.css';
 
-type Mode = 'local' | 'cloud';
+type Mode = 'local' | 'cloud' | 'claude';
 type Probe =
   | { kind: 'idle' }
   | { kind: 'checking' }
@@ -17,26 +20,31 @@ type Probe =
 const LOCAL_ADDRESS = 'http://localhost:8000/v1';
 const CLOUD_ADDRESS = 'https://';
 const DEFAULT_FOLDER = 'Документы/HoH';
-const STEPS = ['Модель', 'Правила', 'Знакомство'] as const;
+const STEPS = ['Модель', 'Правила'] as const;
 
-const EXAMPLES = [
-  { icon: 'chart', title: 'Следить за ценой', note: 'Раз в день смотрит цену и пишет, если она изменилась', text: 'Следи за ценой видеокарты и сообщай, когда она упадёт' },
-  { icon: 'doc', title: 'Прочитать документ', note: 'Открывает файл из папки и коротко пересказывает', text: 'Прочитай документ в папке и перескажи в трёх строках' },
-  { icon: 'tasks', title: 'Новая задача', note: 'Расскажите, что делать регулярно, Помощник уточнит детали', text: 'Давай заведём новую задачу' },
-] as const;
 
-function latencyText(ms: number): string {
-  return ms < 1000 ? `${Math.max(1, Math.round(ms))} мс` : `${(ms / 1000).toFixed(1).replace('.', ',')} с`;
+
+/** The person pressed «Отклонить» (or the time ran out) in the protection window: the host and the engine refuse with these words. */
+const DENIED = /Подтверждение отклонено|approval rejected|rejected/i;
+const EXPIRED = /Подтверждение истекло|approval expired|expired/i;
+type Doing = 'check' | 'save';
+/** What the person sees when the protection window said no: what happened and what to press. Never «unknown error». */
+function refusalText(error: unknown, doing: Doing): string {
+  const message = error instanceof Error ? error.message : '';
+  const what = doing === 'check' ? 'проверку' : 'сохранение';
+  const button = 'Дальше';
+  if (EXPIRED.test(message)) return `Время на ответ вышло. Нажмите «${button}» ещё раз.`;
+  if (DENIED.test(message)) return `Вы не разрешили ${what}. Нажмите «${button}» и выберите «Разрешить один раз».`;
+  return '';
 }
-
 function problemText(error: unknown): string {
   if (error instanceof MethodMissing) return `Эта версия пока не умеет: ${error.what}.`;
-  return error instanceof Error && error.message ? error.message : 'Неизвестная ошибка.';
+  return error instanceof Error && /[А-Яа-яЁё]/.test(error.message) ? error.message : 'Что-то пошло не так. Попробуйте ещё раз.';
 }
 
 export interface FirstRunProps {
-  /** Первый запуск закончен; `prefill` — текст примера для поля ввода чата. */
-  onFinish(prefill?: string): void;
+  /** Мастер закончен: открывается чат. */
+  onFinish(): void;
 }
 
 export function FirstRun({ onFinish }: FirstRunProps) {
@@ -49,6 +57,8 @@ export function FirstRun({ onFinish }: FirstRunProps) {
   const pending = useRef(false);
   const [keyStored, setKeyStored] = useState(false);
   const [probe, setProbe] = useState<Probe>({ kind: 'idle' });
+  const [claudeState, setClaudeState] = useState({ ready: false, model: '' });
+  const [claudeRun, setClaudeRun] = useState(0);
   const [internet, setInternet] = useState<'ask' | 'public'>('ask');
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
   // The default folder is shown as the real path on this computer; until it is known (or if it cannot be) no folder name is invented.
@@ -79,8 +89,9 @@ export function FirstRun({ onFinish }: FirstRunProps) {
     heading.current?.focus();
   }, [step]);
 
-  const verified = probe.kind === 'ok';
   const cloud = mode === 'cloud';
+  const claude = mode === 'claude';
+  const verified = claude ? claudeState.ready : probe.kind === 'ok';
 
   function invalidate() {
     checkId.current++;
@@ -91,19 +102,21 @@ export function FirstRun({ onFinish }: FirstRunProps) {
   function chooseMode(next: Mode) {
     if (next === mode) return;
     setMode(next);
-    setAddress(next === 'cloud' ? CLOUD_ADDRESS : LOCAL_ADDRESS);
+    if (next !== 'claude') setAddress(next === 'cloud' ? CLOUD_ADDRESS : LOCAL_ADDRESS);
+    setClaudeState({ ready: false, model: '' });
     if (keyInput.current) keyInput.current.value = '';
     setKeyStored(false);
     invalidate();
   }
 
-  async function check() {
-    if (pending.current) return;
+  /** Проверка адреса и ключа (её делает «Дальше»). Возвращает выбранную модель или null, если проверка не прошла. */
+  async function check(): Promise<string | null> {
+    if (pending.current) return null;
     const url = address.trim();
     const name = manualModel.trim();
-    const bad = (text: string) => setProbe({ kind: 'bad', text });
+    const bad = (text: string) => { setProbe({ kind: 'bad', text }); return null; };
     if (!/^https?:\/\/.{3,}/.test(url)) return bad('Проверьте адрес: он должен начинаться с http:// или https://');
-    if (cloud && !keyStored && !keyInput.current?.value.trim()) return bad('Для облачного сервиса нужен API-ключ');
+    if (cloud && !keyStored && !keyInput.current?.value.trim()) return bad('Для облачного сервиса нужен ключ доступа');
     const id = ++checkId.current;
     pending.current = true; setBusy(true);
     setProbe({ kind: 'checking' });
@@ -116,39 +129,58 @@ export function FirstRun({ onFinish }: FirstRunProps) {
           await storeApiKey(key, url);
           input.value = '';
           setKeyStored(true);
-        } catch {
-          throw new Error('Не удалось сохранить ключ. Попробуйте ещё раз.');
+        } catch (error) {
+          throw new Error(refusalText(error, 'check') || 'Не удалось сохранить ключ. Попробуйте ещё раз.');
         } finally {
           key = '';
         }
-        if (id !== checkId.current) return;
+        if (id !== checkId.current) return null;
       }
       const result = await probeModel(url, name);
-      if (id !== checkId.current) return;
-      if (!result.ok) return bad('Модель не ответила. Проверьте адрес.');
+      if (id !== checkId.current) return null;
+      if (!result.ok) return bad(cloud ? 'По этому адресу никто не отвечает. Проверьте адрес и ключ.' : 'По этому адресу никто не отвечает. Если вы сами не запускали модель на этом компьютере, выберите другой способ или попросите того, кто ставил программу.');
       const selected = manualModel.trim() || modelsFromProbe(result)[0] || model.trim();
       if (!selected) return bad('Сервис не сообщил доступные модели. Укажите название в «Дополнительно» и проверьте ещё раз.');
       setModel(selected);
       setProbe({
         kind: 'ok',
-        text: `Отвечает за ${latencyText(result.latencyMs)}`,
-        warning: result.toolCalls ? undefined : 'Но она не умеет вызывать инструменты: Помощник сможет только отвечать текстом.',
+        text: 'Отвечает. Можно продолжать',
+        warning: result.toolCalls ? undefined : 'Помощник сможет только отвечать текстом: читать файлы и что-то делать на компьютере не будет.',
       });
+      return selected;
     } catch (error) {
-      if (id === checkId.current) bad(`Не удалось проверить. ${problemText(error)}`);
+      if (id === checkId.current) return bad(refusalText(error, 'check') || (error instanceof Error && /^Вы не разрешили|^Время на ответ|^Не удалось сохранить ключ/.test(error.message) ? error.message : `Не удалось проверить. ${problemText(error)}`));
+      return null;
     } finally {
       pending.current = false; setBusy(false);
     }
   }
 
   async function next() {
-    if (pending.current || step >= 3 || (step === 1 && !verified)) return;
-    pending.current = true;
+    if (pending.current || step > 2) return;
     setProblem('');
+    // «Дальше» сама проверяет: отдельной кнопки проверки на этом пути нет.
+    let checked = model.trim();
+    let claudeModel = claudeState.model;
+    if (step === 1 && !claude && !verified) {
+      const found = await check();
+      if (!found) return;
+      checked = found;
+    }
+    if (step === 1 && claude && !claudeState.ready) {
+      try {
+        const view = discoverView(await discoverClaude());
+        setClaudeRun(run => run + 1);
+        if (!view.ready) { setProblem(view.headline); return; }
+        claudeModel = view.defaultModel;
+      } catch (error) { setProblem(`Не удалось проверить Claude. ${problemText(error)}`); return; }
+    }
+    pending.current = true;
     setBusy(true);
     try {
       if (step === 1) {
-        await saveModel(address.trim(), model.trim());
+        if (claude) await selectClaude(claudeModel);
+        else await saveModel(address.trim(), checked);
       } else if (step === 2) {
         const defaults = internet === 'ask' && folder === DEFAULT_FOLDER;
         try {
@@ -158,9 +190,9 @@ export function FirstRun({ onFinish }: FirstRunProps) {
           if (!(error instanceof MethodMissing) || !defaults) throw error;
         }
       }
-      setStep(step + 1);
+      if (step === 2) onFinish(); else setStep(step + 1);
     } catch (error) {
-      setProblem(`Не удалось сохранить. ${problemText(error)}`);
+      setProblem(refusalText(error, 'save') || `Не удалось сохранить. ${problemText(error)}`);
     } finally {
       pending.current = false; setBusy(false);
     }
@@ -183,12 +215,20 @@ export function FirstRun({ onFinish }: FirstRunProps) {
   const probeLine = probe.kind === 'checking' ? 'Проверяю…' : probe.kind === 'ok' ? probe.text : probe.kind === 'bad' ? probe.text : '';
   const probeIcon = probe.kind === 'checking' ? <Icon name="spinner" small spin /> : probe.kind === 'ok' ? <Icon name={probe.warning ? 'alert' : 'checkCircle'} small /> : probe.kind === 'bad' ? <Icon name="alert" small /> : null;
   const probeTone = probe.kind === 'ok' ? (probe.warning ? 'warn' : 'ok') : probe.kind === 'bad' ? 'bad' : '';
-  const nextNote = problem || (step === 1 && !verified ? 'Сначала проверьте подключение' : '');
+  const nextNote = problem;
+
+  const addressField = (
+        <div className="field">
+          <label htmlFor="fr-address">{cloud ? 'Адрес сервиса' : 'Адрес модели'}</label>
+          <input id="fr-address" type="text" value={address} spellCheck={false} autoComplete="off" onChange={e => { setAddress(e.target.value); invalidate(); }} />
+          <span className="help">{cloud ? 'Адрес сервиса. Его даёт сервис или тот, кто его настраивал.' : (detected.scope === 'private' ? 'Модель в вашей сети: данные уходят с этого компьютера на другой в вашей сети, но не в интернет.' : 'Модель на этом компьютере: данные никуда не уходят.')}</span>
+        </div>
+  );
 
   return (
     <div className="hoh-page fr-page" data-screen="firstrun" data-step={step}>
       <div className="fr-wiz">
-        <div className="fr-brand"><span className="mark">H</span><b>HoH</b></div>
+        <div className="fr-brand"><Emblem /><b>HoH</b></div>
         <ol className="fr-stepper" aria-label="Шаги настройки">
           {STEPS.map((name, i) => {
             const n = i + 1;
@@ -205,37 +245,37 @@ export function FirstRun({ onFinish }: FirstRunProps) {
         <fieldset className="fr-card" aria-label="Настройка Помощника" disabled={busy}>
           {step === 1 && (
             <section aria-labelledby="fr-h">
-              <h2 id="fr-h" ref={heading} tabIndex={-1}>Подключите модель</h2>
-              <p className="fr-sub">Помощник думает с помощью языковой модели. Скажите, где она запущена.</p>
-              <div className="fr-seg" role="group" aria-label="Где запущена модель">
-                <button type="button" aria-pressed={!cloud} onClick={() => chooseMode('local')}>На этом компьютере</button>
-                <button type="button" aria-pressed={cloud} onClick={() => chooseMode('cloud')}>Облачный сервис</button>
+              <h2 id="fr-h" ref={heading} tabIndex={-1}>Кто будет отвечать</h2>
+              <p className="fr-sub">Помощнику нужна программа, которая понимает текст и отвечает.</p>
+              <div className="fr-seg" role="group" aria-label="Кто будет отвечать">
+                <button type="button" aria-pressed={mode === 'local'} onClick={() => chooseMode('local')}>Модель на этом компьютере</button>
+                <button type="button" aria-pressed={cloud} onClick={() => chooseMode('cloud')}>Сервис в интернете (по ключу)</button>
+                <button type="button" aria-pressed={claude} data-mode-claude onClick={() => chooseMode('claude')}><ProviderMark icon="claude" />Claude</button>
               </div>
-              <div className="field">
-                <label htmlFor="fr-address">Адрес</label>
-                <input id="fr-address" type="text" value={address} spellCheck={false} autoComplete="off" onChange={e => { setAddress(e.target.value); invalidate(); }} />
-                <span className="help">{cloud ? 'Адрес из личного кабинета сервиса, обычно заканчивается на /v1.' : (detected.scope === 'private' ? 'Модель в вашей сети: данные уходят с этого компьютера на другой в вашей сети, но не в интернет.' : 'Модель на этом компьютере: данные никуда не уходят.')}</span>
-              </div>
+              {claude ? <ClaudeConnect key={claudeRun} discover={discoverClaude} onChange={setClaudeState} /> : <>
+              {cloud && addressField}
               <p className="fr-provider" data-provider-line data-provider={detected.id}><ProviderMark icon={detected.icon ?? ''} /><span>{detected.scope === 'cloud' || detected.scope === 'unknown' ? detected.name : detected.label}</span>{shownModel && detected.scope === 'cloud' && <span className="fr-provider-model">{shownModel}</span>}</p>
+              {cloud && <p className="fr-note" data-data-line>Ваши сообщения и то, что Помощник прочитает в файлах, отправляются в этот сервис.</p>}
               <details className="fr-advanced">
                 <summary>Дополнительно</summary>
+                {!cloud && addressField}
                 <div className="field">
                   <label htmlFor="fr-model">Название модели</label>
                   <input id="fr-model" type="text" value={manualModel} spellCheck={false} autoComplete="off" placeholder={model || 'Выбирается автоматически'} onChange={e => { setManualModel(e.target.value); invalidate(); }} />
                 </div>
               </details>
-              <div className="field">
-                <label htmlFor="fr-key">API-ключ</label>
-                <input id="fr-key" type="password" ref={keyInput} autoComplete="off" disabled={!cloud} placeholder={cloud ? (keyStored ? 'Ключ сохранён. Оставьте пустым, чтобы не менять' : '') : 'Для модели на этом компьютере не нужен'} onChange={invalidate} />
-                {cloud && <span className="help" data-key-note>Ключ из личного кабинета сервиса. {keyNote()}</span>}
-              </div>
+              {cloud && <div className="field">
+                <label htmlFor="fr-key">Ключ доступа</label>
+                <input id="fr-key" type="password" ref={keyInput} autoComplete="off" placeholder={keyStored ? 'Ключ сохранён. Оставьте пустым, чтобы не менять' : ''} onChange={invalidate} />
+                <span className="help" data-key-note>Длинная строка из личного кабинета сервиса; храните как пароль. {keyNote()}</span>
+              </div>}
               <div className="fr-verify">
-                <button type="button" className="btn" disabled={probe.kind === 'checking'} onClick={() => void check()}>Проверить</button>
                 <span className="fr-result" data-tone={probeTone} role="status">
                   {probeIcon}{probeLine}
                 </span>
               </div>
               {probe.kind === 'ok' && probe.warning && <p className="fr-warning" role="status">{probe.warning}</p>}
+              </>}
             </section>
           )}
 
@@ -264,23 +304,7 @@ export function FirstRun({ onFinish }: FirstRunProps) {
               </div>
               <div className="fr-lock">
                 <Icon name="alert" />
-                <div><b>Опасное подтверждаю в отдельном окне</b>Удаление, запуск программ и отправка данных наружу идут только после вашего «Разрешить» в окне защиты. Это правило нельзя отключить.</div>
-              </div>
-            </section>
-          )}
-
-          {step === 3 && (
-            <section aria-labelledby="fr-h">
-              <h2 id="fr-h" className="fr-hello" ref={heading} tabIndex={-1}>Я ваш Помощник.</h2>
-              <p className="fr-sub">Скажите, что нужно сделать, обычными словами. Можно начать с одного из примеров.</p>
-              <div className="fr-examples">
-                {EXAMPLES.map(example => (
-                  <button key={example.title} type="button" onClick={() => onFinish(example.text)}>
-                    <span className="fr-tile"><Icon name={example.icon} /></span>
-                    <span className="fr-example-text"><b>{example.title}</b><small>{example.note}</small></span>
-                    <Icon name="chevron" small className="fr-go" />
-                  </button>
-                ))}
+                <div><b>Опасное подтверждаю в отдельном окне</b>Удаление, запуск программ и отправка данных наружу идут только после вашего «Разрешить» в окне защиты. Так будет, пока вы сами не включили «Полный доступ».</div>
               </div>
             </section>
           )}
@@ -288,11 +312,9 @@ export function FirstRun({ onFinish }: FirstRunProps) {
           <div className="fr-foot">
             <button type="button" className={step === 1 ? 'btn fr-invisible' : 'btn'} disabled={busy || step === 1} onClick={() => { if (!pending.current) { setProblem(''); setStep(step - 1); } }}><Icon name="back" small />Назад</button>
             <span className="fr-foot-note" role={problem ? 'alert' : undefined}>
-              {step === 3 ? 'Можно и без примера: напишите своё в чате.' : nextNote}
+              {nextNote}
             </span>
-            {step < 3
-              ? <button type="button" className="btn btn-primary btn-lg" disabled={busy || (step === 1 && !verified)} onClick={() => void next()}>Дальше</button>
-              : <button type="button" className="btn btn-primary btn-lg" onClick={() => onFinish()}>Открыть чат</button>}
+            <button type="button" className="btn btn-primary btn-lg" disabled={busy} onClick={() => void next()}>{step === 2 ? 'Открыть чат' : 'Дальше'}</button>
           </div>
         </fieldset>
       </div>

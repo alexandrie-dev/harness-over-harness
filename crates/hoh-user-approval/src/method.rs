@@ -115,8 +115,45 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
                 quoted(&probe.base_url)
             ))
         }
+        // HOH-18 (review 232500, item 1): the user's own choice of the executor's access and of
+        // who answers new chats; the text names the executor and what the choice allows.
+        "hoh/executor/access/set" => {
+            let request: hoh_protocol::ExecutorAccessSetParams =
+                serde_json::from_value(params.clone()).map_err(|_| "invalid executor access")?;
+            let name = executor_name(&request.executor);
+            Ok(match request.mode {
+                hoh_protocol::ExecutorAccessMode::Full => format!(
+                    "Включить полный доступ для {name}? Помощник сам удаляет и меняет файлы в \
+                     любых папках, куда есть доступ у вас, запускает программы и выходит в \
+                     интернет, не спрашивая. Сделанное нельзя отменить."
+                ),
+                hoh_protocol::ExecutorAccessMode::Confirm => {
+                    format!("Вернуть режим «Спрашивать разрешение» для {name}?")
+                }
+            })
+        }
+        "hoh/executor/select" => {
+            let request: hoh_protocol::ExecutorSelectParams =
+                serde_json::from_value(params.clone()).map_err(|_| "invalid executor choice")?;
+            Ok(match request.executor {
+                Some(executor) => format!(
+                    "Отвечать будет {} (модель {})?",
+                    executor_name(&executor),
+                    request.model
+                ),
+                None => "Отвечать будет модель на этом компьютере?".to_owned(),
+            })
+        }
         _ => Ok(format!("Разрешить действие {method}?")),
     }
+}
+
+/// An executor's name as a word in a sentence: `claude` → `Claude`.
+fn executor_name(executor: &str) -> String {
+    let mut chars = executor.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 fn quoted(value: &str) -> String {

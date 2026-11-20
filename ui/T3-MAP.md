@@ -6,7 +6,7 @@
 
 ## Состояние
 
-- **В сборке сейчас:** рендер ответов на конвейере T3 (`ui/src/t3/chatMarkdown.tsx`), подключён в `ui/src/t3/render.tsx` лениво; `marked` из кода окна убран (20.11, решение основателя «как в T3»).
+- **В сборке сейчас:** рендер ответов на конвейере T3 (marked удалён 20.11.2026) через переключатель `ui/src/t3/render.tsx`. Файлы T3 из первой таблицы проверены компилятором (`tsc --noEmit`), но чат их пока не вызывает.
 - **Отложено:** вторая таблица — файлы T3, которым нужны пакеты, которых нет в lock окна. До установки tsc их пропускает (`deferredEnabled: false`), vite их не видит, Tailwind не сканирует (`@source not "../t3"` в tokens.css). Компилятором они не проверены: проверены только адресаты импортов (`t3-check.py`).
 - **Не перенесено из запрошенного:** шаги инструментов (`TimelineWorkEntryRow` тянет за собой подтверждения и поле ввода T3; нынешние строки шагов окна остаются) и картинки-вложения (`ComposerImageThumbnail`, `GuestMessageAttachments`; в протоколе окна пока нет вложений). Файлов T3 для них в дереве нет.
 
@@ -22,6 +22,16 @@
 | `packages/shared/src/path.ts` | `ui/src/t3/shared/path.ts` | без изменений |
 | `packages/shared/src/image.ts` | `ui/src/t3/shared/image.ts` | без изменений |
 | `packages/shared/src/video.ts` | `ui/src/t3/shared/video.ts` | без изменений |
+| `packages/shared/src/markdownPipeline.ts` | `ui/src/t3/shared/markdownPipeline.ts` | без изменений |
+| `packages/shared/src/markdownTaskList.ts` | `ui/src/t3/shared/markdownTaskList.ts` | без изменений |
+| `packages/shared/src/markdownWindowsPaths.ts` | `ui/src/t3/shared/markdownWindowsPaths.ts` | без изменений |
+| `packages/shared/src/markdownGithubAlerts.ts` | `ui/src/t3/shared/markdownGithubAlerts.ts` | без изменений |
+| `packages/shared/src/markdownLeadingWhitespace.ts` | `ui/src/t3/shared/markdownLeadingWhitespace.ts` | без изменений |
+| `packages/shared/src/markdownListIndentation.ts` | `ui/src/t3/shared/markdownListIndentation.ts` | без изменений |
+| `packages/shared/src/markdownOrderedListNumbers.ts` | `ui/src/t3/shared/markdownOrderedListNumbers.ts` | без изменений |
+| `packages/shared/src/codexMarkdownDirectives.ts` | `ui/src/t3/shared/codexMarkdownDirectives.ts` | без изменений |
+| `packages/shared/src/codexArtifactTemplates.ts` | `ui/src/t3/shared/codexArtifactTemplates.ts` | без изменений |
+| `packages/shared/src/codexFileCitations.ts` | `ui/src/t3/shared/codexFileCitations.ts` | без изменений |
 | `packages/client-runtime/src/markdownImages.ts` | `ui/src/t3/client-runtime/markdownImages.ts` | без изменений |
 | `packages/client-runtime/src/mediaReference.ts` | `ui/src/t3/client-runtime/mediaReference.ts` | без изменений |
 | `packages/client-runtime/src/work-log/commandLabel.ts` | `ui/src/t3/client-runtime/work-log/commandLabel.ts` | без изменений |
@@ -55,22 +65,13 @@
 | `apps/web/src/terminal-links.ts` | `ui/src/t3/web/terminal-links.ts` | без изменений |
 | `apps/web/src/markdown-links.ts` | `ui/src/t3/web/markdown-links.ts` | без изменений |
 | `apps/web/src/markdownFileHostPath.ts` | `ui/src/t3/web/markdownFileHostPath.ts` | без изменений |
+| `apps/web/src/components/chat/runtimeModeConfig.ts` | `ui/src/t3/web/components/chat/runtimeModeConfig.ts` | без изменений |
 
 ## Перенесено без изменений, отложено (нужны пакеты)
 
 | Путь в T3 | Путь у нас | Изменения |
 |---|---|---|
-| `packages/shared/src/markdownPipeline.ts` | `ui/src/t3/shared/markdownPipeline.ts` | без изменений |
 | `packages/shared/src/markdownMath.ts` | `ui/src/t3/shared/markdownMath.ts` | без изменений |
-| `packages/shared/src/markdownTaskList.ts` | `ui/src/t3/shared/markdownTaskList.ts` | без изменений |
-| `packages/shared/src/markdownWindowsPaths.ts` | `ui/src/t3/shared/markdownWindowsPaths.ts` | без изменений |
-| `packages/shared/src/markdownGithubAlerts.ts` | `ui/src/t3/shared/markdownGithubAlerts.ts` | без изменений |
-| `packages/shared/src/markdownLeadingWhitespace.ts` | `ui/src/t3/shared/markdownLeadingWhitespace.ts` | без изменений |
-| `packages/shared/src/markdownListIndentation.ts` | `ui/src/t3/shared/markdownListIndentation.ts` | без изменений |
-| `packages/shared/src/markdownOrderedListNumbers.ts` | `ui/src/t3/shared/markdownOrderedListNumbers.ts` | без изменений |
-| `packages/shared/src/codexMarkdownDirectives.ts` | `ui/src/t3/shared/codexMarkdownDirectives.ts` | без изменений |
-| `packages/shared/src/codexArtifactTemplates.ts` | `ui/src/t3/shared/codexArtifactTemplates.ts` | без изменений |
-| `packages/shared/src/codexFileCitations.ts` | `ui/src/t3/shared/codexFileCitations.ts` | без изменений |
 | `packages/client-runtime/src/assemblyHighlighting.ts` | `ui/src/t3/client-runtime/assemblyHighlighting.ts` | без изменений |
 | `apps/web/src/components/ChatMarkdown.tsx` | `ui/src/t3/web/components/ChatMarkdown.tsx` | без изменений |
 | `apps/web/src/components/chat/MarkdownCodeBlock.tsx` | `ui/src/t3/web/components/chat/MarkdownCodeBlock.tsx` | без изменений |
@@ -165,6 +166,7 @@
 | `ui/src/t3/client-runtime/workspaceBasenameLookup.ts` | `packages/client-runtime/src/workspaceBasenameLookup.ts` | поиска файлов по имени в рабочей папке через хост T3 нет. |
 | `ui/src/t3/client-runtime/state/runtime.ts` | `packages/client-runtime/src/state/runtime.ts` | команд хоста T3 (атомы) в окне нет. |
 | `ui/src/t3/shims/atom-react.ts` | `@effect/atom-react` | атомов состояния T3 у окна нет. |
+| `ui/src/t3/shims/contract-labels.ts` | `@t3tools/client-runtime/contract-labels` | ограничения «организации» (managed policy) в окне нет, |
 | `ui/src/t3/shims/contracts.ts` | `@t3tools/contracts` | только те типы и значения, |
 | `ui/src/t3/shims/global.d.ts` | — | Мост Electron из T3 Code в окне HoH отсутствует; тип нужен только перенесённому коду. |
 | `ui/src/t3/shims/gt-react.tsx` | `gt-react` | тексты T3 написаны по-английски, |
@@ -214,14 +216,3 @@
 Уже есть у окна и подходит: `react`, `react-dom`, `lucide-react`, `@base-ui/react` (кнопка, подсказка, меню T3 стоят на нём), `class-variance-authority`, `tailwind-merge`, `zustand`. `uplot` T3 не использует (`marked` из окна удалён 20.11.2026). `@legendapp/list` у T3 тот же, что у нас.
 
 Прочие импорты T3 (`effect`, `@effect/atom-react`, `gt-react`, `@t3tools/*`, `@tiptap/*`, `@tanstack/*`) заменены прослойками или в перенесённую часть не попадают.
-
-## Известные отличия от T3
-
-- katex для micromark-extension-llm-math закреплён на 0.18.10 вместо 0.16.47 из lock T3 (GHSA-238p-pmpm-9mq7; html-часть llm-math у нас не используется), решение CEO 20.11.2026.
-- @pierre/diffs не поставлен: не проходит выдержку 7 дней (minimumReleaseAge), решение CEO 20.11.2026; вид диффов — на имеющихся компонентах.
-- Патчи T3 разбора Markdown (5 шт., ui/patches/) применены через patchedDependencies без изменений.
-- tiptap не ставим: поле ввода — обычное поле со стилями и нижней строкой T3. tiptap — когда появятся упоминания файлов (file-reference-local в чате); список пакетов и лицензий → CEO → основатель.
-- Значки поставщиков моделей (OpenAI, Claude, OpenRouter, Ollama) скопированы из `components/Icons.tsx` T3 без правок рисунка (`src/screens/shared/providerIcons.tsx`). Значка T3 нет у Google Gemini, Mistral, DeepSeek, xAI, Groq, Together AI, Qwen, Moonshot Kimi, Z.ai GLM: они названы по таблице `src/lib/providers.data.mjs`, значок нейтральный. Определение — разбор строки адреса и имени модели (`src/lib/providers.mjs`), без обращений в сеть.
-- Нижняя строка поля ввода и панель разрешений (отдельное окно защиты) повторяют вид T3 на наших токенах и классах, а не копией Tailwind-классов T3. Голосового ввода нет — не показан.
-- Рендер ответов на конвейере T3 включён (20.11, решение основателя «как в T3»): `src/t3/chatMarkdown.tsx` — react-markdown + remark-gfm + remark-math + плагины `shared/markdownPipeline.ts` T3; формулы $…$ и $$…$$ рисует katex (отдельный ленивый кусок при первой формуле, как у T3), таблицы GFM, код. Отличия от ChatMarkdown T3: сырой HTML остаётся видимым текстом; ссылки и картинки не открываются сами; подсветки кода нет (@pierre/diffs не поставлен). Цена: gzip окна 176070 → 360071 (+184 КБ: кусок разметки 118 КБ, katex 78 КБ, его css 4 КБ); пределы check-dist подняты (gzip 378075, один файл 512 КиБ, сырой текст 1216 КиБ). Кусок разметки (388 КБ) один, пока грузится — виден простой текст ответа.
-- **Отложено: разбиение куска разметки.** Внутри куска — react-markdown, micromark, remark-gfm/math, rehype-raw с parse5 (заметная часть веса) и rehype-sanitize из `shared/markdownPipeline.ts`. T3 делит так же лениво только katex и подсветку кода. Разбить rehype-raw/parse5 в отдельный кусок значит менять `shared/markdownPipeline.ts` (файл T3, правок не несёт) или обходить его своим конвейером; оценка 3–4 часа с повторной проверкой безопасности разметки, поэтому не делал.

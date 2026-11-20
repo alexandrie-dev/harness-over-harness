@@ -97,7 +97,7 @@ impl Connector for ProcessConfig {
                     .append(true)
                     .open(path)
                     .map(Stdio::from)
-                    .map_err(|_| "Не удалось открыть журнал ошибок движка".to_owned())?,
+                    .map_err(|_| "Не удалось открыть журнал ошибок Помощника".to_owned())?,
                 None => Stdio::null(),
             });
         #[cfg(unix)]
@@ -108,8 +108,8 @@ impl Connector for ProcessConfig {
         let mut child = command
             .spawn()
             .map_err(|error| spawn_problem(error.kind()))?;
-        let stdout = child.stdout.take().ok_or("Нет stdout движка")?;
-        let stdin = child.stdin.take().ok_or("Нет stdin движка")?;
+        let stdout = child.stdout.take().ok_or("Нет связи с Помощником")?;
+        let stdin = child.stdin.take().ok_or("Нет связи с Помощником")?;
         let (tx, rx) = mpsc::sync_channel::<Value>(64);
         let errors = inbox.clone();
         let writer = thread::spawn(move || {
@@ -151,7 +151,7 @@ impl Transport for StdioTransport {
             .as_ref()
             .ok_or("Помощник остановлен")?
             .try_send(frame)
-            .map_err(|_| "Канал движка недоступен".into())
+            .map_err(|_| "Связь с Помощником недоступна".into())
     }
     fn exited(&mut self) -> bool {
         #[cfg(unix)]
@@ -273,10 +273,10 @@ struct Pending {
 pub fn spawn_problem(kind: std::io::ErrorKind) -> String {
     match kind {
         std::io::ErrorKind::NotFound => {
-            "файл движка не найден: программа повреждена или установлена не полностью".to_owned()
+            "файл Помощника не найден: программа повреждена или установлена не полностью".to_owned()
         }
-        std::io::ErrorKind::PermissionDenied => "нет прав на запуск движка".to_owned(),
-        _ => "движок не запускается".to_owned(),
+        std::io::ErrorKind::PermissionDenied => "нет прав на запуск Помощника".to_owned(),
+        _ => "Помощник не запускается".to_owned(),
     }
 }
 /// After this many failed starts in a row the window is told the assistant is not starting, with the reason.

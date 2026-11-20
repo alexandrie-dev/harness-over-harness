@@ -1312,7 +1312,7 @@ async fn deleting_files_in_the_folder_is_rejected_and_nothing_is_removed() {
     assert!(
         asked
             .human_text
-            .contains("удалить 3 файла: old1.txt, old2.txt, old3.txt")
+            .contains("Удалить 3 файла: old1.txt, old2.txt, old3.txt")
             && asked.human_text.contains("Файлы не попадут в корзину"),
         "{}",
         asked.human_text
@@ -1320,7 +1320,7 @@ async fn deleting_files_in_the_folder_is_rejected_and_nothing_is_removed() {
     // A-03: `reason` is the Russian explanation with the files; the raw command is not in it.
     let reason = asked.reason.as_deref().unwrap_or_default();
     assert!(
-        reason.contains("удалить 3 файла: old1.txt, old2.txt, old3.txt")
+        reason.contains("Удалить 3 файла: old1.txt, old2.txt, old3.txt")
             && reason.contains("Файлы не попадут в корзину")
             && !reason.contains("rm old1.txt")
             && !reason.contains("Команда:"),

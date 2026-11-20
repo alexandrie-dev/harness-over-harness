@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hoh-destructive-classifier = { path = "../hoh-destructive-classifier" }
 hoh-error = { path = "../hoh-error" }
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-tools = { path = "../hoh-tools" }

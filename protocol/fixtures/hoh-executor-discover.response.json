@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/executor/discover","result":{"executor":"claude","installed":true,"version":"2.1.3","versionStatus":"supported","auth":"authenticated","models":[{"id":"default","isDefault":true},{"id":"opus","displayName":"Opus"}],"detail":null}}

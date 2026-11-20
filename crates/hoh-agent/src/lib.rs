@@ -30,6 +30,7 @@ use hoh_kernel::{
 };
 use hoh_scope::Scoped;
 use hoh_session::{Session, SessionEvent, SessionId, SessionLogOffset};
+use hoh_session_persistence::{SessionAccess, SessionPersistenceService};
 use hoh_timeout::AbortSignal;
 use std::{
     future::Future,
@@ -159,6 +160,126 @@ pub trait AgentFactory: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<AgentHandle, BoxError>>;
 }
 
+/// Not in the source (HOH-18): an executor that drives its sessions instead of the agent loop — an
+/// external agent harness with its own loop, tools and continuation (Claude Code, Codex). It is
+/// registered under a name with [`AgentRegistry::set_executor`]; the loop's factory stays the
+/// default for every other session.
+///
+/// Routing: [`AgentRegistry::create`] hands a session to the executor whose name equals the
+/// session's provider route (`AgentOptions::provider`); [`AgentRegistry::resume`] hands a
+/// persisted session to the executor that [`claims`](SessionExecutor::claims) it, from its durable
+/// binding. With no executor registered both behave exactly as before.
+pub trait SessionExecutor: AgentFactory {
+    /// Whether the persisted session `id` is bound to this executor. A session that is not
+    /// stored, or stored by the loop, is not claimed.
+    fn claims(
+        &self,
+        owner_ctx: &Context,
+        id: &SessionId,
+    ) -> BoxFuture<'static, Result<bool, BoxError>>;
+}
+
+/// Not in the source (HOH-18): the plugin record that binds a session to the external harness
+/// driving it (`{harness, nativeSessionId[, replaces]}`). The first one is written when the
+/// session is created; a session that has one is never continued by the agent loop.
+pub const EXECUTOR_BINDING_RECORD: &str = "plugin:external-harness/session";
+
+/// How many events [`stored_executor_binding`] reads at a time.
+pub const EXECUTOR_BINDING_SCAN: u64 = 16;
+
+/// Events only a turn writes. The binding record is written before a session takes any input, so
+/// it always comes before the first of them; records that listeners of `session/created` append
+/// may precede it in any number (review 221315, item 5).
+const TURN_EVENTS: [&str; 7] = [
+    "turn/start",
+    "turn/end",
+    "user/message",
+    "assistant/message",
+    "tool/result",
+    "system/message",
+    "developer/message",
+];
+
+/// Where the binding scan of `events` (the next ones of the log) stopped.
+enum BindingScan<'a> {
+    Bound(&'a str),
+    /// A turn began without a binding: the session is not bound.
+    Unbound,
+    /// Neither yet: the binding may follow.
+    Open,
+}
+
+fn scan_binding(events: &[Arc<SessionEvent>]) -> BindingScan<'_> {
+    for event in events {
+        if event.event_type() == EXECUTOR_BINDING_RECORD {
+            return event
+                .data()
+                .get("harness")
+                .and_then(|name| name.as_str())
+                .map_or(BindingScan::Unbound, BindingScan::Bound);
+        }
+        if TURN_EVENTS.contains(&event.event_type()) {
+            return BindingScan::Unbound;
+        }
+    }
+    BindingScan::Open
+}
+
+/// The harness named by the binding record among the events before the first turn of `events`
+/// (a log from its start).
+pub fn bound_executor(events: &[Arc<SessionEvent>]) -> Option<&str> {
+    match scan_binding(events) {
+        BindingScan::Bound(harness) => Some(harness),
+        BindingScan::Unbound | BindingScan::Open => None,
+    }
+}
+
+/// The harness the stored session `id` is bound to: the log is read from its start, a page at a
+/// time, up to the binding or the first turn. `Ok(None)` when there is no store, the session is not
+/// stored, or it is not bound. A store that fails to answer is an error, never "not bound": a log
+/// that could not be checked is not handed to the loop (fail closed; review 232500, item 3). The
+/// store's error is returned as it is, the one the loop's own resume would report.
+pub async fn stored_executor_binding(
+    ctx: &Context,
+    id: &SessionId,
+) -> Result<Option<String>, BoxError> {
+    let Some(persistence) = ctx.get::<SessionPersistenceService>() else {
+        return Ok(None);
+    };
+    if persistence.stat(id, None).await?.is_none() {
+        return Ok(None);
+    }
+    let handle = persistence.open(id, SessionAccess::Read, None).await?;
+    let mut from = 0;
+    let bound = loop {
+        let page = match handle
+            .read(Some(from), Some(EXECUTOR_BINDING_SCAN), None)
+            .await
+        {
+            Ok(page) => page,
+            Err(error) => break Err(error),
+        };
+        if page.events.is_empty() {
+            break Ok(None);
+        }
+        match scan_binding(&page.events) {
+            BindingScan::Bound(harness) => break Ok(Some(harness.to_owned())),
+            BindingScan::Unbound => break Ok(None),
+            BindingScan::Open => from += page.events.len() as u64,
+        }
+    };
+    let _ = handle.close().await;
+    bound
+}
+
+/// Not in the source (HOH-18): the executor new chats go to, and the model it runs, as the user
+/// chose it in the window (`hoh/executor/select`, a privileged command).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutorSelection {
+    pub executor: String,
+    pub model: String,
+}
+
 /// Thrown when create/resume is called before an agent factory is registered.
 pub const NO_FACTORY_MESSAGE: &str = "no agent factory registered (load an agent-loop plugin)";
 const NO_INITIATOR_MESSAGE: &str = "no initiating agent is active";
@@ -234,6 +355,10 @@ struct Inner {
     turn_boundary: hoh_session_projection::ProjectionHandle<TurnBoundaryProjection>,
     store: Mutex<Vec<Arc<Entry>>>,
     factory: Mutex<Option<Arc<dyn AgentFactory>>>,
+    /// Named session executors (HOH-18), in registration order.
+    executors: Mutex<Vec<(String, Arc<dyn SessionExecutor>)>>,
+    /// The executor the user chose for new chats (HOH-18).
+    selected: Mutex<Option<ExecutorSelection>>,
     initiators: Mutex<Initiators>,
     drained: Notify,
     initiator_disposal: Mutex<Option<()>>,
@@ -295,6 +420,8 @@ impl AgentRegistry {
                 turn_boundary,
                 store: Mutex::new(Vec::new()),
                 factory: Mutex::new(None),
+                executors: Mutex::new(Vec::new()),
+                selected: Mutex::new(None),
                 initiators: Mutex::new(Initiators {
                     state: InitiatorState::Active,
                     active_runs: 0,
@@ -571,11 +698,45 @@ impl AgentRegistry {
 
     /// Create and publish a new agent through the registered factory. `ctx` is the caller's
     /// context: it owns the transaction and the live handle.
+    ///
+    /// A provider route that names a registered [`SessionExecutor`] creates the session on that
+    /// executor instead (HOH-18). While the user has an executor selected for new chats
+    /// ([`select_executor`](Self::select_executor)), a new top-level session (no parent, no
+    /// origin, no seed) goes to it with the selected model, whatever route it was given.
     pub fn create(
         &self,
         ctx: &Context,
         options: CreateAgentOptions,
     ) -> BoxFuture<'static, Result<AgentHandle, BoxError>> {
+        let top_level = options.seed.is_none()
+            && options
+                .meta
+                .as_ref()
+                .is_none_or(|meta| meta.parent_session.is_none() && meta.origin.is_none());
+        if top_level && let Some(selection) = self.selected_executor() {
+            let Some(executor) = self.executor(&selection.executor) else {
+                let error = format!(
+                    "the executor \"{}\" chosen for new chats is not loaded",
+                    selection.executor
+                );
+                return Box::pin(std::future::ready(Err(error.into())));
+            };
+            let mut options = options;
+            let route = options
+                .agent_options
+                .get_or_insert_with(AgentOptions::default);
+            route.provider = Some(Live::Value(selection.executor));
+            route.model = Some(Live::Value(selection.model));
+            return executor.create_agent(ctx.clone(), options);
+        }
+        let routed = options
+            .agent_options
+            .as_ref()
+            .and_then(AgentOptions::provider)
+            .and_then(|provider| self.executor(&provider));
+        if let Some(executor) = routed {
+            return executor.create_agent(ctx.clone(), options);
+        }
         match self.require_factory() {
             Ok(factory) => factory.create_agent(ctx.clone(), options),
             Err(error) => Box::pin(std::future::ready(Err(error))),
@@ -583,15 +744,92 @@ impl AgentRegistry {
     }
 
     /// Load a persisted session and resume an agent on it through the registered factory.
+    ///
+    /// When session executors are registered, a session one of them claims is resumed on that
+    /// executor instead (HOH-18); the claims are asked in registration order. A stored session
+    /// bound to an external harness that no executor claims (its package is not loaded) is
+    /// refused: the loop must not continue a log another harness wrote.
     pub fn resume(
         &self,
         ctx: &Context,
         options: ResumeAgentOptions,
     ) -> BoxFuture<'static, Result<AgentHandle, BoxError>> {
-        match self.require_factory() {
-            Ok(factory) => factory.resume(ctx.clone(), options),
-            Err(error) => Box::pin(std::future::ready(Err(error))),
-        }
+        let executors = lock(&self.inner.executors).clone();
+        let (registry, ctx) = (self.clone(), ctx.clone());
+        Box::pin(async move {
+            for (_, executor) in executors {
+                if executor.claims(&ctx, &options.resume_session_id).await? {
+                    return executor.resume(ctx, options).await;
+                }
+            }
+            if let Some(harness) = stored_executor_binding(&ctx, &options.resume_session_id).await?
+            {
+                return Err(format!("session belongs to external harness {harness}").into());
+            }
+            registry.require_factory()?.resume(ctx, options).await
+        })
+    }
+
+    // ---- session executors (HOH-18) -------------------------------------------------------
+
+    /// Register a session executor under `name`, as an effect of `ctx`. Fails when the name is
+    /// taken. The returned disposer removes it; sessions it already drives are not affected.
+    pub fn set_executor(
+        &self,
+        ctx: &Context,
+        name: &str,
+        executor: Arc<dyn SessionExecutor>,
+    ) -> Result<Disposer, BoxError> {
+        let registry = self.clone();
+        let name = name.to_owned();
+        ctx.try_effect(
+            format!("agents.setExecutor({name})"),
+            move |undos| -> Result<(), BoxError> {
+                {
+                    let mut executors = lock(&registry.inner.executors);
+                    if executors.iter().any(|(taken, _)| *taken == name) {
+                        return Err(format!(
+                            "an agent executor named \"{name}\" is already registered"
+                        )
+                        .into());
+                    }
+                    executors.push((name.clone(), executor.clone()));
+                }
+                undos.push(Undo::sync(move || {
+                    lock(&registry.inner.executors).retain(|(taken, registered)| {
+                        !(*taken == name && Arc::ptr_eq(registered, &executor))
+                    });
+                }))?;
+                Ok(())
+            },
+        )
+    }
+
+    /// Choose the executor new chats go to (`None`: the agent loop, as without executors). Only
+    /// the window's privileged command calls this: nothing a session says reaches it.
+    pub fn select_executor(&self, selection: Option<ExecutorSelection>) {
+        *lock(&self.inner.selected) = selection;
+    }
+
+    /// The executor chosen for new chats.
+    pub fn selected_executor(&self) -> Option<ExecutorSelection> {
+        lock(&self.inner.selected).clone()
+    }
+
+    /// The executor registered under `name`.
+    pub fn executor(&self, name: &str) -> Option<Arc<dyn SessionExecutor>> {
+        lock(&self.inner.executors)
+            .iter()
+            .find(|(taken, _)| taken == name)
+            .map(|(_, executor)| executor.clone())
+    }
+
+    /// Names of the registered session executors, in registration order.
+    pub fn executor_names(&self) -> Vec<String> {
+        lock(&self.inner.executors)
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     // ---- registry -------------------------------------------------------------------------

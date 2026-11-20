@@ -134,7 +134,7 @@ function operationOf(name, args) {
 const verbs = {
   read: ['Читаю', 'Прочитал', 'Не удалось прочитать', 'Чтение остановлено'],
   write: ['Записываю', 'Записал', 'Не удалось записать', 'Запись остановлена'],
-  command: ['Выполняю команду…', 'Команда выполнена без ошибок', 'Не удалось выполнить команду', 'Команда остановлена'],
+  command: ['Выполняю действие на компьютере…', 'Выполнено', 'Не удалось выполнить', 'Остановлено'],
   action: ['Работаю…', 'Готово', 'Не удалось завершить действие', 'Действие остановлено'],
 };
 export function numberInWords(number) {
@@ -148,15 +148,32 @@ export function numberInWords(number) {
 }
 /** The engine marks a sandbox refusal with its fixed `[sandbox: file access denied under <mode> mode]` line (crates/hoh-sandbox escalation.rs). */
 const DENIAL = /\[sandbox: file access denied under ([a-z-]+) mode\]/;
-const deniedLabels = { read: 'Чтение запрещено за пределами папки', write: 'Запись запрещена за пределами папки', command: 'Команда вышла за пределы папки', action: 'Действие запрещено за пределами папки' };
+const deniedLabels = { read: 'Чтение запрещено за пределами папки', write: 'Запись запрещена за пределами папки', command: 'Действие вышло за пределы папки', action: 'Действие запрещено за пределами папки' };
+const WAITING = 'Жду вашего решения в окне «Защита HoH»';
+/** The person said no in the protection window: the step says so, and what did not happen. */
+function refusedLabel(step) {
+  if (step.operation === 'read') return 'Вы не разрешили. Файл не прочитан';
+  if (step.operation === 'write') return 'Вы не разрешили. Файл не изменён';
+  if (step.operation === 'command') return step.what === 'удаление' ? 'Вы не разрешили. Ничего не удалено' : 'Вы не разрешили. Ничего не сделано';
+  return 'Вы не разрешили. Ничего не изменилось';
+}
 function labelFor(step, status, code) {
+  if (status === 'error' && step.refused) return refusedLabel(step);
+  if (status === 'running' && step.waiting) return WAITING;
   if (status === 'error' && step.denied) return deniedLabels[step.operation] ?? deniedLabels.action;
   const what = step.operation === 'command' && step.what ? ': ' + step.what : '';
-  if (step.operation === 'command' && status === 'done' && code === undefined) return 'Команда завершена' + what;
-  if (status === 'error' && step.operation === 'command' && code !== undefined && code !== 0)
-    return 'Команда завершилась с ошибкой: код ' + numberInWords(code) + what;
   const index = { running: 0, done: 1, error: 2, stopped: 3 }[status];
   return verbs[step.operation][index] + (['read', 'write'].includes(step.operation) && status !== 'stopped' ? ' ' + step.file : '') + (status === 'done' ? what : '');
+}
+/** Steps one right after another that say the same thing get a number, so no two headings in a row look alike for different actions. Other entries keep their identity. */
+export function numberRepeatedSteps(entries) {
+  let run = 0;
+  return entries.map((entry, index) => {
+    const previous = entries[index - 1];
+    if (entry.kind !== 'step') { run = 0; return entry; }
+    run = previous?.kind === 'step' && previous.label === entry.label ? run + 1 : 1;
+    return run > 1 ? { ...entry, label: `${entry.label} (${run})` } : entry;
+  });
 }
 export function assistantChunks(event) {
   const result = [];
@@ -321,6 +338,9 @@ export class ChatProjection {
       for (const message of Array.isArray(data.inserted) ? data.inserted : [])
         this.apply({ type: 'user/message', data: message });
     }
+    // The protection window is open (asked) until the person decides: the running step says it waits for them; a «no» is remembered for its result.
+    if (event.type === 'approval/asked') this.waitForDecision(true);
+    if (event.type === 'approval/decided') this.waitForDecision(false, data.outcome === 'rejected');
     if (event.type === 'turn/start') this.running = true;
     if (event.type === 'turn/end') {
       if (data.reason?.kind === 'aborted') this.stop(true);
@@ -344,6 +364,7 @@ export class ChatProjection {
       const step = { id: 'step-' + callId, kind: 'step', operation, status: 'running', what: operation === 'command' ? commandWhat(args.command ?? args.cmd) : '',
         file: windowText(humanFile(args.file_path ?? args.path ?? args.filePath, this.folder), this.folder, 'файл', text(data.name)), detail: '' };
       step.label = labelFor(step, 'running');
+      if (this.waiting) { step.waiting = true; step.label = labelFor(step, 'running'); }
       this.calls.set(callId, this.append(step)); this.arguments.set(callId, { name: text(data.name), preview: text(args.file_text ?? args.content ?? args.new_str).slice(0, 1200) });
     }
     if (event.type === 'tool/result') this.result(record(data.message), data.turn);
@@ -369,10 +390,20 @@ export class ChatProjection {
     const denial = status === 'error' ? DENIAL.exec(contentText(message.content)) : null;
     const denied = denial ? (denial[1] === 'read-only' ? 'read-only' : 'outside') : undefined;
     if (denied) detail = this.deniedText(denied);
+    else if (status === 'error' && before.refused) detail = 'Вы не разрешили это действие в окне защиты. Ничего не изменилось.';
     else if (status === 'error' && before.operation !== 'command') detail = 'Действие не удалось завершить. Попробуйте ещё раз.';
     if (before.operation === 'read' && /<content>/.test(detail)) detail = readContent(detail);
     detail = (denied ? detail : windowText(detail, this.folder, undefined, args.name)).slice(0, 1200);
     this.replace(index, { ...before, status, exitCode, detail, denied, label: labelFor({ ...before, denied }, status, exitCode) });
+  }
+  /** The running step waits for the person (or was refused by them). Also used by the host's approval notifications. */
+  waitForDecision(waiting, refused = false) {
+    this.waiting = waiting;
+    const index = this.entries.findLastIndex(entry => entry.kind === 'step' && entry.status === 'running');
+    if (index < 0) return;
+    const before = this.entries[index];
+    const step = { ...before, waiting, ...(refused ? { refused: true } : {}) };
+    this.replace(index, { ...step, label: labelFor(step, 'running') });
   }
   /** What a person sees when the engine refused to go outside the chosen folder, and what to do about it. */
   deniedText(kind) {
@@ -388,6 +419,11 @@ export class ChatProjection {
     if (!running) this.entries = this.entries.map((entry, index) => entry.kind === 'step' && entry.status === 'running'
       ? { ...entry, status: 'error', label: labelFor(entry, 'error'), detail: 'Действие не удалось завершить.' }
       : entry.streaming && !unfinished.has(index) ? { ...entry, streaming: false } : entry);
+  }
+  /** The person pressed Stop: say so under the text, once. What was already done is not undone. */
+  markStopped() {
+    if (this.entries.at(-1)?.kind === 'note') return;
+    this.append({ id: 'stopped-' + ++this.counter, kind: 'note', text: 'Вы остановили ответ. Уже сделанное не отменяется.' });
   }
   stop(preserveGaps = false) {
     this.running = false;

@@ -51,6 +51,10 @@ pub const WINDOW_METHODS: &[&str] = &[
     "hoh/settings/set",
     "hoh/settings/rules/set",
     "hoh/security/summary",
+    "hoh/executor/access/get",
+    "hoh/executor/access/set",
+    "hoh/executor/discover",
+    "hoh/executor/select",
 ];
 pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), String> {
     if label != "main" {

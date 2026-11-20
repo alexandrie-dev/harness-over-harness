@@ -9,6 +9,22 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::to_value(serde_json::from_value::<InitializeResult>(value).unwrap())
                 .unwrap()
         }
+        "hoh/executor/discover" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorDiscoverResult>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/executor/select" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorSelection>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/executor/access/get" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorAccessGetResult>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/executor/access/set" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorAccessSetResult>(value).unwrap())
+                .unwrap()
+        }
         "session/prompt" => {
             serde_json::to_value(serde_json::from_value::<SessionPromptResult>(value).unwrap())
                 .unwrap()

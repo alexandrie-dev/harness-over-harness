@@ -137,12 +137,12 @@ struct Run<'a> {
     out: &'a mut Vec<Risk>,
 }
 
-const KEYWORDS: &[&str] = &[
+pub(crate) const KEYWORDS: &[&str] = &[
     "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}", "time",
     "function", "select",
 ];
 
-fn is_assignment(text: &str) -> bool {
+pub(crate) fn is_assignment(text: &str) -> bool {
     match text.split_once('=') {
         Some((name, _)) => {
             !name.is_empty()

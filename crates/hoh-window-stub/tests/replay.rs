@@ -855,7 +855,16 @@ fn every_hoh_method_uses_fixture_result() {
         if hoh_protocol::requires_host_approval(method, &request["params"]) {
             assert!(reply.get("error").is_some());
         } else {
-            assert_eq!(reply["result"], response["result"]);
+            let mut result = reply["result"].clone();
+            let mut expected = response["result"].clone();
+            if *method == "hoh/executor/access/get" {
+                // The fixture shows an engine with Claude already chosen; the stub starts on the engine's own model
+                // (`selected: null`) and answers the choice only after `hoh/executor/select`.
+                assert!(result["selected"].is_null());
+                result["selected"] = Value::Null;
+                expected["selected"] = Value::Null;
+            }
+            assert_eq!(result, expected);
         }
     }
     client.shutdown();

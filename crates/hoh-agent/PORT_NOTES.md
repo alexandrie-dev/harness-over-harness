@@ -103,6 +103,41 @@ LICENSE и отдельно лицензированных фрагментов 
     `Deps = { sessionProjections }`. Строка загрузчика `@deepseek-ai/dsh-agent` → этот плагин; запись в таблице
     имён — за ведущим (`hoh-official-bundles`).
 12. **Typert** (`typert.lookups.register('agent', …)`, `TypertLookupMap`) не переносится (PORTING §8).
+13. **Гнездо внешнего исполнителя (HOH-18, сверх образца).** Трейт `SessionExecutor: AgentFactory`
+    с методом `claims(ctx, id)` и методы реестра `set_executor(ctx, name, executor) -> Disposer`
+    (эффект `agents.setExecutor(name)`, имя уникально), `executor(name)`, `executor_names()`.
+    `create`: если маршрут провайдера (`AgentOptions::provider()`) совпадает с именем
+    зарегистрированного исполнителя, сессию создаёт он, иначе — фабрика цикла, как прежде.
+    `resume`: по порядку регистрации спрашивается `claims`, первый согласившийся продолжает
+    сессию. Если никто не согласился (или исполнителей нет), реестр читает начало сохранённого
+    журнала (`stored_executor_binding` через `sessionPersistence`, страницами по 16 событий до
+    привязки или до первого события хода — `turn/*`, сообщения, `tool/result`; ревью 221315 №5:
+    записи слушателей `session/created` перед привязкой могут быть в любом числе): сессия
+    с записью привязки `plugin:external-harness/session` получает отказ
+    «session belongs to external harness <имя>» — цикл не продолжает журнал, который писал внешний
+    исполнитель, даже когда пакет исполнителя не загружен. Иначе — фабрика цикла, как прежде.
+    Отличие от прежнего пути: перед `resume` цикла теперь всегда есть чтение начала журнала
+    (сессия не сохранена или нет службы хранения — чтение пропускается). Ошибка хранилища
+    (`stat`, `open`, `read`, в том числе испорченный журнал) — отказ `resume` с ошибкой хранилища
+    как есть (её же вернул бы `resume` цикла), а не «не привязана»: журнал, который не удалось
+    проверить, циклу не отдаётся (ревью 232500 №3, fail closed; `stored_executor_binding` возвращает
+    `Result<Option<String>, BoxError>`, `claims` гнезда передаёт ошибку дальше). Тест
+    `a_log_that_cannot_be_read_is_not_handed_to_the_loop` (файлы хранилища без прав на чтение);
+    на прежнем коде падает. Для этого добавлена зависимость `hoh-session-persistence`
+    (цикла зависимостей нет); в тестах — `hoh-session-persistence-jsonl`.
+    Имя записи, число событий для поиска и разбор (`EXECUTOR_BINDING_RECORD`,
+    `EXECUTOR_BINDING_SCAN`, `bound_executor`) объявлены здесь, `hoh-external-harness` берёт их
+    отсюда. Новых полей в `CreateAgentOptions` / `ResumeAgentOptions` нет (их строят литералами
+    в других крейтах). Реализация — `hoh-external-harness`; тесты — `tests/executor.rs`.
+14. **Исполнитель новых чатов (HOH-18, решение основателя 20.11, сверх образца).**
+    `select_executor(Option<ExecutorSelection {executor, model}>)` и `selected_executor()`:
+    выбор человека в окне (`hoh/executor/select`, привилегированная команда; зовёт только
+    `hoh-external-harness`). Пока выбор есть, `create` новой сессии верхнего уровня (без
+    `parent_session`, без `origin`, без seed) отдаёт её выбранному исполнителю, подставив
+    `provider` = имя исполнителя и `model` = выбранная модель. Если исполнитель не загружен,
+    `create` отказывает («the executor "…" chosen for new chats is not loaded»): тихой подмены
+    моделью движка нет. Подагенты, форки и без выбора — как прежде. Тест
+    `the_selected_executor_takes_new_chats_and_leaves_subagents_to_the_loop`.
 
 ## Не перенесено
 

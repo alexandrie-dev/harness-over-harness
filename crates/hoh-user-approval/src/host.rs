@@ -211,14 +211,16 @@ fn escalation_text(approval: &ApprovalRequest) -> Option<EscalationText> {
     } else {
         "действие"
     };
+    // Words for people who never wrote code (HOH-35): no jargon, as the destructive guard
+    // words the same escalation.
     let human_text = match mode {
-        "danger-full-access" => {
-            format!("Помощник просит выполнить {what} без ограничений песочницы")
-        }
+        "danger-full-access" => format!(
+            "Помощник просит разрешения работать за пределами своей папки: выполнить {what}"
+        ),
         "workspace-write" => {
             format!("Помощник просит выполнить {what} с правом записи в рабочую папку")
         }
-        _ => format!("Помощник просит выполнить {what} с расширенными правами песочницы"),
+        _ => format!("Помощник просит выполнить {what} с дополнительными правами"),
     };
     let justification: String = justification
         .chars()

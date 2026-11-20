@@ -104,6 +104,14 @@ pub enum Request {
     SettingsSet(SettingsSetParams),
     #[serde(rename = "hoh/security/summary")]
     SecuritySummary(Empty),
+    #[serde(rename = "hoh/executor/discover")]
+    ExecutorDiscover(ExecutorParams),
+    #[serde(rename = "hoh/executor/select")]
+    ExecutorSelect(ExecutorSelectParams),
+    #[serde(rename = "hoh/executor/access/get")]
+    ExecutorAccessGet(ExecutorParams),
+    #[serde(rename = "hoh/executor/access/set")]
+    ExecutorAccessSet(ExecutorAccessSetParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]
@@ -161,6 +169,10 @@ impl Request {
             Self::SettingsGet(_) => "hoh/settings/get",
             Self::SettingsSet(_) => "hoh/settings/set",
             Self::SecuritySummary(_) => "hoh/security/summary",
+            Self::ExecutorDiscover(_) => "hoh/executor/discover",
+            Self::ExecutorSelect(_) => "hoh/executor/select",
+            Self::ExecutorAccessGet(_) => "hoh/executor/access/get",
+            Self::ExecutorAccessSet(_) => "hoh/executor/access/set",
             Self::ApprovalRequest(_) => "approval/request",
             Self::UserQuestionAsk(_) => "user-question/ask",
         }
@@ -254,6 +266,10 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/settings/get",
     "hoh/settings/set",
     "hoh/security/summary",
+    "hoh/executor/discover",
+    "hoh/executor/select",
+    "hoh/executor/access/get",
+    "hoh/executor/access/set",
     "approval/request",
     "user-question/ask",
 ];
@@ -332,6 +348,10 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/settings/get" => admit::<Empty>(value),
         "hoh/settings/set" => admit::<SettingsSetParams>(value),
         "hoh/security/summary" => admit::<Empty>(value),
+        "hoh/executor/discover" => admit::<ExecutorParams>(value),
+        "hoh/executor/select" => admit::<ExecutorSelectParams>(value),
+        "hoh/executor/access/get" => admit::<ExecutorParams>(value),
+        "hoh/executor/access/set" => admit::<ExecutorAccessSetParams>(value),
         "approval/request" => admit::<ApprovalRequestParams>(value),
         "user-question/ask" => admit::<SdkUserQuestionRequest>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -394,6 +414,10 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/settings/get" => admit::<Settings>(value),
         "hoh/settings/set" => admit::<Settings>(value),
         "hoh/security/summary" => admit::<SecuritySummary>(value),
+        "hoh/executor/discover" => admit::<ExecutorDiscoverResult>(value),
+        "hoh/executor/select" => admit::<ExecutorSelection>(value),
+        "hoh/executor/access/get" => admit::<ExecutorAccessGetResult>(value),
+        "hoh/executor/access/set" => admit::<ExecutorAccessSetResult>(value),
         "approval/request" => admit::<ApprovalRequestResult>(value),
         "user-question/ask" => admit::<SdkUserQuestionResult>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -1060,6 +1084,43 @@ pub fn schemas() -> Vec<(String, Value)> {
             .insert("x-method".into(), Value::String(method.into()));
         schemas.push((name.into(), schema));
     }
+    for (name, method, params, result) in [
+        (
+            "ExecutorDiscover",
+            "hoh/executor/discover",
+            schema_for!(ExecutorParams),
+            schema_for!(ExecutorDiscoverResult),
+        ),
+        (
+            "ExecutorSelect",
+            "hoh/executor/select",
+            schema_for!(ExecutorSelectParams),
+            schema_for!(ExecutorSelection),
+        ),
+        (
+            "ExecutorAccessGet",
+            "hoh/executor/access/get",
+            schema_for!(ExecutorParams),
+            schema_for!(ExecutorAccessGetResult),
+        ),
+        (
+            "ExecutorAccessSet",
+            "hoh/executor/access/set",
+            schema_for!(ExecutorAccessSetParams),
+            schema_for!(ExecutorAccessSetResult),
+        ),
+    ] {
+        schemas.push((
+            format!("{name}Params"),
+            serde_json::to_value(params).unwrap(),
+        ));
+        let mut schema = serde_json::to_value(result).unwrap();
+        schema
+            .as_object_mut()
+            .unwrap()
+            .insert("x-method".into(), Value::String(method.into()));
+        schemas.push((format!("{name}Result"), schema));
+    }
     schemas
 }
 
@@ -1165,6 +1226,14 @@ enum RequestDecode {
     SettingsSet(SettingsSetParams),
     #[serde(rename = "hoh/security/summary")]
     SecuritySummary(Empty),
+    #[serde(rename = "hoh/executor/discover")]
+    ExecutorDiscover(ExecutorParams),
+    #[serde(rename = "hoh/executor/select")]
+    ExecutorSelect(ExecutorSelectParams),
+    #[serde(rename = "hoh/executor/access/get")]
+    ExecutorAccessGet(ExecutorParams),
+    #[serde(rename = "hoh/executor/access/set")]
+    ExecutorAccessSet(ExecutorAccessSetParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]
@@ -1218,6 +1287,8 @@ privileged_methods! {
     "hoh/model/probe" => |p:&Value| p.get("baseUrl").is_some(),
     "hoh/model/key/set" => |_:&Value| true,
     "hoh/settings/rules/set" => |_:&Value| true,
+    "hoh/executor/access/set" => |_:&Value| true,
+    "hoh/executor/select" => |_:&Value| true,
 }
 pub fn validate_params_host(method: &str, value: &Value) -> Result<(), String> {
     if method == "approval/request" {

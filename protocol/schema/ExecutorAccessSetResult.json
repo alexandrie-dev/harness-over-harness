@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutorAccessSetResult",
+  "type": "object",
+  "properties": {
+    "executor": {
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "#/$defs/ExecutorAccessMode"
+    }
+  },
+  "required": [
+    "executor",
+    "mode"
+  ],
+  "$defs": {
+    "ExecutorAccessMode": {
+      "type": "string",
+      "enum": [
+        "confirm",
+        "full"
+      ]
+    }
+  },
+  "x-method": "hoh/executor/access/set"
+}

@@ -40,5 +40,6 @@
   "effect/Option": "src/t3/shims/effect/Option.ts",
   "effect/Schema": "src/t3/shims/effect/Schema.ts",
   "effect/reactivity": "src/t3/shims/effect/reactivity.ts",
-  "@effect/atom-react": "src/t3/shims/atom-react.ts"
+  "@effect/atom-react": "src/t3/shims/atom-react.ts",
+  "@t3tools/client-runtime/contract-labels": "src/t3/shims/contract-labels.ts"
 }

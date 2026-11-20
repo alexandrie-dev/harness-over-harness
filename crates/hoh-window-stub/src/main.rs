@@ -15,11 +15,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut scenario = String::from("text-turn");
     let mut recording = None;
     let mut fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../protocol/fixtures");
+    let mut local_approvals = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--help" {
             println!(
-                "hoh-window-stub [--scenario text-turn|approval|plan-review] [--source-root PATH] [--recording PATH] [--fixtures PATH]"
+                "hoh-window-stub [--scenario text-turn|approval|plan-review] [--source-root PATH] [--recording PATH] [--fixtures PATH] [--approvals host|local]"
             );
             return Ok(());
         }
@@ -29,6 +30,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--scenario" => scenario = value,
             "--recording" => recording = Some(PathBuf::from(value)),
             "--fixtures" => fixtures = value.into(),
+            "--approvals" => match value.as_str() {
+                "host" => local_approvals = false,
+                "local" => local_approvals = true,
+                _ => return Err("--approvals takes host or local".into()),
+            },
             _ => return Err(format!("unknown option: {arg}").into()),
         }
     }
@@ -60,6 +66,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let output = io::stdout();
     let mut engine = Engine::new(output.lock(), recording, fixtures);
+    engine.set_local_approvals(local_approvals);
     loop {
         let incoming = if let Some(deadline) = engine.deadline() {
             match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {

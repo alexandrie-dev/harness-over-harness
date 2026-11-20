@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutorDiscoverResult",
+  "type": "object",
+  "properties": {
+    "executor": {
+      "type": "string"
+    },
+    "installed": {
+      "type": "boolean"
+    },
+    "version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "versionStatus": {
+      "$ref": "#/$defs/ExecutorVersionStatus"
+    },
+    "auth": {
+      "$ref": "#/$defs/ExecutorAuth"
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExecutorModel"
+      }
+    },
+    "detail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "executor",
+    "installed",
+    "versionStatus",
+    "auth",
+    "models"
+  ],
+  "$defs": {
+    "ExecutorVersionStatus": {
+      "type": "string",
+      "enum": [
+        "supported",
+        "unsupported",
+        "unknown"
+      ]
+    },
+    "ExecutorAuth": {
+      "type": "string",
+      "enum": [
+        "authenticated",
+        "unauthenticated",
+        "unknown"
+      ]
+    },
+    "ExecutorModel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isDefault": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  "x-method": "hoh/executor/discover"
+}

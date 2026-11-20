@@ -31,7 +31,7 @@ export function detectProvider(baseUrl, model = '') {
   const scope = host ? addressScope(host) : '';
   if (scope === 'loopback' || scope === 'private') {
     const ollama = url?.port === OLLAMA_PORT;
-    return { id: ollama ? 'ollama' : 'local', name: 'Локальная модель', icon: ollama ? 'ollama' : 'local', scope, label: scope === 'private' ? 'Локальная модель в сети' : 'Локальная модель' };
+    return { id: ollama ? 'ollama' : 'local', name: 'Модель на этом компьютере', icon: ollama ? 'ollama' : 'local', scope, label: scope === 'private' ? 'Модель на другом компьютере в вашей сети' : 'Модель на этом компьютере' };
   }
   const byHost = host && PROVIDERS.find(p => p.hosts.some(h => host === h || host.endsWith('.' + h)));
   const byModel = lower && PROVIDERS.find(p => p.models.some(prefix => lower.startsWith(prefix)));

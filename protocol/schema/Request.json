@@ -787,6 +787,70 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/executor/discover"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/executor/select"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorSelectParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/executor/access/get"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/executor/access/set"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorAccessSetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "approval/request"
         },
         "params": {
@@ -2193,6 +2257,56 @@
         "light",
         "dark",
         "system"
+      ]
+    },
+    "ExecutorParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "executor"
+      ]
+    },
+    "ExecutorSelectParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ]
+    },
+    "ExecutorAccessSetParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/ExecutorAccessMode"
+        }
+      },
+      "required": [
+        "executor",
+        "mode"
+      ]
+    },
+    "ExecutorAccessMode": {
+      "type": "string",
+      "enum": [
+        "confirm",
+        "full"
       ]
     },
     "ApprovalRequestParams": {

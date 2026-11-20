@@ -42,8 +42,8 @@ test('persistent-tools becomes read/write/command rows with real recorded result
   assert.equal(steps.filter(e => e.operation === 'read').length, 1);
   assert(steps.some(e => e.label === 'Прочитал note.txt' && e.detail.includes('target:') && e.detail.includes('old')));
   assert(steps.some(e => e.label === 'Записал note.txt' && e.detail.includes('target:')));
-  assert(steps.some(e => e.label === 'Команда выполнена без ошибок' && e.detail === 'delayed'));
-  assert(steps.some(e => e.status === 'error' && e.exitCode === 9 && e.label.includes('код девять')));
+  assert(steps.some(e => e.label === 'Выполнено' && e.detail === 'delayed'));
+  assert(steps.some(e => e.status === 'error' && e.exitCode === 9 && e.label === 'Не удалось выполнить' && !/код/.test(e.label)));
   for (const step of steps) {
     assert(!step.label.includes('{') && !step.label.includes('bash') && !step.label.includes('str_replace_editor'));
     assert(!/[\\/]workspace|[\\/]tmp|инструмент|токен|сесси/i.test(step.label + step.detail));
@@ -119,7 +119,7 @@ test('exit code words and structured command output are human readable', () => {
   const p = new ChatProjection();
   p.event(event('tool/call', 0, { name: 'bash', callId: 'b', arguments: '{}' }));
   p.event(event('tool/result', 1, { message: { toolCallId: 'b', content: [{ type: 'text', text: '{"stdout":{"text":"готово"},"exitCode":0}' }] } }));
-  assert.equal(p.entries[0].detail, 'готово'); assert.equal(p.entries[0].label, 'Команда выполнена без ошибок');
+  assert.equal(p.entries[0].detail, 'готово'); assert.equal(p.entries[0].label, 'Выполнено');
 });
 
 test('5000 projected messages remain distinct and reachable', () => {
@@ -373,6 +373,23 @@ test('a finished command is told apart by what it does, from its first word only
   };
   run('a', 'ls -la'); run('b', 'rm secret-plan.txt'); run('c', 'curl https://x.example/y'); run('d', '/bin/cat notes.txt');
   const labels = projection.entries.map(e => e.label);
-  assert.deepEqual(labels, ['Команда завершена: список файлов', 'Команда завершена: удаление', 'Команда завершена', 'Команда завершена: чтение файла']);
+  assert.deepEqual(labels, ['Выполнено: список файлов', 'Выполнено: удаление', 'Выполнено', 'Выполнено: чтение файла']);
   assert(!labels.join(' ').includes('secret'));
+});
+
+import { numberRepeatedSteps } from '../../src/screens/chat/projection.mjs';
+test('steps right after each other that say the same get numbers, so no two headings in a row look alike', () => {
+  const step = (id, label) => ({ id, kind: 'step', label });
+  const out = numberRepeatedSteps([step('a', 'Выполнено'), step('b', 'Выполнено'), step('c', 'Выполнено'), { id: 'm', kind: 'assistant', text: 'x' }, step('d', 'Выполнено')]);
+  assert.deepEqual(out.map(e => e.label ?? e.text), ['Выполнено', 'Выполнено (2)', 'Выполнено (3)', 'x', 'Выполнено']);
+  const same = [step('a', 'Читаю'), step('b', 'Выполнено')];
+  assert.equal(numberRepeatedSteps(same)[0], same[0], 'неповторяющиеся шаги остаются тем же объектом');
+});
+test('no step heading uses the words «команда» or «код»', () => {
+  for (const operation of ['read', 'write', 'command', 'action']) for (const status of ['running', 'done', 'error', 'stopped']) {
+    const p = new ChatProjection();
+    p.apply({ type: 'tool/call', data: { callId: 'c', turn: 1, name: operation === 'command' ? 'bash' : operation === 'read' ? 'read' : operation === 'write' ? 'write_file' : 'other', arguments: JSON.stringify({ command: 'zzz', file_path: 'a.txt' }) } });
+    const label = p.entries[0].label;
+    assert.doesNotMatch(label, /команд|код/i, `${operation}/${status}: ${label}`);
+  }
 });

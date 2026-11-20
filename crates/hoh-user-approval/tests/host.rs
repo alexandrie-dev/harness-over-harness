@@ -229,7 +229,9 @@ async fn an_escalation_ask_reaching_the_host_is_worded_by_the_engine_and_the_jus
         let host: HostApprovalRequest = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
             host.human_text,
-            format!("Помощник просит выполнить {what} без ограничений песочницы")
+            format!(
+                "Помощник просит разрешения работать за пределами своей папки: выполнить {what}"
+            )
         );
         assert_eq!(
             host.reason.as_deref(),
@@ -296,7 +298,7 @@ async fn escalation_wording_covers_other_modes_and_an_overlong_justification() {
     );
     assert_eq!(
         second.human_text,
-        "Помощник просит выполнить команду с расширенными правами песочницы"
+        "Помощник просит выполнить команду с дополнительными правами"
     );
     for host in [&first, &second] {
         let details = host.details.as_deref().unwrap();
@@ -516,6 +518,75 @@ async fn privileged_method_is_asked_with_typed_text_and_runs_only_after_a_verifi
         requests[1]["humanText"],
         "Разрешить проверку модели «m-1» у провайдера «https://api.example.com/v1»?"
     );
+    h.close().await;
+}
+
+/// Review 232500, item 1: the user's choices of an executor's access and of who answers new chats
+/// are asked in words that name the executor and what the choice allows, never as the bare
+/// method name.
+#[tokio::test]
+async fn executor_choices_are_asked_in_words_that_name_the_executor_and_the_right() {
+    let h = Harness::mounted().await;
+    let (key, key_hex) = key_pair(0x15);
+    let responder = signed(key, ProtocolOutcome::AllowedOnce);
+    let peer = Peer::new(move |params, signal| responder(params, signal));
+    h.service()
+        .install_host_mode(&key_hex, peer.clone())
+        .unwrap();
+    let cases = [
+        (
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"full"}),
+            "Включить полный доступ для Claude? Помощник сам удаляет и меняет файлы в любых \
+             папках, куда есть доступ у вас, запускает программы и выходит в интернет, не \
+             спрашивая. Сделанное нельзя отменить.",
+        ),
+        (
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"confirm"}),
+            "Вернуть режим «Спрашивать разрешение» для Claude?",
+        ),
+        (
+            "hoh/executor/select",
+            json!({"executor":"claude","model":"claude-sonnet-4-5"}),
+            "Отвечать будет Claude (модель claude-sonnet-4-5)?",
+        ),
+        (
+            "hoh/executor/select",
+            json!({"executor":null,"model":"local-model"}),
+            "Отвечать будет модель на этом компьютере?",
+        ),
+    ];
+    for (index, (method, params, text)) in cases.iter().enumerate() {
+        assert_eq!(
+            crate::method_human_text(method, params).as_deref(),
+            Ok(*text)
+        );
+        h.service()
+            .approve_privileged(method, params)
+            .await
+            .unwrap();
+        let requests = lock(&peer.requests).clone();
+        let host: HostApprovalRequest = serde_json::from_value(requests[index].clone()).unwrap();
+        assert_eq!(host.human_text, *text);
+        assert_eq!(host.tool_name, *method);
+        assert_eq!(host.session_id, "host");
+        assert_eq!(host.risk, hoh_protocol::Risk::High);
+        assert_eq!(host.action, json!({"method": method, "params": params}));
+        hoh_protocol::approval::validate_host_request(&host).unwrap();
+    }
+    // A malformed choice is refused before anything is asked.
+    let asked = lock(&peer.requests).len();
+    assert!(
+        h.service()
+            .approve_privileged(
+                "hoh/executor/access/set",
+                &json!({"executor":"claude","mode":"everything"})
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(lock(&peer.requests).len(), asked);
     h.close().await;
 }
 

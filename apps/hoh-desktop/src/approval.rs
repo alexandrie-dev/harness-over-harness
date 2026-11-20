@@ -583,9 +583,9 @@ impl Broker {
             return Err("Обратный метод не поддерживается".into());
         }
         hoh_protocol::validate_params_host(method, &params)
-            .map_err(|_| "Движок прислал некорректное подтверждение".to_owned())?;
+            .map_err(|_| "Получено некорректное подтверждение".to_owned())?;
         let request: HostApprovalRequest = serde_json::from_value(params)
-            .map_err(|_| "Движок прислал некорректное подтверждение".to_owned())?;
+            .map_err(|_| "Получено некорректное подтверждение".to_owned())?;
         validate_time(&request, now)?;
         Ok(request)
     }
@@ -1001,7 +1001,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             let mut changes = Vec::new();
             if let Some(model) = request.model {
                 changes.push(format!(
-                    "модель — {}, провайдер — {}",
+                    "модель — {}, сервис — {}",
                     quoted(&model.model),
                     quoted(&model.base_url)
                 ));
@@ -1094,13 +1094,39 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 quoted(&rules.folder)
             ))
         }
+        // The user's own choice of who answers and how freely: the text names the executor (review 232500, item 1;
+        // the same words as hoh-user-approval/src/method.rs).
+        "hoh/executor/access/set" => {
+            let name = executor_name(
+                params["executor"]
+                    .as_str()
+                    .ok_or("Некорректный исполнитель")?,
+            );
+            match params["mode"].as_str() {
+                Some("full") => Ok(format!(
+                    "Включить полный доступ для {name}? Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить."
+                )),
+                Some("confirm") => Ok(format!("Вернуть режим «Спрашивать разрешение» для {name}?")),
+                _ => Err("Некорректный режим доступа".into()),
+            }
+        }
+        "hoh/executor/select" => {
+            let model = params["model"].as_str().ok_or("Некорректная модель")?;
+            match params["executor"].as_str() {
+                Some(executor) => Ok(format!(
+                    "Отвечать будет {} (модель {model})?",
+                    executor_name(executor)
+                )),
+                None => Ok("Отвечать будет модель на этом компьютере?".to_owned()),
+            }
+        }
         "hoh/model/key/set" => {
             let address = params["baseUrl"]
                 .as_str()
                 .filter(|value| !value.is_empty())
-                .ok_or("Нет адреса провайдера модели")?;
+                .ok_or("Нет адреса сервиса модели")?;
             Ok(format!(
-                "Сохранить API-ключ для провайдера {}?",
+                "Сохранить ключ доступа к сервису {}?",
                 quoted(address)
             ))
         }
@@ -1108,13 +1134,21 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             let probe: hoh_protocol::ModelProbeParams = serde_json::from_value(params.clone())
                 .map_err(|_| "Некорректная проверка модели")?;
             Ok(format!(
-                "Разрешить проверку модели {} у провайдера {}?",
+                "Разрешить проверку модели {} у сервиса {}?",
                 quoted(&probe.model),
                 quoted(&probe.base_url)
             ))
         }
         _ => Err("Нет безопасного описания привилегированного действия".into()),
     }
+}
+
+/// An executor's name as a word in a sentence: `claude` → `Claude`.
+fn executor_name(executor: &str) -> String {
+    let mut chars = executor.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 fn quoted(value: &str) -> String {
@@ -1416,6 +1450,16 @@ mod tests {
                 json!({"internet":"public","folder":"/rules/work"}),
                 "/rules/work",
             ),
+            (
+                "hoh/executor/access/set",
+                json!({"executor":"claude","mode":"full"}),
+                "Включить полный доступ для Claude?",
+            ),
+            (
+                "hoh/executor/select",
+                json!({"executor":"claude","model":"opus-sample"}),
+                "Claude (модель opus-sample)",
+            ),
         ];
         assert_eq!(samples.len(), hoh_protocol::PRIVILEGED_METHODS.len());
         let broker = Broker::new([0x42; 32]).unwrap();
@@ -1434,5 +1478,59 @@ mod tests {
             assert!(!open.view.human_text.contains("never-show-this"));
             assert!(broker.reject(&open.label, 10_000).is_some());
         }
+    }
+
+    #[test]
+    fn executor_choices_are_asked_in_words_that_name_the_executor_and_the_right() {
+        let text = |method, params: Value| preflight_text(method, &params).unwrap();
+        let full = text(
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"full"}),
+        );
+        let confirm = text(
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"confirm"}),
+        );
+        assert_ne!(full, confirm, "full and confirm are asked differently");
+        assert!(
+            full.starts_with("Включить полный доступ для Claude?"),
+            "{full}"
+        );
+        assert!(
+            full.contains("Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить."),
+            "{full}"
+        );
+        assert_eq!(confirm, "Вернуть режим «Спрашивать разрешение» для Claude?");
+        assert_eq!(
+            text(
+                "hoh/executor/select",
+                json!({"executor":"claude","model":"opus"})
+            ),
+            "Отвечать будет Claude (модель opus)?"
+        );
+        assert_eq!(
+            text(
+                "hoh/executor/select",
+                json!({"executor":null,"model":"default"})
+            ),
+            "Отвечать будет модель на этом компьютере?"
+        );
+        for method in ["hoh/executor/access/set", "hoh/executor/select"] {
+            let generic = format!("Разрешить действие {method}?");
+            assert_ne!(
+                text(
+                    method,
+                    json!({"executor":"claude","mode":"full","model":"m"})
+                ),
+                generic
+            );
+        }
+        assert!(
+            preflight_text(
+                "hoh/executor/access/set",
+                &json!({"executor":"claude","mode":"root"})
+            )
+            .is_err()
+        );
     }
 }

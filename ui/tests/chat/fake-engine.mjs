@@ -32,6 +32,8 @@ export class FakeEngine {
     const first = session.events.find(e => e.type === 'user/message');
     return first ? first.data.content.map(b => b.text ?? '').join('').split('\n')[0].slice(0, 60) : '';
   }
+  /** What the engine runs new chats with: `selected` if a check set it, else Claude as soon as the engine has the access setting. */
+  selectedNow() { return this.selected !== undefined ? this.selected : this.access !== undefined ? { executor: 'claude', model: 'default' } : null; }
   async request(method, params) {
     this.requests.push({ method, params });
     if (this.unavailable.has(method)) throw new Error('method-unavailable');
@@ -52,9 +54,33 @@ export class FakeEngine {
         const session = this.sessions.get(params.sessionId); if (!session) throw new Error('unknown SDK session');
         const text = params.contentBlocks.map(b => b.text ?? '').join(''); const messageId = `m-${++this.counter}`;
         this.pending.add(new Promise(resolve => setTimeout(() => { this.answer(session, messageId, text); resolve(); }, 20)));
+        (this.promptExecutors ??= []).push(this.selectedNow()?.executor ?? null);
         return { messageId };
       }
       case 'session/working-directory/set': this.cwd = params.path; return {};
+      case 'hoh/executor/access/get': {
+        // Only an engine that has the Claude executor setting answers; `access` is what is in effect, `accessAsked` what was last requested.
+        if (this.access === undefined) throw new Error('method-unavailable');
+        return { executor: 'claude', mode: this.accessAsked ?? this.access, effective: { mode: this.access, flags: [`--permission-mode=${this.access}`] }, selected: this.selectedNow() };
+      }
+      case 'hoh/executor/access/set': {
+        if (this.access === undefined) throw new Error('method-unavailable');
+        if (this.accessRefuse) throw new Error('rejected');
+        this.accessAsked = params.mode;
+        if (!this.accessIgnore) this.access = params.mode; // `accessIgnore`: an engine that keeps running in its own mode
+        return { mode: params.mode };
+      }
+      case 'hoh/executor/discover': {
+        // `claude`: what a real discover finds now; a function is asked on every call (a check changes it between calls).
+        const found = typeof this.claude === 'function' ? this.claude() : this.claude;
+        if (found === undefined) throw new Error('method-unavailable');
+        return structuredClone(found);
+      }
+      case 'hoh/executor/select': {
+        if (this.selectRefuse) throw new Error('rejected');
+        this.selected = params.executor === 'claude' ? { executor: 'claude', model: params.model } : null;
+        return { executor: params.executor, model: params.model };
+      }
       case 'session/cancel': return {};
       default: throw new Error(`FakeEngine: unsupported ${method}`);
     }

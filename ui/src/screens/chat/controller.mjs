@@ -1,5 +1,6 @@
+import { DEFAULT_ACCESS_MODE, discoverView } from '../../lib/executor.mjs';
 import { detectProvider } from '../../lib/providers.mjs';
-import { assistantChunks, ChatProjection, humanFile, windowText } from './projection.mjs';
+import { numberRepeatedSteps, assistantChunks, ChatProjection, humanFile, windowText } from './projection.mjs';
 
 // Observable behavior without React or a particular transport. The production
 // frame scheduler is injectable so cancellation races can be tested deterministically.
@@ -20,13 +21,18 @@ function isLocalAddress(baseUrl) {
   } catch { return false; }
 }
 
+/** The folder as a person says it: the default one is «Документы → HoH», any other is its own name. */
+function folderLabelOf(normalized, name) {
+  if (/\/(Documents|Документы)\/HoH$/.test(normalized)) return 'Документы → HoH';
+  return windowText(name === 'файл' ? 'Рабочая папка' : name, '', 'Рабочая папка');
+}
 /** Why the window could not reach the assistant, in words, and what to do. The host's own Russian refusals are passed on. */
 function connectionProblem(error) {
   const message = (error?.message ?? (typeof error === 'string' ? error : '')).trim();
   const reason = message === 'Помощник ещё подключается' ? 'Помощник ещё запускается.'
     : /[А-Яа-яЁё]/.test(message) && message.length < 160 ? message
-    : message === METHOD_UNAVAILABLE ? 'Движок не знает нужного запроса: окно и движок разных версий.'
-    : 'Движок не отвечает.';
+    : message === METHOD_UNAVAILABLE ? 'Окно и Помощник из разных версий программы.'
+    : 'Помощник не отвечает.';
   return `Не удалось связаться с Помощником. ${reason} Подождите немного и нажмите «Подключиться ещё раз»; если не помогает, закройте HoH и откройте снова.`;
 }
 export class ChatController {
@@ -37,14 +43,14 @@ export class ChatController {
     this.ignoreUntilNextTurn = false; this.allowNextTurn = false; this.cancelUnconfirmed = false;
     this.statusOff = undefined; this.statusPending = undefined; this.lifecycle = 0;
     this.active = false; this.reloading = false;
-    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', model: '', modelIcon: '', modelScope: '', permissions: '', notice: '', folderPath: '', draft: '', questions: [],
+    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', model: '', modelIcon: '', modelScope: '', executor: '', executorModel: '', executorModels: [], executorBusy: false, permissions: '', notice: '', folderPath: '', draft: '', questions: [],
       sessions: [], currentId: '', working: [] };
     this.questionsOff = undefined;
     // `link` counts real connections of the window to the engine; opening another chat keeps the same link.
     this.link = 0; this.chosen = ''; this.listSeq = 0; this.workingIds = new Set();
   }
   update(patch) { this.state = { ...this.state, ...patch }; this.changed(this.state); }
-  publish() { this.update({ entries: this.projection.entries, busy: this.projection.running || this.cancelUnconfirmed }); }
+  publish() { this.update({ entries: numberRepeatedSteps(this.projection.entries), busy: this.projection.running || this.cancelUnconfirmed }); }
   setDraft(draft) { this.update({ draft }); }
   async readHistory(transport, projection, current) {
     let afterSeq;
@@ -246,6 +252,7 @@ export class ChatController {
       const off = await transport.subscribe(event => {
         if (ownEpoch !== this.epoch) return;
         if (event.method === 'user-question.cancelled') { this.dropQuestion(event.params.requestId); return; }
+        if ((event.method === 'approval.pending' || event.method === 'approval.resolved') && event.params?.sessionId === this.sessionId) { this.projection.waitForDecision(event.method === 'approval.pending', event.method === 'approval.resolved' && event.params.outcome === 'rejected'); this.publish(); return; }
         if (loading) buffered.push(event); else this.enqueue(event);
       });
       if (ownEpoch !== this.epoch) { off(); return; }
@@ -272,7 +279,7 @@ export class ChatController {
       projection.folder = directory.cwd;
       const normalized = directory.cwd.replaceAll('\\', '/').replace(/\/$/, '');
       const name = humanFile(normalized, normalized.slice(0, normalized.lastIndexOf('/')));
-      this.update({ folderPath: directory.cwd, folderLabel: windowText(name === 'файл' ? 'Рабочая папка' : name, '', 'Рабочая папка') });
+      this.update({ folderPath: directory.cwd, folderLabel: folderLabelOf(normalized, name) });
       await this.readHistory(transport, projection, () => ownEpoch === this.epoch && loadGeneration === this.generation);
       if (ownEpoch !== this.epoch || loadGeneration !== this.generation) return;
       const summary = await unlessMissing(() => transport.request('hoh/security/summary', {}), async () => {
@@ -281,12 +288,14 @@ export class ChatController {
       });
       if (ownEpoch !== this.epoch) return;
       await this.readSettings(transport, ownEpoch);
+      await this.readAccess(transport, ownEpoch);
       if (ownEpoch !== this.epoch) return;
       // A new engine cannot still be executing the previous process's turn.
       // History may end mid-turn if termination prevented its closing event.
       if (recovering) projection.stop();
       this.projection = projection; this.publish(); this.reloading = false;
-      this.update({ privacy: summary.model.local ? 'local' : 'remote', connection: 'ready', error: '' });
+      this.basePrivacy = summary.model.local ? 'local' : 'remote';
+      this.update({ privacy: this.state.executor === 'claude' ? 'remote' : this.basePrivacy, connection: 'ready', error: '' });
       void this.refreshSessions();
       loading = false;
       for (const event of buffered) this.enqueue(event);
@@ -303,10 +312,67 @@ export class ChatController {
       const settings = await transport.request('hoh/settings/get', {});
       if (ownEpoch !== this.epoch) return;
       const security = settings.security;
-      const permissions = security ? (security.writeFiles || security.programs ? 'Запись и программы с разрешения' : 'Работа только в этой папке') : '';
+      const permissions = security ? 'Спрашивать разрешение' : '';
       const found = detectProvider(settings.model?.baseUrl, settings.model?.model);
       this.update({ model: windowText(found.label, '', ''), modelIcon: found.icon ?? '', modelScope: found.scope, permissions });
     } catch { /* the line simply shows less */ }
+  }
+  /** Which executor runs new chats (`selected`) and its access mode as the engine really runs it (`effective`), never as the window last asked. Without a selected Claude: ''. */
+  async readAccess(transport, ownEpoch) {
+    try {
+      const answer = await transport.request('hoh/executor/access/get', { executor: 'claude' });
+      if (ownEpoch !== undefined && ownEpoch !== this.epoch) return '';
+      const claude = answer?.selected?.executor === 'claude';
+      const mode = answer?.effective?.mode ?? DEFAULT_ACCESS_MODE;
+      const access = claude && (mode === 'full' || mode === 'confirm') ? mode : '';
+      // With Claude the messages go to a service on the internet, whatever the engine's own model is.
+      this.update({ access, executor: claude ? 'claude' : '', executorModel: claude ? String(answer.selected.model ?? '') : '', ...(claude ? { privacy: 'remote' } : this.basePrivacy ? { privacy: this.basePrivacy } : {}) });
+      if (claude) void this.loadExecutorModels(); // the names of the models for the composer line
+      return access;
+    } catch { this.update({ access: '', executor: '', executorModel: '' }); return ''; }
+  }
+  /** `hoh/executor/discover`: a real, read-only call every time. The raw answer goes to the screen that shows it. */
+  async discoverClaude() {
+    if (!this.transport) throw new Error('нет связи с Помощником');
+    return this.transport.request('hoh/executor/discover', { executor: 'claude' });
+  }
+  /** The models of the composer menu come from a fresh discover; a failure leaves the last list. */
+  async loadExecutorModels() {
+    try {
+      const view = discoverView(await this.discoverClaude());
+      this.update({ executorModels: view.models });
+    } catch { /* the menu shows the model it has */ }
+  }
+  /** Privileged (the host asks the person): new chats run through Claude with `model`, or back on the engine's own model (`executor` null). */
+  async selectExecutor(executor, model) {
+    if (!this.transport || this.state.connection !== 'ready' || this.state.executorBusy) return false;
+    const ownEpoch = this.epoch;
+    this.update({ executorBusy: true, notice: '' });
+    let refused = false;
+    try { await this.transport.request('hoh/executor/select', { executor, model }); } catch { refused = true; }
+    await this.readAccess(this.transport, ownEpoch);
+    if (ownEpoch !== this.epoch) return false;
+    const actual = this.state.executor === 'claude' ? this.state.executorModel : null;
+    const asked = executor === 'claude' ? model : null;
+    const failed = refused || actual !== asked;
+    this.update({ executorBusy: false, notice: failed ? 'Поставщик не изменён: действие не разрешено или не удалось.' : '' });
+    return !failed;
+  }
+  /** The person chose another mode in the composer menu (the only caller). The engine asks the host for approval; afterwards the mode is read back. */
+  async setAccess(mode) {
+    if ((mode !== 'confirm' && mode !== 'full') || !this.transport || this.state.connection !== 'ready' || this.state.accessBusy || mode === this.state.access) return;
+    const ownEpoch = this.epoch;
+    this.update({ accessBusy: true, notice: '' });
+    let refused = false;
+    try { await this.transport.request('hoh/executor/access/set', { executor: 'claude', mode }); } catch { refused = true; }
+    const actual = await this.readAccess(this.transport, ownEpoch);
+    if (ownEpoch !== this.epoch) return;
+    const word = value => value === 'full' ? 'Полный доступ' : 'Спрашивать разрешение';
+    this.update({
+      accessBusy: false,
+      notice: refused ? 'Режим доступа не изменён: действие не разрешено или не удалось.'
+        : actual && actual !== mode ? `Помощник работает в режиме «${word(actual)}», а выбран «${word(mode)}». Показан фактический режим.` : '',
+    });
   }
   /** A link of an answer: the host opens it, or says why it will not. Nothing opens without the host's own checks. */
   async openLink(kind, target) {
@@ -338,7 +404,7 @@ export class ChatController {
       this.projection.folder = path;
       const normalized = path.replaceAll('\\', '/').replace(/\/$/, '');
       const name = humanFile(normalized, normalized.slice(0, normalized.lastIndexOf('/')));
-      this.update({ folderPath: path, folderLabel: windowText(name === 'файл' ? 'Рабочая папка' : name, '', 'Рабочая папка'), error: '' });
+      this.update({ folderPath: path, folderLabel: folderLabelOf(path.replaceAll('\\', '/').replace(/\/$/, ''), name), error: '' });
     } catch {
       if (ownEpoch === this.epoch) this.update({ error: 'Не удалось сменить папку. Попробуйте ещё раз.' });
     }
@@ -378,7 +444,7 @@ export class ChatController {
     this.generation++; this.ignoreUntilNextTurn = true; this.allowNextTurn = false; this.cancelUnconfirmed = true;
     // Preserve a gapped row while cancellation is unconfirmed so a failed Stop
     // can be retried and a successful one can still settle from durable history.
-    this.projection.stop(recoverGap); this.publish(); this.update({ canceling: true, error: '' });
+    this.projection.stop(recoverGap); this.projection.markStopped(); this.publish(); this.update({ canceling: true, error: '' });
     try {
       await this.transport.request('session/cancel', { sessionId: this.sessionId });
       if (ownEpoch !== this.epoch) return;

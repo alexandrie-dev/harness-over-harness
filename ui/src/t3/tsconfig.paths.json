@@ -124,6 +124,9 @@
       "@effect/atom-react": [
         "./shims/atom-react.ts"
       ],
+      "@t3tools/client-runtime/contract-labels": [
+        "./shims/contract-labels.ts"
+      ],
       "~/*": [
         "./web/*"
       ]

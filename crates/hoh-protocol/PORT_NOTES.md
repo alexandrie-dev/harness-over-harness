@@ -273,3 +273,31 @@ ui/src/protocol.ts — только разрешённые окну методы
   последующие live chunks могли быть отброшены. Durable session event не отбрасывается и остаётся
   каноническим. Клиент не должен считать показанный live-префикс полным после `gap`, даже когда позже
   приходит `end`. Это расширение HoH отсутствует в dsh; схемы и `protocol/core.ts` перегенерированы.
+
+## Исполнители окна (o1, HOH-18, 20.11)
+Четыре метода окна для внешнего исполнителя (Claude Code). Их обслуживает плагин
+`ExternalHarnessWindow` (`hoh-external-harness`) через таблицу `HohRpcMethods`:
+- `hoh/executor/discover` `{executor}` → `ExecutorDiscoverResult`. Поля `version` и `detail` —
+  строка или `null`; `versionStatus` — `supported`/`unsupported`/`unknown`.
+- `hoh/executor/select` `{executor: string|null, model}` → `ExecutorSelection`. Метод
+  привилегированный.
+- `hoh/executor/access/get` `{executor}` → `{executor, mode, effective: {mode, flags, text},
+  selected: {executor, model}}`. Поле `text` (слова режима для окна) добавлено сверх договора,
+  который получил u1.
+- `hoh/executor/access/set` `{executor, mode: confirm|full}` → `{executor, mode}`. Метод
+  привилегированный.
+
+Привилегированные методы стоят в `privileged_methods!` с предикатом `|_| true`: любая смена
+режима или исполнителя идёт через одобрение хоста. Тест — расширенный
+`privileged_filter_and_predicate_cannot_drift_and_cover_rights_expansion`.
+
+Схемы `protocol/schema/Executor*.json` перегенерированы `hoh-protocol-schema`. Фикстуры
+`protocol/fixtures/hoh-executor-*.json` добавлены.
+
+`ui/src/protocol.ts` не перегенерирован: писателю запрещены `ui/` и Node. Пока его не
+перегенерируют (`node scripts/gen-protocol-ts.mjs`), тест `schemas_and_generated_types_are_current`
+падает на шаге `--check`.
+
+Человеческий текст одобрения для `access/set` и `select` должен дать `hoh-user-approval`
+(`method_human_text`). Сейчас там общий текст «Разрешить действие <метод>?», предложение — в
+отчёте o1.

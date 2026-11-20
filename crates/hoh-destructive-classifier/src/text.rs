@@ -1,8 +1,9 @@
 //! The question shown to the user, in Russian, as the window's approval screen words it:
 //! what will be done, to which files, and why it cannot be undone. The headline is one line
-//! without control characters (the host protocol rejects anything else). The `explanation`
-//! (the window's "Объяснение Помощника") is plain Russian with the full list of files and never
-//! carries the raw command: that goes to `details`, folded in the window.
+//! without control characters (the host protocol rejects anything else) and starts with the
+//! action itself (`Удалить 2 файла: …`). The `explanation` (the window's "Объяснение Помощника")
+//! adds only what the headline lacks and never carries the raw command: that goes to `details`,
+//! folded in the window. The words are for people who never wrote code (HOH-35): no "песочница".
 
 use std::path::Path;
 
@@ -16,10 +17,19 @@ const MAX_EXPLANATION_CHARS: usize = 2000;
 const MAX_COMMAND_CHARS: usize = 2000;
 const MAX_JUSTIFICATION_CHARS: usize = 1500;
 
+/// How an escalation starts: the assistant asks to work outside its folder.
+const OUTSIDE: &str = "Помощник просит разрешения работать за пределами своей папки";
+/// Where an escalation's explanation sends the reader for the assistant's own reasons.
+const JUSTIFICATION_HINT: &str = "Обоснование Помощника — в подробностях";
+/// After a question that deletes files: they cannot be brought back.
+const NO_UNDO: &str = ". Файлы не попадут в корзину: вернуть их будет нельзя";
+
 pub struct Question {
     /// Becomes `humanText`: one line, what will happen and what cannot be undone.
     pub headline: String,
-    /// Becomes `reason`: what will happen to which files, in words; no raw command.
+    /// Becomes `reason`: what the headline does not say, in words; no raw command. A question
+    /// whose headline already says everything has the headline here, word for word, so the window
+    /// can show the text once.
     pub explanation: String,
     /// Becomes `details` (folded in the window): the command as the assistant wrote it
     /// (`Команда: …`) and, for an escalation, the assistant's justification after it. At most
@@ -52,34 +62,36 @@ fn drops_files(risks: &[Risk]) -> bool {
 }
 
 /// The question for a call that asks to leave the sandbox (`sandbox_permissions:
-/// "danger-full-access"`): the same wording as [`question`], saying that nothing confines the
-/// command. `risks` may be empty: then the command is simply unconfined.
+/// "danger-full-access"`): what the command does, worded as in [`question`], or, when the
+/// classifier finds nothing, that it may read and change any file. `risks` may be empty.
 pub fn escalation_question(risks: &[Risk], command: &str, justification: &str) -> Question {
     let wording = |limit: usize| {
-        if risks.is_empty() {
-            "она сможет читать и менять любые файлы на этом компьютере".to_owned()
+        let mut text = if risks.is_empty() {
+            format!("{OUTSIDE}: он сможет читать и менять любые файлы на этом компьютере")
         } else {
-            phrases(risks, limit).join("; ")
+            format!("{OUTSIDE}: {}", phrases(risks, limit).join("; "))
+        };
+        if drops_files(risks) {
+            text.push_str(NO_UNDO);
         }
+        text
     };
-    let mut headline = format!(
-        "Помощник просит выполнить команду без ограничений песочницы: {}",
-        wording(MAX_NAMES)
-    );
-    let mut explanation = format!(
-        "Помощник просит выполнить команду без ограничений песочницы: {}",
-        wording(MAX_EXPLAINED_NAMES)
-    );
-    if drops_files(risks) {
-        headline.push_str(". Файлы не попадут в корзину");
-        explanation.push_str(". Файлы не попадут в корзину: вернуть их будет нельзя");
-    }
-    // The model's own words never go into the explanation (they may quote the command in any
-    // spelling): they sit with the command, in the details.
-    explanation.push_str(". Обоснование Помощника — в подробностях");
+    let headline = truncate(&clean(&wording(MAX_NAMES)), MAX_HEADLINE_CHARS);
+    let full = truncate(&clean(&wording(MAX_EXPLAINED_NAMES)), MAX_EXPLANATION_CHARS);
+    // The explanation does not repeat the headline: the whole list only when the headline had to
+    // shorten it, then where the assistant's reasons are. The model's own words never go into it
+    // (they may quote the command in any spelling): they sit with the command, in the details.
+    let explanation = if full == headline {
+        JUSTIFICATION_HINT.to_owned()
+    } else {
+        truncate(
+            &format!("{full}. {JUSTIFICATION_HINT}"),
+            MAX_EXPLANATION_CHARS,
+        )
+    };
     Question {
-        headline: truncate(&clean(&headline), MAX_HEADLINE_CHARS),
-        explanation: truncate(&clean(&explanation), MAX_EXPLANATION_CHARS),
+        headline,
+        explanation,
         details: format!(
             "{}\nОбоснование Помощника: {}",
             command_line(command),
@@ -88,41 +100,25 @@ pub fn escalation_question(risks: &[Risk], command: &str, justification: &str) -
     }
 }
 
+/// The question for a command (or a file change) that may delete or overwrite files: the action
+/// first, then the folder it runs in, then that deleted files cannot be brought back.
 pub fn question(risks: &[Risk], command: &str, cwd: Option<&Path>) -> Question {
-    let only_overwrites = risks.iter().all(|r| {
-        matches!(
-            r,
-            Risk::Overwrite { .. }
-                | Risk::Truncate { .. }
-                | Risk::Extract { .. }
-                | Risk::Patch { .. }
-        )
-    });
     let folder = cwd.and_then(folder_name);
     let wording = |limit: usize| {
-        let phrases = phrases(risks, limit);
-        if only_overwrites {
-            let mut text = capitalize(&phrases.join("; "));
-            if let Some(folder) = &folder {
-                text.push_str(&format!(" (папка {folder})"));
-            }
-            text
-        } else {
-            let place = folder
-                .as_ref()
-                .map_or(String::new(), |f| format!(" в папке {f}"));
-            format!("Выполнить команду{place}: {}", phrases.join("; "))
+        let mut text = capitalize(&phrases(risks, limit).join("; "));
+        if let Some(folder) = &folder {
+            text.push_str(&format!(" (папка {folder})"));
         }
+        if drops_files(risks) {
+            text.push_str(NO_UNDO);
+        }
+        text
     };
-    let mut headline = wording(MAX_NAMES);
-    let mut explanation = wording(MAX_EXPLAINED_NAMES);
-    if drops_files(risks) {
-        headline.push_str(". Файлы не попадут в корзину");
-        explanation.push_str(". Файлы не попадут в корзину: вернуть их будет нельзя");
-    }
+    // The explanation names every file (up to twenty) where the headline stops at four; with no
+    // more to name, it is the headline itself.
     Question {
-        headline: truncate(&clean(&headline), MAX_HEADLINE_CHARS),
-        explanation: truncate(&clean(&explanation), MAX_EXPLANATION_CHARS),
+        headline: truncate(&clean(&wording(MAX_NAMES)), MAX_HEADLINE_CHARS),
+        explanation: truncate(&clean(&wording(MAX_EXPLAINED_NAMES)), MAX_EXPLANATION_CHARS),
         details: command_line(command),
     }
 }
@@ -264,19 +260,26 @@ fn plural(n: usize, one: &'static str, few: &'static str, many: &'static str) ->
     }
 }
 
+/// The folder as the question names it: the whole path, the home folder written as `~`
+/// (`~/Documents/HoH`, not just `Documents/HoH`: two folders with the same last names must not
+/// read the same).
 fn folder_name(cwd: &Path) -> Option<String> {
-    let parts: Vec<String> = cwd
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect();
-    match parts.as_slice() {
-        [] => None,
-        [only] => Some(only.clone()),
-        [.., parent, last] => Some(format!("{parent}/{last}")),
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    folder_display(cwd, home.as_deref())
+}
+
+fn folder_display(cwd: &Path, home: Option<&Path>) -> Option<String> {
+    if cwd.as_os_str().is_empty() {
+        return None;
     }
+    let under_home = home
+        .filter(|home| home.is_absolute() && home.parent().is_some())
+        .and_then(|home| cwd.strip_prefix(home).ok());
+    Some(match under_home {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => cwd.display().to_string(),
+    })
 }
 
 /// Anything the protocol refuses in `humanText` becomes a space; the rest of the text is kept.
@@ -321,5 +324,37 @@ fn capitalize(text: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::folder_display;
+    use std::path::Path;
+
+    #[test]
+    fn the_folder_is_named_by_its_whole_path_with_home_as_tilde() {
+        let home = Some(Path::new("/home/u"));
+        let shown = |cwd: &str| folder_display(Path::new(cwd), home);
+        assert_eq!(
+            shown("/home/u/Documents/HoH").as_deref(),
+            Some("~/Documents/HoH")
+        );
+        assert_eq!(shown("/home/u").as_deref(), Some("~"));
+        assert_eq!(
+            shown("/home/u2/Documents/HoH").as_deref(),
+            Some("/home/u2/Documents/HoH")
+        );
+        assert_eq!(
+            shown("/srv/a/b/Documents/HoH").as_deref(),
+            Some("/srv/a/b/Documents/HoH")
+        );
+        assert_eq!(shown("/").as_deref(), Some("/"));
+        assert_eq!(shown(""), None);
+        // A home of `/` would turn every path into `~/…`: it is not used.
+        assert_eq!(
+            folder_display(Path::new("/etc"), Some(Path::new("/"))).as_deref(),
+            Some("/etc")
+        );
     }
 }

@@ -269,7 +269,7 @@ test('Stop drains received backlog; reconnect keeps exactly the same messages an
       await stub.request('session/wait', { sessionId: 'session-1' });
       await waitUntil(() => controller.state.entries.some(entry => entry.streaming));
       await controller.stop();
-      const content = () => controller.state.entries.map(entry => entry.kind === 'step'
+      const content = () => controller.state.entries.filter(entry => entry.kind !== 'note').map(entry => entry.kind === 'step'
         ? { kind: entry.kind, label: entry.label, detail: entry.detail, status: entry.status }
         : { kind: entry.kind, text: entry.text });
       const stopped = content();
@@ -568,7 +568,8 @@ test('Stop waits for cancellation and replaces a gapped prefix from durable hist
   await withGapController([final], async (controller, push, historyReads) => {
     await sendGappedTurn(push, false);
     await controller.stop();
-    assert.deepEqual(controller.state.entries, [{ id: 'assistant-cancel-final', kind: 'assistant', text: 'Сохранённый ответ', streaming: false }]);
+    assert.deepEqual(controller.state.entries.filter(entry => entry.kind !== 'note'), [{ id: 'assistant-cancel-final', kind: 'assistant', text: 'Сохранённый ответ', streaming: false }]);
+    assert.equal(controller.state.entries.filter(entry => entry.kind === 'note').length, 1, '«Вы остановили ответ» — один раз');
     assert.equal(controller.state.busy, false); assert.equal(controller.state.canceling, false); assert.equal(historyReads(), 2);
   });
 });
@@ -581,7 +582,8 @@ test('a successful Stop retry still recovers a gapped prefix after cancellation 
     assert.equal(controller.state.busy, true); assert.equal(controller.state.canceling, false);
     assert.equal(controller.state.entries[0].streaming, true); assert.equal(controller.projection.hasGap(), true);
     await controller.stop();
-    assert.deepEqual(controller.state.entries, [{ id: 'assistant-retry-final', kind: 'assistant', text: 'Итог после повтора', streaming: false }]);
+    assert.deepEqual(controller.state.entries.filter(entry => entry.kind !== 'note'), [{ id: 'assistant-retry-final', kind: 'assistant', text: 'Итог после повтора', streaming: false }]);
+    assert.equal(controller.state.entries.filter(entry => entry.kind === 'note').length, 1, 'повторный «Стоп» не добавляет вторую пометку');
     assert.equal(controller.state.busy, false); assert.equal(historyReads(), 2);
   }, { failCancelOnce: true });
 });
@@ -661,6 +663,7 @@ test('questions from the assistant are shown, answered through the host, and wit
 // ——— список чатов: новый чат, переключение, история не смешивается ———
 async function withChats(callback, options = {}) {
   const engine = new FakeEngine(options);
+  Object.assign(engine, options.engine ?? {});
   engine.seed('window-main', { user: 'Первый вопрос', assistant: 'Первый ответ' });
   engine.seed('chat-old', { user: 'Старый вопрос', assistant: 'Старый ответ' });
   const client = { request: (method, params) => engine.request(method, params), subscribe: async listener => engine.subscribe(listener) };
@@ -749,7 +752,7 @@ test('an engine without session/list keeps the open chat usable', async () => {
 
 test('the composer line gets model and permission mode from the engine, and a chosen folder is sent to it', async () => {
   await withChats(async (controller, engine) => {
-    assert.equal(controller.state.model, 'Локальная модель'); assert.equal(controller.state.permissions, 'Работа только в этой папке');
+    assert.equal(controller.state.model, 'Модель на этом компьютере'); assert.equal(controller.state.permissions, 'Спрашивать разрешение');
     await controller.setFolder('/home/me/Проекты/сайт');
     assert.equal(controller.state.folderLabel, 'сайт');
     assert.deepEqual(engine.requests.find(r => r.method === 'session/working-directory/set')?.params, { sessionId: 'window-main', path: '/home/me/Проекты/сайт' });
@@ -757,7 +760,7 @@ test('the composer line gets model and permission mode from the engine, and a ch
 });
 
 test('when the engine cannot be reached the person is told why and what to do', async () => {
-  for (const [failure, expected] of [[new Error('Помощник ещё подключается'), /Помощник ещё запускается/], [new Error('boom'), /Движок не отвечает/]]) {
+  for (const [failure, expected] of [[new Error('Помощник ещё подключается'), /Помощник ещё запускается/], [new Error('boom'), /Помощник не отвечает/]]) {
     const controller = new ChatController(() => ({ request: async () => { throw failure; }, subscribe: async () => () => {} }), () => {}, async () => {});
     await controller.connect();
     assert.equal(controller.state.connection, 'error');
@@ -785,11 +788,84 @@ test('F-1: when the host reports that the engine does not start, the window ends
   await withChats(async controller => {
     controller.engineStatus({ state: 'restarting' });
     assert.equal(controller.state.connection, 'recovering');
-    controller.engineStatus({ state: 'failed', message: 'Помощник не запускается: файл движка не найден. Закройте HoH и откройте снова.' });
+    controller.engineStatus({ state: 'failed', message: 'Помощник не запускается: файл Помощника не найден. Закройте HoH и откройте снова.' });
     assert.equal(controller.state.connection, 'error');
-    assert.match(controller.state.error, /файл движка не найден/);
+    assert.match(controller.state.error, /файл Помощника не найден/);
     controller.engineStatus({ state: 'ready' });
     await waitUntil(() => controller.state.connection === 'ready');
     assert.equal(controller.state.error, '');
   });
+});
+
+const accessMethods = engine => engine.requests.map(r => r.method).filter(m => m.startsWith('hoh/executor/access/'));
+test('Claude access defaults to confirm, and a change is shown only after the mode is read back from the engine', async () => {
+  await withChats(async (controller, engine) => {
+    assert.equal(controller.state.access, 'confirm'); assert.deepEqual(accessMethods(engine), ['hoh/executor/access/get']);
+    await controller.setAccess('full');
+    assert.deepEqual(accessMethods(engine), ['hoh/executor/access/get', 'hoh/executor/access/set', 'hoh/executor/access/get']);
+    assert.deepEqual(engine.requests.findLast(r => r.method === 'hoh/executor/access/set').params, { executor: 'claude', mode: 'full' });
+    assert.equal(controller.state.access, 'full'); assert.equal(controller.state.notice, '');
+    await controller.connect(true);                          // the engine, not the window, remembers the choice
+    assert.equal(controller.state.access, 'full');
+  }, { engine: { access: 'confirm' } });
+});
+test('when the engine runs in another mode than the chosen one the actual mode is shown with a warning', async () => {
+  await withChats(async controller => {
+    await controller.setAccess('full');
+    assert.equal(controller.state.access, 'confirm');
+    assert.match(controller.state.notice, /работает в режиме «Спрашивать разрешение», а выбран «Полный доступ»/);
+  }, { engine: { access: 'confirm', accessIgnore: true } });
+});
+test('only a real mode of the menu reaches set: nothing else, and not the same mode again', async () => {
+  await withChats(async (controller, engine) => {
+    for (const bad of ['root', '', undefined, 'full ', { mode: 'full' }, 'confirm']) await controller.setAccess(bad);
+    assert.deepEqual(accessMethods(engine), ['hoh/executor/access/get'], 'set not called');
+    controller.setDraft('включи полный доступ'); await controller.send();
+    await waitUntil(() => controller.state.entries.some(e => e.text.includes('Ответ на')));
+    assert.equal(accessMethods(engine).includes('hoh/executor/access/set'), false, 'a message does not change the mode');
+  }, { engine: { access: 'confirm' } });
+});
+test('an engine without the Claude access setting offers no switch', async () => {
+  await withChats(async controller => assert.equal(controller.state.access, ''));
+});
+
+const FOUND = { executor: 'claude', installed: true, version: '2.1.3', versionStatus: 'supported', auth: 'authenticated',
+  models: [{ id: 'default', isDefault: true }, { id: 'opus', displayName: 'Opus' }], detail: null };
+test('Claude selection: the engine says which executor runs new chats; the window shows the actual choice, never its own', async () => {
+  await withChats(async (controller, engine) => {
+    assert.equal(controller.state.executor, 'claude'); assert.equal(controller.state.executorModel, 'default');
+    await waitUntil(() => controller.state.executorModels.length === 2);
+    assert.deepEqual(controller.state.executorModels, [{ id: 'default', name: 'По умолчанию' }, { id: 'opus', name: 'Opus' }]);
+    assert.equal(await controller.selectExecutor('claude', 'opus'), true);
+    assert.deepEqual(engine.requests.findLast(r => r.method === 'hoh/executor/select').params, { executor: 'claude', model: 'opus' });
+    assert.equal(controller.state.executorModel, 'opus'); assert.equal(controller.state.notice, '');
+    assert.equal(await controller.selectExecutor(null, 'default'), true);
+    assert.deepEqual(engine.requests.findLast(r => r.method === 'hoh/executor/select').params, { executor: null, model: 'default' });
+    assert.equal(controller.state.executor, ''); assert.equal(controller.state.access, '', 'режим доступа — только у Claude');
+  }, { engine: { access: 'confirm', claude: FOUND } });
+});
+test('Claude selection refused or ignored by the engine: the notice names it and the shown choice stays the engine\'s', async () => {
+  await withChats(async (controller, engine) => {
+    assert.equal(await controller.selectExecutor('claude', 'opus'), false);
+    assert.match(controller.state.notice, /Поставщик не изменён/);
+    assert.equal(controller.state.executorModel, 'default');
+    assert.equal(engine.promptExecutors, undefined);
+  }, { engine: { access: 'confirm', claude: FOUND, selectRefuse: true } });
+});
+test('discover is called only for real: once on connect when Claude is selected, never when it is not', async () => {
+  await withChats(async (controller, engine) => {
+    await controller.connect(true);
+    assert.equal(engine.requests.filter(r => r.method === 'hoh/executor/discover').length, 0);
+    assert.equal(controller.state.executor, '');
+  }, { engine: { access: 'confirm', claude: FOUND, selected: null } });
+});
+
+test('a lost connection is told without the word «движок»', async () => {
+  for (const failure of [new Error('method-unavailable'), new Error('boom'), 'x']) {
+    const controller = new ChatController(() => ({ request: async () => { throw failure; }, subscribe: async () => () => {}, subscribeStatus: async () => () => {} }), () => {});
+    await controller.connect();
+    assert.equal(controller.state.connection, 'error');
+    assert.doesNotMatch(controller.state.error, /движ/i, controller.state.error);
+    assert.match(controller.state.error, /Помощник/);
+  }
 });

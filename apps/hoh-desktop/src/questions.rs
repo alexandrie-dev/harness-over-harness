@@ -38,14 +38,14 @@ impl QuestionBroker {
         rpc_id: Value,
         params: Value,
     ) -> Result<QuestionView, String> {
-        let request: SdkUserQuestionRequest = serde_json::from_value(params)
-            .map_err(|_| "Движок прислал некорректный вопрос".to_owned())?;
+        let request: SdkUserQuestionRequest =
+            serde_json::from_value(params).map_err(|_| "Получен некорректный вопрос".to_owned())?;
         let mut ids = std::collections::HashSet::new();
         if request.questions.is_empty()
             || request.questions.len() > MAX_QUESTIONS
             || request.questions.iter().any(|q| !ids.insert(q.id.as_str()))
         {
-            return Err("Движок прислал некорректный вопрос".into());
+            return Err("Получен некорректный вопрос".into());
         }
         let mut pending = self.lock();
         if pending.len() >= MAX_PENDING || pending.contains_key(&request.request_id) {

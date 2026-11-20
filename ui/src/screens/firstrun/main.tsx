@@ -5,5 +5,5 @@ import '../../styles/tokens.css';
 import { FirstRun } from './FirstRun';
 
 createRoot(document.getElementById('root')!).render(
-  <FirstRun onFinish={prefill => { document.body.dataset.finished = prefill ?? ''; }} />,
+  <FirstRun onFinish={() => { document.body.dataset.finished = ''; }} />,
 );

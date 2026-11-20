@@ -257,3 +257,30 @@ CARGO_TARGET_DIR=/mnt/toshiba/alexandrie/hoh/target-w4. Приостановле
   `apps/hoh-desktop/src/approval.rs`: `AuditEntry` не содержит `action`). Тесты в `tests/host.rs`:
   `an_escalation_ask_reaching_the_host_is_worded_by_the_engine_and_the_justification_is_in_details`
   (истёкший грант и запрос без гранта), `escalation_wording_covers_other_modes_and_an_overlong_justification`.
+
+## o1 (ревью 232500 №1, 20.11): тексты выбора исполнителя
+- `method_human_text` получил ветки для привилегированных методов окна HOH-18 (раньше они шли в общее
+  «Разрешить действие {method}?»):
+  - `hoh/executor/access/set`, `mode: full` — «Включить полный доступ для Claude? Помощник сам удаляет
+    и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не
+    спрашивая. Сделанное нельзя отменить.»;
+  - `mode: confirm` — «Вернуть режим «Спрашивать разрешение» для Claude?»;
+  - `hoh/executor/select` — «Отвечать будет Claude (модель <model>)?», при `executor: null` — «Отвечать
+    будет модель на этом компьютере?».
+  Имя исполнителя — его идентификатор с заглавной буквы (`claude` → `Claude`). Неверные параметры
+  отклоняются до вопроса. Уровень риска (`high`), подписываемое действие и сессия `host` — прежние.
+- Тест `executor_choices_are_asked_in_words_that_name_the_executor_and_the_right` (`tests/host.rs`):
+  точные тексты через настоящий путь `approve_privileged`; на прежнем `method.rs` падает.
+- Те же строки нужны в копиях текстов окна: `apps/hoh-desktop/src/approval.rs` (`preflight_text` и образцы
+  теста `approval.rs:1420`) и `hoh-window-stub/src/engine.rs` (`approval_text`) — правит u1.
+
+## o1 (HOH-35, 21.11): эскалация без слова «песочница»
+- `host.rs::escalation_text`: `danger-full-access` — «Помощник просит разрешения работать за пределами
+  своей папки: выполнить команду|действие» (как у стража окна, `hoh-destructive-classifier/src/text.rs`);
+  прочие режимы — «Помощник просит выполнить команду|действие с дополнительными правами»;
+  `workspace-write` — прежнее «…с правом записи в рабочую папку». `reason` = текст + «. Обоснование
+  Помощника — в подробностях», как прежде. Тесты на точные строки — `tests/host.rs`
+  (`an_escalation_ask_reaching_the_host_…`, `escalation_wording_covers_other_modes_…`).
+- Перечень: `hoh-window-destructive-guard/tests/words.rs::no_string_of_the_window_crates_says_sandbox`
+  проверяет все строковые литералы `src/` этого крейта, `hoh-external-harness`,
+  `hoh-destructive-classifier` и стража (комментарии не считаются); на прежнем `host.rs` падает.

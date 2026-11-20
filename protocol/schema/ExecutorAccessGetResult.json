@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutorAccessGetResult",
+  "type": "object",
+  "properties": {
+    "executor": {
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "#/$defs/ExecutorAccessMode"
+    },
+    "effective": {
+      "$ref": "#/$defs/ExecutorEffectiveAccess"
+    },
+    "selected": {
+      "$ref": "#/$defs/ExecutorSelection"
+    }
+  },
+  "required": [
+    "executor",
+    "mode",
+    "effective",
+    "selected"
+  ],
+  "$defs": {
+    "ExecutorAccessMode": {
+      "type": "string",
+      "enum": [
+        "confirm",
+        "full"
+      ]
+    },
+    "ExecutorEffectiveAccess": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ExecutorAccessMode"
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "flags",
+        "text"
+      ]
+    },
+    "ExecutorSelection": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  },
+  "x-method": "hoh/executor/access/get"
+}

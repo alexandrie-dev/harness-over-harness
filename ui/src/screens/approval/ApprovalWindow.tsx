@@ -8,6 +8,8 @@ import './approval.css';
 
 /** Пока кнопка «Разрешить один раз» не нажимается, мс: нельзя разрешить, не прочитав. */
 export const ALLOW_DELAY_MS = 1000;
+/** Счёт времени показывается только в последнюю минуту: до неё окно человека не торопит. */
+export const LAST_MINUTE_S = 60;
 
 const WHY: Record<Risk, { title: string; text: string }> = {
   high: {
@@ -40,6 +42,10 @@ export function consequence(view: ApprovalView): { title: string; text: string }
   return WHY[view.risk];
 }
 
+/** A request the person started themselves (the settings of the first run): it is not dangerous and the assistant did not ask for it. */
+export const isOwnAction = (view: ApprovalView) => view.approvalId.startsWith('native-preflight-');
+const OWN_WHY = 'Это вы меняете настройки. Окно нужно, чтобы никто не поменял их за вас.';
+
 const RISK_LABEL: Record<Risk, string> = { high: 'Высокий риск', medium: 'Средний риск', low: 'Низкий риск' };
 
 type Phase =
@@ -64,6 +70,7 @@ export function ApprovalWindow() {
   const [sending, setSending] = useState(false);
   const view = phase.kind === 'pending' || phase.kind === 'error' ? phase.view ?? null : null;
   const expired = !!view && Date.now() >= view.expiresAt;
+  const own = !!view && isOwnAction(view);
 
   useEffect(() => {
     let alive = true;
@@ -101,8 +108,8 @@ export function ApprovalWindow() {
     try {
       await approvalHost().decide(view.approvalId, outcome);
       setPhase(outcome === 'allowed-once'
-        ? { kind: 'done', title: 'Разрешено один раз', note: 'Помощник выполнит это действие. В следующий раз он спросит снова.' }
-        : { kind: 'done', title: 'Отклонено', note: 'Помощник получил отказ. Ничего не изменилось.' });
+        ? { kind: 'done', title: 'Разрешено один раз', note: own ? 'Настройка будет сохранена. В следующий раз окно спросит снова.' : 'Помощник выполнит это действие. В следующий раз он спросит снова.' }
+        : { kind: 'done', title: 'Отклонено', note: own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.' });
     } catch (e) {
       sent.current = false;
       setPhase({ kind: 'error', view, text: e instanceof Error ? e.message : 'Не удалось передать ответ.' });
@@ -135,26 +142,32 @@ export function ApprovalWindow() {
 
         {phase.kind === 'loading' && <div className="ap-done" role="status">Загружаю запрос…</div>}
         {!expired && phase.kind === 'error' && <div className="ap-done" role="alert">{phase.text}<small>Ответ не отправлен. Закройте окно: это отказ.</small></div>}
-        {expired && <div className="ap-done" role="status">Время вышло, действие отклонено<small>Помощник получил отказ. Ничего не изменилось.</small></div>}
+        {expired && <div className="ap-done" role="status">Время вышло, действие отклонено<small>{own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.'}</small></div>}
         {phase.kind === 'done' && <div className="ap-done" role="status">{phase.title}<small>{phase.note}</small></div>}
 
         {view && !expired && (
           <>
             <div className="ap-body">
-              <p className="ap-ask">Помощник просит разрешение <span className="ap-risk" data-risk={view.risk}>{RISK_LABEL[view.risk]}</span></p>
+              {own
+                ? <p className="ap-ask" data-own-action>Подтвердите своё действие</p>
+                : <p className="ap-ask">Помощник просит разрешение <span className="ap-risk" data-risk={view.risk}>{RISK_LABEL[view.risk]}</span></p>}
               <h1 className="ap-what" id="ap-what">{headline}</h1>
-              <div className="ap-why" id="ap-why" data-risk={view.risk}>
-                <Icon name="alert" />
-                <div><h2>{why.title}</h2>{why.text}</div>
+              <div className="ap-why" id="ap-why" data-risk={own ? 'own' : view.risk}>
+                <Icon name={own ? 'shield' : 'alert'} />
+                {own ? <div>{OWN_WHY}</div> : <div><h2>{why.title}</h2>{why.text}</div>}
               </div>
-              <div className="ap-said">
+              {!own && <div className="ap-said">
                 <h2>Объяснение Помощника</h2>
                 {view.reason?.trim() ? <p>{view.reason}</p> : <p className="ap-said-empty">Помощник не объяснил, зачем ему это нужно.</p>}
-              </div>
+              </div>}
               {view.details?.trim() && <details className="ap-details"><summary>Подробности</summary><pre>{view.details}</pre></details>}
-              <div className="ap-timer"><Icon name="clock" small /><span>Ответьте за <b data-testid="timer">{clock(left)}</b></span></div>
-              <div className="ap-bar" aria-hidden="true"><i style={{ '--share': share } as CSSProperties} /></div>
-              <p className="ap-timer-note">Если не ответить, действие отклонится само.</p>
+              {left > LAST_MINUTE_S
+                ? <p className="ap-timer-note" data-calm>Можно не спешить. Если не ответить, действие отклонится само.</p>
+                : <>
+                  <div className="ap-timer"><Icon name="clock" small /><span>Осталось <b data-testid="timer">{clock(left)}</b></span></div>
+                  <div className="ap-bar" aria-hidden="true"><i style={{ '--share': share } as CSSProperties} /></div>
+                  <p className="ap-timer-note">Если не ответить, действие отклонится само.</p>
+                </>}
             </div>
             <div className="ap-actions">
               <button ref={rejectRef} type="button" className="btn ap-safe" disabled={sending} onClick={() => void decide('rejected')}>Отклонить</button>

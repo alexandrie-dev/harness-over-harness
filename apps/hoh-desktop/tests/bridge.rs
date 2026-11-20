@@ -471,3 +471,30 @@ fn real_stub_child_accepts_host_handshake_serves_settings_and_stops() {
     engine.stop();
     assert!(engine.request("hoh/settings/get", json!({})).is_err());
 }
+
+#[test]
+fn window_may_call_exactly_the_four_executor_methods_and_no_new_ones() {
+    let mut executor: Vec<&str> = bridge::WINDOW_METHODS
+        .iter()
+        .copied()
+        .filter(|method| method.starts_with("hoh/executor/"))
+        .collect();
+    executor.sort_unstable();
+    assert_eq!(
+        executor,
+        [
+            "hoh/executor/access/get",
+            "hoh/executor/access/set",
+            "hoh/executor/discover",
+            "hoh/executor/select"
+        ]
+    );
+    // 47 methods before the executor ones; a new window method must be a deliberate change of this number.
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 4);
+    for method in ["hoh/executor/access/get", "hoh/executor/discover"] {
+        assert!(!bridge::needs_approval(
+            method,
+            &json!({"executor":"claude"})
+        ));
+    }
+}

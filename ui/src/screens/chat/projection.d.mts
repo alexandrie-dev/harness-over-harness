@@ -1,7 +1,8 @@
 import type { SessionEvent } from '../../protocol';
 export type MessageEntry = { id: string; kind: 'user' | 'assistant'; text: string; pending?: boolean; failed?: boolean; streaming?: boolean; incomplete?: boolean; at?: number };
+export type NoteEntry = { id: string; kind: 'note'; text: string };
 export type WorkEntry = { id: string; kind: 'step'; operation: 'read' | 'write' | 'command' | 'action'; status: 'running' | 'done' | 'error' | 'stopped'; label: string; file: string; detail: string; exitCode?: number };
-export type ChatEntry = MessageEntry | WorkEntry;
+export type ChatEntry = MessageEntry | WorkEntry | NoteEntry;
 export function contentText(value: unknown): string;
 export function humanFile(value: unknown, folder: string): string;
 export function visibleText(value: unknown, folder: string): string;
@@ -26,3 +27,4 @@ export class ChatProjection {
   setRunning(running: boolean): void;
   stop(preserveGaps?: boolean): void;
 }
+export function numberRepeatedSteps(entries: ChatEntry[]): ChatEntry[];

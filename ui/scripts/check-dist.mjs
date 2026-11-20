@@ -51,7 +51,8 @@ for (const path of await files('dist')) {
 // 19.11 fix QA A: 512 -> 544 KiB for the «Подтверждения» section, live answer text and the approval details.
 // 20.11 отображение чата как в T3 (решение основателя 20.11): 576 -> 1216 КиБ (факт 1187946 Б + 5 %: разметка и katex, ленивые куски).
 // 20.11 окно-как-T3: 544 -> 576 KiB: значки поставщиков из T3 (OpenAI, Claude, Anthropic, OpenRouter, Ollama) и стили чата/окна защиты; предел gzip не менялся.
-assert(total < 1216 * 1024, `window text assets unexpectedly large: ${total} bytes`);
+// 20.11 меню режима доступа из T3 (@base-ui/react/menu, решение основателя): 1216 -> 1368 КиБ (факт 1334008 Б + 5 %).
+assert(total < 1368 * 1024, `window text assets unexpectedly large: ${total} bytes`);
 // 20.11.2026, новый вид окна по design/DESIGN.md (боковая колонка, список чатов, токены системы, старая разметка и стили заменены):
 // было 163468/163840, стало 163782/171971 (предел = факт + 5 %). Проверка остаётся включённой.
 // 20.11.2026, строка поля ввода, ссылки/картинки/шаги в ответах: 165275/173538 (факт + 5 %), было 163782/171971.
@@ -59,6 +60,7 @@ assert(total < 1216 * 1024, `window text assets unexpectedly large: ${total} byt
 // 20.11.2026, круг 2 (настоящий путь папки, фраза о ключе при вводе, затемнение узкой колонки): 167615/175996 (факт + 5 %), было 167329/175695.
 // 20.11.2026, после установки npm-пакетов T3 (решение CEO): было 175924/175996, предел = факт + 5 % = 184720. Рендер T3 (+180 КБ) в сборку не входит, см. src/t3/render.tsx.
 // 20.11.2026, отображение чата как в T3, решение основателя 20.11: было 176070/184720, стало 360071/378075 (предел = факт + 5 %).
-const GZIP_LIMIT = 378075;
+// 20.11.2026, меню режима доступа из T3 (@base-ui/react/menu): было 360808/378075, стало 409703/430188 (предел = факт + 5 %).
+const GZIP_LIMIT = 430188;
 assert(compressed < GZIP_LIMIT, `window compressed text assets unexpectedly large: ${compressed} bytes`);
-console.log(`passed: dist has no external network URLs or dynamic code; text ${total}/1245184, gzip ${compressed}/${GZIP_LIMIT} bytes`);
+console.log(`passed: dist has no external network URLs or dynamic code; text ${total}/${1368 * 1024}, gzip ${compressed}/${GZIP_LIMIT} bytes`);

@@ -10,6 +10,9 @@ import { pathCases, technicalCases } from './privacy-cases.mjs';
 import { harmfulMarkdownCases } from './markdown-cases.mjs';
 
 const UI = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const FULL = 'Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить.';
+const UX = join(UI, 'test-results/t3-exact');
+await mkdir(UX, { recursive: true });
 const RESULTS = join(UI, 'test-results/chat');
 const INDEX = join(UI, 'dist/index.html');
 await mkdir(RESULTS, { recursive: true });
@@ -93,7 +96,7 @@ try {
     });
     try {
       await page.goto(pathToFileURL(INDEX).href);
-      if (options.firstRun) await page.getByRole('heading', { name: 'Подключите модель' }).waitFor();
+      if (options.firstRun) await page.getByRole('heading', { name: 'Кто будет отвечать' }).waitFor();
       else await page.waitForSelector(`[data-chat-screen][data-connection="${options.connection ?? 'ready'}"]`);
       await callback(page, stub);
       await Promise.all(deliveries);
@@ -118,20 +121,34 @@ try {
     }
   }
 
+  let wizardEmblem = '';
   await check('first-run-to-chat', 'text-turn', async (page, stub) => {
-    await page.getByRole('button', { name: 'Проверить', exact: true }).click();
-    await page.getByText(/Отвечает за/).waitFor();
+    const emblem = page.locator('.fr-brand [data-emblem]');
+    await emblem.waitFor();
+    assert.equal(await page.locator('.fr-brand .mark').count(), 0, 'квадрата «H» больше нет');
+    assert.equal(await page.locator('.fr-brand b').textContent(), 'HoH', 'слово рядом осталось');
+    wizardEmblem = await emblem.getAttribute('src');
+    await mkdir(join(UI, 'test-results/t3-exact'), { recursive: true });
+    await page.screenshot({ path: join(UI, 'test-results/t3-exact/emblem-wizard-1440.png'), animations: 'disabled' });
+    // правка 12: одна кнопка — «Дальше» сама проверяет; отдельной «Проверить» нет
+    assert.equal(await page.getByRole('heading', { name: 'Кто будет отвечать' }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Проверить', exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Дальше', exact: true }).click();
     await page.getByRole('heading', { name: 'Правила работы' }).waitFor();
-    await page.getByRole('button', { name: 'Дальше', exact: true }).click();
-    await page.getByRole('button', { name: /Прочитать документ/ }).click();
+    assert.equal(await page.locator('.fr-stepper-item').count(), 2, 'шага «Знакомство» нет');
+    await page.getByRole('button', { name: 'Открыть чат', exact: true }).click();
     await page.waitForSelector('[data-chat-screen][data-connection="ready"]');
-    assert.equal(await page.getByLabel('Сообщение Помощнику', { exact: true }).inputValue(), 'Прочитай документ в папке и перескажи в трёх строках');
+    // правка 13: примеры — в пустом чате
+    assert.equal(await page.locator('[data-chat-example]').count(), 3);
+    assert.match(await page.locator('[data-folder-line]').textContent(), /Папка Помощника: .+\. Кладите туда файлы/);
+    await page.locator('[data-chat-example="file"]').click();
+    assert.equal(await page.getByLabel('Сообщение Помощнику', { exact: true }).inputValue(), 'Создай файл «Идеи.txt» и запиши в нём пять идей для выходных');
+    await page.screenshot({ path: join(UI, 'test-results/t3-exact/ux-g-empty-chat-examples-1440.png'), animations: 'disabled' });
     assert.equal(stub.requests.filter(r => r.method === 'session/prompt').length, 0, 'onFinish never starts work without Send');
     assert.equal(await page.evaluate(() => localStorage.getItem('hoh:first-run:done')), '1');
     await page.reload();
     await page.waitForSelector('[data-chat-screen][data-connection="ready"]');
-  }, [], { firstRun: true });
+  }, [], { firstRun: true, viewport: { width: 1440, height: 900 } });
 
   await check('approvals-section', 'text-turn', async page => {
     // what the native core returns from the journal: newest first, addresses already closed
@@ -143,11 +160,15 @@ try {
     });
     assert.equal(await page.locator('[data-approvals]').count(), 0, 'раздел открывается по нажатию');
     await page.locator('[data-nav-approvals]').click();
-    await page.getByRole('heading', { name: 'Подтверждения' }).waitFor();
+    await page.getByRole('heading', { name: 'Разрешения' }).waitFor();
     const rows = page.locator('.ap-history-row');
     assert.equal(await rows.count(), 2);
-    assert.match(await rows.nth(0).innerText(), /удалить 2 файла[\s\S]*Просил Помощник[\s\S]*Отклонено/);
-    assert.match(await rows.nth(1).innerText(), /Вы, в настройках[\s\S]*Разрешено один раз/);
+    assert.match(await rows.nth(0).innerText(), /Вы не разрешили: выполнить команду[\s\S]*удалить 2 файла[\s\S]*Просил Помощник[\s\S]*Не разрешено/);
+    assert.match(await page.locator('[data-approvals-own] summary').innerText(), /Ваши настройки \(1\)/, 'действия мастера свёрнуты');
+    assert(!(await rows.nth(1).isVisible()), 'свёрнутая запись настройки не показана');
+    await page.locator('[data-approvals-own] summary').click();
+    assert.match(await rows.nth(1).innerText(), /Вы разрешили: изменить настройки[\s\S]*Вы, в настройках[\s\S]*Разрешено один раз/);
+    assert.doesNotMatch(await page.locator('[data-approvals]').innerText(), /Выполнить команду|\?\s*$/m, 'прошедшее время, не вопрос');
     const shown = await page.locator('[data-approvals]').innerText();
     assert(!shown.includes('rm -f'), 'сырая команда скрыта до раскрытия «Подробностей»');
     assert(shown.includes('api_key=•••'));
@@ -246,10 +267,10 @@ try {
     assert((await read.locator('[data-step-detail]').innerText()).includes('target:'));
     await page.locator('[data-operation="write"] summary').first().click();
     assert((await page.locator('[data-operation="write"] [data-step-detail]').first().innerText()).includes('target:'));
-    assert((await page.locator('[data-operation="command"][data-status="error"] summary').innerText()).includes('код девять'));
+    assert((await page.locator('[data-operation="command"][data-status="error"] summary').innerText()).includes('Не удалось выполнить'));
     assert.equal(await page.locator('[data-chat-entry="step"]').count(), 7);
     const labels = await page.locator('[data-step-label]').allTextContents();
-    assert(labels.some(label => label === 'Команда выполнена без ошибок'));
+    assert(labels.some(label => label === 'Выполнено'));
     assert(!/(инструмент|токен|сесси|str_replace_editor|\{\s*")/i.test(labels.join('\n')));
     await page.locator('[data-operation="write"] summary').first().click();
     const visible = await page.locator('body').innerText();
@@ -313,8 +334,8 @@ try {
   }, [], { fake: twoChats, viewport: { width: 1440, height: 900 } });
   await check('model-label-follows-the-executor', '', async page => {
     await page.locator('[data-chat-model]').waitFor();
-    assert.equal(await page.locator('[data-chat-model]').textContent(), 'Локальная модель в сети', 'частная сеть названа сетью, не этим компьютером');
-    assert.match(await page.locator('.chat-privacy').textContent(), /на другом компьютере/);
+    assert.equal(await page.locator('[data-chat-model]').textContent(), 'Модель на другом компьютере в вашей сети', 'частная сеть названа сетью, не этим компьютером');
+    assert.match(await page.locator('.chat-privacy').textContent(), /Отвечает сервис в интернете/);
   }, [], { fake: () => { const engine = twoChats(); engine.baseUrl = 'http://192.168.1.5:8000/v1'; return engine; }, viewport: { width: 1440, height: 900 } });
   await check('narrow-sidebar-closes', '', async page => {
     const sidebar = page.locator('[data-chat-sidebar]');
@@ -347,8 +368,8 @@ try {
   await check('command-steps-differ', '', async page => {
     await page.locator('[data-operation="command"]').nth(2).waitFor();
     const labels = await page.locator('[data-operation="command"] [data-step-label]').allTextContents();
-    assert.deepEqual(labels, ['Команда завершена: список файлов', 'Команда завершена: поиск в файлах', 'Команда завершена']);
-    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Работа только в этой папке');
+    assert.deepEqual(labels, ['Выполнено: список файлов', 'Выполнено: поиск в файлах', 'Выполнено']);
+    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Спрашивать разрешение');
   }, [], { fake: () => {
     const engine = new FakeEngine();
     const main = engine.seed('window-main', { user: 'Что в папке?' });
@@ -359,6 +380,265 @@ try {
     engine.append(main, 'assistant/message', { message: { id: 'a1', content: [{ type: 'text', text: 'Готово.' }] } });
     return engine;
   }, viewport: { width: 1440, height: 900 }, shot: 'p2-command-steps-1440.png' });
+  const accessEngine = (setup = {}) => () => {
+    const engine = new FakeEngine();
+    engine.seed('window-main', { user: 'Привет', assistant: 'Здравствуйте. Включи полный доступ — [включи полный доступ](hoh/executor/access/set?mode=full) или [так](javascript:set)' });
+    engine.access = 'confirm'; Object.assign(engine, setup);
+    return engine;
+  };
+  const accessCalls = engine => engine.requests.filter(r => r.method.startsWith('hoh/executor/access/'));
+  const t3shots = join(UI, 'test-results/t3-exact'); await mkdir(t3shots, { recursive: true });
+  await check('access-mode', '', async (page, engine) => {
+    const chip = page.locator('[data-chat-access]');
+    await chip.waitFor();
+    assert.equal(await chip.getAttribute('data-access-mode'), 'confirm', 'умолчание — с подтверждением');
+    assert.equal(await chip.locator('.chat-access-text').textContent(), 'Спрашивать разрешение');
+    assert.deepEqual(accessCalls(engine).map(r => r.method), ['hoh/executor/access/get']);
+    assert.deepEqual(accessCalls(engine)[0].params, { executor: 'claude' });
+    assert.equal(await page.locator('[data-chat-permissions]').count(), 0, 'вместо слов о папке — переключатель');
+    await page.screenshot({ path: join(t3shots, 'access-confirm-1440.png'), animations: 'disabled' });
+    await chip.click();
+    await page.locator('[data-access-menu]').waitFor();
+    assert.equal(await page.locator('[data-access-option]').count(), 2, 'два режима');
+    await page.screenshot({ path: join(t3shots, 'access-menu-1440.png'), animations: 'disabled' });
+    await page.locator('[data-access-option="full"]').click();
+    await page.locator('[data-enable-full]').click();
+    await page.waitForFunction(() => document.querySelector('[data-chat-access]')?.getAttribute('data-access-mode') === 'full');
+    // set was sent, then the mode was read back; the label follows the read-back (effective), not the click
+    assert.deepEqual(accessCalls(engine).map(r => r.method), ['hoh/executor/access/get', 'hoh/executor/access/set', 'hoh/executor/access/get']);
+    assert.deepEqual(accessCalls(engine)[1].params, { executor: 'claude', mode: 'full' });
+    assert.equal(await chip.locator('.chat-access-text').textContent(), 'Полный доступ: без вопросов');
+    await page.mouse.move(0, 0);
+    await page.screenshot({ path: join(t3shots, 'access-full-1440.png'), animations: 'disabled' });
+    // the engine remembers: a fresh window start reads full
+    await page.reload();
+    await page.waitForSelector('[data-chat-access][data-access-mode="full"]');
+    // and back
+    await page.locator('[data-chat-access]').click();
+    await page.locator('[data-access-option="confirm"]').click();
+    await page.waitForSelector('[data-chat-access][data-access-mode="confirm"]');
+  }, [], { fake: accessEngine(), viewport: { width: 1440, height: 900 } });
+  await check('access-mode-shows-the-effective-mode', '', async (page, engine) => {
+    await page.locator('[data-chat-access]').waitFor();
+    await page.locator('[data-chat-access]').click();
+    await page.locator('[data-access-option="full"]').click();
+    await page.locator('[data-enable-full]').click();
+    await page.waitForFunction(() => document.querySelector('[data-link-notice]'));
+    assert.equal(await page.locator('[data-chat-access]').getAttribute('data-access-mode'), 'confirm', 'показан фактический режим, не выбранный');
+    assert.match(await page.locator('[data-link-notice]').textContent(), /работает в режиме «Спрашивать разрешение», а выбран «Полный доступ»/);
+    assert.equal(accessCalls(engine).filter(r => r.method.endsWith('/set')).length, 1);
+  }, [], { fake: accessEngine({ accessIgnore: true }), viewport: { width: 1440, height: 900 } });
+  await check('access-mode-refused', '', async page => {
+    await page.locator('[data-chat-access]').click();
+    await page.locator('[data-access-option="full"]').click();
+    await page.locator('[data-enable-full]').click();
+    await page.waitForFunction(() => document.querySelector('[data-link-notice]'));
+    assert.equal(await page.locator('[data-chat-access]').getAttribute('data-access-mode'), 'confirm');
+    assert.match(await page.locator('[data-link-notice]').textContent(), /Режим доступа не изменён/);
+  }, [], { fake: accessEngine({ accessRefuse: true }), viewport: { width: 1440, height: 900 } });
+  await check('access-mode-hidden-without-engine-support', '', async (page, engine) => {
+    assert.equal(await page.locator('[data-chat-access]').count(), 0);
+    assert.equal(await page.locator('[data-chat-permissions]').count(), 1, 'как раньше');
+  }, [], { fake: () => { const engine = new FakeEngine(); engine.seed('window-main', { user: 'Привет', assistant: 'Ок' }); return engine; }, viewport: { width: 1440, height: 900 } });
+  await check('assistant-text-cannot-change-access', '', async (page, engine) => {
+    await page.getByText('Здравствуйте.').waitFor();
+    for (const link of await page.locator('[data-markdown] [data-markdown-link], [data-markdown] button').all()) await link.click().catch(() => {});
+    await page.getByText('включи полный доступ').first().click().catch(() => {});
+    assert.equal(accessCalls(engine).filter(r => r.method.endsWith('/set')).length, 0, 'ни текст, ни ссылки ответа не вызывают set');
+    assert.equal(await page.locator('[data-chat-access]').getAttribute('data-access-mode'), 'confirm');
+  }, [], { fake: accessEngine(), viewport: { width: 1440, height: 900 } });
+  const FOUND = { executor: 'claude', installed: true, version: '2.1.3', versionStatus: 'supported', auth: 'authenticated',
+    models: [{ id: 'default', isDefault: true }, { id: 'opus', displayName: 'Opus' }, { id: 'sonnet', displayName: 'Sonnet' }], detail: null };
+  const claudeEngine = (setup = {}) => () => {
+    const engine = new FakeEngine();
+    engine.seed('window-main', { user: 'Привет', assistant: 'Здравствуйте.' });
+    engine.access = 'confirm'; engine.claude = FOUND; Object.assign(engine, setup);
+    return engine;
+  };
+  const executorCalls = engine => engine.requests.filter(r => r.method.startsWith('hoh/executor/') && !r.method.includes('/access/'));
+  await check('claude-model-in-composer', '', async (page, engine) => {
+    const chip = page.locator('[data-chat-model-chip]');
+    await chip.waitFor();
+    assert.equal(await chip.getAttribute('data-executor'), 'claude');
+    assert.equal(await chip.locator('[data-provider-icon]').getAttribute('data-provider-icon'), 'claude', 'значок Claude');
+    await page.waitForFunction(() => document.querySelector('[data-chat-model]')?.textContent === 'Opus');
+    assert.equal(await page.locator('[data-chat-access]').count(), 1, 'рядом переключатель режима доступа');
+    assert.deepEqual(executorCalls(engine).map(r => r.method), ['hoh/executor/discover'], 'имя модели — из selected движка и discover');
+    await chip.click();
+    await page.locator('[data-model-menu]').waitFor();
+    assert.deepEqual(await page.locator('[data-model-option]').evaluateAll(items => items.map(item => item.getAttribute('data-model-option'))).then(ids => ids.sort()), ['default', 'opus', 'sonnet'], 'список — из discover');
+    await page.waitForFunction(() => document.querySelectorAll('[data-model-option]').length === 3);
+    assert.equal(executorCalls(engine).filter(r => r.method === 'hoh/executor/discover').length, 2, 'меню делает свежий discover');
+    await page.screenshot({ path: join(t3shots, 'claude-composer-menu-1440.png'), animations: 'disabled' });
+    await page.locator('[data-model-option="sonnet"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-chat-model]')?.textContent === 'Sonnet');
+    const select = executorCalls(engine).find(r => r.method === 'hoh/executor/select');
+    assert.deepEqual(select.params, { executor: 'claude', model: 'sonnet' });
+    assert.deepEqual(engine.selected, { executor: 'claude', model: 'sonnet' });
+    await page.screenshot({ path: join(t3shots, 'claude-composer-1440.png'), animations: 'disabled' });
+  }, [], { fake: claudeEngine({ selected: { executor: 'claude', model: 'opus' } }), viewport: { width: 1440, height: 900 } });
+  await check('claude-model-refused', '', async (page, engine) => {
+    await page.locator('[data-chat-model-chip]').click();
+    await page.locator('[data-model-option="sonnet"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-link-notice]'));
+    assert.match(await page.locator('[data-link-notice]').textContent(), /Поставщик не изменён/);
+    assert.equal(await page.locator('[data-chat-model]').textContent(), 'Opus', 'показан фактический выбор движка');
+  }, [], { fake: claudeEngine({ selected: { executor: 'claude', model: 'opus' }, selectRefuse: true }), viewport: { width: 1440, height: 900 } });
+  await check('provider-switch-from-the-chat', '', async (page, engine) => {
+    const chip = page.locator('[data-chat-model-chip]');
+    assert.equal(await chip.getAttribute('data-executor'), null, 'пока модель движка');
+    assert.equal(await page.locator('[data-chat-access]').count(), 0, 'режим доступа — только у Claude');
+    await chip.click();
+    const dialog = page.locator('[data-provider-dialog]');
+    await dialog.waitFor();
+    assert.equal(await dialog.locator('[data-provider-choice="engine"]').getAttribute('aria-pressed'), 'true');
+    assert(await dialog.locator('[data-provider-apply]').isDisabled(), 'ничего не менялось: «Применить» закрыта');
+    await dialog.locator('[data-provider-choice="claude"]').click();
+    await dialog.getByText('Готово. Ничего вводить не нужно.').waitFor();
+    await page.screenshot({ path: join(t3shots, 'claude-settings-1440.png'), animations: 'disabled' });
+    await dialog.locator('[data-claude-model]').selectOption('opus');
+    await dialog.locator('[data-provider-apply]').click();
+    await page.waitForSelector('[data-chat-model-chip][data-executor="claude"]');
+    assert.deepEqual(executorCalls(engine).find(r => r.method === 'hoh/executor/select').params, { executor: 'claude', model: 'opus' });
+    assert.equal(await page.locator('[data-chat-model]').textContent(), 'Opus');
+    assert.equal(await page.locator('[data-chat-access]').count(), 1);
+    await page.locator('[data-new-chat]').click();
+    await page.locator('[data-chat-input]').fill('новый чат');
+    await page.locator('[data-chat-send]').click();
+    await page.waitForFunction(() => document.querySelector('[data-chat-entry="assistant"]'));
+    assert.equal(engine.promptExecutors.at(-1), 'claude', 'новый чат отправлен, когда выбран Claude');
+    await page.locator('[data-chat-model-chip]').click();
+    await page.locator('[data-change-provider]').click();
+    await page.locator('[data-provider-choice="engine"]').click();
+    await page.locator('[data-provider-apply]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-chat-model-chip][data-executor="claude"]'));
+    assert.deepEqual(executorCalls(engine).filter(r => r.method === 'hoh/executor/select').at(-1).params, { executor: null, model: 'default' });
+    assert.equal(await page.locator('[data-chat-access]').count(), 0);
+  }, [], { fake: claudeEngine({ selected: null }), viewport: { width: 1440, height: 900 } });
+  await check('provider-switch-claude-not-ready', '', async (page, engine) => {
+    await page.locator('[data-chat-model-chip]').click();
+    await page.locator('[data-provider-choice="claude"]').click();
+    await page.getByText('Claude установлен, но в него не вошли.').waitFor();
+    assert(await page.locator('[data-provider-apply]').isDisabled(), 'без входа Claude применить нельзя');
+    assert.match(await page.locator('[data-claude-result]').textContent(), /Откройте Claude, войдите/);
+    engine.claude = FOUND;
+    await page.getByRole('button', { name: 'Проверить ещё раз' }).click();
+    await page.getByText('Готово. Ничего вводить не нужно.').waitFor();
+    assert(await page.locator('[data-provider-apply]').isEnabled());
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('[data-provider-dialog]').count(), 0, 'Escape закрывает окно');
+    assert.equal(executorCalls(engine).filter(r => r.method === 'hoh/executor/select').length, 0, 'ничего не выбрано');
+  }, [], { fake: claudeEngine({ selected: null, claude: { ...FOUND, auth: 'unauthenticated', models: [], detail: 'claude: вход не выполнен' } }), viewport: { width: 1440, height: 900 } });
+  await check('emblem-in-the-sidebar-and-sizes', '', async page => {
+    const emblem = page.locator('.chat-brand [data-emblem]');
+    await emblem.waitFor();
+    assert.equal(await page.locator('.chat-brand .mark').count(), 0);
+    assert.equal(await page.locator('.chat-brand b').textContent(), 'HoH');
+    assert.equal(await emblem.getAttribute('src'), wizardEmblem, 'шапка мастера и угол окна берут знак из одного источника');
+    await page.screenshot({ path: join(t3shots, 'emblem-sidebar-1440.png'), animations: 'disabled' });
+    for (const size of [16, 20, 24]) {
+      await page.evaluate(({ size, src }) => {
+        document.getElementById('emblem-probe')?.remove();
+        const box = document.createElement('div'); box.id = 'emblem-probe';
+        box.style.cssText = 'position:fixed;left:0;top:0;z-index:99;background:#000;padding:8px;line-height:0';
+        const img = document.createElement('img'); img.src = src; img.style.height = size + 'px'; box.append(img); document.body.append(box);
+      }, { size, src: wizardEmblem });
+      await page.locator('#emblem-probe img').evaluate(img => img.decode());
+      await page.locator('#emblem-probe').screenshot({ path: join(t3shots, `emblem-${size}.png`), animations: 'disabled' });
+    }
+  }, [], { fake: claudeEngine({ selected: null }), viewport: { width: 1440, height: 900 } });
+  // ───── слова для людей без опыта кода (HOH-35) ─────
+  await check('full-access-asks-once-in-a-window', '', async (page, engine) => {
+    const chip = page.locator('[data-chat-access]');
+    await chip.click();
+    await page.locator('[data-access-option="full"]').hover();
+    assert.ok((await page.locator('[data-access-menu]').textContent()).includes(FULL), 'подпись полного доступа — слова CEO дословно');
+    await page.locator('[data-access-option="full"]').click();
+    const dialog = page.locator('[data-full-access-dialog]');
+    await dialog.waitFor();
+    assert.equal(await dialog.locator('h2').textContent(), 'Включить полный доступ?');
+    assert.ok((await dialog.textContent()).includes(FULL), 'окно включения — слова CEO дословно');
+    assert.doesNotMatch(await dialog.textContent(), /в папке Помощника|в своей папке/);
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Оставить вопросы', 'выделена и в фокусе «Оставить вопросы»');
+    await page.screenshot({ path: join(UX, 'ux-full-access-dialog-1440.png'), animations: 'disabled' });
+    await page.locator('[data-keep-questions]').click();
+    assert.equal(accessCalls(engine).filter(r => r.method.endsWith('/set')).length, 0, 'без согласия set не вызывается');
+    assert.equal(await chip.getAttribute('data-access-mode'), 'confirm');
+    await chip.click(); await page.locator('[data-access-option="full"]').click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('[data-full-access-dialog]').count(), 0, 'Escape — оставить вопросы');
+    assert.equal(accessCalls(engine).filter(r => r.method.endsWith('/set')).length, 0);
+    await chip.click(); await page.locator('[data-access-option="full"]').click();
+    await page.locator('[data-enable-full]').click();
+    await page.waitForFunction(() => document.querySelector('[data-chat-access]')?.getAttribute('data-access-mode') === 'full');
+    assert.equal(await chip.locator('.chat-access-text').textContent(), 'Полный доступ: без вопросов', 'включённый режим назван словом');
+    await page.screenshot({ path: join(UX, 'ux-full-access-on-1440.png'), animations: 'disabled' });
+    const setsBefore = accessCalls(engine).filter(r => r.method.endsWith('/set')).length;
+    await chip.click(); await page.locator('[data-access-option="confirm"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-chat-access]')?.getAttribute('data-access-mode') === 'confirm');
+    assert.equal(await page.locator('[data-full-access-dialog]').count(), 0, 'возврат без окна');
+    assert.equal(accessCalls(engine).filter(r => r.method.endsWith('/set')).length, setsBefore + 1);
+  }, [], { fake: accessEngine(), viewport: { width: 1440, height: 900 } });
+  await check('full-access-word-stays-on-a-narrow-window', '', async page => {
+    await page.locator('[data-chat-access]').click();
+    await page.locator('[data-access-option="full"]').click(); await page.locator('[data-enable-full]').click();
+    await page.waitForFunction(() => document.querySelector('[data-chat-access]')?.getAttribute('data-access-mode') === 'full');
+    assert(await page.locator('[data-chat-access] .chat-access-text').isVisible(), 'на узком окне слово видно');
+    assert.equal(await page.locator('[data-chat-access] .chat-access-text').textContent(), 'Полный доступ: без вопросов');
+    await page.screenshot({ path: join(UX, 'ux-full-access-narrow-480x640.png'), animations: 'disabled' });
+  }, [], { fake: accessEngine(), viewport: { width: 480, height: 640 } });
+  await check('empty-chat-says-full-access', '', async page => {
+    await page.locator('[data-full-access-line]').waitFor();
+    assert.equal(await page.locator('[data-full-access-line]').textContent(), 'Включён полный доступ: Помощник не спрашивает разрешения.');
+  }, [], { fake: () => { const engine = new FakeEngine(); engine.access = 'full'; return engine; }, viewport: { width: 1440, height: 900 } });
+  await check('composer-words-folder-and-permissions', '', async (page, engine) => {
+    assert.equal(await page.locator('[data-chat-folder]').textContent(), 'Документы → HoH');
+    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Спрашивать разрешение');
+    assert(!(await page.locator('body').innerText()).includes('Только чтение'));
+    await page.screenshot({ path: join(UX, 'ux-composer-1440.png'), animations: 'disabled' });
+  }, [], { fake: () => { const engine = new FakeEngine(); engine.cwd = '/home/me/Documents/HoH'; engine.seed('window-main', { user: 'Привет', assistant: 'Ок' }); return engine; }, viewport: { width: 1440, height: 900 } });
+  await check('header-names-who-answers', '', async page => {
+    assert.equal(await page.locator('.chat-privacy').textContent(), 'Отвечает Claude, сервис в интернете');
+    await page.screenshot({ path: join(UX, 'ux-header-claude-1440.png'), animations: 'disabled' });
+  }, [], { fake: claudeEngine({ selected: { executor: 'claude', model: 'opus' } }), viewport: { width: 1440, height: 900 } });
+  // ───── Г: ожидание решения и отказ человека в шагах чата (правки 7 и 8), примеры (13) ─────
+  const deletion = (...after) => () => {
+    const engine = new FakeEngine();
+    const main = engine.seed('window-main', { user: 'Убери старые файлы' });
+    engine.append(main, 'tool/call', { name: 'bash', callId: 'rm1', arguments: { command: 'rm -f old-1.txt old-2.txt' } });
+    for (const [type, data] of after) engine.append(main, type, data);
+    return engine;
+  };
+  await check('step-waits-for-the-protection-window', '', async page => {
+    const label = page.locator('[data-step-label]');
+    await label.waitFor();
+    assert.equal(await label.textContent(), 'Жду вашего решения в окне «Защита HoH»');
+    await page.screenshot({ path: join(UX, 'ux-g-waiting-1440.png'), animations: 'disabled' });
+  }, [], { fake: deletion(['approval/asked', { id: 'a1', toolName: 'bash', reason: 'удалить' }]), viewport: { width: 1440, height: 900 } });
+  await check('step-says-the-person-refused', '', async page => {
+    const label = page.locator('[data-step-label]');
+    await label.waitFor();
+    assert.equal(await label.textContent(), 'Вы не разрешили. Ничего не удалено');
+    assert.doesNotMatch(await page.locator('[data-chat-timeline]').innerText().catch(() => page.locator('body').innerText()), /Не удалось выполнить/);
+    await page.screenshot({ path: join(UX, 'ux-g-refused-1440.png'), animations: 'disabled' });
+  }, [], { fake: deletion(['approval/asked', { id: 'a1', toolName: 'bash' }], ['approval/decided', { id: 'a1', outcome: 'rejected' }],
+    ['tool/result', { message: { toolCallId: 'rm1', isError: true, content: [{ type: 'text', text: 'rejected' }] } }]), viewport: { width: 1440, height: 900 } });
+  await check('step-after-a-failure-is-still-a-failure', '', async page => {
+    await page.locator('[data-step-label]').waitFor();
+    assert.equal(await page.locator('[data-step-label]').textContent(), 'Не удалось выполнить', 'без отказа человека — обычная неудача');
+  }, [], { fake: deletion(['tool/result', { message: { toolCallId: 'rm1', isError: true, content: [{ type: 'text', text: 'boom' }] } }]), viewport: { width: 1440, height: 900 } });
+  await check('every-example-gives-a-turn-not-an-error', '', async (page, engine) => {
+    const { EXAMPLES } = await import('../../src/lib/examples.mjs');
+    for (const example of EXAMPLES) {
+      await page.locator('[data-new-chat]').click();
+      await page.locator(`[data-chat-example="${example.id}"]`).click();
+      assert.equal(await page.locator('[data-chat-input]').inputValue(), example.text);
+      await page.locator('[data-chat-send]').click();
+      await page.waitForFunction(() => document.querySelector('[data-chat-entry="assistant"]'));
+      assert.equal(await page.locator('[data-chat-error], .chat-error').count(), 0, `${example.id}: без ошибки`);
+    }
+    assert.equal(engine.requests.filter(r => r.method === 'session/prompt').length, EXAMPLES.length);
+  }, [], { fake: () => new FakeEngine(), viewport: { width: 1440, height: 900 } });
   await check('no-engine-says-so', '', async page => {
     assert.match(await page.locator('.chat-privacy').textContent(), /Нет связи: не знаю, где обрабатываются данные/);
     assert.equal(await page.getByText('Проверяю, где обрабатываются данные').count(), 0, 'не «проверяю» навсегда');
@@ -367,8 +647,8 @@ try {
     await page.locator('[data-chat-folder]').waitFor();
     assert.equal(await page.getByText(/Enter отправляет|Shift\+Enter/).count(), 0, 'подсказки про Enter нет');
     assert.equal(await page.getByRole('button', { name: 'Стоп', exact: true }).count(), 0, 'отдельной кнопки «Стоп» нет');
-    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Работа только в этой папке');
-    assert.equal(await page.locator('[data-chat-model]').textContent(), 'Локальная модель');
+    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Спрашивать разрешение');
+    assert.equal(await page.locator('[data-chat-model]').textContent(), 'Модель на этом компьютере');
     assert.equal(await page.locator('[data-chat-sidebar] [data-chat-folder], .chat-side-foot').count(), 0, 'папки нет в боковой колонке');
     await page.evaluate(() => { window.__HOH_ENGINE__ = { request: async () => ({}), pickFolder: async () => '/home/me/Проекты/сайт' }; });
     await page.locator('[data-chat-folder]').click();
@@ -420,8 +700,16 @@ try {
     await page.getByLabel('Сообщение Помощнику', { exact: true }).fill(await recordedPrompt('text-turn'));
     await page.getByRole('button', { name: 'Отправить', exact: true }).click();
     await page.waitForSelector('[data-chat-entry="assistant"][data-streaming="true"]');
+    // правка 19: Enter во время ответа не молчит
+    await page.locator('[data-chat-input]').press('Enter');
+    assert.equal(await page.locator('[data-send-hint]').textContent(), 'Помощник ещё отвечает. Дождитесь ответа или нажмите «Стоп».');
+    await page.screenshot({ path: join(UX, 'ux-send-hint-1440.png'), animations: 'disabled' });
     await page.getByRole('button', { name: 'Стоп', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[data-chat-status]')?.textContent === 'Можно написать сообщение');
+    // правка 9: остановленный ответ помечен
+    assert.equal(await page.locator('[data-stopped-note]').textContent(), 'Вы остановили ответ. Уже сделанное не отменяется.');
+    await page.waitForFunction(() => !document.querySelector('[data-send-hint]'));
+    await page.screenshot({ path: join(UX, 'ux-stopped-1440.png'), animations: 'disabled' });
     const after = await page.locator('[data-chat-entry="assistant"] [data-markdown]').textContent();
     await page.waitForTimeout(150);
     assert.equal(await page.locator('[data-chat-entry="assistant"] [data-markdown]').textContent(), after);

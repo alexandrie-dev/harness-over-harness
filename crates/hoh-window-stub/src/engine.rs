@@ -48,6 +48,8 @@ enum Effect {
     Key(hoh_protocol::SecretString),
     Rules(hoh_protocol::SettingsRulesSetParams),
     Settings(hoh_protocol::SettingsSetParams),
+    Access(&'static str),
+    Select(Option<String>),
 }
 struct Deferred {
     id: Value,
@@ -78,6 +80,20 @@ pub struct Engine<W> {
     privileged: Option<Deferred>,
     credentials: crate::credentials::StubCredentials,
     settings: Option<hoh_protocol::Settings>,
+    /// Test clients without a host (the UI checks drive the stub directly): privileged methods are applied at once, as the
+    /// host's approval would have allowed them. Off by default: a real host must sign every decision.
+    local_approvals: bool,
+    /// Access mode of the Claude executor (`confirm` | `full`), kept in memory like the engine keeps it.
+    access_mode: &'static str,
+    /// Model chosen with `hoh/executor/select` (`None`: new chats run on the engine's own model).
+    selected: Option<String>,
+    /// Every prompt that went through the Claude executor, for the window's checks (`hoh/stub/executor-calls`).
+    claude_calls: Vec<Value>,
+    /// A Claude turn waiting for the answer to its confirmation question.
+    claude_turn: Option<(String, u64)>,
+    /// Scenario file and fallback text for `discover` (HOH_STUB_CLAUDE_FILE / HOH_STUB_CLAUDE, read at start).
+    claude_file: Option<PathBuf>,
+    claude_state: Option<String>,
 }
 impl<W: Write> Engine<W> {
     pub fn new(output: W, recording: Recording, fixtures: PathBuf) -> Self {
@@ -98,6 +114,13 @@ impl<W: Write> Engine<W> {
             privileged: None,
             credentials: Default::default(),
             settings: None,
+            local_approvals: false,
+            access_mode: "confirm",
+            selected: None,
+            claude_calls: Vec::new(),
+            claude_turn: None,
+            claude_file: std::env::var_os("HOH_STUB_CLAUDE_FILE").map(PathBuf::from),
+            claude_state: std::env::var("HOH_STUB_CLAUDE").ok(),
         }
     }
     pub fn stopped(&self) -> bool {
@@ -135,6 +158,13 @@ impl<W: Write> Engine<W> {
             Incoming::Response { id, result, error } => {
                 if self.pending.as_ref().is_some_and(|p| p.id == id.key()) {
                     let pending = self.pending.take().unwrap();
+                    if pending.method == "user-question/ask"
+                        && let Some(turn) = self.claude_turn.take()
+                    {
+                        let allowed = result["answers"][0]["selected"][0] == "Разрешить";
+                        self.claude_finish(turn, allowed)?;
+                        return Ok(());
+                    }
                     let answer = if let Some(error) = error {
                         Err(error.message)
                     } else {
@@ -205,7 +235,221 @@ impl<W: Write> Engine<W> {
                     .collect(),
             })
     }
+    pub fn set_local_approvals(&mut self, on: bool) {
+        self.local_approvals = on;
+    }
+    /// `hoh/executor/access/get` and `/set` for the Claude executor. The contract is not in hoh-protocol yet,
+    /// so the two methods are checked here; `set` is privileged and goes through the same host approval as the other settings.
+    fn executor_access(&mut self, id: Value, method: &str, params: Value) -> Result<(), String> {
+        if params["executor"] != "claude" {
+            return Err("executor access: only the claude executor is supported".into());
+        }
+        match method {
+            "hoh/executor/access/get" => {
+                let mode = self.access_mode;
+                let (flags, text) = if mode == "full" {
+                    (
+                        json!(["--permission-mode", "bypassPermissions"]),
+                        "Полный доступ: Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить.",
+                    )
+                } else {
+                    (
+                        json!([
+                            "--permission-mode",
+                            "default",
+                            "--permission-prompt-tool",
+                            "stdio"
+                        ]),
+                        "С подтверждением: команды, правки файлов и сеть Claude выполняет после вашего подтверждения",
+                    )
+                };
+                let selected = self.selected.as_ref().map_or(
+                    Value::Null,
+                    |model| json!({"executor":"claude","model":model}),
+                );
+                self.reply(
+                    id,
+                    json!({"executor":"claude","mode":mode,"effective":{"mode":mode,"flags":flags,"text":text},"selected":selected}),
+                )
+                .map_err(|e| e.to_string())
+            }
+            "hoh/executor/access/set" => {
+                let mode: &'static str = match params["mode"].as_str() {
+                    Some("confirm") => "confirm",
+                    Some("full") => "full",
+                    _ => return Err("executor access: mode must be confirm or full".into()),
+                };
+                self.defer(
+                    id,
+                    method,
+                    params,
+                    json!({"mode":mode}),
+                    Effect::Access(mode),
+                )
+            }
+            _ => Err(format!(
+                "unknown DeepSeek Harness SDK runtime method: {method}"
+            )),
+        }
+    }
+    /// The state of the `claude` command line tool as the window sees it. A scenario file (re-read on every call, so a
+    /// check can change it between two discovers) wins over the environment: found | noauth | missing | unknown.
+    fn claude_scenario(&self) -> String {
+        self.claude_file
+            .as_ref()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .or_else(|| self.claude_state.clone())
+            .map(|text| text.trim().to_owned())
+            .unwrap_or_else(|| "found".into())
+    }
+    /// `hoh/executor/discover`: read-only, a real call every time (the contract of the engine, o1).
+    fn executor_discover(&mut self, id: Value, params: &Value) -> Result<(), String> {
+        if params["executor"] != "claude" {
+            return Err("executor discover: only the claude executor is supported".into());
+        }
+        let models = json!([
+            {"id":"default","isDefault":true},
+            {"id":"opus","displayName":"Opus"}
+        ]);
+        let result = match self.claude_scenario().as_str() {
+            "noauth" => {
+                json!({"executor":"claude","installed":true,"version":"2.1.3","versionStatus":"supported",
+                "auth":"unauthenticated","models":[],"detail":"claude: вход не выполнен"})
+            }
+            "missing" => {
+                json!({"executor":"claude","installed":false,"version":null,"versionStatus":"unknown",
+                "auth":"unknown","models":[],"detail":"claude: команда не найдена"})
+            }
+            "unknown" => {
+                json!({"executor":"claude","installed":true,"version":"9.9.9","versionStatus":"unknown",
+                "auth":"authenticated","models":models,"detail":"Версия claude 9.9.9 не проверялась"})
+            }
+            _ => {
+                json!({"executor":"claude","installed":true,"version":"2.1.3","versionStatus":"supported",
+                "auth":"authenticated","models":models,"detail":null})
+            }
+        };
+        self.reply(id, result).map_err(|e| e.to_string())
+    }
+    /// `hoh/executor/select`: privileged. `executor: null` returns new chats to the engine's own model.
+    fn executor_select(&mut self, id: Value, params: Value) -> Result<(), String> {
+        let model = params["model"]
+            .as_str()
+            .filter(|model| !model.is_empty())
+            .ok_or("executor select: model must be a non-empty string")?
+            .to_owned();
+        let (selected, result) = match params["executor"].as_str() {
+            Some("claude") => (
+                Some(model.clone()),
+                json!({"executor":"claude","model":model}),
+            ),
+            None if params["executor"].is_null() => (None, json!({"executor":null,"model":model})),
+            _ => return Err("executor select: only the claude executor is supported".into()),
+        };
+        self.defer(
+            id,
+            "hoh/executor/select",
+            params,
+            result,
+            Effect::Select(selected),
+        )
+    }
+    fn claude_event(&mut self, session: &str, kind: &str, seq: u64, data: Value) -> io::Result<()> {
+        let event = json!({"type":kind,"seq":seq,"time":0,"data":data});
+        self.session(session).history.push(event.clone());
+        self.notify("session.event", json!({"sessionId":session,"event":event}))
+    }
+    /// A prompt of a new chat while Claude is selected: recorded for the checks, then a short synthetic turn.
+    /// In `confirm` the turn stops at a confirmation question; in `full` there is none.
+    fn claude_prompt(&mut self, id: Value, query: bool, params: &Value) -> Result<(), String> {
+        if self.active.is_some() || self.pending.is_some() || self.claude_turn.is_some() {
+            return Err("stub is replaying an action; wait or cancel it first".into());
+        }
+        let session = params["sessionId"].as_str().unwrap_or("").to_owned();
+        if session.is_empty() {
+            return Err("sessionId must not be empty".into());
+        }
+        let text = params["contentBlocks"][0]["text"].as_str().unwrap_or("");
+        let model = self.selected.clone().unwrap_or_default();
+        let mode = self.access_mode;
+        self.claude_calls.push(
+            json!({"executor":"claude","model":model,"mode":mode,"sessionId":session,"text":text}),
+        );
+        let turn = self.claude_calls.len() as u64;
+        let mut reply = json!({"messageId":format!("claude-user-{turn}")});
+        if query {
+            reply["kind"] = json!("prompt");
+        }
+        self.reply(id, reply).map_err(|e| e.to_string())?;
+        let io = |e: io::Error| e.to_string();
+        self.claude_event(
+            &session,
+            "agent/inbox/spliced",
+            turn * 10,
+            json!({"inserted":[{"id":format!("claude-user-{turn}"),
+            "source":{"kind":"user"},"content":[{"type":"text","text":text}]}]}),
+        )
+        .map_err(io)?;
+        self.notify(
+            "session.status",
+            json!({"sessionId":session,"status":"running"}),
+        )
+        .map_err(io)?;
+        self.claude_event(&session, "turn/start", turn * 10 + 1, json!({"turn":turn}))
+            .map_err(io)?;
+        if mode == "confirm" && self.questions {
+            let params = json!({"requestId":format!("stub-question-{}",self.next_request+1),"sessionId":session,
+                "questions":[{"id":"claude-command","header":"Claude","question":"Claude хочет выполнить команду ls в рабочей папке. Разрешить?",
+                    "options":[{"label":"Разрешить"},{"label":"Не разрешать"}]}]});
+            self.claude_turn = Some((session, turn));
+            self.reverse("user-question/ask", params, Expected::AnyQuestion)?;
+            return Ok(());
+        }
+        self.claude_turn = Some((session, turn));
+        let turn = self.claude_turn.take().unwrap();
+        self.claude_finish(turn, true).map_err(io)
+    }
+    fn claude_finish(&mut self, (session, turn): (String, u64), allowed: bool) -> io::Result<()> {
+        let model = self.selected.clone().unwrap_or_default();
+        let answer = if allowed {
+            format!(
+                "Готово. Ответ Claude (модель {model}, режим {}).",
+                self.access_mode
+            )
+        } else {
+            "Хорошо, команду не выполняю.".to_owned()
+        };
+        self.claude_event(&session, "assistant/message", turn * 10 + 2, json!({"turn":turn,
+            "message":{"id":format!("claude-answer-{turn}"),"role":"assistant","content":[{"type":"text","text":answer}]}}))?;
+        self.claude_event(
+            &session,
+            "turn/end",
+            turn * 10 + 3,
+            json!({"turn":turn,"reason":{"kind":"completed"}}),
+        )?;
+        self.notify(
+            "session.status",
+            json!({"sessionId":session,"status":"idle"}),
+        )
+    }
     fn request(&mut self, id: Value, method: &str, params: Value) -> Result<(), String> {
+        if self.initialized {
+            if method.starts_with("hoh/executor/access/") {
+                return self.executor_access(id, method, params);
+            }
+            match method {
+                "hoh/executor/discover" => return self.executor_discover(id, &params),
+                "hoh/executor/select" => return self.executor_select(id, params),
+                "hoh/stub/executor-calls" => {
+                    let calls = json!({"calls":self.claude_calls});
+                    return self.reply(id, calls).map_err(|e| e.to_string());
+                }
+                "session/prompt" | "session/query" if self.selected.is_some() => {
+                    return self.claude_prompt(id, method == "session/query", &params);
+                }
+                _ => {}
+            }
+        }
         validate_params(method, &params)?;
         if method == "initialize" {
             if self.initialized {
@@ -406,6 +650,11 @@ impl<W: Write> Engine<W> {
         effect: Effect,
     ) -> Result<(), String> {
         if self.key.is_none() {
+            if self.local_approvals {
+                return self
+                    .commit(Deferred { id, result, effect })
+                    .map_err(|error| error.to_string());
+            }
             return Err("host approval required".into());
         }
         if self.pending.is_some() || self.active.is_some() {
@@ -440,6 +689,14 @@ impl<W: Write> Engine<W> {
                 };
                 settings.security.folders = vec![rules.folder];
                 self.settings = Some(settings);
+                Ok(())
+            }
+            Effect::Access(mode) => {
+                self.access_mode = mode;
+                Ok(())
+            }
+            Effect::Select(model) => {
+                self.selected = model;
                 Ok(())
             }
             Effect::Settings(update) => {
@@ -671,6 +928,27 @@ impl<W: Write> Engine<W> {
                     "Разрешить работу в папке {}?",
                     quoted(&request.path)
                 ))
+            }
+            "hoh/executor/select" => Ok(
+                match (params["executor"].as_str(), params["model"].as_str()) {
+                    (Some(executor), Some(model)) => {
+                        format!(
+                            "Отвечать будет {} (модель {model})?",
+                            executor_name(executor)
+                        )
+                    }
+                    _ => "Отвечать будет модель на этом компьютере?".to_owned(),
+                },
+            ),
+            "hoh/executor/access/set" => {
+                let name = executor_name(params["executor"].as_str().unwrap_or("claude"));
+                Ok(if params["mode"] == "full" {
+                    format!(
+                        "Включить полный доступ для {name}? Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить."
+                    )
+                } else {
+                    format!("Вернуть режим «Спрашивать разрешение» для {name}?")
+                })
             }
             "hoh/settings/set" => {
                 let request: hoh_protocol::SettingsSetParams =
@@ -963,6 +1241,14 @@ impl<W: Write> Engine<W> {
     }
 }
 
+/// An executor's name as a word in a sentence: `claude` → `Claude`.
+fn executor_name(executor: &str) -> String {
+    let mut chars = executor.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
 fn quoted(value: &str) -> String {
     format!("«{value}»")
 }
@@ -1033,6 +1319,239 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod expiry_tests {
     use super::*;
+    fn plain_engine() -> Engine<Vec<u8>> {
+        let source = std::env::var_os("HOH_DSH_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness"));
+        let recording =
+            Recording::read(&source.join("snapshots/sdk/approval/session.v4.jsonl")).unwrap();
+        let mut engine = Engine::new(
+            Vec::new(),
+            recording,
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../protocol/fixtures"),
+        );
+        engine
+            .request(
+                json!(1),
+                "initialize",
+                json!({"cwd":"/w","provider":"p","model":"m","capabilities":{}}),
+            )
+            .unwrap();
+        engine
+    }
+    #[test]
+    fn claude_executor_is_discovered_selected_and_runs_new_chats() {
+        let mut engine = plain_engine();
+        let file = std::env::temp_dir().join(format!("hoh-stub-claude-{}", std::process::id()));
+        engine.claude_file = Some(file.clone());
+        let discover = |engine: &mut Engine<Vec<u8>>, state: &str| {
+            fs::write(&file, state).unwrap();
+            engine
+                .request(
+                    json!(20),
+                    "hoh/executor/discover",
+                    json!({"executor":"claude"}),
+                )
+                .unwrap();
+            let old = std::mem::replace(&mut engine.writer, FrameWriter::new(Vec::new()));
+            let out = String::from_utf8(old.into_inner()).unwrap();
+            serde_json::from_str::<Value>(out.lines().last().unwrap()).unwrap()["result"].clone()
+        };
+        let found = discover(&mut engine, "found");
+        assert_eq!(
+            (found["installed"].clone(), found["auth"].clone()),
+            (json!(true), json!("authenticated"))
+        );
+        assert_eq!(found["models"][0]["id"], "default");
+        let noauth = discover(&mut engine, "noauth");
+        assert_eq!(
+            (noauth["installed"].clone(), noauth["auth"].clone()),
+            (json!(true), json!("unauthenticated"))
+        );
+        let missing = discover(&mut engine, "missing");
+        assert_eq!(missing["installed"], json!(false));
+        let unknown = discover(&mut engine, "unknown");
+        assert_eq!(
+            (unknown["versionStatus"].clone(), unknown["auth"].clone()),
+            (json!("unknown"), json!("authenticated"))
+        );
+        fs::remove_file(&file).unwrap();
+
+        let select = json!({"executor":"claude","model":"opus"});
+        assert!(
+            engine
+                .request(json!(21), "hoh/executor/select", select.clone())
+                .is_err(),
+            "privileged: no host, refused"
+        );
+        assert!(engine.selected.is_none());
+        engine.set_local_approvals(true);
+        assert!(
+            engine
+                .request(
+                    json!(22),
+                    "hoh/executor/select",
+                    json!({"executor":"other","model":"x"})
+                )
+                .is_err()
+        );
+        engine
+            .request(json!(23), "hoh/executor/select", select)
+            .unwrap();
+        assert_eq!(engine.selected.as_deref(), Some("opus"));
+
+        engine.questions = true;
+        let prompt = |engine: &mut Engine<Vec<u8>>, session: &str| {
+            engine.request(
+                json!(30),
+                "session/prompt",
+                json!({"sessionId":session,"contentBlocks":[{"type":"text","text":"привет"}]}),
+            )
+        };
+        prompt(&mut engine, "s1").unwrap();
+        assert!(
+            engine.pending.is_some() && engine.claude_turn.is_some(),
+            "confirm: the turn waits for a question"
+        );
+        assert_eq!(engine.claude_calls[0]["mode"], "confirm");
+        engine.pending = None;
+        engine.claude_turn = None;
+        engine.access_mode = "full";
+        prompt(&mut engine, "s2").unwrap();
+        assert!(
+            engine.pending.is_none() && engine.claude_turn.is_none(),
+            "full: no question"
+        );
+        assert_eq!(engine.claude_calls[1]["model"], "opus");
+
+        engine
+            .request(
+                json!(40),
+                "hoh/executor/select",
+                json!({"executor":null,"model":"default"}),
+            )
+            .unwrap();
+        assert!(engine.selected.is_none());
+    }
+    #[test]
+    fn approval_texts_name_the_executor_and_tell_full_from_confirm() {
+        let engine = plain_engine();
+        let text = |method: &str, params: Value| engine.approval_text(method, &params).unwrap();
+        let full = text(
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"full"}),
+        );
+        let confirm = text(
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"confirm"}),
+        );
+        assert_ne!(full, confirm);
+        assert!(
+            full.starts_with("Включить полный доступ для Claude?")
+                && full.contains("Сделанное нельзя отменить.")
+        );
+        assert_eq!(confirm, "Вернуть режим «Спрашивать разрешение» для Claude?");
+        assert_eq!(
+            text(
+                "hoh/executor/select",
+                json!({"executor":"claude","model":"opus"})
+            ),
+            "Отвечать будет Claude (модель opus)?"
+        );
+        assert_eq!(
+            text(
+                "hoh/executor/select",
+                json!({"executor":null,"model":"default"})
+            ),
+            "Отвечать будет модель на этом компьютере?"
+        );
+    }
+    #[test]
+    fn claude_access_mode_defaults_to_confirm_and_changes_only_through_set() {
+        let mut engine = plain_engine();
+        let get = |engine: &mut Engine<Vec<u8>>| {
+            engine
+                .request(
+                    json!(9),
+                    "hoh/executor/access/get",
+                    json!({"executor":"claude"}),
+                )
+                .unwrap();
+            engine.access_mode
+        };
+        assert_eq!(get(&mut engine), "confirm");
+        assert!(
+            engine
+                .request(
+                    json!(10),
+                    "hoh/executor/access/set",
+                    json!({"executor":"claude","mode":"full"})
+                )
+                .is_err(),
+            "no host, no local approvals: refused"
+        );
+        assert_eq!(get(&mut engine), "confirm");
+        engine.set_local_approvals(true);
+        assert!(
+            engine
+                .request(
+                    json!(11),
+                    "hoh/executor/access/set",
+                    json!({"executor":"claude","mode":"root"})
+                )
+                .is_err()
+        );
+        assert!(
+            engine
+                .request(
+                    json!(12),
+                    "hoh/executor/access/set",
+                    json!({"executor":"other","mode":"full"})
+                )
+                .is_err()
+        );
+        engine
+            .request(
+                json!(13),
+                "hoh/executor/access/set",
+                json!({"executor":"claude","mode":"full"}),
+            )
+            .unwrap();
+        assert_eq!(get(&mut engine), "full");
+        engine
+            .request(
+                json!(14),
+                "hoh/executor/access/set",
+                json!({"executor":"claude","mode":"confirm"}),
+            )
+            .unwrap();
+        assert_eq!(get(&mut engine), "confirm");
+    }
+    #[test]
+    fn without_a_host_privileged_methods_are_refused_unless_local_approvals_are_on() {
+        let mut engine = plain_engine();
+        let key = json!({"apiKey":"k","baseUrl":"https://api.example.test/v1"});
+        let probe = json!({"baseUrl":"https://api.example.test/v1","model":"local"});
+        assert_eq!(
+            engine
+                .request(json!(2), "hoh/model/key/set", key.clone())
+                .unwrap_err(),
+            "host approval required"
+        );
+        assert!(
+            engine
+                .request(json!(3), "hoh/model/probe", probe.clone())
+                .is_err()
+        );
+        engine.set_local_approvals(true);
+        assert!(!engine.credentials.probe_authenticated().unwrap());
+        engine.request(json!(4), "hoh/model/key/set", key).unwrap();
+        assert!(
+            engine.credentials.probe_authenticated().unwrap(),
+            "the key is stored once applied"
+        );
+        engine.request(json!(5), "hoh/model/probe", probe).unwrap();
+    }
     #[test]
     fn credential_effect_stays_private_until_a_valid_host_decision() {
         let source = std::env::var_os("HOH_DSH_ROOT")

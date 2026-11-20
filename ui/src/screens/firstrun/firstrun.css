@@ -28,8 +28,8 @@
 .fr-card h2.fr-hello { font-size: var(--text-hero); line-height: var(--lh-hero); font-weight: var(--font-weight-regular); letter-spacing: var(--tracking-tight); margin-bottom: var(--space-2); }
 .fr-sub { margin-bottom: var(--space-4); font-size: var(--text-md); line-height: var(--lh-md); color: var(--color-muted); }
 
-.fr-seg { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-0); padding: var(--space-0); border-radius: var(--radius); background: var(--color-bg); margin-bottom: var(--space-4); }
-.fr-seg button { all: unset; box-sizing: border-box; cursor: pointer; text-align: center; height: var(--size-row); line-height: var(--size-row); border-radius: var(--radius-row); font-size: var(--text-md); color: var(--color-muted); }
+.fr-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-0); padding: var(--space-0); border-radius: var(--radius); background: var(--color-bg); margin-bottom: var(--space-4); }
+.fr-seg button { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: var(--space-2); text-align: center; height: var(--size-row); line-height: var(--size-row); border-radius: var(--radius-row); font-size: var(--text-md); color: var(--color-muted); }
 .fr-seg button:hover { color: var(--color-fg); }
 .fr-seg button[aria-pressed='true'] { background: var(--color-selected); color: var(--color-fg); font-weight: var(--font-weight-medium); }
 .fr-seg button:focus-visible { outline: var(--focus-width) solid var(--color-focus); }
