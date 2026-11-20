@@ -1984,6 +1984,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-mcp-manager"
+version = "0.1.0"
+dependencies = [
+ "hoh-credentials",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-mcp-client",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tools",
+ "indexmap",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "hoh-mcp-resources"
 version = "0.1.0"
 dependencies = [
