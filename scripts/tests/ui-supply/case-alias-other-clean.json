@@ -1,0 +1,12 @@
+{
+  "extraPackages": {
+    "target@1.0.0": {}
+  },
+  "replace": {
+    "lock/snapshots/fixture@1.0.0": {
+      "dependencies": {
+        "aliased-name": "target@1.0.0"
+      }
+    }
+  }
+}

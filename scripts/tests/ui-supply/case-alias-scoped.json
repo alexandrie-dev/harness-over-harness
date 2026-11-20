@@ -1,0 +1,12 @@
+{
+  "extraPackages": {
+    "@scope/target@1.0.0": {}
+  },
+  "replace": {
+    "lock/snapshots/fixture@1.0.0": {
+      "dependencies": {
+        "aliased-name": "@scope/target@1.0.0"
+      }
+    }
+  }
+}

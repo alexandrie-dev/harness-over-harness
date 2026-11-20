@@ -1,0 +1,11 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedLinks": {
+    "node_modules/.bin/tool": "@OUTSIDE@"
+  },
+  "error": "installed: .bin/tool leaves the store"
+}

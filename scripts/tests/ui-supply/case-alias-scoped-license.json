@@ -1,0 +1,15 @@
+{
+  "extraPackages": {
+    "@scope/target@1.0.0": {
+      "license": "GPL-3.0-only"
+    }
+  },
+  "replace": {
+    "lock/snapshots/fixture@1.0.0": {
+      "dependencies": {
+        "aliased-name": "@scope/target@1.0.0"
+      }
+    }
+  },
+  "error": "license: forbidden @scope/target@1.0.0"
+}

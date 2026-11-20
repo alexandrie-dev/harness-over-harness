@@ -1,0 +1,16 @@
+{
+  "patched": {
+    "files": {
+      "patches/fixture@1.0.0.patch": "x\n",
+      "patches/extra.patch": "y\n"
+    },
+    "workspace": {
+      "fixture@1.0.0": "patches/fixture@1.0.0.patch",
+      "extra@1.0.0": "patches/extra.patch"
+    },
+    "lock": {
+      "fixture@1.0.0": "patches/fixture@1.0.0.patch"
+    }
+  },
+  "error": "patch: workspace and lock patchedDependencies differ"
+}

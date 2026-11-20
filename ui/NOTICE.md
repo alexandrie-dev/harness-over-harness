@@ -5,7 +5,7 @@
 
 ## T3 Code (MIT)
 
-Размеры и устройство компонентов, а также файлы разметки ответов Помощника (`ui/src/t3/`, перечень — `ui/T3-MAP.md`) взяты из T3 Code (коммит 803f21f6), MIT License, Copyright (c) 2026 T3 Tools Inc. Имён и знаков T3 в окне нет.
+Размеры и устройство компонентов, а также файлы разметки ответов Помощника (`ui/src/t3/`, перечень — `ui/T3-MAP.md`) взяты из T3 Code (коммит 803f21f6), MIT License, Copyright (c) 2026 T3 Tools Inc. Имён и знаков T3 в окне нет. Патчи пакетов разбора Markdown `ui/patches/*.patch` (mdast-util-math, micromark-extension-llm-math, micromark-extension-gfm-table, micromark, mdast-util-to-hast) взяты из того же коммита T3 Code без изменений и подключены через `patchedDependencies`.
 
 ```
 MIT License

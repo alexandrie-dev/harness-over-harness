@@ -1,0 +1,14 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedLinks": {
+    "node_modules/fixture-link": "../../fixture@1.0.0/node_modules/fixture",
+    "node_modules/.bin/tool-link": "../fixture/cli.js"
+  },
+  "installedFiles": {
+    "node_modules/.bin/tool": "#!/bin/sh\nexec node \"$basedir\"/'x' \"$@\"\n# cmd-shim-target=../fixture/cli.js\n"
+  }
+}

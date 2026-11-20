@@ -1,0 +1,7 @@
+{
+  "replace": {
+    "lock/snapshots/fixture@1.0.0": {"dependencies": {"aliased-name": "fixture@1.0.0"}},
+    "metadata/versions/1.0.0/license": "GPL-3.0-only"
+  },
+  "error": "license: forbidden fixture@1.0.0"
+}

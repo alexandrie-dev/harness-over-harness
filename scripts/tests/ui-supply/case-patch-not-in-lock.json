@@ -1,0 +1,14 @@
+{
+  "patched": {
+    "files": {
+      "patches/g.patch": "x\n"
+    },
+    "workspace": {
+      "ghost@1.0.0": "patches/g.patch"
+    },
+    "lock": {
+      "ghost@1.0.0": "patches/g.patch"
+    }
+  },
+  "error": "patch: ghost@1.0.0 is not an exact name@version in the lock"
+}

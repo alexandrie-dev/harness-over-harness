@@ -1,7 +1,7 @@
 {
-  "lockSha256": "f9ddfe4c5f429cd6f675e451203eaa45c61d5b677c13eb5d779d7aa0fabad589",
+  "lockSha256": "8e5f474b393fb8daaa5bbf6e51dd274ac2232d318a3b40775a831f96cb3dccdc",
   "registry": "https://registry.npmjs.org/",
-  "checkedAt": "2026-11-18T22:35:28.183674+00:00",
+  "checkedAt": "2026-11-20T17:26:13.549605+00:00",
   "packages": {
     "@babel/runtime": {
       "versions": {
@@ -959,6 +959,174 @@
         "2.12.4": "2026-10-21T12:20:52.691Z"
       }
     },
+    "@types/debug": {
+      "versions": {
+        "4.1.13": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "22d1cc9d542d3593caea764f974306ab36286ee7",
+            "tarball": "https://registry.npmjs.org/@types/debug/-/debug-4.1.13.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCCohHoTMDF9sIpZzy/frzwcUke6lZ3z2Ymgw7SFeNt+QIhALE3pmngu1EJ/hWfKUzqHh5s+NxRmtpr/uNosu0wFoKj",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 6478
+          }
+        }
+      },
+      "time": {
+        "4.1.13": "2026-03-19T06:47:23.938Z"
+      }
+    },
+    "@types/estree-jsx": {
+      "versions": {
+        "1.0.5": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "858a88ea20f34fe65111f005a689fa1ebf70dc18",
+            "tarball": "https://registry.npmjs.org/@types/estree-jsx/-/estree-jsx-1.0.5.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-52CcUVNFyfb1A2ALocQw/Dd1BQFNmSdkuC3BkZ6iqhdMfQz7JWOFRuJFloOzjk+6WijU56m9oKXFAXc7o3Towg==",
+            "signatures": [
+              {
+                "sig": "MEQCIDN3q/ILYnHs4IO5dVl7+LxTVU+gSa85qxZjHFSrxWvLAiBIvBYuZtiNsx4u8bDZPrDbrvV9LOHRMP+yw3OZCRw2jA==",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 5773
+          }
+        }
+      },
+      "time": {
+        "1.0.5": "2024-02-23T02:11:41.791Z"
+      }
+    },
+    "@types/estree": {
+      "versions": {
+        "1.0.9": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "cf3f0e876d7bee15a93ab925b82bf570a3904a24",
+            "tarball": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
+            "fileCount": 6,
+            "integrity": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==",
+            "signatures": [
+              {
+                "sig": "MEUCIG5LeiyV3/m+9NSRDf8bEpvCkRcyilZuXkNQlbi061y3AiEAmCE4B4EH6503g6oasz7YS+5ASghAE7+b7mLkeXCI4K8=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 26153
+          }
+        }
+      },
+      "time": {
+        "1.0.9": "2026-05-06T21:01:00.975Z"
+      }
+    },
+    "@types/hast": {
+      "versions": {
+        "3.0.5": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "48020de4c0e63492f4ca9db42068c108f68b7f8f",
+            "tarball": "https://registry.npmjs.org/@types/hast/-/hast-3.0.5.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-rp/ezSWaD1m44dPKICGhiskI13nVr7qTloFwDa/IYkhhf5nzwP+zIQcIJh3WIFSBOy/H1PzB40jPjMDksN4F+g==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCYUFJcMYREzDsB0ODUl9JhOlaDq7dE8Cb65GcQntJCxgIhANC5eg+q7xwnN3H/lsSgAeP/DkO2rp8TvD/wEFMXPQO5",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 35267
+          }
+        }
+      },
+      "time": {
+        "3.0.5": "2026-07-09T11:00:14.068Z"
+      }
+    },
+    "@types/katex": {
+      "versions": {
+        "0.16.8": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "80bf3e0814d09a846412a0b0f140946b79c36c3e",
+            "tarball": "https://registry.npmjs.org/@types/katex/-/katex-0.16.8.tgz",
+            "fileCount": 7,
+            "integrity": "sha512-trgaNyfU+Xh2Tc+ABIb44a5AYUpicB3uwirOioeOkNPPbmgRNtcWyDeeFRzjPZENO9Vq8gvVqfhaaXWLlevVwg==",
+            "signatures": [
+              {
+                "sig": "MEUCIHd5NYeQPtPM19PkRQw/UPkcWJoyFtTPqUXiisFc855+AiEA/sIdILKvQIwj+Tr93pciSfmyZXsH+xON4PkfewBbG/o=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 9977
+          }
+        }
+      },
+      "time": {
+        "0.16.8": "2026-01-10T00:47:17.003Z"
+      }
+    },
+    "@types/mdast": {
+      "versions": {
+        "4.0.4": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "7ccf72edd2f1aa7dd3437e180c64373585804dd6",
+            "tarball": "https://registry.npmjs.org/@types/mdast/-/mdast-4.0.4.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==",
+            "signatures": [
+              {
+                "sig": "MEQCIAdOJtb99onvgmfAz+Eabnzx62FWmUAYPs3JfEA37FsiAiAoyCux/Jrlv34Cs8w0hv2M8QfI13jH9M9nT4jUWeEdYg==",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 29432
+          }
+        }
+      },
+      "time": {
+        "4.0.4": "2024-05-14T07:35:37.616Z"
+      }
+    },
+    "@types/ms": {
+      "versions": {
+        "2.1.0": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "052aa67a48eccc4309d7f0191b7e41434b90bb78",
+            "tarball": "https://registry.npmjs.org/@types/ms/-/ms-2.1.0.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==",
+            "signatures": [
+              {
+                "sig": "MEUCIEQ2QDtF7l1l7Qnnly5roFJ4csogIK7dXOtzAEajLYLDAiEA8W7GVUO/CzRwutehGyj67/LAV1VSSfzSidIyz29/QRE=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 5101
+          }
+        }
+      },
+      "time": {
+        "2.1.0": "2025-01-16T21:02:46.181Z"
+      }
+    },
     "@types/node": {
       "versions": {
         "24.19.2": {
@@ -1043,6 +1211,78 @@
         "19.3.0": "2026-09-09T18:08:49.750Z"
       }
     },
+    "@types/unist": {
+      "versions": {
+        "2.0.11": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "11af57b127e32487774841f7a4e54eab166d03c4",
+            "tarball": "https://registry.npmjs.org/@types/unist/-/unist-2.0.11.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==",
+            "signatures": [
+              {
+                "sig": "MEQCIH6fky9to0M6+/RrhfP5rSNc2k3Qp26b0tHRhS5j9XW+AiBQtg8BMrTjG9usdcxiKOU1U3hFGTRJZEbaOllWyyEfAA==",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 8543
+          }
+        },
+        "3.0.3": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "shasum": "acaab0f919ce69cce629c2d4ed2eb4adc1b6c20c",
+            "tarball": "https://registry.npmjs.org/@types/unist/-/unist-3.0.3.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCA24+KorHj4+o2tnP4IapyteV19PI4solT2UFnhUV+egIhAKvGDKTjc/8qKmGSLFoLNeVbizakg2NbXz2v8Xg/R4ig",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 6262
+          }
+        }
+      },
+      "time": {
+        "2.0.11": "2024-08-15T02:19:24.090Z",
+        "3.0.3": "2024-08-15T02:19:16.553Z"
+      }
+    },
+    "@ungap/structured-clone": {
+      "versions": {
+        "1.3.1": {
+          "license": "ISC",
+          "scripts": {
+            "cjs": "ascjs esm cjs",
+            "test": "c8 node test/index.js",
+            "build": "npm run cjs && npm run rollup:json && npm run test",
+            "coverage": "c8 report --reporter=text-lcov > ./coverage/lcov.info",
+            "rollup:json": "rollup --config rollup/json.config.js"
+          },
+          "dist": {
+            "shasum": "0e8f34854df7966b09304a18e808b23997bb9fc1",
+            "tarball": "https://registry.npmjs.org/@ungap/structured-clone/-/structured-clone-1.3.1.tgz",
+            "fileCount": 16,
+            "integrity": "sha512-mUFwbeTqrVgDQxFveS+df2yfap6iuP20NAKAsBt5jDEoOTDew+zwLAOilHCeQJOVSvmgCX4ogqIrA0mnyr08yQ==",
+            "signatures": [
+              {
+                "sig": "MEQCIDih11h8dEf5u/6p6e1xmV6wA99Cge5CO2SZpVugxwSVAiAk3Suk1q/9R3rptohhNJHAGQRs6A+1/f9JuPAoJoyEmw==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 28217
+          }
+        }
+      },
+      "time": {
+        "1.3.1": "2026-05-06T05:15:15.978Z"
+      }
+    },
     "@vitejs/plugin-react": {
       "versions": {
         "6.3.0": {
@@ -1080,6 +1320,202 @@
       },
       "time": {
         "6.3.0": "2026-11-09T06:12:31.033Z"
+      }
+    },
+    "bail": {
+      "versions": {
+        "2.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && tsd && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==",
+            "shasum": "d26f5cd8fe5d6f832a31517b9f7c356040ba6d5d",
+            "tarball": "https://registry.npmjs.org/bail/-/bail-2.0.2.tgz",
+            "fileCount": 5,
+            "unpackedSize": 6353,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2kXjCRA9TVsSAnZWagAAYg8QAJWmChnlYu7AwO+Mom2j\n+S7Xa+EVR9tjNdtevTWVkB31S0eLz3rDX/B67vw2Pgtur2vVmPnh68l0Zbxm\nq9wW4lyNSJxRDaOS4E/do7MwUcIz81Dck9zfXDIUOgLP2JZ8QHtl3EnNr0jD\n20UJzZ95rDQyzANMuBlH4SGWSMEt8dv93v4ba1K+1YrigUQXYXcL6PQKwbgX\ncOALhR+jpG2GT5SHNNEAQeNOnX26BLglgE2GVgVWOEzfa9hP9w0Bpig80SuW\n/b9bbw8zjsR3ceV0TzcGaibupyuI2oUXBOMhcUWPDc5vUYcWC4yY/ORHa+AU\n5h4KRfXKI9AXiGJZ9vMVArUc0RfGft5st5iuOKzomAlniR0cJncA1dh4g5Fi\nQ/3s7PYGPYfXbh8Jja7IugYrOlKi+yH/mtZzE0iTzg0xr6Vcnxm8pZAdfLBx\nDYTU4JEO6aqI4ll05KcOkpLlNNKPg1WiWCVV5QdUgevTRVoHfV5h+4/jYfdn\nr278eHDpNAv+4L1cgrB9GgMbVie8peVZqDcUdA7XWeOTUfucBnTvDWYXrpmU\nzAasCu9TBT3jv2Dkxt66xAIJ0G38zBrlMtDpepNhXuvlTyRXhUzDB40rMb+a\n9IrgDS0691xl0/JunC8s6ChGAjYlQJRC/LZCz/hXBvITbUrn1vUPfLfTM03q\nFvnT\r\n=LI1h\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDYgaOdxTBF4HNnI2XB9jNoIAdUfylVzJPI0nhrVlchPwIhAMLG18k5rYamkIyz8LubxCVT3HpmffuH9XNg1Nl9FJVL"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.2": "2021-11-07T08:39:23.227Z"
+      }
+    },
+    "ccount": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==",
+            "shasum": "17a3bf82302e0870d6da43a01311a8bc02a3ecf5",
+            "tarball": "https://registry.npmjs.org/ccount/-/ccount-2.0.1.tgz",
+            "fileCount": 5,
+            "unpackedSize": 7344,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2lnUCRA9TVsSAnZWagAARlEP/iscYE7gGNJiDLjF2MaY\nXZnQV1XZZ9kyYf9rtb9r7xnD/Xr/rN8h9Ytp6g0N3uXa25Q9U0BRHGi2w05h\nEbcQCv+8HEEUJuG6AoSaX4EP6XV8KGO6CsNayb97AX5z9Y089+LBVhNIYYib\nNHoFWUFX1w4VNbnWTsUXfniOxTAuOinn5x3KZulWcTMtPBh+uPlFlCKXfPJF\nmes3WOu5rjjuzS/tuNfzKpMKwhvetWn4Iac0Fsnf5vjW8zwkVk9Mt+CwTMby\n42rp515yTG1RsIYsew15kT/tMvfe8dAKnhmC/vxIiFa9AgdrkgAy4kr6B8gt\nZQGPgnUDQlDnHAZs3rXP67mIfl6a7haJHxwD2tpl2vBnA/GnrttHaZrf0kpr\nj9hJojnpQWz/eZtZuJfULzhc7w9NYH9VEEg24YZD0LqgEzAjfeyBUyiXwnUt\n1/0WLnUxn/AxOx5kmZqaBoeQv5Q2P0zNvqHC8q29HtY+UfJJLResELs3X8FY\n1S7rbmvg2OeV1boq8rLGu43HtEvofBDKzHpRhicmz2flsLrp+i2EjKMxGWrk\n8Ap1y38EQRqLRGcwYbox8PirVzKPgDGDfNcdLFjEIAW99Nl/G74b7bFuoHpT\n7+1Xc+fUdyZdwqZV4PrF7vwhZ+jlXiGTSNWtWjwjwyS6dq66RPTjbZlAeTRL\n0frM\r\n=khoe\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQCPmqNdUX5XXTFiXF8ajjTCQRM1QrQ5fHC9T37l6Af7AQIgBIOMGU0VykPeinjRy8i0s0ha02CcRg2FLIqUzKZWuBI="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2021-10-28T09:38:13.774Z"
+      }
+    },
+    "character-entities-html4": {
+      "versions": {
+        "2.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "generate": "node build",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-1v7fgQRj6hnSwFpq1Eu0ynr/CDEw0rXo2B61qXrLNdHZmPKgb7fqS1a2JwF0rISo9q77jDI8VMEHoApn8qDoZA==",
+            "shasum": "1f1adb940c971a4b22ba39ddca6b618dc6e56b2b",
+            "tarball": "https://registry.npmjs.org/character-entities-html4/-/character-entities-html4-2.1.0.tgz",
+            "fileCount": 5,
+            "unpackedSize": 11364,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2lxyCRA9TVsSAnZWagAAaZoP/jak6AxHfO6xx5JiNwZW\njqxbEjua+KnM+btib4U4IUsc5coQLOn4xVwz2lokVQxORNIIy67L6WPS9yye\neaVkhOSgWNmDxl99awVmUvoYXolMZzG2ZpmdoZX4PqeKNRDJM6YuIigWZizz\nxz6gV3qkSa066r3eo7RUBozL1/cjz+ozPul20VUbLj6z6nTdN+debinkqL0W\nRMV/EN+OnhY1IeisWjcbT2z/CwNwNo28SaDAqYkBArGHb1iHJPBjlcEKWhyV\n5rVmBEbt8iKd8ZOaBn89Cysu5+VKxh29DVpB7AZvDkCsAXhkz+vMjrs8k+6w\nKh/W1Hv6FR+4GbOF/vkMxlVtjRX+XtyLpvkCWWzaQkT7iWzCMoG3uCk3dDZ8\nWlqBpzjTGTFDo0WyWcLnMSQr+bGes5Erro8d7lSRj+jaDpSKO9FVcxgJB12h\n//ALdQsUcc3gGAiJl4s5lTp8bTZUeohfH9ea7ddKNdobS5Y3rVoeOnj02x5f\nUCHNLoxecTCZbnhrB1yAI+pmXjna1wlAKTev2orV7BT8L1c1/exJIiEcq+c/\nGDUXqmc67S5RBXSH/eK4DEuOM6caIkvkXf3hwK8A83uq9LC0rKv8uMcIF9y4\nvA2nvOgdNpOvDvWEjfyA7mrFhwCXsvEcAiijhCgPLE5CNJqF8f3nSMlsF0if\n5qDO\r\n=IT5+\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQCDPRKl8mBuEDSAUTURMUpNTKWEkJw7PaKEFruPabiaHwIhAORzgOBdl0VLNZgAyCY905NsehTlcOqwYFLOhg2upzLA"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.0": "2021-10-29T14:28:35.375Z"
+      }
+    },
+    "character-entities-legacy": {
+      "versions": {
+        "3.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "generate": "node build",
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-RpPp0asT/6ufRm//AJVwpViZbGM/MkjQFxJccQRHmISF/22NBtsHqAWmL+/pmkPWoIUJdWyeVleTl1wydHATVQ==",
+            "shasum": "76bc83a90738901d7bc223a9e93759fdd560125b",
+            "tarball": "https://registry.npmjs.org/character-entities-legacy/-/character-entities-legacy-3.0.0.tgz",
+            "fileCount": 5,
+            "unpackedSize": 9141,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2lx0CRA9TVsSAnZWagAAsgsQAJJWYjkoYEq6U2jj9xh5\nZHBcDBHiKVahq59wx/5NwbyGaP6zbhNUiNQBHY3gKnFeA+XeI9OL0MT+Ady9\n7rugskCgDPGTloGiHU9FS91Ghj77vix+VW07zmRjLUCa15HV2GwYq7rY81Jr\n9hcd2a3Crkif9jcxN52u2etxhzw8WDPuFpZZiaq/U/Q7bbeing/Zli7KhARt\nuqbitYpYpdta0i2gr954mS9hBIeAxdmg498kJjdR4z/oQqnUtQHivF+HTuM9\nmVWl3ETAP8rzGchsgANyN9MM2PPlZAq3KR76NovJ8w6FTDxAZx976W6w+uBI\ntAM+nzYYYLF0rflDg5ph/hxVWhTzC8utvYdvq82RHqdMNeZVZL/2F1vsGbn1\nI9h8q25/5NVuENT+/w9cr30Mk9qrXbdDZUDRkmZd9Kn2kCW6SQXj5X91vLhp\nImWEqRD/zNTQuABO7p7f+bnDR5ih/z9cUGSznGuKS7v2QLD4Zpx7qDw8wT0n\nu+WZUULrXVQ7U82/6bR+uwiTp1DkOQhI7u55cFI0sqE/QrVk/gAOXOV5zgfF\nMSpF5oR1kFyWtuVkRvRcp/O+NZuplKxugZngwrnKqm4TyY6YQafBUABxjtH0\nGr8GDAWvpEeW/V5eF33igc7hEHDFyI/q7rQpr2b9fhEJx2Hm3fCd63WcNDkX\nXlRF\r\n=K0vP\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIADiz2vd0no8uqI/G0f0FTD/Dc3mlT7CQtEqHqNvV9N5AiAKgMl7t0OhjTea/7HL/T4yRSj0bZk7vVryH57dQoNzmA=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.0.0": "2021-10-29T12:50:20.435Z"
+      }
+    },
+    "character-entities": {
+      "versions": {
+        "2.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "generate": "node build",
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-shx7oQ0Awen/BRIdkjkvz54PnEEI/EjwXDSIZp86/KKdbafHh1Df/RYGBhn4hbe2+uKC9FnT5UCEdyPz3ai9hQ==",
+            "shasum": "2d09c2e72cd9523076ccb21157dff66ad43fcc22",
+            "tarball": "https://registry.npmjs.org/character-entities/-/character-entities-2.0.2.tgz",
+            "fileCount": 5,
+            "unpackedSize": 44634,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIFdNEGjl1f3JA/p/8PdIvkHn/Z16jY54YOYu5Xm02GCCAiBFPmNnizViqUSmnLgKNqAAEZkQcm9znoa05X1U+I0Lrg=="
+              }
+            ],
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJisyCiACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2VmpWGg//cVLwU1luA5WwC/R2Xrowk4G9R2K33LY5/hdAM51eP2ZMveHf\r\ny6AA++N0AVBL3i3r4cExoIBIKEVrHvYY+SJKhxi0YHu7dfCSuJOOIxoWnDxu\r\nlRqPEPZ6mX0zWwChF4jaosnuorid7soi0SZxry08BRtmZuftoySz24GXB7VG\r\nZHE/gA0KajfWiy2nhniT50GLvASKlYe6iQElxhnFXOWxa2Q3DMrId9133uuv\r\nUTmAPaBvVMKK9a59bPaotpoIU0ftNmRCI8x0O/Q4Obf+wafraivxrMLs8zkj\r\nzR93yxlp9uvp+ylZoKEEXRWb5HlSh+gSjYnooF2zXKdRDPJ4JPcfAhUjFNB6\r\nCOj8Buz1+5WwF1SIviyOYdyiN3fei9k8CcmZUwapFTQXySiiWH5vcLRGzHZ1\r\nVBnHSWavRW/3RjAlYdjySUm+sXnFfK/hruFxVrPTwGsEcAPHkRMgw6iKMbht\r\nFAiQVpyUslUGIMuOxdp2poeXKIDTKXq5MNS1u2AYF9brRw14Hy25v9wZBOd3\r\nv5KJgdACuRbSr0FDz/q1zvQFlTilRCqRu/suyOs26Y6YR+XY6uNbd36cjiU3\r\nNmZT+UdCGvyUhtePH7pwu26Xc3wLRuovREjKSVahlPQ22Nyuxf9Iz8awFjz3\r\n0q14OubtyHarGlJSR+63kw5/I6NZBvZ2Ifg=\r\n=D3Hg\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "2.0.2": "2022-06-22T14:01:06.906Z"
+      }
+    },
+    "character-reference-invalid": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "generate": "node build",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-iBZ4F4wRbyORVsu0jPV7gXkOsGYjGHPmAyv+HiHG8gi5PtC9KI2j1+v8/tlibRvjoWX027ypmG/n0HtO5t7unw==",
+            "shasum": "85c66b041e43b47210faf401278abf808ac45cb9",
+            "tarball": "https://registry.npmjs.org/character-reference-invalid/-/character-reference-invalid-2.0.1.tgz",
+            "fileCount": 5,
+            "unpackedSize": 8428,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2lx4CRA9TVsSAnZWagAAD2EP+QB1NKAyuRqArMppYBQz\ncsMsGeac/QQOk23R28eU7sJgSdhyHdGwXmOIaVoJu4yPLOdrQn5GqBdtY4ia\nBsBEAiAxu3B/jO7iKEpT4bE/WdaNdgRspsA8IHFT2npSI1nJR7wwNupsMCZ3\nsH1NnttYzqVeDTBiqenxuOWfMYnVZnvhvueL5HTSzo2ubLGvBciFp4t15Rdx\nkbjHloHh1kogJp7zEQ5ljlasYJZsAcWgopTOwemqwrQIA/D8jjwQpekHCsb/\n1HE+oXz5aykN/lh5lyw5UmGAq4wS0tqX6W8H9KGJsnoJjSPALAGAInd1C2tv\nXzEdnF9q/RTZ3wjh4HMfcLcWKxRbyLy4wbt3T7Vsr5g525quzLiVQU60oWch\nyN/AS0r+VRKztraef/OS5156S7pzi0O82N38h237Wwc81i2Pw+AgGxlSAxzO\nyion2HBTvYYj0AREraoPOjmnLPbPS5BUhSpNWVxOOoEbxCgF1QXL0Y67b2xb\nEsgtzzgiqjwwtu9XJbJlHoz691UjVfOKAKhsMZ3zbNfMpzvX3BvyG39kTzaB\nF/mgyobmqxwrw3EDWjYf+8lekHLVN6ymrYv941h7LIV5Zg3wERm4rTUgEIYt\ndccaX58scU/AVJiZ7qK0xIomi8g6b2psPc1sLoTRVs/j+3kJrgV6iEArFFSy\nvprs\r\n=0Iit\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIFgTdIdbvLv16BhUnNCPlLUaX1RdAMp1D6KnamcEzzJAAiEAu9FKQmm5YZvo3OKzgt2gDzhz+aSC3UNAcTbSTvkNBQA="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2021-10-27T16:35:51.866Z"
       }
     },
     "class-variance-authority": {
@@ -1140,6 +1576,78 @@
         "2.1.1": "2024-04-23T05:26:04.645Z"
       }
     },
+    "comma-separated-tokens": {
+      "versions": {
+        "2.0.3": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==",
+            "shasum": "4e89c9458acb61bc8fef19f4529973b2392839ee",
+            "tarball": "https://registry.npmjs.org/comma-separated-tokens/-/comma-separated-tokens-2.0.3.tgz",
+            "fileCount": 5,
+            "unpackedSize": 9971,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIH+ULRh568h/85gtMwXA/w3MQ4nQKsEVEl7hBShwOz3BAiAS2upAAM+3Dfn8ALxTNTwG7JcJufZs7EJR5ezSXixzJg=="
+              }
+            ],
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJjcgWwACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2VmpPQg/9Fu00/Pj11IX12yRPFFfZOoi9CgZf0Uq/VUYFf15wmgRlZTFg\r\nkDJfqUheUD+S+ieX6CmCj54XWXZ33Ozqmmon0LKLcO77TR489k9vc5tTzMm5\r\ndmCEU2zsLCopfemn4qvwGR/Hv3t+l0WtY1UNH/UADF2pWbvZsG2nYpy2CzD9\r\n1WiAYoGvGU1XtInWu/St8NqshiOTG4jisPmiJ6Xbh9Y/Ja8MdGR1dbYugPFm\r\nBCGKv+CzKWAkIF39SFZG/kpFVouFDOLItUk1tJ00grTYCKMxXghS74aMyV1z\r\nq4VrBXdSInTCntvCDNb4id99/ANCSFboueFopYH+uj7SJTmx9kYRiNf/CCbk\r\n9yr56013jjYcB1JtoQwSQq/oC1azqPbajrlbADu0hSu8+EZNcBZDxKyiifjz\r\na/UGFi/+42ol1wLDekM7tlDD/cG6wXcuqhOdatCUraDg6iGRxcE95fQQuool\r\nAS+gPTbzKOIbz6krAYlTXV/eNJLytrY0aJAdVSAcLqOdJL8U9qnJAtkARHOl\r\nKYSWrtjqVtjwnymmlV2pDvZI9Zt7eTevmk+LgPkFMq/DeFTJXvZ+mZn45ERL\r\nJyaoQBdYfuQTA26C/iKRj8TMtcb8/P8lVvcUAtR+Hsa9ujmpcnZ87lPppcCc\r\nICix748FAZgKVJptXNEwHldtX6ZAHLjmpfs=\r\n=uX2E\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "2.0.3": "2022-11-14T09:09:04.761Z"
+      }
+    },
+    "commander": {
+      "versions": {
+        "15.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "fix": "npm run fix:lint && npm run fix:format",
+            "test": "node --test && npm run check:type:ts",
+            "check": "npm run check:type && npm run check:lint && npm run check:format",
+            "fix:lint": "eslint --fix .",
+            "test-all": "node --test && npm run check",
+            "check:lint": "eslint .",
+            "check:type": "npm run check:type:js && npm run check:type:ts",
+            "fix:format": "prettier --write .",
+            "check:format": "prettier --check .",
+            "check:type:js": "tsc -p tsconfig.js.json",
+            "check:type:ts": "tsd && tsc -p tsconfig.ts.json"
+          },
+          "dist": {
+            "shasum": "397e6a353fda8e9d4e1eb9e3c0c28644cfd69406",
+            "tarball": "https://registry.npmjs.org/commander/-/commander-15.1.0.tgz",
+            "fileCount": 12,
+            "integrity": "sha512-cgnQ88TRrWcC7pVq46RzJVRMktu3W2RcbnoidnfBsl1bmDCBwJS/udcIZpKoCrbAYYaCqsz1yZCVIgbIaU3ddQ==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCxKkRStwM2jUsKk02QuGQh7BmXnUR8aAJEOqFAQFOmlQIgRM/kg7/K2/ymZxn/CdC9bS7hwkBZg6DJWXPWf/s6Ec8=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIEHN9G0ADS8C0QhrwXMOCbML5fTm4Bd1R0MIr7EWEjU6AiAT1fDd2uUNYlnIX9m9HBlUr1t6LauxtSND0M9CJqbIug==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 207052
+          }
+        }
+      },
+      "time": {
+        "15.1.0": "2026-11-07T01:27:22.311Z"
+      }
+    },
     "csstype": {
       "versions": {
         "3.2.3": {
@@ -1176,6 +1684,96 @@
         "3.2.3": "2025-11-17T11:42:27.045Z"
       }
     },
+    "debug": {
+      "versions": {
+        "4.4.3": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "xo",
+            "test": "npm run test:node && npm run test:browser && npm run lint",
+            "test:node": "mocha test.js test.node.js",
+            "test:browser": "karma start --single-run",
+            "test:coverage": "cat ./coverage/lcov.info | coveralls"
+          },
+          "dist": {
+            "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+            "shasum": "c6ae432d9bd9662582fce08709b038c58e9e3d6a",
+            "tarball": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+            "fileCount": 7,
+            "unpackedSize": 42793,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCICInafSZ+sajZhfNPQj8Qh6jqz8p8TN8EukVSyY1yMj+AiAptzBLrvHsI3+t0d+QToir6keiBEy9LngkCOpDUm81uA=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.4.3": "2025-09-13T17:25:19.732Z"
+      }
+    },
+    "decode-named-character-reference": {
+      "versions": {
+        "1.3.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-GtpQYB283KrPp6nRw50q3U9/VfOutZOe103qlN7BPP6Ad27xYnOIWv4lPzo8HCAL+mMZofJ9KEy30fq6MfaK6Q==",
+            "shasum": "3e40603760874c2e5867691b599d73a7da25b53f",
+            "tarball": "https://registry.npmjs.org/decode-named-character-reference/-/decode-named-character-reference-1.3.0.tgz",
+            "fileCount": 9,
+            "unpackedSize": 9277,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIErwzIg7BbbxQJVH4/TeOwUGd12aGvg8wk+lQWbipjjXAiEA4oGcsEBqVQHyYiArHYMEY1vtWFUhTx43E38G6PkRnrM="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "1.3.0": "2026-01-19T19:53:01.619Z"
+      }
+    },
+    "dequal": {
+      "versions": {
+        "2.0.3": {
+          "license": "MIT",
+          "scripts": {
+            "build": "bundt",
+            "pretest": "npm run build",
+            "postbuild": "echo \"lite\" | xargs -n1 cp -v index.d.ts",
+            "test": "uvu -r esm test"
+          },
+          "dist": {
+            "integrity": "sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==",
+            "shasum": "2644214f1997d39ed0ee0ece72335490a7ac67be",
+            "tarball": "https://registry.npmjs.org/dequal/-/dequal-2.0.3.tgz",
+            "fileCount": 11,
+            "unpackedSize": 14229,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDgWgKlZIYPELAoZgvd75QHuBEqzptycatd8f4ZuS/PQAIhAPhLUsj3mbddEtxP/pDnv5pL7jzd13Qyot9JoTMiSlHT"
+              }
+            ],
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJizLJAACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2VmpopRAAmHhHzk2y0ADyGW5AylMlcuu05lzJjyA1wKZcA+l4QQabeSUx\r\nPb+xnee4+iSWaIL0LVNqOrOtOE75C1f+h4v9s4013utIraLKHffPpRz8R7B0\r\nt9zBFRx8v35U89EM932/gHn0zSXJMiNozfboYQEfJBoUZF2mdMsB6i/F7FtW\r\n7GTJ3ChjZBS6ujPFYHNx4FJN1tAP9sjyj2a5zydRyTZZyyS1RbmHwjNw0Fct\r\nGXZ9fwBBagzcHlTohCDy2jIQjj/dwy9NuwTEG9Dzc6b0MiQSp3mZjlmQv4R7\r\nhRF90vmoo3Q20eBBKbPFZxkFJIJRqVVOKjEW7lw/kCA6+xNtSGHG05Q/0Mau\r\nsFEkvELdBOwNbouG3jMWMKNljDv9Z3P12+qQOnf+gQFKQqE/myBzZb7SL3VW\r\ngeobdyO+si7fEbK8kgrGSxNOId4vzZauR7dSF7nzRqDEjNzVkNgxIUmJszEZ\r\nOHPk1pm/5oTSrcwAYh4zo37BqpzQqmqv6fvC1TsEEeJ5IAaGGUojRYdHtaAv\r\n9SOHMuWB/iWoSO+LwSREio+XN4pkJFi5ThGq+Z97KFQTE+TAu2DtjPX/8/w2\r\nQZb8WkBo6pCol2YfB0sYQ/YbX+yMmuLVy1qlYzl2cGA8zWsSF8H3EdChXObD\r\nbrrIpo6Uf04oLrymAbAh9QXRbvKwEyzyVWM=\r\n=SMb/\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "2.0.3": "2022-07-11T23:29:04.965Z"
+      }
+    },
     "detect-libc": {
       "versions": {
         "2.1.2": {
@@ -1209,6 +1807,98 @@
       },
       "time": {
         "2.1.2": "2025-10-05T12:46:33.077Z"
+      }
+    },
+    "devlop": {
+      "versions": {
+        "1.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api-development": "node --conditions development test-development.js",
+            "test-api-default": "node test-default.js",
+            "test-api": "npm run test-api-development && npm run test-api-default",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==",
+            "shasum": "4db7c2ca4dc6e0e834c30be70c94bbc976dc7018",
+            "tarball": "https://registry.npmjs.org/devlop/-/devlop-1.1.0.tgz",
+            "fileCount": 6,
+            "unpackedSize": 22010,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIAtaddfjV6tQ2/T06R4E6eGr5BebRxwZj+TNTB8FGVFcAiEAwxoI7Nz28LqhF40MisosEFwPB6rkgQP+C+4H/Ax4Gfc="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "1.1.0": "2023-06-29T15:17:11.346Z"
+      }
+    },
+    "dompurify": {
+      "versions": {
+        "3.4.17": {
+          "license": "(MPL-2.0 OR Apache-2.0)",
+          "scripts": {
+            "dev": "cross-env NODE_ENV=development DOMPURIFY_BUILD_TARGET=umd rolldown -w -c config/rolldown.config.js",
+            "lint": "xo src/*.ts",
+            "test": "cross-env NODE_ENV=test npm run lint && npm run build && npm run test:jsdom && npm run test:browser -- --project=chromium",
+            "bench": "node scripts/benchmark.js",
+            "build": "npm run build:types && npm run build:rolldown && npm run build:fix-types && npm run build:cleanup",
+            "format": "npm run format:js && npm run format:md",
+            "prepare": "husky",
+            "test:ci": "cross-env NODE_ENV=test npm run test:jsdom && npm run test:browser",
+            "build:es": "cross-env DOMPURIFY_BUILD_TARGET=es rolldown -c config/rolldown.config.js",
+            "coverage": "rimraf .nyc_output coverage dist/purify.cov.cjs.js && npm run build:cov && cross-env NODE_ENV=test DOMPURIFY_COV=1 node test/jsdom-node-runner --dot && nyc report --reporter=html --reporter=text --report-dir=coverage",
+            "prebuild": "rimraf dist",
+            "build:cjs": "cross-env DOMPURIFY_BUILD_TARGET=cjs rolldown -c config/rolldown.config.js",
+            "build:cov": "rolldown -c config/rolldown.coverage.config.js",
+            "build:umd": "cross-env DOMPURIFY_BUILD_TARGET=umd rolldown -c config/rolldown.config.js",
+            "format:js": "prettier --write '{src,demos,scripts,test,website}/*.{js,ts}'",
+            "format:md": "prettier --write --parser markdown '**/*.md'",
+            "test:fuzz": "cross-env NODE_ENV=test node test/fuzz/sanitize.fast-check.js",
+            "test:jsdom": "cross-env NODE_ENV=test node test/jsdom-node-runner --dot",
+            "build:types": "tsc -p config/tsconfig.json --outDir dist/types --declaration --emitDeclarationOnly",
+            "test:browser": "playwright test --config config/playwright.config.js",
+            "build:cleanup": "rimraf dist/types",
+            "build:umd:min": "cross-env DOMPURIFY_BUILD_TARGET=umd-min rolldown -c config/rolldown.config.js",
+            "test:happydom": "cross-env NODE_ENV=test node test/happydom-node-runner --dot",
+            "build:rolldown": "rolldown -c config/rolldown.config.js",
+            "build:fix-types": "node ./scripts/fix-types.js",
+            "test:purify-edge": "cross-env NODE_ENV=test node test/purify-edge-node-runner --dot && cross-env NODE_ENV=test node test/purify-edge-node-runner --dot --sinks",
+            "verify-typescript": "node ./typescript/verify.js",
+            "commit-amend-build": "scripts/commit-amend-build.sh",
+            "test:browser:legacy": "node test/browser/legacy-runner.js",
+            "test:browser:install": "playwright install"
+          },
+          "dist": {
+            "shasum": "074bbb24eaa419535ac19ffe7f663104b0e1543d",
+            "tarball": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.17.tgz",
+            "fileCount": 24,
+            "integrity": "sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==",
+            "signatures": [
+              {
+                "sig": "MEUCIBL09a/FRhPiM4b3X+TFZoT/x1DfA/0MJq2cTGk7MQ27AiEAvi1PSlcki3xWeI78qMgy+sOlgQJf7HEQurhVS2+q8MI=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEQCIHQd4PfyWERSfyNFXtW8GM7zQouNEl8+gIMKBaoWIgMBAiBjW6IfIXg+RThMtWUn7s+khCbEzZRMhBNZ3bB307BJhQ==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 1615512
+          }
+        }
+      },
+      "time": {
+        "3.4.17": "2026-10-12T12:41:28.880Z"
       }
     },
     "enhanced-resolve": {
@@ -1266,6 +1956,138 @@
       },
       "time": {
         "5.26.1": "2026-11-03T09:15:19.164Z"
+      }
+    },
+    "entities": {
+      "versions": {
+        "6.0.1": {
+          "license": "BSD-2-Clause",
+          "scripts": {
+            "lint": "npm run lint:es && npm run lint:ts && npm run lint:prettier",
+            "test": "npm run test:vi && npm run lint",
+            "format": "npm run format:es && npm run format:prettier",
+            "lint:es": "eslint . --ignore-path .gitignore",
+            "lint:ts": "tsc --noEmit",
+            "test:vi": "vitest run",
+            "prettier": "prettier '**/*.{ts,md,json,yml}'",
+            "format:es": "npm run lint:es -- --fix",
+            "build:docs": "typedoc --hideGenerator src/index.ts",
+            "build:trie": "node --import=tsx scripts/write-decode-map.ts",
+            "lint:prettier": "npm run prettier -- --check",
+            "prepublishOnly": "tshy",
+            "format:prettier": "npm run prettier -- --write",
+            "build:encode-trie": "node --import=tsx scripts/write-encode-map.ts"
+          },
+          "dist": {
+            "shasum": "c28c34a43379ca7f61d074130b2f5f7020a30694",
+            "tarball": "https://registry.npmjs.org/entities/-/entities-6.0.1.tgz",
+            "fileCount": 86,
+            "integrity": "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==",
+            "signatures": [
+              {
+                "sig": "MEUCIQC3VvSO19lPnaq+4Txc7DJo5/IKsbFMacfN/ZIevM14ewIgONXumuj31t3ttXPY9aEy1yrsivfof3R8xPA84sfXIMI=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 540551
+          }
+        }
+      },
+      "time": {
+        "6.0.1": "2025-06-08T19:31:24.093Z"
+      }
+    },
+    "escape-string-regexp": {
+      "versions": {
+        "5.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "xo && ava && tsd"
+          },
+          "dist": {
+            "integrity": "sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==",
+            "shasum": "4683126b500b61762f2dbebace1806e8be31b1c8",
+            "tarball": "https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-5.0.0.tgz",
+            "fileCount": 5,
+            "unpackedSize": 3659,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJgewKuCRA9TVsSAnZWagAA/R8QAKIjcAQrtpAGFWhms0M2\nudKffrknPQbQXcgJkJJrZEvxGcUk9Hvcka+R34RHwhm3jYtd3vubQk/AY4qR\n6IgtVJ6yuqq1Ev9NoeniZs6Mn6iS0nqluTK8YoZnupTJHAk/idO+SrW9F1B3\nEOzaRyhPCGaImNRCwNVy1RKXG67kzccqUGdqufz5sui1L0kt7kCvhUYRBQ44\n7iOxLRwTE02PpxyCN59jMEkxP26wAmVmyMMXuu5zOhUHZLX9hgL4AeTdeBrc\n8rP/VDYcck1tDYRHJnhB5VKi+xKqaV0TTF5s0dMJ/AgPoNeYpn9YNEEFZBt7\n3OqzJFm5tt2GwQ6NTh0O9bsGzxyco1wBLGWqUTWBf0mEwtZayLL3OKTNxZFl\nMC5hk8T1NrrVAOmj+Fdwk/eXJ8afhbiPVM8EDMgHFhgVFkjCfH7EN8MR4rs+\nJb2iVZX4F0RPFgmLUhu8cpdrB3+p27tBkeyoSHF35tV4W7LGuVhEMeYLy+HO\nwYTIa5ifCGckRcOVaxSyONM5Dtkv8RCGU5YYz9KXqwiFqtEc+arD43n3vro4\nnq7ZxBHrX0F220uhaxMFqNr1E66UAb9Dfoh25hjdt5U7zNdKQ7kQE/vEfz3U\ngcuO4H7PfM++Y1ZJrENaFM/an9+2xs0m8pmM61EWXM5WCA98/ALZ+PDCLDwK\n8+1q\r\n=iLSV\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQDriPVVBNO+MIoPnK6z99gUKJJG33qsCk8gF+RolC058wIgA6LiFjLoZbITiGeW3IjuuZtERJD9VzL2kRYgNwF08Ac="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "5.0.0": "2021-04-17T15:45:50.334Z"
+      }
+    },
+    "estree-util-is-identifier-name": {
+      "versions": {
+        "3.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-hFtqIDZTIUZ9BXLb8y4pYGyk6+wekIivNVTcmvk8NoOh+VeRn5y6cEHzbURrWbfp1fIqdVipilzj+lfaadNZmg==",
+            "shasum": "0b5ef4c4ff13508b34dcd01ecfa945f61fce5dbd",
+            "tarball": "https://registry.npmjs.org/estree-util-is-identifier-name/-/estree-util-is-identifier-name-3.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 11862,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIAWi5owhEn7ybAkj5qhWoKLICxeM9K38tCGKk2YRUF4aAiAD9XablIdjQuMiQGGYqnGMqAtzRHjBRkRZd51maSf16A=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.0.0": "2023-07-19T10:26:42.216Z"
+      }
+    },
+    "extend": {
+      "versions": {
+        "3.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "pretest": "npm run lint",
+            "test": "npm run tests-only",
+            "posttest": "npm run coverage-quiet",
+            "tests-only": "node test",
+            "coverage": "covert test/index.js",
+            "coverage-quiet": "covert test/index.js --quiet",
+            "lint": "npm run jscs && npm run eslint",
+            "jscs": "jscs *.js */*.js",
+            "eslint": "eslint *.js */*.js"
+          },
+          "dist": {
+            "integrity": "sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==",
+            "shasum": "f8b1136b4071fbd8eb140aff858b1019ec2915fa",
+            "tarball": "https://registry.npmjs.org/extend/-/extend-3.0.2.tgz",
+            "fileCount": 10,
+            "unpackedSize": 23461,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.4\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJbUPRbCRA9TVsSAnZWagAAQvUQAI7RuKHKR/BtJGQTRMjw\nQr46YK0xU36ey91h+EfjKesrI+6sPi6r3Fi10zQ/IocxbXoGCfnGt0XlSD1e\nAWSMSKVxoRbOg7txu9RiMbfHZ0kdXH4WU+i83FQAG1goqDVQuNAsj4UzktrO\n6ShU1GDjmeWRmZpVwHnlpwfITGTMdHM6j7RJNnLQYoFlssatgk8txFeOzYeh\nNdBxuxtki5H297qXc0inWoNa/e+ahsGRM6dgDRvaZlWaIvDoDr6vQgpx4iGc\ndacBNB6P7SYS9ArdzUtTivvTHv7l2MHCL2JlXk3e4hq6I8wBnkQFgMas8b9b\nVGD4mUCgFwC80wQ0r19r8t9DmuOhJGobcj/nGxuvaeM+mbnuHiADhLTOV3dW\nQbnZDlMRQnODmGwxDK2yyTqZJrBzFkZvb/yRdSucxQgHkGraM+NOkbb0iSMG\nnyJK8U0EyjEvyRMMJEXwO+jb+DfULrFZHLt4whkG53G8QhoeF8qjmbZ8r0Ea\nMxuS25wP2sLS27fljk516N9WMjMh4rhhBj6j8hUDij3F0ZVy/wGnnpDrz9cU\nB+ylJKsgQb6DWMXTmj2OZ/QJny1XEebCxdceIN8HcIvxHBjs+rWBlWT+QLXU\n/wHy1hEd4ZXcV/OFQHj2M+sWhc+sUpFKvtObZbxGOODSE1IDSdisVdjwFTx+\nMEht\r\n=SSFB\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIDxZybFUK8W8pqP3zITcYY1oEc/KMJgCw+yxg7lO++A+AiAYxGbSC57/nIBPp4VKAPHLsSPJMXl1eFaZ3Kx3pxCp3w=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.0.2": "2018-07-19T20:28:11.447Z"
       }
     },
     "fdir": {
@@ -1334,6 +2156,538 @@
         "4.2.11": "2023-03-16T19:30:19.323Z"
       }
     },
+    "hast-util-from-parse5": {
+      "versions": {
+        "8.0.3": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --quiet --output -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "830a35022fff28c3fea3697a98c2f4cc6b835a2e",
+            "tarball": "https://registry.npmjs.org/hast-util-from-parse5/-/hast-util-from-parse5-8.0.3.tgz",
+            "fileCount": 8,
+            "integrity": "sha512-3kxEVkEKt0zvcZ3hCRYI8rqrgwtlIOFMWkbclACvjlDw8Li9S2hk/d51OI0nr/gIpdMHNepwgOKqZ/sy0Clpyg==",
+            "signatures": [
+              {
+                "sig": "MEYCIQC3v3mwcBQ45tVY1Hka5Sj97a/Ns8OuAXkTdSoSfIOFHwIhAKTtC/mC4SBdxWDEdIovLy0e4Somn9MQPaiaznqfs8Da",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 24588
+          }
+        }
+      },
+      "time": {
+        "8.0.3": "2025-02-19T14:42:45.779Z"
+      }
+    },
+    "hast-util-parse-selector": {
+      "versions": {
+        "4.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage && tsd",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-wkQCkSYoOGCRKERFWcxMVMOcYE2K1AaNLU8DXS9arxnLOUEWbOXKXiJUNzEpqZ3JOKpnha3jkFrumEjVliDe7A==",
+            "shasum": "352879fa86e25616036037dd8931fb5f34cb4a27",
+            "tarball": "https://registry.npmjs.org/hast-util-parse-selector/-/hast-util-parse-selector-4.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 12652,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDhPL+zMgGPx9vJPk4CWEa/SUv15fiEMkSK4UB8vuDddAIhAOCM7pJU5jM27UegQuQ/oI+NAjH0m241jmVycrDWB/n3"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.0.0": "2023-08-01T11:57:16.332Z"
+      }
+    },
+    "hast-util-raw": {
+      "versions": {
+        "9.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "79b66b26f6f68fb50dfb4716b2cdca90d92adf2e",
+            "tarball": "https://registry.npmjs.org/hast-util-raw/-/hast-util-raw-9.1.0.tgz",
+            "fileCount": 8,
+            "integrity": "sha512-Y8/SBAHkZGoNkpzqqfCldijcuUKh7/su31kEBp67cFY09Wy0mTRgtsLYsiIxMJxlu0f6AA5SUTbDR8K0rxnbUw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDw35Gd5bMPyC/qxm8jgINtTnpPa2AynT/Fk3ejjyq+IQIgfUwOhNZD+4j5FROg7j2zyKQtOwh7Mo8FU3TpNGCesVU=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 34875
+          }
+        }
+      },
+      "time": {
+        "9.1.0": "2024-11-14T16:02:23.969Z"
+      }
+    },
+    "hast-util-sanitize": {
+      "versions": {
+        "5.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-3yTWghByc50aGS7JlGhk61SPenfE/p1oaFeNwkOOyrscaOkMGrcW9+Cy/QAIOBpZxP1yqDIzFMR0+Np0i0+usg==",
+            "shasum": "edb260d94e5bba2030eb9375790a8753e5bf391f",
+            "tarball": "https://registry.npmjs.org/hast-util-sanitize/-/hast-util-sanitize-5.0.2.tgz",
+            "fileCount": 12,
+            "unpackedSize": 47656,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCICayDW9Eeu2ztSQ9vkKUbSwayLAtcTRQeI4oUV2lEj9NAiAtcdyUIrBUtubCyseqjIkU3jeSm4lC0/BPgsLqpHheOQ=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "5.0.2": "2024-10-25T13:36:27.148Z"
+      }
+    },
+    "hast-util-to-html": {
+      "versions": {
+        "9.0.5": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "ccc673a55bb8e85775b08ac28380f72d47167005",
+            "tarball": "https://registry.npmjs.org/hast-util-to-html/-/hast-util-to-html-9.0.5.tgz",
+            "fileCount": 42,
+            "integrity": "sha512-OguPdidb+fbHQSU4Q4ZiLKnzWo8Wwsf5bZfbvu7//a9oTYoqD/fWpe96NuHkoS9h0ccGOTe0C4NGXdtS0iObOw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDch7pNepqiT/E/+ijRlWPAk19zb/3L6PI3mP6d1Z4rjwIgKsH3R3FXpqVYxzYlg9WuG+v6+J8bp4xKgjw2Uq4CT4Y=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 71798
+          }
+        }
+      },
+      "time": {
+        "9.0.5": "2025-02-19T13:34:47.133Z"
+      }
+    },
+    "hast-util-to-jsx-runtime": {
+      "versions": {
+        "2.3.6": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "generate": "esbuild --bundle --format=esm --minify --outfile=example/hast-util-to-jsx-runtime.min.js --target=es2020 .",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "ff31897aae59f62232e21594eac7ef6b63333e98",
+            "tarball": "https://registry.npmjs.org/hast-util-to-jsx-runtime/-/hast-util-to-jsx-runtime-2.3.6.tgz",
+            "fileCount": 10,
+            "integrity": "sha512-zl6s8LwNyo1P9uw+XJGvZtdFF1GdAkOg8ujOw+4Pyb76874fLps4ueHXDhXWdk6YHQ6OgUtinliG7RsYvCbbBg==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDs7ucf0HxojBbgygUMI3vDjz6SjT3tzNp01QYMSldWBAIgJsihKN7kt6QSAVFfLZfWYkbojsFmQXKYfUtsnp8GAX8=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 56610
+          }
+        }
+      },
+      "time": {
+        "2.3.6": "2025-03-05T11:30:29.166Z"
+      }
+    },
+    "hast-util-to-parse5": {
+      "versions": {
+        "8.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-MlWT6Pjt4CG9lFCjiz4BH7l9wmrMkfkJYCxFwKQic8+RTZgWPuWxwAfjJElsXkex7DJjfSJsQIt931ilUgmwdA==",
+            "shasum": "95aa391cc0514b4951418d01c883d1038af42f5d",
+            "tarball": "https://registry.npmjs.org/hast-util-to-parse5/-/hast-util-to-parse5-8.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 20064,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQDjd1d89D7ZYulQaWgdNyn6teEeheYhVATwNccvfZfCLAIhANo/mu94nAo89hnBM++5dUqk3ULdlDAVW3bf/wqRgLMt"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "8.0.1": "2025-12-04T16:34:30.916Z"
+      }
+    },
+    "hast-util-whitespace": {
+      "versions": {
+        "3.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==",
+            "shasum": "7778ed9d3c92dd9e8c5c8f648a49c21fc51cb621",
+            "tarball": "https://registry.npmjs.org/hast-util-whitespace/-/hast-util-whitespace-3.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 11781,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIGSipieT3kKOizmB8JuPQCJATnJ9K2IVAB/t/PLb7YMdAiBuvZZtHwznOM/CVGHp0JTr0Dz1fS+OqleoRKqOpBcDgg=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.0.0": "2023-07-31T15:52:12.042Z"
+      }
+    },
+    "hastscript": {
+      "versions": {
+        "9.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && tsd && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "generate": "node --conditions development script/generate-jsx.js && node --conditions development script/build.js",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "dbc84bef6051d40084342c229c451cd9dc567dff",
+            "tarball": "https://registry.npmjs.org/hastscript/-/hastscript-9.0.1.tgz",
+            "fileCount": 27,
+            "integrity": "sha512-g7df9rMFX/SPi34tyGCyUBREQoKkapwdY/T04Qn9TDWfHhAYt4/I0gMVirzK5wEzeUqIjEB+LXC/ypb7Aqno5w==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDVGkZ7hU3NcPQouzPsT+u0MyoiMOtTl2ka81GOFA3JxAIgQ9QSSduj6otDI6xcwU2sitXOfRqrvhQUPLrovExUQQg=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 49362
+          }
+        }
+      },
+      "time": {
+        "9.0.1": "2025-02-19T13:18:00.722Z"
+      }
+    },
+    "html-url-attributes": {
+      "versions": {
+        "3.0.1": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "integrity": "sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ==",
+            "shasum": "83b052cd5e437071b756cd74ae70f708870c2d87",
+            "tarball": "https://registry.npmjs.org/html-url-attributes/-/html-url-attributes-3.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 8675,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIEVZoTTzl0P6waeqgDagLiWHodQ/HNUX9bCrdJmmGTiKAiEA22puQDqLfhaq1MVF5vPRCs2zVr5A9uqTfpD70ayhNfE="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.0.1": "2024-09-27T11:49:16.930Z"
+      }
+    },
+    "html-void-elements": {
+      "versions": {
+        "3.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "generate": "node --conditions development build.js",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --100 --reporter lcov npm run test-api",
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-bEqo66MRXsUGxWHV5IP0PUiAWwoEjba4VCzg0LjFJBpchPaTfyfCKTG6bc5F8ucKec3q5y6qOdGyYTSBEvhCrg==",
+            "shasum": "fc9dbd84af9e747249034d4d62602def6517f1d7",
+            "tarball": "https://registry.npmjs.org/html-void-elements/-/html-void-elements-3.0.0.tgz",
+            "fileCount": 5,
+            "unpackedSize": 6899,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQD9EmPmUNKgu7KSfpoQ+6b2g7iY0tYVB4hBWNCC3jtPKgIgLW+/rOCC+Mnvs12NylVyAD/Dy2394BvwslqK6DHLksE="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.0.0": "2023-05-19T10:17:19.335Z"
+      }
+    },
+    "inline-style-parser": {
+      "versions": {
+        "0.2.7": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint .",
+            "test": "jest --colors --testPathIgnorePatterns=test/index.test.mjs",
+            "build": "run-s build:*",
+            "clean": "rm -rf cjs dist esm",
+            "prepare": "husky",
+            "test:ci": "CI=true npm test -- --ci --coverage --collectCoverageFrom=cjs/index.js",
+            "lint:fix": "npm run lint -- --fix",
+            "test:esm": "node --test **/*.test.mjs",
+            "build:cjs": "rollup --config rollup.cjs.config.mjs --failAfterWarnings && cp index.d.ts cjs/index.d.cts",
+            "build:esm": "rollup --config rollup.esm.config.mjs --failAfterWarnings && cp index.d.ts esm/index.d.mts",
+            "build:umd": "rollup --config rollup.umd.config.mjs --failAfterWarnings",
+            "test:watch": "npm test -- --watch",
+            "lint:package": "publint",
+            "prepublishOnly": "npm run lint && npm run build && npm test"
+          },
+          "dist": {
+            "shasum": "b1fc68bfc0313b8685745e4464e37f9376b9c909",
+            "tarball": "https://registry.npmjs.org/inline-style-parser/-/inline-style-parser-0.2.7.tgz",
+            "fileCount": 14,
+            "integrity": "sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==",
+            "signatures": [
+              {
+                "sig": "MEQCIFW2QtQt4PTrwcw38MSWzYDbcoRDanhXP9kKIo6vg31ZAiBVI5nKx3B4QPMM9j18S1oghQDkvMl3tuA98xNz4Vompw==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/inline-style-parser@0.2.7",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 66492
+          }
+        }
+      },
+      "time": {
+        "0.2.7": "2025-11-16T02:49:09.374Z"
+      }
+    },
+    "is-alphabetical": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==",
+            "shasum": "01072053ea7c1036df3c7d19a6daaec7f19e789b",
+            "tarball": "https://registry.npmjs.org/is-alphabetical/-/is-alphabetical-2.0.1.tgz",
+            "fileCount": 5,
+            "unpackedSize": 7235,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2wDrCRA9TVsSAnZWagAAgVsP/jmBiJN64v3L/z8zRnVk\nZEHwZCisCl3SssHcLc/5P/YTedqtoeBHqW6uNyyKP43A9qE5W0ieEQOgZkP5\nrVlYmDhR9R8ED04xKfk2ioZTiebAcs7vNwn+txmqis1rT6ikct9kF5AUnZ/M\nC4wIlz3lYm7Nfnu6uqp3n8C8c/qEu/wP+INe64rxHgcA4drgBvzBachIT0Ac\nFNZvo0T9T1aj1IBPIQWPi1RMkadDlw/LPGVPX0kIbr8axF/kDitY0Nvo8HA4\nPTB3veAAsx57+6x49uY9IO9JRsGX4xCl1NHTX0lzfxBzI0vRPv8597Win/3+\nJUDIpDnsLMQGFds9sgpGTq6/YDEniJiz1vu7wCHlwTFQeDKq19pICIMGRLCU\nYjoALWat73f3PC/Px/tjh11X/VGvXRSWlw+0524VlsO8+og5wKdU6rz5lvCV\nRMybd7RaLC7YuLL/Rd6XMMNf9eBMCerM/drteNDLrAO4VXkPoLKoshlQHh3P\n4TXUZq71SfYNYdPN+C8Xqgwj3QTNVJRuh7kxp4MU5OYDzai8Rfn0o7w3cAiA\nokomtjXBa0o+z8+r/zoV5GZi2uwVYBw1CX8QbM45uDXu5UVrmHFwu2lPkGKA\n0hkqPAbw2WuadGROGwTIvUVZ+rdVNQ7f4C1m7H1vIHO/T5jxXieOSlOnUB+Y\nHgFC\r\n=wizU\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIBlkypI33e8xKre/rxCiZidzvxS2JXiDepgRzcY4BYT9AiEAp2cksDgZWUS41Gc9qcer8Xx9cnfVswzwl6GGn4O1XwM="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2021-11-04T06:50:31.635Z"
+      }
+    },
+    "is-alphanumerical": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-hmbYhX/9MUMF5uh7tOXyK/n0ZvWpad5caBA17GsC6vyuCqaWliRG5K1qS9inmUhEMaOBIW7/whAnSwveW/LtZw==",
+            "shasum": "7c03fbe96e3e931113e57f964b0a368cc2dfd875",
+            "tarball": "https://registry.npmjs.org/is-alphanumerical/-/is-alphanumerical-2.0.1.tgz",
+            "fileCount": 5,
+            "unpackedSize": 7393,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2wDtCRA9TVsSAnZWagAARLwP/3fgk8J/RjiV9OG6qBBH\naMqvQf6JIHJTaSBXDm9YsfadNQbgv85D+fsSs5RaiQRdRyFKYGKBHyeVyUx0\nPRjVAzVyyX7X7hWCnJLwriZLIS7XsY2fs2HwjyaRPUUGQELAE4XwgAKSUyT5\nbndhbHayTWEFLj3CMg4w4SuKRSQ3cKFBY/QBFBaNpHt2Ir7mDNz75HSuYORr\nfwnYWMP2rrK9taVy7uncCKJLNzHjx0odSIEYuSwDenp87tn/K1X2t+tq9rGZ\naVWcpEQDyXFV+O8iuveyklkjtv3TvYM5B0T8qERfKzo19WPKv9aIP21PYlrn\nDRTqSwyeCR2osj7/JKhS/zRimbttH4KcAe172r9gLBC5qrEpG62KH9Uj/pOY\nbDZwHT4Q9yJNDt2lsFL5MwXy7eeWz5wT4sAM6m5zKWN5raT8U1IueQKWG9BK\n9H3aBntzyjrI6ED7TKztw04x4dCuARNYopgKTCSfXS75piHQo9QP4L4nbBi2\nzLv+JQemFFHj1CKleyXKdxfi6WKlc02GP1f/Yp720garggYiRaO1vNriQOzR\n6ieHcW7YTad6r3m8gmK8YS9RhW/fbwMLdxY3gKgsP8ZSIbtaNCvDluXvZGG/\ntjGFFhv0VBpkCpTCC5u9H8o0GO3Wgn4+ZNrxCd9mmED8snv3s5VM/C3YIr3S\nyE+0\r\n=Fa7C\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIBXTaRtF2Cv0qSIQIiiCxwQQAWDuu+3/QTemMTbRLyRsAiAu/6+apC2erzWR9xYKmDTMxj6BRIuCq/ZcobGUt5ztlA=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2021-11-04T07:00:42.686Z"
+      }
+    },
+    "is-decimal": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-AAB9hiomQs5DXWcRB1rqsxGUstbRroFOPPVAomNk/3XHR5JyEZChOyTWe2oayKnsSsr/kcGqF+z6yuH6HHpN0A==",
+            "shasum": "9469d2dc190d0214fd87d78b78caecc0cc14eef7",
+            "tarball": "https://registry.npmjs.org/is-decimal/-/is-decimal-2.0.1.tgz",
+            "fileCount": 5,
+            "unpackedSize": 6892,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2wENCRA9TVsSAnZWagAA/U8P/0xoSyBtXHz9iZkspSv5\n6kI1WJN5vwoQeyADTiuGdiKEcuJ/BFnufozul8hFgbD1slMeY/nTt9mkJt+u\n8irfoXN7IgLxJMQQHsB0+q2zTHIGOYIEQPxsoZJiR45NAhcuj6SQ52nbprio\nf7FL3uaU8rnaCldcOvq8P4vQ/HfnwG/z2bd6j5ws/ow45zzdlXLn+bSQ/1pf\nClknbW4YR/Q0L8Bn1A55M7FOyW7I58I2+U1ZQxx0X0ljMh20ltQldIqOSkgC\n3+hCHELsXcw6Ja6taLScryVTppsfY0I43QhsTvgBebthaejn1EgvpUWwcDtM\nu86c9+GFT6yoCqrqFzWSyvvQuV5sbdxJNYgI/Q3AEEGm0uirrE9lVlbPSutj\nZMmIxLpiqQQuIiSmY4RaUs0gmi3jN9W+/Qc2C5JVa9PVoLzXpenKV7LvQqUS\nOd0ssvhc6805SQXlroYPACJ94COsEaUZ2U/5mT05XuavK17tnxIceHF9XV2G\n7hZ1bQyo/kSxkp1g0mLIMjY6RJY41m95rWmKV7gFk7+chUHeM5hwHo2/Ab7J\nSSw+RSOKlHBFqnsNEGpST/SuA0QAxgI7IcYqirL0tnDZoHOKo4+5YSoWOg1P\n1QR+Jz5oTlaX7JYbm+szLY9zynGJ+K4dwd4gD6FS1p/ttpPOaIReOAgqm5cq\nqKtH\r\n=PNNX\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQCU4yIfw5AW6kh4IhYvJIAYp/hpq3XXQRHoYUL2I3XUhAIgEYmwWZzyYtbVpTeVNKwYhZxZxN0iBf+VvX0qLScE5p4="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2021-11-04T06:55:58.815Z"
+      }
+    },
+    "is-hexadecimal": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg==",
+            "shasum": "86b5bf668fca307498d319dfc03289d781a90027",
+            "tarball": "https://registry.npmjs.org/is-hexadecimal/-/is-hexadecimal-2.0.1.tgz",
+            "fileCount": 5,
+            "unpackedSize": 7278,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh2wEtCRA9TVsSAnZWagAALlMP/0/Z6EXRKTm8bBfCoJ8r\nunFwQAVlcCPzFIPUhTZFNBHbkbEl3GkIz4RFfHTTH1oBwsrlYC89czvoQzu1\nWBZXGaCFWtA1YPI4cwLbUi5+czsJzYnQRRh93w18l0vp9dBhZeQW/mkbb5wD\noLHYEi6nomY+bzbPT0KVvOy4mVhlFXDjITMEaEKlAwS1tFRg7ArXi987iuwk\n6bq6rLH0qvtN5RThBhM2zdcvIL3g3DPRHd+PkqbS4dFam0ZWFUuZmWBI7Ab3\n9jkrvGKPVox1GhPwS4ER9IzIc/DaZNbMxHl+r675DP4rK0OSNTL9KNc21HOR\nc5QQJLBXBUk0g4Y8Ocx/yfyk+OLVauSrufC8IQ4GgxKhIX+wg612JRZ4AYgL\nwGg8k6N8KCDZ9KK8geU2yGCJck+a4jA2hdT5ginom1v665JoYGcrG+Lp+jtI\nB5DHeAGLHH7ibXsFfjMgxmtvM8rANBldkerzCNi2zRYCBtieVwdQBi91Gnpn\nZrCqWwsvYsKlASy1mZCduoZ96GAV176oTgTEwwFv+agJ16PjxOBGy4H/Rs7J\nKIrxI3JkIOFnIPQCoUFn3diLDDYMCBYbQkYCWL7xCGHIwPK/yEJjGBW+6Iuf\nT39Zr1IZ0E65kqeYhhmA0VgPGrnfxQe1XWvW62p50yk1NUpBjxL4kbBXC5Pm\nwlEr\r\n=rKyB\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIE7ejJKPktqYs33vDktuuLyuEhqQUIKg9mV1/slGvkNEAiBJHJW9Wa8/JSEmdY8hTg8vY8CMITKaWtw2BVJsHeBGAg=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2021-11-04T07:17:07.036Z"
+      }
+    },
+    "is-plain-obj": {
+      "versions": {
+        "4.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "xo && ava && tsd"
+          },
+          "dist": {
+            "integrity": "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==",
+            "shasum": "d65025edec3657ce032fd7db63c97883eaed71f0",
+            "tarball": "https://registry.npmjs.org/is-plain-obj/-/is-plain-obj-4.1.0.tgz",
+            "fileCount": 5,
+            "unpackedSize": 4080,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDLg0iwC+wT6+MdTHIEG/5zDEl15Y1/7oyJWyeA0ckW9AIhAORRKxuiLzlYxbGbTMByBRcD4Atot9WipLAbZH2wqoYv"
+              }
+            ],
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJiqf8BACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2VmrpUw/9E5Q2YwGlBqc26ZDxVrRclCjGVdh5sXwwYz55TDXUxpFX9aSA\r\nIj1HlW75hVqPi3VcrV2RZW2kSwiKwU0OnJComRFmQBqKmSZAk8V+i8Ly8oem\r\nwf/Ad/Aowfc3gTMGleibGoPKTiGlnVMLsVbu0KJAMqeyxmWnc8aNVVZjBR8m\r\nlTgyzdjjswXxU1A5Z1owJQdZ/eXHqiW8idr1s5v8pT97QQ4qAlSlcmK9K9HN\r\nyHZlePQlzpPc1oULTisWxoMa90so4R4jyckwFy9iEz2fGLoolCbiSfvBuBOv\r\n5K9d2fi5eBbBAobzIYuAIaFo+Xe2OlGo4cDzirJhmwu/r1nxmd8O1jKpwF+4\r\nzGZDG7a8dfQReghkL/sLtU2OvAS1Dht1OaFSAKaXYoBUUkf3qQ3JFdDx42b0\r\nkzrbEtUfypdh7v+o92UATiIbGooy7db6UOwsHvuyVZNeEMOmjx6hwSf7H0WZ\r\nlzxtYWgTjODNuxIo8TIVCHr3zRb3rY2MU0j0+AvfUm+Sml8o53uwWi3MhTYw\r\n4zLK5r0HizcBC9wxT2B6nJiuB5bMKkqfYzWpXgVy0Ar3IhhwSV5YxPXlLeXL\r\nJWWtu+CBwbmgmKpXyiXuMxxIYERmSsjhNEhxxt1kcFzl0VKImkr3qN7tyhez\r\nf8TKxh3ucQ/Amo3CEcqRK835YHlootc9MHE=\r\n=1Lzq\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "4.1.0": "2022-06-15T15:47:13.746Z"
+      }
+    },
     "jiti": {
       "versions": {
         "2.7.0": {
@@ -1375,6 +2729,61 @@
       },
       "time": {
         "2.7.0": "2026-05-05T21:02:47.918Z"
+      }
+    },
+    "katex": {
+      "versions": {
+        "0.18.10": {
+          "license": "MIT",
+          "scripts": {
+            "dist": "pnpm build && pnpm dist:zip",
+            "test": "pnpm test:lint && pnpm test:ts && pnpm test:jest",
+            "build": "rimraf dist/ && mkdirp dist && cp README.md dist && rollup -c --failAfterWarnings && webpack && node update-sri.js package dist/README.md",
+            "clean": "rm -rf dist/ node_modules/",
+            "start": "webpack serve --config webpack.dev.js",
+            "watch": "pnpm build --watch",
+            "analyze": "webpack --config webpack.analyze.js",
+            "prepare": "husky",
+            "test:ts": "tsc --noEmit",
+            "dist:zip": "rimraf katex/ katex.tar.gz katex.zip && cp -R dist katex && tar czf katex.tar.gz katex && zip -rq katex.zip katex && rimraf katex/",
+            "test:jest": "jest",
+            "test:lint": "pnpm test:lint:js && pnpm test:lint:css",
+            "test:perf": "NODE_ENV=test node -e \"require('@babel/register')({extensions:['.js','.ts']}); require('./test/perf-test.ts')\"",
+            "test:build": "node test/verify-build.js",
+            "build:fonts": "dockers/fonts/buildFonts.sh",
+            "postversion": "pnpm dist && node update-sri.js package README.md contrib/*/README.md docs/*.md website/pages/index.html",
+            "test:lint:js": "eslint .",
+            "build:metrics": "dockers/fonts/buildMetrics.sh",
+            "clean-install": "pnpm clean && pnpm install",
+            "test:lint:css": "stylelint src/styles/katex.scss static/main.css website/static/**/*.css",
+            "test:jest:watch": "jest --watch",
+            "semantic-release": "semantic-release",
+            "test:jest:update": "jest --updateSnapshot",
+            "test:screenshots": "pnpm test:screenshots:update --verify",
+            "test:jest:coverage": "jest --coverage",
+            "test:screenshots:update": "dockers/screenshotter/screenshotter.sh"
+          },
+          "dist": {
+            "shasum": "71373b79139d2dba768774145782de3405bfdff2",
+            "tarball": "https://registry.npmjs.org/katex/-/katex-0.18.10.tgz",
+            "fileCount": 224,
+            "integrity": "sha512-/B6p9eY9DX7aHBfpkHdpirDTZ5QH9xTwL9y837PWuzuv41O5jFdqNQwVQEQsimY0/iVNkwBY4+4hMfhQ7d4Dbw==",
+            "signatures": [
+              {
+                "sig": "MEQCICe9HVLUV+szO0H2AWPOiWLzbdusCXF9Q85hZ6cogd0IAiAByTNoLAIN4aBt4WRdEyntufAd8n05pJy3JBEyIT/wzQ==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEUCIQDlwKhQpCsXvY9P65nMn6hpgOq5gekAikRcdFImMNOSpwIgVM33JcG405CvNFNu+SUxAZn1i0tXyu/h5EV3Q4FZ2dw=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 4041580
+          }
+        }
+      },
+      "time": {
+        "0.18.10": "2026-09-30T17:11:04.346Z"
       }
     },
     "lightningcss-linux-x64-gnu": {
@@ -1434,6 +2843,38 @@
       },
       "time": {
         "1.33.0": "2026-07-20T05:11:09.509Z"
+      }
+    },
+    "longest-streak": {
+      "versions": {
+        "3.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==",
+            "shasum": "62fa67cd958742a1574af9f39866364102d90cd4",
+            "tarball": "https://registry.npmjs.org/longest-streak/-/longest-streak-3.1.0.tgz",
+            "fileCount": 5,
+            "unpackedSize": 7661,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQCd3CI5tUQFkMNljg7XoTA3Ldq1+a/7YtKhfFniV/0PRAIhAMIFb5EV4OMj4wTlsLBt/XyobdAtoZs7o+g63rqihpNr"
+              }
+            ],
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJjc4JpACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2VmrQzw/9H7CkblzBtmCSk/nGf6dKvgwe/mFFQIPhx6+hkuk6Y3WexA9M\r\ndPtL0x8e+V4fgrGHZGrRtGbScKUfRWI2l5GvO+Y5vA4X+49CkmN5tVxSZ8f6\r\ndxwMzqbPnlF1oYs8QbDX8pkKlNFYAkaUhjcnlUS6WsINVGfDyB9TLYJNOHgX\r\nefEyDNySV1PqM1tocl6Uf0ZxQZ4UxRNWFCDhly1IZXV7+XuJ3cI53ri0NDMJ\r\nfuU/czQSdREO3KQbDLtPNG5n2Ach7DSU+5idd6jKq5YuPu4QbxP001ihOSV3\r\nQRhO+t6gI46Q5w7NVssY1CZEOxsRbRic0wx/dqbPTbPpGtjAZXDdnYzITYtE\r\nDXB8dK5KZy6xYLJgtyxeeGMgOXlObny5LhbjzQMxTG9oL5lLYM1jxR7IjEAa\r\nkz3m49oDABkOotKHpi6TvAS6Gg+cFkD/xyMuFnM2vKMFaVgJQYghjR53o8pm\r\nhbBJE06/JDttYyX6DNujuLFNzq2Jc8On9Gz6KzF0uAjWOcJToEBTH/01yjhU\r\nazWjk5spi1PgFKkg5G52fQl59INV7gbU95TEhnlMKoLZLdOwkr1jT6NwA/RO\r\n5Bbv7a6AwzPPoDezAPsyEM0PgKCBc9dot3p+lUuWJhWBk0c+30gVQS+jT2yN\r\nNd6nLyNFxH3+dPpi8M1VClNR0nri8NsPPoI=\r\n=/Dy2\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "3.1.0": "2022-11-15T12:13:29.629Z"
       }
     },
     "lucide-react": {
@@ -1526,6 +2967,36 @@
         "1.4.5": "2026-10-27T05:36:50.800Z"
       }
     },
+    "markdown-table": {
+      "versions": {
+        "3.0.4": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --check-coverage --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "fe44d6d410ff9d6f2ea1797a3f60aa4d2b631c2a",
+            "tarball": "https://registry.npmjs.org/markdown-table/-/markdown-table-3.0.4.tgz",
+            "fileCount": 6,
+            "integrity": "sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCI8zQCTwJuR0IhVzFCDnwf7hFm600MII7a6hcTRZf5oAIgXZQbUb5NJ7m+1woW3Q5CBPW950yfzZyHTe5R7ccPgJY=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 26109
+          }
+        }
+      },
+      "time": {
+        "3.0.4": "2024-10-22T11:58:39.972Z"
+      }
+    },
     "marked": {
       "versions": {
         "18.2.0": {
@@ -1580,6 +3051,1435 @@
       },
       "time": {
         "18.2.0": "2026-11-09T23:05:41.759Z"
+      }
+    },
+    "mdast-util-directive": {
+      "versions": {
+        "3.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api-prod": "node --conditions production test.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "f3656f4aab6ae3767d3c72cfab5e8055572ccba1",
+            "tarball": "https://registry.npmjs.org/mdast-util-directive/-/mdast-util-directive-3.1.0.tgz",
+            "fileCount": 8,
+            "integrity": "sha512-I3fNFt+DHmpWCYAT7quoM6lHf9wuqtI+oCOfvILnoicNIqjh5E3dEJWiXuYME2gNe8vl1iMQwyUHa7bgFmak6Q==",
+            "signatures": [
+              {
+                "sig": "MEYCIQD3ovTsbpcIydvHssrKLhywhoAiF2Ed1GFyH9LcyTnJrAIhAMxETou/aUyVkbL6nojp6G7CUmEt8axj+hfNi9S+4bIV",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 40649
+          }
+        }
+      },
+      "time": {
+        "3.1.0": "2025-01-22T14:54:37.720Z"
+      }
+    },
+    "mdast-util-find-and-replace": {
+      "versions": {
+        "3.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "70a3174c894e14df722abf43bc250cbae44b11df",
+            "tarball": "https://registry.npmjs.org/mdast-util-find-and-replace/-/mdast-util-find-and-replace-3.0.2.tgz",
+            "fileCount": 9,
+            "integrity": "sha512-Tmd1Vg/m3Xz43afeNxDIhWRtFZgM2VLyaf4vSTYwudTyeuTneoL3qtWMA5jeLyz/O1vDJmmV4QuScFCA2tBPwg==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDDLZrJxoCXJwbO+gOtIPUFsxlM+id5LJ7D0exetRB4WgIgNwW16ViM7D2vIwWfoV0jj1ZvNkkUb+1alcYF/hW+qFA=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 23400
+          }
+        }
+      },
+      "time": {
+        "3.0.2": "2025-01-03T12:27:35.988Z"
+      }
+    },
+    "mdast-util-from-markdown": {
+      "versions": {
+        "2.0.3": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage && micromark-build && esbuild . --bundle --minify | terser | gzip-size --raw",
+            "format": "remark --frail --quiet --output -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "c95822b91aab75f18a4cbe8b2f51b873ed2cf0c7",
+            "tarball": "https://registry.npmjs.org/mdast-util-from-markdown/-/mdast-util-from-markdown-2.0.3.tgz",
+            "fileCount": 17,
+            "integrity": "sha512-W4mAWTvSlKvf8L6J+VN9yLSqQ9AOAAvHuoDAmPkz4dHf553m5gVj2ejadHJhoJmcmxEnOv6Pa8XJhpxE93kb8Q==",
+            "signatures": [
+              {
+                "sig": "MEUCIQC14iJUIbJuZjx+wYyNb5wipPLGjB/HsmvWuzPkygzbBwIgIMpSfOhSlSaslD4s9t79K31Gx72Mio84wylNC7BfAHU=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 97286
+          }
+        }
+      },
+      "time": {
+        "2.0.3": "2026-02-21T13:23:13.849Z"
+      }
+    },
+    "mdast-util-gfm-autolink-literal": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "abd557630337bd30a6d5a4bd8252e1c2dc0875d5",
+            "tarball": "https://registry.npmjs.org/mdast-util-gfm-autolink-literal/-/mdast-util-gfm-autolink-literal-2.0.1.tgz",
+            "fileCount": 7,
+            "integrity": "sha512-5HVP2MKaP6L+G6YaxPNjuL0BPrq9orG3TsrZ9YXbA3vDw/ACI4MEsnoDpn6ZNm7GnZgtAcONJyPhOP8tNJQavQ==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDvJpbtkP1u1kunqDwCIvwN0LR1gdVgCZ/7IBsurQ6+AAIgUlPEAqZ9mmipYJHof+K+GEK55Prfzl1MsuOJlmZY9RI=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 21703
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-08-19T09:42:23.383Z"
+      }
+    },
+    "mdast-util-gfm-footnote": {
+      "versions": {
+        "2.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api-prod": "node --conditions production test.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-sqpDWlsHn7Ac9GNZQMeUzPQSMzR6Wv0WKRNvQRg0KqHh02fpTz69Qc1QSseNX29bhz1ROIyNyxExfawVKTm1GQ==",
+            "shasum": "7778e9d9ca3df7238cc2bd3fa2b1bf6a65b19403",
+            "tarball": "https://registry.npmjs.org/mdast-util-gfm-footnote/-/mdast-util-gfm-footnote-2.1.0.tgz",
+            "fileCount": 8,
+            "unpackedSize": 24051,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQCLWiDFPqXJH90UKrs1CwSQw58sN2iDjyTQsvAZUUbGtwIhAKNMWvyU3tT0/lgXatWDBnqMLOAFPT1L5iYKJtcV4cIJ"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.0": "2025-02-10T11:52:23.193Z"
+      }
+    },
+    "mdast-util-gfm-strikethrough": {
+      "versions": {
+        "2.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api-prod": "node --conditions production test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "d44ef9e8ed283ac8c1165ab0d0dfd058c2764c16",
+            "tarball": "https://registry.npmjs.org/mdast-util-gfm-strikethrough/-/mdast-util-gfm-strikethrough-2.0.0.tgz",
+            "fileCount": 7,
+            "integrity": "sha512-mKKb915TF+OC5ptj5bJ7WFRPdYtuHv0yTRxK2tJvi+BDqbkiG7h7u/9SI89nRAYcmap2xHQL9D+QG/6wSrTtXg==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDRhOyCny4mMUy17E9vXwL2U/f/g0mbxcO5lcidfQoU4QIgKZLT8043PToVfrstlYl9C27MWP104m/XnSEr0i+92xk=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 17828
+          }
+        }
+      },
+      "time": {
+        "2.0.0": "2023-07-10T14:37:12.146Z"
+      }
+    },
+    "mdast-util-gfm-table": {
+      "versions": {
+        "2.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api-prod": "node --conditions production test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "7a435fb6223a72b0862b33afbd712b6dae878d38",
+            "tarball": "https://registry.npmjs.org/mdast-util-gfm-table/-/mdast-util-gfm-table-2.0.0.tgz",
+            "fileCount": 7,
+            "integrity": "sha512-78UEvebzz/rJIxLvE7ZtDd/vIQ0RHv+3Mh5DR96p7cS7HsBhYIICDBCu8csTNWNO6tBWfqXPWekRuj2FNOGOZg==",
+            "signatures": [
+              {
+                "sig": "MEQCIGmdY/twMQMyL6u0nhz62rQmdEWnOI2PWsQRxn9d36HHAiAxe8YSlN541G4uCS01jwEmP7fidcOeDZzAIru2ugAvMw==",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 30873
+          }
+        }
+      },
+      "time": {
+        "2.0.0": "2023-07-10T15:15:32.984Z"
+      }
+    },
+    "mdast-util-gfm-task-list-item": {
+      "versions": {
+        "2.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api-prod": "node --conditions production test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "e68095d2f8a4303ef24094ab642e1047b991a936",
+            "tarball": "https://registry.npmjs.org/mdast-util-gfm-task-list-item/-/mdast-util-gfm-task-list-item-2.0.0.tgz",
+            "fileCount": 7,
+            "integrity": "sha512-IrtvNvjxC1o06taBAVJznEnkiHxLFTzgonUdy8hzFVeDun0uTjxxrRGVaNFqkU1wJR3RBPEfsxmU6jDWPofrTQ==",
+            "signatures": [
+              {
+                "sig": "MEYCIQD4h44lF8I1kgXRCsOK3cB+lBrcyd4HXV6iTLoF8HpPhQIhAJ9XBmQi7wBhFfpdALuxUh4v8F8g+WuUOxgutyBzLnpG",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 18341
+          }
+        }
+      },
+      "time": {
+        "2.0.0": "2023-07-10T11:50:53.684Z"
+      }
+    },
+    "mdast-util-gfm": {
+      "versions": {
+        "3.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "crawl": "node --conditions development script/crawl-tests.js",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-0ulfdQOM3ysHhCJ1p06l0b0VKlhU0wuQs3thxZQagjcjPrlFRqY215uZGHHJan9GEAXd9MbfPjFJz+qMkVR6zQ==",
+            "shasum": "2cdf63b92c2a331406b0fb0db4c077c1b0331751",
+            "tarball": "https://registry.npmjs.org/mdast-util-gfm/-/mdast-util-gfm-3.1.0.tgz",
+            "fileCount": 8,
+            "unpackedSize": 22153,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIQD6ZQST8JnOmTM+7XgYEN3+6mGHlTZ1ImSytkmKUF2OeAIgWWR7dndRp2p22zmGrTjesmdV7kcjOhT/H7HiVm9AAFM="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.1.0": "2025-02-10T12:33:52.269Z"
+      }
+    },
+    "mdast-util-math": {
+      "versions": {
+        "3.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api-prod": "node --conditions production test.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-Tl9GBNeG/AhJnQM221bJR2HPvLOSnLE/T9cJI9tlc6zwQk2nPk/4f0cHkOdEixQPC/j8UtKDdITswvLAy1OZ1w==",
+            "shasum": "8d79dd3baf8ab8ac781f62b8853768190b9a00b0",
+            "tarball": "https://registry.npmjs.org/mdast-util-math/-/mdast-util-math-3.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 28323,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIHQuGj6YWXQaqxKxsuwu5OkncL83tC6gvO563756r33lAiB3+kBbGJPe71N/adXcNENUWkfpZtUEjJkCd1dnu+dr2Q=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.0.0": "2023-07-16T11:25:47.253Z"
+      }
+    },
+    "mdast-util-mdx-expression": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api-prod": "node --conditions production test.js",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==",
+            "shasum": "43f0abac9adc756e2086f63822a38c8d3c3a5096",
+            "tarball": "https://registry.npmjs.org/mdast-util-mdx-expression/-/mdast-util-mdx-expression-2.0.1.tgz",
+            "fileCount": 8,
+            "unpackedSize": 25728,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDaSj+RwCPUd8nhBiNT0hrMNOJ2AuckRNvMWxlrsdx4kAIhAMyPiTpwaxBQ3hfHqD7dy4oVWuJrIqqN+PoCF3DRD7TQ"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-09-13T10:36:30.801Z"
+      }
+    },
+    "mdast-util-mdx-jsx": {
+      "versions": {
+        "3.2.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api-prod": "node --conditions production test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "fd04c67a2a7499efb905a8a5c578dddc9fdada0d",
+            "tarball": "https://registry.npmjs.org/mdast-util-mdx-jsx/-/mdast-util-mdx-jsx-3.2.0.tgz",
+            "fileCount": 8,
+            "integrity": "sha512-lj/z8v0r6ZtsN/cGNNtemmmfoLAFZnjMbNyLzBafjzikOM+glrjNHPlf6lQDOTccj9n5b0PPihEBbhneMyGs1Q==",
+            "signatures": [
+              {
+                "sig": "MEYCIQC9E0/IY7llOaP6NipTcsao3//1QEgf0s+eTkY05UCKFAIhAKWMQNdtpKCSz8TpzOmY7+3FofO0k1ZEFHoKtDOUTNqJ",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 56776
+          }
+        }
+      },
+      "time": {
+        "3.2.0": "2025-01-13T10:46:33.489Z"
+      }
+    },
+    "mdast-util-mdxjs-esm": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api-prod": "node --conditions production test.js",
+            "test-api-dev": "node --conditions development test.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-EcmOpxsZ96CvlP03NghtH1EsLtr0n9Tm4lPUJUBccV9RwUOneqSycg19n5HGzCf+10LozMRSObtVr3ee1WoHtg==",
+            "shasum": "019cfbe757ad62dd557db35a695e7314bcc9fa97",
+            "tarball": "https://registry.npmjs.org/mdast-util-mdxjs-esm/-/mdast-util-mdxjs-esm-2.0.1.tgz",
+            "fileCount": 7,
+            "unpackedSize": 20343,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCICz5BpndMMIN199h93QjPJa2l34xC/ibs2qMSEecbNi1AiEAvzwYAOcywoQlBt0WxMwT+s78PO1JAcTXLVH6JnH+QHU="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2023-08-08T10:13:47.344Z"
+      }
+    },
+    "mdast-util-newline-to-break": {
+      "versions": {
+        "2.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "4e73ef621b6b1a590240336cfe6c29915e198df0",
+            "tarball": "https://registry.npmjs.org/mdast-util-newline-to-break/-/mdast-util-newline-to-break-2.0.0.tgz",
+            "fileCount": 7,
+            "integrity": "sha512-MbgeFca0hLYIEx/2zGsszCSEJJ1JSCdiY5xQxRcLDDGa8EPvlLPupJ4DSajbMPAnC0je8jfb9TiUATnxxrHUog==",
+            "signatures": [
+              {
+                "sig": "MEUCIFZ94pU5FwCUBLEnzDwvOQ9se4zR2l92BzlVIHBeibSYAiEAnN1NMDR0cnPyBeyDlsBO165Pb1CMtDvoteEHH9alY9M=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 10794
+          }
+        }
+      },
+      "time": {
+        "2.0.0": "2023-07-08T15:06:29.702Z"
+      }
+    },
+    "mdast-util-phrasing": {
+      "versions": {
+        "4.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-TqICwyvJJpBwvGAMZjj4J2n0X8QWp21b9l0o7eXyVJ25YNWYbJDVIyD1bZXE6WtV6RmKJVYmQAKWa0zWOABz2w==",
+            "shasum": "7cc0a8dec30eaf04b7b1a9661a92adb3382aa6e3",
+            "tarball": "https://registry.npmjs.org/mdast-util-phrasing/-/mdast-util-phrasing-4.1.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 10032,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIFsEADY0Jz3EVH9v9n20lhnyBQ01R64bSulI/05ZkbznAiB1+IBkQBRrstMpRm0F1k/j+0xWqxYkDM2Y0yj39Z4reQ=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.1.0": "2024-02-01T10:26:42.249Z"
+      }
+    },
+    "mdast-util-to-hast": {
+      "versions": {
+        "13.2.1": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "d7ff84ca499a57e2c060ae67548ad950e689a053",
+            "tarball": "https://registry.npmjs.org/mdast-util-to-hast/-/mdast-util-to-hast-13.2.1.tgz",
+            "fileCount": 89,
+            "integrity": "sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==",
+            "signatures": [
+              {
+                "sig": "MEQCICWIgYA3PUZPUIbr4PvwrDBpfWEUkF7BgQYqi/funtchAiALEzM0vJ8h6tgEUwNISZKlTgLwMzI7tnMnLtdk/cMXEQ==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 132114
+          }
+        }
+      },
+      "time": {
+        "13.2.1": "2025-11-23T21:08:34.155Z"
+      }
+    },
+    "mdast-util-to-markdown": {
+      "versions": {
+        "2.1.2": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "f910ffe60897f04bb4b7e7ee434486f76288361b",
+            "tarball": "https://registry.npmjs.org/mdast-util-to-markdown/-/mdast-util-to-markdown-2.1.2.tgz",
+            "fileCount": 150,
+            "integrity": "sha512-xj68wMTvGXVOKonmog6LwyJKrYXZPvlwabaryTjLh9LuvovB/KAH+kvi8Gjj+7rJjsFi23nkUxRQv1KqSroMqA==",
+            "signatures": [
+              {
+                "sig": "MEQCIAd6wIm9H7ZEWLK8vhfFs6zzmQ2jtINbL3QIT7oFRRvIAiBFI+1GBwpuPsRLYoBsOkTphpRcuRS4PMp+NVh3wUqI5A==",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 148937
+          }
+        }
+      },
+      "time": {
+        "2.1.2": "2024-11-04T10:56:59.698Z"
+      }
+    },
+    "mdast-util-to-string": {
+      "versions": {
+        "4.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-0H44vDimn51F0YwvxSJSm0eCDOJTRlmN0R1yBh4HLj9wiV1Dn0QoXGbvFAWj2hSItVTlCmBF1hqKlIyUBVFLPg==",
+            "shasum": "7a5121475556a04e7eddeb67b264aae79d312814",
+            "tarball": "https://registry.npmjs.org/mdast-util-to-string/-/mdast-util-to-string-4.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 12692,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIGjpn/LVzPNZvEmQQuLABym34kKyWLjUdYh4v5x7JXCXAiBWb6c0JBV8u9WhBDF05yw0wDAJedvAYZD62oJazM3Qag=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.0.0": "2023-07-07T16:19:50.488Z"
+      }
+    },
+    "micromark-core-commonmark": {
+      "versions": {
+        "2.0.3": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "shasum": "c691630e485021a68cf28dbc2b2ca27ebf678cd4",
+            "tarball": "https://registry.npmjs.org/micromark-core-commonmark/-/micromark-core-commonmark-2.0.3.tgz",
+            "fileCount": 141,
+            "integrity": "sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDhSc6Xz8mz7xVI14bihcro/gmxHrXbQ34Fxx4uf5g6RwIgM2IfZNYyXr2NcHgeeMIye37hRA3HG9VO64Fy71+k0zg=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 266840
+          }
+        }
+      },
+      "time": {
+        "2.0.3": "2025-02-27T13:49:35.477Z"
+      }
+    },
+    "micromark-extension-directive": {
+      "versions": {
+        "4.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage && micromark-build",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-/C2nqVmXXmiseSSuCdItCMho7ybwwop6RrrRPk0KbOHW21JKoCldC+8rFOaundDoRBUWBnJJcxeA/Kvi34WQXg==",
+            "shasum": "af389e33fe0654c15f8466b73a0f5af598d00368",
+            "tarball": "https://registry.npmjs.org/micromark-extension-directive/-/micromark-extension-directive-4.0.0.tgz",
+            "fileCount": 55,
+            "unpackedSize": 104452,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIQC5jZCODdgICQ/nm+gUQIfnOi+Z6PB172jnzpadTEUq9gIgc4MGYJCWUOHYpm/g4jgTqg4z7VZg39oMruKPZvVYC4A="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.0.0": "2025-02-27T14:40:06.098Z"
+      }
+    },
+    "micromark-extension-gfm-autolink-literal": {
+      "versions": {
+        "2.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage && micromark-build",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-oOg7knzhicgQ3t4QCjCWgTmfNhvQbDDnJeVu9v81r7NltNCVmhPy1fJRX27pISafdjL+SVc4d3l48Gb6pbRypw==",
+            "shasum": "6286aee9686c4462c1e3552a9d505feddceeb935",
+            "tarball": "https://registry.npmjs.org/micromark-extension-gfm-autolink-literal/-/micromark-extension-gfm-autolink-literal-2.1.0.tgz",
+            "fileCount": 15,
+            "unpackedSize": 65381,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIAgTHHOGe0CMSsom2DtPMHwCkM+OfoD0jIL/8XJmWspWAiEAvpALYhhMZmb6Z6pHS28lJXcOCDOuNZo8PQu9c1kiaVI="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.0": "2024-07-05T12:07:39.754Z"
+      }
+    },
+    "micromark-extension-gfm-footnote": {
+      "versions": {
+        "2.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage && micromark-build",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "4dab56d4e398b9853f6fe4efac4fc9361f3e0750",
+            "tarball": "https://registry.npmjs.org/micromark-extension-gfm-footnote/-/micromark-extension-gfm-footnote-2.1.0.tgz",
+            "fileCount": 15,
+            "integrity": "sha512-/yPhxI1ntnDNsiHtzLKYnE3vf9JZ6cAisqVDauhp4CEHxlb4uoOTxOCJ+9s51bIB8U1N1FJ1RXOKTIlD5B/gqw==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCcdM0mvNhmwji4vOynAsso6w6z2E2hsgABDA1+FwMPfQIhAMzBVfCuIdIAOda4aqffCT1AzK+sdXq4LLoTngDK/cvR",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 79466
+          }
+        }
+      },
+      "time": {
+        "2.1.0": "2024-07-05T12:22:49.339Z"
+      }
+    },
+    "micromark-extension-gfm-strikethrough": {
+      "versions": {
+        "2.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage && micromark-build",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-ADVjpOOkjz1hhkZLlBiYA9cR2Anf8F4HqZUO6e5eDcPQd0Txw5fxLzzxnEkSkfnD0wziSGiv7sYhk/ktvbf1uw==",
+            "shasum": "86106df8b3a692b5f6a92280d3879be6be46d923",
+            "tarball": "https://registry.npmjs.org/micromark-extension-gfm-strikethrough/-/micromark-extension-gfm-strikethrough-2.1.0.tgz",
+            "fileCount": 15,
+            "unpackedSize": 27585,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIGNKTuaDzWo9+2bB8Of3unSvoDOBKyLA1IEhLk4skN8nAiAtLdnBI5NJTZLH4s84kJMSF1nhBRDkSfQ2JlwolO8Luw=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.0": "2024-07-05T09:35:26.227Z"
+      }
+    },
+    "micromark-extension-gfm-table": {
+      "versions": {
+        "2.1.1": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage && micromark-build",
+            "format": "remark --frail --quiet --output -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "fac70bcbf51fe65f5f44033118d39be8a9b5940b",
+            "tarball": "https://registry.npmjs.org/micromark-extension-gfm-table/-/micromark-extension-gfm-table-2.1.1.tgz",
+            "fileCount": 31,
+            "integrity": "sha512-t2OU/dXXioARrC6yWfJ4hqB7rct14e8f7m0cbI5hUmDyyIlwv5vEtooptH8INkbLzOatzKuVbQmAYcbWoyz6Dg==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCbzcmHLmbLhTgxWR94MbIqc6ZmivBnd4WBycQZ1figmQIhAONl+4kLnluwat9niV5hgLwD267M0FE+p8tKDlfP4LAa",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 92074
+          }
+        }
+      },
+      "time": {
+        "2.1.1": "2025-01-20T12:24:29.395Z"
+      }
+    },
+    "micromark-extension-gfm-tagfilter": {
+      "versions": {
+        "2.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-xHlTOmuCSotIA8TW1mDIM6X2O1SiX5P9IuDtqGonFhEK0qgRI4yeC6vMxEV2dgyr2TiD+2PQ10o+cOhdVAcwfg==",
+            "shasum": "f26d8a7807b5985fba13cf61465b58ca5ff7dc57",
+            "tarball": "https://registry.npmjs.org/micromark-extension-gfm-tagfilter/-/micromark-extension-gfm-tagfilter-2.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 11960,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQCbM/azQsAoOZTF/PcwnEfnZH6WEvGgqZDV78+YWp/QcAIgGzgp17MeIv8A78Y7pg3k3f/gdtwiUo11/NCSwEc56qs="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.0": "2023-06-23T11:00:35.241Z"
+      }
+    },
+    "micromark-extension-gfm-task-list-item": {
+      "versions": {
+        "2.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage && micromark-build",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-qIBZhqxqI6fjLDYFTBIa4eivDMnP+OZqsNwmQ3xNLE4Cxwc+zfQEfbs6tzAo2Hjq+bh6q5F+Z8/cksrLFYWQQw==",
+            "shasum": "bcc34d805639829990ec175c3eea12bb5b781f2c",
+            "tarball": "https://registry.npmjs.org/micromark-extension-gfm-task-list-item/-/micromark-extension-gfm-task-list-item-2.1.0.tgz",
+            "fileCount": 15,
+            "unpackedSize": 24410,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQCDTR6/9zvtpf/6mIanKprdx2DcvOYUQDDLNDQnStTeMAIgPVpq7nCC8g1dVaaw0KotmcazmoMryUt41NjfONLTs7k="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.0": "2024-07-05T09:49:50.922Z"
+      }
+    },
+    "micromark-extension-gfm": {
+      "versions": {
+        "3.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-vsKArQsicm7t0z2GugkCKtZehqUm31oeGBV/KVSorWSy8ZlNAv7ytjFhvaryUiCUJYqs+NoE6AFhpQvBTM6Q4w==",
+            "shasum": "3e13376ab95dd7a5cfd0e29560dfe999657b3c5b",
+            "tarball": "https://registry.npmjs.org/micromark-extension-gfm/-/micromark-extension-gfm-3.0.0.tgz",
+            "fileCount": 5,
+            "unpackedSize": 20321,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCICPIehkbrKG9iHpqaPJmQLalTp4Ai1W0aYtTmu+tYV0vAiA0EqUyIgyeut60RmzvFb7MCTt1FrITk2FsVNJYVBEwqg=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "3.0.0": "2023-06-26T17:08:15.954Z"
+      }
+    },
+    "micromark-extension-llm-math": {
+      "versions": {
+        "3.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage && micromark-build",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "npm run test-api-dev && npm run test-api-prod",
+            "test-api-dev": "node --conditions development test/index.js",
+            "test-api-prod": "node --conditions production test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "b523c595302ffa108ef3f922b10bbcdc149cf7ee",
+            "tarball": "https://registry.npmjs.org/micromark-extension-llm-math/-/micromark-extension-llm-math-3.1.0.tgz",
+            "fileCount": 31,
+            "integrity": "sha512-VIYHuIEk0gpHrojEtNGaxGwdpSLtdWYlLL2vu9PM4M1ilEtak10S8F9zzbNAPBNRoWFs/bjs+J7R3yUBoIQUEA==",
+            "signatures": [
+              {
+                "sig": "MEUCICZVF+4FC4VrCGaFjRMKr3vBbamS3M3YLaF2USiftTwFAiEAiiCkOzH2EYAtt6ZLF1L2CF+hFnpYR/vwa3dY0yG+yg8=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 76468
+          }
+        }
+      },
+      "time": {
+        "3.1.0": "2024-11-24T06:52:02.788Z"
+      }
+    },
+    "micromark-factory-destination": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-Xe6rDdJlkmbFRExpTOmRj9N3MaWmbAgdpSrBQvCFqhezUn4AHqJHbaEnfbVYYiexVSs//tqOdY/DxhjdCiJnIA==",
+            "shasum": "8fef8e0f7081f0474fbdd92deb50c990a0264639",
+            "tarball": "https://registry.npmjs.org/micromark-factory-destination/-/micromark-factory-destination-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 20549,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCICO7AMQCKkbZ+DwAk7JzUkiFkPLAwDQ++I5T0BYHPv/MAiEA3dQd0WhqXOTtE+L1S2RSOL92zF6BzZUWIsglb7H9oGQ="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:16:55.545Z"
+      }
+    },
+    "micromark-factory-label": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-VFMekyQExqIW7xIChcXn4ok29YE3rnuyveW3wZQWWqF4Nv9Wk5rgJ99KzPvHjkmPXF93FXIbBp6YdW3t71/7Vg==",
+            "shasum": "5267efa97f1e5254efc7f20b459a38cb21058ba1",
+            "tarball": "https://registry.npmjs.org/micromark-factory-label/-/micromark-factory-label-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 17588,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQCjhX9Kw1DmGG/3rHHTcL8LWK/M7INvZ7+z60xaIjX18wIhALCsOX0yyxEhRq9uU4XIT5rn5NAQEmMOCjRFZKaHhq1d"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:16:59.169Z"
+      }
+    },
+    "micromark-factory-space": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "shasum": "36d0212e962b2b3121f8525fc7a3c7c029f334fc",
+            "tarball": "https://registry.npmjs.org/micromark-factory-space/-/micromark-factory-space-2.0.1.tgz",
+            "fileCount": 9,
+            "integrity": "sha512-zRkxjtBxxLd2Sc0d+fbnEunsTj46SWXgXciZmHq0kDYGnck/ZSGj9/wULTV95uoeYiK5hRXP2mJ98Uo4cq/LQg==",
+            "signatures": [
+              {
+                "sig": "MEQCID+lpv32vH6RI6bvO2wVObpGKIGTKJOqRcmJWw3CUoQCAiAkmNHHiNJdqEMw7NLT77zPHs3fRIoIdnmO3N6YdWuovg==",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 13753
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:03.021Z"
+      }
+    },
+    "micromark-factory-title": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-5bZ+3CjhAd9eChYTHsjy6TGxpOFSKgKKJPJxr293jTbfry2KDoWkhBb6TcPVB4NmzaPhMs1Frm9AZH7OD4Cjzw==",
+            "shasum": "237e4aa5d58a95863f01032d9ee9b090f1de6e94",
+            "tarball": "https://registry.npmjs.org/micromark-factory-title/-/micromark-factory-title-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 16527,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQDo24ahV48lvM3pje0PjqWfpfWlAxK7aZ8cKCwX8tDnugIgNQx3BbeO54ocEUq8qfDZW+bbb1ebSnf1hLqhJ/7B1XQ="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:06.622Z"
+      }
+    },
+    "micromark-factory-whitespace": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-Ob0nuZ3PKt/n0hORHyvoD9uZhr+Za8sFoP+OnMcnWK5lngSzALgQYKMr9RJVOWLqQYuyn6ulqGWSXdwf6F80lQ==",
+            "shasum": "06b26b2983c4d27bfcc657b33e25134d4868b0b1",
+            "tarball": "https://registry.npmjs.org/micromark-factory-whitespace/-/micromark-factory-whitespace-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 12143,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIBSng2rFFvVWL2Gj+GoJpY/NcyLc1Dsz76NW+GYgLfULAiEA/hQ2TkS5XplI5zKtCSaL2TVHJjrayI3rAvd6ZCSnr0A="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:10.261Z"
+      }
+    },
+    "micromark-util-character": {
+      "versions": {
+        "2.1.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-wv8tdUTJ3thSFFFJKtpYKOYiGP2+v96Hvk4Tu8KpCAsTMs6yi+nVmGh1syvSCsaxz45J6Jbw+9DD6g97+NV67Q==",
+            "shasum": "2f987831a40d4c510ac261e89852c4e9703ccda6",
+            "tarball": "https://registry.npmjs.org/micromark-util-character/-/micromark-util-character-2.1.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 42421,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIAy1QLB3JfgnAA1YzFhkZ9xarzvpS+EI7kq80MWxWZGHAiA8DNJffVEiawOg8KxwNPC9sGO9A3m18UvRy/lrr97EUQ=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.1": "2024-11-12T11:17:13.750Z"
+      }
+    },
+    "micromark-util-chunked": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-QUNFEOPELfmvv+4xiNg2sRYeS/P84pTW0TCgP5zc9FpXetHY0ab7SxKyAQCNCc1eK0459uoLI1y5oO5Vc1dbhA==",
+            "shasum": "47fbcd93471a3fccab86cff03847fc3552db1051",
+            "tarball": "https://registry.npmjs.org/micromark-util-chunked/-/micromark-util-chunked-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 16255,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCID6pHJ2aHM3blYt9ROgvA5sNqUeCqDd5w5yxN8B62/bRAiEAsrUqcdKvk95g+WQCrwEmYsreQu/cv8NsaN+atrD9ZgA="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:17.117Z"
+      }
+    },
+    "micromark-util-classify-character": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-K0kHzM6afW/MbeWYWLjoHQv1sgg2Q9EccHEDzSkxiP/EaagNzCm7T/WMKZ3rjMbvIpvBiZgwR3dKMygtA4mG1Q==",
+            "shasum": "d399faf9c45ca14c8b4be98b1ea481bced87b629",
+            "tarball": "https://registry.npmjs.org/micromark-util-classify-character/-/micromark-util-classify-character-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 11428,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQDQeT4W67CCrD4KpAbvxbFdjhVEfkExw6S/f8ZmIRns8wIgUFcOUIAVeqEPs7H3Jrw3dts9CQo2wPa6Fp1/cl/inuQ="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:20.461Z"
+      }
+    },
+    "micromark-util-combine-extensions": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-OnAnH8Ujmy59JcyZw8JSbK9cGpdVY44NKgSM7E9Eh7DiLS2E9RNQf0dONaGDzEG9yjEl5hcqeIsj4hfRkLH/Bg==",
+            "shasum": "2a0f490ab08bff5cc2fd5eec6dd0ca04f89b30a9",
+            "tarball": "https://registry.npmjs.org/micromark-util-combine-extensions/-/micromark-util-combine-extensions-2.0.1.tgz",
+            "fileCount": 6,
+            "unpackedSize": 12387,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQCo+OMUIQWa+OIdrcJ6x9Yh8ayBfLsiJFtxV0WTwlHTjQIgCaROCpXRtW86wWhZi98Y9eVGf0YHWZ2Q3tEdNaAQq3I="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:23.680Z"
+      }
+    },
+    "micromark-util-decode-numeric-character-reference": {
+      "versions": {
+        "2.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-ccUbYk6CwVdkmCQMyr64dXz42EfHGkPQlBj5p7YVGzq8I7CtjXZJrubAYezf7Rp+bjPseiROqe7G6foFd+lEuw==",
+            "shasum": "fcf15b660979388e6f118cdb6bf7d79d73d26fe5",
+            "tarball": "https://registry.npmjs.org/micromark-util-decode-numeric-character-reference/-/micromark-util-decode-numeric-character-reference-2.0.2.tgz",
+            "fileCount": 9,
+            "unpackedSize": 11414,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDTu1MlZl9hAO8GPdIw7Hk9/rklPS5uwciMbDzGocwLHgIhAOPQP0hXxgUO4BGwTa/fff8n6EIXvY8OiZ5hp1pfotgX"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.2": "2024-11-12T11:17:27.210Z"
+      }
+    },
+    "micromark-util-decode-string": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-nDV/77Fj6eH1ynwscYTOsbK7rR//Uj0bZXBwJZRfaLEJ1iGBR6kIfNmlNqaqJf649EP0F3NWNdeJi03elllNUQ==",
+            "shasum": "6cb99582e5d271e84efca8e61a807994d7161eb2",
+            "tarball": "https://registry.npmjs.org/micromark-util-decode-string/-/micromark-util-decode-string-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 11088,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIHWQpLq4lGO7p3wgenPGdKyror7NSE7nnJjo74GUhpkEAiBc+OFRvsO7Hy3RUfKy7V9/wVeL1CZc3XIrMrG9q6CgDQ=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:30.843Z"
+      }
+    },
+    "micromark-util-encode": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-c3cVx2y4KqUnwopcO9b/SCdo2O67LwJJ/UyqGfbigahfegL9myoEFoDYZgkT7f36T0bLrM9hZTAaAyH+PCAXjw==",
+            "shasum": "0d51d1c095551cfaac368326963cf55f15f540b8",
+            "tarball": "https://registry.npmjs.org/micromark-util-encode/-/micromark-util-encode-2.0.1.tgz",
+            "fileCount": 6,
+            "unpackedSize": 7971,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQDZtjQG8S0pY7t9AdnKO91nWEREJlE+iJ2swjx+hup4AAIgVVRHV4eO3owQCtumNQkrqYTkuUUxJl7tqA51CgW0IKk="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:34.206Z"
+      }
+    },
+    "micromark-util-html-tag-name": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-2cNEiYDhCWKI+Gs9T0Tiysk136SnR13hhO8yW6BGNyhOC4qYFnwF1nKfD3HFAIXA5c45RrIG1ub11GiXeYd1xA==",
+            "shasum": "e40403096481986b41c106627f98f72d4d10b825",
+            "tarball": "https://registry.npmjs.org/micromark-util-html-tag-name/-/micromark-util-html-tag-name-2.0.1.tgz",
+            "fileCount": 6,
+            "unpackedSize": 10426,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQD5grwUcsbJDmPuv+PCkAzGU/ugOK4O4l6ul7+qJLfcdgIhALgyOmnP8xEp2AjU4MKqLCXKslMGv2aQXUP4LPHgmp4t"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:37.806Z"
+      }
+    },
+    "micromark-util-normalize-identifier": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-sxPqmo70LyARJs0w2UclACPUUEqltCkJ6PhKdMIDuJ3gSf/Q+/GIe3WKl0Ijb/GyH9lOpUkRAO2wp0GVkLvS9Q==",
+            "shasum": "c30d77b2e832acf6526f8bf1aa47bc9c9438c16d",
+            "tarball": "https://registry.npmjs.org/micromark-util-normalize-identifier/-/micromark-util-normalize-identifier-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 12256,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDbsWDSbkv1JO5y7VUQclMl9DvvgEdp5vgvu68O2jD/oAIhANYrNFIiWrrqIVqVeLj1IAU7Gn8+KWpC7bSGV3pv+pkb"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:41.347Z"
+      }
+    },
+    "micromark-util-resolve-all": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-VdQyxFWFT2/FGJgwQnJYbe1jjQoNTS4RjglmSjTUlpUMa95Htx9NHeYW4rGDJzbjvCsl9eLjMQwGeElsqmzcHg==",
+            "shasum": "e1a2d62cdd237230a2ae11839027b19381e31e8b",
+            "tarball": "https://registry.npmjs.org/micromark-util-resolve-all/-/micromark-util-resolve-all-2.0.1.tgz",
+            "fileCount": 6,
+            "unpackedSize": 10316,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQCJ5EaSQTiWR2tzCB9L/MzHW1OOoEJtSlk1wr2uEFX7oQIgPF3ba2EN/VgK4tfmvnsKZkjBYqIEDrzY8p61UOgjDgs="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:45.019Z"
+      }
+    },
+    "micromark-util-sanitize-uri": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-9N9IomZ/YuGGZZmQec1MbgxtlgougxTodVwDzzEouPKo3qFWvymFHWcnDi2vzV1ff6kas9ucW+o3yzJK9YB1AQ==",
+            "shasum": "ab89789b818a58752b73d6b55238621b7faa8fd7",
+            "tarball": "https://registry.npmjs.org/micromark-util-sanitize-uri/-/micromark-util-sanitize-uri-2.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 17917,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDxS1lH/jlAWMbxuKRD3+FaKcvZbcYYjeNubBkfPSwiVwIhAOyI11cq09rp4DdQqcK6hzeTSeZKG3JIm7wE6S7X3HR6"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:48.745Z"
+      }
+    },
+    "micromark-util-subtokenize": {
+      "versions": {
+        "2.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "integrity": "sha512-XQLu552iSctvnEcgXw6+Sx75GflAPNED1qx7eBJ+wydBb2KCbRZe+NwvIEEMM83uml1+2WSXpBAcp9IUCgCYWA==",
+            "shasum": "d8ade5ba0f3197a1cf6a2999fbbfe6357a1a19ee",
+            "tarball": "https://registry.npmjs.org/micromark-util-subtokenize/-/micromark-util-subtokenize-2.1.0.tgz",
+            "fileCount": 15,
+            "unpackedSize": 51162,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIGH7IXEnaGggXHQNpOIfczH9+p7epgs0RtZOLLEms75bAiBpiRwaGv2OZ5zsLZoasxXuLGgz+yNuMeUDL2o5wwt/HA=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.1.0": "2025-02-27T13:48:52.891Z"
+      }
+    },
+    "micromark-util-symbol": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-vs5t8Apaud9N28kgCrRUdEed4UJ+wWNvicHLPxCa9ENlYuAY31M0ETy5y1vA33YoNPDFTghEbnh6efaE8h4x0Q==",
+            "shasum": "e5da494e8eb2b071a0d08fb34f6cefec6c0a19b8",
+            "tarball": "https://registry.npmjs.org/micromark-util-symbol/-/micromark-util-symbol-2.0.1.tgz",
+            "fileCount": 18,
+            "unpackedSize": 40530,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIH1QrHs4xTGoPtuPAb3M2DCz6tQDmnSSJjF8PtWP6jhjAiEA/1DW6K+JV4lMKWPBZX8m9MGVo1qFJ92nLQECtnEb9A0="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2024-11-12T11:17:55.709Z"
+      }
+    },
+    "micromark-util-types": {
+      "versions": {
+        "2.0.2": {
+          "license": "MIT",
+          "dist": {
+            "shasum": "f00225f5f5a0ebc3254f96c36b6605c4b393908e",
+            "tarball": "https://registry.npmjs.org/micromark-util-types/-/micromark-util-types-2.0.2.tgz",
+            "fileCount": 5,
+            "integrity": "sha512-Yw0ECSpJoViF1qTU4DC6NwtC4aWGt1EkzaQB8KPPyCRR8z9TWeV0HbEFGTO+ZY1wB22zmxnJqhPyTpOVCpeHTA==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDr/33PrWibaVSOpr3M0sInHKw2+aswPX29uLew15Mh+QIgWLoSilOWERMmQvORsRcmKWAKPfwvXbr9xrL3rcFsGMM=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 38950
+          }
+        }
+      },
+      "time": {
+        "2.0.2": "2025-02-27T13:55:27.982Z"
+      }
+    },
+    "micromark": {
+      "versions": {
+        "4.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "build": "micromark-build"
+          },
+          "dist": {
+            "shasum": "91395a3e1884a198e62116e33c9c568e39936fdb",
+            "tarball": "https://registry.npmjs.org/micromark/-/micromark-4.0.2.tgz",
+            "fileCount": 75,
+            "integrity": "sha512-zpe98Q6kvavpCr1NPVSCMebCKfD7CA2NqZ+rykeNhONIJBpc1tFKt9hucLGwha3jNTNI8lHpctWJWoimVF4PfA==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCm3rnLMmPkwh/krV1MiminWA5ant+iiY1lLz+piNleYQIhALVlKLx+WXOHJEbA8wNVPxVqMz0XG8jRxik4u+xTmYu0",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 209635
+          }
+        }
+      },
+      "time": {
+        "4.0.2": "2025-02-27T14:04:03.516Z"
+      }
+    },
+    "ms": {
+      "versions": {
+        "2.1.3": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint lib/* bin/*",
+            "test": "mocha tests.js",
+            "precommit": "lint-staged"
+          },
+          "dist": {
+            "shasum": "574c8138ce1d2b5861f0b44579dbadd60c6615b2",
+            "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+            "fileCount": 4,
+            "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+            "signatures": [
+              {
+                "sig": "MEYCIQCpp8dz4QhYMwrrNgFARRXozR4wAyDcUVNXEBw0PmSj+wIhALlCZH2KJyCo9qv/3CfMFsvx9bXKQNQBOqmLstIPXP2L",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 6721,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJfz4WbCRA9TVsSAnZWagAA5A8P/jNowbVOl1ORENKivAXb\nQ3NncrkWHdRjUGeUhX89Ih3N+woNugnSTOEKACswARtqXMf5M1Iy8GODorDp\noz+pqU0HGU+KjLO/sL+TGxJJJAMfX3vhRZTHk5ZzKDi9s6iAM3nMeE5rwNUS\n7wprOzbKNE9hev82zLgfY8kF7UhxY09BH/GBS+kWGD3ViM8R5vl49JEfrvN9\nSKris0FTSP/YL1QrRNjvMMfGh9WhMOC/FLkJnIErcw2I8g/XmBOApjqM9KhG\n42/ls4gXuaUinNXC68wAbntxhHtJo2403NVmU7UJDDdulEBbTXZ18cKHt520\nUkRZp8piQb1m3QR8XPjvpnShlOutYdQJfjltY5z12Wfwj5OBVsurWeFtJRme\nBxn9pdrKW45doypT1Lc7LXoIftLBtToVtWRThEVihq4I9f4zpR9Uzc3qp1jU\nlEo9ndqf9rg9oVV8fSK+dIDuUUyp7NrI5uCfcUMfKEgwWortapNKNvMuHp7r\noZhuGRekRc1kG8YmsYfLKv3kRS8uiXa/jbwD4PkNGbev7KhEptCnGZm78z9k\nV0KOdaCU3Igo6rK23kgsAFhxDvMANHby3dLYQMbZOoqkZLv4qiPS/7raPOLc\n5q/ezwT2JZLWZlTbZnigAVuZ5aHmLb6QEuMLcIQaelDkH7XWCNpED8cM2pFX\nTllW\r\n=eZCP\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "2.1.3": "2020-12-08T13:54:35.223Z"
       }
     },
     "nanoid": {
@@ -1656,6 +4556,63 @@
         "0.156.0": "2026-10-27T03:36:10.706Z"
       }
     },
+    "parse-entities": {
+      "versions": {
+        "4.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==",
+            "shasum": "61d46f5ed28e4ee62e9ddc43d6b010188443f159",
+            "tarball": "https://registry.npmjs.org/parse-entities/-/parse-entities-4.0.2.tgz",
+            "fileCount": 8,
+            "unpackedSize": 26410,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQCP9CAEneH02672xpljWMN0UcBe8BfeCTnmjLXIrG4CqgIhAJnuGjctZ154St8PzxLIg9lh9Eal+XX5MShjI2YS8ate"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.0.2": "2024-12-13T11:08:08.736Z"
+      }
+    },
+    "parse5": {
+      "versions": {
+        "7.3.0": {
+          "license": "MIT",
+          "scripts": {
+            "build:cjs": "tsc --noCheck --moduleResolution node10 --module CommonJS --target ES6 --outDir dist/cjs && echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json"
+          },
+          "dist": {
+            "shasum": "d7e224fa72399c7a175099f45fc2ad024b05ec05",
+            "tarball": "https://registry.npmjs.org/parse5/-/parse5-7.3.0.tgz",
+            "fileCount": 64,
+            "integrity": "sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDRY8XjVSuEbsWQGNFp6XX94SGLYiswz0ZysTJJ0+IaHAIgXa3mPnb63A7KGC1mW7E5pBxlGHRPysneJl38Zz/HRnc=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 695873
+          }
+        }
+      },
+      "time": {
+        "7.3.0": "2025-04-22T17:04:33.658Z"
+      }
+    },
     "pdfjs-dist": {
       "versions": {
         "6.5.438": {
@@ -1688,6 +4645,50 @@
       },
       "time": {
         "6.5.438": "2026-11-01T18:22:21.690Z"
+      }
+    },
+    "pele": {
+      "versions": {
+        "1.8.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "vitest run --exclude \"tests/website/**\"",
+            "bench": "node scripts/bench.mjs",
+            "build": "node scripts/build.mjs",
+            "website": "cd website && pnpm dev",
+            "typecheck": "tsc --noEmit",
+            "test:watch": "vitest --exclude \"tests/website/**\"",
+            "test:website": "vitest run tests/website",
+            "bench:mermaid": "node scripts/bench-mermaid.mjs",
+            "prepublishOnly": "npm run typecheck && npm test && npm run build"
+          },
+          "dist": {
+            "shasum": "85853ea6207dd619a2cc24592483a5360c1474b9",
+            "tarball": "https://registry.npmjs.org/pele/-/pele-1.8.0.tgz",
+            "fileCount": 417,
+            "integrity": "sha512-AYmHttE70cwNJVXdfPMCANGivFlmc3bGGpMG0GqH5S5vE3RgtEuLlkqbhRfe94Csv/ZEd1TUbv2dMUHpw4p1Bg==",
+            "signatures": [
+              {
+                "sig": "MEQCIGdN8yj9hSpT+DuPEvkA7+Eb+RoB2vPBF9xMQiypfEdaAiBurOPMxJYw8MD0zS94Gg+0Oh1w9H6x69Td4opqx48nCg==",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              },
+              {
+                "sig": "MEYCIQDkipHDN5VUl1hvB4GR7G4ZqhV+6tWPVJkMHmI66aJeXQIhAPAbo3lwye2nCvVibl9SKWT3qSR/gTAsyxoZFaZs+mFU",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/pele@1.8.0",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 2298769
+          }
+        }
+      },
+      "time": {
+        "1.8.0": "2026-10-20T18:59:30.285Z"
       }
     },
     "picocolors": {
@@ -1809,6 +4810,37 @@
         "8.5.32": "2026-10-26T20:36:42.832Z"
       }
     },
+    "property-information": {
+      "versions": {
+        "7.2.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "generate": "node --conditions development script/generate-react.js && node --conditions development script/generate-exceptions.js",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api",
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==",
+            "shasum": "0809b34264e995c0bfcd3227028a1e35210af80a",
+            "tarball": "https://registry.npmjs.org/property-information/-/property-information-7.2.0.tgz",
+            "fileCount": 56,
+            "unpackedSize": 122232,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEUCIQCCVY3qgeg+nmTd0AaHpDTQvuScQOu7/sMF6pUnWFBqfwIgNXzDjgjgt0tQwuE9jrwZVEsigXgmnyVdARsWIQhV7ik="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "7.2.0": "2026-06-01T17:35:58.155Z"
+      }
+    },
     "react-dom": {
       "versions": {
         "19.3.1": {
@@ -1845,6 +4877,36 @@
         "19.3.1": "2026-10-14T16:49:10.081Z"
       }
     },
+    "react-markdown": {
+      "versions": {
+        "10.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "node --conditions development --experimental-loader=./script/load-jsx.js --no-warnings test.jsx",
+            "test-coverage": "c8 --100 --exclude script/ --reporter lcov -- npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ==",
+            "shasum": "e22bc20faddbc07605c15284255653c0f3bad5ca",
+            "tarball": "https://registry.npmjs.org/react-markdown/-/react-markdown-10.1.0.tgz",
+            "fileCount": 9,
+            "unpackedSize": 52637,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIFDa5w8PqqBGqoR+fKkd5YDj+MX231iD0jgUj71QqiQ2AiB37cB2Ja1dNCn3pISsxSPUlxzwpurt5S8TvMGRQLN15Q=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "10.1.0": "2025-03-07T10:32:53.222Z"
+      }
+    },
     "react": {
       "versions": {
         "19.3.1": {
@@ -1876,6 +4938,235 @@
       },
       "time": {
         "19.3.1": "2026-10-14T16:47:15.290Z"
+      }
+    },
+    "rehype-raw": {
+      "versions": {
+        "7.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . --frail --output --quiet && prettier . --log-level warn --write && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --check-coverage --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "integrity": "sha512-/aE8hCfKlQeA8LmyeyQvQF3eBiLRGNlfBJEvWH7ivp9sBqs7TNqBL5X3v157rM4IFETqDnIOO+z5M/biZbo9Ww==",
+            "shasum": "59d7348fd5dbef3807bbaa1d443efd2dd85ecee4",
+            "tarball": "https://registry.npmjs.org/rehype-raw/-/rehype-raw-7.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 12527,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEQCIBFEMoE9rklLyIjnjn763wp14cRLdwD/6QLS5ZFFKwHWAiBcBFtDyuqxzQKk5t6m/r2b+1iYcMi9kOTbEAwpDbZogA=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "7.0.0": "2023-08-26T10:03:47.145Z"
+      }
+    },
+    "rehype-sanitize": {
+      "versions": {
+        "6.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . --frail --output --quiet && prettier . --log-level warn --write && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --check-coverage --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "integrity": "sha512-CsnhKNsyI8Tub6L4sm5ZFsme4puGfc6pYylvXo1AeqaGbjOYyzNv3qZPwvs0oMJ39eryyeOdmxwUIo94IpEhqg==",
+            "shasum": "16e95f4a67a69cbf0f79e113c8e0df48203db73c",
+            "tarball": "https://registry.npmjs.org/rehype-sanitize/-/rehype-sanitize-6.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 20789,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQDks5XRSkDwGCYxhWCAnxncgcNDPU3ZHt9seGQxXx+AKgIgL0cvKJ7kvGiRwBeYAkgy4IN+XhzLIKmp5mOoavCn4vY="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "6.0.0": "2023-08-26T11:11:05.469Z"
+      }
+    },
+    "remark-breaks": {
+      "versions": {
+        "4.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . --frail --output --quiet && prettier . --log-level warn --write && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "integrity": "sha512-IjEjJOkH4FuJvHZVIW0QCDWxcG96kCq7An/KVH2NfJe6rKZU2AsHeB3OEjPNRxi4QC34Xdx7I2KGYn6IpT7gxQ==",
+            "shasum": "dcc19a2891733906f3b97eaa8acb8621e8da8852",
+            "tarball": "https://registry.npmjs.org/remark-breaks/-/remark-breaks-4.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 10950,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQClwRYAOW/F7t5evJQ2IoUBR5mpG7pv1PwdoTbpcLYRewIgHSG0Uwsl/U6oslC+eQkr0oQ79efO+8V8tOEGuQY+TD0="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.0.0": "2023-09-22T16:45:41.061Z"
+      }
+    },
+    "remark-gfm": {
+      "versions": {
+        "4.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . --frail --output --quiet && prettier . --log-level warn --write && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "integrity": "sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==",
+            "shasum": "33227b2a74397670d357bf05c098eaf8513f0d6b",
+            "tarball": "https://registry.npmjs.org/remark-gfm/-/remark-gfm-4.0.1.tgz",
+            "fileCount": 8,
+            "unpackedSize": 21993,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCIEWYic1BBFKx4zeFKtk4SPn+/si02gH074BVqIsoJzSrAiAZZpak3M+rKHY+E8br30Q18H/BffhAiTB4dtgMYFY5aA=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.0.1": "2025-02-10T12:43:10.735Z"
+      }
+    },
+    "remark-math": {
+      "versions": {
+        "6.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "test-api": "node --conditions development test.js",
+            "test": "npm run build && npm run test-api"
+          },
+          "dist": {
+            "integrity": "sha512-MMqgnP74Igy+S3WwnhQ7kqGlEerTETXMvJhrUzDikVZ2/uogJCb+WHUg97hK9/jcfc0dkD73s3LN8zU49cTEtA==",
+            "shasum": "0acdf74675f1c195fea6efffa78582f7ed7fc0d7",
+            "tarball": "https://registry.npmjs.org/remark-math/-/remark-math-6.0.0.tgz",
+            "fileCount": 6,
+            "unpackedSize": 12891,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQCbnbsx0IowENZvN9CpXPv2OQEIj0XhKUFautEIM3nD6AIgUu2LyvOEC2FrWLh5L0S5PI0iZ1mCMVEoQfJ5jXx2/eY="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "6.0.0": "2023-09-19T11:38:59.221Z"
+      }
+    },
+    "remark-parse": {
+      "versions": {
+        "11.0.0": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "integrity": "sha512-FCxlKLNGknS5ba/1lmpYijMUzX2esxW5xQqjWxw2eHFfS2MSdaHVINFmhjo+qN1WhZhNimq0dZATN9pH0IDrpA==",
+            "shasum": "aa60743fcb37ebf6b069204eb4da304e40db45a1",
+            "tarball": "https://registry.npmjs.org/remark-parse/-/remark-parse-11.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 19481,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQCVX1lA/CtSVliaYIHwRY9OmEk+GfFgXP2hOxHaSoiM3gIhANCWI7FgDCB3BVOulXBnfpaKIDP4hXBYe3WtTbu5fqTo"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "11.0.0": "2023-09-18T09:42:28.170Z"
+      }
+    },
+    "remark-rehype": {
+      "versions": {
+        "11.1.2": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-Dh7l57ianaEoIpzbp0PC9UKAdCSVklD8E5Rpw7ETfbTl3FqcOOgq5q2LVDhgGCkaBv7p24JXikPdvhhmHvKMsw==",
+            "shasum": "2addaadda80ca9bd9aa0da763e74d16327683b37",
+            "tarball": "https://registry.npmjs.org/remark-rehype/-/remark-rehype-11.1.2.tgz",
+            "fileCount": 9,
+            "unpackedSize": 48301,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEYCIQCcxpBX3J9yVPr2IXaMHPBv63JlCXmgMY4S70Tx0LniOgIhAO33m0KN/dHpcWL9LWpt5RucF8D/HmaAAkez44Elx9GK"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "11.1.2": "2025-04-02T13:46:59.156Z"
+      }
+    },
+    "remark-stringify": {
+      "versions": {
+        "11.0.0": {
+          "license": "MIT",
+          "scripts": {},
+          "dist": {
+            "integrity": "sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==",
+            "shasum": "4c5b01dd711c269df1aaae11743eb7e2e7636fd3",
+            "tarball": "https://registry.npmjs.org/remark-stringify/-/remark-stringify-11.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 19639,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQCUSQxcUcALQ7E4O5AIkWSznHIovWNO9uUOYlQwuq64dQIgEB8ECIrIf0wWVwV4VsxNlAIEywqLPIUw2UmRrB7Pgus="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "11.0.0": "2023-09-18T09:43:14.397Z"
       }
     },
     "reselect": {
@@ -2054,6 +5345,159 @@
         "1.2.2": "2026-09-30T14:08:09.382Z"
       }
     },
+    "space-separated-tokens": {
+      "versions": {
+        "2.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==",
+            "shasum": "1ecd9d2350a3844572c3f4a312bceb018348859f",
+            "tarball": "https://registry.npmjs.org/space-separated-tokens/-/space-separated-tokens-2.0.2.tgz",
+            "fileCount": 5,
+            "unpackedSize": 7753,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQCH6NKB1j+yQrtvDF9wDgH9HlwbrCJ/hpNZ9xJIDsJL4gIhAJ3aVSQMGcoVuNiCJ9VabcXtEXpS7+PU2BPRAjwlvUZK"
+              }
+            ],
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJjcgI2ACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2Vmr+0w//eRJKe6ISuUZGIjuscd6jeDlEWj7cQ2cjE+9LCVozc6B4CTXx\r\nzwqbMmVvXee4hoADwsNzktJMzvY/NH1NAea2cfxsJmcUWxVgRPgnS7mW6oDn\r\nYbx0O4P0ER2WDxtrCmbufi8kSHSy5S4NjBfM+4VTlga1964A4vrYDLFSnVK1\r\nizmhuTqbGf46FB1R7RsZBHhhfcrhKifabakwImIh8YhEtrMHVUmnoufejfMZ\r\n5kZkcYQW602rs5y4Gkach090ckVww5hDzU65T+Ajve7dZ4W0BKiXaAvmJ5ph\r\nktax0aWgfvUlKQsc6bNgM3PHPbLvZUlE2yvYtvZ5kG8+wLt1DgEP7tQNz9dr\r\nCDTf8rm0EEHQRGcjbeVidiEjF5nNTn4etS1p1lXGofFly0AcJDa+H3J0pmiq\r\nhQcwKG6J+boNnQTg2L29vB1NIcBG5/AstF9u/jAsdG4CTNYaNGHilcldRNTL\r\n3n0JQ6OlYfgWojtDe+26fB4ElVAapMSqUu9yOqn34QRggp6yUaSTzMZ+J1LI\r\n3ogPcsT3I74yHTyWH1DflUXLRZOGnL1ko/cQTczuoihzs2BsfhV/xE/Ff9v7\r\nXdpRRHvlTmwtm/z7BuSkeOvbYUaplKizeF5he42IXtGB+ZeOEXkbUN8YI8TF\r\nLKQTVslwp+iH8xlsBufPgD5N4UgmdXpSA28=\r\n=Oq8F\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "2.0.2": "2022-11-14T08:54:14.011Z"
+      }
+    },
+    "stringify-entities": {
+      "versions": {
+        "4.0.4": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "generate": "node --conditions development build.js",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "b3b79ef5f277cc4ac73caeb0236c5ba939b3a4f3",
+            "tarball": "https://registry.npmjs.org/stringify-entities/-/stringify-entities-4.0.4.tgz",
+            "fileCount": 21,
+            "integrity": "sha512-IwfBptatlO+QCJUo19AqvrPNqlVMpW9YEL2LIVY+Rpv2qsjCGxaDLNRgeGsQWJhfItebuJhsGSLjaBbNSQ+ieg==",
+            "signatures": [
+              {
+                "sig": "MEUCICkT9plTxiB/qC47otOnvqniEZMkmW5UzV74QM7lm2pMAiEAjqxZzx1nlylyhKu9c4m15oHLXLroT9uzL7Lce6FYZ1M=",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 23780
+          }
+        }
+      },
+      "time": {
+        "4.0.4": "2024-04-03T13:04:46.263Z"
+      }
+    },
+    "style-to-js": {
+      "versions": {
+        "1.1.21": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint .",
+            "test": "jest",
+            "build": "npm run build:cjs && npm run build:umd",
+            "clean": "rm -rf cjs umd",
+            "prepare": "husky",
+            "test:ci": "CI=true jest --ci --colors --coverage",
+            "lint:fix": "npm run lint -- --fix",
+            "lint:tsc": "tsc --noEmit",
+            "build:cjs": "tsc --declaration --outDir cjs",
+            "build:umd": "rollup --config --failAfterWarnings",
+            "test:watch": "jest --watch",
+            "prepublishOnly": "npm run lint && npm run lint:tsc && npm run test:ci && npm run clean && npm run build"
+          },
+          "dist": {
+            "shasum": "2908941187f857e79e28e9cd78008b9a0b3e0e8d",
+            "tarball": "https://registry.npmjs.org/style-to-js/-/style-to-js-1.1.21.tgz",
+            "fileCount": 19,
+            "integrity": "sha512-RjQetxJrrUJLQPHbLku6U/ocGtzyjbJMP9lCNK7Ag0CNh690nSH8woqWH9u16nMjYBAok+i7JO1NP2pOy8IsPQ==",
+            "signatures": [
+              {
+                "sig": "MEUCIGnnlbWZsmiOSBPrHtbmEeRr3s5SejxXbZ9TZpOwP4RcAiEAub7zHuAE4dWcx1q2bff0zsVrCg56Gymp/Ur3+ZQQA/o=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/style-to-js@1.1.21",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 66738
+          }
+        }
+      },
+      "time": {
+        "1.1.21": "2025-11-16T06:30:53.558Z"
+      }
+    },
+    "style-to-object": {
+      "versions": {
+        "1.0.14": {
+          "license": "MIT",
+          "scripts": {
+            "lint": "eslint .",
+            "test": "jest",
+            "build": "run-s build:*",
+            "clean": "rm -rf cjs coverage dist esm",
+            "prepare": "husky",
+            "test:ci": "CI=true jest --ci --colors --coverage",
+            "lint:fix": "npm run lint -- --fix",
+            "lint:tsc": "tsc --noEmit",
+            "test:esm": "npm run build && node --test **/*.test.mjs",
+            "build:cjs": "tsc --project tsconfig.cjs.json",
+            "build:esm": "tsc --project tsconfig.json",
+            "build:umd": "rollup --config --failAfterWarnings",
+            "test:watch": "npm run test -- --watch",
+            "lint:package": "publint",
+            "prepublishOnly": "run-s lint lint:tsc test clean build"
+          },
+          "dist": {
+            "shasum": "1d22f0e7266bb8c6d8cae5caf4ec4f005e08f611",
+            "tarball": "https://registry.npmjs.org/style-to-object/-/style-to-object-1.0.14.tgz",
+            "fileCount": 18,
+            "integrity": "sha512-LIN7rULI0jBscWQYaSswptyderlarFkjQ+t79nzty8tcIAceVomEVlLzH5VP4Cmsv6MtKhs7qaAiwlcp+Mgaxw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQCMVZXOd565IJ01CAqhjbR6uvQvqEWoMfkMUTjeGU+MIgIgfSTOUVRySf3EgNrn4NSjoz5lelzq0RRV4XSj74eeAHI=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "attestations": {
+              "url": "https://registry.npmjs.org/-/npm/v1/attestations/style-to-object@1.0.14",
+              "provenance": {
+                "predicateType": "https://slsa.dev/provenance/v1"
+              }
+            },
+            "unpackedSize": 45764
+          }
+        }
+      },
+      "time": {
+        "1.0.14": "2025-11-16T06:23:17.550Z"
+      }
+    },
     "tailwind-merge": {
       "versions": {
         "3.7.0": {
@@ -2224,6 +5668,70 @@
         "0.2.17": "2026-05-30T19:57:21.717Z"
       }
     },
+    "trim-lines": {
+      "versions": {
+        "3.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepublishOnly": "npm run build && npm run format",
+            "prebuild": "rimraf \"*.d.ts\"",
+            "build": "tsc",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov node test.js",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==",
+            "shasum": "d802e332a07df861c48802c04321017b1bd87338",
+            "tarball": "https://registry.npmjs.org/trim-lines/-/trim-lines-3.0.1.tgz",
+            "fileCount": 5,
+            "unpackedSize": 7493,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQC5UxvH5XLRKNq0mnM/HK5Pb9UtNo4WU6h1qUHOPH6CZgIgL9f7bR/vF0uv7Fj8jLOIrAZ3wdu8VvgAYsJcYZL8WYs="
+              }
+            ],
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJiwZF8ACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2Vmo47RAAmXH6U0K+i1FPO4Ng1xfuHMSfStm/LnXkQV7438C49QlkePk3\r\nke5oALmHSiFawnY77WLu/JkBWxA484OLgnzIZNN9sW8wS9Llb8Ti02OviXkt\r\ngU+Ncl5bQtKEu3s8M1gszI1c1X/qY5hEjo6YLaLbtX7ZOP2asaqX59UupnSB\r\nPL39tNS+aj4JqO0kPCeklzgi1pei0hqPsl+mZflGVb6LX/XqZzj6inFLbAOZ\r\nrl2llGTXE9Zy7JM2eoQTRDl4k+8r9olafek/LTLS94cyou3uN98Lz4nhLKng\r\nTzGax0BhDxnzQYTYWVQCkV6ZuY9KX0NK2jsFQJbjXXssFQpVNPTg/BY/UiCo\r\n6PRCAokKMRfjLxbakRBm6Sn7TVRUVE93fYzBrxyJmBc23RHgGC32lZONfD54\r\nkx/Rvm0m0uddCMHY6TtVOJZszptgEWHf6lmPIc23MX9wFMsxFC28BAc+BhlS\r\nXAnQgoNWFEyze7rk9ClPX3+p2NMcAka6EHcVXzH/cKSGhW2/1/r2htpL1lVK\r\n0MWriCFBibqy/hcpP/npLY5L3iEIr1ReEEuv39beQL1xt+HzMxvvXo5JpN3j\r\n8iaXYQ7qAg0NrnXCejoXxbe1cW/GvZqBibOVzmmnPQnuv7GNCcbaf3ClUhwb\r\n8nhoTBlgkJetIPlC7kPPgLUjN6WPlCbkFng=\r\n=DX/Q\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "3.0.1": "2022-07-03T12:54:20.493Z"
+      }
+    },
+    "trough": {
+      "versions": {
+        "2.2.0": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . --frail --output --quiet && prettier . --log-level warn --write && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "integrity": "sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw==",
+            "shasum": "94a60bd6bd375c152c1df911a4b11d5b0256f50f",
+            "tarball": "https://registry.npmjs.org/trough/-/trough-2.2.0.tgz",
+            "fileCount": 9,
+            "unpackedSize": 22877,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIGP4OXHC74tIjni5aZIIBPmHJgUQZ8znxCmfubgLdTHrAiEAzYgbeDyX33tsCMcwWXcEdHxI3AYO4tW75EAQdo4ptE0="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.2.0": "2024-02-05T15:27:09.053Z"
+      }
+    },
     "typescript": {
       "versions": {
         "6.0.3": {
@@ -2290,6 +5798,223 @@
         "7.24.6": "2026-03-25T16:01:36.357Z"
       }
     },
+    "unified": {
+      "versions": {
+        "11.0.5": {
+          "license": "MIT",
+          "scripts": {
+            "build": "tsc --build --clean && tsc --build && node script/fix-types.js && type-coverage && tsd",
+            "format": "remark . --frail --output --quiet && prettier . --log-level warn --write && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --check-coverage --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "integrity": "sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==",
+            "shasum": "f66677610a5c0a9ee90cab2b8d4d66037026d9e1",
+            "tarball": "https://registry.npmjs.org/unified/-/unified-11.0.5.tgz",
+            "fileCount": 11,
+            "unpackedSize": 145932,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIHyAbJe+7NVaTRj5oMZr/UFWPuDfsiB0Hh9+TqYZU1tfAiEAmgYGHWdlnyPAilACDGN4sbec4FsX1b1QJehHDnEhJwM="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "11.0.5": "2024-06-19T12:33:43.464Z"
+      }
+    },
+    "unist-util-is": {
+      "versions": {
+        "6.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && tsd && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test/index.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-LsiILbtBETkDz8I9p1dQ0uyRUWuaQzd/cuEeS1hoRSyW5E5XGmTzlwY1OrNzzakGowI9Dr/I8HVaw4hTtnxy8g==",
+            "shasum": "d0a3f86f2dd0db7acd7d8c2478080b5c67f9c6a9",
+            "tarball": "https://registry.npmjs.org/unist-util-is/-/unist-util-is-6.0.1.tgz",
+            "fileCount": 9,
+            "unpackedSize": 31489,
+            "signatures": [
+              {
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+                "sig": "MEQCICSM6nWg5ekeesMUjq7HtoZOoU8Wej0oAdpLOtnqLEatAiAjDXqpqs0NGCr/acyLpbPok6oysFfpswILHCdMctK02A=="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "6.0.1": "2025-10-16T18:01:47.398Z"
+      }
+    },
+    "unist-util-position": {
+      "versions": {
+        "5.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==",
+            "shasum": "678f20ab5ca1207a97d7ea8a388373c9cf896be4",
+            "tarball": "https://registry.npmjs.org/unist-util-position/-/unist-util-position-5.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 12779,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQCE7Xsw+SHettM6uvdmbbaPNSZwXiQw8fEXGOsCf76+cAIhALTs1RRK73qxRLNZCg32p0as+3kL5oHllQYBuBnJ8dRw"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "5.0.0": "2023-07-07T09:59:34.316Z"
+      }
+    },
+    "unist-util-remove-position": {
+      "versions": {
+        "5.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && tsd && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-Hp5Kh3wLxv0PHj9m2yZhhLt58KzPtEYKQQ4yxfYFEO7EvHwzyDYnduhHnY1mDxoqr7VUwVuHXk9RXKIiYS1N8Q==",
+            "shasum": "fea68a25658409c9460408bc6b4991b965b52163",
+            "tarball": "https://registry.npmjs.org/unist-util-remove-position/-/unist-util-remove-position-5.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 11038,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIEiqLRGxf4jC4PNQrETU/HSJ4X+hCEAVB4GlLhbns2r9AiEAp20/PwMUDPODvlVqENE9FTcLFWLl2q55QsjrOGiGVgo="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "5.0.0": "2023-07-07T10:24:53.442Z"
+      }
+    },
+    "unist-util-stringify-position": {
+      "versions": {
+        "4.0.0": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==",
+            "shasum": "449c6e21a880e0855bf5aabadeb3a740314abac2",
+            "tarball": "https://registry.npmjs.org/unist-util-stringify-position/-/unist-util-stringify-position-4.0.0.tgz",
+            "fileCount": 7,
+            "unpackedSize": 13180,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIQDBzFFA/0PUi2qLEVi8TehgYw+u9cuoFnhxaLw1i4jv0AIgT3WWkOeSV58fWMiuiQ7MYj3m+wb5v89bTQ4tuI4h+8o="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "4.0.0": "2023-07-07T10:09:26.763Z"
+      }
+    },
+    "unist-util-visit-parents": {
+      "versions": {
+        "6.0.2": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && tsd && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "777df7fb98652ce16b4b7cd999d0a1a40efa3a02",
+            "tarball": "https://registry.npmjs.org/unist-util-visit-parents/-/unist-util-visit-parents-6.0.2.tgz",
+            "fileCount": 14,
+            "integrity": "sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==",
+            "signatures": [
+              {
+                "sig": "MEUCIGnvpJr+z1/4amEQDakarerY2E5LhkJtM7QNx+leRuwsAiEA24DcEho1U+MCdWdu3Kcns7BPPyU4dneDmIIqM94MNw0=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 39087
+          }
+        }
+      },
+      "time": {
+        "6.0.2": "2025-10-16T18:20:45.045Z"
+      }
+    },
+    "unist-util-visit": {
+      "versions": {
+        "5.1.0": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && tsd && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "9a2a28b0aa76a15e0da70a08a5863a2f060e2468",
+            "tarball": "https://registry.npmjs.org/unist-util-visit/-/unist-util-visit-5.1.0.tgz",
+            "fileCount": 8,
+            "integrity": "sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDbWJn69mZTvOLq0Ouup3RiNWguioein0DVSylyhtN/EQIhAOEJalY4vvhgrjwCOqWqoCnj3oTnWuo+65Gw9kGS5mSS",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 33781
+          }
+        }
+      },
+      "time": {
+        "5.1.0": "2026-01-22T19:02:58.977Z"
+      }
+    },
     "uplot": {
       "versions": {
         "1.6.32": {
@@ -2350,6 +6075,99 @@
         "1.7.0": "2026-09-09T17:19:07.352Z"
       }
     },
+    "vfile-location": {
+      "versions": {
+        "5.0.3": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api"
+          },
+          "dist": {
+            "shasum": "cb9eacd20f2b6426d19451e0eafa3d0a846225c3",
+            "tarball": "https://registry.npmjs.org/vfile-location/-/vfile-location-5.0.3.tgz",
+            "fileCount": 8,
+            "integrity": "sha512-5yXvWDEgqeiYiBe1lbxYF7UMAIm/IcopxMHrMQDq3nvKcjPKIhZklUKL+AE7J7uApI4kwe2snsK+eI6UTj9EHg==",
+            "signatures": [
+              {
+                "sig": "MEYCIQDNqIVkBNs2hK0+SK9n2UBJDb9aBMPMI22rUQwHaMWRhQIhAJ/Q6aWpjLSxpaHr7/SM+plOKMlE8p/AFwllLUOPvnFa",
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+              }
+            ],
+            "unpackedSize": 13089
+          }
+        }
+      },
+      "time": {
+        "5.0.3": "2024-07-15T14:29:27.567Z"
+      }
+    },
+    "vfile-message": {
+      "versions": {
+        "4.0.3": {
+          "license": "MIT",
+          "scripts": {
+            "test": "npm run build && npm run format && npm run test-coverage",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark --frail --output --quiet -- . && prettier --log-level warn --write -- . && xo --fix",
+            "prepack": "npm run build && npm run format",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov -- npm run test-api"
+          },
+          "dist": {
+            "shasum": "87b44dddd7b70f0641c2e3ed0864ba73e2ea8df4",
+            "tarball": "https://registry.npmjs.org/vfile-message/-/vfile-message-4.0.3.tgz",
+            "fileCount": 7,
+            "integrity": "sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==",
+            "signatures": [
+              {
+                "sig": "MEUCIQDxJurhHdEc1yAwJC9wj+C5kPr3JfPL1VjHLl6U1lv5jwIgU9aD048XNc7bGQaLcMUj1fDBKyIy+rBIYRwFVc+4i38=",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+              }
+            ],
+            "unpackedSize": 34220
+          }
+        }
+      },
+      "time": {
+        "4.0.3": "2025-07-26T15:08:12.656Z"
+      }
+    },
+    "vfile": {
+      "versions": {
+        "6.0.3": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && type-coverage",
+            "format": "remark . -qfo && prettier . -w --log-level warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==",
+            "shasum": "3652ab1c496531852bf55a6bac57af981ebc38ab",
+            "tarball": "https://registry.npmjs.org/vfile/-/vfile-6.0.3.tgz",
+            "fileCount": 29,
+            "unpackedSize": 121686,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDJC19U1iCaRUcsNUi+3Oe2vCzUGod6HEngPaJ/xPEuiwIhAPIbNhh87C4P4bPW8YHTIIDqc/yBPbnZTb5/deLR+Bsa"
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "6.0.3": "2024-08-27T09:12:42.377Z"
+      }
+    },
     "vite": {
       "versions": {
         "8.3.7": {
@@ -2395,6 +6213,39 @@
         "8.3.7": "2026-11-09T10:25:29.212Z"
       }
     },
+    "web-namespaces": {
+      "versions": {
+        "2.0.1": {
+          "license": "MIT",
+          "scripts": {
+            "generate": "node build",
+            "prepublishOnly": "npm run build && npm run format",
+            "build": "rimraf \"*.d.ts\" && tsc && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --branches 100 --functions 100 --lines 100 --statements 100 --reporter lcov npm run test-api",
+            "test": "npm run generate && npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-bKr1DkiNa2krS7qxNtdrtHAmzuYGFQLiQ13TsorsdT6ULTkPLKuu5+GsFpDlg6JFjUTwX2DyhMPG2be8uPrqsQ==",
+            "shasum": "1010ff7c650eccb2592cebeeaf9a1b253fd40692",
+            "tarball": "https://registry.npmjs.org/web-namespaces/-/web-namespaces-2.0.1.tgz",
+            "fileCount": 5,
+            "unpackedSize": 7443,
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v3.0.13\r\nComment: https://openpgpjs.org\r\n\r\nwsFcBAEBCAAQBQJh3A+uCRA9TVsSAnZWagAAnacP/RfOUfyPzTBXLyiruqrp\no61/yvNLKIBgGQeVI+POj+5L6q7goTGCqnNQKfYm7a6Q/Jd0wBksXH4J4skD\nEflZ/HXnWa3n4tzNInFDJ83aqS/0zfpI4utb4ILV3bCNBA5sDURyLeiIA2XP\nZEQxPDz/uf6BKgCWZ4lCQjX6iMfBn72dFlTgxSeu1nz/2/tZBhJDQv5bUE+P\n/sbz8IlEWG5+TmVvCy1Cp+K2EPXBnjUrJFfTsdrbUm/y9lFcppo+xvCV8El3\nzlgyqB7LHfLsQ2ct70XGp3GGlseUI6mVR0saTfe62aK6FGpZHMA70UEa03Vj\n+TSe+wPGOAiEvKKXtjjiuwTYMm+NoBEqEzVaFpENYf3A1NoR+WBjhlZ+5FI+\ngRMKfq7m2tekdxyrN3e7Nn9YWUT4EZUZmYDNgYtGj2hnP7rqnzKNQ7Ad105+\n6SbMn2WhPlFA8Xuu8e9fUCAiKNzQRZfyHyNV7eyeCY/snjasLZLZH+/l/Lea\numozyaW2h9ZI3NHIVhWyON0Au5OJjA98DkvZfKN+KZti89s3t63j+DXqSjz4\nvKyf30gXiaBzeHN1AtNbfIXrvNKEebM0JnuTz8fWdhFNj9buZ+dA5Msdjj5M\nLA4yLdX9BX47SeExtiiAl8lnK3SrlkkeSWpS0JHzhBPOWw+R6H99nktsWNf5\nEK8c\r\n=xDVa\r\n-----END PGP SIGNATURE-----\r\n",
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEUCIHALkAdgSBKDK/aHfmhzyUWQJcPa/pg3/pAHim9n+215AiEAuX2qBvP+XXb8MW0zbc/ywcNjnDCpReSjRx4UP4RrfSw="
+              }
+            ]
+          }
+        }
+      },
+      "time": {
+        "2.0.1": "2021-11-05T18:13:56.968Z"
+      }
+    },
     "zustand": {
       "versions": {
         "5.1.0": {
@@ -2426,6 +6277,38 @@
       },
       "time": {
         "5.1.0": "2026-11-06T14:07:48.019Z"
+      }
+    },
+    "zwitch": {
+      "versions": {
+        "2.0.4": {
+          "license": "MIT",
+          "scripts": {
+            "prepack": "npm run build && npm run format",
+            "build": "tsc --build --clean && tsc --build && tsd && type-coverage",
+            "format": "remark . -qfo && prettier . -w --loglevel warn && xo --fix",
+            "test-api": "node --conditions development test.js",
+            "test-coverage": "c8 --check-coverage --100 --reporter lcov npm run test-api",
+            "test": "npm run build && npm run format && npm run test-coverage"
+          },
+          "dist": {
+            "integrity": "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==",
+            "shasum": "c827d4b0acb76fc3e685a4c6ec2902d51070e9d7",
+            "tarball": "https://registry.npmjs.org/zwitch/-/zwitch-2.0.4.tgz",
+            "fileCount": 5,
+            "unpackedSize": 13752,
+            "signatures": [
+              {
+                "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+                "sig": "MEYCIQDVjIIedduzzuY8l+MPKOA7NpUsQGcTsg4Lg3EQgHXd0wIhAKBeuxXx7ZGAte4eZkfYnfzpFKSwIpr1+Sqkm89JtiOD"
+              }
+            ],
+            "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJjdKi6ACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2VmrgyQ/+I1Sq+0bMK4O9czlVsetS6XRAx3cun4zLTKKCqBh4t3g9+Wtq\r\n1U1+eje8+cwPEKGg1xgyIklku6bD4bKShaJ9dnblXHD8dZ49KgGvHKaGgGYh\r\ndFxTtgzADv2koAZ04D88IhXG533eaLfoRvB0Dgy4bmVO3GrczkQw1qtwIeyk\r\nd4V2MxsUDPBZTtqNIyA7k1vJSXQXKO4JECPlUzdDYfGOExKRI/30UnroJo7N\r\ngIGYKWfDAPXK52463586xvgVA2l/MwC6CAfKDIkPkhksQqy4ZmKtzNhkGrOn\r\nsSNuQQvlfcaq1JBAs+74G1duX0gV/qsfrjPf6PnBbvcCIJ4hroalLRRxKIVm\r\njC2CaSxzyWeMrcbt0mn+eojWHDzajf5Rq+fjw9x31KoJRQH5WrnPfvvBULDK\r\nE4yPiZTnMFXp5iPxZAB9PkbpICQG+33CRKnNfwcyqWTnnXQ2S+JFWOcING9b\r\nMjx2CQExdpCTGVwkoCB3m+Or2LVwe/OSry6g0HNfcUapbh45JApVPY+FBG2p\r\nrpCTwwc59m1rPeZx+YcyxNcqJtfHVvO/ZvXVgNI+U2Vf50MVdAiXNx9mvZLe\r\n0Xe2zARXF1FUaij8+/THRS71I0PrY8EumazcH/2iY93TKnla5C9W06KzmhVe\r\nMrBdeGcwj6KrqrBENdLIKnHm8QakXnvv35M=\r\n=RPgT\r\n-----END PGP SIGNATURE-----\r\n"
+          }
+        }
+      },
+      "time": {
+        "2.0.4": "2022-11-16T09:09:14.038Z"
       }
     }
   }

@@ -1,0 +1,11 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedFiles": {
+    "node_modules/.bin/tool": "#!/bin/sh\nexec node \"$basedir\"/'x' \"$@\"\n# cmd-shim-target=../../../../../../../../outside/x.js\n"
+  },
+  "error": "installed: .bin/tool leaves the store"
+}

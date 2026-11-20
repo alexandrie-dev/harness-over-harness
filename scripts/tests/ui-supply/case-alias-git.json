@@ -1,0 +1,10 @@
+{
+  "replace": {
+    "lock/snapshots/fixture@1.0.0": {
+      "dependencies": {
+        "aliased-name": "git+https://example.invalid/x/y.git#0123456789abcdef"
+      }
+    }
+  },
+  "error": "lock: missing dependency aliased-name@git+https://example.invalid/x/y.git#0123456789abcdef"
+}

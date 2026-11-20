@@ -1,0 +1,10 @@
+{
+  "installedDir": "not-a-store-key",
+  "installedName": "fixture",
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "error": "installed: unexpected store entry not-a-store-key"
+}

@@ -1,0 +1,11 @@
+{
+  "replace": {
+    "metadata/versions/1.0.0/license": null,
+    "policy/licenseExceptions": {
+      "fixture@1.0.0": {
+        "reason": "planted"
+      }
+    }
+  },
+  "error": "license: forbidden fixture@1.0.0"
+}

@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='hoh-env-test-') as directory:
     env = dict(line.split('=', 1) for line in printed.splitlines())
     assert set(env) == ALLOWED, env
     assert env['LANG'] == env['LC_ALL'] == 'C.UTF-8'
-    assert env['PATH'].startswith(str(ROOT / 'ui/scripts/tools') + ':/home/save/.nvm/versions/node/v20.20.2/bin:')
+    assert env['PATH'].startswith(str(ROOT / 'ui/scripts/tools') + ':/home/save/.nvm/versions/node/v22.23.1/bin:')
     assert env['HOME'].startswith('/tmp/hoh-ui-build-') and not Path(env['HOME']).exists()
     assert env['XDG_RUNTIME_DIR'] == env['HOME'] + '/runtime'
     assert not (root / 'injected').exists()

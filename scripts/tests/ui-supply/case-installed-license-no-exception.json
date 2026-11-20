@@ -1,0 +1,17 @@
+{
+  "replace": {
+    "metadata/versions/1.0.0/license": "(MPL-2.0 OR Apache-2.0)",
+    "policy/licenseExceptions": {
+      "fixture@1.0.0": {
+        "license": "(MPL-2.0 OR Apache-2.0)",
+        "reason": "planted: Apache-2.0 branch"
+      }
+    }
+  },
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "GPL-3.0-only"
+  },
+  "error": "license: installed fixture"
+}

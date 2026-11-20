@@ -1,6 +1,6 @@
 {
-  "lockSha256": "f9ddfe4c5f429cd6f675e451203eaa45c61d5b677c13eb5d779d7aa0fabad589",
-  "checkedAt": "2026-11-19T23:46:53.634227+00:00",
+  "lockSha256": "8e5f474b393fb8daaa5bbf6e51dd274ac2232d318a3b40775a831f96cb3dccdc",
+  "checkedAt": "2026-11-20T17:26:13.549605+00:00",
   "report": {
     "advisories": {},
     "metadata": {
@@ -11,10 +11,10 @@
         "high": 0,
         "critical": 0
       },
-      "dependencies": 23,
-      "devDependencies": 42,
+      "dependencies": 152,
+      "devDependencies": 40,
       "optionalDependencies": 0,
-      "totalDependencies": 65
+      "totalDependencies": 192
     }
   }
 }

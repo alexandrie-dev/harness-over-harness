@@ -1,0 +1,5 @@
+{
+  "replace": {
+    "lock/snapshots/fixture@1.0.0": {"dependencies": {"aliased-name": "fixture@1.0.0"}}
+  }
+}

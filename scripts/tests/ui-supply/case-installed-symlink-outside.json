@@ -1,0 +1,11 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedLinks": {
+    "node_modules/evil": "@OUTSIDE@"
+  },
+  "error": "installed: symlink leaves the store: evil"
+}

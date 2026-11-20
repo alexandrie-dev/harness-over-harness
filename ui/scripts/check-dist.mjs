@@ -43,12 +43,14 @@ for (const path of await files('dist')) {
 // Package 1's empty-shell cap covered one screen; this build has chat, first run
 // and approval entries. Keep both a whole-window cap and a compressed payload cap.
 // 19.11 fix QA A: 512 -> 544 KiB for the «Подтверждения» section, live answer text and the approval details.
-assert(total < 544 * 1024, `window text assets unexpectedly large: ${total} bytes`);
+// 20.11 окно-как-T3: 544 -> 576 KiB: значки поставщиков из T3 (OpenAI, Claude, Anthropic, OpenRouter, Ollama) и стили чата/окна защиты; предел gzip не менялся.
+assert(total < 576 * 1024, `window text assets unexpectedly large: ${total} bytes`);
 // 20.11.2026, новый вид окна по design/DESIGN.md (боковая колонка, список чатов, токены системы, старая разметка и стили заменены):
 // было 163468/163840, стало 163782/171971 (предел = факт + 5 %). Проверка остаётся включённой.
 // 20.11.2026, строка поля ввода, ссылки/картинки/шаги в ответах: 165275/173538 (факт + 5 %), было 163782/171971.
 // 20.11.2026, ссылки как кнопки, отказ вне папки, ключ: 167329/175695 (факт + 5 %), было 165275/173538.
 // 20.11.2026, круг 2 (настоящий путь папки, фраза о ключе при вводе, затемнение узкой колонки): 167615/175996 (факт + 5 %), было 167329/175695.
-const GZIP_LIMIT = 175996;
+// 20.11.2026, после установки npm-пакетов T3 (решение CEO): было 175924/175996, предел = факт + 5 % = 184720. Рендер T3 (+180 КБ) в сборку не входит, см. src/t3/render.tsx.
+const GZIP_LIMIT = 184720;
 assert(compressed < GZIP_LIMIT, `window compressed text assets unexpectedly large: ${compressed} bytes`);
-console.log(`passed: dist has no external network URLs or dynamic code; text ${total}/557056, gzip ${compressed}/${GZIP_LIMIT} bytes`);
+console.log(`passed: dist has no external network URLs or dynamic code; text ${total}/589824, gzip ${compressed}/${GZIP_LIMIT} bytes`);

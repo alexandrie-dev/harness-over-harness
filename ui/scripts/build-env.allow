@@ -1,6 +1,6 @@
 # Literal values only; no inherited values, expansion or shell evaluation.
 [build]
-PATH=/home/save/Alexandrie/HarnessOverHarness/ui/scripts/tools:/home/save/.nvm/versions/node/v20.20.2/bin:/usr/local/bin:/usr/bin:/bin # Local shim calls the installed pnpm 12.21.0 native binary without Corepack; pinned Node and host tools, no caller PATH.
+PATH=/home/save/Alexandrie/HarnessOverHarness/ui/scripts/tools:/home/save/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin # Local shim calls the installed pnpm 12.21.0 native binary without Corepack; pinned Node and host tools, no caller PATH.
 HOME=@HOME@ # Fresh private /tmp directory for each command; never the real home or its npm config.
 LANG=C.UTF-8 # Deterministic UTF-8 diagnostics and filenames.
 LC_ALL=C.UTF-8 # Prevent inherited locale overrides.

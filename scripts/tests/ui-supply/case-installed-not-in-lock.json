@@ -1,0 +1,10 @@
+{
+  "installedDir": "ghost@1.0.0",
+  "installedName": "ghost",
+  "installed": {
+    "name": "ghost",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "error": "installed: not in lock ghost@1.0.0"
+}

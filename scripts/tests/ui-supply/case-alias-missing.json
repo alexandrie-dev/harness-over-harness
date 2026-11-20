@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "lock/snapshots/fixture@1.0.0": {"dependencies": {"aliased-name": "ghost@1.0.0"}}
+  },
+  "error": "lock: missing dependency aliased-name@ghost@1.0.0"
+}

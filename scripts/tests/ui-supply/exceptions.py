@@ -54,6 +54,10 @@ for case_file in sorted(HERE.glob('case-*.json')):
         (root / 'docs/ts').mkdir(parents=True)
         for filename in ('.npmrc', 'pnpm-workspace.yaml'):
             shutil.copyfile(ROOT / 'ui' / filename, ui / filename)
+        # Fixture locks carry no patches; the real workspace's patchedDependencies would need patch files.
+        cfg = yaml.safe_load((ui / 'pnpm-workspace.yaml').read_text())
+        cfg.pop('patchedDependencies', None)
+        (ui / 'pnpm-workspace.yaml').write_text(yaml.safe_dump(cfg))
         (ui / 'package.json').write_text(json.dumps(data['manifest']))
         (ui / 'pnpm-lock.yaml').write_text(yaml.safe_dump(data['lock']))
         direct = data['manifest'].get('dependencies', {}) | data['manifest'].get('devDependencies', {})
@@ -112,6 +116,7 @@ with tempfile.TemporaryDirectory(prefix='hoh-real-evidence-') as directory:
                      'docs/ts/DEPS.md', 'docs/ts/npm-lock-metadata.json',
                      'docs/ts/pnpm-audit.json'):
         shutil.copyfile(ROOT / relative, root / relative)
+    shutil.copytree(ROOT / 'ui/patches', root / 'ui/patches')
     active_exception = ROOT / 'ui/audit-exceptions.json'
     if active_exception.exists():
         shutil.copyfile(active_exception, root / 'ui/audit-exceptions.json')

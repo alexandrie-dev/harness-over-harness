@@ -71,8 +71,11 @@ def build_paths():
         nonlocal visits
         visits += 1
         require(visits <= 50000, 'exception: dependency graph too complex')
-        key = name + '@' + str(version)
+        # An npm: alias edge is stored as 'real-name@version(...)'; follow and name the REAL package.
+        key = gate.dependency_key(name, version)
         require(key in snapshots, 'exception: missing snapshot ' + key)
+        name = key.split('(')[0].rsplit('@', 1)[0]
+        version = key[len(name) + 1:]
         if key in active:
             return
         route = (*names, name)

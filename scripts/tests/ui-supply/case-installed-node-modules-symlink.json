@@ -1,0 +1,11 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedLinks": {
+    "node_modules/fixture/node_modules": "@OUTSIDE@"
+  },
+  "error": "installed: node_modules is a symlink"
+}

@@ -1,0 +1,15 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedFiles": {
+    "node_modules/@scope/ghost/package.json": {
+      "name": "@scope/ghost",
+      "version": "1.0.0",
+      "license": "MIT"
+    }
+  },
+  "error": "installed: not in lock @scope/ghost"
+}

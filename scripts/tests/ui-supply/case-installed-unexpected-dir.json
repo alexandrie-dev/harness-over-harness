@@ -1,0 +1,19 @@
+{
+  "extraPackages": {
+    "nested@1.0.0": {}
+  },
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedFiles": {
+    "node_modules/fixture/node_modules/nested/package.json": {
+      "name": "nested",
+      "version": "1.0.0",
+      "license": "MIT"
+    },
+    "node_modules/neighbour-dir/placeholder": {}
+  },
+  "error": "installed: unexpected entry neighbour-dir"
+}

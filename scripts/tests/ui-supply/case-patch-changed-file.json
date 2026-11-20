@@ -1,0 +1,17 @@
+{
+  "patched": {
+    "files": {
+      "patches/fixture@1.0.0.patch": "--- a\n+++ b\n"
+    },
+    "workspace": {
+      "fixture@1.0.0": "patches/fixture@1.0.0.patch"
+    },
+    "lock": {
+      "fixture@1.0.0": "patches/fixture@1.0.0.patch"
+    },
+    "mutate": {
+      "patches/fixture@1.0.0.patch": "--- a\n+++ evil\n"
+    }
+  },
+  "error": "patch: hash differs for fixture@1.0.0"
+}

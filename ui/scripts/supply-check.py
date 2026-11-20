@@ -31,6 +31,24 @@ def read_json(path):
     return json.loads(path.read_text())
 
 
+def dependency_key(name, reference):
+    """Lock snapshot key of a dependency edge; an npm: alias is stored as 'real-name@version(...)'."""
+    reference = str(reference)
+    return reference if '@' in reference.split('(')[0].lstrip('@') else name + '@' + reference
+
+
+def license_allowed(license, key, policy):
+    """Listed license, or the exact name@version exception: exact license string + non-empty written reason."""
+    if isinstance(license, str) and license in policy['licenses']:
+        return True
+    exception = policy.get('licenseExceptions', {}).get(key)
+    if not isinstance(exception, dict):
+        return False
+    reason = exception.get('reason')
+    return (isinstance(license, str) and bool(license) and exception.get('license') == license and
+            isinstance(reason, str) and bool(reason.strip()))
+
+
 def download(name, cache):
     path = cache / (name.replace('/', '__') + '.json')
     if path.exists() and time.time() - path.stat().st_mtime < 3600:
@@ -123,7 +141,8 @@ def check(args):
     require(bases == set(packages), 'lock: packages and snapshots differ')
     for key, snapshot in snapshots.items():
         for name, version in (snapshot.get('dependencies', {}) | snapshot.get('optionalDependencies', {})).items():
-            require(name + '@' + str(version).split('(')[0] in packages, f'lock: missing dependency {name}@{version}')
+            # An npm: alias points at 'real-name@version'; that target key must exist and is checked below.
+            require(dependency_key(name, version).split('(')[0] in packages, f'lock: missing dependency {name}@{version}')
     for name, entry in imported.items():
         require(name + '@' + entry['version'].split('(')[0] in packages, f'lock: missing direct package {name}')
     # Validate structure before the network phase; malformed locks never trigger requests.
@@ -132,6 +151,7 @@ def check(args):
         resolution = entry.get('resolution', {})
         require(re.fullmatch(r'sha512-[A-Za-z0-9+/]{86}==', resolution.get('integrity', '')), f'integrity: missing/invalid SHA512 for {key}')
         require(set(resolution) == {'integrity'}, f'lock: non-registry resolution {key}')
+    check_patches(ui, cfg, lock, packages)
     cache = ui / '.supply-cache'
     cache.mkdir(exist_ok=True)
     now = dt.datetime.now(dt.timezone.utc)
@@ -162,7 +182,8 @@ def check(args):
         require(release.get('dist', {}).get('integrity') == integrity, f'integrity: registry mismatch for {key}')
         tarball = urllib.parse.urlparse(release.get('dist', {}).get('tarball', ''))
         require(tarball.scheme == 'https' and tarball.netloc == 'registry.npmjs.org', f'source: foreign tarball for {key}')
-        require(release.get('license') in policy['licenses'], f'license: forbidden {key}: {release.get("license")}')
+        # Exact name@version + exact license string, with a written reason (CEO 20.11.2026); never a pattern.
+        require(license_allowed(release.get('license'), key, policy), f'license: forbidden {key}: {release.get("license")}')
         scripts = release.get('scripts', {})
         hooks = set(scripts) & {'preinstall', 'install', 'postinstall', 'prepare'}
         allowed = set(policy.get('scriptExceptions', {}).get(key, []))
@@ -178,10 +199,25 @@ def check(args):
         evidence_path.write_text(json.dumps({'lockSha256': lock_hash, 'registry': expected['registry'], 'checkedAt': now.isoformat(), 'packages': compact}, indent=2) + '\n')
     print(f'passed: integrity, exact pins, 7-day age, scripts, licenses ({len(packages)} lock packages)')
     # The manifest inside every materialized tarball is checked as well as registry metadata.
-    for path in (ui / 'node_modules/.pnpm').glob('*/node_modules/*/package.json'):
-        inspect_installed(path, policy)
-    for path in (ui / 'node_modules/.pnpm').glob('*/node_modules/@*/*/package.json'):
-        inspect_installed(path, policy)
+    store = Path(os.path.realpath(ui / 'node_modules/.pnpm'))
+    for directory in sorted(store.iterdir()) if store.is_dir() else []:
+        if directory.name == 'lock.yaml' and directory.is_file():
+            continue
+        require(not directory.is_symlink() and directory.is_dir(), f'installed: unexpected store entry {directory.name}')
+        if directory.name == 'node_modules':  # pnpm's hoisted symlinks: same rules as any node_modules
+            inspect_modules(directory, policy, packages, store)
+            continue
+        found = STORE_ENTRY.fullmatch(directory.name)
+        require(found, f'installed: unexpected store entry {directory.name}')
+        name, version = found[1].replace('+', '/', 1), found[2]
+        require(name + '@' + version in packages, f'installed: not in lock {name}@{version}')
+        modules = directory / 'node_modules'
+        require(not modules.is_symlink() and not (modules / name).is_symlink(), f'installed: node_modules is a symlink in {directory.name}')
+        manifest = modules / name / 'package.json'
+        require(manifest.is_file(), f'installed: missing manifest for {name}@{version}')
+        inspect_installed(manifest, policy, name, version)
+        # Everything else physically present (real neighbours, nested node_modules) is inspected too.
+        inspect_modules(modules, policy, packages, store, modules / name)
     audit_path = cache / 'audit.json'
     if not audit_path.exists() and (root / 'docs/ts/pnpm-audit.json').exists():
         audit_path = root / 'docs/ts/pnpm-audit.json'
@@ -212,9 +248,82 @@ def check(args):
                         '--locked', '--offline', 'check', '--disable-fetch'], env=env, check=True, cwd=root)
 
 
-def inspect_installed(path, policy):
+def check_patches(ui, cfg, lock, packages):
+    """patchedDependencies: workspace set == lock set; each patch file hashes to the lock value (pnpm: sha256, LF-normalized)."""
+    workspace = cfg.get('patchedDependencies') or {}
+    locked = lock.get('patchedDependencies') or {}
+    require(isinstance(workspace, dict) and isinstance(locked, dict), 'patch: malformed patchedDependencies')
+    require(set(workspace) == set(locked), 'patch: workspace and lock patchedDependencies differ')
+    for key, relative in workspace.items():
+        require(key in packages, f'patch: {key} is not an exact name@version in the lock')
+        path = (ui / str(relative)).resolve()
+        require(path.is_file(), f'patch: missing file for {key}')
+        require(path.is_relative_to(ui.resolve()), f'patch: file outside ui/ for {key}')
+        digest = hashlib.sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+        require(locked[key] == digest, f'patch: hash differs for {key}')
+
+
+STORE_ENTRY = re.compile(r'((?:@[^+@]+\+)?[^+@]+)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:_.*)?')
+
+
+def inspect_modules(modules, policy, packages, store, own=None):
+    """Inspect everything physically under a node_modules directory, recursively.
+
+    Real packages must be lock keys and pass the manifest checks. A symlink must lead to
+    <store>/<lock key directory>/node_modules/<name>. Only .bin (shims inside the store) is
+    special; every other entry, dotted or not, follows the same rule.
+    """
+    if modules.is_symlink():
+        raise ValueError(f'installed: node_modules is a symlink: {modules}')
+    if not modules.is_dir():
+        return
+    for entry in sorted(modules.iterdir()):
+        if entry.name == '.bin' and not entry.is_symlink():
+            inspect_bin(entry, store)
+            continue
+        candidates = [entry]
+        if entry.name.startswith('@') and entry.is_dir() and not entry.is_symlink():
+            candidates = sorted(entry.iterdir())
+        for candidate in candidates:
+            relative = candidate.relative_to(modules).as_posix()
+            if candidate.is_symlink():
+                target = Path(os.path.realpath(candidate))
+                parts = target.relative_to(store).parts if target.is_relative_to(store) else ()
+                found = len(parts) >= 3 and parts[1] == 'node_modules' and STORE_ENTRY.fullmatch(parts[0])
+                require(found, f'installed: symlink leaves the store: {relative}')
+                name, version = found[1].replace('+', '/', 1), found[2]
+                require(name + '@' + version in packages and '/'.join(parts[2:]) == name,
+                        f'installed: symlink to unknown package: {relative}')
+                continue
+            require(candidate.is_dir(), f'installed: unexpected file {relative}')
+            if candidate != own:
+                manifest = candidate / 'package.json'
+                require(manifest.is_file(), f'installed: unexpected entry {relative}')
+                pkg = read_json(manifest)
+                require(pkg.get('name') == relative and isinstance(pkg.get('version'), str) and
+                        relative + '@' + pkg['version'] in packages, f'installed: not in lock {relative}')
+                inspect_installed(manifest, policy, relative, pkg['version'])
+            inspect_modules(candidate / 'node_modules', policy, packages, store)
+
+
+def inspect_bin(directory, store):
+    """.bin holds only symlinks into the store or pnpm shims whose recorded target is inside the store."""
+    for entry in sorted(directory.iterdir()):
+        if entry.is_symlink():
+            target = Path(os.path.realpath(entry))
+        else:
+            require(entry.is_file(), f'installed: unexpected entry in .bin: {entry.name}')
+            targets = re.findall(r'^# cmd-shim-target=(\S+)$', entry.read_text(errors='replace'), re.M)
+            require(len(targets) == 1, f'installed: unrecognised shim .bin/{entry.name}')
+            target = Path(os.path.normpath(directory / targets[0]))
+        require(target.is_relative_to(store), f'installed: .bin/{entry.name} leaves the store')
+
+
+def inspect_installed(path, policy, name, version):
     pkg = read_json(path)
-    name = pkg['name']
+    # The store directory name decides the identity; a manifest must not claim another package's exceptions.
+    require(pkg.get('name') == name and pkg.get('version') == version, f'installed: manifest differs from {name}@{version}')
+    key = name + '@' + version
     require(name not in ('fsevents', '@napi-rs/canvas'), f'installed: forbidden {name}')
     # Foreign binary packages are not allowed even if someone overrides optional=false.
     if pkg.get('os') or pkg.get('cpu'):
@@ -222,9 +331,9 @@ def inspect_installed(path, policy):
         require(pkg.get('os', ['linux']) == ['linux'] and pkg.get('cpu', ['x64']) == ['x64'],
                 f'installed: foreign platform {name}')
     hooks = set(pkg.get('scripts', {})) & {'preinstall', 'install', 'postinstall', 'prepare'}
-    allowed = set(policy.get('scriptExceptions', {}).get(name + '@' + pkg['version'], []))
+    allowed = set(policy.get('scriptExceptions', {}).get(key, []))
     require(not (hooks - allowed) and not (path.parent / 'binding.gyp').exists(), f'script: installed hook/binding.gyp in {name}')
-    require(pkg.get('license') in policy['licenses'], f'license: installed {name}')
+    require(license_allowed(pkg.get('license'), key, policy), f'license: installed {name}')
 
 
 if __name__ == '__main__':

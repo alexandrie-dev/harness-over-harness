@@ -1,0 +1,24 @@
+{
+  "replace": {
+    "policy/licenseExceptions": {
+      "dompurify@3.4.17": {
+        "license": "(MPL-2.0 OR Apache-2.0)",
+        "reason": "planted"
+      }
+    },
+    "policy/scriptExceptions": {
+      "dompurify@3.4.17": [
+        "prepare"
+      ]
+    }
+  },
+  "installed": {
+    "name": "dompurify",
+    "version": "3.4.17",
+    "license": "(MPL-2.0 OR Apache-2.0)",
+    "scripts": {
+      "prepare": "touch SHOULD_NEVER_RUN"
+    }
+  },
+  "error": "installed: manifest differs from fixture@1.0.0"
+}

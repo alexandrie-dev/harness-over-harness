@@ -214,3 +214,9 @@
 Уже есть у окна и подходит: `react`, `react-dom`, `lucide-react`, `@base-ui/react` (кнопка, подсказка, меню T3 стоят на нём), `class-variance-authority`, `tailwind-merge`, `zustand`. `marked` и `uplot` T3 не использует. `@legendapp/list` у T3 тот же, что у нас.
 
 Прочие импорты T3 (`effect`, `@effect/atom-react`, `gt-react`, `@t3tools/*`, `@tiptap/*`, `@tanstack/*`) заменены прослойками или в перенесённую часть не попадают.
+
+## Известные отличия от T3
+
+- katex для micromark-extension-llm-math закреплён на 0.18.10 вместо 0.16.47 из lock T3 (GHSA-238p-pmpm-9mq7; html-часть llm-math у нас не используется), решение CEO 20.11.2026.
+- @pierre/diffs не поставлен: не проходит выдержку 7 дней (minimumReleaseAge), решение CEO 20.11.2026; вид диффов — на имеющихся компонентах.
+- Патчи T3 разбора Markdown (5 шт., ui/patches/) применены через patchedDependencies без изменений.
