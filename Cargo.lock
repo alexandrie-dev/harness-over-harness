@@ -2459,6 +2459,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-query"
+version = "0.1.0"
+dependencies = [
+ "feruca",
+ "futures-util",
+ "hoh-brand",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-session",
+ "hoh-session-format-catalog",
+ "hoh-session-persistence",
+ "hoh-session-projection",
+ "hoh-session-projection-cache",
+ "hoh-session-title",
+ "hoh-storage",
+ "hoh-storage-domain",
+ "hoh-storage-json",
+ "hoh-timeout",
+ "hoh-util-values",
+ "indexmap",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-session-telemetry"
 version = "0.1.0"
 dependencies = [

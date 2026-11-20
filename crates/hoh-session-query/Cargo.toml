@@ -1,0 +1,39 @@
+[package]
+name = "hoh-session-query"
+description = "Port of @deepseek-ai/dsh-session-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+feruca.workspace = true
+futures-util.workspace = true
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-format-catalog = { path = "../hoh-session-format-catalog" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-session-projection-cache = { path = "../hoh-session-projection-cache" }
+hoh-session-title = { path = "../hoh-session-title" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-util-values = { path = "../hoh-util-values" }
+indexmap.workspace = true
+regex.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hoh-brand = { path = "../hoh-brand" }
+hoh-storage = { path = "../hoh-storage" }
+hoh-storage-domain = { path = "../hoh-storage-domain" }
+hoh-storage-json = { path = "../hoh-storage-json" }
+tempfile.workspace = true
+
