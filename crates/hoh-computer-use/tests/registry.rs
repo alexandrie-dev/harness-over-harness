@@ -4,6 +4,7 @@ use hoh_computer_use::{
 };
 use hoh_error::BoxError;
 use hoh_kernel::{Context, Inject, Kernel, Plugin, Service, ServiceKey};
+use std::sync::{Arc, Barrier};
 
 fn mcp() -> ComputerUseProviderName {
     computer_use_provider_name("cua-driver-mcp")
@@ -76,7 +77,10 @@ async fn rejects_a_second_provider_and_permits_registration_after_disposal() {
         Ok(_) => panic!("a different provider registration must fail"),
         Err(error) => error,
     };
-    assert!(different.to_string().contains("cua-driver-mcp"));
+    assert_eq!(
+        different.to_string(),
+        "computer use provider \"cua-driver-mcp\" is already registered"
+    );
 
     dispose.dispose().await;
     assert_eq!(registry.provider_name(), None);
@@ -144,5 +148,45 @@ async fn duplicate_diagnostic_precedes_an_inactive_callers_error() {
     assert_eq!(registry.provider_name(), Some(mcp()));
 
     incumbent.dispose().await;
+    kernel.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_registrations_publish_exactly_one_provider() {
+    let kernel = Kernel::start();
+    let registry = ComputerUseRegistry::default();
+    let barrier = Arc::new(Barrier::new(3));
+    let attempts = [mcp(), native()].map(|name| {
+        let registry = registry.clone();
+        let context = kernel.root();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            let result = registry.register(&context, name.clone());
+            (name, result)
+        })
+    });
+    barrier.wait();
+    let [first, second] = attempts.map(|attempt| attempt.join().unwrap());
+    let outcomes = [first, second];
+    assert_eq!(
+        outcomes.iter().filter(|(_, result)| result.is_ok()).count(),
+        1
+    );
+    let incumbent = registry.provider_name().expect("published provider");
+    let loser = outcomes
+        .iter()
+        .find_map(|(_, result)| result.as_ref().err())
+        .expect("rejected contender");
+    assert_eq!(
+        loser.to_string(),
+        format!("computer use provider \"{incumbent}\" is already registered")
+    );
+    let disposer = outcomes
+        .into_iter()
+        .find_map(|(_, result)| result.ok())
+        .expect("winning disposer");
+    disposer.dispose().await;
+    assert_eq!(registry.provider_name(), None);
     kernel.shutdown().await;
 }

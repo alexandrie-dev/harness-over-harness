@@ -7,7 +7,7 @@
 | `src/index.ts` | `src/lib.rs` | service `computerUse`, exclusive registration, getter и lifecycle-effect |
 | `src/brand.ts` | `src/brand.rs` | `ComputerUseProviderName` и конструктор без валидации |
 | `src/types.ts` | `src/types.rs` | публичный type-only entry представлен реэкспортом типа |
-| `tests/registry.spec.ts` | `tests/registry.rs` | 2/2 исходных случая и 4 Rust lifecycle/API regression |
+| `tests/registry.spec.ts` | `tests/registry.rs` | 2/2 исходных случая и 5 Rust lifecycle/API/concurrency regression |
 | `locale/*.json` | `locale/*.json` | 8 файлов скопированы без изменений |
 | `README.md`, `README.zh.md`, `README.i18n.yaml` | rustdoc и этот файл | поведенческий контракт учтён |
 
@@ -52,6 +52,6 @@
 
 Команды запускаются offline с `CARGO_BUILD_JOBS=2`, выделенным `CARGO_TARGET_DIR` и внешним `timeout`.
 
-- `cargo test -p hoh-computer-use --offline`: 6 passed, 0 failed; doc-tests 0/0.
+- `cargo test -p hoh-computer-use --offline`: 7 passed, 0 failed; doc-tests 0/0.
 - `cargo clippy -p hoh-computer-use --all-targets --no-deps --offline -- -D warnings` — чисто.
 - `cargo fmt -p hoh-computer-use -- --check` — чисто.
