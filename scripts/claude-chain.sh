@@ -9,10 +9,12 @@ D=/mnt/toshiba/alexandrie/hoh/logs/lead1118
 B=/home/save/.cache/hoh-build
 exec 9>"$D/$writer.autofix.lock"; flock 9
 
-# CEO 20.11 19:17: не больше 8 одновременно идущих ходов claude -p (писатели, ревью, QA). Приоритет:
-# защита (o1, s5) → прогонщик (s2) → окно (u1, q1) → события и остальное.
-MAX_TURNS=6   # писателям 6, ещё 2 места — ревью конвейера и QA (у ревью предел 8 в pipeline.sh)
-prio() { case $1 in o1|s5) echo 1;; s2) echo 2;; u1|q1) echo 3;; *) echo 5;; esac; }
+# CEO 20.11 19:17: не больше 8 одновременно идущих ходов claude -p (писатели, ревью, QA). CEO 20.11 20:20: пока USB/диск
+# перегружен (/proc/pressure/io full avg10 ≥ 20 %) — не больше 6; после разгрузки 8. Приоритет: u1|q1|o1|s4 → 1, s5 → 2,
+# s1|s2 → 3, остальные (f1, s3, jobs…) → 5 и стартуют только при full avg10 < 20 %.
+io_full() { awk '/^full/{sub("avg10=","",$2); print int($2)}' /proc/pressure/io 2>/dev/null || echo 0; }
+max_turns() { (( $(io_full) >= 20 )) && echo 6 || echo 8; }   # ревью конвейера — отдельный предел 8 в pipeline.sh
+prio() { case $1 in u1|q1|o1|s4) echo 1;; s5) echo 2;; s1|s2) echo 3;; *) echo 5;; esac; }
 turns() { local p n=0; for p in /proc/[0-9]*; do [[ $(cat "$p/comm" 2>/dev/null) == claude ]] || continue
   [[ $(tr '\0' '\n' <"$p/cmdline" 2>/dev/null | sed -n 2p) == -p ]] && n=$((n + 1)); done; echo $n; }
 wait_slot() {   # ожидающий с меньшим приоритетом (или тем же, но позже) пропускает вперёд
@@ -20,22 +22,22 @@ wait_slot() {   # ожидающий с меньшим приоритетом (�
   mkdir -p "$D/slots"; echo "$mine" >"$me"
   while :; do
     best=$(for f in "$D"/slots/*.wait; do [[ -e $f ]] && echo "$(cat "$f") $(stat -c %Y "$f") $f"; done | sort -n -k1,1 -k2,2 | head -1 | cut -d' ' -f3)
-    if [[ $best == "$me" ]]; then
+    if [[ $best == "$me" ]] && { (( mine < 5 )) || (( $(io_full) < 20 )); }; then
       exec 8>"$D/slots.lock"; flock 8
-      if (( $(turns) < MAX_TURNS )); then rm -f "$me"; return 0; fi   # замок 8 держится до появления процесса хода
+      if (( $(turns) < $(max_turns) )); then rm -f "$me"; return 0; fi   # замок 8 держится до появления процесса хода
       flock -u 8
     fi
     sleep 30
   done
 }
-# CEO 20.11 19:17: NVMe ≤25 ГБ. На границе хода: при занятых >22 ГБ каталог писателя переезжает с NVMe на toshiba.
+# CEO 20.11 19:17: NVMe ≤40 ГБ (20.11 20:20). На границе хода: при занятых >37 ГБ каталог писателя переезжает с NVMe на toshiba.
 nvme_move() {
   local link=/mnt/toshiba/alexandrie/hoh/target-$writer used
   [[ -L $link && $(readlink "$link") == "$B"/* ]] || return 0
   used=$(du -sm "$B" 2>/dev/null | cut -f1)
-  (( ${used:-0} > 22 * 1024 )) || return 0
+  (( ${used:-0} > 37 * 1024 )) || return 0
   rm -f "$link" && mkdir -p "$link" && rm -rf -- "$B/target-$writer"
-  echo "$(date +%H:%M) target-$writer: NVMe ${used}M > 22G — каталог перенесён на toshiba" >>/mnt/toshiba/alexandrie/hoh/logs/nvme-builds.log
+  echo "$(date +%H:%M) target-$writer: NVMe ${used}M > 37G — каталог перенесён на toshiba" >>/mnt/toshiba/alexandrie/hoh/logs/nvme-builds.log
 }
 
 while (( $# >= 2 )); do

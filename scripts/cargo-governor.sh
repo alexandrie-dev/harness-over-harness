@@ -15,6 +15,13 @@ touch "$state"
 prio=/mnt/toshiba/alexandrie/hoh/governor-priority.txt hold=/mnt/toshiba/alexandrie/hoh/governor-hold.txt
 touch "$prio" "$hold"
 declare -A prev=() ; finished=0
+# CEO 20.11 19:47: ограничение по факту нагрузки. load1 > 16 — предел снижается на 1 раз в минуту (не ниже 1),
+# load1 < 12 — растёт на 1 раз в минуту (до MAX). Пока идёт полный прогон сценариев — новые сборки не стартуют.
+cur=$max; step_at=0
+# После перехода на рабочие деревья (20.11 19:3x) сборки идут в деревьях писателей и конвейера, не только в основном.
+in_scope() { [[ $1 == "$repo"* || $1 == /mnt/toshiba/alexandrie/hoh/wt/* || $1 == /mnt/toshiba/alexandrie/hoh/it/* || $1 == /home/save/.cache/hoh-build/wt/* || $1 == /home/save/.cache/hoh-build/it/* || $1 == /dev/shm/hoh/cc-tree* || $1 == /mnt/toshiba/alexandrie/hoh/ht-tree* ]]; }
+full_run() { local p; for p in $(pgrep -x hoh-conformance); do tr '\0' '\n' <"/proc/$p/cmdline" 2>/dev/null | grep -qx -- --v1 \
+  && ! tr '\0' '\n' <"/proc/$p/cmdline" 2>/dev/null | grep -qx -- --scenario && return 0; done; return 1; }
 
 tree() { local p=$1 c; echo "$p"; for c in $(pgrep -P "$p"); do tree "$c"; done; }
 signal_tree() { local sig=$1 p; for p in $(tree "$2"); do kill "-$sig" "$p" 2>/dev/null; done; }
@@ -35,7 +42,7 @@ kill_hung_tests() {  # 19.11 09:40: a test binary alive > 20 min at < 1 % averag
   local pid et cpu exe
   while read -r pid et cpu; do
     exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
-    [[ $exe == */deps/* && $(readlink "/proc/$pid/cwd" 2>/dev/null) == "$repo"* ]] || continue
+    [[ $exe == */deps/* ]] && in_scope "$(readlink "/proc/$pid/cwd" 2>/dev/null)" || continue
     (( et > 1200 )) && awk -v c="$cpu" 'BEGIN{exit !(c < 1.0)}' || continue
     kill -TERM "$pid" 2>/dev/null && echo "$(date +%H:%M:%S) HUNG TEST killed: pid $pid $(basename "$exe") ${et}s cpu ${cpu}%"
   done < <(ps -eo pid=,etimes=,pcpu=)
@@ -50,7 +57,7 @@ while :; do
     ppid_comm=$(ps -o comm= -p "$(ps -o ppid= -p "$pid" | tr -d ' ')" 2>/dev/null)
     [[ $ppid_comm == cargo ]] && continue                      # nested cargo: counted with its parent
     cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null) || continue
-    [[ $cwd == "$repo"* ]] || continue                         # not this project
+    in_scope "$cwd" || continue                                # not this project
     [[ -n ${seen[$pgid]:-} ]] && continue; seen[$pgid]=1
     # CEO 19.11 03:05: acceptance builds (CARGO_TARGET_DIR=…/target-accept-*) go first, ahead of writers
     # also the lead's verification runs of a writer's work (HOH_PRIORITY=1): they gate acceptance the same way
@@ -76,6 +83,13 @@ while :; do
     [[ -e /mnt/toshiba/alexandrie/hoh/pipeline/root-low.flag ]] || { touch /mnt/toshiba/alexandrie/hoh/pipeline/root-low.flag
       echo "$(date +%H:%M) NEEDS-LEAD / свободно ${root_free} ГБ < 30: сборки на NVMe остановлены (CEO 20.11)" >>/mnt/toshiba/alexandrie/hoh/pipeline/attention.log; }
   fi
+  load1=$(cut -d' ' -f1 /proc/loadavg)
+  if (( SECONDS >= step_at )); then
+    if awk -v l="$load1" 'BEGIN{exit !(l > 16)}'; then (( cur > 1 )) && cur=$((cur - 1)); step_at=$((SECONDS + 60))
+    elif awk -v l="$load1" 'BEGIN{exit !(l < 12)}'; then (( cur < max )) && cur=$((cur + 1)); step_at=$((SECONDS + 60)); fi
+  fi
+  (( limit > cur )) && limit=$cur
+  frun=0; full_run && { frun=1; limit=0; }
   active=0; : >"$state.new"
   for p in "${held[@]}"; do running_tests "$p" && continue; [[ $(ps -o stat= -p "$p" | cut -c1) != T ]] && signal_tree STOP "$p"; echo "$p" >>"$state.new"; done
   for k in "${!prev[@]}"; do [[ -z ${seen[$k]:-} ]] && finished=$((finished + 1)); done   # builds that ended since the last pass
@@ -93,6 +107,6 @@ while :; do
     fi
   done
   mv "$state.new" "$state"
-  echo "$(date +%H:%M:%S) running=$active paused=$(wc -l <"$state") $(awk '/some/{print $3}' /proc/pressure/memory) swapfree=$(awk '/SwapFree/{print int($2/1024)}' /proc/meminfo)M disk=${disk_free}G mem=${avail}M limit=${limit} held=${#held[@]} finished_total=$finished"
+  echo "$(date +%H:%M:%S) running=$active paused=$(wc -l <"$state") $(awk '/some/{print $3}' /proc/pressure/memory) swapfree=$(awk '/SwapFree/{print int($2/1024)}' /proc/meminfo)M disk=${disk_free}G mem=${avail}M limit=${limit} load1=${load1} cur=${cur} fullrun=${frun} held=${#held[@]} finished_total=$finished"
   sleep 5   # CEO 19.11 09:10: tmpfs slots — admit quickly, a build should not run unadmitted long
 done

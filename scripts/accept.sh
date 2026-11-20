@@ -18,8 +18,10 @@ while :; do
     exec {fd}>"$H/accept-lane-$lane.lock"
     if flock -n "$fd"; then
       echo "lane $lane: $*"
-      dir=/home/save/.cache/hoh-build/accept-$lane   # CEO 20.11: NVMe
-      CARGO_TARGET_DIR="$dir" CARGO_BUILD_JOBS=4 HOH_REPORT_DIR="$H/reports/$name" \
+      dir=$H/target-accept-$lane   # CEO 20.11 19:17: NVMe ≤25 ГБ — приёмка на toshiba
+      tree=   # CEO 20.11 19:3x: приёмка в выгрузке коммита пакета HOH_PKG (main + пути пакета)
+      if [[ -n ${HOH_PKG:-} ]]; then tree=$H/it/acc-$lane; bash scripts/pkg.sh checkout "$tree" "$HOH_PKG" || exit 1; fi
+      HOH_TREE=$tree CARGO_TARGET_DIR="$dir" CARGO_BUILD_JOBS=4 HOH_REPORT_DIR="$H/reports/$name" \
         bash scripts/verify.sh "$@" >/dev/null 2>&1
       rc=$?
       cat "$H/reports/$name/summary.txt" 2>/dev/null || echo "(no summary)"

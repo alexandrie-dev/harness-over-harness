@@ -4,7 +4,7 @@
 # Runs cargo test (--no-fail-fast), clippy -D warnings, fmt --check with HOH_PRIORITY=1 (governor priority).
 # Logs: logs/NAME.lead-{test,clippy}.txt; result line appended to logs/lead-runs.done.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "${HOH_TREE:-$(dirname "$0")/..}"   # CEO 20.11 19:3x: прогон в выгрузке коммита пакета
 name=$1 target=$2 limit=$3; shift 3
 L=/mnt/toshiba/alexandrie/hoh/logs
 sel=(); for c in "$@"; do sel+=(-p "$c"); done

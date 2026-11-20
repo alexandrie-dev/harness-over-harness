@@ -4,7 +4,7 @@
 #   scripts/verify.sh CRATE...   formatting, lints and tests of the named crates only; never a final check
 # Reports go to $HOH_REPORT_DIR (default: /mnt/toshiba/alexandrie/hoh/reports/<time>).
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "${HOH_TREE:-$(dirname "$0")/..}"   # CEO 20.11 19:3x: приёмка в выгрузке коммита пакета
 export CARGO_NET_OFFLINE=true
 export CARGO_HOME=/mnt/toshiba/alexandrie/hoh/cargo-home   # CEO 20.11: кэш crates не на корневом диске
 

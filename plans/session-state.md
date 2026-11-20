@@ -1461,6 +1461,26 @@ hoh-agent (fix s16), hoh-llm-replay (fix w7), hoh-llm-openai (fix s5c, нет в
 - 19:16: f1 body готов (verify 10/10, sdk 26/26, 71/0), отдельно не сдан — подключение в runner и сдача вместе с s2f (задание дополнено; №9 и fixtures.rs переданы f1). f1f — остаток фикстур local: (18 TS + .mjs). harness-claude ревью 185708: 6 замечаний → s4f после s4e.
 - 19:21 CEO: не больше 8 ходов claude -p (писатели, ревью, QA). claude-chain.sh: ворота (писателям 6, приоритет o1/s5 → s2 → u1/q1 → остальные; ожидающие в logs/lead1118/slots/*.wait), перенос каталога с NVMe при >22 ГБ. pipeline.sh: review_slot (<8). Править claude-chain.sh/pipeline.sh только подменой через mv. lead-pl-build → toshiba. s3/f1 продолжают через continue.txt (s3f, f1g).
 - Прогон 185545: exit 28 (22 process timeout — пик нагрузки?) — проверить на следующем полном прогоне s2.
+- 19:2x–19:4x ПЕРЕХОД НА РАБОЧИЕ ДЕРЕВЬЯ (указание основателя через CEO). Устройство и конфликты — plans/worktrees.md.
+  - Снимок до перехода: refs/hoh/snapshot-20261120-1924.
+  - Интеграция закоммичена: 8bc2dd70.
+  - Подключение 51 плагина: hoh-integ-wiring (commit-check --pkg, ref refs/hoh/pkg/integ-v1-wiring).
+  - Уборка общего дерева: hoh-main-cleanup (ждёт, пока из общего дерева уйдут s2, s3, s4).
+  - В своих деревьях: o1, s5, q1; остальные переходят на следующем ходе.
+  - Очередь коммитов: tool-jobs переведён на коммит пакета (фон b42ljbc7z ждёт блокировку), harness-claude снят.
+  - s1: пакет 193832 (hoh-session + hoh-agent-loop); следующий ход s1g — hoh-tool-subagent.
 - Перезапуск конвейера ТОЛЬКО `bash scripts/pipeline-restart.sh` (ждёт, пока нет идущих ревью и прогонов).
 - nvme-builds: каталог с записью за последние 30 мин считается занятым (target-qa у QA). port-status берёт только полный прогон (120 строк).
 - Внимание: оболочка Bash здесь zsh — `set -- $x` не делит строку на слова. Запускать каждый юнит отдельной командой.
+
+## 20.11 20:25 — перестройка по CEO 20:20 (ведущий не пишет код)
+- ops (Sonnet, без MCP): служба hoh-ops-1, сессия logs/lead1118/ops.claude-session, задание ops-1.txt (перенос it/wt/сборок на NVMe 40 ГБ, вытеснение, CARGO_HOME, MCP-флаг, MAX_TURNS 6→8 по давлению, prio П1–П3, уборка, очередь коммитов). Отчёт logs/ops.1.report.md. Черновик scripts/nvme-migrate.sh — у ops.
+- g1 (Sonnet, Agent в фоне): гейт (псевдоним npm:, licenseExceptions — правки ведущего уже в wt/u1 + 7 сценариев, 24 PASS, environment.py:34 падает — разбирается), DEPS.md исключения, katex override 0.18.10 (вариант б, подтверждён чтением), шаги 1–3, сборка, gzip. Задание g1-gate-npm.txt, отчёт logs/g1.gate-npm.report.md. После — короткое ревью защиты (Codex) диффа supply-check.py.
+- u1: hoh-chain-u1i, задание u1-t3-exact2.txt (запрет на npm-файлы). 
+- Приоритеты CEO: П1 окно (u1,q1) и Claude (o1,s4); П2 s5 credguard; П3 ядро ≤2 писателя (s1,s2), f1/s3/jobs — только при full<20 %. Ходов ≤6 до разгрузки, затем 8.
+- Отчёт CEO раз в 30 мин, три строки: влито в main / блокеры П1 / давление диска и load1.
+- 20:47 Влито в main: c64464e0 (hoh-session, hoh-agent-loop), 4b36d1c2 (hoh-jobs-local). hoh-tool-jobs снова в очереди (pkg 601b18c7), служба hoh-commit-queue-2046.
+- Release нового окна: release/*-9362ae5f (desktop sha256 921f28ec…), demo-window.sh по умолчанию 9362ae5f, HOH_DEMO_COMMIT=93a6f994 — прежний. Отправлено CEO 20:45. Скрипты demo-window.* не закоммичены (интеграция).
+- Гейт: ревью Sonnet (Codex — лимит до 26.11 18:21) P1 2 → fix1 → повтор: 6/7 закрыто, новых P0/P1 нет; g1 fix2 (регресс A, Node в DEPS, 2 сценария) идёт. Node сборки окна → v22.23.1. После fix2 — коммит гейта и npm из wt/u1 (пути ui/scripts, scripts/tests/ui-supply, scripts/ui-supply-check.sh, docs/ts, ui/package.json, lock, workspace, patches, NOTICE, T3-MAP) — отдельным пакетом, не дожидаясь u1.
+- u1: hoh-chain-u1i (t3exact2), за ним hoh-chain-u1j (u1-t3-npm.txt: рендер T3, gzip ≤184720, F-1..F-3).
+- Ждут ведущего: s4 session-title — ревью с замечаниями (после s4f harness-claude); f1 fixtures 8/22 — продолжение при full<20 %.

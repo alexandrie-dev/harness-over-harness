@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 Q=/mnt/toshiba/alexandrie/hoh/pipeline/commit-waiting.txt
 while :; do
   progress=0
-  while IFS=$'\t' read -r name paths note; do
+  while IFS=$'\t' read -r name paths note pkg; do   # pkg: коммит пакета C (CEO 20.11 19:3x); пусто — старые строки, из общего дерева
     [[ -z $name ]] && continue
     read -ra p <<<"$paths"
     for d in "${p[@]}"; do
@@ -16,7 +16,7 @@ while :; do
       c=${d#crates/}
       awk -F'\t' -v OFS='\t' -v c="$c" '$5==c{$8="done"}1' docs/porting/MAP.tsv >/dev/shm/map.tmp && cat /dev/shm/map.tmp >docs/porting/MAP.tsv
     done
-    if scripts/commit-check.sh "$name принят: $note
+    if scripts/commit-check.sh ${pkg:+--pkg "$pkg"} "$name принят: $note
 
 Очередь принятых пакетов; чистая выгрузка кандидата собирается (cargo check --workspace --all-targets --locked).
 

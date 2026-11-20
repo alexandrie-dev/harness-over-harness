@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Показ окна HoH (веха «окно-чат», коммит 93a6f994) на рабочем столе, с mock-моделью.
+# Показ окна HoH (по умолчанию коммит 9362ae5f, «новый вид»; прежний: HOH_DEMO_COMMIT=93a6f994) на рабочем столе, с mock-моделью.
 #   bash scripts/demo-window.sh            — новый показ: новая папка данных, mock с начала сценария
 #   bash scripts/demo-window.sh ПАПКА      — повторный запуск с теми же данными (история сохраняется)
 # Все данные (настройки, ключ, журнал, рабочая папка) — в ПАПКЕ на /mnt/toshiba; настоящий HOME не трогается.
 # mock слушает 127.0.0.1 на свободном порту (не 8000); при закрытии окна скрипт останавливает свой mock.
+#   HOH_DEMO_COMMIT=93a6f994 bash scripts/demo-window.sh — показать прежнюю сборку
 # Шпаргалка: scripts/demo-window.md
 set -uo pipefail
-C=93a6f994
+C=${HOH_DEMO_COMMIT:-9362ae5f}
 R=/mnt/toshiba/alexandrie/hoh/release
 DESKTOP=$R/hoh-desktop-$C          # окно, собранное из $C (движок вшит: $R/hoh-$C)
 ENGINE=$R/hoh-$C

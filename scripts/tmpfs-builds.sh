@@ -52,14 +52,14 @@ while :; do
       [[ -n $d && ( $d == "$T"* || ( -L ${d%%/desktop} ) ) ]] && kill -TERM -- "-$(ps -o pgid= -p "$p" | tr -d ' ')" 2>/dev/null
     done
     sleep 5
-    for l in "$H"/target-*; do [[ -L $l ]] && rm -f "$l" && mkdir -p "$l"; done
+    for l in "$H"/target-*; do [[ -L $l && $(readlink "$l") == "$T"/* ]] && rm -f "$l" && mkdir -p "$l"; done   # 20.11: ссылки на NVMe не трогать
     find "$T" -mindepth 1 -delete 2>/dev/null
     touch "$T.disabled"
     say "tmpfs OFF: MemAvailable=${avail}M — builds stopped, tmpfs emptied, real directories back on the USB disk"
     continue
   fi
   # after a reboot (or eviction of a whole directory): every link must point at an existing directory
-  for l in "$H"/target-*; do [[ -L $l ]] && mkdir -p "$(readlink "$l")"; done
+  for l in "$H"/target-*; do [[ -L $l && $(readlink "$l") == "$T"/* ]] && mkdir -p "$(readlink "$l")"; done
   # room for the next build
   used=$(du -sm "$T" 2>/dev/null | cut -f1)
   if (( used > cap_mb )); then

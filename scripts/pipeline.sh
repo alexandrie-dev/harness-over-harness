@@ -74,7 +74,17 @@ run_job() {
   # shellcheck disable=SC2086
   set -- $crates
   say "$id start ($model, $kind: $crates)"
-  scripts/lead-run.sh "pl-$id" "/mnt/toshiba/alexandrie/hoh/lead-pl-build" 2400 "$@"   # CEO 20.11 19:17: NVMe ≤25 ГБ — прогон на toshiba; было 17:2x: прогон ведущего на USB, tmpfs — писателям
+  # CEO 20.11 19:3x: пакет = коммит C (main + пути пакета из дерева писателя); прогон, ревью, приёмка и коммит — по C
+  local w0= C lane
+  [[ $note =~ (^from\ $L/|\[w=)([a-z0-9]+)[].] ]] && w0=${BASH_REMATCH[2]}
+  C=$(scripts/pkg.sh commit "$id" "$w0" "$@" 2>>"$P/reviews/$id.deps") || { attention "NEEDS-LEAD $crates: коммит пакета не собран ($id) $note"; return; }
+  say "$id пакет $C (писатель ${w0:-общее дерево})"
+  while :; do for lane in a b; do
+      exec {lfd}>"$H/it/run-$lane.lock"; flock -n "$lfd" && break 2; exec {lfd}>&-
+    done; sleep 20; done
+  scripts/pkg.sh checkout "$H/it/run-$lane" "$C"
+  HOH_TREE=$H/it/run-$lane scripts/lead-run.sh "pl-$id" "/mnt/toshiba/alexandrie/hoh/lead-pl-build-$lane" 2400 "$@"   # CEO 20.11 19:17: прогон на toshiba
+  exec {lfd}>&-
   local line; line=$(grep " pl-$id " "$L/lead-runs.done" | tail -1)
   if [[ $line =~ (test|clippy)=(143|137|130)\  ]]; then   # 19.11 19:08: оборван сигналом (предохранитель памяти) — не дефект пакета
     say "$id: прогон оборван сигналом ($line) — повтор через 2 мин"; sleep 120
@@ -101,13 +111,16 @@ run_job() {
     say "$id AUTO-FIX (красный прогон) $w $1"; echo "$(date +%H:%M) AUTO-FIX красный $w $crates — $rr" >>"$P/auto-fix.log"; return
   fi
   if [[ $line != *"test=0 "*"clippy=0 fmt=0"* ]]; then attention "NEEDS-LEAD $crates: прогон красный — $line (logs/pl-$id.lead-*.txt) $note"; return; fi
-  local out=$P/reviews/${1}.$id.md prompt; prompt=$(brief "$kind" "$@")
+  local out=$P/reviews/${1}.$id.md prompt rt=$H/it/rev-$id; prompt=$(brief "$kind" "$@")
+  scripts/pkg.sh checkout "$rt" "$C"
+  prompt+=$'\n'"Package checkout (main + this package, nothing else): $rt — read files there. Diff of the package against main: $P/reviews/$id.diff (read it first)."
+  pushd "$rt" >/dev/null
   if [[ $model == codex ]]; then
     timeout 3600 kimi --add-dir "$REF" -p "$prompt" </dev/null >"$out" 2>"$out.stderr"
     if ! grep -qE 'ВЕРДИКТ: (ЧИСТО|ЗАМЕЧАНИЯ)' "$out"; then   # Kimi quota/crash: Sonnet reviews instead (still not Codex)
       say "$id kimi gave no verdict ($(tail -c 200 "$out.stderr" | tr '\n' ' ')); Sonnet reviews"
       review_slot   # CEO 20.11 19:17: общий предел 8 ходов claude -p (scripts/claude-chain.sh)
-      timeout 3600 claude -p --model sonnet --add-dir "$REF" --allowedTools Read Grep Glob \
+      timeout 3600 claude -p --model sonnet --strict-mcp-config --mcp-config '{"mcpServers":{}}' --add-dir "$REF" --allowedTools Read Grep Glob \
         --disallowedTools Bash Edit Write NotebookEdit WebFetch WebSearch -- "$prompt" </dev/null >"$out" 2>"$out.stderr"
     fi
   else   # 19.11 18:25 (CEO): лимит Codex сброшен — код Sonnet ревьюит Codex только на чтение; при лимите/без вердикта Kimi;
@@ -122,6 +135,7 @@ run_job() {
       timeout 3600 kimi --add-dir "$REF" -p "$prompt" </dev/null >"$out" 2>"$out.stderr"
     fi
   fi
+  popd >/dev/null; git worktree remove --force "$rt" 2>/dev/null; rm -rf "$rt"
   for c in "${@:2}"; do cp "$out" "$P/reviews/$c.$id.md"; done
   local verdict; verdict=$(grep -oE 'ВЕРДИКТ: (ЧИСТО|ЗАМЕЧАНИЯ)' "$out" | tail -1)
   if [[ $verdict == "ВЕРДИКТ: ЗАМЕЧАНИЯ" && $note =~ ^from\ $L/([a-z0-9]+)\.[^/]*\.report\.md$ ]] \
@@ -132,10 +146,10 @@ run_job() {
     say "$id AUTO-FIX $w $1 по $out"; echo "$(date +%H:%M) AUTO-FIX $w $crates — $out" >>"$P/auto-fix.log"; return
   fi
   if [[ $verdict != "ВЕРДИКТ: ЧИСТО" ]]; then attention "NEEDS-LEAD $crates: ревью ${verdict:-без вердикта} — $out $note"; return; fi
-  if scripts/accept.sh "pl-$id" "$@" >"$P/done/$id.accept.txt" 2>&1; then
+  if HOH_PKG=$C scripts/accept.sh "pl-$id" "$@" >"$P/done/$id.accept.txt" 2>&1; then
     attention "READY-COMMIT $crates: прогон $line; ревью чисто ($out); приёмка зелёная (reports/pl-$id) $note"
     # коммит без ведущего: в очередь и проход commit-queue (чистая выгрузка); отказ остаётся в очереди и идёт в attention
-    printf '%s\t%s\t%s\n' "$crates" "$(printf 'crates/%s ' "$@")" "принят $(date +%H:%M) конвейером (pl-$id)" >>"$P/commit-waiting.txt"
+    printf '%s\t%s\t%s\t%s\n' "$crates" "$(scripts/pkg.sh paths "$@" | tr '\n' ' ')" "принят $(date +%H:%M) конвейером (pl-$id)" "$C" >>"$P/commit-waiting.txt"
     setsid nohup bash -c "exec 9>$P/commit-queue.lock; flock 9; exec scripts/commit-queue.sh" >>"$L/commit-queue.txt" 2>&1 </dev/null &
   else
     attention "NEEDS-LEAD $crates: приёмка красная — $P/done/$id.accept.txt $note"
