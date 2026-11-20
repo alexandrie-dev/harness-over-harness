@@ -2522,6 +2522,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-spill-local"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-session",
+ "hoh-spill",
+ "hoh-util-workspace-path",
+ "indexmap",
+ "rustix",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-spill-policy"
 version = "0.1.0"
 dependencies = [
