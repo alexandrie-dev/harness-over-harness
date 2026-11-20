@@ -31,6 +31,71 @@ fn every_ported_fixture_is_registered_under_the_local_name_of_its_typescript_fil
     }
 }
 
+/// The fixtures of a scenario directory (`./name.mjs`), as `scenario dir -> file`; registered under
+/// `local:snapshots/<dir>/<file>`.
+const PORTED_IN_SCENARIOS: &[(&str, &str)] = &[
+    ("sdk/manual-compact", "capture-requests.mjs"),
+    ("sdk/command-identity", "runtime.mjs"),
+    ("sdk/text-turn", "feedback-producer.mjs"),
+    ("session/deepseek-fetch", "deepseek-fetch-fixture.mjs"),
+    ("session/model-switch-compaction", "driver.mjs"),
+    ("session/model-switch-notice", "model-switch-driver.mjs"),
+    ("session/multimodal-spill-ends", "fixture.mjs"),
+    ("session/subagent-parallel", "execution-order.mjs"),
+    ("session/subagent-spawn-in-process", "settlement-order.mjs"),
+    ("session/web-fetch", "web-fetch-fixture-server.mjs"),
+    (
+        "session/web-fetch-transport-failure",
+        "web-fetch-transport-failure-fixture.mjs",
+    ),
+];
+
+#[test]
+fn every_ported_scenario_fixture_is_registered_under_its_snapshots_path() {
+    let mut registry = PluginRegistry::default();
+    fixtures::add(&mut registry);
+    let clone = Path::new("/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness");
+    for (dir, file) in PORTED_IN_SCENARIOS {
+        let relative = format!("snapshots/{dir}/{file}");
+        assert!(
+            clone.join(&relative).is_file(),
+            "{relative} is not a dsh fixture"
+        );
+        assert!(
+            registry.resolve(&format!("local:{relative}")).is_some(),
+            "{relative} is not registered"
+        );
+    }
+}
+
+#[test]
+fn unported_names_the_local_plugins_without_a_counterpart_in_any_group_row() {
+    let patch = serde_json::json!([{"insert": [
+        {"id": "a", "name": "@deepseek-ai/dsh-llm-replay"},
+        {"id": "b", "name": "local:snapshots/sdk/desktop-context/clock.mjs"},
+        {"id": "c", "name": "local:snapshots/session/web-fetch/web-fetch-fixture-server.mjs"},
+        {"id": "d", "group": true, "config": [
+            {"id": "e", "name": "local:packages/core/tools/tests/fixtures/literal-sdk.ts"},
+            {"id": "f", "name": "local:snapshots/sdk/desktop-context/clock.mjs"}
+        ]}
+    ]}])
+    .to_string();
+    let names = fixtures::unported(&patch);
+    assert_eq!(
+        names,
+        [
+            "local:snapshots/sdk/desktop-context/clock.mjs",
+            "local:packages/core/tools/tests/fixtures/literal-sdk.ts"
+        ]
+    );
+    assert_eq!(
+        fixtures::unported_message(&names),
+        "фикстура clock.mjs не перенесена (local:snapshots/sdk/desktop-context/clock.mjs); \
+         фикстура literal-sdk.ts не перенесена (local:packages/core/tools/tests/fixtures/literal-sdk.ts)"
+    );
+    assert!(fixtures::unported("not json").is_empty());
+}
+
 #[test]
 fn an_unported_fixture_stays_unresolved() {
     let mut registry = PluginRegistry::default();

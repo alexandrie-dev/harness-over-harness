@@ -36,6 +36,8 @@ fn run_scenario(base: &Path, hoh: &Path, name: &str) -> (Outcome, String) {
         "5000".into(),
         "--wait-timeout-ms".into(),
         "2000".into(),
+        // The scripted double loads no plugin: the fixtures the acp scenario names do not matter.
+        "--allow-unported-fixtures".into(),
     ])
     .unwrap();
     let all = corpus::discover(Path::new(REFS)).unwrap();

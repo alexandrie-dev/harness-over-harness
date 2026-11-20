@@ -41,6 +41,9 @@ pub struct Options {
     pub wait_timeout: Duration,
     /// `--disable-plugin ID` (repeatable): diagnostic rows disabled on top of the normalization overlay.
     pub disable: Vec<String>,
+    /// `--allow-unported-fixtures`: replay although a patch names a `local:` fixture that is not
+    /// ported. Only for a stand-in `hoh` that loads no plugin; the default is a `launch` failure.
+    pub allow_unported_fixtures: bool,
 }
 impl Options {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
@@ -55,8 +58,13 @@ impl Options {
         let mut request_timeout = 110_000;
         let mut wait_timeout = 10_000;
         let mut disable = Vec::new();
+        let mut allow_unported_fixtures = false;
         let mut args = args.into_iter();
         while let Some(flag) = args.next() {
+            if flag == "--allow-unported-fixtures" {
+                allow_unported_fixtures = true;
+                continue;
+            }
             let value = args
                 .next()
                 .ok_or_else(|| format!("missing value for {flag}"))?;
@@ -101,6 +109,7 @@ impl Options {
             request_timeout: Duration::from_millis(request_timeout),
             wait_timeout: Duration::from_millis(wait_timeout),
             disable,
+            allow_unported_fixtures,
         })
     }
 }
@@ -224,6 +233,16 @@ pub fn harvest(root: &Path, suite: &str) -> Result<Vec<String>> {
 
 fn write(path: &Path, text: impl AsRef<[u8]>) -> Result<()> {
     fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+/// Materialize one patch and note the `local:` fixtures in it that are not ported.
+fn materialize_checked(path: &Path, refs: &Path, unported: &mut Vec<String>) -> Result<String> {
+    let text = crate::yaml::materialize(&read(path)?, path, refs)?;
+    for name in crate::fixtures::unported(&text) {
+        if !unported.contains(&name) {
+            unported.push(name);
+        }
+    }
+    Ok(text)
 }
 fn create(path: &Path) -> Result<fs::File> {
     fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))
@@ -511,6 +530,7 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
     fs::create_dir_all(&patch_root).map_err(|e| e.to_string())?;
     let sources = corpus::patch_sources(all, s, &options.refs)?;
     let mut patches = Vec::new();
+    let mut unported = Vec::new();
     for (i, path) in sources.iter().enumerate() {
         let target = patch_root.join(format!(
             "{i}-{}",
@@ -520,7 +540,7 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
         ));
         write(
             &target,
-            crate::yaml::materialize(&read(path)?, path, &options.refs)?,
+            materialize_checked(path, &options.refs, &mut unported)?,
         )?;
         patches.push(target);
     }
@@ -537,10 +557,10 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
             .map_err(|e| e.to_string())?;
         write(
             &target,
-            crate::yaml::materialize(
-                &read(&s.dir.join("profile.patch.yml"))?,
+            materialize_checked(
                 &s.dir.join("profile.patch.yml"),
                 &options.refs,
+                &mut unported,
             )?,
         )?;
     }
@@ -588,7 +608,7 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
             let target = patch_root.join(format!("child-{i}.yml"));
             write(
                 &target,
-                crate::yaml::materialize(&read(source)?, source, &options.refs)?,
+                materialize_checked(source, &options.refs, &mut unported)?,
             )?;
             child_patches.push(target.to_string_lossy().into_owned());
         }
@@ -610,6 +630,13 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
                 .to_string_lossy()
                 .into_owned(),
         );
+    }
+    // Every materialized patch counts: the root profile, the children's and the profile overlay.
+    if !unported.is_empty() && !options.allow_unported_fixtures {
+        return Ok(Err(Failure::new(
+            "launch",
+            crate::fixtures::unported_message(&unported),
+        )));
     }
     let mut command = tokio::process::Command::new(&options.hoh);
     #[cfg(unix)]

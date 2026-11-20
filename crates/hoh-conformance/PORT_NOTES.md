@@ -377,20 +377,86 @@ HOME изолирован (`/dev/shm/hoh/conformance-home-<время>`), сет
 Перенесено 8 из 22 TS-фикстур отобранных сценариев (`src/fixtures.rs`, регистрация под `local:`-именем
 файла; поведение дословное): `compaction-working-directory`, `parent-agent-preset`,
 `parent-sandbox-override`, `in-history-prompt-update`, `session-write-grant`, `child-question-tripwire`,
-`subagent-activation-limit`, `subagent-settlement-barrier` (`src/fixtures/agents.rs`). Тесты: `tests/fixtures.rs` (имя и существование
-исходного файла; непортированная фикстура не разрешается). Эффект проверен прогоном: `working-directory/change`
-больше не пропадает в сценариях `compaction-*`.
+`subagent-activation-limit`, `subagent-settlement-barrier` (`src/fixtures/agents.rs`).
 
-Не перенесено (остаток, сценарии затронуты): `workspace-context-compaction`, `workspace-context-global-failure`,
-`working-directory-admission`, `partial-landlock-sandbox`, `in-history-series-start`,
-`dynamic-tool-updates`, `dynamic-tool-prompt-updates`, `subagent-structured-parent`,
-`subagent-send-message-fence`, `subagent-durability-failure`,
-`provider-cwd`, `provider-unload`, `pending-confinement`,
-`async-confinement-failure` (packages/shell/bash-sandbox), и `.mjs`-фикстуры SDK (`capture-requests`, `fixture`,
-`driver`, `settlement-order`, `runtime`, `scheduler-failure`, `model-switch-driver`, `execution-order`,
-`web-fetch-*`, `deepseek-fetch-fixture`). Каждая использует внутренние события крейтов-владельцев
-(`tools/post-execute`, `agent/pre-step`, `llm/stream`, `loader.entries`, subagent-сервис); перенос
-требует чтения API по каждой и не уместился в этот ход.
+**Фикстуры каталогов сценариев (`./*.mjs`), 21.11.** Регистрируются под `local:snapshots/<сценарий>/<файл>`
+(так материализует имя `yaml::materialize`; `../manual-compact/capture-requests.mjs` и
+`../model-switch-compaction/driver.mjs` дают то же имя, что и «свой» каталог — одна регистрация на файл).
+Перенесено 11 из 16:
+
+| фикстура (файл) | сценарии | модуль | отличие от TS |
+|---|---|---|---|
+| `web-fetch-fixture-server.mjs` | session/web-fetch | `fixtures/web.rs` | сервер на `127.0.0.1:0` (tokio), провайдер — настоящий `HttpFetchProvider` с подменой URL; ответ `200`, `content-type: text/html; charset=gbk,utf-8`, `connection: close` |
+| `web-fetch-transport-failure-fixture.mjs` | session/web-fetch-transport-failure | `fixtures/web.rs` | сервер закрывает соединение сразу после запроса (`req.socket.end()`) |
+| `deepseek-fetch-fixture.mjs` | session/deepseek-fetch | `fixtures/web.rs` | **TS слушает порт 0 и подменяет `globalThis.fetch`; в Rust нет шва в транспорте `hoh-web-deepseek-api`, поэтому слушатель занимает записанный порт 43118** (занятый порт = ошибка запуска плагина) |
+| `driver.mjs` (model-switch-compaction) | session/model-switch-compaction, model-switch-overflow-recovery | `fixtures/model.rs` | — |
+| `model-switch-driver.mjs` | session/model-switch-notice | `fixtures/model.rs` | — |
+| `capture-requests.mjs` | sdk/manual-compact (+ command-attachments, goal-rounds, permission-switch, plan-review, team-default-enabled через `../manual-compact/…`) | `fixtures/capture.rs` | строка — выборка полей `GenerateOptions` в порядке TS; ключ без значения опускается как `undefined` |
+| `runtime.mjs` (command-identity) | sdk/command-identity | `fixtures/commands.rs` | регистрации живут на контексте Agent (`agent.ctx()`), как `agent.ctx.plugin(...)` |
+| `feedback-producer.mjs` | sdk/text-turn | `fixtures/feedback.rs` | запросы/ответы сервисов проходят через serde_json |
+| `fixture.mjs` (multimodal-spill-ends) | session/multimodal-spill-ends | `fixtures/mcp.rs` | — |
+| `settlement-order.mjs` | session/subagent-spawn-in-process | `fixtures/subagents.rs` | ворота `Promise.withResolvers` — `watch<u8>` (ожидание, выполнено, отклонено при снятии плагина) |
+| `execution-order.mjs` | session/subagent-parallel | `fixtures/subagents.rs` | то же |
+
+Не перенесено (5 из 16) — причины:
+
+- `clock.mjs` (sdk/desktop-context; также desktop-ptc-context, team-default-enabled, cua-run-code): подменяет `Date.now`; в
+  `hoh-time-context` часы вызываются напрямую (`SystemTime::now()` в `now_ms`), шва нет — **нужен шов в продукте**.
+- `scheduler-failure.mjs` (sdk/tool-scheduler-recovery): подменяет `pipeline.prepare` исполнителя; `execute_tool_batch`
+  принимает конкретный `ToolExecutionPipeline`, переопределить `prepare` нельзя — **нужен шов в продукте**.
+- `wait-fixture.mjs` (sdk/background-wait-steer): подменяет `jobs.wait` на живом сервисе и читает `jobs.readAt/events`; `hoh-jobs`
+  не подключён в `apps/hoh` (см. разбор причин) и метод сервиса не переопределяется.
+- `resolve-spill-command.mjs` (session/session-query-spill): подменяет `shell.execute`; `Shell` — объект-трейт, провайдер
+  `shell` один, замены на месте нет.
+- `fixture.mjs` (session/subagent-archive-lineage): зависит от `subagents.startActivation`, `workspaceRegistry.archiveSession`,
+  `sessions`, `sessionPersistence.open().read()` и `WorkspaceActiveSessionError`; не перенесена из-за объёма, сценарий всё равно
+  не пройдёт, пока `tool-subagent` не подключён в `apps/hoh`.
+
+**Непортированная фикстура — явная ошибка прогона.** Раньше `hoh` молча пропускал плагин `local:`, которого нет в реестре, и
+сценарий расходился «по вине продукта». Теперь runner перед запуском проверяет все материализованные патчи
+(`fixtures::unported`, в том числе строки групп) и, если есть непортированное имя, завершает сценарий в фазе `launch`:
+`фикстура <файл> не перенесена (local:<имя>)` (несколько — через `; `); процесс `hoh` не запускается, `launch.json` не пишется.
+Флаг `--allow-unported-fixtures` отключает проверку — только для двойника `hoh-conformance-fake`, который плагины не
+грузит (`tests/runner_process.rs` запускает корпус из 242 сценариев с ним; отдельный тест
+`an_unported_fixture_is_a_launch_failure_not_a_silent_skip` — без него). Следствие: сценарии с остатком (33 непортированных файла
+в корпусе: кроме пяти выше — `workspace-context-*`, `working-directory-admission`, `partial-landlock-sandbox`,
+`in-history-series-start`, `dynamic-tool*-updates`, `subagent-structured-parent`, `subagent-send-message-fence`,
+`subagent-durability-failure`, `provider-cwd`, `provider-unload`, `pending-confinement`, `async-confinement-failure`,
+`approval.mjs`, `serial-created.mjs`, `scripts/snapshot-spill-locators.ts`, `literal-sdk.ts` и др.) теперь сразу видны как
+«фикстура не перенесена», а не как расхождение продукта.
+
+Тесты: `tests/fixtures.rs` (имена и существование исходных файлов, `unported`), `tests/fixtures_web.rs` (страница, ответ с
+записанным URL, закрытие соединения, 401/200 `deepseek-fetch`), `tests/fixtures_model.rs`, `tests/fixtures_capture.rs`,
+`tests/fixtures_commands.rs`, `tests/fixtures_mcp.rs` (на настоящем `AgentLoop` из `hoh-agent-loop-testkit`). Для `feedback-producer`,
+`settlement-order`, `execution-order` отдельного поведенческого теста нет: нужны персистентность сессий и дочерние агенты
+(проверяется регистрацией и сборкой).
+
+**Точечный прогон 16 сценариев** (`conformance-runs/20261121-012533`, `scripts/conformance-v1.sh all --scenario …`): прошло 0;
+8 дошли до причин в продукте (фикстура загружена): `deepseek-fetch`, `model-switch-notice`, `web-fetch-transport-failure`,
+`sdk/text-turn` — `headers` (абзац jobs в системном промпте); `model-switch-compaction` — `log` 35→28 (нет compaction);
+`subagent-spawn-in-process` — `log` 31→23, `subagent-parallel` — `exit` (нет инструментов субагентов в `apps/hoh`);
+`web-fetch` — **настоящее расхождение продукта**: HTML→markdown даёт `**service & _tax_**— updated daily` вместо
+`**service & _tax_** — updated daily` (пробел перед `&mdash;` после `</strong>`; владелец `hoh-tool-web`). 8 остановлены явной
+ошибкой `launch`: `desktop-context`, `command-identity`, `manual-compact` (`clock.mjs` входит в общий патч sdk), `tool-scheduler-recovery`,
+`background-wait-steer`, `subagent-archive-lineage`, `session-query-spill` и `multimodal-spill-ends` (общий
+`scripts/snapshot-spill-locators.ts`: подмена `spillStore.saveText` и `fs.resolve` на живых сервисах; провайдер `DuplicateService`
+в одном realm не допускает подмены, шва нет).
+
+**Следствие строгой проверки на корпусе V1 (119 сценариев):** 38 теперь останавливаются на `launch` (`snapshot-spill-locators.ts` — 9,
+`clock.mjs` — 6, по 2: `subagent-durability-failure`, `partial-landlock-sandbox`, `dynamic-tool-updates`; остальные — по одному).
+Раньше они показывали расхождения продукта, часть из которых была следствием отсутствия фикстуры. Для диагностики «как раньше»
+запуск принимает `--allow-unported-fixtures` (`conformance-v1.sh … --allow-unported-fixtures`).
+
+### Причина NO_ADAPTER у сценариев со старыми поколениями сессии (21.11)
+
+Инструмент выбирает тот же файл, что и TS: наибольшее поколение каждой роли (`harness.ts:807`; `session.v1.jsonl` для
+`text-turn`, `session.jsonl`=v0 для `error-finish`, `packed-chunks`, `empty-response-retry`). Загрузка такого файла в
+`hoh-llm-replay` падает: `session snapshot line 1: llm-replay: migration v0->v4 requires hoh-session-format-catalog`
+(`crates/hoh-llm-replay/src/shim.rs`, `Restore::new`: «SHIM … Replace this restore seam during the separately deferred
+historical-reader integration» — любая версия, кроме текущей, отвергается). Плагин `llm-replay` не поднимается, адаптер
+`deepseek-official` не регистрируется, и первый запрос модели даёт `NO_ADAPTER`. **Причина — продукт (`hoh-llm-replay`), код не тронут.**
+Проверка: временный тест с `hoh_llm_replay::load_session_scripts` на `text-turn/session.v1.jsonl`, `text-turn/session.jsonl`,
+`error-finish`, `packed-chunks`, `empty-response-retry` (все — ошибка выше) и на `web-fetch/session.v4.jsonl` (ок, 2 записи).
 
 ### Первый прогон (`conformance-runs/20261120-182636/summary.tsv`)
 

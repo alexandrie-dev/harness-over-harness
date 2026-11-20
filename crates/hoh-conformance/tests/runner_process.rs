@@ -59,6 +59,16 @@ impl Harness {
         selector: Option<(&str, &str)>,
         exit_codes: Value,
     ) -> (PathBuf, Vec<Vec<String>>) {
+        self.run_with(label, mutation, selector, exit_codes, true)
+    }
+    fn run_with(
+        &self,
+        label: &str,
+        mutation: &str,
+        selector: Option<(&str, &str)>,
+        exit_codes: Value,
+        allow_unported_fixtures: bool,
+    ) -> (PathBuf, Vec<Vec<String>>) {
         let out = self.root.path().join(label);
         std::fs::create_dir_all(&out).unwrap();
         let control = out.join("fake.json");
@@ -111,6 +121,10 @@ impl Harness {
                 "--request-timeout-ms",
                 "120000",
             ]);
+        if allow_unported_fixtures {
+            // The fake hoh loads no plugin, so the fixtures a scenario names are of no consequence.
+            command.arg("--allow-unported-fixtures");
+        }
         if let Some((suite, scenario)) = selector {
             command.args(["--suite", suite, "--scenario", scenario]);
         }
@@ -554,5 +568,71 @@ fn complete_executable_corpus_identity_and_six_mutations_reach_their_checks() {
             rows[0][3] == phase && rows[0][4].starts_with(reason),
             "{rows:?}"
         );
+    }
+}
+
+/// A `local:` fixture that is not ported stops the run at `launch` (the product would skip the plugin
+/// silently and the run would show a divergence of the product instead); the ported ones run.
+#[test]
+fn an_unported_fixture_is_a_launch_failure_not_a_silent_skip() {
+    let h = Harness::new();
+    for (suite, name, reason) in [
+        (
+            "session",
+            "subagent-structured-parent",
+            Some(
+                "фикстура subagent-structured-parent.ts не перенесена (local:packages/test-support/session-snapshot/tests/fixtures/subagent-structured-parent.ts)",
+            ),
+        ),
+        (
+            "sdk",
+            "desktop-context",
+            Some(
+                "фикстура clock.mjs не перенесена (local:snapshots/sdk/desktop-context/clock.mjs)",
+            ),
+        ),
+        // The child patches and the profile overlay are checked too, not only the root patches.
+        (
+            "sdk",
+            "subagent-dsh-sdk-dynamic-route",
+            Some("*child-mock-llm.ts*"),
+        ),
+        ("session", "web-fetch", None),
+        ("session", "model-switch-notice", None),
+        ("session", "bash-tool-turn", None),
+    ] {
+        let (out, rows) = h.run_with(
+            &format!("unported-{name}"),
+            "",
+            Some((suite, name)),
+            json!({}),
+            false,
+        );
+        assert_eq!(rows.len(), 1);
+        match reason {
+            Some(reason) => {
+                let got = (
+                    rows[0][2].as_str(),
+                    rows[0][3].as_str(),
+                    rows[0][4].as_str(),
+                );
+                match reason.strip_prefix('*').and_then(|r| r.strip_suffix('*')) {
+                    Some(part) => {
+                        assert!(got.2.contains(part), "{got:?}");
+                        assert_eq!((got.0, got.1), ("fail", "launch"));
+                    }
+                    None => assert_eq!(got, ("fail", "launch", reason)),
+                }
+                assert!(
+                    !attempt(&out, suite, name).join("launch.json").exists(),
+                    "the process must not have been started"
+                );
+            }
+            None => assert_ne!(
+                rows[0][3], "launch",
+                "{name} is fully ported: {:?}",
+                rows[0]
+            ),
+        }
     }
 }

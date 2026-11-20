@@ -24,6 +24,8 @@ fn acp_golden_handshake_accepts_nonzero_exit_after_stdin_eof() {
         .env("HOH_CONFORMANCE_FAKE", &control)
         .arg("--hoh")
         .arg(env!("CARGO_BIN_EXE_hoh-conformance-fake"))
+        // The fake hoh loads no plugin, so the fixtures the scenario names are of no consequence.
+        .arg("--allow-unported-fixtures")
         .args([
             "--refs",
             "/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness",

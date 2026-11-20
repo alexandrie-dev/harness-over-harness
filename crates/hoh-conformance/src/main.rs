@@ -175,7 +175,7 @@ async fn main() -> ExitCode {
         Err(e) => {
             let _ = writeln!(
                 std::io::stderr(),
-                "hoh-conformance: {e}\nusage: hoh-conformance --hoh PATH --refs CLONE --runs DIR [--suite session|sdk|acp] [--scenario NAME] [--jobs N] [--results TSV] [--timeout-ms N] [--request-timeout-ms N] [--wait-timeout-ms N] [--disable-plugin ID]..."
+                "hoh-conformance: {e}\nusage: hoh-conformance --hoh PATH --refs CLONE --runs DIR [--suite session|sdk|acp] [--scenario NAME] [--jobs N] [--results TSV] [--timeout-ms N] [--request-timeout-ms N] [--wait-timeout-ms N] [--disable-plugin ID]... [--allow-unported-fixtures]"
             );
             ExitCode::FAILURE
         }

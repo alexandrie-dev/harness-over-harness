@@ -18,8 +18,16 @@ saphyr-parser.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 hoh-util-values = { path = "../hoh-util-values" }
+hoh-commands = { path = "../hoh-commands" }
+hoh-attachment = { path = "../hoh-attachment" }
+hoh-mcp-client = { path = "../hoh-mcp-client" }
+hoh-command-feedback = { path = "../hoh-command-feedback" }
+hoh-message-feedback = { path = "../hoh-message-feedback" }
+hoh-web = { path = "../hoh-web" }
+hoh-web-fetch-http = { path = "../hoh-web-fetch-http" }
+hoh-timeout = { path = "../hoh-timeout" }
 hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
 hoh-session-format = { path = "../hoh-session-format" }
 hoh-session-format-v0-to-v1 = { path = "../hoh-session-format-v0-to-v1" }
@@ -52,3 +60,6 @@ path = "src/bin/fake.rs"
 
 [dev-dependencies]
 hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-agent-loop-testkit = { path = "../hoh-agent-loop-testkit" }
+hoh-attachment-local = { path = "../hoh-attachment-local" }
+futures-util.workspace = true

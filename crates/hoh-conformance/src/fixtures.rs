@@ -15,6 +15,13 @@ use std::sync::{Arc, Mutex};
 
 mod agents;
 pub use agents::release_grant;
+pub mod capture;
+pub mod commands;
+mod feedback;
+pub mod mcp;
+pub mod model;
+mod subagents;
+pub mod web;
 
 /// `session.header.parentSession !== undefined`: a present key, `null` included, marks a child.
 pub(crate) fn is_child(header: &serde_json::Value) -> bool {
@@ -22,6 +29,8 @@ pub(crate) fn is_child(header: &serde_json::Value) -> bool {
 }
 
 const ROOT: &str = "local:packages/test-support/session-snapshot/tests/fixtures/";
+/// `local:` name prefix of the fixtures that live in a scenario directory under `snapshots/`.
+const SNAPSHOTS: &str = "local:snapshots/";
 
 /// `compaction-working-directory.ts`: before any model request, give every Session the effective
 /// directory `/tmp` while the original project stays recorded in its header.
@@ -161,4 +170,52 @@ pub fn add(registry: &mut PluginRegistry) {
         .add::<ParentSandboxOverride>(&format!("{ROOT}parent-sandbox-override.ts"))
         .add::<InHistoryPromptUpdate>(&format!("{ROOT}in-history-prompt-update.ts"));
     agents::add(registry);
+    web::add(registry);
+    model::add(registry);
+    capture::add(registry);
+    subagents::add(registry);
+    commands::add(registry);
+    feedback::add(registry);
+    mcp::add(registry);
+}
+
+/// Every `local:` plugin name of a materialized patch that no ported fixture answers to
+/// (`hoh` skips such a plugin silently, which would show up as a divergence of the product).
+pub fn unported(patch: &str) -> Vec<String> {
+    fn walk(value: &serde_json::Value, registry: &PluginRegistry, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(name) = map.get("name").and_then(serde_json::Value::as_str)
+                    && name.starts_with("local:")
+                    && registry.resolve(name).is_none()
+                    && !out.iter().any(|seen| seen == name)
+                {
+                    out.push(name.to_owned());
+                }
+                map.values().for_each(|v| walk(v, registry, out));
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(v, registry, out)),
+            _ => {}
+        }
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(patch) else {
+        return vec![];
+    };
+    let mut registry = PluginRegistry::default();
+    add(&mut registry);
+    let mut out = vec![];
+    walk(&value, &registry, &mut out);
+    out
+}
+
+/// The run failure for fixtures that were not ported: `фикстура <файл> не перенесена`.
+pub fn unported_message(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|name| {
+            let file = name.rsplit('/').next().unwrap_or(name);
+            format!("фикстура {file} не перенесена ({name})")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
