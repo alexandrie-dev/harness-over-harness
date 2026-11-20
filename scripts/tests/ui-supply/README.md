@@ -49,13 +49,15 @@
 | node_modules пакета сам симлинк | case-installed-node-modules-symlink.json | installed: node_modules is a symlink |
 | .bin: симлинк или shim с целью вне .pnpm | case-installed-bin-symlink-outside.json, case-installed-bin-shim-outside.json | installed: .bin/tool leaves the store |
 | Допустимые симлинк в .pnpm и .bin (симлинк, shim с `cmd-shim-target`) | case-installed-links-clean.json | проходит |
+| Shim `.bin` с целью через ссылку на то же дерево (realpath внутри .pnpm, каталог с ключом lock) | case-installed-bin-shim-via-link-same-store.json | проходит |
+| Shim с целью через ссылку наружу или в каталог с ключом вне lock | case-installed-bin-shim-via-link-outside.json, case-installed-bin-shim-via-link-unknown-key.json | installed: .bin/tool leaves the store |
 | patchedDependencies: файл, хэш (sha256, CRLF→LF) и набор workspace = lock | case-patch-clean.json | проходит |
 | Изменённый файл патча | case-patch-changed-file.json | patch: hash differs |
 | Лишний патч в workspace | case-patch-extra-in-workspace.json | patch: workspace and lock patchedDependencies differ |
 | Файл патча отсутствует | case-patch-missing-file.json | patch: missing file |
 | Ключ патча не name@version из lock | case-patch-not-in-lock.json | patch: ... is not an exact name@version in the lock |
 
-Чистый контроль case-clean.json проходит и явно выводит `skipped: cargo-deny not installed`. Итого 58 сценариев: 49 отказов и 9 проходящих (контроли: case-installed-links-clean, case-clean, case-alias-clean, case-alias-other-clean, case-alias-scoped, case-alias-peer-suffix, case-license-exception, case-installed-license-exception, case-patch-clean). Настоящий lock дополнительно остановлен реальным live pnpm audit (picomatch 4.0.7), отчёт в docs/ts/pnpm-audit.json.
+Чистый контроль case-clean.json проходит и явно выводит `skipped: cargo-deny not installed`. Итого 61 сценарий: 51 отказ и 10 проходящих (контроль shim через ссылку: case-installed-bin-shim-via-link-same-store) (контроли: case-installed-links-clean, case-clean, case-alias-clean, case-alias-other-clean, case-alias-scoped, case-alias-peer-suffix, case-license-exception, case-installed-license-exception, case-patch-clean). Настоящий lock дополнительно остановлен реальным live pnpm audit (picomatch 4.0.7), отчёт в docs/ts/pnpm-audit.json.
 
 Дополнительная проверка самого pnpm: `python3 scripts/tests/ui-supply/native-age.py` после первого resolve. Она использует уже разрешённую версию React и сохранённые метаданные, отключает сеть и получение архивов, но подставляет усиленный возрастной порог из native-age.yaml. 2026-11-18 получен `ERR_PNPM_NO_MATURE_MATCHING_VERSION`, где pnpm явно называет minimumReleaseAge.
 
@@ -72,7 +74,7 @@
 
 ## Исключения политики (лицензии, скрипты) и установленные пакеты
 
-Решение CEO 20.11.2026: `licenseExceptions` (dompurify@3.4.17) и `scriptExceptions` (prepare) действуют только на точный name@version, только с точной строкой лицензии и непустой строковой причиной. Для установленных пакетов исключение выдаётся по имени каталога `node_modules/.pnpm/<name>@<version>[_контекст]`, который обязан быть ключом lock; манифест внутри обязан совпасть с этим именем и версией. Реальные (не симлинк) соседи в `node_modules` каталога и вложенные `node_modules` тоже проверяются: манифест должен быть ключом lock, иначе отказ. Симлинк в `node_modules` обязан вести в `.pnpm/<каталог с ключом из lock>/node_modules/<name>`; симлинкнутый `node_modules` и записи с точкой, кроме `.bin`, отказ; в `.bin` допустимы только симлинки и shim pnpm с `cmd-shim-target` внутри `.pnpm`. patchedDependencies проверяются: набор в workspace и в lock, файл, хэш и ключ name@version из lock.
+Решение CEO 20.11.2026: `licenseExceptions` (dompurify@3.4.17) и `scriptExceptions` (prepare) действуют только на точный name@version, только с точной строкой лицензии и непустой строковой причиной. Для установленных пакетов исключение выдаётся по имени каталога `node_modules/.pnpm/<name>@<version>[_контекст]`, который обязан быть ключом lock; манифест внутри обязан совпасть с этим именем и версией. Реальные (не симлинк) соседи в `node_modules` каталога и вложенные `node_modules` тоже проверяются: манифест должен быть ключом lock, иначе отказ. Симлинк в `node_modules` обязан вести в `.pnpm/<каталог с ключом из lock>/node_modules/<name>`; симлинкнутый `node_modules` и записи с точкой, кроме `.bin`, отказ; в `.bin` допустимы только симлинки и shim pnpm с `cmd-shim-target`, чья цель после realpath лежит внутри `.pnpm` в каталоге с ключом lock (дерево может быть достижимо через ссылку). patchedDependencies проверяются: набор в workspace и в lock, файл, хэш и ключ name@version из lock.
 
 Не проверяется сознательно (P2-3 ревью, решение владельца): содержимое самой политики в DEPS.md. Расширение `licenseExceptions` или `scriptExceptions` правкой DEPS.md гейт принимает; такая правка видна в diff и принимается владельцем. Overrides workspace и lock гейт не сверяет, набор патчей в политике DEPS.md не закреплён (проверяются согласованность workspace, lock и файлов). Всё это решение ведущего: политика DEPS.md и lock под контролем владельца, как и P2-3.
 

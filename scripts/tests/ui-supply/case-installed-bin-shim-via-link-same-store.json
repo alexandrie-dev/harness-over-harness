@@ -1,0 +1,10 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedFiles": {
+    "node_modules/.bin/tool": "#!/bin/sh\nexec node x\n# cmd-shim-target=@VIA@/ui/node_modules/.pnpm/fixture@1.0.0/node_modules/fixture/cli.js\n"
+  }
+}

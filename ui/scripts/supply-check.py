@@ -279,7 +279,7 @@ def inspect_modules(modules, policy, packages, store, own=None):
         return
     for entry in sorted(modules.iterdir()):
         if entry.name == '.bin' and not entry.is_symlink():
-            inspect_bin(entry, store)
+            inspect_bin(entry, store, packages)
             continue
         candidates = [entry]
         if entry.name.startswith('@') and entry.is_dir() and not entry.is_symlink():
@@ -306,8 +306,8 @@ def inspect_modules(modules, policy, packages, store, own=None):
             inspect_modules(candidate / 'node_modules', policy, packages, store)
 
 
-def inspect_bin(directory, store):
-    """.bin holds only symlinks into the store or pnpm shims whose recorded target is inside the store."""
+def inspect_bin(directory, store, packages):
+    """.bin holds only symlinks or pnpm shims whose target, after realpath, is inside a lock-key store directory."""
     for entry in sorted(directory.iterdir()):
         if entry.is_symlink():
             target = Path(os.path.realpath(entry))
@@ -315,8 +315,11 @@ def inspect_bin(directory, store):
             require(entry.is_file(), f'installed: unexpected entry in .bin: {entry.name}')
             targets = re.findall(r'^# cmd-shim-target=(\S+)$', entry.read_text(errors='replace'), re.M)
             require(len(targets) == 1, f'installed: unrecognised shim .bin/{entry.name}')
-            target = Path(os.path.normpath(directory / targets[0]))
-        require(target.is_relative_to(store), f'installed: .bin/{entry.name} leaves the store')
+            # realpath: the tree may be reached through a link (e.g. a moved worktree); the real file must still be in the store.
+            target = Path(os.path.realpath(directory / targets[0]))
+        parts = target.relative_to(store).parts if target.is_relative_to(store) else ()
+        found = parts and STORE_ENTRY.fullmatch(parts[0])
+        require(found and found[1].replace('+', '/', 1) + '@' + found[2] in packages, f'installed: .bin/{entry.name} leaves the store')
 
 
 def inspect_installed(path, policy, name, version):

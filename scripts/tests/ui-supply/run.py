@@ -79,11 +79,12 @@ for case_file in sorted(HERE.glob('case-*.json')):
             installed.mkdir(parents=True)
             (installed/'package.json').write_text(json.dumps(case['installed']))
             (root / 'outside').mkdir()
+            (root / 'via').symlink_to(root)  # the same tree reached through a link, as after moving a worktree
             for relative, manifest in case.get('installedFiles', {}).items():
                 extra = ui/'node_modules/.pnpm'/case.get('installedDir', 'fixture@1.0.0')/relative
                 extra.parent.mkdir(parents=True, exist_ok=True)
                 # A string is raw file text (e.g. a pnpm shim); anything else is a JSON manifest.
-                extra.write_text(manifest if isinstance(manifest, str) else json.dumps(manifest))
+                extra.write_text(manifest.replace('@VIA@', str(root / 'via')) if isinstance(manifest, str) else json.dumps(manifest))
             for relative, target in case.get('installedLinks', {}).items():
                 link = ui/'node_modules/.pnpm'/case.get('installedDir', 'fixture@1.0.0')/relative
                 link.parent.mkdir(parents=True, exist_ok=True)

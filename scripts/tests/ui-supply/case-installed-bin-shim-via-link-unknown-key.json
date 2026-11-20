@@ -1,0 +1,11 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "installedFiles": {
+    "node_modules/.bin/tool": "#!/bin/sh\nexec node x\n# cmd-shim-target=@VIA@/ui/node_modules/.pnpm/ghost@1.0.0/node_modules/ghost/x.js\n"
+  },
+  "error": "installed: .bin/tool leaves the store"
+}
