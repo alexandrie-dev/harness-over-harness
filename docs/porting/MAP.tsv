@@ -137,7 +137,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/goal/tool-goal	@deepseek-ai/dsh-tool-goal	hoh-tool-goal	482	751	done	
 2	port	packages/guard/repeat-tool-reminder	@deepseek-ai/dsh-repeat-tool-reminder	hoh-repeat-tool-reminder	234	415	writing:x7	
 2	port	packages/guard/timeout-policy	@deepseek-ai/dsh-tool-call-timeout-policy	hoh-tool-call-timeout-policy	81	252	done	
-2	port	packages/jobs/tool-jobs	@deepseek-ai/dsh-tool-jobs	hoh-tool-jobs	698	2005	accepted	
+2	port	packages/jobs/tool-jobs	@deepseek-ai/dsh-tool-jobs	hoh-tool-jobs	698	2005	done	
 2	port	packages/plan/plan-mode	@deepseek-ai/dsh-plan-mode	hoh-plan-mode	580	1737	writing:x7	
 2	port	packages/preset/agent-preset	@deepseek-ai/dsh-agent-preset	hoh-agent-preset	30	271	done	
 2	port	packages/preset/persona	@deepseek-ai/dsh-persona	hoh-persona	75	179	done	

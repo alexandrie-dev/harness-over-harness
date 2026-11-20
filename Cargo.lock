@@ -3511,6 +3511,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-tool-jobs"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-agent-loop-testkit",
+ "hoh-error",
+ "hoh-jobs",
+ "hoh-jobs-local",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-output-retention",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-values",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-tool-office"
 version = "0.1.0"
 dependencies = [

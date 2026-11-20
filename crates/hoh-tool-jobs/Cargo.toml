@@ -1,0 +1,37 @@
+[package]
+name = "hoh-tool-jobs"
+description = "Port of @deepseek-ai/dsh-tool-jobs (packages/jobs/tool-jobs)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-error = { path = "../hoh-error" }
+hoh-jobs = { path = "../hoh-jobs" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-output-retention = { path = "../hoh-output-retention" }
+hoh-session = { path = "../hoh-session" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-util-values = { path = "../hoh-util-values" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+hoh-agent-loop = { path = "../hoh-agent-loop" }
+hoh-agent-loop-testkit = { path = "../hoh-agent-loop-testkit" }
+hoh-jobs-local = { path = "../hoh-jobs-local" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-tool-executor-native = { path = "../hoh-tool-executor-native" }
+hoh-tool-testkit = { path = "../hoh-tool-testkit" }
+tokio = { workspace = true, features = ["test-util"] }
