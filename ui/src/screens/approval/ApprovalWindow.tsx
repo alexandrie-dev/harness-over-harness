@@ -1,3 +1,4 @@
+import { tidyHuman } from '../../lib/humanText';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Risk } from '../../protocol';
 import { Icon } from '../shared/icons';
@@ -122,7 +123,7 @@ export function ApprovalWindow() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('pagehide', onHide); };
   }, [view?.approvalId]);
 
-  const headline = view?.humanText;
+  const headline = view ? tidyHuman(view.humanText) : undefined;
   const left = view ? (view.expiresAt - now) / 1000 : 0;
   const share = view ? Math.min(1, Math.max(0, (view.expiresAt - now) / total.current)) : 0;
   const why = view ? consequence(view) : WHY.high;

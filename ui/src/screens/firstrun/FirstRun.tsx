@@ -1,6 +1,7 @@
+import { keyNote } from '../../lib/keyNote';
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../shared/icons';
-import { MethodMissing, loadModelSettings, modelsFromProbe, pickFolder, probeModel, saveModel, saveRules, storeApiKey } from './engine';
+import { MethodMissing, loadModelSettings, loadWorkFolder, modelsFromProbe, pickFolder, probeModel, saveModel, saveRules, storeApiKey } from './engine';
 import '../shared/primitives.css';
 import './firstrun.css';
 
@@ -48,6 +49,10 @@ export function FirstRun({ onFinish }: FirstRunProps) {
   const [probe, setProbe] = useState<Probe>({ kind: 'idle' });
   const [internet, setInternet] = useState<'ask' | 'public'>('ask');
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
+  // The default folder is shown as the real path on this computer; until it is known (or if it cannot be) no folder name is invented.
+  const [workFolder, setWorkFolder] = useState<string | null>(null);
+  useEffect(() => { void loadWorkFolder().then(setWorkFolder); }, []);
+  const folderShown = folder === DEFAULT_FOLDER ? (workFolder ?? 'Папка HoH') : folder;
   const [folderNote, setFolderNote] = useState('');
   const [problem, setProblem] = useState('');
   const [busy, setBusy] = useState(false);
@@ -164,7 +169,7 @@ export function FirstRun({ onFinish }: FirstRunProps) {
       const picked = await pickFolder();
       if (picked) setFolder(picked);
     } catch (error) {
-      setFolderNote(error instanceof MethodMissing ? `Выбор папки пока недоступен, работаем в ${folder}.` : problemText(error));
+      setFolderNote(error instanceof MethodMissing ? `Выбор папки пока недоступен, работаем в ${folderShown}.` : problemText(error));
     } finally {
       pending.current = false; setBusy(false);
     }
@@ -216,7 +221,7 @@ export function FirstRun({ onFinish }: FirstRunProps) {
               <div className="field">
                 <label htmlFor="fr-key">API-ключ</label>
                 <input id="fr-key" type="password" ref={keyInput} autoComplete="off" disabled={!cloud} placeholder={cloud ? (keyStored ? 'Ключ сохранён. Оставьте пустым, чтобы не менять' : '') : 'Для модели на этом компьютере не нужен'} onChange={invalidate} />
-                {cloud && <span className="help">Ключ из личного кабинета сервиса. Он хранится только на этом компьютере.</span>}
+                {cloud && <span className="help" data-key-note>Ключ из личного кабинета сервиса. {keyNote()}</span>}
               </div>
               <div className="fr-verify">
                 <button type="button" className="btn" disabled={probe.kind === 'checking'} onClick={() => void check()}>Проверить</button>
@@ -246,7 +251,7 @@ export function FirstRun({ onFinish }: FirstRunProps) {
               <div className="fr-group">
                 <p className="fr-legend" id="fr-folder-label">Папка для работы</p>
                 <div className="fr-pick">
-                  <div className="fr-path" aria-labelledby="fr-folder-label"><Icon name="folder" small />{folder}</div>
+                  <div className="fr-path" aria-labelledby="fr-folder-label"><Icon name="folder" small />{folderShown}</div>
                   <button type="button" className="btn btn-lg" onClick={() => void choose()}>Выбрать</button>
                 </div>
                 {folderNote && <p className="fr-note" role="status">{folderNote}</p>}

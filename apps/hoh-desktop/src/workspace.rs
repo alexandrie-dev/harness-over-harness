@@ -11,6 +11,18 @@ pub fn default_folder(documents: &Path) -> PathBuf {
     documents.join("HoH")
 }
 
+/// The app's default folder. `<Documents>/HoH` when it can exist; when Documents is missing or broken (a dangling
+/// link, a read-only parent), `<fallback_base>/HoH` instead, so the app still starts and says which folder it uses.
+pub fn usable_default(documents: &Path, fallback_base: &Path) -> std::io::Result<PathBuf> {
+    let preferred = default_folder(documents);
+    if std::fs::create_dir_all(&preferred).is_ok() && preferred.is_dir() {
+        return Ok(preferred);
+    }
+    let fallback = default_folder(fallback_base);
+    std::fs::create_dir_all(&fallback)?;
+    Ok(fallback)
+}
+
 /// The folder the person chose, as an absolute path. The first-run default label stands for the
 /// default folder; any other relative text is refused because it would depend on the process folder.
 pub fn resolve_choice(choice: &str, default: &Path) -> Result<PathBuf, String> {
@@ -76,6 +88,25 @@ mod tests {
         for refused in ["", "Документы/Другая", "work", "../x", "/", "/a\0b"] {
             assert!(resolve_choice(refused, default).is_err(), "{refused:?}");
         }
+    }
+
+    #[test]
+    fn a_broken_documents_link_falls_back_to_the_app_folder_instead_of_failing() {
+        let base = scratch("broken");
+        let documents = base.join("Documents");
+        std::os::unix::fs::symlink(base.join("nowhere"), &documents).unwrap();
+        let config = base.join("config");
+        let folder = usable_default(&documents, &config).unwrap();
+        assert_eq!(folder, config.join("HoH"));
+        assert!(folder.is_dir());
+        assert_eq!(startup_folder(&config, &folder).unwrap(), folder);
+        // a healthy Documents keeps the usual place
+        let healthy = base.join("Healthy");
+        assert_eq!(
+            usable_default(&healthy, &config).unwrap(),
+            healthy.join("HoH")
+        );
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

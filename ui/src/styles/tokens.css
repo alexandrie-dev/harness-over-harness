@@ -1,12 +1,15 @@
 @import 'tailwindcss';
+/* Перенесённый код T3 (src/t3) пока не в сборке: его классы не должны раздувать CSS. При включении (src/t3/render.tsx) строку убрать. */
+@source not "../t3";
 
 /*
- * Токены окна HoH. Вариант A «T3 как есть» (design/round1/a/index.html).
- * Все цвета, размеры, радиусы, тени, размытия, шрифты, отступы и времена —
- * только здесь. В компонентах — только var(--…).
- * Основатель правит вид, меняя значения в этом файле.
+ * Токены окна HoH. Система вида заморожена по главной раунда 8 (design/DESIGN.md, design/round8/style.css).
+ * Все цвета, размеры, радиусы, отступы и времена — только здесь. В компонентах — только var(--…).
+ * Один набор: тёмная тема. Градиентов, свечений, теней-украшений и размытия нет.
  */
 
+/* Шрифт системы — Open Sans. Файла шрифта в сборке нет (решение о лицензии и размере — за ведущим),
+   поэтому показывается Open Sans, если он есть в системе, иначе вложенный Inter. */
 @font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: block; src: url('../assets/fonts/Inter-Regular.woff') format('woff'); }
 @font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: block; src: url('../assets/fonts/Inter-Medium.woff') format('woff'); }
 @font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: block; src: url('../assets/fonts/Inter-SemiBold.woff') format('woff'); }
@@ -15,209 +18,123 @@
   color-scheme: dark;
   --viewport-height: 100dvh;
 
-  /* ───── шрифт ───── */
-  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* ───── шрифт и текст: кегли только 12/14/16/18/30 ───── */
+  --font-sans: 'Open Sans', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-features: 'calt';
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
-  --font-weight-bold: 700;
-
-  /* ───── размеры текста ───── */
-  --text-2xs: 10px;
-  --text-xs: 11px;
   --text-sm: 12px;
-  --text-base: 13px;
+  --lh-sm: 16px;
   --text-md: 14px;
+  --lh-md: 20px;
+  --lh-prose: 22.75px;
+  --text-title: 16px;
+  --lh-title: 22px;
   --text-lg: 18px;
-  --text-xl: 20px;
-  --text-2xl: 26px;
-  --leading-tight: 1.25;
-  --leading-snug: 1.35;
-  --leading-normal: 1.5;
-  --leading-relaxed: 1.6;
-  --leading-loose: 1.7;
-  --tracking-tight: -0.01em;
-  --tracking-tighter: -0.02em;
+  --lh-lg: 24px;
+  --text-hero: 30px;
+  --lh-hero: 36px;
+  --tracking-tight: -0.025em;
 
   /* ───── цвета: поверхности ───── */
-  --color-stage: #000;
-  --color-bg: #09090b;
-  --color-bg-side: #060607;
-  --color-panel: rgba(24, 24, 27, 0.62);
-  --color-panel-strong: rgba(18, 18, 21, 0.78);
-  --color-field: rgba(0, 0, 0, 0.35);
-  --color-scrim: rgba(0, 0, 0, 0.58);
-  --color-guard: #0a0a0c;
-  --color-guard-bar: #050506;
-  --color-privacy-base: #050506;
+  --color-bg: #000;
+  --color-raised: #111;
+  --color-raised-hi: #1c1c1c;
+  --color-selected: #2a2a2a;
+  --color-scrim: rgb(0 0 0 / 72%);
 
   /* ───── цвета: текст ───── */
-  --color-fg: #fafafa;
-  --color-fg-2: #d4d4d8;
-  --color-muted: #a1a1aa;
-  --color-dim: #71717a;
-  --color-on-accent: #fff;
-  --color-on-light: #09090b;
+  --color-fg: oklch(97% 0 0);
+  --color-fg-hover: color-mix(in oklab, oklch(97% 0 0) 86%, #000);
+  --color-fg-2: color-mix(in oklab, oklch(97% 0 0) 80%, transparent);
+  --color-muted: #a3a3a3;
+  --color-dim: #8f8f8f;
+  --color-key: rgb(255 255 255 / 7%);
+  --color-icon: color-mix(in srgb, #a3a3a3 85%, #000);
+  --color-on-light: #000;
 
-  /* ───── цвета: линии и подложки ───── */
-  --border: rgba(255, 255, 255, 0.08);
-  --border-2: rgba(255, 255, 255, 0.14);
-  --color-tint: rgba(255, 255, 255, 0.04);
-  --color-tint-2: rgba(255, 255, 255, 0.07);
-  --color-highlight: rgba(255, 255, 255, 0.14);
-  --color-highlight-mark: rgba(255, 255, 255, 0.18);
+  /* ───── цвета: линии и наведение (белый на чёрном) ───── */
+  --border: rgb(255 255 255 / 8%);
+  --border-card: rgb(255 255 255 / 10%);
+  --border-field: rgb(255 255 255 / 11%);
+  --border-composer: rgb(255 255 255 / 5%);
+  --color-hover: rgb(255 255 255 / 4%);
+  --color-row-hover: rgb(255 255 255 / 8%);
+  --color-row-active: rgb(255 255 255 / 11%);
+  --color-disabled: rgb(255 255 255 / 12%);
+  --color-avatar: #1b1b1b;
+  --color-avatar-ink: rgb(255 255 255 / 85%);
 
-  /* ───── цвета: основной и состояния ───── */
-  --accent: oklch(0.488 0.217 264);
-  --accent-hi: oklch(0.55 0.22 264);
-  --accent-text: oklch(0.76 0.12 264);
-  --accent-soft: color-mix(in oklab, var(--accent) 22%, transparent);
-  --accent-border: color-mix(in oklab, var(--accent-hi) 70%, white 10%);
-  --accent-focus: color-mix(in oklab, var(--accent-hi) 70%, transparent);
-  --accent-selected: color-mix(in oklab, var(--accent-hi) 65%, transparent);
-  --accent-field-focus: color-mix(in oklab, var(--accent-hi) 75%, transparent);
-  --color-ok: oklch(0.76 0.16 155);
-  --color-ok-soft: color-mix(in oklab, var(--color-ok) 7%, var(--color-privacy-base));
-  --color-warn: oklch(0.82 0.15 80);
-  --color-warn-soft: color-mix(in oklab, var(--color-warn) 14%, transparent);
-  --color-warn-border: color-mix(in oklab, var(--color-warn) 30%, transparent);
-  --color-warn-glow: color-mix(in oklab, var(--color-warn) 9%, transparent);
-  --color-danger: oklch(0.7 0.18 25);
-  --color-danger-soft: color-mix(in oklab, var(--color-danger) 16%, transparent);
-  --color-danger-border: color-mix(in oklab, var(--color-danger) 28%, transparent);
-  --color-danger-border-strong: color-mix(in oklab, var(--color-danger) 50%, transparent);
-  --color-danger-text: oklch(0.8 0.12 25);
-  --color-safe-hover: #e4e4e7;
-  --color-tape-dark: #17130a;
-  --color-glow-violet: color-mix(in oklab, oklch(0.5 0.16 300) 16%, transparent);
-  --color-glow-accent: color-mix(in oklab, var(--accent) 30%, transparent);
-  --color-avatar-end: oklch(0.4 0.18 290);
+  /* ───── цвета: красный — ждут человека, синий — работает система ───── */
+  --color-wait: #fe3f4f;
+  --color-wait-soft: color-mix(in oklab, #fe3f4f 14%, transparent);
+  --color-wait-line: color-mix(in oklab, #fe3f4f 38%, transparent);
+  --color-work: #4dacf6;
+  --color-work-soft: color-mix(in oklab, #4dacf6 14%, transparent);
+  --color-work-line: color-mix(in oklab, #4dacf6 38%, transparent);
+  --color-focus: color-mix(in oklab, #4dacf6 70%, transparent);
 
-  /* ───── радиусы ───── */
-  --radius: 0.5rem;
-  --radius-sm: 6px;
-  --radius-md: 7px;
-  --radius-lg: 12px;
-  --radius-xl: 14px;
-  --radius-pill: 999px;
-  --radius-round: 50%;
+  /* ───── радиусы: 4 клавиша, 6 строка списка, 8 кнопка и меню, 16 карточка и поле ввода, круг ───── */
+  --radius-key: 4px;
+  --radius-row: 6px;
+  --radius: 8px;
+  --radius-card: 16px;
+  --radius-round: 999px;
 
-  /* ───── отступы (шаг шкалы) ───── */
-  --space-1: 2px;
-  --space-2: 4px;
-  --space-3: 6px;
-  --space-4: 8px;
-  --space-5: 10px;
-  --space-6: 12px;
-  --space-7: 14px;
-  --space-8: 16px;
-  --space-9: 20px;
-  --space-10: 24px;
-  --space-11: 28px;
-  --space-12: 32px;
+  /* ───── отступы: 8 внутри блока и между карточками, 16 поля карточки, 32 между блоками ───── */
+  --space-0: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
 
-  /* ───── размеры элементов ───── */
+  /* ───── размеры элементов: высоты 28 / 32 / 36 ───── */
   --border-width: 1px;
   --focus-width: 2px;
-  --focus-offset: 2px;
   --icon-stroke: 1.75;
   --size-icon: 16px;
   --size-icon-sm: 14px;
   --size-icon-xs: 12px;
-  --size-icon-lg: 18px;
+  --size-small: 28px;
+  --size-row: 32px;
+  --size-main: 36px;
   --size-badge: 20px;
-  --size-mark: 24px;
-  --size-avatar: 26px;
-  --size-tile: 30px;
-  --size-control: 28px;
-  --size-control-field: 34px;
-  --size-control-lg: 34px;
-  --size-control-xl: 36px;
-  --size-titlebar: 38px;
-  --size-bar: 3px;
-  --size-tape: 6px;
+  --size-mark: 26px;
+  --size-bar: 4px;
+  --size-orbit-dot: 4px;
   --head: 52px;
-  --side-width: 252px;
+  --side-width: 256px;
   --side-width-compact: 56px;
-  --panel-width: 424px;
-  --col: 46rem;
+  --col: 736px;
+  --col-margin: 48px;
   --width-wizard: 34rem;
   --width-guard: 29rem;
-
-  /* ───── тени, размытия, фоны ───── */
-  --shadow-card: 0 24px 60px rgba(0, 0, 0, 0.45);
-  --shadow-guard: 0 0 0 1px #000, 0 40px 90px rgba(0, 0, 0, 0.75), 0 0 60px var(--color-warn-glow);
-  --shadow-panel: -24px 0 48px rgba(0, 0, 0, 0.5);
-  --shadow-inset-top: inset 0 1px 0 var(--color-highlight);
-  --shadow-inset-mark: inset 0 0 0 1px var(--color-highlight-mark);
-  --shadow-inset-border: inset 0 0 0 1px var(--border);
-  --blur-scrim: blur(7px) saturate(0.7);
-  --blur: blur(12px);
-  --blur-md: blur(14px);
-  --blur-lg: blur(16px);
-  --bg-firstrun:
-    radial-gradient(60rem 32rem at 50% -8%, var(--color-glow-accent), transparent 70%),
-    radial-gradient(40rem 26rem at 88% 108%, var(--color-glow-violet), transparent 70%),
-    var(--color-bg);
-  --bg-avatar: linear-gradient(140deg, var(--accent-hi), var(--color-avatar-end));
-  --bg-tape: repeating-linear-gradient(-45deg, var(--color-warn) 0 8px, var(--color-tape-dark) 8px 16px);
   --opacity-disabled: 0.4;
-  --opacity-tape: 0.85;
 
   /* ───── чат ───── */
   --chat-zero: 0;
   --chat-full: 100%;
   --chat-viewport: 100dvh;
   --chat-transparent: transparent;
-  --chat-privacy-height: 26px;
-  --chat-turn-gap: 18px;
-  --chat-user-max: 84%;
-  --chat-bubble-block: 9px;
-  --chat-bubble-inline: 13px;
-  --chat-bubble-leading: 1.55;
-  --chat-input-height: 42px;
-  --chat-input-max: 120px;
-  --chat-step-line-x: 7.5px;
-  --chat-step-offset: 26px;
+  --chat-user-max: 80%;
+  --chat-input-height: 46px;
+  --chat-input-max: 208px;
+  --chat-step-offset: 32px;
   --chat-detail-width: 25rem;
   --chat-estimated-row: 90px;
   --chat-compact-breakpoint: 1000px;
   --chat-caret-width: 7px;
   --chat-chevron-open: 90deg;
+  --chat-chats-min: 144px;
+  --chat-fade: 12px;
 
-  /* ───── движение ───── */
-  --ease: cubic-bezier(0.32, 0.72, 0, 1);
-  --dur-fast: 0.2s;
-  --dur: 0.3s;
+  /* ───── движение: только значок-орбита «работает» и короткие переходы ───── */
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-fast: 90ms;
+  --dur: 180ms;
   --dur-timer: 1s;
-  --dur-spin: 0.8s;
-}
-
-
-/* Светлая тема: та же геометрия A, меняются только поверхности и контраст. */
-:root[data-theme='light'] {
-  color-scheme: light;
-  --color-stage: #e4e4e7;
-  --color-bg: #fafafa;
-  --color-bg-side: #f4f4f5;
-  --color-panel: rgba(255, 255, 255, 0.85);
-  --color-panel-strong: rgba(244, 244, 245, 0.92);
-  --color-field: rgba(255, 255, 255, 0.8);
-  --color-privacy-base: #f4f4f5;
-  --color-fg: #18181b;
-  --color-fg-2: #3f3f46;
-  --color-muted: #52525b;
-  --color-dim: #71717a;
-  --border: rgba(24, 24, 27, 0.1);
-  --border-2: rgba(24, 24, 27, 0.18);
-  --color-tint: rgba(24, 24, 27, 0.035);
-  --color-tint-2: rgba(24, 24, 27, 0.06);
-  --color-highlight: rgba(24, 24, 27, 0.1);
-  --color-highlight-mark: rgba(24, 24, 27, 0.12);
-  --accent-text: oklch(0.46 0.2 264);
-  --color-ok: oklch(0.46 0.12 155);
-  --color-danger: oklch(0.5 0.18 25);
-  --color-danger-text: oklch(0.46 0.16 25);
-  --shadow-card: 0 24px 60px rgba(24, 24, 27, 0.12);
+  --dur-orbit: 2.4s;
 }

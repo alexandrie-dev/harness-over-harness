@@ -26,6 +26,7 @@ export function QuestionCard({ question }: { question: PendingQuestion }) {
   }
   async function skip() { setSending(true); await dismissQuestion(question.requestId); setSending(false); }
   return <form className="chat-question" data-chat-question onSubmit={submit} aria-label="Вопрос Помощника">
+    <p className="chat-question-head">Нужен ваш ответ</p>
     {question.questions.map(q => <fieldset className="chat-question-item" key={q.id} data-question-id={q.id}>
       <legend>{q.header ? <small>{q.header}</small> : null}{q.question}</legend>
       {q.detail && <p className="chat-question-detail">{q.detail}</p>}

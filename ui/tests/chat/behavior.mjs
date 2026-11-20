@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { StubClient, RestartingStubHost, recording, recordedPrompt } from './stub-client.mjs';
+import { FakeEngine } from './fake-engine.mjs';
 import { pathCases, technicalCases } from './privacy-cases.mjs';
 import { harmfulMarkdownCases } from './markdown-cases.mjs';
 
@@ -31,7 +32,7 @@ try {
     args: ['--allow-file-access-from-files', '--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--no-first-run', '--disable-default-apps', '--force-color-profile=srgb'],
   });
   async function check(name, scenario, callback, extra = [], options = {}) {
-    const stub = options.restart ? await RestartingStubHost.open() : await StubClient.open(scenario, extra);
+    const stub = options.fake ? options.fake() : options.restart ? await RestartingStubHost.open() : await StubClient.open(scenario, extra);
     const context = await browser.newContext({ viewport: options.viewport ?? { width: 1200, height: 800 }, locale: 'ru-RU', reducedMotion: 'reduce' });
     await context.tracing.start({ screenshots: false, snapshots: false, sources: false });
     const page = await context.newPage();
@@ -52,8 +53,9 @@ try {
         subscribeQuestions: async listener => { window.__hohAsk = listener; return () => { window.__hohAsk = undefined; }; },
         answerQuestion: async (requestId, answer) => { window.__hohAnswers.push({ requestId, answer }); },
         approvalHistory: async () => window.__hohApprovalHistory ?? [],
+        openLink: async (kind, target, sessionId) => { window.__hohOpened.push({ kind, target, sessionId }); if (window.__hohOpenFail) throw new Error(window.__hohOpenFail); },
       };
-      window.__hohAnswers = [];
+      window.__hohAnswers = []; window.__hohOpened = [];
       window.__hohChatNotify = notification => { for (const listener of listeners) listener(notification); };
       window.__hohChatEngineStatus = status => { for (const listener of statusListeners) listener(status); };
       window.__chatTextSamples = [];
@@ -96,16 +98,16 @@ try {
       await callback(page, stub);
       await Promise.all(deliveries);
       assert.deepEqual(errors, [], 'renderer exceptions'); assert.deepEqual(remote, [], 'unexpected resource loads');
-      assert.equal(await page.locator('[data-chat-sidebar]').count(), 1, 'A sidebar contains only the current assistant');
+      assert.equal(await page.locator('[data-chat-sidebar]').count(), 1, 'one sidebar');
+      // Nothing the engine cannot do is shown: no employees, tasks, schedule, widgets, learning.
+      assert.equal(await page.locator('[data-chat-sidebar]').getByText(/Сотрудники|Задачи|Расписание|Виджеты|Обучение|Быстрые задачи/).count(), 0);
       assert.equal(await page.getByRole('link', { name: /Сотрудники|Задачи|Расписание|Результаты/ }).count(), 0);
       if (options.shot) {
         await page.evaluate(() => document.fonts.ready);
         await page.mouse.move(0, 0);
-        const shots = resolve(UI, '../design/build-a'); await mkdir(shots, { recursive: true });
+        // Review images stay inside ui/: design/ is read-only for window work.
+        const shots = join(RESULTS, 'shots'); await mkdir(shots, { recursive: true });
         await page.screenshot({ path: join(shots, options.shot), animations: 'disabled' });
-        await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
-        assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), 'light');
-        await page.screenshot({ path: join(shots, 'chat-1440-light.png'), animations: 'disabled' });
       }
       results.push({ name, status: 'passed' }); console.log('PASS ' + name);
     } catch (error) {
@@ -217,7 +219,7 @@ try {
     await page.waitForSelector('[data-chat-screen][data-connection="recovering"]');
     assert.equal(host.client.child.signalCode, 'SIGKILL');
     assert.equal(await page.getByRole('alert').textContent(), 'Связь с Помощником прервалась, восстанавливаю…');
-    assert.equal(await page.getByRole('button', { name: 'Стоп', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Стоп', exact: true }).count(), 0, 'отдельной кнопки «Стоп» нет, пока ответа нет');
     assert.equal(await page.getByRole('button', { name: 'Отправить', exact: true }).isDisabled(), true);
     assert.equal(await page.getByLabel('Сообщение Помощнику', { exact: true }).isDisabled(), true);
     assert.equal(await page.locator('[data-chat-entry="user"]').count(), 2);
@@ -253,10 +255,105 @@ try {
     assert(!visible.includes('/workspace/') && !visible.includes('/tmp'), 'external absolute paths must be hidden');
   }, [], { viewport: { width: 1440, height: 900 }, shot: 'chat-1440.png' });
 
+  const twoChats = () => {
+    const engine = new FakeEngine();
+    engine.seed('window-main', { user: 'Первый вопрос', assistant: 'Первый ответ' });
+    engine.seed('chat-old', { user: 'Старый вопрос', assistant: 'Старый ответ' });
+    return engine;
+  };
+  await check('chat-list', '', async (page, engine) => {
+    const rows = page.locator('[data-chat-row]');
+    const current = () => page.locator('[data-chat-row][aria-current="true"]');
+    const feed = () => page.locator('[data-chat-entry]').evaluateAll(nodes => nodes.map(node => node.querySelector('[data-markdown], .chat-user-text')?.textContent));
+    await rows.nth(1).waitFor();
+    assert.equal(await rows.count(), 2);
+    assert.deepEqual((await rows.locator('.chat-row-label').allTextContents()).sort(), ['Первый вопрос', 'Старый вопрос']);
+    assert.equal(await current().locator('.chat-row-label').textContent(), 'Первый вопрос');
+    assert.equal(await page.locator('.chat-title').textContent(), 'Первый вопрос');
+    assert.deepEqual(await feed(), ['Первый вопрос', 'Первый ответ']);
+    // switching
+    await page.locator('[data-chat-id="chat-old"]').click();
+    await page.getByText('Старый ответ', { exact: true }).waitFor();
+    assert.deepEqual(await feed(), ['Старый вопрос', 'Старый ответ']);
+    assert.equal(await page.locator('.chat-title').textContent(), 'Старый вопрос');
+    assert.equal(await page.getByText('Первый ответ', { exact: true }).count(), 0, 'histories are not mixed');
+    // a new chat is empty, listed and current
+    await page.locator('[data-new-chat]').click();
+    await page.locator('[data-chat-empty]').waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('[data-chat-row]').length === 3);
+    assert.equal(await page.locator('[data-chat-entry]').count(), 0);
+    assert.equal(await current().locator('.chat-row-label').textContent(), 'Новый чат');
+    await page.locator('[data-new-chat]').click();      // empty chat is reused
+    await page.waitForTimeout(100);
+    assert.equal(await rows.count(), 3);
+    // write in the new chat; its title follows the first message; the other chats are untouched
+    await page.getByLabel('Сообщение Помощнику', { exact: true }).fill('Третья тема');
+    await page.getByRole('button', { name: 'Отправить', exact: true }).click();
+    await page.getByText('Ответ на: Третья тема', { exact: true }).waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-chat-row] .chat-row-label')].some(node => node.textContent === 'Третья тема'));
+    assert.equal(await page.locator('.chat-title').textContent(), 'Третья тема');
+    await page.screenshot({ path: join(RESULTS, 'shots', 'chat-list-1440.png'), animations: 'disabled' });
+    await page.locator('[data-chat-id="window-main"]').click();
+    await page.getByText('Первый ответ', { exact: true }).waitFor();
+    assert.deepEqual(await feed(), ['Первый вопрос', 'Первый ответ']);
+    await page.locator('[data-chat-row]', { hasText: 'Третья тема' }).click();
+    await page.getByText('Ответ на: Третья тема', { exact: true }).waitFor();
+    assert.deepEqual(await feed(), ['Третья тема', 'Ответ на: Третья тема']);
+    // keyboard: Ctrl+N starts a chat; one while the open chat is empty changes nothing
+    await page.keyboard.press('Control+n');
+    await page.locator('[data-chat-empty]').waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('[data-chat-row]').length === 4);
+    await page.keyboard.press('Control+n'); await page.waitForTimeout(100);
+    assert.equal(await rows.count(), 4);
+    // nothing the engine cannot do is offered
+    assert.equal(await page.locator('body').getByText(/Сотрудник|Расписание|Виджет|Обучение|Быстрые задачи/).count(), 0);
+    assert.equal(await page.locator('[data-nav-chat] .chat-state').textContent(), 'готов к работе');
+    assert.equal(engine.requests.filter(r => r.method === 'session/prompt').length, 1);
+  }, [], { fake: twoChats, viewport: { width: 1440, height: 900 } });
+  await check('model-label-follows-the-executor', '', async page => {
+    await page.locator('[data-chat-model]').waitFor();
+    assert.equal(await page.locator('[data-chat-model]').textContent(), '192.168.1.5:8000', 'не «Локальная модель» для модели по сети');
+    assert.match(await page.locator('.chat-privacy').textContent(), /на другом компьютере/);
+    assert.equal(await page.getByText('Локальная модель').count(), 0);
+  }, [], { fake: () => { const engine = twoChats(); engine.baseUrl = 'http://192.168.1.5:8000/v1'; return engine; }, viewport: { width: 1440, height: 900 } });
+  await check('narrow-sidebar-closes', '', async page => {
+    const sidebar = page.locator('[data-chat-sidebar]');
+    assert.equal(await sidebar.isVisible(), false);
+    await page.locator('[data-chat-menu]').click();
+    assert.equal(await sidebar.isVisible(), true);
+    assert.equal(await page.locator('[data-chat-scrim]').count(), 1, 'под колонкой затемнение');
+    await page.mouse.click(700, 300);                       // a click on the feed side closes it
+    assert.equal(await sidebar.isVisible(), false);
+    await page.locator('[data-chat-menu]').click();
+    await page.keyboard.press('Escape');                    // so does Escape
+    assert.equal(await sidebar.isVisible(), false);
+    assert.equal(await page.locator('[data-chat-scrim]').count(), 0);
+    await page.locator('[data-chat-menu]').click();
+    await page.screenshot({ path: join(RESULTS, 'shots', 'narrow-menu-800x640.png'), animations: 'disabled' });
+  }, [], { fake: twoChats, viewport: { width: 800, height: 640 } });
+  await check('composer-line', '', async (page, engine) => {
+    await page.locator('[data-chat-folder]').waitFor();
+    assert.equal(await page.getByText(/Enter отправляет|Shift\+Enter/).count(), 0, 'подсказки про Enter нет');
+    assert.equal(await page.getByRole('button', { name: 'Стоп', exact: true }).count(), 0, 'отдельной кнопки «Стоп» нет');
+    assert.equal(await page.locator('[data-chat-permissions]').textContent(), 'Только чтение');
+    assert.equal(await page.locator('[data-chat-model]').textContent(), 'Локальная модель');
+    assert.equal(await page.locator('[data-chat-sidebar] [data-chat-folder], .chat-side-foot').count(), 0, 'папки нет в боковой колонке');
+    await page.evaluate(() => { window.__HOH_ENGINE__ = { request: async () => ({}), pickFolder: async () => '/home/me/Проекты/сайт' }; });
+    await page.locator('[data-chat-folder]').click();
+    await page.waitForFunction(() => document.querySelector('[data-chat-folder]')?.textContent === 'сайт');
+    assert.deepEqual(engine.requests.find(r => r.method === 'session/working-directory/set')?.params.path, '/home/me/Проекты/сайт');
+    assert.equal(await page.locator('[data-chat-screen] .chat-composer button[type="submit"]').count(), 1, 'одна круглая кнопка');
+  }, [], { fake: twoChats, viewport: { width: 1440, height: 900 } });
+
   await check('assistant-question', 'text-turn', async page => {
-    await page.evaluate(() => window.__hohAsk({ requestId: 'r1', sessionId: 'employee-1', questions: [
+    const { sessionId } = await page.evaluate(() => window.__HOH_CHAT_TEST_TRANSPORT__.request('hoh/employee/open', { id: 'employee-1' }));
+    // A question of another chat is not shown in this one.
+    await page.evaluate(() => window.__hohAsk({ requestId: 'r0', sessionId: 'another-chat', questions: [{ id: 'q', question: 'Чужой вопрос?' }] }));
+    await page.waitForTimeout(100);
+    assert.equal(await page.locator('[data-chat-question]').count(), 0, 'only the question of the open chat is shown');
+    await page.evaluate(id => window.__hohAsk({ requestId: 'r1', sessionId: id, questions: [
       { id: 'format', question: 'Какой формат отчёта?', options: [{ label: 'PDF' }, { label: 'Word', description: 'Для правок' }] },
-      { id: 'note', question: 'Что подчеркнуть? <b>тег</b>', multiSelect: true, options: [{ label: 'Сроки' }, { label: 'Цена' }] }] }));
+      { id: 'note', question: 'Что подчеркнуть? <b>тег</b>', multiSelect: true, options: [{ label: 'Сроки' }, { label: 'Цена' }] }] }), sessionId);
     const card = page.locator('[data-chat-question]');
     await card.waitFor();
     assert.equal(await card.locator('b').count(), 0, 'question text is plain text');
@@ -271,7 +368,7 @@ try {
     const answers = await page.evaluate(() => window.__hohAnswers);
     assert.deepEqual(answers, [{ requestId: 'r1', answer: { answers: [
       { id: 'format', selected: ['PDF'] }, { id: 'note', selected: ['Сроки', 'Цена'], custom: 'и ещё про риски' }] } }]);
-    await page.evaluate(() => window.__hohAsk({ requestId: 'r2', sessionId: 'employee-1', questions: [{ id: 'q', question: 'Продолжать?' }] }));
+    await page.evaluate(id => window.__hohAsk({ requestId: 'r2', sessionId: id, questions: [{ id: 'q', question: 'Продолжать?' }] }), sessionId);
     await page.locator('[data-question-skip]').click();
     await page.locator('[data-chat-question]').waitFor({ state: 'detached' });
     assert.deepEqual((await page.evaluate(() => window.__hohAnswers)).at(-1), { requestId: 'r2', answer: { cancelled: true } });
@@ -318,6 +415,79 @@ try {
     await writeFile(path, [base[0], ...history, ...base.slice(1)].map(row => JSON.stringify(row)).join('\n') + '\n');
     return path;
   }
+  const linksFile = await historyFile('links', ['Смотри [код](a.ts:12), [док](https://example.com/a) и ![схема](https://example.com/i.png) [плохо](javascript:1)']);
+  await check('links-and-images', 'text-turn', async page => {
+    await page.locator('[data-markdown-link="file"]').waitFor();
+    assert.equal(await page.locator('[data-markdown-link="file"]').textContent(), 'a.ts:12');
+    assert.equal(await page.locator('[data-markdown-link="url"]').textContent(), 'докexample.com');
+    assert.equal(await page.locator('[data-markdown-image="placeholder"]').textContent(), 'Картинка: схема');
+    assert.equal(await page.locator('[data-markdown-link="inert"]').textContent(), '[плохо](javascript:1)');
+    assert.equal(await page.locator('[data-markdown] a, [data-markdown] img').count(), 0);
+  }, ['--recording', linksFile]);
+  const linkEngine = () => {
+    const engine = new FakeEngine();
+    const main = engine.seed('window-main', { user: 'Покажи файлы' });
+    engine.cwd = '/home/me/Проекты/сайт';
+    engine.append(main, 'tool/call', { name: 'write_file', callId: 'w1', arguments: { path: '../qa-outside.txt', content: 'x' } });
+    engine.append(main, 'tool/result', { message: { toolCallId: 'w1', isError: true, content: [{ type: 'text', text: '[sandbox: file access denied under workspace-write mode]\n[sandbox: escalation available — retry this exact operation once]' }] } });
+    engine.append(main, 'tool/call', { name: 'write_file', callId: 'w2', arguments: { path: 'ok.txt', content: 'x' } });
+    engine.append(main, 'tool/result', { message: { toolCallId: 'w2', isError: true, content: [{ type: 'text', text: 'disk full' }] } });
+    engine.append(main, 'tool/call', { name: 'read_file', callId: 'r1', arguments: { path: 'notes.txt' } });
+    engine.append(main, 'tool/result', { message: { toolCallId: 'r1', content: [{ type: 'text', text: '<path>notes.txt</path>\n<type>file</type>\n<content>\n1: alpha\n2: beta\n\n(End of file - total 2 lines)\n</content>' }] } });
+    engine.append(main, 'assistant/message', { message: { id: 'a1', content: [{ type: 'text', text: 'Файлы: [заметки](notes.txt), [чужой](/etc/passwd), [снаружи](../qa-outside.txt), [сайт](https://example.com/a), [плохо](javascript:1) и [удалённый](file:///etc/passwd)' }] } });
+    return engine;
+  };
+  await check('denied-step-and-links', '', async page => {
+    await page.locator('[data-operation="write"]').nth(1).waitFor();
+    const steps = page.locator('[data-operation="write"]');
+    // F-02: a refusal outside the folder says so and says what to do; other failures stay generic
+    assert.equal(await steps.nth(0).locator('[data-step-label]').textContent(), 'Запись запрещена за пределами папки');
+    await steps.nth(0).locator('summary').click();
+    const detail = await steps.nth(0).locator('[data-step-detail]').textContent();
+    assert.match(detail, /работает только в папке «сайт»/); assert.match(detail, /выберите другую папку внизу поля ввода/);
+    assert(!/ещё раз/.test(detail), 'не «попробуйте ещё раз»');
+    assert.equal(await steps.nth(1).locator('[data-step-label]').textContent(), 'Не удалось записать ok.txt');
+    await steps.nth(1).locator('summary').click();
+    assert.match(await steps.nth(1).locator('[data-step-detail]').textContent(), /Попробуйте ещё раз/);
+    // F-04: no engine markup in an opened read step
+    await page.locator('[data-operation="read"] summary').click();
+    const read = await page.locator('[data-operation="read"] [data-step-detail]').textContent();
+    assert.equal(read, 'alpha\nbeta'); assert(!/<path>|<content>/.test(read));
+    // F-03: links look like links and open only through the host
+    const opened = () => page.evaluate(() => window.__hohOpened);
+    await page.locator('[data-markdown-link="url"]').click();
+    await page.locator('[data-markdown-link="file"]').click();
+    await page.locator('[data-markdown-reveal]').click();
+    assert.deepEqual(await opened(), [
+      { kind: 'url', target: 'https://example.com/a', sessionId: 'window-main' },
+      { kind: 'file', target: 'notes.txt', sessionId: 'window-main' },
+      { kind: 'reveal', target: 'notes.txt', sessionId: 'window-main' },
+    ]);
+    const outside = page.locator('[data-markdown-link="file-outside"]');
+    assert.equal(await outside.count(), 3, 'внешние файлы помечены: чужой, снаружи и file: вне папки');
+    await outside.first().click();
+    assert.match(await page.locator('[data-link-notice]').textContent(), /вне папки «сайт».*выберите другую папку внизу поля ввода/);
+    assert.equal((await opened()).length, 3, 'файл вне папки ничего не открывает');
+    assert.equal(await page.locator('[data-markdown-link="inert"]').count(), 1, 'javascript: остаётся текстом');
+    assert.equal(await page.locator('[data-markdown] a').count(), 0);
+    // a refusal of the host is shown in words
+    await page.evaluate(() => { window.__hohOpenFail = 'Файл не найден'; });
+    await page.locator('[data-markdown-link="file"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-link-notice]')?.textContent.startsWith('Файл не найден'));
+    // N-2: a blocked link says why, and opens nothing
+    const before = (await opened()).length;
+    await page.locator('[data-markdown-link="inert"]').click();
+    assert.match(await page.locator('[data-link-notice]').textContent(), /Эта ссылка не открывается/);
+    assert.equal((await opened()).length, before);
+    // N-7: the next message removes the banner; so does «Закрыть»
+    await page.getByLabel('Сообщение Помощнику', { exact: true }).fill('Дальше');
+    await page.getByRole('button', { name: 'Отправить', exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector('[data-link-notice]'));
+    await page.locator('[data-markdown-link="inert"]').click();
+    await page.locator('[data-link-notice]').getByRole('button', { name: 'Закрыть' }).click();
+    assert.equal(await page.locator('[data-link-notice]').count(), 0);
+  }, [], { fake: linkEngine, viewport: { width: 1440, height: 900 }, shot: 'links-1440.png' });
+
   const harmful = harmfulMarkdownCases.map(({ source }) => source);
   const markdownFile = await historyFile('markdown', harmful);
   await check('safe-markdown', 'text-turn', async page => {
@@ -407,7 +577,7 @@ try {
   }, ['--recording', manyFile]);
 
   await writeFile(join(RESULTS, 'behavior.json'), JSON.stringify({ status: 'passed', passed: results.length, results }, null, 2) + '\n');
-  console.log(`Behavior: ${results.length} passed, 0 failed; A review images: design/build-a/chat-1440.png, design/build-a/chat-1440-light.png`);
+  console.log(`Behavior: ${results.length} passed, 0 failed; review image: ui/test-results/chat/shots/chat-1440.png`);
 } catch (error) {
   await writeFile(join(RESULTS, 'behavior.json'), JSON.stringify({ status: 'failed', results, error: String(error) }, null, 2) + '\n');
   console.error(error); process.exitCode = 1;

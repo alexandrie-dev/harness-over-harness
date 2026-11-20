@@ -1,6 +1,6 @@
 {
   "identifier": "main",
-  "description": "Main UI: filtered engine requests and native folder selection; no approval decision, filesystem, shell or window creation.",
+  "description": "Main UI: filtered engine requests and native folder selection; opening links inside the chosen folder or in the browser; no approval decision, filesystem, shell or window creation.",
   "windows": ["main"],
-  "permissions": ["allow-engine-request", "allow-pick-folder", "allow-question-answer", "allow-approval-history", "core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": ["allow-engine-request", "allow-pick-folder", "allow-open-link", "allow-question-answer", "allow-approval-history", "core:event:allow-listen", "core:event:allow-unlisten"]
 }

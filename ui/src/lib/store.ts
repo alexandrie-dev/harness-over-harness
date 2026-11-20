@@ -13,6 +13,13 @@ export function createChatStore(transportFactory: () => ChatTransport = chatTran
       disconnect: () => controller.disconnect(),
       send: () => controller.send(),
       stop: () => controller.stop(),
+      openSession: id => controller.openSession(id),
+      newChat: () => controller.newChat(),
+      setFolder: path => controller.setFolder(path),
+      openLink: (kind, target) => controller.openLink(kind, target),
+      refuseLink: () => controller.refuseLink(),
+      blockedLink: () => controller.blockedLink(),
+      dismissNotice: () => controller.dismissNotice(),
       answerQuestion: (requestId, answer) => controller.answerQuestion(requestId, answer),
       dismissQuestion: requestId => controller.dismissQuestion(requestId),
     };

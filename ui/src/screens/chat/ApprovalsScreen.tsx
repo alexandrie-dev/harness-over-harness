@@ -1,3 +1,4 @@
+import { tidyHuman } from '../../lib/humanText';
 import { useEffect, useState } from 'react';
 import { Icon } from '../shared/icons';
 import { chatTransport, type ApprovalRecord } from './transport';
@@ -16,8 +17,7 @@ export function ApprovalsScreen() {
     history().then(rows => { if (live) setRecords(rows); }, () => { if (live) setFailed(true); });
     return () => { live = false; };
   }, []);
-  return <section className="chat-main ap-history" aria-label="Подтверждения">
-    <header className="chat-header"><h1>Подтверждения</h1></header>
+  return <section className="ap-history" aria-label="Подтверждения">
     <div className="ap-history-body" data-approvals>
       {failed ? <p className="ap-history-empty" role="alert">Не удалось загрузить историю решений.</p>
         : !records ? <p className="ap-history-empty">Загружаю историю…</p>
@@ -25,7 +25,7 @@ export function ApprovalsScreen() {
         : <ol className="ap-history-list">{records.map(record => <li key={`${record.at}-${record.method}-${record.outcome}-${record.humanText}`} className="ap-history-row" data-outcome={record.outcome}>
           <Icon name={record.outcome === 'allowed-once' ? 'checkCircle' : 'shield'} className="ap-history-icon" />
           <div className="ap-history-text">
-            <p className="ap-history-what">{record.humanText}</p>
+            <p className="ap-history-what">{tidyHuman(record.humanText)}</p>
             <p className="ap-history-meta">{record.asker === 'assistant' ? 'Просил Помощник' : 'Вы, в настройках'} · {when(record.at)}</p>
             {record.reason && <p className="ap-history-reason">«{record.reason}»</p>}
             {record.details && <details className="ap-history-details"><summary>Подробности</summary><pre>{record.details}</pre></details>}

@@ -97,6 +97,11 @@ function withIncompleteMarker(value) {
   const closing = fence ? '\n' + fence.char.repeat(fence.length) : '';
   return value + closing + '\n\n' + incompleteMarker;
 }
+/** A read result wrapped in the engine's `<path>/<type>/<content>` markup: only the file text, without line numbers. */
+function readContent(value) {
+  const inner = value.split(/<content>\s*\n?/)[1]?.split(/<\/content>/)[0] ?? '';
+  return inner.split('\n').filter(line => !/^\(End of file - total \d+ lines\)\s*$/.test(line)).map(line => line.replace(/^\s*\d+[:|]\s?/, '')).join('\n').trim();
+}
 function operationOf(name, args) {
   if (['read', 'read_file', 'file_read', 'read_image'].includes(name) || (name === 'str_replace_editor' && args.command === 'view')) return 'read';
   if (['write', 'write_file', 'file_write', 'str_replace_editor', 'edit_file'].includes(name)) return 'write';
@@ -118,7 +123,11 @@ export function numberInWords(number) {
   if (number || !words.length) words.push(small[number]);
   return words.join(' ');
 }
+/** The engine marks a sandbox refusal with its fixed `[sandbox: file access denied under <mode> mode]` line (crates/hoh-sandbox escalation.rs). */
+const DENIAL = /\[sandbox: file access denied under ([a-z-]+) mode\]/;
+const deniedLabels = { read: 'Чтение запрещено за пределами папки', write: 'Запись запрещена за пределами папки', command: 'Команда вышла за пределы папки', action: 'Действие запрещено за пределами папки' };
 function labelFor(step, status, code) {
+  if (status === 'error' && step.denied) return deniedLabels[step.operation] ?? deniedLabels.action;
   if (step.operation === 'command' && status === 'done' && code === undefined) return 'Команда завершена';
   if (status === 'error' && step.operation === 'command' && code !== undefined && code !== 0)
     return 'Команда завершилась с ошибкой: код ' + numberInWords(code);
@@ -333,9 +342,21 @@ export class ChatProjection {
       detail = output.split('\n').filter(line => /^\s*\d+\s/.test(line)).map(line => line.replace(/^\s*\d+ {2}/, '')).join('\n');
     if (before.operation === 'write') detail = text(args.preview);
     const status = message.isError === true || (before.operation === 'command' && exitCode !== undefined && exitCode !== 0) ? 'error' : 'done';
-    if (status === 'error' && before.operation !== 'command') detail = 'Действие не удалось завершить. Попробуйте ещё раз.';
-    detail = windowText(detail, this.folder, undefined, args.name).slice(0, 1200);
-    this.replace(index, { ...before, status, exitCode, detail, label: labelFor(before, status, exitCode) });
+    const denial = status === 'error' ? DENIAL.exec(contentText(message.content)) : null;
+    const denied = denial ? (denial[1] === 'read-only' ? 'read-only' : 'outside') : undefined;
+    if (denied) detail = this.deniedText(denied);
+    else if (status === 'error' && before.operation !== 'command') detail = 'Действие не удалось завершить. Попробуйте ещё раз.';
+    if (before.operation === 'read' && /<content>/.test(detail)) detail = readContent(detail);
+    detail = (denied ? detail : windowText(detail, this.folder, undefined, args.name)).slice(0, 1200);
+    this.replace(index, { ...before, status, exitCode, detail, denied, label: labelFor({ ...before, denied }, status, exitCode) });
+  }
+  /** What a person sees when the engine refused to go outside the chosen folder, and what to do about it. */
+  deniedText(kind) {
+    if (kind === 'read-only') return 'Сейчас Помощник может только читать файлы. Чтобы он мог записывать, разрешите это в окне защиты, когда он спросит.';
+    const name = windowText(normalPath(this.folder).split('/').filter(Boolean).at(-1) ?? '', '', '');
+    return name
+      ? `Помощник работает только в папке «${name}». Чтобы разрешить этот файл, выберите другую папку внизу поля ввода.`
+      : 'Помощник работает только в выбранной папке. Чтобы разрешить этот файл, выберите другую папку внизу поля ввода.';
   }
   setRunning(running) {
     this.running = running;

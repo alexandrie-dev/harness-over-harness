@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ChatController } from '../../src/screens/chat/controller.mjs';
 import { StubClient, RestartingStubHost, recordedPrompt, recording } from './stub-client.mjs';
+import { FakeEngine } from './fake-engine.mjs';
 
 const waitUntil = async condition => {
   const end = performance.now() + 5000;
@@ -655,4 +656,112 @@ test('questions from the assistant are shown, answered through the host, and wit
     controller.engineStatus({ state: 'restarting' });
     assert.equal(controller.state.questions.length, 0);
   } finally { controller.disconnect(); await stub.close(); }
+});
+
+// ——— список чатов: новый чат, переключение, история не смешивается ———
+async function withChats(callback, options = {}) {
+  const engine = new FakeEngine(options);
+  engine.seed('window-main', { user: 'Первый вопрос', assistant: 'Первый ответ' });
+  engine.seed('chat-old', { user: 'Старый вопрос', assistant: 'Старый ответ' });
+  const client = { request: (method, params) => engine.request(method, params), subscribe: async listener => engine.subscribe(listener) };
+  const controller = new ChatController(() => client, () => {}, async () => {});
+  try { await controller.connect(); await waitUntil(() => controller.state.sessions.length >= (options.unavailable ? 1 : 2)); await callback(controller, engine); }
+  finally { controller.disconnect(); await engine.close(); }
+}
+const shown = controller => controller.state.entries.map(e => e.text);
+
+test('the sidebar lists the chats of the engine with their titles; the open one is marked', async () => {
+  await withChats(async controller => {
+    assert.equal(controller.state.currentId, 'window-main');
+    assert.deepEqual(controller.state.sessions.map(s => s.id).sort(), ['chat-old', 'window-main']);
+    assert.equal(controller.state.sessions.find(s => s.id === 'chat-old').title, 'Старый вопрос');
+    assert.deepEqual(shown(controller), ['Первый вопрос', 'Первый ответ']);
+  });
+});
+
+test('switching chats shows only that chat and does not mix histories', async () => {
+  await withChats(async (controller, engine) => {
+    await controller.openSession('chat-old');
+    assert.equal(controller.state.connection, 'ready'); assert.equal(controller.state.currentId, 'chat-old');
+    assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ']);
+    controller.setDraft('Третий вопрос'); await controller.send();
+    await waitUntil(() => !controller.state.busy && controller.state.entries.some(e => e.text === 'Ответ на: Третий вопрос'));
+    assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ', 'Третий вопрос', 'Ответ на: Третий вопрос']);
+    await controller.openSession('window-main');
+    assert.deepEqual(shown(controller), ['Первый вопрос', 'Первый ответ']);
+    await controller.openSession('chat-old');
+    assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ', 'Третий вопрос', 'Ответ на: Третий вопрос']);
+    assert(engine.requests.some(r => r.method === 'session/resume' && r.params.sessionId === 'chat-old'));
+  });
+});
+
+test('events of a chat that is not open never reach the open chat, and are there when it is opened', async () => {
+  await withChats(async (controller, engine) => {
+    controller.setDraft('Вопрос в первом'); await controller.send();
+    await controller.openSession('chat-old');                 // leave while the turn is still running
+    await waitUntil(() => engine.sessions.get('window-main').events.some(e => e.type === 'turn/end'));
+    await controller.queue;
+    assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ']);
+    await controller.openSession('window-main');
+    assert.deepEqual(shown(controller), ['Первый вопрос', 'Первый ответ', 'Вопрос в первом', 'Ответ на: Вопрос в первом']);
+  });
+});
+
+test('a new chat starts empty, is listed, takes its title from the first message, and is not duplicated while empty', async () => {
+  await withChats(async (controller, engine) => {
+    await controller.newChat();
+    const fresh = controller.state.currentId;
+    assert.match(fresh, /^chat-/); assert.notEqual(fresh, 'window-main');
+    assert.deepEqual(shown(controller), []); assert.equal(controller.state.connection, 'ready');
+    await waitUntil(() => controller.state.sessions.some(s => s.id === fresh));
+    assert.equal(controller.state.sessions.length, 3);
+    await controller.newChat();                              // still empty: reused
+    assert.equal(controller.state.currentId, fresh);
+    assert.equal(engine.requests.filter(r => r.method === 'session/working-directory/get' && r.params.sessionId.startsWith('chat-') && r.params.sessionId !== 'chat-old').length, 1);
+    controller.setDraft('Новая тема'); await controller.send();
+    await waitUntil(() => controller.state.sessions.find(s => s.id === fresh)?.title === 'Новая тема');
+    await waitUntil(() => !controller.state.busy);
+    await controller.newChat();                              // written to: a second new chat
+    assert.notEqual(controller.state.currentId, fresh); assert.deepEqual(shown(controller), []);
+    await controller.openSession(fresh);
+    assert.deepEqual(shown(controller), ['Новая тема', 'Ответ на: Новая тема']);
+    await controller.openSession('window-main');
+    assert(!shown(controller).includes('Новая тема'));
+  });
+});
+
+test('a reconnect returns to the chat the person chose, not to the default one', async () => {
+  await withChats(async controller => {
+    await controller.openSession('chat-old');
+    await controller.connect(true);
+    assert.equal(controller.sessionId, 'chat-old'); assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ']);
+  });
+});
+
+test('an engine without session/list keeps the open chat usable', async () => {
+  await withChats(async controller => {
+    assert.deepEqual(controller.state.sessions.map(s => s.id), ['window-main']);
+    controller.setDraft('Привет'); await controller.send();
+    await waitUntil(() => controller.state.entries.some(e => e.text === 'Ответ на: Привет'));
+    assert.equal(controller.state.error, '');
+  }, { unavailable: ['session/list'] });
+});
+
+test('the composer line gets model and permission mode from the engine, and a chosen folder is sent to it', async () => {
+  await withChats(async (controller, engine) => {
+    assert.equal(controller.state.model, 'Локальная модель'); assert.equal(controller.state.permissions, 'Только чтение');
+    await controller.setFolder('/home/me/Проекты/сайт');
+    assert.equal(controller.state.folderLabel, 'сайт');
+    assert.deepEqual(engine.requests.find(r => r.method === 'session/working-directory/set')?.params, { sessionId: 'window-main', path: '/home/me/Проекты/сайт' });
+  });
+});
+
+test('when the engine cannot be reached the person is told why and what to do', async () => {
+  for (const [failure, expected] of [[new Error('Помощник ещё подключается'), /Помощник ещё запускается/], [new Error('boom'), /Движок не отвечает/]]) {
+    const controller = new ChatController(() => ({ request: async () => { throw failure; }, subscribe: async () => () => {} }), () => {}, async () => {});
+    await controller.connect();
+    assert.equal(controller.state.connection, 'error');
+    assert.match(controller.state.error, expected); assert.match(controller.state.error, /нажмите «Подключиться ещё раз»/);
+    controller.disconnect();
+  }
 });

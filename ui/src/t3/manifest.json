@@ -1,0 +1,202 @@
+{
+  "deferredEnabled": false,
+  "files": {
+    "shared": [
+      "markdownFrontmatter.ts",
+      "textDirection.ts",
+      "mediaPreview.ts",
+      "markdownLinks.ts",
+      "fileLinks.ts",
+      "path.ts",
+      "image.ts",
+      "video.ts",
+      {
+        "file": "markdownPipeline.ts",
+        "deferred": true
+      },
+      {
+        "file": "markdownMath.ts",
+        "deferred": true
+      },
+      {
+        "file": "markdownTaskList.ts",
+        "deferred": true
+      },
+      {
+        "file": "markdownWindowsPaths.ts",
+        "deferred": true
+      },
+      {
+        "file": "markdownGithubAlerts.ts",
+        "deferred": true
+      },
+      {
+        "file": "markdownLeadingWhitespace.ts",
+        "deferred": true
+      },
+      {
+        "file": "markdownListIndentation.ts",
+        "deferred": true
+      },
+      {
+        "file": "markdownOrderedListNumbers.ts",
+        "deferred": true
+      },
+      {
+        "file": "codexMarkdownDirectives.ts",
+        "deferred": true
+      },
+      {
+        "file": "codexArtifactTemplates.ts",
+        "deferred": true
+      },
+      {
+        "file": "codexFileCitations.ts",
+        "deferred": true
+      }
+    ],
+    "client-runtime": [
+      "markdownImages.ts",
+      "mediaReference.ts",
+      "work-log/commandLabel.ts",
+      {
+        "file": "assemblyHighlighting.ts",
+        "deferred": true
+      }
+    ],
+    "web": [
+      "components/RenderErrorBoundary.tsx",
+      "components/chat/MathTypeset.logic.ts",
+      "components/chat/hostImageUrl.ts",
+      "components/chat/markdownActionFailure.ts",
+      "components/chat/markdownChipPunctuation.ts",
+      "components/chat/markdownFindContext.ts",
+      "components/chat/markdownFragments.ts",
+      "components/chat/markdownHast.logic.ts",
+      "components/chat/markdownStreamBlocks.ts",
+      "components/chat/markdownTextDirection.ts",
+      "components/ui/button.tsx",
+      "components/ui/collapsible.tsx",
+      "components/ui/scroll-area.tsx",
+      "components/ui/tooltip.tsx",
+      "lib/lruCache.ts",
+      "lib/observeResize.ts",
+      "textDirection.ts",
+      "lib/windowControlsOverlay.ts",
+      "components/media/mediaContent.ts",
+      "components/chat/externalLinkContextMenu.ts",
+      "components/chat/markdownImageGallery.ts",
+      "components/chat/ChatMarkdownMedia.tsx",
+      "components/ui/closing-positioner.tsx",
+      "components/ui/input.tsx",
+      "components/ui/spinner.tsx",
+      "lib/visibleAnimation.ts",
+      "filePathDisplay.ts",
+      "terminal-links.ts",
+      "markdown-links.ts",
+      "markdownFileHostPath.ts",
+      {
+        "file": "components/ChatMarkdown.tsx",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/MarkdownCodeBlock.tsx",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/MarkdownCodeBlock.logic.ts",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/MarkdownDetails.tsx",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/MarkdownMath.tsx",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/MarkdownMermaidCodeBlock.tsx",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/MarkdownTable.tsx",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/MathTypeset.tsx",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/MermaidDiagram.tsx",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/markdownRenderer.ts",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/markdownSyntaxGates.ts",
+        "deferred": true
+      },
+      {
+        "file": "components/chat/HighlightedCodeLines.tsx",
+        "deferred": true
+      },
+      {
+        "file": "markdown-clipboard.ts",
+        "deferred": true
+      },
+      {
+        "file": "markdown-incremental.ts",
+        "deferred": true
+      },
+      {
+        "file": "lib/syntaxHighlighting.ts",
+        "deferred": true
+      },
+      {
+        "file": "lib/incrementalHighlighting.ts",
+        "deferred": true
+      },
+      {
+        "file": "lib/diffRendering.ts",
+        "deferred": true
+      },
+      {
+        "file": "lib/readableSyntaxTheme.ts",
+        "deferred": true
+      },
+      {
+        "file": "lib/contextChipAccents.ts",
+        "deferred": true
+      },
+      {
+        "file": "components/ui/menu.tsx",
+        "deferred": true
+      }
+    ]
+  },
+  "aliases": {
+    "gt-react": "src/t3/shims/gt-react.tsx",
+    "@t3tools/contracts": "src/t3/shims/contracts.ts",
+    "effect/Function": "src/t3/shims/effect/Function.ts",
+    "@t3tools/shared/threadLinks": "src/t3/shared/threadLinks.ts",
+    "@t3tools/shared/assistantCitations": "src/t3/shared/assistantCitations.ts",
+    "@t3tools/shared/composerContextReferences": "src/t3/shared/composerContextReferences.ts",
+    "@t3tools/shared/composerContextClipboard": "src/t3/shared/composerContextClipboard.ts",
+    "@t3tools/shared/codexArtifactTemplatesCopy": "src/t3/shared/codexArtifactTemplatesCopy.ts",
+    "@t3tools/client-runtime/errors": "src/t3/client-runtime/errors.ts",
+    "@t3tools/client-runtime/environment": "src/t3/client-runtime/environment.ts",
+    "@t3tools/client-runtime/change-request-links": "src/t3/client-runtime/changeRequestLinks.ts",
+    "@t3tools/client-runtime/issue-links": "src/t3/client-runtime/issueLinks.ts",
+    "@t3tools/client-runtime/source-control-clients": "src/t3/client-runtime/sourceControlClients.ts",
+    "@t3tools/client-runtime/state/runtime": "src/t3/client-runtime/state/runtime.ts",
+    "@t3tools/client-runtime/workspace-basename-lookup": "src/t3/client-runtime/workspaceBasenameLookup.ts",
+    "effect/Cause": "src/t3/shims/effect/Cause.ts",
+    "effect/Option": "src/t3/shims/effect/Option.ts",
+    "effect/Schema": "src/t3/shims/effect/Schema.ts",
+    "effect/reactivity": "src/t3/shims/effect/reactivity.ts",
+    "@effect/atom-react": "src/t3/shims/atom-react.ts"
+  }
+}

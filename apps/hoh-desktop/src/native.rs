@@ -123,7 +123,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         Ok(path) => path,
         Err(_) => app.path().home_dir()?.join("Documents"),
     };
-    let default_folder = workspace::default_folder(&documents);
+    let default_folder = workspace::usable_default(&documents, &config_dir)?;
     // The sandbox of the session is rooted in this folder: the one chosen on the first run, else
     // the app's own folder in Documents. Never the home folder.
     let session_folder = workspace::startup_folder(&config_dir, &default_folder)?;
@@ -733,6 +733,37 @@ pub fn shutdown(handle: &tauri::AppHandle, host: &Host) {
         destroy_window(handle, &label);
     }
     host.engine.stop();
+}
+
+/// Open a link of an answer. Only the main window; the session's folder is asked from the engine,
+/// never taken from the window.
+#[tauri::command]
+pub async fn open_link(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    kind: String,
+    target: String,
+    session_id: String,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Команда доступна только главному окну".into());
+    }
+    let kind = crate::opener::Kind::parse(&kind)?;
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let folder = if kind == crate::opener::Kind::Url {
+            PathBuf::new()
+        } else {
+            let answer = engine.request(
+                "session/working-directory/get",
+                json!({ "sessionId": session_id }),
+            )?;
+            PathBuf::from(answer["cwd"].as_str().ok_or("Рабочая папка неизвестна")?)
+        };
+        crate::opener::open(&crate::opener::resolve(kind, &target, &folder)?)
+    })
+    .await
+    .map_err(|_| "Запрос прерван".to_owned())?
 }
 
 #[tauri::command]

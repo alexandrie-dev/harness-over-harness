@@ -1,0 +1,166 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@t3tools/shared/textDirection": [
+        "./shared/textDirection.ts"
+      ],
+      "@t3tools/shared/path": [
+        "./shared/path.ts"
+      ],
+      "@t3tools/shared/mediaPreview": [
+        "./shared/mediaPreview.ts"
+      ],
+      "@t3tools/shared/video": [
+        "./shared/video.ts"
+      ],
+      "@t3tools/shared/image": [
+        "./shared/image.ts"
+      ],
+      "@t3tools/shared/codexArtifactTemplates": [
+        "./shared/codexArtifactTemplates.ts"
+      ],
+      "@t3tools/shared/codexFileCitations": [
+        "./shared/codexFileCitations.ts"
+      ],
+      "@t3tools/shared/codexMarkdownDirectives": [
+        "./shared/codexMarkdownDirectives.ts"
+      ],
+      "@t3tools/shared/markdownGithubAlerts": [
+        "./shared/markdownGithubAlerts.ts"
+      ],
+      "@t3tools/shared/markdownFrontmatter": [
+        "./shared/markdownFrontmatter.ts"
+      ],
+      "@t3tools/shared/markdownTaskList": [
+        "./shared/markdownTaskList.ts"
+      ],
+      "@t3tools/shared/markdownListIndentation": [
+        "./shared/markdownListIndentation.ts"
+      ],
+      "@t3tools/shared/markdownWindowsPaths": [
+        "./shared/markdownWindowsPaths.ts"
+      ],
+      "@t3tools/shared/markdownPipeline": [
+        "./shared/markdownPipeline.ts"
+      ],
+      "@t3tools/shared/markdownLinks": [
+        "./shared/markdownLinks.ts"
+      ],
+      "@t3tools/shared/fileLinks": [
+        "./shared/fileLinks.ts"
+      ],
+      "@t3tools/shared/markdownMath": [
+        "./shared/markdownMath.ts"
+      ],
+      "@t3tools/client-runtime/assembly-highlighting": [
+        "./client-runtime/assemblyHighlighting.ts"
+      ],
+      "@t3tools/client-runtime/markdown-images": [
+        "./client-runtime/markdownImages.ts"
+      ],
+      "@t3tools/client-runtime/media-reference": [
+        "./client-runtime/mediaReference.ts"
+      ],
+      "@t3tools/client-runtime/work-log/command-label": [
+        "./client-runtime/work-log/commandLabel.ts"
+      ],
+      "gt-react": [
+        "./shims/gt-react.tsx"
+      ],
+      "@t3tools/contracts": [
+        "./shims/contracts.ts"
+      ],
+      "effect/Function": [
+        "./shims/effect/Function.ts"
+      ],
+      "@t3tools/shared/threadLinks": [
+        "./shared/threadLinks.ts"
+      ],
+      "@t3tools/shared/assistantCitations": [
+        "./shared/assistantCitations.ts"
+      ],
+      "@t3tools/shared/composerContextReferences": [
+        "./shared/composerContextReferences.ts"
+      ],
+      "@t3tools/shared/composerContextClipboard": [
+        "./shared/composerContextClipboard.ts"
+      ],
+      "@t3tools/shared/codexArtifactTemplatesCopy": [
+        "./shared/codexArtifactTemplatesCopy.ts"
+      ],
+      "@t3tools/client-runtime/errors": [
+        "./client-runtime/errors.ts"
+      ],
+      "@t3tools/client-runtime/environment": [
+        "./client-runtime/environment.ts"
+      ],
+      "@t3tools/client-runtime/change-request-links": [
+        "./client-runtime/changeRequestLinks.ts"
+      ],
+      "@t3tools/client-runtime/issue-links": [
+        "./client-runtime/issueLinks.ts"
+      ],
+      "@t3tools/client-runtime/source-control-clients": [
+        "./client-runtime/sourceControlClients.ts"
+      ],
+      "@t3tools/client-runtime/state/runtime": [
+        "./client-runtime/state/runtime.ts"
+      ],
+      "@t3tools/client-runtime/workspace-basename-lookup": [
+        "./client-runtime/workspaceBasenameLookup.ts"
+      ],
+      "effect/Cause": [
+        "./shims/effect/Cause.ts"
+      ],
+      "effect/Option": [
+        "./shims/effect/Option.ts"
+      ],
+      "effect/Schema": [
+        "./shims/effect/Schema.ts"
+      ],
+      "effect/reactivity": [
+        "./shims/effect/reactivity.ts"
+      ],
+      "@effect/atom-react": [
+        "./shims/atom-react.ts"
+      ],
+      "~/*": [
+        "./web/*"
+      ]
+    }
+  },
+  "exclude": [
+    "shared/markdownPipeline.ts",
+    "shared/markdownMath.ts",
+    "shared/markdownTaskList.ts",
+    "shared/markdownWindowsPaths.ts",
+    "shared/markdownGithubAlerts.ts",
+    "shared/markdownLeadingWhitespace.ts",
+    "shared/markdownListIndentation.ts",
+    "shared/markdownOrderedListNumbers.ts",
+    "shared/codexMarkdownDirectives.ts",
+    "shared/codexArtifactTemplates.ts",
+    "shared/codexFileCitations.ts",
+    "client-runtime/assemblyHighlighting.ts",
+    "web/components/ChatMarkdown.tsx",
+    "web/components/chat/MarkdownCodeBlock.tsx",
+    "web/components/chat/MarkdownCodeBlock.logic.ts",
+    "web/components/chat/MarkdownDetails.tsx",
+    "web/components/chat/MarkdownMath.tsx",
+    "web/components/chat/MarkdownMermaidCodeBlock.tsx",
+    "web/components/chat/MarkdownTable.tsx",
+    "web/components/chat/MathTypeset.tsx",
+    "web/components/chat/MermaidDiagram.tsx",
+    "web/components/chat/markdownRenderer.ts",
+    "web/components/chat/markdownSyntaxGates.ts",
+    "web/components/chat/HighlightedCodeLines.tsx",
+    "web/markdown-clipboard.ts",
+    "web/markdown-incremental.ts",
+    "web/lib/syntaxHighlighting.ts",
+    "web/lib/incrementalHighlighting.ts",
+    "web/lib/diffRendering.ts",
+    "web/lib/readableSyntaxTheme.ts",
+    "web/lib/contextChipAccents.ts",
+    "web/components/ui/menu.tsx"
+  ]
+}

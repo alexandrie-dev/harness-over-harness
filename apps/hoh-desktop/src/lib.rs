@@ -3,6 +3,7 @@ pub mod bridge;
 pub mod engine;
 #[cfg(feature = "desktop")]
 pub mod native;
+pub mod opener;
 #[cfg(feature = "probe")]
 pub mod probe;
 pub mod questions;

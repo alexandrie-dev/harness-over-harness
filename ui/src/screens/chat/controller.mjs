@@ -19,6 +19,23 @@ function isLocalAddress(baseUrl) {
   } catch { return false; }
 }
 
+/** The engine's placeholder name for the model on this computer reads as words. */
+function modelLabel(name, baseUrl) {
+  const clean = windowText(name, '', '');
+  if (clean.toLowerCase() !== 'local') return clean;
+  if (isLocalAddress(baseUrl)) return 'Локальная модель';
+  // The engine's default name «local» on a model reached over the network: name the machine that really answers.
+  try { return new URL(baseUrl).host; } catch { return clean; }
+}
+/** Why the window could not reach the assistant, in words, and what to do. The host's own Russian refusals are passed on. */
+function connectionProblem(error) {
+  const message = (error?.message ?? (typeof error === 'string' ? error : '')).trim();
+  const reason = message === 'Помощник ещё подключается' ? 'Помощник ещё запускается.'
+    : /[А-Яа-яЁё]/.test(message) && message.length < 160 ? message
+    : message === METHOD_UNAVAILABLE ? 'Движок не знает нужного запроса: окно и движок разных версий.'
+    : 'Движок не отвечает.';
+  return `Не удалось связаться с Помощником. ${reason} Подождите немного и нажмите «Подключиться ещё раз»; если не помогает, закройте HoH и откройте снова.`;
+}
 export class ChatController {
   constructor(transportFactory, changed = () => {}, frame = () => new Promise(resolve => requestAnimationFrame(resolve))) {
     this.transportFactory = transportFactory; this.changed = changed; this.frame = frame;
@@ -27,8 +44,11 @@ export class ChatController {
     this.ignoreUntilNextTurn = false; this.allowNextTurn = false; this.cancelUnconfirmed = false;
     this.statusOff = undefined; this.statusPending = undefined; this.lifecycle = 0;
     this.active = false; this.reloading = false;
-    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', draft: '', questions: [] };
+    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', model: '', permissions: '', notice: '', folderPath: '', draft: '', questions: [],
+      sessions: [], currentId: '', working: [] };
     this.questionsOff = undefined;
+    // `link` counts real connections of the window to the engine; opening another chat keeps the same link.
+    this.link = 0; this.chosen = ''; this.listSeq = 0; this.workingIds = new Set();
   }
   update(patch) { this.state = { ...this.state, ...patch }; this.changed(this.state); }
   publish() { this.update({ entries: this.projection.entries, busy: this.projection.running || this.cancelUnconfirmed }); }
@@ -43,6 +63,41 @@ export class ChatController {
       if (afterSeq !== undefined && page.nextSeq <= afterSeq) throw new Error('History did not advance');
       afterSeq = page.nextSeq;
     }
+  }
+  /** Chats of the engine for the sidebar. A missing method leaves just the open chat. */
+  async refreshSessions() {
+    const transport = this.transport;
+    if (!transport || !this.active) return;
+    const seq = ++this.listSeq;
+    let listed = [];
+    try { listed = (await transport.request('session/list', {})).sessions ?? []; } catch { /* the open chat is still shown */ }
+    if (seq !== this.listSeq || !this.active) return;
+    const rows = listed.map(item => {
+      const raw = typeof item.title === 'string' ? item.title.trim() : '';
+      return { id: item.id, title: raw ? windowText(raw, this.projection.folder ?? '', '') || 'Разговор' : '', updatedAt: Number(item.updatedAt) || 0 };
+    });
+    if (this.sessionId && !rows.some(row => row.id === this.sessionId)) rows.unshift({ id: this.sessionId, title: '', updatedAt: 0 });
+    this.update({ sessions: rows });
+  }
+  trackWorking(params) {
+    if (typeof params?.sessionId !== 'string') return;
+    if (params.status === 'running') this.workingIds.add(params.sessionId); else this.workingIds.delete(params.sessionId);
+    this.update({ working: [...this.workingIds] });
+    if (params.status !== 'running') void this.refreshSessions();
+  }
+  /** Open an existing chat: its history is read again from the engine, nothing is shared between chats. */
+  async openSession(id) {
+    if (!id || id === this.sessionId || !this.active || this.state.connection === 'connecting') return;
+    this.update({ notice: '' });
+    await this.connect(false, id);
+  }
+  /** A chat that was never written to is reused instead of piling up empty ones. */
+  async newChat() {
+    if (!this.active || this.state.connection === 'connecting') return;
+    if (this.sessionId && this.state.connection === 'ready' && this.projection.entries.length === 0) return;
+    const id = globalThis.crypto?.randomUUID ? `chat-${globalThis.crypto.randomUUID()}` : `chat-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    this.update({ notice: '' });
+    await this.connect(false, id);
   }
   async consume(task, current) {
     const event = task.event;
@@ -69,6 +124,7 @@ export class ChatController {
         if (current !== this.generation || !this.active) return;
         this.projection.finishGaps(); this.publish();
       }
+      if (event.type === 'turn/end') void this.refreshSessions();
       if (event.type === 'turn/end' && event.data?.reason?.kind === 'error')
         this.update({ error: 'Ответ прервался. Попробуйте ещё раз.' });
     }
@@ -86,6 +142,7 @@ export class ChatController {
     this.received.clear();
   }
   enqueue(notification) {
+    if (notification.method === 'session.status') this.trackWorking(notification.params);
     const current = this.generation;
     let task;
     if (notification.method === 'session.event' && notification.params.sessionId === this.sessionId) {
@@ -142,15 +199,15 @@ export class ChatController {
     }
     await this.statusPending;
   }
-  async listenQuestions(transport, ownEpoch) {
+  async listenQuestions(transport, ownLink) {
     this.questionsOff?.(); this.questionsOff = undefined;
     if (!transport.subscribeQuestions) return;
     const off = await transport.subscribeQuestions(question => {
-      if (ownEpoch !== this.epoch || !this.active) return;
+      if (ownLink !== this.link || !this.active) return;
       if (this.state.questions.some(q => q.requestId === question.requestId)) return;
       this.update({ questions: [...this.state.questions, question] });
     });
-    if (ownEpoch !== this.epoch) off(); else this.questionsOff = off;
+    if (ownLink !== this.link) off(); else this.questionsOff = off;
   }
   dropQuestion(requestId) {
     if (this.state.questions.some(q => q.requestId === requestId))
@@ -167,20 +224,22 @@ export class ChatController {
     }
   }
   dismissQuestion(requestId) { return this.answerQuestion(requestId, { cancelled: true }); }
-  async connect(recovering = false) {
+  async connect(recovering = false, target = '') {
     this.flushReceived(); this.publish(); this.active = true; this.reloading = true;
     const ownEpoch = ++this.epoch; const loadGeneration = ++this.generation;
     this.queue = Promise.resolve(); this.ignoreUntilNextTurn = false; this.allowNextTurn = false; this.cancelUnconfirmed = false;
     this.unsubscribe?.(); this.unsubscribe = undefined;
     const projection = new ChatProjection(); this.sessionId = '';
-    this.update({ questions: [], connection: recovering ? 'recovering' : 'connecting', busy: false, canceling: false,
+    const ownLink = target ? this.link : ++this.link;
+    // A question belongs to its chat and survives switching; a new link to the engine drops them.
+    this.update({ ...(target ? { entries: [], currentId: target } : { questions: [] }), connection: recovering ? 'recovering' : 'connecting', busy: false, canceling: false,
       error: recovering ? 'Связь с Помощником прервалась, восстанавливаю…' : '' });
     const buffered = []; let loading = true;
     try {
-      const transport = this.transportFactory(); this.transport = transport;
+      const transport = target && this.transport ? this.transport : this.transportFactory(); this.transport = transport;
       await this.listenStatus(transport);
       if (ownEpoch !== this.epoch) return;
-      await this.listenQuestions(transport, ownEpoch);
+      if (!target) await this.listenQuestions(transport, ownLink);
       if (ownEpoch !== this.epoch) return;
       const off = await transport.subscribe(event => {
         if (ownEpoch !== this.epoch) return;
@@ -192,9 +251,13 @@ export class ChatController {
       // The replay stub offers per-employee conversations; the window-profile engine has no employees
       // and keeps one conversation, so a missing method falls back to its fixed session id.
       // Nothing about employees is rendered by this screen.
-      const opened = await unlessMissing(() => transport.request('hoh/employee/open', { id: 'employee-1' }), () => ({ sessionId: WINDOW_SESSION }));
+      // The chat the person chose stays chosen across a reconnect; the first start opens the default one.
+      const wanted = target || this.chosen;
+      const opened = wanted ? { sessionId: wanted }
+        : await unlessMissing(() => transport.request('hoh/employee/open', { id: 'employee-1' }), () => ({ sessionId: WINDOW_SESSION }));
       if (ownEpoch !== this.epoch) return;
-      this.sessionId = opened.sessionId;
+      this.sessionId = opened.sessionId; this.chosen = opened.sessionId;
+      this.update({ currentId: this.sessionId });
       // After a restart the conversation is on disk but not open in the new engine. Asking for its
       // working folder first would open it as a NEW one ("already exists") and the history would be
       // lost to the screen, so it is resumed first. A session that does not exist yet ("not found")
@@ -207,7 +270,7 @@ export class ChatController {
       projection.folder = directory.cwd;
       const normalized = directory.cwd.replaceAll('\\', '/').replace(/\/$/, '');
       const name = humanFile(normalized, normalized.slice(0, normalized.lastIndexOf('/')));
-      this.update({ folderLabel: windowText(name === 'файл' ? 'Рабочая папка' : name, '', 'Рабочая папка') });
+      this.update({ folderPath: directory.cwd, folderLabel: windowText(name === 'файл' ? 'Рабочая папка' : name, '', 'Рабочая папка') });
       await this.readHistory(transport, projection, () => ownEpoch === this.epoch && loadGeneration === this.generation);
       if (ownEpoch !== this.epoch || loadGeneration !== this.generation) return;
       const summary = await unlessMissing(() => transport.request('hoh/security/summary', {}), async () => {
@@ -215,24 +278,72 @@ export class ChatController {
         return { model: { local: isLocalAddress(settings.model.baseUrl) } };
       });
       if (ownEpoch !== this.epoch) return;
+      await this.readSettings(transport, ownEpoch);
+      if (ownEpoch !== this.epoch) return;
       // A new engine cannot still be executing the previous process's turn.
       // History may end mid-turn if termination prevented its closing event.
       if (recovering) projection.stop();
       this.projection = projection; this.publish(); this.reloading = false;
       this.update({ privacy: summary.model.local ? 'local' : 'remote', connection: 'ready', error: '' });
+      void this.refreshSessions();
       loading = false;
       for (const event of buffered) this.enqueue(event);
-    } catch {
+    } catch (problem) {
       if (ownEpoch !== this.epoch) return;
       this.reloading = false;
       this.unsubscribe?.(); this.unsubscribe = undefined;
-      this.update({ connection: 'error', busy: false, error: 'Не удалось связаться с Помощником. Попробуйте подключиться ещё раз.' });
+      this.update({ connection: 'error', busy: false, error: connectionProblem(problem) });
+    }
+  }
+  /** Model name and permission mode for the composer line; absent data leaves the field empty (and hidden). */
+  async readSettings(transport, ownEpoch) {
+    try {
+      const settings = await transport.request('hoh/settings/get', {});
+      if (ownEpoch !== this.epoch) return;
+      const security = settings.security;
+      const permissions = security ? (security.writeFiles || security.programs ? 'Запись и программы с разрешения' : 'Только чтение') : '';
+      this.update({ model: typeof settings.model?.model === 'string' ? modelLabel(settings.model.model, settings.model.baseUrl) : '', permissions });
+    } catch { /* the line simply shows less */ }
+  }
+  /** A link of an answer: the host opens it, or says why it will not. Nothing opens without the host's own checks. */
+  async openLink(kind, target) {
+    const open = this.transport?.openLink;
+    if (!open) { this.update({ notice: 'Открывать ссылки можно только в приложении HoH.' }); return; }
+    this.update({ notice: '' });
+    try { await open.call(this.transport, kind, target, this.sessionId); } catch (problem) {
+      const message = (problem?.message ?? (typeof problem === 'string' ? problem : '')).trim();
+      this.update({ notice: /[А-Яа-яЁё]/.test(message) ? message : 'Не удалось открыть.' });
+    }
+  }
+  /** A link to a file outside the chat folder: nothing is opened, the person is told why and what to do. */
+  refuseLink() {
+    const name = this.state.folderLabel;
+    this.update({ notice: `Этот файл вне папки «${name}»: Помощник и окно работают только внутри неё. Чтобы открыть его, выберите другую папку внизу поля ввода.` });
+  }
+  /** A link that is neither an address nor a file in the folder: nothing is opened, and the person is told so. */
+  blockedLink() {
+    this.update({ notice: 'Эта ссылка не открывается: открываются только адреса http и https и файлы в рабочей папке.' });
+  }
+  dismissNotice() { this.update({ notice: '' }); }
+  /** Another working folder for the open chat (the path comes from the system folder dialog). */
+  async setFolder(path) {
+    if (!path || !this.transport || this.state.connection !== 'ready' || this.state.busy) return;
+    const ownEpoch = this.epoch;
+    try {
+      await this.transport.request('session/working-directory/set', { sessionId: this.sessionId, path });
+      if (ownEpoch !== this.epoch) return;
+      this.projection.folder = path;
+      const normalized = path.replaceAll('\\', '/').replace(/\/$/, '');
+      const name = humanFile(normalized, normalized.slice(0, normalized.lastIndexOf('/')));
+      this.update({ folderPath: path, folderLabel: windowText(name === 'файл' ? 'Рабочая папка' : name, '', 'Рабочая папка'), error: '' });
+    } catch {
+      if (ownEpoch === this.epoch) this.update({ error: 'Не удалось сменить папку. Попробуйте ещё раз.' });
     }
   }
   disconnect() {
     this.flushReceived(); this.active = false; this.reloading = false;
     this.epoch++; this.generation++; this.unsubscribe?.(); this.unsubscribe = undefined;
-    this.questionsOff?.(); this.questionsOff = undefined;
+    this.link++; this.questionsOff?.(); this.questionsOff = undefined;
     this.statusOff?.(); this.statusOff = undefined;
     this.lifecycle++; this.statusPending = undefined;
     this.queue = Promise.resolve();
@@ -241,13 +352,14 @@ export class ChatController {
     const value = this.state.draft;
     if (!value.trim() || this.state.connection !== 'ready' || this.state.busy || this.state.canceling) return;
     const ownEpoch = this.epoch; const sendGeneration = this.generation;
-    this.allowNextTurn = true;
+    this.allowNextTurn = true; this.state.notice && this.update({ notice: '' });
     const localId = this.projection.optimistic(value);
     this.projection.setRunning(true); this.publish(); this.update({ draft: '', error: '' });
     try {
       const result = await this.transport.request('session/prompt', { sessionId: this.sessionId, contentBlocks: [{ type: 'text', text: value }] });
       if (ownEpoch !== this.epoch) return;
       this.projection.receipt(localId, result.messageId); this.publish();
+      void this.refreshSessions();
     } catch {
       if (ownEpoch !== this.epoch || sendGeneration !== this.generation) return;
       this.generation++; this.ignoreUntilNextTurn = true; this.allowNextTurn = false;

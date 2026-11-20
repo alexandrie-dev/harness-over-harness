@@ -1,7 +1,7 @@
 // Проверки первого запуска и окна подтверждения (вариант A) в headless Chromium.
 // Страницы — из ui/dist (firstrun.html, approval.html) или из HOH_FIRSTRUN_PAGE / HOH_APPROVAL_PAGE.
 // Движок: если задан HOH_WINDOW_STUB — настоящая заглушка hoh-window-stub по stdio, иначе подмена в этом файле.
-// Снимки 1440×900 — в design/build-a/. Ничего не ходит в сеть: всё кроме file:// блокируется.
+// Снимки 1440×900 — в ui/test-results/screens-a/ (design/ окно не меняет). Ничего не ходит в сеть: всё кроме file:// блокируется.
 import { chromium } from 'playwright-core';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,7 +12,7 @@ import { startStub } from './stub-engine.mjs';
 import { approvalRequest as request } from './fixtures.mjs';
 
 const ui = process.env.HOH_UI_ROOT ?? resolve(import.meta.dirname, '../..');
-const shots = resolve(ui, '../design/build-a');
+const shots = resolve(ui, 'test-results/screens-a');
 const pages = {
   firstrun: resolve(process.env.HOH_FIRSTRUN_PAGE ?? join(ui, 'dist/firstrun.html')),
   approval: resolve(process.env.HOH_APPROVAL_PAGE ?? join(ui, 'dist/approval.html')),
@@ -54,6 +54,7 @@ const fake = async (method, params) => {
   engineCalls.push({ method, params });
   if (stub) return stub.request(method, params);
   if (method === 'hoh/settings/get') return { model: { baseUrl: 'http://127.0.0.1:8000', model: 'local' }, security: {}, view: {} };
+  if (method === 'session/working-directory/get') return { cwd: '/home/me/Documents/HoH' };
   if (method === 'hoh/model/probe') return { ok: true, latencyMs: 2100, toolCalls: true, models: ['local', 'other'] };
   if (method === 'hoh/settings/set' || method === 'hoh/settings/rules/set' || method === 'hoh/model/key/set') return {};
   throw new Error('нет такого метода');
@@ -101,6 +102,7 @@ const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.
   await page.getByRole('button', { name: 'Облачный сервис' }).click();
   assert.equal(await page.getByLabel('Адрес').inputValue(), 'https://');
   assert.equal(await page.getByLabel('API-ключ').getAttribute('type'), 'password');
+  assert.match(await page.locator('[data-key-note]').innerText(), /Ключ хранится в файле на этом компьютере\. Читать его может только ваша учётная запись\./, 'фраза о хранении ключа уже при вводе');
   await page.getByLabel('Адрес').fill('https://api.example.test/v1');
   await page.getByRole('button', { name: 'Проверить' }).click();
   await page.getByText('Для облачного сервиса нужен API-ключ').waitFor();
@@ -118,6 +120,9 @@ const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.
   const stored = await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }]));
   assert(!stored.includes(SECRET), 'ключа нет в localStorage и sessionStorage');
   assert.equal(await next.isEnabled(), true);
+  const keyNote = await page.locator('[data-key-note]').innerText();
+  assert.match(keyNote, /Ключ хранится в файле на этом компьютере\. Читать его может только ваша учётная запись\.$/);
+  assert(!keyNote.includes(SECRET), 'в пояснении ключа самого ключа нет');
   ok('облачный режим: ключ уходит движку один раз (key/set), в окне, хранилищах и других запросах его нет');
 
   // правка адреса снимает проверку
@@ -134,6 +139,7 @@ const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.
   await page.getByRole('heading', { name: 'Правила работы' }).waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.id), 'fr-h', 'фокус на заголовке нового шага');
   assert(engineCalls.some(c => c.method === 'hoh/settings/set' && c.params.model.model === 'local'), 'модель сохранена через settings/set');
+  assert.equal(await page.locator('.fr-path').innerText(), '/home/me/Documents/HoH', 'по умолчанию показан настоящий путь, не перевод');
   await page.getByRole('radio', { name: /Читать открытые сайты самому/ }).check();
   await page.getByRole('button', { name: 'Выбрать' }).click();
   await page.locator('.fr-path', { hasText: 'Документы/Проекты' }).waitFor();
@@ -384,13 +390,22 @@ async function openApproval(view, viewport, options = {}) {
 }
 
 {
-  const { page, context } = await openApproval(request(), { width: 480, height: 640 });
+  const { page, context } = await openApproval(request({ humanText: 'Разрешить проверку модели «» у провайдера https://api.example.test/v1 в Documents/HoH?' }));
+  await page.getByRole('alertdialog').waitFor();
+  const headline = await page.locator('#ap-what').innerText();
+  assert.equal(headline, 'Разрешить проверку модели у провайдера https://api.example.test/v1 в Documents/HoH?');
+  await context.close();
+  ok('окно защиты: пустые «» убраны, настоящий путь не переводится');
+}
+
+{
+  const { page, context } = await openApproval(request(), { width: 800, height: 640 });
   await page.getByRole('alertdialog').waitFor();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   assert.equal(overflow, false);
-  await page.screenshot({ path: join(shots, 'approval-480x640.png'), animations: 'disabled' });
+  await page.screenshot({ path: join(shots, 'approval-800x640.png'), animations: 'disabled' });
   await context.close();
-  ok('окно 480×640: помещается без горизонтальной прокрутки; снимок approval-480x640');
+  ok('окно 800×640: помещается без горизонтальной прокрутки; снимок approval-800x640');
 }
 
 {

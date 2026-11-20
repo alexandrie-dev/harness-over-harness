@@ -4,7 +4,7 @@ import type { MethodMap, Notification } from '../../protocol';
 
 export type ChatMethod = Extract<keyof MethodMap,
   'hoh/employee/open' | 'hoh/security/summary' | 'hoh/settings/get' | 'session/resume' | 'session/events' |
-  'session/working-directory/get' | 'session/prompt' | 'session/cancel'>;
+  'session/working-directory/get' | 'session/prompt' | 'session/cancel' | 'session/list' | 'session/working-directory/set'>;
 export type EngineStatus = { state: 'starting' | 'ready' | 'unavailable' | 'restarting' | 'stopped' };
 // Shapes of `user-question/ask` (crates/hoh-protocol/src/sdk.rs); the native host checks every answer against the question.
 export interface AskedQuestion {
@@ -24,6 +24,8 @@ export interface ChatTransport {
   subscribeQuestions?(listener: (question: PendingQuestion) => void): Promise<() => void>;
   answerQuestion?(requestId: string, answer: QuestionAnswer): Promise<void>;
   approvalHistory?(): Promise<ApprovalRecord[]>;
+  /** Open a link of an answer through the native host (it checks the address or the path itself). */
+  openLink?(kind: 'url' | 'file' | 'reveal', target: string, sessionId: string): Promise<void>;
 }
 declare global {
   interface Window { __HOH_CHAT_TEST_TRANSPORT__?: ChatTransport; }
@@ -42,5 +44,6 @@ export function chatTransport(): ChatTransport {
     subscribeQuestions: listener => listen<PendingQuestion>('engine-question', event => listener(event.payload)),
     answerQuestion: (requestId, answer) => invoke<void>('question_answer', { requestId, answer }),
     approvalHistory: () => invoke<ApprovalRecord[]>('approval_history'),
+    openLink: (kind, target, sessionId) => invoke<void>('open_link', { kind, target, sessionId }),
   };
 }

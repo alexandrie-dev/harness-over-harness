@@ -80,3 +80,11 @@ export async function pickFolder(): Promise<string | null> {
   if (window.__TAURI_INTERNALS__) return invoke<string | null>('pick_folder');
   throw new MethodMissing('выбор папки (нет связи с ядром)');
 }
+
+/** The folder the engine's session works in now (the default one on a first run), as a real path; null when unknown. */
+export async function loadWorkFolder(): Promise<string | null> {
+  try {
+    const answer = await call('session/working-directory/get', { sessionId: 'window-main' });
+    return typeof answer.cwd === 'string' && answer.cwd.startsWith('/') ? answer.cwd : null;
+  } catch { return null; }
+}

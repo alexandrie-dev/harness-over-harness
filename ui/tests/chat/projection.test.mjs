@@ -325,3 +325,28 @@ test('data URI MIME headers are not paths, while external paths in their payload
     ['data:,/etc/passwd', 'data:,файл'],
   ]) assert.equal(visibleText(source, WORKSPACE), expected, source);
 });
+
+test('a sandbox refusal is recognised by the engine marker and explained with the folder name and the way out', () => {
+  const projection = new ChatProjection(); projection.folder = '/home/me/Проекты/сайт';
+  let seq = 0;
+  const call = (id, name, args) => projection.event(event('tool/call', seq++, { callId: id, name, arguments: args }));
+  const result = (id, text, isError = true) => projection.event(event('tool/result', seq++, { message: { toolCallId: id, isError, content: [{ type: 'text', text }] } }));
+  call('a', 'write_file', { path: '../x.txt', content: 'x' });
+  result('a', '[sandbox: file access denied under workspace-write mode]\n[sandbox: escalation available — retry]');
+  call('b', 'write_file', { path: 'y.txt', content: 'y' });
+  result('b', 'something else broke');
+  call('c', 'write_file', { path: '../z.txt', content: 'z' });
+  result('c', '[sandbox: file access denied under read-only mode]');
+  const [denied, other, readOnly] = projection.entries;
+  assert.equal(denied.label, 'Запись запрещена за пределами папки');
+  assert.match(denied.detail, /только в папке «сайт».*выберите другую папку внизу поля ввода/);
+  assert.equal(other.label, 'Не удалось записать y.txt'); assert.match(other.detail, /Попробуйте ещё раз/);
+  assert.match(readOnly.detail, /только читать/);
+});
+
+test('a read step shows the file text, not the engine markup around it', () => {
+  const projection = new ChatProjection(); projection.folder = '/work';
+  projection.event(event('tool/call', 10, { callId: 'r', name: 'read_file', arguments: { path: 'n.txt' } }));
+  projection.event(event('tool/result', 11, { message: { toolCallId: 'r', content: [{ type: 'text', text: '<path>/work/n.txt</path>\n<type>file</type>\n<content>\n1: alpha\n2: beta\n\n(End of file - total 2 lines)\n</content>' }] } }));
+  assert.equal(projection.entries[0].detail, 'alpha\nbeta');
+});
