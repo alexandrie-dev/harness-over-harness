@@ -1430,6 +1430,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-file-reference-local"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop",
+ "hoh-error",
+ "hoh-file-reference",
+ "hoh-fs",
+ "hoh-fs-patch",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-sandbox",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tool-executor-native",
+ "hoh-tool-testkit",
+ "hoh-tools",
+ "hoh-util-workspace-path",
+ "hoh-working-directory",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-fs"
 version = "0.1.0"
 dependencies = [
