@@ -1135,6 +1135,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-command-goal"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop-testkit",
+ "hoh-attachment",
+ "hoh-commands",
+ "hoh-error",
+ "hoh-goal",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-projection",
+ "hoh-timeout",
+ "hoh-util-values",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-commander"
 version = "0.1.0"
 dependencies = [

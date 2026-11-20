@@ -1,0 +1,31 @@
+[package]
+name = "hoh-command-goal"
+description = "Port of @deepseek-ai/dsh-command-goal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-commands = { path = "../hoh-commands" }
+hoh-error = { path = "../hoh-error" }
+hoh-goal = { path = "../hoh-goal" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-util-values = { path = "../hoh-util-values" }
+
+[dev-dependencies]
+futures-util.workspace = true
+hoh-agent = { path = "../hoh-agent" }
+hoh-agent-loop-testkit = { path = "../hoh-agent-loop-testkit" }
+hoh-attachment = { path = "../hoh-attachment" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-timeout = { path = "../hoh-timeout" }
+serde_json.workspace = true
+tokio.workspace = true
+
