@@ -2870,6 +2870,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-subagent"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-agent",
+ "hoh-agent-loop-testkit",
+ "hoh-agent-preset-registry",
+ "hoh-attachment",
+ "hoh-brand",
+ "hoh-chunked-list",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-permission-presets",
+ "hoh-sandbox",
+ "hoh-sandbox-policy",
+ "hoh-scope",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-projection",
+ "hoh-session-query",
+ "hoh-system-prompt",
+ "hoh-timeout",
+ "hoh-tools",
+ "hoh-user-approval",
+ "hoh-util-crypto",
+ "hoh-util-time",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "hoh-working-directory",
+ "hoh-workspace",
+ "rustix",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-subprocess"
 version = "0.1.0"
 dependencies = [

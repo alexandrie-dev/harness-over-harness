@@ -1,0 +1,49 @@
+[package]
+name = "hoh-subagent"
+description = "Port of @deepseek-ai/dsh-subagent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hoh-agent = { path = "../hoh-agent" }
+hoh-agent-preset-registry = { path = "../hoh-agent-preset-registry" }
+hoh-attachment = { path = "../hoh-attachment" }
+hoh-brand = { path = "../hoh-brand" }
+hoh-chunked-list = { path = "../hoh-chunked-list" }
+hoh-error = { path = "../hoh-error" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-llm = { path = "../hoh-llm" }
+hoh-permission-presets = { path = "../hoh-permission-presets" }
+hoh-sandbox = { path = "../hoh-sandbox" }
+hoh-sandbox-policy = { path = "../hoh-sandbox-policy" }
+hoh-scope = { path = "../hoh-scope" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-persistence = { path = "../hoh-session-persistence" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-session-query = { path = "../hoh-session-query" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-timeout = { path = "../hoh-timeout" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-user-approval = { path = "../hoh-user-approval" }
+hoh-util-time = { path = "../hoh-util-time" }
+hoh-util-crypto = { path = "../hoh-util-crypto" }
+hoh-util-values = { path = "../hoh-util-values" }
+hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
+hoh-working-directory = { path = "../hoh-working-directory" }
+hoh-workspace = { path = "../hoh-workspace" }
+futures-util.workspace = true
+rustix.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hoh-agent-loop-testkit = { path = "../hoh-agent-loop-testkit" }
+tokio = { workspace = true, features = ["test-util"] }
