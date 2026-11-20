@@ -39,7 +39,12 @@ pub fn capture(root: &Path, ignored: &[&str], expected: bool) -> Result<Vec<Valu
                 continue;
             }
             let path = relative.join(name);
-            let label = path.to_string_lossy().replace('\\', "/");
+            // A backslash is a file-name character on POSIX; only a Windows separator becomes `/`.
+            let label = if cfg!(windows) {
+                path.to_string_lossy().replace('\\', "/")
+            } else {
+                path.to_string_lossy().into_owned()
+            };
             let kind = entry.file_type().map_err(|e| e.to_string())?;
             if kind.is_symlink() {
                 result.push(json!({"path":label,"kind":"symlink","target":fs::read_link(entry.path()).map_err(|e|e.to_string())?.to_string_lossy()}));

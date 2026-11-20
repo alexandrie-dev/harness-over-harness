@@ -26,6 +26,10 @@ pub struct Rpc {
     pub initialized: bool,
     pub results: Vec<Value>,
     timeout: Duration,
+    /// Bytes of the line being read; kept across cancelled reads.
+    partial: Vec<u8>,
+    /// A scripted answer the agent made impossible: the run is rejected after the step (`scriptError`).
+    script_error: Option<String>,
 }
 impl Rpc {
     pub fn new(child: &mut Child, s: &Scenario, script: &Value, timeout: Duration) -> Result<Self> {
@@ -61,6 +65,8 @@ impl Rpc {
             initialized: false,
             results: Vec::new(),
             timeout,
+            partial: Vec::new(),
+            script_error: None,
         })
     }
     pub async fn send(&mut self, value: &Value) -> Result<()> {
@@ -82,15 +88,61 @@ impl Rpc {
         self.send(&json!({"jsonrpc":"2.0","method":method,"params":params}))
             .await
     }
+    /// The next non-blank stdout line (`ndJsonStream` skips blank lines); `None` at EOF.
+    /// Cancel-safe: a half-read line stays in `partial`.
+    async fn next_line(&mut self) -> Result<Option<String>> {
+        loop {
+            let buffer = self.output.fill_buf().await.map_err(|e| e.to_string())?;
+            if buffer.is_empty() {
+                if self.partial.is_empty() {
+                    return Ok(None);
+                }
+            } else if let Some(end) = buffer.iter().position(|b| *b == b'\n') {
+                self.partial.extend_from_slice(&buffer[..=end]);
+                self.output.consume(end + 1);
+            } else {
+                let length = buffer.len();
+                self.partial.extend_from_slice(buffer);
+                self.output.consume(length);
+                continue;
+            }
+            let line = String::from_utf8_lossy(&std::mem::take(&mut self.partial)).into_owned();
+            if !hoh_util_values::js_trim(&line).is_empty() {
+                return Ok(Some(line));
+            }
+        }
+    }
     async fn receive(&mut self) -> Result<()> {
-        let mut line = String::new();
-        let read = tokio::time::timeout(self.timeout, self.output.read_line(&mut line))
+        tokio::time::timeout(self.timeout, self.receive_untimed())
             .await
             .map_err(|_| "protocol response timeout")?
-            .map_err(|e| e.to_string())?;
-        if read == 0 {
-            return Err("protocol stdout closed before completion".into());
+    }
+    /// Read frames while `work` runs (the source's client callbacks run beside the step), so an
+    /// agent that writes a lot or asks for permission before the marker is never blocked on a pipe.
+    pub async fn serving<T>(
+        &mut self,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        tokio::pin!(work);
+        loop {
+            // Only the (cancel-safe) read races `work`; a frame that was read is always handled to
+            // the end, so a reply to an agent request is never dropped half-sent.
+            let line = tokio::select! {
+                done = &mut work => return done,
+                line = self.next_line() => line?,
+            };
+            self.handle_line(line.ok_or("protocol stdout closed before completion")?)
+                .await?;
         }
+    }
+    async fn receive_untimed(&mut self) -> Result<()> {
+        let line = self
+            .next_line()
+            .await?
+            .ok_or("protocol stdout closed before completion")?;
+        self.handle_line(line).await
+    }
+    async fn handle_line(&mut self, line: String) -> Result<()> {
         self.raw.push_str(&line);
         let frame = hoh_util_values::js_json_parse(&line)
             .map_err(|e| format!("invalid protocol stdout: {e}"))?;
@@ -104,13 +156,22 @@ impl Rpc {
                 let result = match method {
                     "session/request_permission" => {
                         if let Some(kind) = self.permissions.pop_front() {
-                            let option = params["options"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .find(|o| o["kind"] == kind)
-                                .ok_or_else(|| format!("permission kind {kind} was not offered"))?;
-                            json!({"outcome":{"outcome":"selected","optionId":option["optionId"]}})
+                            let offered = params["options"].as_array().cloned().unwrap_or_default();
+                            match offered.iter().find(|o| o["kind"] == kind) {
+                                Some(option) => {
+                                    json!({"outcome":{"outcome":"selected","optionId":option["optionId"]}})
+                                }
+                                None => {
+                                    // harness.ts:316-319: answered `cancelled`, the run is rejected after the step.
+                                    let kinds: Vec<&str> =
+                                        offered.iter().filter_map(|o| o["kind"].as_str()).collect();
+                                    self.script_error = Some(format!(
+                                        "snapshot-harness: scripted permission answer {kind} not among the offered options [{}]",
+                                        kinds.join(", ")
+                                    ));
+                                    json!({"outcome":{"outcome":"cancelled"}})
+                                }
+                            }
                         } else {
                             json!({"outcome":{"outcome":"cancelled"}})
                         }
@@ -157,7 +218,10 @@ impl Rpc {
         }
         Ok(())
     }
+    /// One request has one deadline (`self.timeout`), as the source's per-request timer: notifications
+    /// arriving meanwhile do not extend it, and a run of many requests is not bounded as a whole.
     pub async fn finish(&mut self, id: u64) -> Result<Value> {
+        let deadline = tokio::time::Instant::now() + self.timeout;
         loop {
             if let Some(frame) = self.pending.remove(&id) {
                 if let Some(error) = frame.get("error") {
@@ -171,7 +235,9 @@ impl Rpc {
                     .cloned()
                     .ok_or("RPC response lacks result".into());
             }
-            self.receive().await?;
+            tokio::time::timeout_at(deadline, self.receive())
+                .await
+                .map_err(|_| "protocol response timeout")??;
         }
     }
     pub async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
@@ -190,14 +256,12 @@ impl Rpc {
     pub async fn close(&mut self) -> Result<()> {
         self.input.take();
         loop {
-            let mut line = String::new();
-            let read = tokio::time::timeout(self.timeout, self.output.read_line(&mut line))
+            let Some(line) = tokio::time::timeout(self.timeout, self.next_line())
                 .await
-                .map_err(|_| "protocol shutdown timeout")?
-                .map_err(|e| e.to_string())?;
-            if read == 0 {
+                .map_err(|_| "protocol shutdown timeout")??
+            else {
                 break;
-            }
+            };
             self.raw.push_str(&line);
             let frame = hoh_util_values::js_json_parse(&line)
                 .map_err(|e| format!("invalid protocol stdout: {e}"))?;
@@ -398,22 +462,39 @@ pub async fn sdk(rpc: &mut Rpc, s: &Scenario, rows: &[Value], cwd: &Path) -> Res
     Ok(())
 }
 
-async fn wait_file(cwd: &Path, step: &Value, timeout: Duration) -> Result<()> {
+/// The step's own `timeoutMs` (harness.ts `waitFor…(…, timeoutMs)`), else the run's wait limit.
+fn limit(step: &Value, default: Duration) -> Duration {
+    step["timeoutMs"]
+        .as_u64()
+        .map_or(default, Duration::from_millis)
+}
+
+pub async fn wait_file(cwd: &Path, step: &Value, default: Duration) -> Result<()> {
     let path = step["path"].as_str().ok_or("waitForFile lacks path")?;
+    let timeout = limit(step, default);
     let wait = async {
         while !cwd.join(path).exists() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         Ok(())
     };
-    tokio::time::timeout(timeout, wait)
-        .await
-        .map_err(|_| format!("workspace file {path} did not appear"))?
+    tokio::time::timeout(timeout, wait).await.map_err(|_| {
+        format!(
+            "snapshot-harness: workspace file \"{path}\" did not appear within {}ms",
+            timeout.as_millis()
+        )
+    })?
 }
-async fn wait_boundary(root: &Path, id: &str, end: bool, timeout: Duration) -> Result<()> {
+pub async fn wait_boundary(root: &Path, id: &str, end: bool, timeout: Duration) -> Result<()> {
     let wait = async {
         loop {
-            let logs = crate::runner::harvest(root, "acp").unwrap_or_default();
+            // Directory walk and file reads must not stall the runtime's workers.
+            let owned = root.to_path_buf();
+            let logs = tokio::task::spawn_blocking(move || {
+                crate::runner::harvest(&owned, "acp").unwrap_or_default()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
             if let Some(log) = logs.iter().find(|log| {
                 crate::records(log)
                     .ok()
@@ -436,8 +517,9 @@ async fn wait_boundary(root: &Path, id: &str, end: bool, timeout: Duration) -> R
     };
     tokio::time::timeout(timeout, wait).await.map_err(|_| {
         format!(
-            "session {id} did not persist turn/{}",
-            if end { "end" } else { "start" }
+            "snapshot-harness: session \"{id}\" did not persist turn/{} within {}ms",
+            if end { "end" } else { "start" },
+            timeout.as_millis()
         )
     })?
 }
@@ -484,12 +566,20 @@ pub async fn acp(
                 match rpc.request("session/new", params).await {
                     Err(e) if e.starts_with("RPC error:") => {}
                     Err(e) => return Err(e),
-                    Ok(_) => return Err("expected session/new to be rejected".into()),
+                    Ok(_) => {
+                        return Err(
+                            "snapshot-harness: expected session/new to be rejected but it succeeded"
+                                .into(),
+                        );
+                    }
                 }
             }
             "prompt" | "promptContent" | "promptAndCancel" => {
                 if session.is_empty() {
-                    return Err("prompt before newSession".into());
+                    return Err(format!(
+                        "snapshot-harness: {} before newSession",
+                        step["op"].as_str().unwrap_or_default()
+                    ));
                 }
                 let content = if step["op"] == "promptContent" {
                     step["content"].clone()
@@ -503,19 +593,29 @@ pub async fn acp(
                     )
                     .await?;
                 if step["op"] == "promptAndCancel" {
+                    // The agent keeps talking while the step waits for its marker.
                     if let Some(file) = step.get("waitForFile") {
-                        wait_file(cwd, file, timeout).await?;
+                        rpc.serving(wait_file(cwd, file, timeout)).await?;
                     } else {
-                        wait_boundary(sessions_root, &session, false, timeout).await?;
+                        rpc.serving(wait_boundary(sessions_root, &session, false, timeout))
+                            .await?;
                     }
                     rpc.notify("session/cancel", json!({"sessionId":session}))
                         .await?;
                 }
                 rpc.finish(id).await?;
             }
-            "waitForTurnEnd" => wait_boundary(sessions_root, &session, true, timeout).await?,
+            "waitForTurnEnd" => {
+                if session.is_empty() {
+                    return Err("snapshot-harness: waitForTurnEnd before newSession".into());
+                }
+                wait_boundary(sessions_root, &session, true, limit(step, timeout)).await?
+            }
             "waitForFile" => wait_file(cwd, step, timeout).await?,
             op => return Err(format!("check acp.input.{op} not implemented")),
+        }
+        if let Some(error) = rpc.script_error.take() {
+            return Err(error);
         }
     }
     Ok(())

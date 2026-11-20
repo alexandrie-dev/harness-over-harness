@@ -1,4 +1,4 @@
-use crate::{Result, read, records, yaml};
+use crate::{Result, read, records};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -52,10 +52,13 @@ pub fn discover(refs: &Path) -> Result<Vec<Scenario>> {
             if !file.is_file() {
                 continue;
             }
-            let manifest = yaml::parse(&read(&file)?, false)?;
-            validate_manifest(&manifest)?;
+            let manifest = crate::manifest::parse(&read(&file)?, &file.to_string_lossy())?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if manifest["scenario"] != name {
+            // `scenario` is optional in the source; when present it names the directory.
+            if manifest
+                .get("scenario")
+                .is_some_and(|scenario| *scenario != name)
+            {
                 return Err(format!("{}: scenario name mismatch", file.display()));
             }
             all.push(Scenario {
@@ -67,75 +70,6 @@ pub fn discover(refs: &Path) -> Result<Vec<Scenario>> {
         }
     }
     Ok(all)
-}
-
-fn validate_manifest(v: &Value) -> Result<()> {
-    let fields = [
-        (
-            "",
-            &[
-                "version",
-                "scenario",
-                "profile",
-                "composition",
-                "recording",
-                "header",
-                "replay",
-                "platform",
-                "permission",
-                "environment",
-                "workspace",
-                "input",
-                "session",
-                "sessionFormat",
-            ][..],
-        ),
-        (
-            "/header",
-            &[
-                "class",
-                "pin",
-                "systemPromptSource",
-                "toolSchemasSource",
-                "childSystemPrompts",
-                "childToolSchemas",
-                "changes",
-                "promptChanges",
-            ][..],
-        ),
-        ("/replay", &["override"][..]),
-        ("/workspace", &["setup", "final", "parent"][..]),
-        ("/input", &["task", "attachments"][..]),
-        ("/sessionFormat", &["version", "coverage"][..]),
-        ("/session", &["source"][..]),
-    ];
-    for (pointer, allowed) in fields {
-        if let Some(value) = v.pointer(pointer) {
-            let map = value
-                .as_object()
-                .ok_or_else(|| format!("manifest {pointer} must be a mapping"))?;
-            for key in map.keys() {
-                if !allowed.contains(&key.as_str()) {
-                    return Err(format!("unknown manifest field {pointer}/{key}"));
-                }
-            }
-        }
-    }
-    if v["version"] != 1 {
-        return Err("unsupported snapshot manifest version".into());
-    }
-    if !["headless", "sdk", "sdk-minimal", "acp"].contains(&v["profile"].as_str().unwrap_or("")) {
-        return Err("invalid snapshot profile".into());
-    }
-    if let Some(env) = v["environment"].as_object() {
-        let variable = regex::Regex::new("^[A-Z][A-Z0-9_]*$").map_err(|e| e.to_string())?;
-        for (k, value) in env {
-            if !value.is_string() || !variable.is_match(k) {
-                return Err("invalid environment".into());
-            }
-        }
-    }
-    Ok(())
 }
 
 pub fn sorted_entries(dir: &Path) -> Result<Vec<std::fs::DirEntry>> {

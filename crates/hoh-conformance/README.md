@@ -648,3 +648,8 @@ headless — `.agents`, `.dsh`, `.snapshot-patches` (для `git-worktree` вм�
 - Столбец `session_format` — выбранные версии ролей (`v4`, `v3`, …) и, для удержанных, `;retained=<coverage>`.
 - Все числа в разделе 4 получены разбором `snapshot.yml` и каталогов этого коммита; число «различных файлов промптов/схем»
   (81/77) посчитано по хешу содержимого файлов `*.expected.md` / `*.expected.json` всего `snapshots/` (включая `web`).
+
+## Прогон списка V1
+
+`scripts/conformance-v1.sh [in|extra|all]` — см. PORT_NOTES.md («Подключение к бинарнику hoh и прогон списка V1»)
+и NORMALIZATION.md.

@@ -62,6 +62,11 @@ pub fn logs(n: &Normalizer, expected: &[String], actual: &[String], ctx: &Contex
             },
         )
         .map_err(|e| Failure::new("log", e))?;
+    let mut expected = expected;
+    // N-TOOLS-FOREIGN: only the recorded side loses the tools of plugins outside the 118.
+    for rows in &mut expected {
+        crate::normalize::v1::header_rows(rows);
+    }
     let actual = n.logs(actual, ctx).map_err(|e| Failure::new("log", e))?;
     for (i, (e, a)) in expected.into_iter().zip(actual).enumerate() {
         if let Err(mut failure) = equal("log", &format!("session role {i}"), &json!(e), &json!(a)) {
@@ -239,8 +244,14 @@ fn schema_sets(file: &std::path::Path) -> Result<Vec<Value>> {
     {
         return Err("invalid tool-schema satellite".into());
     }
-    let mut sets = vec![v["initial"].clone()];
-    sets.extend(v["changes"].as_array().into_iter().flatten().cloned());
+    let mut sets = vec![crate::normalize::v1::tools(&v["initial"])];
+    sets.extend(
+        v["changes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(crate::normalize::v1::tools),
+    );
     Ok(sets)
 }
 pub fn prompt_parts(snapshot: &str) -> Result<Vec<String>> {
@@ -315,7 +326,9 @@ pub fn hydrate(all: &[Scenario], s: &Scenario, raw: &[String]) -> Result<Logs> {
         {
             continue;
         }
-        let prompts = prompt_parts(&read(&satellite(all, s, index, true)?)?)?;
+        let prompts = prompt_parts(&crate::normalize::v1::prompt(&read(&satellite(
+            all, s, index, true,
+        )?)?))?;
         let schemas = schema_sets(&satellite(all, s, index, false)?)?;
         let mut pi = 0;
         let mut hi = 0;
@@ -353,6 +366,34 @@ pub fn hydrate(all: &[Scenario], s: &Scenario, raw: &[String]) -> Result<Logs> {
     Ok(result)
 }
 
+/// `restorePinnedToolSchemas` (suite.ts:532-548): a pinned header's `tools` must be the `{{tools}}`
+/// token or the ordered names of the sidecar schemas (or be absent for an empty sidecar).
+pub fn restore_pinned_tool_schemas(
+    header: &mut Value,
+    schemas: &Value,
+) -> std::result::Result<(), String> {
+    if !header.is_object() {
+        return Err("acp-snapshot: pinned request header must be an object".into());
+    }
+    let list = schemas.as_array().map_or(&[][..], Vec::as_slice);
+    let tools = header.get("tools");
+    if tools.is_none() && list.is_empty() {
+        return Ok(());
+    }
+    let names_match = tools.and_then(Value::as_array).is_some_and(|names| {
+        names.len() == list.len()
+            && names
+                .iter()
+                .zip(list)
+                .all(|(name, schema)| name.is_string() && schema.get("name") == Some(name))
+    });
+    if tools != Some(&Value::from("{{tools}}")) && !names_match {
+        return Err("acp-snapshot: pinned request header tools must equal {{tools}} or the ordered sidecar tool names".into());
+    }
+    header["tools"] = schemas.clone();
+    Ok(())
+}
+
 pub fn headers(
     n: &Normalizer,
     all: &[Scenario],
@@ -385,9 +426,11 @@ pub fn headers(
             let tools = schemas
                 .get(i)
                 .ok_or_else(|| Failure::new("headers", "pin tool-schema count mismatch"))?;
-            if h.get("tools").is_some() {
-                h["tools"] = tools.clone();
+            // The pin is recorded by the full plugin set: drop the same foreign tools as the sidecar.
+            if let Some(names) = h.get_mut("tools") {
+                crate::normalize::v1::header_tools(names);
             }
+            restore_pinned_tool_schemas(h, tools).map_err(|e| Failure::new("headers", e))?;
         }
         for (index, log) in actual.iter().enumerate() {
             let rows = n
@@ -457,7 +500,7 @@ pub fn headers(
                 equal(
                     "headers",
                     "system prompt satellite",
-                    &json!(expected),
+                    &json!(crate::normalize::v1::prompt(&expected)),
                     &json!(format_prompts(&prompts)),
                 )?;
             }
@@ -674,102 +717,253 @@ pub fn headless_stdout(fixture: &str, stdout: &str, stderr_actual: &str) -> Chec
     )
 }
 
-/// Adjacent migration actually available today; the next missing edge is always reported.
-pub fn migration_gate(raw: &str) -> Check {
-    let mut rows = records(raw).map_err(|e| Failure::new("input", e))?;
-    let header = rows
-        .first_mut()
-        .ok_or_else(|| Failure::new("input", "empty fixture"))?;
-    let version = header.get("version").and_then(Value::as_u64).unwrap_or(0);
-    match version {
-        0 => {
-            // Projected fixtures must be hydrated before the released codec validates cwd/coordinates.
-            crate::normalize::map_strings(header, &mut |s, _| {
-                s.replace("{{cwd}}", "/dsh-snapshot-cwd")
-            });
-            header["version"] = json!(0);
-            if header.get("delegationDepth").is_none() {
-                header["delegationDepth"] = json!(0);
-            }
-            let mut envelope = 0;
-            let mut complete = None;
-            for r in rows.iter_mut().skip(1) {
-                if r["type"] == "request/header"
-                    && let Some(header) =
-                        r.pointer_mut("/data/header").and_then(Value::as_object_mut)
-                {
-                    if header.get("tools").is_some_and(|v| v == "{{tools}}") {
-                        header.shift_remove("tools");
-                    } else if let Some(tools) = header.get_mut("tools").filter(|v| {
-                        v.as_array().is_some_and(|a| {
-                            !a.is_empty()
-                                && a.iter().all(|v| v.as_str().is_some_and(|s| !s.is_empty()))
-                        })
-                    }) {
-                        *tools = Value::Array(
-                            tools
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .map(|name| json!({"name":name,"description":"","parameters":{}}))
-                                .collect(),
-                        );
-                    }
-                }
-                let packed = ["text-chunks", "reasoning-chunks", "tool-call-chunks"]
-                    .contains(&r["type"].as_str().unwrap_or(""));
-                let (seq, time) = if packed {
-                    ("seq0", "time0")
-                } else {
-                    ("seq", "time")
-                };
-                let has_seq = r.get(seq).is_some();
-                let has_time = r.get(time).is_some();
-                if has_seq != has_time {
-                    return Err(Failure::new(
-                        "input",
-                        "fixture row must contain both sequence and time or neither",
-                    ));
-                }
-                if complete.is_some_and(|c| c != has_seq) {
-                    return Err(Failure::new(
-                        "input",
-                        "fixture cannot mix projected and complete rows",
-                    ));
-                }
-                complete = Some(has_seq);
-                if !has_seq {
-                    r[seq] = json!(envelope);
-                    r[time] = json!(0);
-                }
-                envelope += if packed {
-                    r["data"][if r["type"] == "tool-call-chunks" {
-                        "args"
-                    } else {
-                        "texts"
-                    }]
-                    .as_array()
-                    .map_or(1, |a| a.len().max(1))
-                } else {
-                    1
-                };
-            }
-            let _artifact = hoh_session_format_v0_to_v1::testing::restore::restore_v0_to_v1(
-                &rows[0],
-                &rows[1..],
-                hoh_session_format::SessionFormatRecovery::Strict,
-            )
-            .map_err(|e| Failure::new("input", format!("migration v0->v1: {e}")))?;
-            Err(Failure::new("input", "migration v1->v2 not ported"))
+/// `strictV4Catalog`: the strict read of one recorded Session artifact under the released format
+/// catalog, as `llm-replay`'s `parseSessionFixture` performs it for every fixture a scenario
+/// replays (`packages/test-support/llm-replay/src/index.ts:218-288`). The first line is the
+/// physical header; `createRestore(header, {recovery: 'strict', validation: 'current'})` decodes
+/// every following row and migrates older generations to V4 on the way (`:245-248`, `:279`,
+/// `:288`). Projected fixtures first get the fixture-only completions of `normalizeProjectedHeader`
+/// (`:389-398`: `delegationDepth: 0` for v0, `{{cwd}}` → `/dsh-snapshot-cwd`) and
+/// `normalizeProjectedRow` (`:367-387`: request-tool tokens), and dense `seq`/zero `time` for rows
+/// without an envelope (`:260-277`, cardinality `:401-407`).
+///
+/// A rejected fixture is an `input` failure carrying the TS location prefix
+/// `session snapshot line N: `; the line of a late (finish) error is found as `:410-431` does.
+pub fn strict_catalog(raw: &str) -> Check {
+    migrate_fixture(raw).map(|_| ())
+}
+
+/// The artifact `strict_catalog` reads: the fixture strictly decoded and migrated to the current
+/// generation (`prepareSessionSnapshotFixtureForComparison`'s input to the comparison).
+pub fn migrate_fixture(
+    raw: &str,
+) -> std::result::Result<hoh_session_format::SessionFormatArtifact, Failure> {
+    let located = |line: usize, e: &dyn std::fmt::Display| {
+        Failure::new("input", format!("session snapshot line {line}: {e}"))
+    };
+    let catalog = hoh_session_format_catalog::create_session_format_catalog_with_children(vec![])
+        .map_err(|e| Failure::new("input", format!("session format catalog: {e}")))?;
+    let mut restore: Option<hoh_session_format::SessionFormatRestore> = None;
+    let mut header_line = 1;
+    let mut body_complete: Option<bool> = None;
+    let mut next = 0_u64;
+    let mut event_lines: Vec<usize> = Vec::new();
+    // Physical body-row index → source line (`rowLines`), for `released Session row N` errors.
+    let mut row_lines: Vec<usize> = Vec::new();
+    for (index, line) in raw.split('\n').enumerate() {
+        let line = line.trim_end_matches('\r');
+        if hoh_util_values::js_trim(line).is_empty() {
+            continue;
         }
-        1..=3 => Err(Failure::new(
-            "input",
-            format!("migration v{version}->v{} not ported", version + 1),
-        )),
-        4 => Ok(()),
-        _ => Err(Failure::new(
-            "input",
-            format!("unsupported Session format v{version}"),
-        )),
+        let number = index + 1;
+        let mut row = hoh_util_values::js_json_parse(line).map_err(|_| {
+            Failure::new(
+                "input",
+                format!("session snapshot line {number} contains invalid JSON"),
+            )
+        })?;
+        if !row.is_object() {
+            return Err(Failure::new(
+                "input",
+                format!("session snapshot line {number} must be a JSON object"),
+            ));
+        }
+        let Some(active) = restore.as_mut() else {
+            header_line = number;
+            if row["version"] == 0 && row.get("delegationDepth").is_none() {
+                row["delegationDepth"] = json!(0);
+            }
+            if let Some(cwd) = row["cwd"]
+                .as_str()
+                .filter(|c| *c == "{{cwd}}" || c.starts_with("{{cwd}}/"))
+            {
+                row["cwd"] = json!(cwd.replacen("{{cwd}}", "/dsh-snapshot-cwd", 1));
+            }
+            restore = Some(
+                catalog
+                    .create_restore(
+                        &row,
+                        hoh_session_format::SessionFormatRestoreOptions {
+                            recovery: hoh_session_format::SessionFormatRecovery::Strict,
+                            validation: hoh_session_format::SessionFormatValidation::Current,
+                        },
+                    )
+                    .map_err(|e| located(number, &e))?,
+            );
+            continue;
+        };
+        if row["type"] == "request/header"
+            && let Some(header) = row
+                .pointer_mut("/data/header")
+                .and_then(Value::as_object_mut)
+        {
+            if header.get("tools").is_some_and(|v| v == "{{tools}}") {
+                header.shift_remove("tools");
+            } else if let Some(tools) = header.get_mut("tools").filter(|v| {
+                v.as_array().is_some_and(|a| {
+                    !a.is_empty() && a.iter().all(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+                })
+            }) {
+                *tools = Value::Array(
+                    tools
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|name| json!({"name":name,"description":"","parameters":{}}))
+                        .collect(),
+                );
+            }
+        }
+        let packed = ["text-chunks", "reasoning-chunks", "tool-call-chunks"]
+            .contains(&row["type"].as_str().unwrap_or(""));
+        let (seq, time) = if packed {
+            ("seq0", "time0")
+        } else {
+            ("seq", "time")
+        };
+        let complete = row.get(seq).is_some();
+        if complete != row.get(time).is_some() {
+            return Err(Failure::new(
+                "input",
+                format!(
+                    "session snapshot line {number} must contain both {seq} and {time}, or neither"
+                ),
+            ));
+        }
+        if body_complete.is_some_and(|previous| previous != complete) {
+            return Err(Failure::new(
+                "input",
+                format!(
+                    "session snapshot line {number} cannot mix projected and complete body rows"
+                ),
+            ));
+        }
+        body_complete = Some(complete);
+        if !complete {
+            row[seq] = json!(next);
+            row[time] = json!(0);
+        }
+        let cardinality = if packed {
+            row["data"][if row["type"] == "tool-call-chunks" {
+                "args"
+            } else {
+                "texts"
+            }]
+            .as_array()
+            .map_or(1, |a| a.len().max(1))
+        } else {
+            1
+        };
+        next += cardinality as u64;
+        row_lines.push(number);
+        event_lines.extend(std::iter::repeat_n(number, cardinality));
+        active.decode_row(row).map_err(|e| located(number, &e))?;
+    }
+    let restore = restore.ok_or_else(|| {
+        Failure::new("input", "session snapshot must start with a session header")
+    })?;
+    restore.finish().map_err(|e| {
+        let detail = e.to_string();
+        // `fixtureFormatError`: the location is read from `error.cause.message` when there is one.
+        let location =
+            std::error::Error::source(&e).map_or_else(|| detail.clone(), |c| c.to_string());
+        let line = finish_error_line(&location, &row_lines, &event_lines, header_line);
+        located(line, &detail)
+    })
+}
+
+/// `normalizeSessionSnapshots([log], ctx)` of one fixture (headless.snapshot.ts:1149-1150): the
+/// strictly migrated artifact, rendered as a log and run through the comparison normalizer.
+pub fn normalized_session(raw: &str) -> std::result::Result<Value, Failure> {
+    let artifact = migrate_fixture(raw)?;
+    let mut header = artifact.header;
+    header
+        .entry("type")
+        .or_insert_with(|| Value::String("session".into()));
+    let mut text = hoh_util_values::js_json_stringify(&Value::Object(header));
+    text.push('\n');
+    for event in artifact.events {
+        text.push_str(&hoh_util_values::js_json_stringify(&Value::Object(event)));
+        text.push('\n');
+    }
+    let context = crate::normalize::Context {
+        cwd: "/snapshot".into(),
+        ..Default::default()
+    };
+    let logs = crate::normalize::Normalizer::new()
+        .and_then(|n| n.logs(&[text], &context))
+        .map_err(|e| Failure::new("body", e))?;
+    Ok(json!(logs))
+}
+
+/// `fixtureFormatError`'s line choice for an error raised by `finish`: a `released Session row N`
+/// message points at the Nth physical body row, an event/seq/cut index at the line of that event,
+/// anything else at the header (`llm-replay/src/index.ts:410-431`).
+pub(crate) fn finish_error_line(
+    location: &str,
+    row_lines: &[usize],
+    event_lines: &[usize],
+    header_line: usize,
+) -> usize {
+    let number = |pattern: &str| {
+        regex::Regex::new(pattern).ok().and_then(|r| {
+            r.captures(location)
+                .and_then(|c| c[1].parse::<usize>().ok())
+        })
+    };
+    if let Some(row) = number(r"^released Session row ([0-9]+)") {
+        return row_lines.get(row).copied().unwrap_or(header_line);
+    }
+    // `index.ts:422-424`: the patterns are tried in this order, not by leftmost match.
+    [
+        r"Session event ([0-9]+)",
+        r" at seq ([0-9]+)",
+        r"inherited Session cut ([0-9]+)",
+    ]
+    .iter()
+    .find_map(|pattern| number(pattern))
+    .and_then(|n| event_lines.get(n).copied())
+    .unwrap_or(header_line)
+}
+
+#[cfg(test)]
+mod finish_error_line_tests {
+    use super::finish_error_line;
+
+    #[test]
+    fn the_event_patterns_are_tried_in_the_order_of_the_source() {
+        let events = [10, 11, 12, 13, 14, 15];
+        let at = |text: &str| finish_error_line(text, &[], &events, 1);
+        // `at seq 5` is the leftmost, `Session event 3` is tried first.
+        assert_eq!(at("bad at seq 5 near Session event 3"), 13);
+        assert_eq!(at("Session event 2 and inherited Session cut 4"), 12);
+        assert_eq!(at("x at seq 4 and inherited Session cut 1"), 14);
+        assert_eq!(at("only inherited Session cut 1"), 11);
+        // `seed event at index N` is not a location pattern of the source.
+        assert_eq!(at("seed event at index 3"), 1);
+    }
+
+    #[test]
+    fn a_released_row_error_points_at_its_physical_row_not_its_event() {
+        // Rows 0..3 live on lines 2, 3, 5; the packed row on line 5 carries events 2..=4.
+        let rows = [2, 3, 5];
+        let events = [2, 3, 5, 5, 5];
+        let at = |text: &str| finish_error_line(text, &rows, &events, 1);
+        assert_eq!(
+            at("released Session row 2 has seq gap (expected 4, got 9)"),
+            5
+        );
+        assert_eq!(at("released Session row 1 seq must be an integer"), 3);
+        // The same number read as an event index lands elsewhere: the branches must not be mixed up.
+        assert_eq!(at("Session event 4 is broken"), 5);
+        assert_eq!(
+            at("format v1 contains unknown event type \"x\" at seq 1"),
+            3
+        );
+        // Out of range and unrelated messages fall back to the header line.
+        assert_eq!(at("released Session row 9 is broken"), 1);
+        assert_eq!(at("Session inheritedEventCount exceeds its event count"), 1);
+        // The row pattern is anchored at the start, as in the source.
+        assert_eq!(at("while reading released Session row 2"), 1);
     }
 }

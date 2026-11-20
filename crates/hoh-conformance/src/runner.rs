@@ -39,6 +39,8 @@ pub struct Options {
     pub timeout: Duration,
     pub request_timeout: Duration,
     pub wait_timeout: Duration,
+    /// `--disable-plugin ID` (repeatable): diagnostic rows disabled on top of the normalization overlay.
+    pub disable: Vec<String>,
 }
 impl Options {
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
@@ -52,6 +54,7 @@ impl Options {
         let mut timeout = 30_000;
         let mut request_timeout = 110_000;
         let mut wait_timeout = 10_000;
+        let mut disable = Vec::new();
         let mut args = args.into_iter();
         while let Some(flag) = args.next() {
             let value = args
@@ -69,6 +72,7 @@ impl Options {
                     suites.push(value);
                 }
                 "--scenario" => scenarios.push(value),
+                "--disable-plugin" => disable.push(value),
                 "--jobs" => jobs = value.parse().map_err(|_| "invalid jobs")?,
                 "--timeout-ms" => timeout = value.parse().map_err(|_| "invalid timeout")?,
                 "--request-timeout-ms" => {
@@ -96,6 +100,7 @@ impl Options {
             timeout: Duration::from_millis(timeout),
             request_timeout: Duration::from_millis(request_timeout),
             wait_timeout: Duration::from_millis(wait_timeout),
+            disable,
         })
     }
 }
@@ -212,11 +217,8 @@ pub fn harvest(root: &Path, suite: &str) -> Result<Vec<String>> {
             .as_i64()
             .unwrap_or(0)
             .cmp(&b["createdAt"].as_i64().unwrap_or(0));
-        if suite == "acp" {
-            order.then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
-        } else {
-            order
-        }
+        // harness.ts:843: `a.id.localeCompare(b.id)` breaks a same-time tie in every suite.
+        order.then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
     });
     Ok(logs.into_iter().map(|(_, text)| text).collect())
 }
@@ -248,7 +250,7 @@ pub fn environment(
     spill: &Path,
     sessions: &Path,
     route: &Value,
-) -> BTreeMap<String, String> {
+) -> Result<BTreeMap<String, String>> {
     let mut env = BTreeMap::new();
     env.insert("DEEPSEEK_API_KEY".into(), "snapshot-replay-key".into());
     env.insert("DSH_SNAPSHOT".into(), "replay".into());
@@ -267,12 +269,13 @@ pub fn environment(
         );
     }
     if fixture_files.len() > 1 {
+        // A path holding `:` cannot be listed in the variable; dropping the child fixtures silently
+        // would replay a different scenario.
+        let joined = std::env::join_paths(&fixture_files[1..])
+            .map_err(|e| format!("DSH_SNAPSHOT_CHILD_FILES: {e}"))?;
         env.insert(
             "DSH_SNAPSHOT_CHILD_FILES".into(),
-            std::env::join_paths(&fixture_files[1..])
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
+            joined.to_string_lossy().into_owned(),
         );
     }
     if s.manifest["replay"]["override"] == true {
@@ -373,10 +376,14 @@ pub fn environment(
             );
         }
     }
-    env
+    Ok(env)
 }
 
-fn scenario_checks(s: &Scenario) -> Check {
+fn scenario_checks(s: &Scenario, body: &crate::body::BodyContext<'_>) -> Check {
+    // A ported scenario body (f1's `body` module) decides; `None` means this module carries none.
+    if let Some(result) = crate::body::body_check(&s.suite, &s.name, body) {
+        return crate::body::gate(&s.suite, &s.name, result);
+    }
     // This is a deliberate fail-closed gate. The source's scenario bodies are not implied by snapshots.
     if s.suite == "sdk" {
         return Err(Failure::new(
@@ -385,14 +392,7 @@ fn scenario_checks(s: &Scenario) -> Check {
         ));
     }
     if s.suite == "acp" {
-        return if ["handshake", "reject-extra-dirs"].contains(&s.name.as_str()) {
-            Ok(())
-        } else {
-            Err(Failure::new(
-                "scenario-check",
-                "check strictV4Catalog not implemented",
-            ))
-        };
+        return Ok(());
     }
     let check = match s.name.as_str() {
         "provider-cwd" => Some("verifyProviderCwdResume"),
@@ -422,11 +422,9 @@ fn scenario_checks(s: &Scenario) -> Check {
             format!("check {check} not implemented"),
         ));
     }
-    // The current workspace has only the generic catalog machinery and V0->V1 codec.
-    Err(Failure::new(
-        "scenario-check",
-        "check strictV4Catalog not implemented",
-    ))
+    // `strictV4Catalog` is performed in `execute` for every replayed fixture (`compare::strict_catalog`);
+    // reaching this point means it passed. Scenarios without a named body check end here.
+    Ok(())
 }
 
 async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) -> Result<Check> {
@@ -522,6 +520,13 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
         )?;
         patches.push(target);
     }
+    // N-BOOT-FOREIGN-PLUGINS: the last overlay disables the rows outside the 118 (NORMALIZATION.md).
+    let exclusions = patch_root.join(format!("{}-v1-exclusions.cordis.yml", patches.len()));
+    write(
+        &exclusions,
+        crate::normalize::v1::exclusion_patch_with(&options.disable),
+    )?;
+    patches.push(exclusions);
     if s.name == "plugin-manager-mcp" {
         let target = cwd.join(".dsh/profiles/headless/cordis.patch.yml");
         fs::create_dir_all(target.parent().ok_or("profile path has no parent")?)
@@ -562,7 +567,7 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
             .map(|r| r["data"]["header"]["config"].clone())
             .unwrap_or(Value::Null);
     }
-    let mut env = environment(s, &replay_files, &cwd, &spill, &sessions, &route);
+    let mut env = environment(s, &replay_files, &cwd, &spill, &sessions, &route)?;
     if s.name == "subagent-dsh-sdk-dynamic-route" {
         let child_home = cwd.join(".child-dsh");
         fs::create_dir_all(&child_home).map_err(|e| e.to_string())?;
@@ -689,15 +694,17 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
                 crate::protocol::acp(&mut rpc, &script, &cwd, &sessions, options.wait_timeout).await
             }
         };
-        let total = if s.suite == "sdk" {
-            options.request_timeout
+        // SDK: every request carries its own timeout (`Rpc::finish`/`until`), so the controller as a
+        // whole is unbounded; ACP keeps the process-wide limit.
+        let controlled = if s.suite == "sdk" {
+            controller.await
         } else {
-            options.timeout
+            tokio::time::timeout(options.timeout, controller)
+                .await
+                .unwrap_or_else(|_| Err("controller timeout".into()))
         };
-        match tokio::time::timeout(total, controller).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => rpc_error = Some(e),
-            Err(_) => rpc_error = Some("controller timeout".into()),
+        if let Err(e) = controlled {
+            rpc_error = Some(e);
         }
         initialized = rpc.initialized;
         if rpc_error.is_none() {
@@ -755,7 +762,7 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
     // A missing decoder is an input failure, even when the process emitted a comparison diff.
     // Preserve launch/exit precedence above; ACP without a model turn does not restore a log.
     for raw in raw.iter().filter(|_| s.suite != "acp" || has_model) {
-        if let Err(f) = checked(dir, "migration", compare::migration_gate(raw))? {
+        if let Err(f) = checked(dir, "strict-catalog", compare::strict_catalog(raw))? {
             return Ok(Err(f));
         }
     }
@@ -959,7 +966,47 @@ async fn execute(options: &Options, all: &[Scenario], s: &Scenario, dir: &Path) 
     if let Some(f) = pending {
         return Ok(Err(f));
     }
-    checked(dir, "scenario-check", scenario_checks(s))
+    let expected_logs = s.expected_logs()?;
+    let harvest_again = || harvest(&sessions, &s.suite);
+    let task = compare::task(&rows)
+        .or_else(|| s.manifest["input"]["task"].as_str().map(str::to_owned))
+        .unwrap_or_default();
+    let body = crate::body::BodyContext {
+        dir: &s.dir,
+        manifest: &s.manifest,
+        actual: &actual,
+        expected: &expected_logs,
+        notifications: &notifications,
+        cwd: &cwd,
+        harvest: &harvest_again,
+        launch: crate::body::Launch {
+            hoh: &options.hoh,
+            profile: s.profile(),
+            patches: &patches,
+            env: &env,
+            task: &task,
+            timeout: options.timeout,
+        },
+    };
+    // The body checks are synchronous (files, Git, a second `hoh` launch).
+    let verdict = off_the_workers(|| scenario_checks(s, &body))?;
+    checked(dir, "scenario-check", verdict)
+}
+
+/// Run synchronous, possibly slow work (the body checks) without stalling the async workers that
+/// drive the other scenarios and their timeouts. Only a multi-thread runtime can give the work up
+/// its worker (`block_in_place`); on a current-thread runtime it would freeze every timer, so it is
+/// refused instead of being run in place.
+pub fn off_the_workers<T>(work: impl FnOnce() -> T) -> Result<T> {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current().map(|h| h.runtime_flavor()) {
+        Ok(RuntimeFlavor::MultiThread) => Ok(tokio::task::block_in_place(work)),
+        _ => Err(
+            "scenario bodies need a multi-thread tokio runtime: on a current-thread runtime \
+                  they would stall the timers of the other scenarios"
+                .into(),
+        ),
+    }
 }
 
 pub async fn run(options: &Options, all: &[Scenario], s: &Scenario) -> Outcome {

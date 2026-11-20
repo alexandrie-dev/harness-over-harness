@@ -3,6 +3,7 @@
 #[path = "support/plans.rs"]
 mod plans;
 use hoh_conformance::{
+    compare,
     corpus::{self, Scenario},
     read, records,
 };
@@ -187,14 +188,14 @@ fn expected_gate(s: &Scenario) -> Option<(&'static str, String)> {
     }
     let raw = read(&s.fixtures().unwrap()[0]).unwrap();
     let rows = records(&raw).unwrap();
-    let version = rows[0]["version"].as_u64().unwrap_or(0);
     let model = rows.iter().any(|r| r["type"] == "request/header");
-    if version < 4 && (s.suite != "acp" || model) {
-        let from = version.max(1);
-        return Some((
-            "input",
-            format!("migration v{from}->v{} not ported", from + 1),
-        ));
+    // The runner reads every replayed fixture strictly under the released catalog (strictV4Catalog).
+    if s.suite != "acp" || model {
+        for file in s.fixtures().unwrap() {
+            if let Err(f) = compare::strict_catalog(&read(&file).unwrap()) {
+                return Some((f.phase, f.reason));
+            }
+        }
     }
     if s.suite == "sdk" {
         return Some((
@@ -225,7 +226,7 @@ fn expected_gate(s: &Scenario) -> Option<(&'static str, String)> {
         "empty-response-retry-current" => "emptyResponseRetryCurrent",
         "office-progressive-native" | "office-progressive-ptc" => "officeProgressive",
         "subagent-depth-two-rejection" => "subagentDepthTwoRejection",
-        _ => "strictV4Catalog",
+        _ => return None,
     };
     Some(("scenario-check", format!("check {name} not implemented")))
 }
@@ -251,6 +252,9 @@ fn complete_executable_corpus_identity_and_six_mutations_reach_their_checks() {
         let actual = (row[2].as_str(), row[3].as_str(), row[4].as_str());
         let expected = expected_gate(s);
         let matched = match &expected {
+            // A ported body (f1's `body` module) decides the last gate itself: the scenario must reach
+            // it (every comparison before it matched), whatever the body concludes about the fake.
+            Some(("scenario-check", _)) => ["scenario-check", "body"].contains(&actual.1),
             Some((phase, reason)) => actual == ("fail", *phase, reason.as_str()),
             None => row[2] == "pass",
         };
@@ -272,7 +276,7 @@ fn complete_executable_corpus_identity_and_six_mutations_reach_their_checks() {
             assert!(
                 checks
                     .iter()
-                    .any(|c| c["check"] == "migration" && c["status"] == "fail")
+                    .any(|c| c["check"] == "strict-catalog" && c["status"] == "fail")
             );
             assert!(!checks.iter().any(|c| c["check"] == "log"));
             continue;
@@ -501,25 +505,21 @@ fn complete_executable_corpus_identity_and_six_mutations_reach_their_checks() {
     assert_eq!(rows[0][4], "exit Some(1); expected 0; persisted sessions 1");
     let (checks, _) = audit(&out, &rows[0]);
     assert!(checks.is_empty(), "exit gate must precede comparisons");
+    // A v1 fixture is migrated by the real catalog and then compared like a current one.
     let (out, rows) = h.run(
-        "historical-diff-before-migration",
-        "tool",
+        "historical-migrates",
+        "",
         Some(("session", "text-turn")),
         json!({}),
     );
     assert_eq!(rows.len(), 1);
-    assert_eq!(
-        (&rows[0][2], &rows[0][3], &rows[0][4]),
-        (
-            &"fail".to_owned(),
-            &"input".to_owned(),
-            &"migration v1->v2 not ported".to_owned()
-        )
-    );
+    assert_eq!(rows[0][2], "pass", "{:?}", rows[0]);
     let (checks, _) = audit(&out, &rows[0]);
-    assert_eq!(checks.len(), 1);
-    assert_eq!(checks[0]["check"], "migration");
-    assert_eq!(checks[0]["status"], "fail");
+    assert!(
+        checks
+            .iter()
+            .any(|c| c["check"] == "strict-catalog" && c["status"] == "pass")
+    );
     for (suite, name, mutation, phase, reason) in [
         (
             "session",

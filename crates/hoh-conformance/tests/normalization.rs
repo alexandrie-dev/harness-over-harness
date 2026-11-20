@@ -345,3 +345,310 @@ fn fixture_selection_generations_roles_and_header_mismatch() {
     write("session.v4.jsonl", 3);
     assert!(corpus::fixture_files(root.path()).is_err());
 }
+
+mod v1_rules {
+    use hoh_conformance::normalize::v1;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn foreign_prompt_paragraphs_are_dropped_and_others_kept() {
+        let prompt = "Intro.\n\nUse the glob tool — not shell find — to discover files by path pattern.\n\nUse the grep tool — not shell grep or rg — to search file contents. Use read on a matched file when you need surrounding context.\n\nTrack every background job id you start. Keep it.\n\nUse the workflow tool ONLY when the user explicitly asks for a workflow or for large orchestration.\n\nTail.\n";
+        assert_eq!(
+            v1::prompt(prompt),
+            "Intro.\n\nTrack every background job id you start. Keep it.\n\nTail.\n"
+        );
+    }
+
+    #[test]
+    fn a_dropped_last_paragraph_keeps_the_closing_newline() {
+        let prompt =
+            "Intro.\n\nUse the glob tool — not shell find — to discover files by path pattern.\n";
+        assert_eq!(v1::prompt(prompt), "Intro.\n");
+        assert!(v1::prompt(prompt).ends_with('\n'));
+        // A prompt with nothing foreign is returned byte for byte.
+        assert_eq!(v1::prompt("A\n\nB\n"), "A\n\nB\n");
+    }
+
+    #[test]
+    fn a_similar_but_different_paragraph_is_not_dropped() {
+        let text = "Use the glob tool differently.\n\nuse the grep tool — not shell grep or rg — lower case\n";
+        assert_eq!(v1::prompt(text), text);
+    }
+
+    #[test]
+    fn foreign_tools_are_dropped_from_a_schema_set_and_the_rest_is_untouched() {
+        let set = json!([
+            {"name": "read", "description": "Use glob for patterns."},
+            {"name": "glob"}, {"name": "grep"}, {"name": "workflow"},
+            {"name": "job_list"}, {"name": "run_code"}
+        ]);
+        assert_eq!(
+            v1::tools(&set),
+            json!([
+                {"name": "read", "description": "Use glob for patterns."},
+                {"name": "job_list"}, {"name": "run_code"}
+            ])
+        );
+        assert_eq!(v1::tools(&Value::Null), Value::Null);
+    }
+
+    #[test]
+    fn foreign_tools_are_dropped_from_recorded_header_rows_in_both_forms() {
+        let mut rows = vec![
+            json!({"type":"request/header","data":{"header":{"tools":["read","glob","grep","workflow","bash"]}}}),
+            json!({"type":"request/header","data":{"header":{"tools":[{"name":"glob"},{"name":"read"}]}}}),
+            json!({"type":"request/header","data":{"header":{"model":"m"}}}),
+            json!({"type":"tool/call","data":{"tools":["glob"]}}),
+        ];
+        v1::header_rows(&mut rows);
+        assert_eq!(rows[0]["data"]["header"]["tools"], json!(["read", "bash"]));
+        assert_eq!(rows[1]["data"]["header"]["tools"], json!([{"name":"read"}]));
+        assert_eq!(rows[2]["data"]["header"], json!({"model":"m"}));
+        assert_eq!(
+            rows[3]["data"]["tools"],
+            json!(["glob"]),
+            "only request/header rows are touched"
+        );
+    }
+
+    #[test]
+    fn exclusion_patch_disables_every_foreign_row_and_nothing_else() {
+        let patch: Value = serde_json::from_str(&v1::exclusion_patch()).unwrap();
+        let rows = patch.as_array().unwrap();
+        assert_eq!(rows.len(), v1::FOREIGN_PLUGINS.len());
+        for (row, (id, _)) in rows.iter().zip(v1::FOREIGN_PLUGINS) {
+            assert_eq!(row["id"], *id);
+            assert_eq!(row["disabled"], true);
+            assert_eq!(
+                row.as_object().unwrap().len(),
+                3,
+                "only id, disabled, insert"
+            );
+        }
+        let ids: std::collections::HashSet<_> =
+            v1::FOREIGN_PLUGINS.iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids.len(), v1::FOREIGN_PLUGINS.len(), "ids are unique");
+    }
+
+    #[test]
+    fn no_foreign_plugin_is_inside_the_118() {
+        // The rows of the first version that are still being written must stay un-normalized.
+        for inside in ["tool-jobs", "jobs-local"] {
+            assert!(
+                v1::FOREIGN_PLUGINS.iter().all(|(id, _)| *id != inside),
+                "{inside} is inside the 118"
+            );
+        }
+        assert!(
+            !v1::FOREIGN_PROMPT_PARAGRAPHS
+                .iter()
+                .any(|(prefix, _)| prefix.starts_with("Track every background job")),
+            "the background-job paragraph belongs to tool-jobs"
+        );
+    }
+
+    #[test]
+    fn every_rule_has_a_section_in_normalization_md() {
+        let text =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/NORMALIZATION.md"))
+                .unwrap();
+        for rule in v1::RULES {
+            assert!(
+                text.contains(&format!("### {rule}\n")),
+                "{rule} has no section"
+            );
+        }
+        let sections = text.lines().filter(|l| l.starts_with("### N-")).count();
+        assert_eq!(
+            sections,
+            v1::RULES.len(),
+            "a section without a rule in code"
+        );
+    }
+
+    #[test]
+    fn provider_replacement_adds_no_normalization_rule() {
+        assert!(v1::RULES.iter().all(|rule| !rule.contains("PROVIDER")));
+    }
+}
+
+/// Review 220412 №6: cases of `normalize.spec.ts` / `suite.spec.ts` whose function exists in Rust.
+mod review_220412 {
+    use super::{ctx, n};
+    use hoh_conformance::{compare, corpus, normalize::scrub_bulk};
+    use serde_json::{Value, json};
+
+    const HEADERLESS: &str = "session snapshot must start with a session header";
+
+    fn lines(rows: &[Value]) -> String {
+        rows.iter().map(|r| format!("{r}\n")).collect()
+    }
+
+    /// normalize.spec.ts:252.
+    #[test]
+    fn blank_lines_in_a_frame_stream_are_ignored() {
+        let raw = format!("\n{}\n\n", json!({"jsonrpc":"2.0","id":1,"method":"m"}));
+        let frames = n().frames(&raw, &ctx()).unwrap();
+        assert_eq!(frames.len(), 1);
+    }
+
+    /// normalize.spec.ts:534: only `hook/result` loses its duration.
+    #[test]
+    fn a_non_hook_duration_is_left_untouched() {
+        let mut event = json!({"type":"tool/result","seq":2,"time":5,"data":{"durationMs":88}});
+        n().clocks(&mut event).unwrap();
+        assert_eq!(event["data"]["durationMs"], 88);
+        let mut hook = json!({"type":"hook/result","seq":2,"time":5,"data":{"durationMs":88}});
+        n().clocks(&mut hook).unwrap();
+        assert_eq!(hook["data"]["durationMs"], 0);
+    }
+
+    /// normalize.spec.ts:799, :999 and scrub.spec :1268 (one path in Rust: `Normalizer::logs`).
+    #[test]
+    fn a_snapshot_must_start_with_a_session_header() {
+        for raw in [
+            lines(&[json!({"type":"turn/start","data":{"turn":1}})]),
+            "{\"type\":\"turn/start\"}\n".to_owned(),
+        ] {
+            let error = n().logs(&[raw], &ctx()).unwrap_err();
+            assert_eq!(error, HEADERLESS);
+        }
+        assert_eq!(compare::strict_catalog("").unwrap_err().reason, HEADERLESS);
+    }
+
+    fn system(content: Value) -> Value {
+        json!({"type":"system/message","seq":1,"time":2,"data":{"message":{"content":content}}})
+    }
+
+    /// normalize.spec.ts:1177: presence is behavior.
+    #[test]
+    fn an_absent_tools_field_stays_absent_and_an_empty_system_prompt_empty() {
+        let mut empty = system(json!([]));
+        scrub_bulk(&mut empty, false);
+        assert_eq!(empty["data"]["message"]["content"], json!([]));
+        let mut header = json!({"type":"request/header","seq":2,"time":2,
+            "data":{"header":{"config":{"model":"m"}},"reason":"initial"}});
+        let before = header.clone();
+        scrub_bulk(&mut header, false);
+        assert_eq!(header, before);
+        assert!(header["data"]["header"].get("tools").is_none());
+    }
+
+    /// normalize.spec.ts:1184: records with nothing to scrub are byte-identical.
+    #[test]
+    fn malformed_records_without_a_scrubbable_payload_are_unchanged() {
+        let records = [
+            json!({"type":"request/header","seq":10,"time":9,"data":{"reason":"initial"}}),
+            json!({"type":"request/header","seq":11,"time":9,"data":null}),
+            json!({"type":"system/message","seq":12,"time":9,"data":{"turn":1,"step":1}}),
+            json!({"type":"system/message","seq":13,"time":9,
+                "data":{"message":{"content":[{"type":"image","data":"x"}]}}}),
+        ];
+        for record in records {
+            let mut scrubbed = record.clone();
+            scrub_bulk(&mut scrubbed, false);
+            assert_eq!(scrubbed, record);
+        }
+    }
+
+    /// suite.spec.ts:519, :523.
+    #[test]
+    fn a_primary_only_scenario_is_accepted_and_a_missing_primary_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("session.1.jsonl"),
+            "{\"type\":\"session\"}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            corpus::fixture_files(dir.path()).unwrap_err(),
+            "missing parent session fixture"
+        );
+        std::fs::write(dir.path().join("session.jsonl"), "{\"type\":\"session\"}\n").unwrap();
+        std::fs::remove_file(dir.path().join("session.1.jsonl")).unwrap();
+        let files = corpus::fixture_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("session.jsonl"));
+    }
+
+    /// suite.spec.ts:1626.
+    #[test]
+    fn a_catalog_creation_time_that_disagrees_with_the_child_header_is_rejected() {
+        let log = |parent_time: u64| {
+            vec![
+                lines(&[
+                    json!({"type":"session","id":"parent","createdAt":1}),
+                    json!({"type":"subagent/catalog","data":{"childId":"child","childCreatedAt":parent_time}}),
+                ]),
+                lines(&[json!({"type":"session","id":"child","createdAt":100})]),
+            ]
+        };
+        assert!(compare::catalog_creation_times(&log(100)).is_ok());
+        let failure = compare::catalog_creation_times(&log(200)).unwrap_err();
+        assert!(failure.reason.contains("disagrees with child header"));
+        // A partial corpus (the child is absent) and unrelated rows are not judged.
+        let partial = vec![log(200).remove(0)];
+        assert!(compare::catalog_creation_times(&partial).is_ok());
+    }
+
+    /// normalize.ts:659 (review 222017 №2): only a string `text` becomes `{{system}}`; the log and
+    /// bulk paths agree.
+    #[test]
+    fn a_non_string_system_text_is_not_replaced_by_the_token() {
+        let header = json!({"type":"session","version":4,"id":"live-session","createdAt":1});
+        let record = |text: Value| {
+            json!({"type":"system/message","seq":1,"time":2,
+                "data":{"message":{"content":[{"type":"text","text":text}]}}})
+        };
+        let logs = n()
+            .logs(
+                &[lines(&[
+                    header.clone(),
+                    record(Value::Null),
+                    record(json!(5)),
+                    record(json!("secret prompt")),
+                ])],
+                &ctx(),
+            )
+            .unwrap();
+        let texts: Vec<&Value> = logs[0][1..]
+            .iter()
+            .map(|r| &r["data"]["message"]["content"][0]["text"])
+            .collect();
+        assert_eq!(texts, [&Value::Null, &json!(5), &json!("{{system}}")]);
+    }
+
+    /// identity.spec.ts:74 (review 222017 №6): the first record only reserves an id when it is a session.
+    #[test]
+    fn a_first_record_that_is_not_a_session_reserves_no_identity() {
+        let mut logs = vec![vec![json!({"type":"not-a-session","id":"s1"})]];
+        let before = logs.clone();
+        n().identities(&mut logs);
+        assert_eq!(logs, before);
+    }
+
+    /// normalize.spec.ts:842 (review 230043 №4).
+    #[test]
+    fn a_source_delivery_marker_claiming_the_target_generation_is_refused() {
+        let log = |version: u64, delivery: u64| {
+            lines(&[
+                json!({"type":"session","version":version,"id":"delivery","createdAt":1,"isSeeded":false,"delegationDepth":0}),
+                json!({"type":"turn/start","seq":0,"time":1,"data":{"turn":1}}),
+                json!({"type":"session-log-deepseek/delivery-accepted","seq":1,"time":2,
+                    "data":{"sessionId":"delivery","throughSeq":0,"sessionFormatVersion":delivery}}),
+            ])
+        };
+        assert_eq!(
+            n().logs(&[log(3, 4)], &ctx()).unwrap_err(),
+            "format v3 delivery marker claims target format v4"
+        );
+        assert_eq!(
+            n().logs(&[log(2, 3)], &ctx()).unwrap_err(),
+            "format v2 delivery marker claims target format v3"
+        );
+        // Its own generation and future generations are retained.
+        for (version, delivery) in [(3, 3), (3, 99), (4, 4)] {
+            assert!(n().logs(&[log(version, delivery)], &ctx()).is_ok());
+        }
+    }
+}

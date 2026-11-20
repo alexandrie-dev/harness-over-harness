@@ -319,3 +319,576 @@ fixed cwd length mismatch`, `runner_process.rs` — со «fake: spill root is n
 Остаётся фиксированным только расположение `refs` (`/mnt/toshiba/alexandrie/hoh/refs/…`) — это
 данные образца, а не выгрузка. Ограничение прежнее: если `CARGO_TARGET_TMPDIR` внутри `/tmp`,
 сценарии `outside-temp` честно отвечают «falls within temporary write grant».
+
+## Подключение к бинарнику hoh и прогон списка V1 (s2, 20.11)
+
+Запуск: `scripts/conformance-v1.sh [in|extra|all] [флаги прогонщика]` собирает `hoh` с функцией
+`conformance-fixtures` и `hoh-conformance`, затем вызывает `hoh-conformance --v1 conformance/V1-SCENARIOS.tsv
+--group … --out /mnt/toshiba/alexandrie/hoh/conformance-runs/<время>`. Результат — `summary.tsv`
+(`suite scenario group status phase body_check detail`), `diffs/<suite>/<сценарий>.diff|.stderr`, `runs/`.
+HOME изолирован (`/dev/shm/hoh/conformance-home-<время>`), сеть не нужна: модель — `llm-replay`.
+
+Статус сценария (`src/v1.rs`, `classify`):
+- **не запустилось** — ошибка прогонщика, фазы `input`/`setup`/`launch`, либо в stderr `startup failed`
+  (профиль не загрузился);
+- **расхождение** — процесс стартовал, но один из сравниваемых артефактов отличается (`exit`, `stdout`,
+  `frames`, `log`, `headers`);
+- **прошло** — все сравнения совпали; завершающий барьер `scenario-check` (проверки тела TS-сценария,
+  которые не перенесены, см. «Не перенесено») не считается расхождением, его имя пишется в столбец
+  `body_check`. В первом прогоне до барьера не дошёл ни один сценарий, поэтому «прошло» = 0.
+  Это число нельзя читать как «всё совпало»: пока строгий V4-каталог и проверки тела не перенесены,
+  «прошло» означает только совпадение сравнений прогонщика.
+
+Что понадобилось в `apps/hoh` (бинарнику, не крейту прогонщика):
+- `src/v1_registry.rs` и 60 строк в `Cargo.toml` (зависимости и функция `conformance-fixtures`): плагины v1, уже лежащие в дереве, но не заведённые в
+  таблицу (`headless`, `headless/startup`, `llm-replay`, `agent-*`, `subagent*`, `goal*`, `spill-*`,
+  `session-*`, `settings`, `workspace`, `schedule`, `office-*` и др., всего 56 пакетов). `hoh-jobs-local`
+  в таблицу не включён: на момент работы крейт не собирался (`Config: Serialize`), его писатель — x9.
+- `profile_boot.rs`: (1) профиль не должен подменять `cordis.yml` на `cordis.snapshot.yml` — подмена
+  `resolveConfigPath` есть только у явного пути конфига; из-за неё `headless` не стартовал
+  (`config file not found …/cordis.snapshot.yml`); (2) профили `sdk`/`sdk-minimal` берут тот же
+  stdio-клей, что окно (единственный читатель stdin, выход после `shutdown`).
+- `v1_registry` при `--features conformance-fixtures` регистрирует Rust-аналоги `local:`-фикстур из
+  `hoh_conformance::fixtures`.
+
+### Нормализация первой версии
+
+Файл `NORMALIZATION.md` — полный перечень (что, где, почему, тест); тест
+`every_rule_has_a_section_in_normalization_md` не даёт добавить правило без раздела. Правила
+нормализуют **только записанную сторону** и только то, что вносит плагин вне 118 строк
+(`research/v1-engine-scope.codex.md`):
+
+| правило | что убирается | почему | тест |
+|---|---|---|---|
+| `N-BOOT-FOREIGN-PLUGINS` | последний `--patch` отключает 21 строку профиля (`connection`, `file-upload`, `deepseek-account`, `llm-pi-ai`, `hooks-*`, `plugin-manager`, `ptc-runtime`, `workflow-ptc`, `tool-workflow`, `tool-fs-search`, `repeat-tool-reminder`, `plan-mode`, `typert*`, `remote-access`, `timer`, …) | пакеты вне 118 без Rust-реализации; без этого профиль sdk не стартует (обязательная `connection`); `tool-jobs`/`jobs-local` (внутри 118) не отключаются | `exclusion_patch_disables_every_foreign_row_and_nothing_else`, `no_foreign_plugin_is_inside_the_118`, контракт fake (`contract.rs`) |
+| `N-PROMPT-FOREIGN` | три абзаца системного промпта: `glob`, `grep` (tool-fs-search), `workflow` (tool-workflow) | пишут плагины вне 118; абзац `tool-jobs` не трогается | `foreign_prompt_paragraphs_are_dropped_and_others_kept`, `a_dropped_last_paragraph_keeps_the_closing_newline`, `a_similar_but_different_paragraph_is_not_dropped` |
+| `N-TOOLS-FOREIGN` | инструменты `glob`, `grep`, `workflow` в наборах схем и в `tools` строк `request/header` (имена или определения) | регистрируют плагины вне 118 | `foreign_tools_are_dropped_from_a_schema_set_and_the_rest_is_untouched`, `foreign_tools_are_dropped_from_recorded_header_rows_in_both_forms` |
+
+Нормализация провайдера (условие CEO): **правил нет**. Записи сделаны `llm-deepseek-api-key`, но патч
+сценария заменяет его `llm-replay` под тем же идентификатором провайдера `deepseek-official`, поэтому
+заголовок запроса, поля модели и `thinking`/`reasoningEffort` совпадают без правок. Первый прогон не
+показал расхождений, вызванных заменой провайдера. Если они появятся — правило и строка в
+`NORMALIZATION.md` вместе (`provider_replacement_adds_no_normalization_rule` закрепляет текущее состояние).
+Диагностический флаг `--disable-plugin ID` не является нормализацией: прогоны с ним помечаются как
+диагностические (без него полный прогон даёт то, что в summary).
+
+### Фикстуры `local:`
+
+Перенесено 8 из 22 TS-фикстур отобранных сценариев (`src/fixtures.rs`, регистрация под `local:`-именем
+файла; поведение дословное): `compaction-working-directory`, `parent-agent-preset`,
+`parent-sandbox-override`, `in-history-prompt-update`, `session-write-grant`, `child-question-tripwire`,
+`subagent-activation-limit`, `subagent-settlement-barrier` (`src/fixtures/agents.rs`). Тесты: `tests/fixtures.rs` (имя и существование
+исходного файла; непортированная фикстура не разрешается). Эффект проверен прогоном: `working-directory/change`
+больше не пропадает в сценариях `compaction-*`.
+
+Не перенесено (остаток, сценарии затронуты): `workspace-context-compaction`, `workspace-context-global-failure`,
+`working-directory-admission`, `partial-landlock-sandbox`, `in-history-series-start`,
+`dynamic-tool-updates`, `dynamic-tool-prompt-updates`, `subagent-structured-parent`,
+`subagent-send-message-fence`, `subagent-durability-failure`,
+`provider-cwd`, `provider-unload`, `pending-confinement`,
+`async-confinement-failure` (packages/shell/bash-sandbox), и `.mjs`-фикстуры SDK (`capture-requests`, `fixture`,
+`driver`, `settlement-order`, `runtime`, `scheduler-failure`, `model-switch-driver`, `execution-order`,
+`web-fetch-*`, `deepseek-fetch-fixture`). Каждая использует внутренние события крейтов-владельцев
+(`tools/post-execute`, `agent/pre-step`, `llm/stream`, `loader.entries`, subagent-сервис); перенос
+требует чтения API по каждой и не уместился в этот ход.
+
+### Первый прогон (`conformance-runs/20261120-182636/summary.tsv`)
+
+- **110 in: прошло 0, расхождение 108, не запустилось 2**; **9 extra: прошло 0, расхождение 9, не запустилось 0**.
+- До нормализации и подключения плагинов (первый заход, 16:42): 0/91/28 — 27 sdk не загружались
+  (`connection` обязательна).
+- Фазы: log 79 (71 in + 8 extra), headers 26, exit 10, frames 2, input 2.
+- Не запустилось: `session/error-finish` (`migration v1->v2 not ported`), `sdk/multi-turn`
+  (`migration v2->v3 not ported`) — исторические поколения журнала, их декодеры в дереве нет.
+- Чаще всего в записанном журнале есть, а у нас нет: `job/registered`+`job/settled` (21 сценарий,
+  `tool-jobs`/`jobs-local`, строки внутри 118, ещё пишутся), `session/title` (17), `user/message`
+  (18), `agent/inbox/spliced` (10), `request/header`, `compaction/*` (4), `model/selection` (4).
+  В заголовках: 20+ сценариев расходятся только из-за абзаца `Track every background job id…`
+  (tool-jobs; не нормализуется намеренно).
+- Расхождения прогонщик не чинит, разбор — у ведущего.
+
+### Наблюдения для ведущего
+
+- `hoh-settings`: задача `settings legacy import` ждёт `loader.settled()` без отмены. Если профиль не
+  оседает (в голом запуске без overlay из N-BOOT-FOREIGN-PLUGINS, при нерезолвящихся строках), выход после
+  `shutdown` подвисает; с overlay в полном прогоне не воспроизводится (2 `process timeout` в `session`:
+  `read-image-attachment-path`, `subagent-parallel`).
+- `cargo test -p hoh-conformance` при `TMPDIR`, лежащем над симлинком `target-*`, роняет четыре
+  `outside-temp` сценария (`cwd is temporary`) — свойство среды, не кода; зелёный прогон:
+  `TMPDIR=/mnt/toshiba/alexandrie/hoh/scratch-s2 cargo test --offline -p hoh-conformance`.
+
+## strictV4Catalog и миграции (s2, 20.11 вечер)
+
+Заглушка «check strictV4Catalog not implemented» удалена. Настоящая проверка — `compare::strict_catalog`
+(фаза `input`, имя в `checks.jsonl` — `strict-catalog`, раньше `migration`); выполняется для каждой
+воспроизводимой фикстуры (все роли) в `runner::execute` на прежнем месте. TS-образец — разбор фикстуры в
+`llm-replay`, т. е. то, что делает каждый сценарий при загрузке записи:
+- `packages/test-support/llm-replay/src/index.ts:218-288` `parseSessionFixture`: первая строка — заголовок,
+  `createSessionFormatCatalogWithChildren([]).createRestore(header, {recovery:'strict', validation:'current'})`
+  (`:245-248`), каждая следующая строка — `restore.decodeRow` (`:279`), в конце `restore.finish()` (`:288`);
+- `:389-398` `normalizeProjectedHeader` (`delegationDepth: 0` у v0, `{{cwd}}` → `/dsh-snapshot-cwd`);
+  `:367-387` `normalizeProjectedRow` (токен `{{tools}}` убирается, список имён → определения);
+  `:260-277`, `:401-407` плотные `seq` и нулевой `time` у строк без конверта, кардинальность packed-строк;
+- `:410-431` `fixtureFormatError`: префикс `session snapshot line N:`; строка для ошибки `finish` берётся по
+  `Session event N` / ` at seq N` / `inherited Session cut N` / `seed event at index N`.
+Реализация использует `hoh_session_format_catalog::create_session_format_catalog_with_children` и
+`SessionFormatCatalog::create_restore` (Strict + Current); та же цепочка выполняет миграции v0→v1→v2→v3→v4,
+поэтому прежний `migration_gate` (останавливавшийся на v1→v2 и v2→v3) удалён: `session/error-finish` и
+`sdk/multi-turn` доходят до запуска. Отдельная проверка v0 на `restore_v0_to_v1` больше не нужна.
+Остальные барьеры (`sdk.*`, `verify*`, git-worktree и др.) не тронуты, остаются fail-closed.
+Барьер ACP «strictV4Catalog» тоже снят: у ACP-сценариев нет других именованных проверок тела.
+
+Тесты (`tests/corpus.rs`): `every_historical_and_current_fixture_reads_strictly_under_the_catalog` (все роли
+всех 242 сценариев читаются), модуль `strict_catalog` — запись v4 проходит, историческая запись мигрируется и
+проходит; испорченные: неизвестный тип события (`format v4 contains unknown event type "no/such-event" at seq 2`,
+строка 4), нарушенная связь (`tool/result … has no advertised tool lifecycle`), версия 9 (`stored Session uses
+newer format v9; this build writes v4`), смесь projected/complete строк, битый JSON, пустой файл.
+`runner_process.rs`: ожидаемый барьер считается по настоящему `strict_catalog`, v1-сценарий `text-turn`
+проходит миграцию и сравнение.
+
+Нормализация: новых правил нет.
+
+## Тела сценариев: `src/body/` (f1, 20.11)
+
+Проверки после запуска, которых нет в общих сравнениях runner. Вход — `body::body_check(suite, name, &BodyContext)`;
+`None` — у сценария нет тела в этом модуле. Тела `sdk` — только для 26 сценариев группы `in`
+(`body::sdk::SCENARIOS_IN`), остальным возвращается `None`.
+
+### headless (`body/session.rs`, 10 из 10), `headless.snapshot.ts`
+
+| сценарий | образец | примечание |
+|---|---|---|
+| empty-response-retry-current | :1447–1453 | порядок четырёх типов событий |
+| tool-call-turn | :171–183 (частично) | `tool/result` без `id` из мигрированного `session.v3.jsonl` (`compare::migrate_fixture`) равны выводу writer. НЕ перенесён второй полный прогон сценария на V3-входе (:1349–1350, :1476–1478: exit, stdout, журнал, заголовки) — сценарий идёт как «прошло, тело не проверено» (`body::unchecked`) |
+| toolcall-unused-args | :1485–1503 | |
+| office-progressive-native / -ptc | :1504–1519 | у `-ptc` нет ветки с отказом render |
+| subagent-depth-two-rejection | :1523–1531 | |
+| provider-cwd | :944–1008 | запускает `hoh` ещё два раза (`BodyContext::launch`: бинарь, профиль, патчи, env, задача) из временного каталога; `--session-id` и `--json` как в образце. Env — окружение запуска runner с подменённым `DSH_SNAPSHOT_PROVIDER_CWD`; образцовый набор `REPLAY_CREDENTIAL_ENV`/`DSH_HOME` не воспроизведён |
+| background-confinement-failure | :862–879 | читает `confinement-audit.json` из `cwd` |
+| working-directory | :881–904 | |
+| worktree | :906–942 | git с детерминированными именем и датой, без пользовательской конфигурации |
+| packed-chunks | :1122–1150 | три упакованных типа в фикстуре; упакованный журнал и распакованный (построчный декодер V0 `RELEASED_V0_SESSION_FORMAT_CODEC`, `run.expand()`) мигрируются каталогом и сравниваются по событиям без `seq`/`time` |
+
+### sdk (`body/sdk.rs`, 26 из 26 перечислены; свои тела у 10), `sdk.snapshot.ts`
+
+Тела: command-attachments :1253–1297, command-identity :1348–1365, permission-switch :1366–1409,
+manual-compact :1410–1465, dynamic-tool-updates :1535–1568, tool-scheduler-recovery :1569–1587,
+subagent-activation-limit :1588–1595, system-prompt-in-history :1707–1726, desktop-context (`runtimeContext`
+в SDK_ASSERTIONS, :1738–1753), serial-created :1766–1772. Остальные 16 сценариев группы — только общий
+хвост :1773–1778 (при нескольких Session: `subagent.started`/`finished` и `parentSessionId` ребёнка).
+
+Не перенесено (в runner нет данных):
+- утверждения над `modelRequests` (файлы `*-requests.jsonl` профиля): command-attachments :1286–1291 (`modelRequests`
+  длины 1, сообщение с картинкой, «You are in plan mode.»), command-identity :1360–1364,
+  permission-switch :1380–1408, manual-compact :1448–1464;
+- `results[].events` (результаты вызовов SDK): dynamic-tool-updates и tool-scheduler-recovery берут события из
+  журнала на диске (`finalResponse` второго вызова — текст последнего `assistant/message`);
+- `expectedFinalResponse` — в образце проверяется всегда (:1617), не только при записи. Не перенесено для desktop-context, manual-compact, permission-switch, command-identity, dynamic-tool-updates; эти сценарии идут в отчёте как «прошло, тело не проверено» (`body::unchecked`, `body::gate`);
+- внутри прогона (управляющий код, `protocol.rs`): порядок завершений subagent-continuable :1000–1015 и
+  feedback-события :1018–1023 — вне этого модуля.
+
+Подключение (делает s2): в `runner.rs::scenario_checks` до заглушек строится `BodyContext` и вызывается
+`body::body_check(&s.suite, &s.name, &ctx)`; `Some(check)` возвращается как результат, `None` — прежняя логика.
+Поля: `dir = s.dir`, `manifest = s.manifest`, `actual`, `expected = s.expected_logs()?`, `notifications` (для SDK —
+накопленные уведомления, для headless `&[]`), `cwd`, `harvest = || harvest(&sessions, &s.suite)`,
+`launch = Launch { hoh: &options.hoh, profile: s.profile(), patches: &patches, env: &env, task }`.
+Тесты: `tests/body.rs` — проход на записанных журналах корпуса и отказ на испорченной копии.
+
+### Прогон после снятия барьера (`conformance-runs/20261120-193810`, `--timeout-ms 180000`)
+
+in 110: прошло 0 (тело не проверено 0), расхождение 110, не запустилось 0; extra 9: 0 / 9 / 0.
+По фазам: log 69+8, headers 32, exit 7+1, frames 2. Против `20261120-182636` (0/108/2; log 71+8, headers 26,
+exit 9+1, frames 2, input 2): `error-finish` и `multi-turn` теперь доходят до сравнения; 74 сценария,
+остановленных барьером, перестали быть «барьерными» — все они оказались настоящими расхождениями
+(в основном отсутствуют `job/*` из tool-jobs и абзац его промпта, `session/title`, `agent/inbox/spliced`).
+При нагрузке системы (load ≈ 20) лимит процесса 30 с даёт ложные `process timeout` (17 из 110): итоговый
+прогон сделан с `--timeout-ms 180000`, таймаутов нет.
+
+## Круг исправлений 1 по ревью прогонщика (s2, 20.11)
+
+- №2 `src/manifest.rs`: полный порт `parseSnapshotManifest` (manifest.ts:201-432), сообщения как в образце; профиль `web`
+  принят, `scenario` необязателен; `corpus::discover` вызывает `manifest::parse`. Тесты `tests/manifest.rs`.
+- №3 `compare::restore_pinned_tool_schemas` (suite.ts:532-548) в `compare::headers`: `tools` пина — `{{tools}}`
+  или упорядоченные имена sidecar, иначе ошибка; пин без `tools` при непустом sidecar — ошибка. Имена пина проходят
+  `N-TOOLS-FOREIGN` (`normalize::v1::header_tools`) так же, как sidecar. Тесты `tests/round1.rs`.
+- №6 таймаут SDK — на каждый запрос (`Rpc::finish`, `Rpc::until`), а не на весь контроллер; ACP сохраняет общий лимит.
+- №7 `normalize::clocks` не добавляет `data: null` строкам без `data`.
+- №1 `tests/workspace.rs` (4 из 4), `tests/manifest.rs` (7 `it` из `manifest.spec.ts` + `writesCurrentSessionFixtures` (`manifest.rs: writes_current_session_fixtures`) + таблица недопустимых метаданных + тест `js_trim`); остальные спеки — список ниже.
+- Тела сценариев f1 (`body::body_check`) подключены в `runner::scenario_checks`: `Some` решает, `None` — прежняя логика.
+  `tests/runner_process.rs`: сценарий с телом должен дойти до `scenario-check`; исход тела на fake не проверяется.
+- №4 блокирующий ввод-вывод: `wait_boundary` (опрос журналов каждые 10 мс) вынесен в `spawn_blocking`. Не вынесены:
+  jsdiff в `compare::equal`, синхронные `fs` в `runner`, `workspace::capture` — они идут один раз на сценарий; детерминированного
+  теста нет (поведение не наблюдаемо без измерения занятости воркеров), поэтому теста нет.
+- №5 `promptAndCancel`: пока ждём границу хода/файл, stdout дочернего процесса не читается. Скрытый риск: если до
+  `session/cancel` процесс выведет в stdout больше буфера канала (≈64 КиБ), он заблокируется на записи и ожидание
+  закончится таймаутом. На корпусе не срабатывает (кадры до отмены короче); исправление — читать stdout параллельно с ожиданием.
+- №8 отложено: заметок нет.
+
+### Список случаев TS-спеков: перенесён / отложен, причина
+
+`manifest.spec.ts` (все 7 `it` и `it.each`, включая случай «keeps explicitly retained generations read-only…» через
+`writes_current_session_fixtures`) и `workspace.spec.ts` перенесены целиком (`tests/manifest.rs`, `tests/workspace.rs`).
+
+Источник: `/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness/packages/test-support/session-snapshot/tests/`. Rust: `/mnt/toshiba/alexandrie/hoh/wt/s2/crates/hoh-conformance` (tests/*.rs и `#[cfg(test)]` в src). manifest.spec.ts и workspace.spec.ts не включены (уже перенесены). Тесты не запускались, статус выставлен чтением тел тестов.
+
+Критерий: «перенесён» — Rust-тест реально проверяет то же поведение (центральное утверждение случая). Если покрыта лишь часть или функция есть без теста — «отложен» с пометкой «частично»/причиной. Строки `it.each` считаются блоком; в итогах учтено число строк таблицы (N).
+
+#### Итоги по спекам
+
+| спек | перенесён | отложен | всего |
+|---|---|---|---|
+| normalize.spec.ts | 30 | 58 | 88 |
+| identity.spec.ts | 0 | 4 | 4 |
+| storage-policy.spec.ts | 0 | 8 | 8 |
+| harness.spec.ts | 0 | 72 | 72 |
+| suite.spec.ts | 11 | 106 | 117 |
+
+Примечание: `describe` без `it` в suite.spec.ts (строки 173, 179, 183) лишь регистрируют defineAcpSnapshotSuite в режимах replay/record/refresh; их динамические случаи не пронумерованы и не учтены (mode record/refresh не портирован, replay-аналог — прогон корпуса `hoh-conformance`).
+
+#### normalize.spec.ts
+
+| строка | случай | статус | причина/тест |
+|---|---|---|---|
+| 30 | rewrites JSON-RPC ids to a stable first-seen sequence | перенесён | tests/normalization.rs::rpc_ids_share_one_namespace_preserve_string_vs_number |
+| 43 | scrubs the cwd and session id anywhere they appear | перенесён | tests/normalization.rs::cwd_aliases_mac_alias_and_path_boundaries (cwd) + acp_usage_tokens_and_legacy_message_ids (sessionId) |
+| 55 | keeps standard message identity distinct from session identity | перенесён | tests/normalization.rs::acp_usage_tokens_and_legacy_message_ids (messageId и sessionId раздельно) |
+| 75 | stabilizes path-dependent context occupancy without hiding capacity | перенесён | tests/normalization.rs::acp_usage_tokens_and_legacy_message_ids (used -> {{usedTokens}}, емкость сохранена; ключ там total, а не size) |
+| 96 | scrubs cwd at file URI and chained-punctuation boundaries | отложен | частично: cwd_aliases_mac_alias_and_path_boundaries проверяет file:// и границы -other/.txt; цепочка пунктуации `cwd.,` -> `{{cwd}}.,` не проверена |
+| 118 | scrubs every filesystem spelling of the cwd longest-first | отложен | частично: alias проверен, но longest-first и Windows-написания (RUNNER~1) не проверены |
+| 136 | canonicalizes only cwd-rooted path separators | перенесён | tests/normalization.rs::canonical_paths_do_not_rewrite_regex_or_commands (разделители только у cwd-rooted, regex/printf не тронуты) |
+| 160 | canonicalizes generated relative path fields and text markers without rewriting other text | отложен | частично: canonical_paths_... проверяет `path`-ключ и `<path>`/`Additional instructions from:` для абсолютных путей; относительные `nested\AGENTS.md` и `.\nested\task.txt` не проверены |
+| 179 | can preserve native cwd-rooted separators for a platform golden | отложен | режим cwdPathMode:"native" не портирован (grep native в src/normalize.rs пуст); Windows-golden не используется |
+| 186 | scrubs a stray UUID not in the known list | отложен | нет теста на «чужой» UUID -> {{sessionId}} в stdout (normalizer.string его не проверяет) |
+| 191 | leaves notification frames without an id untouched in id-space | отложен | нет теста: фрейм-уведомление без id не проверяется (rpc_ids_... идёт только по фреймам с id) |
+| 197 | stabilizes only the top-level event timestamp and spill byte count in event-read text | отложен | частично: event_read_time_and_omitted_bytes_only_in_target_envelope проверяет верхний time и Omitted, но не что вложенный `data.time` (31337) и текст после `After:` остаются |
+| 223 | preserves event-like timestamps in unrelated output text | перенесён | tests/normalization.rs::event_read_time_and_omitted_bytes_only_in_target_envelope (последний assert: без Target event ничего не меняется) |
+| 247 | throws on a non-JSON stdout line (the purity check) | перенесён | tests/normalization.rs::rpc_ids_share_one_namespace_preserve_string_vs_number (frames("ordinary stdout") -> Err) |
+| 252 | ignores blank lines | перенесён | tests/normalization.rs::review_220412::blank_lines_in_a_frame_stream_are_ignored |
+| 259 | keeps $format distinct in single-log and single-snapshot paths (строк в таблице: 2) | отложен | частично: tests/fix_round.rs::legacy_job_uuid_in_header_and_prompt_skips_reserved_id_token (литерал {{id:1}} сохранён, один job -> {{id:2}}); два разных job-id ({{id:2}}/{{id:3}}), tool/call.arguments, короткие UUID, идемпотентность не проверены |
+| 286 | normalizes only message-feedback item clocks | отложен | частично: feedback_clocks_and_version_identity зануляет createdAt у feedback/message-put, но не проверяет, что у tool/result с тем же item часы НЕ меняются |
+| 297 | keeps unexpected request-header fields observable in comparisons | отложен | нет теста: неожиданные поля request/header остаются наблюдаемыми (в Rust заголовки сравниваются через compare::headers e2e) |
+| 309 | zeroes the header createdAt | перенесён | tests/normalization.rs::session_event_and_embedded_stream_clocks (createdAt заголовка = 0) |
+| 315 | preserves event sequence and zeroes event time | отложен | поведение другое: Rust-logs() удаляет seq/time (envelopes_are_removed_references_and_event_order_remain), seq не «сохраняется»; кейс TS-нормализатора session-log в Rust не воспроизводится |
+| 322 | normalizes a projected event without adding a persistence envelope | отложен | нет теста: проецируемое событие без persistence envelope; Rust-аналог — только clocks_do_not_add_data_to_rows_without_it (round1.rs), другая проверка |
+| 331 | scrubs cwd and session id deep inside event data | отложен | частично: cwd/sessionId проверены на уровне string()/value() (cwd_aliases_..., acp_usage_...), обход data событий в logs() отдельно не проверен |
+| 341 | scrubs cwd at file URI and chained-punctuation boundaries in event data | отложен | частично: см. строку 96 (цепочка пунктуации в event data не проверена) |
+| 357 | scrubs random local spill paths under the snapshot cwd | перенесён | tests/normalization.rs::local_and_snapshot_spill_locators_keep_only_filename (`{{cwd}}/.spill/session-…/…-result.txt` -> {{spillLocator:result.txt}}) |
+| 373 | scrubs macOS /private aliases for local spill paths | отложен | частично: /private-алиас проверен для обычного пути (cwd_aliases_...), для spill-пути /private+cwd+/.spill — нет |
+| 388 | scrubs macOS /private prefix on cwd-rooted fs tool result paths | перенесён | tests/normalization.rs::cwd_aliases_mac_alias_and_path_boundaries (/private/tmp/... -> {{cwd}}/x) |
+| 403 | scrubs fixed snapshot spill paths | отложен | нет теста: фиксированный /tmp/dsh-acp-snapshot-spill (в Rust проверен только dsh-acp-snap-<id>) |
+| 418 | scrubs scenario-owned snapshot spill paths | перенесён | tests/normalization.rs::local_and_snapshot_spill_locators_keep_only_filename (/tmp/dsh-acp-snap-012345678/…) |
+| 433 | scrubs scenario-owned snapshot spill paths with Windows drive and separators | перенесён | tests/normalization.rs::local_and_snapshot_spill_locators_keep_only_filename (C:\t\dsh-acp-snap-… с обратными слэшами) |
+| 448 | shares cwd-rooted path handling with stdout normalization | отложен | нет cwdPathMode/native в Rust-нормализаторе; проверка совместного canonical-поведения со stdout не воспроизведена |
+| 460 | scrubs the session id in the header | отложен | нет прямого теста id заголовка session; sessionId-скраб проверен только для ACP-значений (acp_usage_tokens_...), в logs() идентичности — {{session:N}} (typed_identities_...) |
+| 465 | zeroes a hook/result durationMs (run-to-run noise) but keeps its decision | перенесён | tests/normalization.rs::hook_job_goal_and_catalog_clocks_are_scoped (hook/result durationMs -> 0; соседние поля сохранены) |
+| 476 | preserves a packed chunk row\'s sequence, zeroes time, and zeroes volatile dt gaps | перенесён | tests/normalization.rs::packed_row_clocks_preserve_lengths (time0 -> 0, dt -> нули, texts сохранены по длине) |
+| 490 | normalizes timing inside an embedded Assistant stream and ignores opaque members | отложен | частично: session_event_and_embedded_stream_clocks проверяет text-chunks/chunk внутри stream, но не opaque-члены (null, строка) и usage с time0/dt |
+| 527 | normalizes a headerless packed-like stream record without decoding it | отложен | нет теста: безголовая packed-подобная запись с нестроковым data |
+| 534 | leaves a non-hook event durationMs untouched (only hook/result is scrubbed) | перенесён | tests/normalization.rs::review_220412::a_non_hook_duration_is_left_untouched |
+| 540 | normalizes goal lifecycle clocks without scrubbing unrelated payload timestamps | отложен | частично: goal/change createdAt/updatedAt обнуляются (hook_job_goal_and_catalog_clocks_are_scoped), но что tool/result.createdAt и goal без часов не меняются — не проверено |
+| 555 | normalizes job lifecycle clocks while preserving user timestamps and uncertainty | отложен | частично: round1.rs::clocks_do_not_add_data_to_rows_without_it обнуляет startedAt у job/settled; не проверены null/строковый data, пользовательские startedAt в tool/result и producerReported |
+| 575 | normalizes subagent catalog child creation clocks | перенесён | tests/normalization.rs::hook_job_goal_and_catalog_clocks_are_scoped (subagent/catalog childCreatedAt -> 0) |
+| 591 | handles complete envelopes when optional normalized fields are absent | перенесён | tests/round1.rs::clocks_do_not_add_data_to_rows_without_it |
+| 609 | normalizes, scrubs, and projects each parsed body record | отложен | частично: куски раздельно (system_prompt_bulk_is_scrubbed_only_in_first_block, envelopes_are_removed_...); целиком проекция+cwd+{{tools}} в заголовке без developer-сообщения не проверена; {{tools}}-токен проверен только e2e |
+| 635 | normalizes an already-projected packed row | перенесён | tests/normalization.rs::packed_row_clocks_preserve_lengths (data.dt обнуляется у packed-строки) |
+| 646 | retains historical packed-row boundaries while normalizing their timing | отложен | нет теста границ packed-строк: миграция/ре-пакинг делает hoh_session_format_catalog (strict_catalog), нормализатор Rust их не меняет; проверяется только e2e прогоном корпуса |
+| 672 | preserves adjacent catalog facts in parent event order | отложен | нет теста порядка соседних subagent/catalog в логе родителя |
+| 691 | preserves malformed catalog payloads | отложен | нет теста: некорректные catalog-payload сохраняются как есть |
+| 708 | preserves source references and catalog order: $sources (строк в таблице: 2) | отложен | частично: envelopes_are_removed_references_and_event_order_remain проверяет разворот sourceEventSeqs; порядок catalog, surfaceOp и идемпотентность не проверены |
+| 730 | migrates and re-packs multi-session fixtures after relationship-preserving id redaction | отложен | миграция v0->v3 и ре-пакинг в Rust выполняет hoh_session_format_catalog (strict_catalog, tests/corpus.rs); нормализатор не мигрирует — аналог только e2e (every_historical_and_current_fixture_reads_strictly_under_the_catalog), id v2-to-v3-system-… не проверяется |
+| 782 | normalizes an already-projected snapshot without a released-format field | отложен | нет теста: уже спроецированный снимок без поля версии |
+| 794 | rejects an empty snapshot before classifying its released format | перенесён | tests/corpus.rs::strict_catalog::mixed_projected_and_complete_rows_and_bad_json_are_rejected (strict_catalog("") -> "session snapshot must start with a session header") |
+| 799 | rejects a nonempty snapshot whose first record is not a session header | перенесён | tests/normalization.rs::review_220412::a_snapshot_must_start_with_a_session_header |
+| 816 | compares each strictly restored input using its own native delivery generation | отложен | частично: native_delivery_generation_only_matches_source_generation проверяет токен для текущей v4; историческая v3 -> тот же токен и сравнение «historical === current», а также дефолтный (не native) режим не проверены |
+| 826 | keeps source-versus-migrated-artifact delivery comparison generation-exact by default | отложен | нет теста: сравнение source vs migrated по умолчанию (prepareSessionSnapshotFixtureForComparison не портирована) |
+| 834 | keeps a wrong native delivery generation distinguishable from historical writer output | перенесён | tests/normalization.rs::native_delivery_generation_only_matches_source_generation (delivery 3 в логе v4 остаётся числом 3, не токеном) |
+| 842 | refuses source delivery claiming V4 before creating comparison tokens | отложен | нет теста: отказ при delivery, заявляющем V4 в источнике v3 (сообщение "format v3 delivery marker claims target format v4") |
+| 847 | retains future delivery generations without renaming their event identity | отложен | нет теста: будущие поколения (99) без переименования; prepareSessionSnapshotFixtureForComparison не портирована |
+| 861 | keeps captured generations and delivery lookalikes numeric in versioned inputs | отложен | частично: числа вне delivery-маркера не проверены (custom/event capturedFormatVersion/sessionFormatVersion) |
+| 872 | preserves delivery and captured-source generations without a validated source generation | отложен | normalizeSessionFormatMetadata не портирована (в Rust эквивалент встроен в Normalizer::logs, отдельного теста без исходной версии нет) |
+| 881 | preserves opaque generation qualifiers and their lookalikes | отложен | функция нормализации session-reference/capturedFormatVersion не портирована (grep capturedFormat в src пуст); lookalike-кейсы без теста |
+| 955 | preserves an unexpected session-reference payload instead of omitting its fields | отложен | session-reference payload не нормализуется в Rust; нет теста |
+| 963 | keeps session-reference lookalikes outside Message source positions unchanged | отложен | session-reference lookalike: нет теста; normalizeSessionFormatMetadata не портирована |
+| 986 | projects persisted source-event ranges back to logical seq arrays | перенесён | tests/normalization.rs::envelopes_are_removed_references_and_event_order_remain (sourceEventSeqs [0,[1,3]] -> [0,1,2,3]) |
+| 999 | rejects headerless input | перенесён | tests/normalization.rs::review_220412::a_snapshot_must_start_with_a_session_header |
+| 1006 | tokenizeSessionFixtureCwd: macOS / Linux / Windows (строк в таблице: 3) | отложен | tokenizeSessionFixtureCwd не портирована (инструмент записи фикстур record/refresh; Rust replay-only) |
+| 1066 | collapses a residual macOS realpath prefix around an existing cwd token | отложен | tokenizeSessionFixtureCwd не портирована (record/refresh) |
+| 1084 | rejects a log without a session cwd | отложен | tokenizeSessionFixtureCwd не портирована (record/refresh) |
+| 1092 | recognizes %s locators with %s separators in nested JSON omissions (строк в таблице: 3) | отложен | extractSnapshotSpillPaths не портирована; вложенные JSON-омиссии с locator/omittedBytes не проверены (в Rust spill-тест только на строках) |
+| 1112 | normalizes nested Windows local spill locators with %s paths (canonical, native) (строк в таблице: 2) | отложен | нет cwdPathMode:"native" в Rust-нормализаторе; вложенные Windows spill-locators в JSON-тексте не проверены |
+| 1122 | maps each spill filename to its full matched path, last match wins per name | отложен | extractSnapshotSpillPaths не портирована (refresh-инструмент) |
+| 1134 | returns an empty map when the log carries no snapshot spill paths | отложен | extractSnapshotSpillPaths не портирована (refresh-инструмент) |
+| 1163 | replaces system/message text and header tools with tokens, keeping config and reason | отложен | частично: {{system}} проверен (system_prompt_bulk_is_scrubbed_only_in_first_block); {{tools}} в заголовке без developer-сообщения и сохранность config/reason — только e2e; scrubModelRequestBulk как отдельная строчная функция не портирована (scrub_bulk приватна, работает над Value) |
+| 1177 | keeps an absent tools field absent and an empty system prompt empty (presence is behavior) | перенесён | tests/normalization.rs::review_220412::an_absent_tools_field_stays_absent_and_an_empty_system_prompt_empty |
+| 1184 | leaves malformed records with no scrubbable payload byte-identical | перенесён | tests/normalization.rs::review_220412::malformed_records_without_a_scrubbable_payload_are_unchanged |
+| 1195 | passes every other line through byte-for-byte and is idempotent | отложен | байт-в-байт и идемпотентность построчной функции scrubModelRequestBulk не портированы (Rust работает над Value, не над сырой строкой) |
+| 1206 | writes expanded source-event references and remains idempotent | отложен | частично: разворот sourceEventSeqs проверен (envelopes_are_removed_...), идемпотентность scrubSessionSnapshot нет |
+| 1217 | writes stable feedback clocks while retaining notes and version identity | перенесён | tests/normalization.rs::feedback_clocks_and_version_identity (createdAt -> 0, version -> {{id:…}}; updatedAt/note/идемпотентность отдельно не проверены) |
+| 1230 | normalizes Timeline task clocks and receipts without changing descriptions | перенесён | tests/normalization.rs::timeline_tree_tasks_receipts_and_tool_meta (часы задач и receipt обнуляются, count и текст сохранены) |
+| 1247 | preserves the header while projecting and scrubbing each body record | отложен | scrubSessionSnapshot как отдельная функция не портирована; проекция+скраб покрыты кусками, не целиком |
+| 1268 | rejects headerless input | перенесён | tests/normalization.rs::review_220412::a_snapshot_must_start_with_a_session_header (один путь: Normalizer::logs) |
+| 1275 | scrubs only system/message text while keeping header tools verbatim | отложен | scrubSystemPrompts как отдельный режим не портирован (в Rust один проход Normalizer::logs); отдельного негативного/идемпотентного теста нет |
+| 1298 | retains historical tool names when developer messages reference declarations | перенесён | tests/normalization.rs::developer_messages_retain_ordered_tool_names (tools -> ["bash","write"] при developer/message) |
+| 1315 | scrubs only tool-schema payloads while keeping prompts verbatim | отложен | scrubToolSchemas как отдельный режим не портирован (в Rust один проход Normalizer::logs); сохранность промптов при скрабе tools не проверена |
+
+#### identity.spec.ts
+
+| строка | случай | статус | причина/тест |
+|---|---|---|---|
+| 13 | preserves feedback versions and target relationships without redacting unrelated prose | отложен | частично: feedback version -> {{id:…}} (feedback_clocks_and_version_identity) и прозаический UUID в tool-тексте (arbitrary_tool_text_and_usage_are_preserved); messageId -> {{message:1}} в feedback-put/delete и идемпотентность не проверены |
+| 30 | preserves typed relationships across parent and child logs | отложен | частично: typed_identities_preserve_shared_parent_child_relationships (session/parentSession/childId) и messages_approvals_workflows_commands_rpc_retries_and_jobs_have_distinct_spaces (message/approval/workflow по отдельности); общий message id родитель+потомок, requestId/echoed -> {{id:1}}, `session {{session:2}}` внутри текста, идемпотентность не проверены |
+| 74 | classifies semantic text plus command, RPC, and retry identity fields | отложен | частично: commandId/rpcId/retryId -> {{command:1}}/{{rpc:1}}/{{retry:1}} проверены (messages_approvals_...); семантический текст `as message …`, `Anonymous user: {{id:1}}`, неизменный `requestId` и отсутствие завершающего \n не проверены |
+| 102 | keeps a canonical token first seen through a generic id key | отложен | нет теста: канонический токен {{message:7}}, увиденный через общий ключ id, нумерация {{message:8}} |
+
+#### storage-policy.spec.ts
+
+| строка | случай | статус | причина/тест |
+|---|---|---|---|
+| 49 | checks only the highest generation of every parent and child role | отложен | assertSessionFixtureStorage не портирована: проверка хранимых фикстур (скраб промпта/схем, fixed point редакции id, UNKNOWN_TOOL, /private{{cwd}}) — часть record/refresh на Node; в Rust только replay |
+| 53 | preserves a selected historical child without imposing current prompt or identity storage | отложен | assertSessionFixtureStorage не портирована: проверка хранимых фикстур (скраб промпта/схем, fixed point редакции id, UNKNOWN_TOOL, /private{{cwd}}) — часть record/refresh на Node; в Rust только replay |
+| 57 | rejects a selected historical child with %s (unknown tool, noncanonical cwd) (строк в таблице: 2) | отложен | assertSessionFixtureStorage не портирована; UNKNOWN_TOOL проверяется только inline по журналу прогона (src/runner.rs:825), unit-теста нет; /private{{cwd}} в хранимых фикстурах не проверяется |
+| 64 | rejects an unredacted identity in a selected current child beside historical residue | отложен | assertSessionFixtureStorage не портирована: проверка хранимых фикстур (скраб промпта/схем, fixed point редакции id, UNKNOWN_TOOL, /private{{cwd}}) — часть record/refresh на Node; в Rust только replay |
+| 69 | rejects a selected child with %s (missing prompt, unscrubbed prompt, unscrubbed tools) (строк в таблице: 3) | отложен | assertSessionFixtureStorage не портирована: проверка хранимых фикстур (скраб промпта/схем, fixed point редакции id, UNKNOWN_TOOL, /private{{cwd}}) — часть record/refresh на Node; в Rust только replay |
+
+#### harness.spec.ts
+
+| строка | случай | статус | причина/тест |
+|---|---|---|---|
+| 96 | keeps scenario-owned snapshot spill root length stable across platforms | отложен | snapshotSpillRoot не портирована (длина корня spill зависит от платформы; в Rust путь spill определяет сам hoh) |
+| 115 | surfaces an asynchronous child spawn failure through startup and close | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 131 | centralizes ACP boot, captures, updates, fail-closed permissions, and shutdown | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 178 | builds dsh profile argv and rebases relative modules in live and replay patches | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 282 | waits for inherited stdio and buffered ACP parsing after the parent exits | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 306 | rejects promptly when fallback termination is refused | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 335 | preserves the child error when the requested signal sets an exit marker | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 358 | preserves the child error when the requested signal publishes its exit marker later | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 380 | preserves the child error when fallback refusal races with an exit marker | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 404 | preserves the child error after accepted fallback termination drains | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 426 | rejects promptly when fallback termination emits an error | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 456 | waits for in-flight client callbacks after the ACP stream closes | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 491 | includes agent stderr when the ACP connection closes during startup | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 499 | preserves launch-resolution errors when no child process exists | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 516 | drives a full turn: initialize, session, prompt, permission stub, harvest | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 547 | drives a structured prompt-content step without flattening its wire blocks | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 565 | forwards override/child fixture paths into the child env and captures stderr | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 596 | cleans acquired workspace and session roots when spill allocation fails | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 615 | gives concurrent runs of the same scenario private temporary spill roots | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 632 | seeds the workspace dir into the temp cwd before the run | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 646 | prepares the generated workspace after copying committed fixtures | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 670 | creates the generated workspace under an explicit parent | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 686 | promptAndCancel waits for the durable turn start, cancels, and settles the prompt | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 697 | promptAndCancel can wait for cwd-relative readiness before cancelling | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 728 | promptAndWaitForAgentMessage keeps the app live through a matching later update | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 743 | waitForTurnEnd holds cancellation open through the persisted closing boundary | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 762 | waitForInboxMessage holds the app through a matching durable insertion | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 790 | waitForInboxMessage times out when the session log or matching insertion is absent | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 811 | waitForTitleAfterTurnEnd holds the app through a standalone durable title | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 837 | waitForTurnStart can require a later durable turn before continuing | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 862 | waitForTurnStart rejects missing, earlier, and malformed durable turns | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 939 | waitForTurnEnd times out for a missing log and an open logged turn | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 969 | waitForGoalPhase requires the requested durable goal phase | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1001 | identifies the $label wait when its first log harvest outlasts the deadline (строк в таблице: 7) | отложен | нужен vitest с vi.spyOn(fs.readdir); wait-операции waitForTurnStart/GoalPhase/InboxMessage/… в Rust не реализованы (PORT_NOTES «ACP operations вне выбранного корпуса») |
+| 1047 | waitForSubagentTurnEnd requires a closed child work turn | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1135 | waitForTitleAfterTurnEnd times out when the title precedes the boundary | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1161 | waitForEventAfterTurnEnd holds the app for a typed post-boundary record and times out otherwise | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1211 | promptExpectError swallows a model-error response as the expected outcome | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1220 | promptExpectError throws when the prompt unexpectedly succeeds (and teardown kills the live child) | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1228 | reports scenario and cleanup failures together | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1246 | reports cleanup failure after an otherwise successful scenario | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1261 | newSessionExpectError swallows the rejection, with and without extra dirs | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1279 | newSessionExpectError throws when session/new unexpectedly succeeds | отложен | частично реализовано: src/protocol.rs ("expected session/new to be rejected" / newSessionExpectError), unit-теста нет; проверяется только e2e |
+| 1287 | a plain cancel step is forwarded (and ignored by an idle agent) | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1296 | a standalone cancel can wait for cwd-relative readiness | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1309 | waitForFile holds the next input step behind cwd-relative readiness | отложен | нужен Node/vitest + TS fake-acp-agent (tests/fixtures/fake-acp-agent.ts, vi.mock/vi.spyOn node:fs): runScenario/harness.ts не портирован; Rust-драйвер ACP (src/protocol.rs) проверяется только end-to-end (tests/runner_process.rs, fix_round.rs, corpus) |
+| 1322 | rejects %j before newSession (строк в таблице: 12) | отложен | нужен fake-acp-agent; в Rust ошибка «prompt before newSession» есть только для prompt/promptContent/promptAndCancel (src/protocol.rs), остальные op дают «not implemented»; unit-теста нет |
+| 1343 | rejects an unknown input op | отложен | нет теста: неизвестный op в Rust даёт "check acp.input.<op> not implemented" (src/protocol.rs), другое сообщение и другая семантика (fail-closed) |
+| 1352 | harvests all logs primary-first, children by createdAt then id, skipping filesystem noise | отложен | harvest логов (runner::harvest) реализован, unit-теста нет; пустое/несовпадающее поколение и исчезнувший корень sessions не проверяются; нужен fake-acp-agent |
+| 1381 | rejects an empty persisted generation | отложен | harvest логов (runner::harvest) реализован, unit-теста нет; пустое/несовпадающее поколение и исчезнувший корень sessions не проверяются; нужен fake-acp-agent |
+| 1389 | rejects a persisted filename/header generation mismatch | отложен | harvest логов (runner::harvest) реализован, unit-теста нет; пустое/несовпадающее поколение и исчезнувший корень sessions не проверяются; нужен fake-acp-agent |
+| 1399 | yields no logs when the sessions root vanished | отложен | harvest логов (runner::harvest) реализован, unit-теста нет; пустое/несовпадающее поколение и исчезнувший корень sessions не проверяются; нужен fake-acp-agent |
+| 1408 | answers permission requests from the scripted queue by option kind, falling back to cancelled | отложен | очередь permissionAnswers по kind и ошибка «permission kind … was not offered» реализованы в src/protocol.rs:105-112, но unit-теста нет; fake-acp-agent и сценарии вручную не портированы |
+| 1425 | selects a non-first offered option by kind | отложен | очередь permissionAnswers по kind и ошибка «permission kind … was not offered» реализованы в src/protocol.rs:105-112, но unit-теста нет; fake-acp-agent и сценарии вручную не портированы |
+| 1434 | rejects the run on a scripted permission kind the agent never offered | отложен | очередь permissionAnswers по kind и ошибка «permission kind … was not offered» реализованы в src/protocol.rs:105-112, но unit-теста нет; fake-acp-agent и сценарии вручную не портированы |
+
+#### suite.spec.ts
+
+| строка | случай | статус | причина/тест |
+|---|---|---|---|
+| 188 | rewrites stdout and comparable logs from a replay-mode child run | отложен | режимы record/refresh и write-back в defineAcpSnapshotSuite (vitest, запись фикстур) не портированы: Rust-прогон replay-only (PORT_NOTES «Не перенесено»: «Vitest record/refresh…») |
+| 234 | uses complete UUIDs for the shared parent and child system message | отложен | режимы record/refresh и write-back в defineAcpSnapshotSuite (vitest, запись фикстур) не портированы: Rust-прогон replay-only (PORT_NOTES «Не перенесено»: «Vitest record/refresh…») |
+| 244 | creates a missing primary fixture and preserves generations for a retired child role | отложен | режимы record/refresh и write-back в defineAcpSnapshotSuite (vitest, запись фикстур) не портированы: Rust-прогон replay-only (PORT_NOTES «Не перенесено»: «Vitest record/refresh…») |
+| 255 | retains an unchanged message relationship across the recorded parent and child fixtures | отложен | режимы record/refresh и write-back в defineAcpSnapshotSuite (vitest, запись фикстур) не портированы: Rust-прогон replay-only (PORT_NOTES «Не перенесено»: «Vitest record/refresh…») |
+| 270 | throws when a scenario's header class has no pinning scenario | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
+| 293 | throws when two scenarios pin the same header class | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
+| 307 | throws when scenario names are duplicated | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
+| 321 | rejects %s away from a header pin (строк в таблице: 4) | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
+| 345 | rejects an unknown or non-pinning sidecar source | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
+| 380 | rejects a sidecar source that redirects the same artifact | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
+| 409 | rejects shared sidecars with different header-change counts | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
+| 436 | rejects shared prompt sidecars with different prompt-change counts | отложен | контракт регистрации defineAcpSnapshotSuite (vitest, TS-only corpus guards, PORT_NOTES) не портирован; в Rust есть corpus::pin (src/corpus.rs:147, «missing header pin») без негативного теста, остальные проверки согласованности пинов/сайдкаров отсутствуют |
+| 465 | accepts identical claims and rejects order-dependent shared output | отложен | проверка общего содержимого shared-снимков при регистрации сьюта не портирована (TS-only corpus guard) |
+| 478 | rejects identical committed content under different paths | отложен | проверка общего содержимого shared-снимков при регистрации сьюта не портирована (TS-only corpus guard) |
+| 493 | keeps native writer expectations outside historical replay selection | отложен | writerSnapshotName не портирована (имена файлов записи, режим record) |
+| 500 | rejects invalid role %s (строк в таблице: 4) | отложен | writerSnapshotName не портирована (имена файлов записи, режим record) |
+| 506 | selects the highest generation for each contiguous role while ignoring other files | перенесён | tests/normalization.rs::fixture_selection_generations_roles_and_header_mismatch (corpus::fixture_files: старшее поколение по роли; посторонние файлы в каталоге отдельно не проверены) |
+| 519 | accepts a primary-only scenario | перенесён | tests/normalization.rs::review_220412::a_primary_only_scenario_is_accepted_and_a_missing_primary_rejected |
+| 523 | rejects a directory without the primary fixture | перенесён | tests/normalization.rs::review_220412::a_primary_only_scenario_is_accepted_and_a_missing_primary_rejected |
+| 527 | rejects gapped child fixtures | перенесён | tests/normalization.rs::fixture_selection_generations_roles_and_header_mismatch (session.3 без session.2 -> ошибка про contiguous) |
+| 532 | rejects invalid fixture name %s (строк в таблице: 7) | отложен | логика есть (corpus::fixture_files, regex имён и «invalid session fixture name»), теста на 7 невалидных имён нет; session.0/session.01/session.v0 корректно отсеиваются regex только по умолчанию |
+| 548 | rejects duplicate role generations | отложен | duplicate role generations: в Rust проверки нет (на ФС дубликата имени быть не может; TS работает со списком имён) |
+| 555 | renders canonical parent, child, raw, and compressed names | отложен | sessionFixtureName/persistedSessionFilename/parse*/latestPersistedSessionPaths не портированы (генерация имён — для record; Rust только читает) |
+| 564 | rejects invalid numeric filename components (строк в таблице: 5) | отложен | sessionFixtureName/persistedSessionFilename/parse*/latestPersistedSessionPaths не портированы (генерация имён — для record; Rust только читает) |
+| 574 | parses canonical fixture and persistence names without admitting lookalikes | отложен | sessionFixtureName/persistedSessionFilename/parse*/latestPersistedSessionPaths не портированы (генерация имён — для record; Rust только читает) |
+| 585 | selects one highest persisted generation per directory and compression | отложен | sessionFixtureName/persistedSessionFilename/parse*/latestPersistedSessionPaths не портированы (генерация имён — для record; Rust только читает) |
+| 599 | validates filename and header generation equality | отложен | частично: fixture_selection_generations_roles_and_header_mismatch проверяет только «имя v4, заголовок v3 -> ошибка» (без текста сообщения); остальные assert* функции (assertSessionFixtureVersion/assertPersistedSessionVersion/sessionHeaderVersion) не портированы |
+| 618 | rejects malformed header %j (строк в таблице: 8) | отложен | sessionHeaderVersion не портирована; в Rust заголовок проверяется внутри fixture_files (type=session, version) без теста на 8 вариантов |
+| 640 | adds the native sidecar after the shared golden on Windows | отложен | stdoutExpectedVariants не портирована: stdout.expected.windows.jsonl и native cwdPathMode в Rust не используются |
+| 647 | keeps only the shared golden on other platforms or without the declaration | отложен | stdoutExpectedVariants не портирована: stdout.expected.windows.jsonl и native cwdPathMode в Rust не используются |
+| 668 | skips authored scenarios only while recording | отложен | scenarioSkipped не портирована (пропуск по recording/posixOnly/pwshOnly); manifest.platform только валидируется (src/manifest.rs:199) |
+| 673 | skips a retained historical generation while recording but replays and refreshes it | отложен | scenarioSkipped не портирована (пропуск по recording/posixOnly/pwshOnly); manifest.platform только валидируется (src/manifest.rs:199) |
+| 678 | skips posixOnly scenarios on Windows and nowhere else | отложен | scenarioSkipped не портирована (пропуск по recording/posixOnly/pwshOnly); manifest.platform только валидируется (src/manifest.rs:199) |
+| 685 | skips pwshOnly scenarios when the host lacks pwsh, and runs them otherwise | отложен | scenarioSkipped не портирована (пропуск по recording/posixOnly/pwshOnly); manifest.platform только валидируется (src/manifest.rs:199) |
+| 694 | reads the fixture header id and cwd | отложен | fixtureContext не портирована как отдельная функция; близкий compare::context (src/compare.rs:216) без unit-теста, sentinel-cwd не воспроизводится |
+| 699 | yields no session ids for a header without a string id | отложен | fixtureContext не портирована как отдельная функция; близкий compare::context (src/compare.rs:216) без unit-теста, sentinel-cwd не воспроизводится |
+| 703 | falls back to an impossible sentinel cwd (never the empty string) | отложен | fixtureContext не портирована как отдельная функция; близкий compare::context (src/compare.rs:216) без unit-теста, sentinel-cwd не воспроизводится |
+| 709 | treats an empty fixture as an empty header | отложен | fixtureContext не портирована как отдельная функция; близкий compare::context (src/compare.rs:216) без unit-теста, sentinel-cwd не воспроизводится |
+| 719 | extracts every request/header payload in log order, normalized | отложен | normalizedHeaders не портирована как функция; compare::header_values приватна, без unit-теста (e2e через compare::headers) |
+| 730 | yields nothing for a log without header events | отложен | normalizedHeaders не портирована как функция; compare::header_values приватна, без unit-теста (e2e через compare::headers) |
+| 739 | extracts every system/message text in log order, normalized, and reads empty content as no prompt | отложен | normalizedSystemPrompts не портирована; Rust сравнивает промпты через сайдкар compare::prompt_parts/headers только e2e |
+| 751 | omits system/message records without a text block | отложен | normalizedSystemPrompts не портирована; Rust сравнивает промпты через сайдкар compare::prompt_parts/headers только e2e |
+| 769 | accepts a log whose first request/header follows a system/message | отложен | systemPromptPrecedesRequests не портирована (grep в src пуст); проверка порядка system/message и request/header в Rust отсутствует |
+| 773 | accepts a log without any request/header | отложен | systemPromptPrecedesRequests не портирована (grep в src пуст); проверка порядка system/message и request/header в Rust отсутствует |
+| 778 | rejects a request/header with no preceding system/message | отложен | systemPromptPrecedesRequests не портирована (grep в src пуст); проверка порядка system/message и request/header в Rust отсутствует |
+| 785 | extracts normalized schema arrays, preserves empty headers, and omits invalid fields | отложен | normalizedToolSchemas не портирована; compare::schema_sets (src/compare.rs:235) без unit-теста |
+| 803 | adds a missing terminal newline without changing an existing one | перенесён | tests/normalization.rs::satellites_prompt_changes_and_exact_strings (compare::format_prompts: "one" -> "one\n", "two\n" не удваивается) |
+| 808 | renders readable changed-prompt sections | перенесён | tests/normalization.rs::satellites_prompt_changes_and_exact_strings ("one\n\n<!-- system/message change 1 -->\n\ntwo\n") |
+| 813 | does not double the newline of a changed prompt | перенесён | tests/normalization.rs::satellites_prompt_changes_and_exact_strings (изменённый промпт "two\n" без двойного перевода строки) |
+| 820 | splits a formatted sidecar back into its initial prompt and each replacement | отложен | частично: satellites_prompt_changes_and_exact_strings делает round-trip реального system-prompt.expected.md через compare::prompt_parts + format_prompts, но разбиение на initial и changes явно не утверждается |
+| 828 | reads a single-prompt sidecar as having no changes | отложен | нет теста: parse одиночного промпта -> без изменений (compare::prompt_parts) |
+| 836 | accepts a distinct non-empty canonical child prompt | отложен | assertChildSystemPromptSnapshot не портирована (проверка сайдкаров потомков при записи) |
+| 842 | rejects an empty or non-canonical child prompt | отложен | assertChildSystemPromptSnapshot не портирована (проверка сайдкаров потомков при записи) |
+| 849 | rejects a child prompt that duplicates its class pin | отложен | assertChildSystemPromptSnapshot не портирована (проверка сайдкаров потомков при записи) |
+| 862 | counts changed request headers, ignoring anchors, blanks, and other lines | отложен | headerChangeCount не портирована (grep в src пуст) |
+| 877 | formats and parses canonical structured JSON | отложен | formatToolSchemasSnapshot/parseToolSchemasSnapshot не портированы; Rust читает tool-schemas.expected.json через compare::schema_sets без теста |
+| 883 | rejects invalid top-level and field shapes | отложен | parseToolSchemasSnapshot не портирована; валидации формы («must be an object»/«array-valued») нет |
+| 892 | restores initial schemas into the pinned header token | перенесён | tests/round1.rs::a_pinned_header_accepts_the_token_or_the_ordered_names_and_gets_the_schemas (токен {{tools}} -> схемы) |
+| 897 | preserves absent tools only for an empty sidecar | перенесён | tests/round1.rs: a_pinned_header_accepts_… (заголовок без tools и пустой сайдкар не меняется) + a_corrupted_pin_is_an_error (без tools при непустом сайдкаре -> ошибка) |
+| 903 | restores ordered tool names only when they match the sidecar | перенесён | tests/round1.rs: a_pinned_header_… (["read","write"] принимается) + a_corrupted_pin_is_an_error (перестановка, неполный список, "other", [1,2]); варианты с отсутствующим именем и невалидным элементом сайдкара не проверены |
+| 914 | rejects invalid headers and a missing tool token | отложен | частично: a_corrupted_pin_is_an_error проверяет заголовок-массив [] и tools-значения; null/строка в качестве заголовка и tools:[] при непустом сайдкаре не проверены |
+| 923 | returns structured UNKNOWN_TOOL call ids and ignores other results | отложен | unknownToolCallIds не портирована как функция: проверка inline в src/runner.rs:825 («ACP snapshot contains UNKNOWN_TOOL») без unit-теста; список callId и «<missing callId>» не проверяются |
+| 938 | returns no failures for ordinary tool results | отложен | unknownToolCallIds не портирована как функция: проверка inline в src/runner.rs:825 («ACP snapshot contains UNKNOWN_TOOL») без unit-теста; список callId и «<missing callId>» не проверяются |
+| 944 | reuses one committed message UUID across fixture-ready parent and child logs | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
+| 967 | stabilizes developer message identities through their explicit surface case | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
+| 976 | rewrites only complete messages carried by surface events or durable inbox splices | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
+| 1033 | matches cwd-bearing messages only after the fresh log reaches fixture-ready form | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
+| 1060 | rejects a fingerprint connected to an id that also identifies different content | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
+| 1079 | leaves fresh fixtures unchanged when no committed counterpart exists | отложен | stabilizeFixtureMessageIds (refresh/record) не портирована |
+| 1086 | maps fresh ids and cwd values to the existing fixture values, skipping non-replacements | отложен | refreshFixtureReplacements (refresh) не портирована |
+| 1103 | stabilizes moved snapshot spill paths by filename while skipping unchanged or unmatched names | отложен | refreshFixtureReplacements (refresh) не портирована |
+| 1126 | leaves complete message ids out of the literal refresh replacement list | отложен | refreshFixtureReplacements (refresh) не портирована |
+| 1152 | preserves unpacked member times when refresh first packs a chunk run | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1176 | preserves packed member times without flattening fresh chunk boundaries | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1195 | reads projected packed fixtures while retaining their data gaps | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1214 | keeps fresh packed gaps when %s (строк в таблице: 4) | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1240 | aligns volatile times across a newly inserted log event | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1270 | retains unchanged message ids across an unrelated inserted event | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1320 | leaves an aligned complete message id to the fixture-ready structural pass | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1339 | keeps volatile fixture fields while preserving fresh meaningful payloads | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1371 | keeps job identities consistent across registration, tool text, and later calls during refresh | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1388 | preserves normalized volatile fields while accepting fresh semantic fields | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1491 | normalizes fresh cwd aliases before reusing existing paths | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1519 | preserves one correlated volatile id through a consistent log-wide mapping | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1543 | keeps fresh correlated ids when record alignment is structurally ambiguous | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1567 | keeps fresh ids when existing records remain unmatched | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1587 | keeps fresh ids when $name (строк в таблице: 2) | отложен | stabilizeRefreshLog (режим refresh) не портирована |
+| 1626 | rejects mismatched raw clocks before normalization can erase them | перенесён | tests/normalization.rs::review_220412::a_catalog_creation_time_that_disagrees_with_the_child_header_is_rejected |
+| 1631 | keeps retained child clocks in newly generated catalog fixtures | отложен | режим reconcile preserve-headers (запись фикстур) не портирован |
+| 1638 | preserves partial corpora and unrelated rows verbatim | отложен | reconcileCatalogCreationTimes не портирована; сохранность частичных корпусов не проверена |
+
+- `--scenario` при `--v1` теперь сужает список (раньше список его затирал и запускался весь прогон): `main.rs`.
+
+## Ревью конвейера 213901 (s2, 20.11)
+
+- №1 ошибки тел сценариев имеют фазу `body` (`body::fail`, `body::expect_eq`), а не `scenario-check`; `v1::classify`
+  относит `body` к расхождению, `scenario-check` («check … not implemented») остаётся «прошло, тело не проверено».
+- №2 `--v1` с пустой выборкой (`--scenario nope`, `--suite acp`) — ошибка `no scenarios selected`, а не «все сценарии».
+- №3 проверки тел идут через `block_in_place` (многопоточный рантайм), процессы `git` и повторный `hoh` — через
+  `body::run_bounded` с лимитом `--timeout-ms`: по истечении процесс убивается, проверка падает фазой `body`.
+- №4 `session-write-grant`: в Rust `Disposer::dispose()` выполняет синхронную отмену внутри самого вызова (`effects.rs
+  begin_inner → synchronous`), поэтому и прежний `tokio::spawn(disposer.dispose())` снимал грант до следующего запроса;
+  дефекта поведения нет. Код сделан явным (`fixtures::release_grant`, без spawn), добавлен тест-страж на многопоточном
+  рантайме (на прежнем коде он тоже зелёный).
+- №5 в `tests/fixtures.rs::PORTED` добавлены четыре зарегистрированные фикстуры; список «не перенесено» исправлен.
+- №6 случай `writesCurrentSessionFixtures` портирован.
+- №7 `compare::strict_catalog`: ошибка `finish` берёт текст из причины (`source`), `released Session row N` → строка
+  `row_lines[N]` (`finish_error_line`). Реальный журнал не воспроизводит эту ошибку (v0-декодер в строгом режиме
+  падает раньше, в `decode_row`), поэтому тест — юнит на функцию выбора строки.
+- №8 `manifest.rs`: `trim()` → `js_trim` (BOM `\u{feff}` — пробел, `\u{85}` — нет).
+
+## Ревью конвейера 220412 (s2, 20.11, fix3)
+
+- №1 `body::run_bounded`: потомок — лидер своей группы процессов; по сроку и после нормального выхода группа убивается
+  (`kill_process_group`), чтение труб ограничено 1 с после этого. Тесты: `body::tests` (фоновая работа держит трубы —
+  возврат < 1 с; таймаут убивает группу; вывод и код быстрого потомка).
+- №2 `body::unchecked`/`body::gate`: SDK-тела с непереносимыми частями (`modelRequests`: command-attachments,
+  command-identity, permission-switch, manual-compact; `expectedFinalResponse`: desktop-context, manual-compact,
+  permission-switch, command-identity, dynamic-tool-updates) дают `scenario-check` «check sdk.<name>: <части> not
+  implemented» → «прошло, тело не проверено». Тест `tests/body.rs::a_partially_carried_sdk_body_names_what_it_leaves_unchecked`.
+- №3 `packed-chunks` — полное сравнение (см. таблицу выше); тест `packed_chunks_checks_the_row_types_and_the_unpacked_equality`.
+- №4 `tool-call-turn` — через удерживаемый V3; тест `tool_call_turn_compares_the_writer_with_the_migrated_retained_v3_input`
+  (подмена `content` во входе V3, версия не 3).
+- №5 `runner::off_the_workers`: на current-thread рантайме тело отказывается с ошибкой, на multi-thread — `block_in_place`.
+  Тесты `round1.rs` (оба рантайма, таймер идёт).
+- №6 перенесено 10 случаев (normalize.spec: 252, 534, 799, 999, 1177, 1184, 1268; suite.spec: 519, 523, 1626).
+  НЕ закрыто: у ~30 случаев функция в Rust есть, а теста нет (строки normalize.spec 186, 191, 297, 322, 403, 527, 646, 672,
+  691, 782, 826, 842, 847, 955, 963; identity 102; suite.spec 694–709 `compare::context`, 719/730 `header_values`, 785
+  `schema_sets`, 828 `prompt_parts`, 923/938 UNKNOWN_TOOL, 1352–1399 `harvest`, 1408–1434 `permissionAnswers`). Они остаются
+  в таблице отложенных с прежней причиной; тесты не написаны в этом ходе.
+
+## Ревью конвейера 222017 (s2, 20.11, fix4)
+
+- №1 `Rpc::next_line` пропускает пустые строки stdout (и в `close`); тест `tests/protocol.rs::blank_lines_between_frames_are_ignored`.
+  Чтение строки cancel-safe (`fill_buf`, остаток в `partial`).
+- №2 `Normalizer::logs` вызывает `scrub_bulk`, нестроковый `text` остаётся; тест `a_non_string_system_text_is_not_replaced_by_the_token`.
+- №3 тексты и сроки приведены к `harness.ts`: префикс `snapshot-harness: `, `within Nms`, `workspace file "p" did not appear`,
+  `session "id" did not persist turn/…`, `expected session/new to be rejected but it succeeded`, `<op> before newSession`
+  (сразу, без ожидания; в т.ч. `waitForTurnEnd`), неотвеченный scripted-вид разрешения: агенту уходит `cancelled`, прогон
+  отвергается после шага с текстом TS; `timeoutMs` шага (и `waitForFile.timeoutMs`) учитывается. Тесты — `tests/protocol.rs`.
+  Остаётся отличием: неизвестный/неперенесённый `op` даёт `check acp.input.<op> not implemented` (fail-closed), не `unknown input op`.
+- №4 `Rpc::serving`: ожидание файла/границы в `promptAndCancel` идёт вместе с чтением stdout; тест — агент пишет 300 КБ до маркера.
+- №5 тела идут через `block_in_place` (`runner::off_the_workers`): он отдаёт очередь воркера другому потоку, воркер не
+  блокируется. Тест `bodies_blocking_every_worker_do_not_delay_the_timers_of_other_scenarios` (два тела держат оба воркера, таймер соседа вовремя).
+  `spawn_blocking` невозможен: тело заимствует данные прогона.
+- №6 закрыто: `identities` берёт `id` только у `session` (тест `a_first_record_that_is_not_a_session_reserves_no_identity`);
+  тай-брейк по `id` у всех сьютов; `DSH_SNAPSHOT_CHILD_FILES` с `:` — ошибка; `\` в имени файла на POSIX сохраняется.
+  Отложено: `yaml.rs` — нестроковые ключи (js-yaml приводит к строке) и `1_000`; в корпусе не встречаются, YAML-манифесты
+  закрыты `exact_keys`. `corpus::pin` берёт первый подходящий pin без проверки уникальности (спек: `suite.spec.ts`, контракт
+  регистрации, отложен как весь блок). «Refuses source delivery claiming V4» (`normalize.spec.ts:842`) не реализовано:
+  `prepareSessionSnapshotFixtureForComparison` не портирована, `logs()` оставляет число; строка 842 таблицы остаётся «отложен».
+
+## Ревью конвейера 224637 (s2, 20.11, fix5; блокирующие)
+
+- №1 `body::unchecked` расширен управляющими проверками драйвера: `approval` (параметры `approval/request`), `session-resume`
+  (закрытие, повторный запуск, `missing-session`), `subagent-continuable` (порядок завершений, результат `session/wait`),
+  `session-title-stability` (ожидание provider-title), `text-turn` (цепочка `feedback/*`, `DSH_SNAPSHOT_FEEDBACK`). Все они
+  идут как «прошло, тело не проверено». Тесты `tests/body.rs::controller_only_sdk_scenarios_are_passed_body_not_checked`,
+  `scenarios_without_a_body_pass_and_unlisted_ones_are_not_claimed` (прежний «approval — pass» заменён).
+- №2 `finish_error_line`: шаблоны пробуются по порядку источника (`Session event` → ` at seq` → `inherited Session cut`);
+  `seed event at index` убран. Юнит `the_event_patterns_are_tried_in_the_order_of_the_source`.
+- №3 `waitForTurnEnd` учитывает `timeoutMs` шага; тест `wait_for_turn_end_uses_the_timeout_of_its_step` («within 50ms»).
+
+## Ревью конвейера 230043 (s2, 20.11, fix6; блокирующие)
+
+- №1 `tool-call-turn`: второй прогон на удерживаемом V3 не портирован; `body::unchecked("session","tool-call-turn")` →
+  «прошло, тело не проверено». Таблица тел выше исправлена (не «перенесено»). Тест `tool_call_turn_is_passed_body_not_checked`.
+- №2 `Rpc::serving`: с `work` соревнуется только чтение строки (cancel-safe); прочитанный кадр обрабатывается и отвечается до
+  конца вне `select!`. Тест `a_permission_request_racing_the_marker_is_answered` (25 кругов).
+- №4 `Normalizer::logs`: журнал V2/V3, где delivery-маркер уже заявляет следующее поколение, отвергается текстом
+  `format vN delivery marker claims target format vN+1` (как миграции `v2-to-v3`, `v3-to-v4`). Тест `a_source_delivery_marker_claiming_the_target_generation_is_refused`.
+- №5 `packed-chunks`: оба журнала (упакованный и распакованный по V0-декодеру с исходным заголовком) идут через `migrate_fixture`
+  и `Normalizer::logs` (`compare::normalized_session`). Отличие от TS: нормализуется мигрированный артефакт, а не сырой текст.
+  Тест `packed_comparison_sees_chunk_contents_but_not_clocks` (другие `dt` не видны, другой текст чанка виден; сдвиг границ
+  чанков ломает ссылки `assistant/message`, поэтому до сравнения не доходит — строгий каталог отвергает его раньше).
+- №6 `toolcall-unused-args`: `!result.isError` с JS-истинностью (`js_truthy`); тест `toolcall_unused_args_accepts_a_tool_result_without_is_error`.
+- №8 `run_bounded`: выход потомка наблюдается через `waitid(WNOWAIT)`, группа убивается до `wait()`; пока процесс не собран,
+  его pid не может быть переиспользован. Отличие от источника: `snapshotGit` — `spawnSync` без таймаута, здесь каждый процесс тела ограничен.

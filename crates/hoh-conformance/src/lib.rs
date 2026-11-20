@@ -1,9 +1,13 @@
 //! Replays recorded DeepSeek Harness scenarios through the built `hoh` binary.
+pub mod body;
 pub mod compare;
 pub mod corpus;
+pub mod fixtures;
+pub mod manifest;
 pub mod normalize;
 pub mod protocol;
 pub mod runner;
+pub mod v1;
 pub mod workspace;
 pub mod yaml;
 

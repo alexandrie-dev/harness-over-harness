@@ -98,7 +98,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	infra	packages/test-support/llm-mock-server	@deepseek-ai/dsh-llm-mock-server	hoh-llm-mock-server	1018	489	done	HTTP-сервер сбоев модели для тестов apps/cli; в прогоне сценариев не участвует
 1	infra	packages/test-support/llm-replay	@deepseek-ai/dsh-llm-replay	hoh-llm-replay	1212	2528	done	плагин: подменяет модель записанным потоком StreamChunk внутри процесса; подключается к hoh только в сборке для прогона сценариев
 1	infra	packages/test-support/loader-smoke	@deepseek-ai/dsh-loader-smoke	hoh-loader-smoke	375	742	done	нужное переносится в hoh-conformance и тестовые помощники
-1	infra	packages/test-support/session-snapshot	@deepseek-ai/dsh-session-snapshot	hoh-conformance	4819	6449	done	прогон и сверка сценариев: внутрь hoh-conformance (описание в crates/hoh-conformance/README.md)
+1	infra	packages/test-support/session-snapshot	@deepseek-ai/dsh-session-snapshot	hoh-conformance	4819	6449	review	прогон и сверка сценариев: внутрь hoh-conformance (описание в crates/hoh-conformance/README.md)
 1	infra	packages/test-support/tool-testkit	@deepseek-ai/dsh-tool-testkit	hoh-tool-testkit	92	42	done	нужное переносится в hoh-conformance и тестовые помощники
 1	port	packages/todo/tool-todo	@deepseek-ai/dsh-tool-todo	hoh-tool-todo	271	683	done	
 1	port	packages/util/atomic-write	@deepseek-ai/dsh-atomic-write	hoh-atomic-write	293	513	done	

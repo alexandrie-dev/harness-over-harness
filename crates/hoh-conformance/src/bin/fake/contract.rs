@@ -7,8 +7,12 @@ pub fn check(plan: &Value, cwd: &Path) -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let patches = plan["patches"].as_array().ok_or("patch list missing")?;
     ensure(
-        args.len() == 2 + patches.len() * 2 + usize::from(plan["suite"] == "session"),
-        "argv length mismatch",
+        args.len() == 4 + patches.len() * 2 + usize::from(plan["suite"] == "session"),
+        format!(
+            "argv length mismatch: {} args, {} patches",
+            args.len(),
+            patches.len()
+        ),
     )?;
     ensure(
         args[0] == "--profile" && args[1] == plan["manifest"]["profile"],
@@ -30,6 +34,20 @@ pub fn check(plan: &Value, cwd: &Path) -> Result<()> {
         )?;
         patch_value(file, patch, plan)?;
     }
+    // N-BOOT-FOREIGN-PLUGINS: the runner's last overlay, byte for byte the rule's patch.
+    let at = 2 + patches.len() * 2;
+    ensure(args[at] == "--patch", "exclusion patch flag missing")?;
+    let exclusions = Path::new(&args[at + 1]);
+    ensure(
+        exclusions.file_name().is_some_and(|n| {
+            n.to_string_lossy() == format!("{}-v1-exclusions.cordis.yml", patches.len())
+        }),
+        "exclusion patch name mismatch",
+    )?;
+    ensure(
+        read(exclusions)? == hoh_conformance::normalize::v1::exclusion_patch_with(&[]),
+        "exclusion patch content mismatch",
+    )?;
     if plan["suite"] == "session" {
         ensure(
             args.last().map(String::as_str) == plan["task"].as_str(),

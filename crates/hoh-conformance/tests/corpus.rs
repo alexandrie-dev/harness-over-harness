@@ -1,4 +1,4 @@
-use hoh_conformance::{compare, corpus, read, records};
+use hoh_conformance::{compare, corpus, read};
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -11,26 +11,26 @@ fn refs() -> PathBuf {
 }
 
 #[test]
-fn historical_inputs_use_available_migration_then_name_the_missing_edge() {
+fn every_historical_and_current_fixture_reads_strictly_under_the_catalog() {
+    let mut failures = Vec::new();
+    let mut count = 0;
     for s in corpus::discover(&refs()).unwrap() {
         for file in s.fixtures().unwrap() {
-            let raw = read(&file).unwrap();
-            let version = records(&raw).unwrap()[0]["version"].as_u64().unwrap_or(0);
-            if version < 4 {
-                let f = compare::migration_gate(&raw).unwrap_err();
-                assert_eq!(f.phase, "input");
-                let next = version.max(1);
-                assert_eq!(
-                    f.reason,
-                    format!("migration v{next}->v{} not ported", next + 1),
-                    "{}/{} {}",
+            count += 1;
+            if let Err(f) = compare::strict_catalog(&read(&file).unwrap()) {
+                failures.push(format!(
+                    "{}/{} {}: {}",
                     s.suite,
                     s.name,
-                    file.display()
-                );
+                    file.display(),
+                    f.reason
+                ));
             }
         }
     }
+    assert!(count > 242, "every role of every scenario is read: {count}");
+    // The corpus must be readable except for fixtures whose rejection is itself pinned below.
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
@@ -112,5 +112,101 @@ fn bin_false_all_three_suites_are_failures_without_runner_errors() {
         let fields: Vec<_> = row.split('\t').collect();
         assert_eq!(fields[2], "fail");
         assert!(["launch", "exit"].contains(&fields[3]), "{row}");
+    }
+}
+
+mod strict_catalog {
+    use super::refs;
+    use hoh_conformance::{compare, corpus, read};
+    use serde_json::{Value, json};
+
+    fn recorded(name: &str) -> Vec<Value> {
+        let all = corpus::discover(&refs()).unwrap();
+        let s = all
+            .iter()
+            .find(|s| s.suite == "session" && s.name == name)
+            .unwrap();
+        read(&s.fixtures().unwrap()[0])
+            .unwrap()
+            .lines()
+            .map(|l| hoh_util_values::js_json_parse(l).unwrap())
+            .collect()
+    }
+    fn text(rows: &[Value]) -> String {
+        rows.iter()
+            .map(|r| format!("{}\n", hoh_util_values::js_json_stringify(r)))
+            .collect()
+    }
+    fn probe(rows: &[Value]) -> String {
+        compare::strict_catalog(&text(rows)).unwrap_err().reason
+    }
+
+    #[test]
+    fn a_recorded_current_journal_passes() {
+        let rows = recorded("bash-tool-turn");
+        assert_eq!(rows[0]["version"], 4);
+        compare::strict_catalog(&text(&rows)).unwrap();
+    }
+
+    #[test]
+    fn a_recorded_historical_journal_is_migrated_and_passes() {
+        let rows = recorded("text-turn");
+        assert!(rows[0]["version"].as_u64().unwrap() < 4);
+        compare::strict_catalog(&text(&rows)).unwrap();
+    }
+
+    #[test]
+    fn an_unknown_event_type_is_rejected_with_its_line() {
+        let mut rows = recorded("bash-tool-turn");
+        rows[3]["type"] = json!("no/such-event");
+        let reason = probe(&rows);
+        eprintln!("unknown event: {reason}");
+        assert!(reason.starts_with("session snapshot line "), "{reason}");
+        assert!(reason.contains("no/such-event"), "{reason}");
+    }
+
+    #[test]
+    fn a_broken_relationship_is_rejected() {
+        let mut rows = recorded("bash-tool-turn");
+        let result = rows
+            .iter_mut()
+            .find(|r| r["type"] == "tool/result")
+            .unwrap();
+        result["data"]["message"]["toolCallId"] = json!("call-that-was-never-made");
+        result["data"]["message"]["source"]["callId"] = json!("call-that-was-never-made");
+        let reason = probe(&rows);
+        eprintln!("broken relationship: {reason}");
+        assert!(reason.starts_with("session snapshot line "), "{reason}");
+    }
+
+    #[test]
+    fn a_newer_format_version_is_rejected_by_name() {
+        let mut rows = recorded("bash-tool-turn");
+        rows[0]["version"] = json!(9);
+        let reason = probe(&rows);
+        eprintln!("newer version: {reason}");
+        assert!(reason.contains("v9"), "{reason}");
+        assert!(reason.contains("v4"), "{reason}");
+    }
+
+    #[test]
+    fn mixed_projected_and_complete_rows_and_bad_json_are_rejected() {
+        let mut rows = recorded("bash-tool-turn");
+        rows[1]["seq"] = json!(0);
+        rows[1]["time"] = json!(0);
+        let reason = probe(&rows);
+        assert!(
+            reason.contains("cannot mix projected and complete body rows"),
+            "{reason}"
+        );
+        let header = hoh_util_values::js_json_stringify(&recorded("bash-tool-turn")[0]);
+        let reason = compare::strict_catalog(&format!("{header}\nnot json\n"))
+            .unwrap_err()
+            .reason;
+        assert_eq!(reason, "session snapshot line 2 contains invalid JSON");
+        assert_eq!(
+            compare::strict_catalog("").unwrap_err().reason,
+            "session snapshot must start with a session header"
+        );
     }
 }

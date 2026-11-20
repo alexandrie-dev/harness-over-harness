@@ -94,7 +94,7 @@ impl Normalizer {
             }
         };
         for log in logs.iter() {
-            if let Some(header) = log.first() {
+            if let Some(header) = log.first().filter(|h| h["type"] == "session") {
                 claim(&header["id"], "session", true);
             }
         }
@@ -349,6 +349,26 @@ impl Normalizer {
                 return Err("session snapshot must start with a session header".into());
             }
             let version = header.get("version").cloned();
+            // The adjacent migrations refuse a delivery marker that already claims their target
+            // generation (`session-format-v2-to-v3`, `-v3-to-v4`); the source reaches them through
+            // `prepareSessionSnapshotFixtureForComparison`.
+            if let Some(source) = version
+                .as_ref()
+                .and_then(Value::as_u64)
+                .filter(|v| (2..=3).contains(v))
+            {
+                let claims = log.iter().skip(1).any(|e| {
+                    e["type"] == "session-log-deepseek/delivery-accepted"
+                        && e["data"]["sessionFormatVersion"].as_u64() == Some(source + 1)
+                });
+                if claims {
+                    return Err(format!(
+                        "format v{source} delivery marker claims target format v{}",
+                        source + 1
+                    ));
+                }
+            }
+            let header = &mut log[0];
             if let Some(o) = header.as_object_mut() {
                 o.shift_remove("version");
             }
@@ -368,33 +388,7 @@ impl Normalizer {
                 self.clocks(record)?;
                 self.value(record, ctx, false);
                 if i > 0 {
-                    if record["type"] == "system/message"
-                        && let Some(text) = record.pointer_mut("/data/message/content/0/text")
-                    {
-                        *text = json!("{{system}}");
-                    }
-                    if record["type"] == "request/header"
-                        && let Some(tools) = record.pointer_mut("/data/header/tools")
-                    {
-                        *tools = if retain_names && tools.is_array() {
-                            Value::Array(
-                                tools
-                                    .as_array()
-                                    .into_iter()
-                                    .flatten()
-                                    .map(|t| {
-                                        if t.is_string() {
-                                            t.clone()
-                                        } else {
-                                            t["name"].clone()
-                                        }
-                                    })
-                                    .collect(),
-                            )
-                        } else {
-                            json!("{{tools}}")
-                        };
-                    }
+                    scrub_bulk(record, retain_names);
                     if let Some(o) = record.as_object_mut() {
                         for key in ["seq", "time", "seq0", "time0"] {
                             o.shift_remove(key);
@@ -426,13 +420,17 @@ impl Normalizer {
                 zeros(v.get_mut("dt"));
             }
         }
-        match kind.as_str() {
-            "hook/result" => zero(&mut record["data"], &["durationMs"], false),
-            "job/registered" | "job/settled" => {
-                zero(&mut record["data"], &["startedAt", "finishedAt"], false)
+        // `record["data"]` would insert `data: null` into a row that has none; only touch an existing one.
+        let mut data = |keys: &[&str]| {
+            if let Some(data) = record.get_mut("data") {
+                zero(data, keys, false);
             }
-            "goal/change" => zero(&mut record["data"], &["createdAt", "updatedAt"], false),
-            "subagent/catalog" => zero(&mut record["data"], &["childCreatedAt"], false),
+        };
+        match kind.as_str() {
+            "hook/result" => data(&["durationMs"]),
+            "job/registered" | "job/settled" => data(&["startedAt", "finishedAt"]),
+            "goal/change" => data(&["createdAt", "updatedAt"]),
+            "subagent/catalog" => data(&["childCreatedAt"]),
             "feedback/message-put" => {
                 if let Some(item) = record.pointer_mut("/data/item") {
                     zero(item, &["createdAt", "updatedAt"], false);
@@ -554,7 +552,7 @@ impl Normalizer {
     }
 }
 
-fn scrub_bulk(record: &mut Value, retain_names: bool) {
+pub fn scrub_bulk(record: &mut Value, retain_names: bool) {
     if record["type"] == "system/message"
         && let Some(text) = record
             .pointer_mut("/data/message/content/0/text")
@@ -687,4 +685,157 @@ fn replace_cwd(text: &str, cwd: &str) -> String {
     }
     out.push_str(&text[cursor..]);
     out
+}
+
+/// Normalization of the first version (see NORMALIZATION.md, which lists every rule with its test).
+///
+/// The recordings were made by the full set of dsh plugins. The first version has 118 entries;
+/// everything below removes only what a plugin outside them contributes to the *recorded* side.
+/// The actual side is never rewritten, so anything our own plugins add or change stays a difference.
+pub mod v1 {
+    use serde_json::Value;
+
+    /// Rule `N-PROMPT-FOREIGN`: system-prompt paragraphs written by plugins outside the 118.
+    /// `(paragraph prefix, owner package)`; a paragraph is the text between blank lines.
+    pub const FOREIGN_PROMPT_PARAGRAPHS: &[(&str, &str)] = &[
+        (
+            "Use the glob tool — not shell find — ",
+            "@deepseek-ai/dsh-tool-fs-search",
+        ),
+        (
+            "Use the grep tool — not shell grep or rg — ",
+            "@deepseek-ai/dsh-tool-fs-search",
+        ),
+        (
+            "Use the workflow tool ONLY when the user explicitly asks for a workflow",
+            "@deepseek-ai/dsh-tool-workflow",
+        ),
+    ];
+
+    /// Rule `N-TOOLS-FOREIGN`: tools registered by plugins outside the 118.
+    pub const FOREIGN_TOOLS: &[(&str, &str)] = &[
+        ("glob", "@deepseek-ai/dsh-tool-fs-search"),
+        ("grep", "@deepseek-ai/dsh-tool-fs-search"),
+        ("workflow", "@deepseek-ai/dsh-tool-workflow"),
+    ];
+
+    /// Rule `N-BOOT-FOREIGN-PLUGINS`: plugin rows of the full dsh profiles whose package is outside
+    /// the 118 and has no Rust implementation. The overlay disables them, as an operator would, so
+    /// the profile boots; `(row id, package)`.
+    pub const FOREIGN_PLUGINS: &[(&str, &str)] = &[
+        ("connection", "@deepseek-ai/dsh-client-connection"),
+        ("file-upload", "@deepseek-ai/dsh-client-file-upload"),
+        ("deepseek-account", "@deepseek-ai/dsh-deepseek-account"),
+        (
+            "llm-deepseek-account",
+            "@deepseek-ai/dsh-llm-deepseek-account",
+        ),
+        ("llm-pi-ai", "@deepseek-ai/dsh-llm-pi-ai"),
+        ("hooks-claude-code", "@deepseek-ai/dsh-hooks-claude-code"),
+        ("hooks-codex", "@deepseek-ai/dsh-hooks-codex"),
+        ("plugin-manager", "@deepseek-ai/dsh-plugin-manager"),
+        (
+            "tool-plugin-manager",
+            "@deepseek-ai/dsh-plugin-manager/tools",
+        ),
+        ("ptc-runtime", "@deepseek-ai/dsh-ptc-runtime-node"),
+        ("workflow-ptc", "@deepseek-ai/dsh-workflow-ptc"),
+        ("tool-workflow", "@deepseek-ai/dsh-tool-workflow"),
+        ("tool-fs-search", "@deepseek-ai/dsh-tool-fs-search"),
+        (
+            "repeat-tool-reminder",
+            "@deepseek-ai/dsh-repeat-tool-reminder",
+        ),
+        ("plan-mode", "@deepseek-ai/dsh-plan-mode"),
+        ("typert", "@deepseek-ai/dsh-typert-registry"),
+        ("typert-loader", "@deepseek-ai/dsh-typert-loader"),
+        ("typert-gateway", "@deepseek-ai/dsh-api-gateway"),
+        ("remote-access", "@deepseek-ai/dsh-api-remote-access"),
+        ("timer", "@deepseek-ai/cordis-plugin-timer"),
+        (
+            "session-title-provider",
+            "@deepseek-ai/dsh-session-title-all-prompts-llm",
+        ),
+    ];
+
+    /// The overlay patch (JSON is valid YAML) appended after every scenario patch.
+    pub fn exclusion_patch() -> String {
+        exclusion_patch_with(&[])
+    }
+
+    /// The same overlay plus rows an operator disabled with `--disable-plugin` for a diagnostic run.
+    /// Those rows are not normalization: a run that uses them is labelled as diagnostic.
+    pub fn exclusion_patch_with(extra: &[String]) -> String {
+        let rows: Vec<Value> = FOREIGN_PLUGINS
+            .iter()
+            .map(|(id, _)| *id)
+            .chain(extra.iter().map(String::as_str))
+            .map(|id| serde_json::json!({"id": id, "disabled": true, "insert": null}))
+            .collect();
+        hoh_util_values::js_json_stringify(&Value::Array(rows))
+    }
+
+    /// Every rule id; NORMALIZATION.md must carry a section for each.
+    pub const RULES: &[&str] = &[
+        "N-BOOT-FOREIGN-PLUGINS",
+        "N-PROMPT-FOREIGN",
+        "N-TOOLS-FOREIGN",
+    ];
+
+    /// Drop the foreign paragraphs from a recorded system prompt (one or several `system/message`
+    /// revisions joined by the satellite separators).
+    pub fn prompt(text: &str) -> String {
+        let kept: Vec<&str> = text
+            .split("\n\n")
+            .filter(|paragraph| {
+                !FOREIGN_PROMPT_PARAGRAPHS
+                    .iter()
+                    .any(|(prefix, _)| paragraph.starts_with(prefix))
+            })
+            .collect();
+        let mut result = kept.join("\n\n");
+        // A removed final paragraph carried the file's closing newline.
+        if text.ends_with('\n') && !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result
+    }
+
+    /// Apply `N-TOOLS-FOREIGN` to the `tools` of every recorded `request/header` row, whether the
+    /// row lists tool names or tool definitions.
+    pub fn header_rows(rows: &mut [Value]) {
+        for row in rows.iter_mut().filter(|r| r["type"] == "request/header") {
+            if let Some(tools) = row.pointer_mut("/data/header/tools") {
+                header_tools(tools);
+            }
+        }
+    }
+
+    /// `N-TOOLS-FOREIGN` for one recorded header's `tools` (names or definitions).
+    pub fn header_tools(tools: &mut Value) {
+        if let Some(list) = tools.as_array_mut() {
+            list.retain(|tool| {
+                let name = tool.as_str().or_else(|| tool["name"].as_str());
+                !name.is_some_and(|name| FOREIGN_TOOLS.iter().any(|(foreign, _)| *foreign == name))
+            });
+        }
+    }
+
+    /// Drop the foreign tools from a recorded tool-schema set (an array of tool definitions).
+    pub fn tools(set: &Value) -> Value {
+        match set.as_array() {
+            Some(tools) => Value::Array(
+                tools
+                    .iter()
+                    .filter(|tool| {
+                        !tool["name"].as_str().is_some_and(|name| {
+                            FOREIGN_TOOLS.iter().any(|(foreign, _)| *foreign == name)
+                        })
+                    })
+                    .cloned()
+                    .collect(),
+            ),
+            None => set.clone(),
+        }
+    }
 }

@@ -23,7 +23,24 @@ hoh-util-values = { path = "../hoh-util-values" }
 hoh-util-workspace-path = { path = "../hoh-util-workspace-path" }
 hoh-session-format = { path = "../hoh-session-format" }
 hoh-session-format-v0-to-v1 = { path = "../hoh-session-format-v0-to-v1" }
+hoh-session-format-catalog = { path = "../hoh-session-format-catalog" }
 hoh-jsdiff = { path = "../hoh-jsdiff" }
+hoh-kernel = { path = "../hoh-kernel" }
+hoh-error = { path = "../hoh-error" }
+hoh-loader = { path = "../hoh-loader" }
+hoh-agent = { path = "../hoh-agent" }
+hoh-agent-preset-registry = { path = "../hoh-agent-preset-registry" }
+hoh-sandbox = { path = "../hoh-sandbox" }
+hoh-sandbox-policy = { path = "../hoh-sandbox-policy" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
+hoh-tools = { path = "../hoh-tools" }
+hoh-session = { path = "../hoh-session" }
+hoh-subagent = { path = "../hoh-subagent" }
+hoh-user-questions = { path = "../hoh-user-questions" }
+hoh-working-directory = { path = "../hoh-working-directory" }
+hoh-llm = { path = "../hoh-llm" }
+serde.workspace = true
+schemars.workspace = true
 
 [[bin]]
 name = "hoh-conformance"
@@ -32,3 +49,6 @@ path = "src/main.rs"
 [[bin]]
 name = "hoh-conformance-fake"
 path = "src/bin/fake.rs"
+
+[dev-dependencies]
+hoh-session-projection = { path = "../hoh-session-projection" }
