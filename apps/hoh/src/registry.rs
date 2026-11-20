@@ -101,6 +101,7 @@ pub fn registry() -> PluginRegistry {
         .add::<super::window_glue::WindowModelSettings>("hoh:window-model-settings")
         .add::<super::window_glue::WindowPrivilegedApprover>("hoh:window-privileged-approver")
         .add::<hoh_window_destructive_guard::DestructiveGuard>("hoh:window-destructive-guard");
+    crate::v1_registry::add(&mut registry);
     #[cfg(debug_assertions)]
     if std::env::var_os("HOH_TEST_EXIT_THEN_FAIL").is_some() {
         registry.add::<ExitThenFailFixture>("hoh:test-exit-then-fail");

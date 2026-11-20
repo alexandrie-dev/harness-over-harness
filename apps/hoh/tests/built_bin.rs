@@ -474,7 +474,13 @@ async fn schema_dump_reports_the_compiled_packages_and_the_missing_packages_with
     assert!(
         entries
             .iter()
-            .any(|e| e["name"] == "@deepseek-ai/dsh-headless" && e["status"] == "error")
+            .any(|e| e["name"] == "@deepseek-ai/dsh-headless" && e["status"] == "schema")
+    );
+    // A package the build does not include stays reported as missing.
+    assert!(
+        entries
+            .iter()
+            .any(|e| e["name"] == "@deepseek-ai/dsh-jobs-local" && e["status"] == "error")
     );
     assert!(!root.path().join("home/logs").exists());
 }

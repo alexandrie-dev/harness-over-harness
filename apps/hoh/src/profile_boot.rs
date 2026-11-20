@@ -503,7 +503,10 @@ pub async fn run_profile(
         env: options.env.clone(),
         overlays,
     });
-    let window_profile = options.profile.name == crate::window_glue::WINDOW_PROFILE;
+    // The sdk profiles speak the same stdio JSON-RPC as the window engine, so they take the same glue
+    // (single stdin reader, end-of-input announcement, exit after `shutdown`).
+    let window_profile = [crate::window_glue::WINDOW_PROFILE, "sdk", "sdk-minimal"]
+        .contains(&options.profile.name.as_str());
     let launch = async {
         ctx.provide::<ProfileContextKey>(Arc::new(ProfileContext {
             name: options.profile.name,
@@ -547,11 +550,9 @@ pub async fn run_profile(
             .await
             .map_err(|error| LoadError::Runtime(error.to_string()))?;
         }
-        let base = hoh_loader::resolve_config_path(
-            &path.to_string_lossy(),
-            (options.env.var)("DSH_SNAPSHOT").as_deref(),
-            &options.env.cwd.to_string_lossy(),
-        );
+        // dsh's profile boot keeps the profile root `cordis.yml`; the replay basename swap
+        // (`resolveConfigPath`) belongs to the explicit config-path entry, not to a profile.
+        let base = path.clone();
         hoh_loader::boot(
             &ctx,
             hoh_loader::BootOptions {

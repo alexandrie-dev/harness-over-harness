@@ -9,6 +9,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Rust counterparts of dsh's `local:` test plugins, for the conformance runner only.
+conformance-fixtures = ["dep:hoh-conformance"]
+
 [dependencies]
 hoh-loader = { path = "../../crates/hoh-loader" }
 hoh-kernel = { path = "../../crates/hoh-kernel" }
@@ -62,6 +66,57 @@ hoh-user-questions = { path = "../../crates/hoh-user-questions" }
 hoh-user-approval = { path = "../../crates/hoh-user-approval" }
 hoh-window-destructive-guard = { path = "../../crates/hoh-window-destructive-guard" }
 hoh-working-directory = { path = "../../crates/hoh-working-directory" }
+hoh-agent-default-model = { path = "../../crates/hoh-agent-default-model" }
+hoh-agent-instructions = { path = "../../crates/hoh-agent-instructions" }
+hoh-command-compact = { path = "../../crates/hoh-command-compact" }
+hoh-command-feedback = { path = "../../crates/hoh-command-feedback" }
+hoh-command-goal = { path = "../../crates/hoh-command-goal" }
+hoh-commands = { path = "../../crates/hoh-commands" }
+hoh-compaction-image-offload = { path = "../../crates/hoh-compaction-image-offload" }
+hoh-compaction-tool-result-pruner = { path = "../../crates/hoh-compaction-tool-result-pruner" }
+hoh-goal = { path = "../../crates/hoh-goal" }
+hoh-goal-round-driver = { path = "../../crates/hoh-goal-round-driver" }
+hoh-headless = { path = "../../crates/hoh-headless" }
+hoh-llm-replay = { path = "../../crates/hoh-llm-replay" }
+hoh-llm-retry = { path = "../../crates/hoh-llm-retry" }
+hoh-mcp-resources = { path = "../../crates/hoh-mcp-resources" }
+hoh-permission-presets = { path = "../../crates/hoh-permission-presets" }
+hoh-plugin-package-inventory-deepseek = { path = "../../crates/hoh-plugin-package-inventory-deepseek" }
+hoh-session-checkpoint-policy = { path = "../../crates/hoh-session-checkpoint-policy" }
+hoh-session-log-deepseek = { path = "../../crates/hoh-session-log-deepseek" }
+hoh-session-projection-cache = { path = "../../crates/hoh-session-projection-cache" }
+hoh-session-query-sqlite = { path = "../../crates/hoh-session-query-sqlite" }
+hoh-session-title = { path = "../../crates/hoh-session-title" }
+hoh-settings = { path = "../../crates/hoh-settings" }
+hoh-skill-filesystem = { path = "../../crates/hoh-skill-filesystem" }
+hoh-spill-local = { path = "../../crates/hoh-spill-local" }
+hoh-spill-policy = { path = "../../crates/hoh-spill-policy" }
+hoh-subagent = { path = "../../crates/hoh-subagent" }
+hoh-subagent-fork-in-process = { path = "../../crates/hoh-subagent-fork-in-process" }
+hoh-subagent-spawn-in-process = { path = "../../crates/hoh-subagent-spawn-in-process" }
+hoh-token-meter = { path = "../../crates/hoh-token-meter" }
+hoh-tool-call-timeout-policy = { path = "../../crates/hoh-tool-call-timeout-policy" }
+hoh-tool-goal = { path = "../../crates/hoh-tool-goal" }
+hoh-tool-skill = { path = "../../crates/hoh-tool-skill" }
+hoh-tool-subagent-control = { path = "../../crates/hoh-tool-subagent-control" }
+hoh-tool-web = { path = "../../crates/hoh-tool-web" }
+hoh-web-deepseek-api = { path = "../../crates/hoh-web-deepseek-api" }
+hoh-web-search-deepseek = { path = "../../crates/hoh-web-search-deepseek" }
+hoh-authorization = { path = "../../crates/hoh-authorization" }
+hoh-file-reference-local = { path = "../../crates/hoh-file-reference-local" }
+hoh-fs-observation-policy = { path = "../../crates/hoh-fs-observation-policy" }
+hoh-message-feedback = { path = "../../crates/hoh-message-feedback" }
+hoh-office-kit = { path = "../../crates/hoh-office-kit" }
+hoh-schedule = { path = "../../crates/hoh-schedule" }
+hoh-session-title-first-prompt-llm = { path = "../../crates/hoh-session-title-first-prompt-llm" }
+hoh-skill-office = { path = "../../crates/hoh-skill-office" }
+hoh-time-context = { path = "../../crates/hoh-time-context" }
+hoh-tool-office = { path = "../../crates/hoh-tool-office" }
+hoh-tool-present = { path = "../../crates/hoh-tool-present" }
+hoh-tool-schedule = { path = "../../crates/hoh-tool-schedule" }
+hoh-tool-workspace-dependencies = { path = "../../crates/hoh-tool-workspace-dependencies" }
+hoh-workspace = { path = "../../crates/hoh-workspace" }
+hoh-conformance = { path = "../../crates/hoh-conformance", optional = true }
 futures-util.workspace = true
 indexmap.workspace = true
 serde.workspace = true
