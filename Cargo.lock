@@ -2489,6 +2489,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-query-sqlite"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "futures-util",
+ "hoh-error",
+ "hoh-kernel",
+ "hoh-session",
+ "hoh-session-persistence",
+ "hoh-session-persistence-jsonl",
+ "hoh-session-query",
+ "hoh-timeout",
+ "hoh-util-values",
+ "hoh-util-workspace-path",
+ "rusqlite",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hoh-session-telemetry"
 version = "0.1.0"
 dependencies = [
