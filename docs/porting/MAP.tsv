@@ -35,7 +35,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 1	port	packages/deliverables/deliverable-file-references	@deepseek-ai/dsh-deliverable-file-references	hoh-deliverable-file-references	30	42	done	
 1	port	packages/deliverables/tool-present	@deepseek-ai/dsh-tool-present	hoh-tool-present	127	282	done	
 1	port	packages/document/office-kit	@deepseek-ai/dsh-office-kit	hoh-office-kit	1399	2071	done	зависит от: dsh-typert-protocol=skip
-1	port	packages/document/tool-office	@deepseek-ai/dsh-tool-office	hoh-tool-office	761	1082	done	
+1	port	packages/document/tool-office	@deepseek-ai/dsh-tool-office	hoh-tool-office	761	1082	accepted	
 1	port	packages/fs/fs	@deepseek-ai/dsh-fs	hoh-fs	640	248	done	
 1	port	packages/fs/fs-local	@deepseek-ai/dsh-fs-local	hoh-fs-local	1401	2552	done	
 1	port	packages/fs/fs-patch	@deepseek-ai/dsh-fs-patch	hoh-fs-patch	350	334	done	
@@ -164,7 +164,7 @@ stage	decision	dsh_path	dsh_name	hoh_crate	src_lines	test_lines	status	note
 2	port	packages/team/tool-agent-team	@deepseek-ai/dsh-tool-agent-team	hoh-tool-agent-team	235	1064	writing:x8	
 2	port	packages/telemetry/otel	@deepseek-ai/dsh-otel	hoh-otel	475	466	writing:x8	
 2	port	packages/util/ripgrep	@deepseek-ai/dsh-util-ripgrep	hoh-util-ripgrep	109	189	done	
-2	port	packages/web/tool-web	@deepseek-ai/dsh-tool-web	hoh-tool-web	1054	1692	writing:x8	
+2	port	packages/web/tool-web	@deepseek-ai/dsh-tool-web	hoh-tool-web	1054	1692	done	
 2	port	packages/web/web	@deepseek-ai/dsh-web	hoh-web	507	394	done	зависит от: dsh-typert-protocol=skip
 2	port	packages/web/web-deepseek-api	@deepseek-ai/dsh-web-deepseek-api	hoh-web-deepseek-api	1052	2105	done	зависит от: dsh-deepseek-account=later, dsh-llm-deepseek-account=later
 2	port	packages/web/web-fetch-http	@deepseek-ai/dsh-web-fetch-http	hoh-web-fetch-http	601	853	done	
