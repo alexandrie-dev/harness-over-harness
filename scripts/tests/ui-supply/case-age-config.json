@@ -1,0 +1,6 @@
+{
+  "configChanges": {
+    "minimumReleaseAge": 0
+  },
+  "error": "config: minimumReleaseAge"
+}

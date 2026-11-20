@@ -1,0 +1,67 @@
+{
+  "manifest": {
+    "dependencies": {
+      "fixture": "1.0.0"
+    },
+    "engines": {
+      "pnpm": "12.21.0"
+    }
+  },
+  "policy": {
+    "direct": {
+      "fixture": "1.0.0"
+    },
+    "licenses": [
+      "MIT"
+    ]
+  },
+  "lock": {
+    "lockfileVersion": "9.0",
+    "importers": {
+      ".": {
+        "dependencies": {
+          "fixture": {
+            "specifier": "1.0.0",
+            "version": "1.0.0"
+          }
+        }
+      }
+    },
+    "packages": {
+      "fixture@1.0.0": {
+        "resolution": {
+          "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+      }
+    },
+    "snapshots": {
+      "fixture@1.0.0": {}
+    }
+  },
+  "metadata": {
+    "versions": {
+      "1.0.0": {
+        "license": "MIT",
+        "dist": {
+          "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+          "tarball": "https://registry.npmjs.org/fixture/-/fixture-1.0.0.tgz"
+        }
+      }
+    },
+    "time": {
+      "1.0.0": "2020-01-01T00:00:00Z"
+    }
+  },
+  "audit": {
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0
+      }
+    },
+    "advisories": {}
+  }
+}

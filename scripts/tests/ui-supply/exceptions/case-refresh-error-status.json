@@ -1,0 +1,5 @@
+{
+  "refresh": true,
+  "auditExit": 2,
+  "error": "pnpm audit returned failure"
+}

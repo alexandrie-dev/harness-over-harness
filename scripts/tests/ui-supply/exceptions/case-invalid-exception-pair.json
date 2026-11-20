@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "exception/version": "4.0.8"
+  },
+  "error": "unsupported advisory/package/version"
+}

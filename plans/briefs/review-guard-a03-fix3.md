@@ -1,0 +1,7 @@
+You only read. Do not run builds, tests, servers, browsers or any command that writes; do not edit or create files. Write in Russian.
+
+Project HoH, working tree /home/save/Alexandrie/HarnessOverHarness (uncommitted changes vs HEAD). Subject: fix of QA finding A-03
+Subject: closure round «details fix3» of writer sg2 (section «details fix3» in /mnt/toshiba/alexandrie/hoh/logs/sg2-guard.glue.sonnet.md). Previous review: /mnt/toshiba/alexandrie/hoh/pipeline/reviews/guard-a03-fix2.214154.md (one error: second escalation request carried the model justification in reason to the host). The fix rewrites escalation requests in crates/hoh-user-approval/src/host.rs build_request (host mode only).
+Check: the error is closed (no path for model text into HostApprovalRequest.reason/humanText for sandbox escalations of bash and file tools); the signed action now carries the rewritten reason — verify this cannot break the one-time escalation grant matching (pre_approve_escalation keyed by reason?), actionHash/mac verification of the host response, or the engine-side comparison of request vs response; non-window profiles and the engine journal unchanged; detection of 'escalation' by parsing the reason string is not spoofable by a tool/model into rewriting an ordinary request (or if spoofable, whether it matters); tests would fail on the old code.
+Each finding: scenario, deviation, evidence file:line, level (blocker / error / note). Taste is not a finding.
+The LAST line must be exactly 'ВЕРДИКТ: ЧИСТО' or 'ВЕРДИКТ: ЗАМЕЧАНИЯ'.

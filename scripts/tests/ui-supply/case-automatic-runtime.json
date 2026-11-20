@@ -1,0 +1,12 @@
+{
+  "replace": {
+    "manifest/devEngines": {
+      "runtime": {
+        "name": "node",
+        "version": "24.22.3",
+        "onFail": "download"
+      }
+    }
+  },
+  "error": "direct: automatic package manager/runtime downloads forbidden"
+}

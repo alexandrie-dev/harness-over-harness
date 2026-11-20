@@ -1,0 +1,8 @@
+{
+  "replace": {
+    "audit": {
+      "error": "registry unavailable"
+    }
+  },
+  "error": "audit: unavailable"
+}

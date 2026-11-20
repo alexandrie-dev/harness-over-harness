@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "exception/review_by": "2026-12-03"
+  },
+  "error": "invalid CEO decision/review period"
+}

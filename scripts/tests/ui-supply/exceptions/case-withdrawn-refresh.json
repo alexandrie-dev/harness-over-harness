@@ -1,0 +1,5 @@
+{
+  "refresh": true,
+  "cleanAudit": true,
+  "error": "advisory absent after refresh; delete"
+}

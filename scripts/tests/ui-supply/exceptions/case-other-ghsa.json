@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "audit/advisories/1247710/github_advisory_id": "GHSA-xxxx-yyyy-zzzz"
+  },
+  "error": "audit: known vulnerability"
+}

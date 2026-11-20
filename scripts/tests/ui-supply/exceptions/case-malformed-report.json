@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "audit/error": "offline planted failure"
+  },
+  "error": "audit: unavailable"
+}

@@ -1,0 +1,4 @@
+{
+  "wrongLockAudit": true,
+  "error": "audit: lock changed since audit"
+}

@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "lock/packages/fixture@1.0.0/resolution": {}
+  },
+  "error": "integrity: missing/invalid"
+}

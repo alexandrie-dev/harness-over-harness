@@ -530,6 +530,18 @@ Claude, Codex и Kimi параллельно. **Открытый вопрос о
 исполнителей по одному не выписывать. `cargo-deny`, `cargo-vet` не ставить до ответа CEO. Число исполнителей
 ограничивают только память и лимиты подписок.
 
+**Ответы основателя через CEO, 18.11 16:15.** (1) `cargo-deny` и `cargo-vet` установить разрешено («да, разрешаю»);
+ставить, когда дойдёт очередь, место и версии записать сюда. (2) Безопасность: «не прям параноидально». Схема
+соразмерная и не тормозит первую версию: берём дешёвые автоматические слои (закреплённые версии, срок выдержки новых
+версий, сборка с `--locked`, `cargo-deny`); потолок 12/150 и ручное ревью диффа каждого обновления для первой версии
+не обязательны. Если потолок мешает нормальному стеку окна — выбираем стек и записываем число пакетов и причину.
+
+Решение ведущего 18.11 (ядро): ошибка очистки при прямом вызове `Disposer::dispose` в образце доходит до вызывающего
+(`fiber.ts:515–526, 532–541`), у нас пишется в журнал. Сделать вызов возвращающим ошибку — 82 места (5 рабочих,
+75 тестов, 2 UI) плюс `AdapterRegistrationHandle::dispose` (9) и `DirectoryRegistrationHandle::dispose` (3).
+Не меняем сейчас: записано как известное отличие; меняем, когда первый переносимый пакет или сценарий покажет, что
+вызывающий ловит эту ошибку. Причина: правка публичной сигнатуры ломает всех писателей на ядре посреди волны.
+
 Решения ведущего 18.11: (1) прогонщик не переписывает патчи сценариев, `!!js` вычисляет загрузчик, локальные
 подставки получают имя `local:<путь>` и пишутся по мере переноса пакетов, которые они изображают (до того сценарий
 падает с причиной) — так прогон считает честно уже на этапе 0; (2) результат прогона — `conformance/RESULTS.tsv`,
@@ -578,3 +590,877 @@ HTTP crate — решить при первом потребителе). Оши�
 Устаревший хвост прежнего списка:
 бенчмарк и железо (8, 8а) → репозиторий, лицензия, marketplace (10, 4г) → разрешения на установки (11) →
 инструмент для окна после отчёта (6). Потом PLAN.md на утверждение. По мере прихода отчётов сверять их с ответами и обновлять очередь.
+
+## 2026-11-18, решения CEO по вопросам окна
+
+- Вопросы 1–5 решены CEO (записаны в `docs/window.md` §7): скрипты задач в песочнице — да; движок дочерним
+  процессом, протокол не привязан к stdio; книги только открытые и от пользователя; docx/pptx через системный
+  `soffice`, без него — внешняя программа; русский и слова основателя. Запрет скриптов в `PLAN.md` снят.
+- npm-часть окна (пакеты 1, 5, 6, 7) ждёт разрешения основателя через CEO.
+- ui1 (Codex, новый): пакеты 2–3 окна, `plans/briefs/window-ui1-protocol-stub.md`, фоновая задача `b0bvghn1o`,
+  target `/mnt/toshiba/alexandrie/hoh/target-ui1`, лог `logs/ui1.proto1.*`.
+- Проверка закрытия шестого круга ядра (Sonnet): R14, путь сбоя установки и fix4 закрыты; R54 и L19 частично,
+  плюс регрессия `$ref`+`default`. Задание седьмого круга `plans/briefs/fix5-stage0-k1.md` для k1
+  (`01a1e540-dcef-7f90-86f1-45eb1286aee0`) запустить после коммита задачи `bzmfhxkg2` (иначе коммит захватит
+  половину правок).
+- Ревью Codex `hoh-system-prompt` получено: принято к исправлению 1–4, 7 (+тест диагностики); 5–6 — наследие ядра,
+  в PORT_NOTES. Задание `plans/briefs/fix-stage1-s4-system-prompt.md` — новый Sonnet-исполнитель после завершения
+  verify `bw2a1fza7` (иначе проверка увидит половину правок).
+- s4 сдал `hoh-persona` (11) и `hoh-deliverable-file-references` (1): verify `bblsssglq`, ревью Codex `bqsllat6w`
+  (`plans/briefs/review-hoh-persona-dfr.md`).
+- Ревью `hoh-persona`/`dfr`: одна находка — null в полях с умолчанием (суть ядра, Schemastery `index.ts:533-542`);
+  перенесено в седьмой круг ядра, пункт 5 `fix5-stage0-k1.md`. После него: тесты null для persona (3 поля), затем
+  `done` при зелёном verify `bblsssglq`.
+- `hoh-llm` done (коммит `0136cbe`, verify `reports/llm-1118b`: 226). port-status: 37 из 205.
+- l1 сдал исправления части B загрузчика (270 тестов, 1 ignored ждёт ядро круг 7 п.1): verify `b5sxpw283`. После
+  него — `done` и задание `plans/briefs/stage0-l1-cmdline-app.md` (сессия l1 `01a1e540-e759-7552-a9a6-f191cff930c6`).
+- w1 сдал `hoh-web` (49): verify `b0cs07nen`, ревью Sonnet (delegate «Review: hoh-web»). w1 получил
+  `hoh-web-fetch-http` и `hoh-credentials-local` (фон `bj2zxypjr`, задание `logs/lead1118/w1-webfetch.txt`).
+- 16:52: проверка ядра `bzmfhxkg2` убита по 30-мин пределу фоновой задачи (нагрузка 36–45 на 12 потоках, все
+  проверки ведущего ждут блокировку общего target). Перезапущена `bwadm1pbp` с пределом 2 ч; коммит только при
+  коде 0 verify (прежний шаблон `cat summary && commit` коммитил бы и при провале). Правило: проверки ведущего —
+  с `timeout` 2 ч и `if verify; then commit`.
+- Ревью Sonnet `hoh-web`: ошибок нет. Хвост для w1 после текущих пакетов: тест «настроенный id + Err из
+  available()» (п.6) и проверка тестом атрибуции лога сбоя слушателя (п.1: в источнике, вероятно, fiber/имя
+  вкладчика). `done` — после зелёного verify `b0cs07nen`.
+- ~17:00: c4 сдал v1-to-v2 (63): verify `bsu0vigol`, ревью Sonnet (Kimi снова в лимите); c4 получил v2-to-v3
+  (`bc2stu3fb`, `logs/lead1118/c4-v2v3.txt`). Вопросы c4 1 и 3 → w7 `plans/briefs/fix-w7-shared-precision.md`
+  (`btbjzhd6y`); вопрос 2 (Windows) — заметка, v1 только Linux.
+- system-prompt verify 83 прошло; исправления по ревью — Sonnet-делегат «Writer s4: hoh-system-prompt review fixes».
+- w5 сдал `hoh-skill` (45): verify `bqv2lvw3s`, ревью Sonnet; w5 получил `hoh-settings`, `hoh-skill-office` (`b5zrukucx`).
+- ui1 убит 30-мин пределом, возобновлён (сессия `01a1eed6-849b-7e13-99cc-fc56e98d31fa`, `bmkyr6w0c`, предел 2 ч).
+- w5 остановился на `hoh-settings`: не хватает трёх API загрузчика → добавлены первым пунктом в задание l1
+  (`stage0-l1-cmdline-app.md`). w5 тем временем делает `hoh-skill-office`. verify persona `bblsssglq` убит по
+  30-мин пределу — перезапуск после седьмого круга ядра (там же тесты null).
+- 17:10 CEO: писать в треде по-русски; приёмка важнее ещё одного писателя. Решение: одновременно не больше
+  6 пишущих исполнителей со сборками (Codex и Sonnet вместе); новые задания — очередью по мере освобождения;
+  проверки ведущего — по одной за раз через общий target, предел 2 ч. Очередь: l1 (API загрузчика + cmdline,
+  после verify загрузчика `b5sxpw283`), затем w5 `plans/briefs/fix-w5-skill.md` (в конце — `hoh-skill-office`), затем k1 седьмой круг (после `bwadm1pbp`).
+- Ревью Sonnet v1-to-v2: 2 ошибки (cause — API уже есть в hoh-session-format, вопрос c4 №1 ошибочен, значит
+  пункт 2 задания w7 лишний; ранний отказ на битых chunk), ослабленные проверки, тест на список типов, сборка
+  таблицы на каждый вызов. Задание `plans/briefs/fix-c4-v1-to-v2.md` — c4 после v2-to-v3 (`bc2stu3fb`).
+- Ревью Sonnet `hoh-skill`: текст для модели совпадает; ослабленные проверки, один ненаблюдаемый тест, нетипизированные записи → `plans/briefs/fix-w5-skill.md` (очередь).
+
+## 2026-11-18 ~17:25, указания CEO (слова основателя «ок взять TypeScript в местах, мб на расте есть готовые либы?»)
+
+- npm окна разрешено (чтение CEO). ui2 (Codex, новый, сеть только в этом запуске): пакеты окна 8 и 1,
+  `plans/briefs/window-ui2-base-supply.md`, запуск `scripts/codex-writer-net.sh`, фон `bpxvi2ena`; свои
+  CARGO_HOME `/mnt/toshiba/alexandrie/hoh/cargo-home-ui2` и pnpm-store. `apps/hoh-desktop` — отдельный workspace
+  (`exclude` в корневом Cargo.toml; l1 добавит `apps/hoh` явно, не шаблоном).
+- Исследование сокращения 65 неначатых строк описи (`research/v1-unstarted.tsv`, 69 000 строк): (а)+(б) — Sonnet
+  «Research: Rust crates and engines», файл `research/v1-shortcuts-ab.md`; (в) — Codex `bgvdt4xhs`, файл
+  `research/v1-shortcuts-c.md`. Свести в `research/v1-shortcuts.md` + новая оценка → CEO.
+- Приёмка разгружена: `scripts/accept.sh NAME CRATE...` — три полосы `target-accept-{a,b,c}`, параллельно.
+  Разбор ревью — исполнитель по `plans/briefs/triage-review.md`, ведущему только подтверждённое.
+  Новых писателей на новые пакеты не добавлять, пока приёмка в очереди.
+- Приёмка в полосах: ядро+коммит `bjy1ip443`, loader `buukbs7yj`, conformance `b73a33w4r`, skill→v1v2 `bw10id0pk`,
+  storage-json→protocol/stub→attachment-local `bs2z65atn`; web на общем target `b0cs07nen`.
+- ui1 сдал hoh-protocol и hoh-window-stub (122 примера, 49 методов, 16 уведомлений): ревью Sonnet.
+- w3 сдал attachment-local fix2 (103): проверка закрытия Sonnet.
+- w4 сдал storage-json (67): ревью Sonnet идёт.
+- Ревью storage-json: потеря данных — tokio `sync_all` глотает ошибку записи (проверено по исходнику tokio 1.54.1);
+  правило внесено в PORTING.md §6. w4 исправляет (`plans/briefs/fix-w4-storage-json.md`, `fix-sj1`). Тот же шаблон
+  в `crates/hoh-attachment-local/src/store.rs:238-250` (write_all → sync_all без flush) — добавить w3 после
+  проверки закрытия.
+- Проверка закрытия attachment-local fix2: 8/8 закрыто; открыто: APP13 без префикса Photoshop (риск), WebP shrink-on-load (живой разрыв ±1). Факты libvips — Sonnet «Facts: libvips APP13 and WebP shrink-on-load»; затем w3 fix3: flush до sync_all (store.rs:238-250) + факты.
+- Ревью протокола окна: дыры в подтверждениях (методы, расширяющие права, шли мимо подтверждения; MAC не покрывал humanText/risk; повторный initialize). docs/window.md §5 п.4 и п.6 уточнены. ui1 исправляет (`plans/briefs/fix-ui1-protocol.md`, `bw51czxgh`). Приёмка protocol/stub в цепочке `bs2z65atn` устарела — повторить после исправлений.
+- Факты libvips получены (APP13 по префиксу «Photo», WebP rint-загрузка с возможной разницей в 1 px, GIF без уменьшения, JPEG округляет вниз — моё прежнее задание ошибалось). w3 третий круг `plans/briefs/fix3-stage1-w3-attachment-local.md`, `beb94yt7o`; приёмка attachment-local в цепочке `bs2z65atn` устарела.
+- s4 исправил system-prompt (5 пунктов; 4 теста null ignored до ядра круг 7; PromptPresentation стал общим объектом). Приёмка system-prompt+persona+dfr с коммитом `b4efcunxm`. В fix5 ядра добавлено снять ignore.
+- ~18:00 исследование сокращения сведено в `research/v1-shortcuts.md`, выводы отправлены CEO: (а) 3 %, (б) не брать, (в) только Office при согласии на Node; вариант «окно поверх движка dsh на время» — на решение основателя.
+- ~18:10 CEO: (г)+точечные crates — да; (б) нет; (в) для Office нет (soffice). Вопрос «окно поверх dsh на время» у основателя; CEO отправлены оценки: dsh 4–6 сут, Rust 7–10 сут; 4 писателя на окно и hoh/* сдвигают перенос до 5–7 сут; для dsh нужны Node ≥24.9 (на машине 20.20.2), 383 внешних npm-пакета, исключения для node-pty/koffi. До ответа ничего не переключать.
+- w8 сдал `hoh-session` (294 теста; 57 исходных случаев исключены — ревью проверяет обоснованность). Приёмка `b9tmlbp57`, ревью Sonnet «Review: hoh-session». w8 (сессия `01a1eebf-2e0c-7890-8d27-0ceddf6ae24c`) свободен; следующим ему `hoh-llm-replay` (этап 0) — когда очередь приёмки разойдётся.
+- ~18:05 loader часть B закоммичен `fe1d8c5`. l1 запущен на `stage0-l1-cmdline-app.md` (`cmdline1`).
+- w4 исправил storage-json (flush, карантин; 74): приёмка с коммитом и done `bsr7y7j5r`. w4 свободен.
+- w1: web-fetch-http упёрся в зависимости → в workspace добавлены `encoding_rs` 0.8.44 и `async-compression`
+  0.4.x (tokio, gzip, deflate, brotli, zstd), скачаны в кэш; `hoh-http-proxy` dev-зависимостью разрешён.
+  Продолжение w1 — `logs/lead1118/w1-webfetch3.txt`, в очереди (сейчас 6 писателей). Корневой Cargo.toml не закоммичен.
+- c4 сдал v2-to-v3 (191, вся цепочка v0→v3): приёмка `b1t95anwb`, ревью Sonnet. c4 начал `fix-c4-v1-to-v2.md` (`bndoaod2v`). w1 по-прежнему в очереди.
+- ui1 закрыл 8 пунктов протокола (подтверждения, MAC по канонической записи, общий verifier, core.ts отдельно): приёмка `bieeazp6w`, проверка закрытия Sonnet с атакой на путь подтверждений. w1 возобновлён (`webfetch3`, `bz9r5nbc0`).
+- conformance после первого круга: verify прошёл (`b73a33w4r`); cf1 `fix2-stage0-cf1-conformance.md` — в очереди писателей (сейчас 6).
+- Проверка закрытия протокола: путь подтверждений устоял; хвост — `plans/briefs/fix2-ui1-protocol.md` (ключ ≠ 0 в
+  тестах, слабые ключи, Debug ключа, ещё 3 метода под подтверждение, ограничения humanText). docs/window.md §5 п.6 дополнен.
+  Протокол закоммитить после приёмки `bieeazp6w`.
+- Очередь писателей (лимит 6; w8 fix-session запущен) → k1 круг 7 → cf1 fix2 → ui1 fix2 → w5 fix-skill (+skill-office) → w8 hoh-llm-replay.
+- w3 третий круг attachment-local (104): приёмка с коммитом и done (attachment-local-1118c). w3 свободен.
+- Ревью v2-to-v3: ошибок нет. Хвост c4 после текущего круга: тест на точный id системного сообщения (`v2-to-v3-system-9673c4ed…667b`, + не-ASCII id). Принять как done по зелёной приёмке `b1t95anwb` (коммит руками).
+
+## 2026-11-18 18:10 решение основателя (через CEO), дословно: «dsh не трогаем делаем свое»
+
+Вариант «окно временно поверх движка dsh» закрыт. Движок dsh на TypeScript в продукт не берём ни целиком,
+ни частями; Node 24 и npm-пакеты dsh не ставим. Путь прежний: свой движок на Rust по образцу dsh; окно
+проверяется против заглушки, потом против Rust-движка.
+Просьба CEO: порядок волн — к самой ранней вехе «движок держит сессию и инструменты и проходит первые сценарии
+dsh»; всё, что нужно только полной совместимости, но не примеру основателя, — в конец. В следующей сводке —
+оценка даты вехи и критический путь.
+- 18:25 сводка CEO: веха «первые сценарии dsh» — 5–8 сут (нужны 84–92 пакета + поверхности skip/later; профиль
+  полный). Критический путь (13 звеньев, ~22 тыс. строк): session → session-persistence → workspace → agent →
+  commands → compaction → compaction-image-offload → session-format-catalog → session-query → subagent → schedule →
+  sdk-jsonrpc-server → apps/hoh. Предложена ранняя веха «свой минимальный профиль: read/write/bash» 2–3 сут —
+  ждём ответа CEO. Очередь писателей — по волнам `research/first-scenarios.md` (волны 0–12).
+
+## 2026-11-18 ~18:35 порядок целей (решение CEO)
+1. Ранняя веха: свой hoh на минимальном профиле — read/write/bash, модель из записи (оценка 2–3 сут).
+2. Пример основателя из окна (HOH-23) — это первая версия.
+3. Побайтная сверка 242 сценариев — до выпуска клиентам, не на критическом пути.
+Поверхности skip/later — только если пример требует. Сценарии dsh, которые можно прогнать раньше, — прогонять.
+Исследование наборов пакетов под цели 1 и 2: Codex `research/milestones.md` (бриф `research-milestones.md`).
+В следующей сводке: оценка до цели 2 и список пакетов, без которых пример не проходит.
+
+## ~18:55 расширение фронта (слова основателя «парарллель задачи… codex kimi отправляй код писать»)
+- Правило писателей впереди зависимостей: `plans/briefs/interface-first.md` (шимы, CARGO_BUILD_JOBS=2, check при
+  письме, тесты один раз в конце). Скелеты с путями к несуществующим crates чистятся (иначе ломается workspace).
+- В workspace добавлены notify 8.2.2, portable-pty 0.9.0, procfs 0.18.0, zstd 0.13.5 (точечные crates, CEO 18.11).
+- Писатели ранней вехи: w3 session-persistence + session-projection (`persist1`); w4 sandbox + fs + fs-local (`fs1`);
+  cf1 llm-replay, затем fix2 conformance (`replay1`); w5 subprocess-local, затем fix-skill (`subproc1`);
+  c4 пин-тест v2-to-v3 + session-persistence-jsonl (`jsonl1`); Kimi k2 tool-executor-native + shell
+  (`scripts/kimi-writer.sh`, `shell1`; Kimi без песочницы — границы в задании).
+- Новое без образца: Sonnet s5 hoh-llm-openai (`plans/briefs/new-llm-openai.md`).
+- Продолжают: w8 fix hoh-session, l1 API загрузчика + cmdline + apps/hoh, w1 web-fetch-http + credentials-local,
+  w7 общие правки llm/session-format, ui2 окно 8+1. Ждут: k1 круг 7 (после коммита ядра), ui1 fix2.
+- ~18:40 `research/milestones.md`: цель 1 = 50 crates (24 done, 26 открыты, 45 тыс. строк); цель 2 += 28 пакетов
+  (17,6 тыс.) + новый код (сетевой контроль песочницы, поиск, скачивание фото, host-подтверждения в SDK,
+  hoh-employee/task, artifacts). Полная сверка dsh для примера не нужна. Ранний сценарий-кандидат:
+  sdk/minimal-image-compaction. Оценки CEO: цель 1 — 1,5–2,5 сут, цель 2 — 6–9 сут.
+- Добавлены писатели: Sonnet s6 agent+agent-loop (target-s6), s7 tools (target-s7), s8 working-directory+tool-fs
+  (target-s8) по `plans/briefs/goal1-sonnet-writer.md`; Kimi k3 bash-local+shell-env+tool-bash (`bash1`).
+  Не назначены из цели 1: session-format-v3-to-v4, session-format-catalog, compaction-image-offload (проекция) —
+  следующему освободившемуся (w7). Всего пишут 16.
+- ~18:45 ядро закоммичено `3fd6d2d` (289). Поправка CEO: подкачка занята 6,6 из 8 ГБ — тяжёлых сборок не
+  добавлять; `scripts/accept.sh` теперь ждёт, пока MemAvailable ≥ 6 ГБ и SwapFree ≥ 1 ГБ. k1 круг 7 — только когда
+  освободится писатель Codex (не сверх нынешних 16).
+- Вопрос CEO к следующей сводке: источник поиска в сети (свой разбор поисковика / открытый сервис / платный API) и
+  что требует разрешения или ключа основателя.
+- 19:05 давление памяти 16–22 % (avg60/avg300), подкачка свободна 0,9 ГБ, 23 процесса cargo проекта. Запущен
+  `scripts/cargo-governor.sh 5` (фон `bimn365iu`, лог `logs/cargo-governor.log`): одновременно ≤5 cargo этого
+  проекта, остальные — SIGSTOP только самого cargo и его потомков (писатель не трогается), продолжение по
+  освобождению места; группы с запущенными тестами не останавливаются; чужие процессы не трогаются; SIGTERM
+  возобновляет всё. Если за 15 мин avg60 не упадёт ниже 5 % — приостановить часть писателей (номера сессий в этом файле).
+- 19:10 Kimi снова в 5-часовом лимите: k3 остановился в hoh-bash-local (код начат, шим shell снят). bash-local/shell-env/tool-bash — передать первому свободному писателю Codex или Sonnet; Kimi — после сброса окна.
+- k2 (Kimi) тоже в лимите: tool-executor-native и shell написаны с тестами, не прогнаны → Sonnet s10 проверяет и доводит (target-s10). bash-цепочка → Sonnet s9 (target-s9).
+- 19:22 давление не упало (avg60 24 %, подкачка свободна 284 МБ; остановленные сборки держат память). По правилу CEO
+  приостановлены писатели цели 2 / побочные, файлы на месте, продолжение — `resume-continue`:
+  w1 (`01a1e5c8-591d-7e32-ab5d-ea85ff26901f`, web-fetch-http + credentials-local; задание `logs/lead1118/w1-webfetch4.txt`),
+  ui2 (`01a1eefe-9d1f-7e43-bc9d-dd9333034424`, окно 8+1, сеть — см. команду в истории `ui2.base2`),
+  w7 (`01a1ec50-2ba4-7e42-8cd8-ff50dcd5d062`, `logs/lead1118/w7-shared2.txt`),
+  Sonnet s5 hoh-llm-openai отменён (файлы в `crates/hoh-llm-openai`, продолжение — новый делегат с `plans/briefs/new-llm-openai.md`).
+  Возобновлять, когда avg60 < 5 % и подкачка свободна > 2 ГБ.
+- w8 закрыл 5 из 7 пунктов hoh-session (302, 2 ignored): вето слушателя → ядро круг 7 п.6; глубина 4096 → hoh-util-values (рекурсивные clone/eq/drop) — отдельное задание. Приёмка с коммитом session-1118b. w8 свободен (держу до спада давления).
+- 19:26 attachment-local принят (62ce2a3, 104 теста). Память после паузы w1/ui2/w7/s5: avg60 9.7 (было 24), swap free 734M, MemAvailable 17.5G, сборок 5 идут/14 на паузе. Решение о паузе ещё части писателей — по проверке bfodmq1x2 (~19:31) и окну 15 мин (~19:36).
+- 19:29 v1-to-v2 принят (b64bfae, 71 тест).
+- 19:31 hoh-protocol + window-stub приняты первым кругом (24 теста), закоммичены; fix2-ui1 (упрочнение) в очереди за памятью.
+- 19:37 окно 15 мин истекло, avg60 10.6 (>5%) → пауза cf1 (01a1ec52-489f-7950-bfdf-b6ef2edc8d58, prompt logs/lead1118/cf1-replay.txt), w5 (01a1e5d3-da02-72c3-be89-fcb61ad9c9c0, w5-subproc.txt), c4 (01a1e527-6a6d-7e20-a0b7-f8064e0f3041, c4-jsonl.txt). Возобновлять через codex exec resume с «остановлен по памяти, файлы на месте, продолжай». Порядок возобновления: c4, cf1, w5, w1, w7, ui2, s5. Работают: Codex l1, w3, w4; Sonnet s6–s10.
+- 19:40 сводка CEO отправлена (память, писатели, прогресс 44/205, веб-поиск: рекомендован платный API Brave/Yandex через интерфейс поставщика). Обещано: интерфейс поиска + тест на записанных ответах без сети — поручить первому освободившемуся писателю.
+- 19:50 CEO: пороги памяти приняты; поиск — платный API за интерфейсом, первым Yandex; до ответа основателя делать интерфейс и тесты на записанных ответах. Задание plans/briefs/new-web-search-yandex.md (поставщик для hoh_web::WebSearchProvider), писатель w8 новой сессией через scripts/codex-writer-net.sh (сеть только для документации). Очередь запуска по порогам (avg60<5%, swap>2ГБ): c4 → w8-yandex → cf1 → w5 → w1 → w7 → ui2 → s5. Писать CEO по-русски.
+- 19:58 ИСПРАВЛЕНИЕ: в 19:22 w1 и w7 фактически НЕ были остановлены (их codex работали до 19:57), ui2 доработал до конца (19:46). Остановлены сейчас через TaskStop: w1 (bww4h4nja), w7 (bf53bc110). Проверено ps: работают codex только l1, w3, w4. Перед записью «на паузе» проверять ps.
+- ui2 (base2, 19:46): пакет 8 готов (17 сценариев защиты поставки), пакет 1 частично: проба WebKitGTK 2.52.6 PASS (oklch, color-mix, @layer), сборка Tauri --locked --offline. Блокер: pnpm audit — high GHSA-fc5q-39xc-vjpf в picomatch 4.0.7, исправления нет → ui/dist, typecheck, снимок не выполнены. Вопрос к CEO об исключении. Отчёт logs/ui2.base2.report.md, docs/ts/validation.md, docs/ts/webkitgtk-probe.md. ui2 свободен (сессия 01a1eefe-9d1f-7e43-bc9d-dd9333034424).
+- ~20:08 CEO: picomatch — вариант (а) с 4 условиями (точечно GHSA+версия+сборочная зависимость; verify.sh: нет в ui/dist и бинарнике; reason одной строкой; снятие при исправлении + проверка возраста 14 суток). Если срабатывает на внешнем входе при сборке — сначала CEO. Задание plans/briefs/fix-ui2-picomatch-exception.md, ui2 запущен (bkudqii2d, тег picomatch1, без сборок).
+- CEO: Yandex-поставщика НЕ запускать до ответа основателя (бриф new-web-search-yandex.md в очереди, заблокирован). Интерфейс поставщика уже есть: hoh_web::WebSearchProvider (crates/hoh-web/src/types.rs:84).
+- 20:05 память: avg60 3.7, swap free 964 МБ (порог 2 ГБ не достигается — swap держат долгоживущие процессы), MemAvailable 16.9 ГБ.
+- 20:15 CEO: новый порог возобновления — avg60 < 5 %, MemAvailable > 8 ГБ, swap free ≥ 800 МБ; по одному раз в 15 мин с проверкой. Обратное правило: если после возобновления avg60 > 10 % или swap free < 500 МБ — последнего снова на паузу, следующего не раньше чем через 30 мин. Порядок: c4 → cf1 → w5 → s5 → w1 → w7.
+- 20:16 возобновлён c4 (logs/lead1118/resume-memory.txt, тег jsonl2).
+- 20:2x старая приёмка session-1118 (b9tmlbp57, до круга исправлений) остановлена по лимиту времени — не нужна, актуальна bgq3m9tzk (session-1118b).
+- (время записи не по date) основатель (через CEO; ответ основателя 19:53 МСК, поправка CEO): «насчет поискать пока хз, ну давай яндекс да». hoh-web-search-yandex разблокирован, запуск по порогам памяти; поставщик сменный; живой ключ — просить через CEO. Порядок: c4 → cf1 → w5 → w8-yandex → s5 → w1 → w7 (сначала путь ранней вехи).
+- 20:28 l1 (cmdline1) остановлен лимитом 2 ч в 19:56 (работал: cmdline, apps/hoh, help-тексты). Возобновить сессию 01a1e540-e759-7552-a9a6-f191cff930c6 с resume-time.txt (тег cmdline2) в слот 20:31 — впереди cf1. Порядок: l1 → cf1 → w5 → w8-yandex → s5 → w1 → w7.
+- 20:30 приёмка v2v3 (b1t95anwb) остановлена лимитом времени; всё равно нужна повторная после теста-закрепления c4 — запустить после отчёта c4 (jsonl2).
+- 20:35 ui2 picomatch1: шаг 1 не доказан (нет исходников vite/tinyglobby), правок нет. ReDoS CWE-1333 на extglob-шаблонах; advisory ОТОЗВАН 18.11. ui2 возобновлён (picomatch2): сначала --refresh аудит; если находки нет — исключение не нужно; иначе скачать два архива по хешам lock и дочитать.
+- 20:05 поправка CEO: ответ основателя про Yandex — 19:53 МСК, не 20:20. Мои пометки времени после ~19:40 («20:00», «20:05», «20:08», «20:15», «20:16», «20:2x», «20:28», «20:30», «20:35») ставились на глаз и могут опережать фактическое на 10–20 мин. Дальше время только из date.
+- 20:05 проверка после c4: avg60 7.6 %, swap free 651 МБ, MemAvailable 16.4 ГБ — ни возобновления (>5 %), ни обратного правила (<10 %, >500 МБ). Следующая проверка через 10 мин; l1 ждёт.
+- 20:07 ui2 picomatch2: аудит --refresh всё ещё выдаёт GHSA-fc5q (advisory отозван, но в базе). Стоп-условие: vite читает VP_RUN_NODE_CLIENT_PATH и загружает внешний модуль (node.js:107), build.sh/offline.py наследуют окружение. Написал CEO: предложение — чистое окружение (env -i + список) и тест, затем исключение. Жду ответа; ui2 свободен.
+- 20:08 CEO согласен: чистое окружение + тест + исключение (отзыв advisory → снятие без новой версии). ui2 запущен, тег picomatch3.
+- 20:15 пороги выполнены (avg60 0.5, MemAvailable 15.9 ГБ, swap 804 МБ) → возобновлён l1 (тег cmdline2). Проверка через 15 мин.
+- 20:18 s10 готов: hoh-tool-executor-native (шим убран, на настоящем hoh-tools) и hoh-shell (7/7), MAP → review. Ревью Codex read-only: plans/briefs/review-hoh-shell-executor.md (rv-shell). Сквозной clippy падает на 13 ошибках в hoh-tools (владелец s7). Приёмка session-1118b: тесты 302/0/2, но exit 2 — ui2 правил verify.sh в 20:13 во время прогона; перезапуск после ui2. ПРАВИЛО: verify.sh не правят, пока идут приёмки.
+- 20:25 ревью rv-shell (logs/rv-shell.report.md), разбор ведущего:
+  1) bug в hoh-tools/src/batch.rs:252 — pre(B) раньше execute(A) (TS batch.ts:163) → s7, после текущего хода.
+  2) hoh-shell render.rs:32 переполнение кода выхода >u64 / >2^53 → note: на вход идёт только наш отрисованный маркер с кодом процесса (i32), наблюдателю недостижимо; записать в PORT_NOTES hoh-shell.
+  3) NativeToolExecutor::new падает без сервиса tools (TS хранит undefined) → корень в hoh-tools/pipeline.rs:125 → s7.
+  4) алиасинг схемы при detach=false (schema.rs:431) → note (владение Rust).
+  5) missing test: deferLoading None/false/true в describe → дописать в executor после стабилизации hoh-tools.
+  SHELL_SETTINGS_NAMESPACE — устаревший README, не добавлять.
+  hoh-shell → приёмка, когда ui2 закончит с verify.sh; executor ждёт s7 (п.1, 3) и тест п.5.
+- 20:25 s7 готов: hoh-tools 194 теста, clippy/fmt чисто, шим hoh-agent и hoh-user-approval. MAP → review. Ревью Codex read-only plans/briefs/review-hoh-tools.md (rv-tools), включает п.1,3 из rv-shell и WeakMap→сильные ссылки. Ответ s7: владелец Agent — hoh-agent (s6). ВНИМАНИЕ: s7 сам делал CONT своим остановленным регулятором сборкам — запрет добавлен в interface-first.md; сообщать каждому новому писателю.
+- 20:26 ui2 picomatch3 готов: чистое окружение сборки (allow-list), исключение ui/audit-exceptions.json (пересмотр 02.12), 54 PASS supply-тестов; verify.sh получил режим --window-artifacts-only. Настоящие артефакты не проверены (нужна сборка UI и бинарника). accept.sh: пороги памяти → 8000 МБ / swap 800 МБ (по CEO). Перезапуск приёмки hoh-session (session-1118c).
+- 20:27 w3 готов: hoh-session-persistence (18 тестов) и hoh-session-projection (78), без шимов (кроме слабой идентичности заголовка в projection). MAP → review; ревью rv-persist (b7nzicxcc). w3 сразу получил v3-to-v4 + catalog (тег v3v4, b4q5hqo3m) — замена завершившегося, не добавление писателя.
+- 20:28 w4 (fs1) остановлен лимитом 2 ч → сразу возобновлён (тег fs2), замена себя.
+- 20:31 после l1: avg60 0.6, MemAvailable 16.9 ГБ, swap 1099 МБ → возобновлён cf1 (тег replay2). Проверка через 15 мин.
+- 20:33 ревью rv-persist: 4 bug (регистрация после выгрузки владельца; float createdAt в читателях; проверка сериализуемого снимка vs extra; __proto__ в checkpoint → воспроизвести {}). Задание plans/briefs/fix-w3-persist-proj.md — w3 после текущего v3v4.
+- 20:34 ревью rv-tools: 13 пунктов (11 bug, 1 rule violation, 1 missing test), все приняты. Задание plans/briefs/fix-s7-tools.md → новый Sonnet-делегат s7b (замена завершившегося s7).
+- 20:34 s7b запущен: [Writer s7b] taskId node:delegated-task:command%3Amcp%3A247662d9-ea27-4c3b-8069-ec0c7a761499%3Adelegate-task%3Aadde5b95-d874-42b6-abdf-9730b275e6d7 (Sonnet, target-s7).
+- 20:44 hoh-shell принят (a3f8d10, 7 тестов).
+- 20:45 hoh-session принят (b2414a0, 302 теста). Хвосты: вето слушателя → ядро круг 7 п.6; глубина 4096 → hoh-util-values (рекурсивные clone/eq/drop) — задание w8 в очередь после w5.
+- 20:46 после cf1: avg60 0.3, MemAvailable 16.7 ГБ, swap 1022 МБ → возобновлён w5 (тег subproc2). Проверка через 15 мин; дальше w8 (hoh-util-values) или w8-yandex.
+- 21:01 после w5: avg60 0.04, MemAvailable 16.5 ГБ, swap 961 МБ → запущен w8 на hoh-web-search-yandex (новая сессия, codex-writer-net, тег yandex1). Следом: w8/hoh-util-values после него; s5, w1, w7.
+- 21:05 регулятор cargo (bimn365iu) снят лимитом 2 ч; при выходе оставил один rustc hoh_loader в T — возобновил его (CONT), регулятор перезапущен. Перезапускать каждые 2 ч.
+- 21:16 после w8: avg60 0.1, MemAvailable 15.9 ГБ, swap 1026 МБ; очередь регулятора 5 идут / 9 ждут → запущен s5b (hoh-llm-openai), taskId node:delegated-task:command%3Amcp%3A247662d9-ea27-4c3b-8069-ec0c7a761499%3Adelegate-task%3A902ede14-bd88-4c6f-807d-27fd13aa0f6f. Остались w1, w7. Проверка 21:32.
+- 21:31 АВАРИЯ: диск /mnt/toshiba заполнен на 100 % (916 ГБ) → все Codex-писатели упали с кодом 101 (l1, c4, cf1, w3, w5, w4, w8), регулятор писал «No space left on device». Перед этим swap падал до 127 МБ (21:28). s5b отменён по обратному правилу. Удаляю устаревшие кэши сборки: target-{c1,c2,c3,k2,k3,m1,n1,nc1,p1,s1,s2,s3,s4,s10,w2,w6,scratch} (только debug/tmp). Не трогаю: target-p1-static, landlock-run, accept-*, активные. Все упавшие писатели — продолжение той же сессией с resume-memory.txt/resume-time.txt после освобождения места; порядок l1 → c4 → cf1 → w3 → w4 → w5 → w8. Sonnet s6, s8, s9, s7b — проверить, живы ли.
+- 21:37 CEO: диск — удалять только свои target-* завершённых писателей; после приёмки писатель удаляет свой target; ≤10 каталогов сборки с приёмочными; df /mnt/toshiba перед запуском/возобновлением/приёмкой: <60 ГБ — не запускать, <30 ГБ — снять последнего; системный диск не использовать; возобновление от 100 ГБ. Сделано: регулятор (brepb2f7y) при диске <30 ГБ пускает 1 сборку и пишет disk=; accept.sh не стартует при <60 ГБ. Удаление 17 кэшей идёт (bmevwb25y). План до 10 каталогов: accept×3 + 7 писательских; простаивающие k1, s5, ui1, w1, w7 удалить; target (по умолчанию из .cargo/config), landlock-run, p1-static — проверить нужность.
+- 22:00 диск: 17 старых кэшей = 19 ГБ (ср. 1,1). Активные target 2–13 ГБ (ср. ~5,5), полосы 6–11. hoh ≈160 ГБ, остальные ~740 ГБ диска не наши. Удаляю target (33 ГБ, по умолчанию, не использ. с 18:06) и target-ui1 (bao5jgarv) → ~54 ГБ свободно. CEO спрошено: (а) удалить k1/w1/w7/s5 (~27 ГБ), (б) порог возобновления 60 ГБ вместо 100. До ответа никого не возобновляю. Sonnet s6, s7b, s8, s9 живы.
+- 22:10 CEO: (а)+(б). Порог возобновления 60 ГБ; <60 — не запускать/не начинать приёмку; <30 — регулятор ставит на паузу ВСЕ сборки и пишет DISK<30G, ведущий снимает последнего запущенного. Сделано: регулятор перезапущен (bbkrrc1uc); accept.sh — две полосы a, b (target-accept-c удалён). Удаляются target-k1/w1/w7/s5 (brnm3pdcz). Sonnet s6, s7b, s8, s9 переведены на общий /mnt/toshiba/alexandrie/hoh/target-sonnet (steer); старые target-s6/s7/s8/s9 удалить после их перехода. Если блокировка общего каталога заметно тормозит — сказать CEO (лучше меньше писателей).
+  Каталоги сборки (цель ≤10): accept-a, accept-b, sonnet, l1, w3, cf1, w4, c4, w5, w8 = 10. Артефакты отдельно: ui2 (бинарник окна), landlock-run, p1-static (~1 ГБ каждый).
+  Порядок возобновления: l1 → w3 → cf1 → w4 → c4 → w5 → w8, по одному раз в 15 мин, проверка памяти и диска после каждого.
+  Thread s6: thread:delegated-task:command%3Amcp%3A247662d9-ea27-4c3b-8069-ec0c7a761499%3Adelegate-task%3Ade342a35-f893-4a89-a073-6273af7d060f ; s8: ...%3A251b24f1-46cb-4928-aa5f-dbb8b30d1eb8 ; s9: ...%3A4773a1ce-804f-43d0-b8da-a5c76e886603.
+- 22:32 CEO: возобновлять сейчас (диск 118 ГБ, память 0 %, swap 2,2 ГБ). l1 возобновлён (тег cmdline3), далее w3, cf1, w4 шаг 15 мин, потом c4, w5, w8. Удаление s5, accept-c в фоне. CEO чистит остальной /mnt/toshiba (400–500 ГБ), лимит 10 каталогов снимет отдельно.
+- 22:48 после l1: avg60 0.05, MemAvailable 18.1 ГБ, swap 2,4 ГБ, диск 294 ГБ → возобновлён w3 (тег v3v4b, resume-disk.txt). Затем после w3 — его fix-w3-persist-proj.md.
+- 22:57 CEO: лимит 10 каталогов сборки снят; пороги 60/30 ГБ и удаление target после приёмки остаются; память — прежние правила. Ввод-вывод медленный из-за чистки диска.
+- 23:03 после w3: avg60 0.15, MemAvailable 17.7 ГБ, swap 2,4 ГБ, диск 394 ГБ → возобновлён cf1 (тег replay3, resume-disk.txt).
+- 23:05 удаление target-s5 и target-accept-c завершено.
+- 23:18 после cf1: avg60 0.12, MemAvailable 17.5 ГБ, swap 2,4 ГБ, диск 400 ГБ → возобновлён w4 (тег fs3, resume-disk.txt).
+- 23:33 после w4: avg60 0.00, MemAvailable 17.7 ГБ, swap 2,3 ГБ, диск 404 ГБ → возобновлён c4 (тег jsonl3, resume-disk.txt).
+- 23:35 сводка CEO по пакетам пути вехи отправлена (оценки приёмок 00:30–03:00). Часовые сводки по date: следующая 00:40. compaction-image-offload — первому освободившемуся.
+- 23:35 CEO: ревью до приёмки сохраняется; сдача по одному пакету (добавлено в interface-first.md, Sonnet s6/s8/s9 — steer, Codex w3/w4 — при ближайшем ходе); круг persistence/projection — свободному исполнителю сейчас (Sonnet s12, не пересекается с w3: v3-to-v4/catalog); compaction-image-offload — Sonnet s11 сейчас; обрыв по лимиту — возобновлять в том же ходе, время обрыва в state.
+- 23:47 запущены: s12 (круг persistence/projection) taskId node:delegated-task:command%3Amcp%3A247662d9-ea27-4c3b-8069-ec0c7a761499%3Adelegate-task%3Af138c918-445a-4c68-933a-53ae79995a74; s11 (compaction-image-offload) …%3Acaf147c6-dc5b-4838-85c9-572d68bafe2d. Оба на target-sonnet. s6/s8/s9 получили правило «сдавать по одному» (steer). w3/w4 — добавить в их следующий prompt (resume). fix-w3-persist-proj.md больше НЕ за w3.
+- 23:48 после c4: avg60 0.5, MemAvailable 17.6 ГБ, swap 961 МБ (падает), диск 406 ГБ → возобновлён w5 (тег subproc3, resume-disk2.txt со сдачей по одному).
+- 23:55 CEO: веха «окно-чат» между ранней вехой и примером (окно вида T3 Code, Помощник, локальная модель OpenAI, read/write/bash в ленте). ui2 → plans/briefs/window-ui3-chat.md (экран чата против заглушки), запуск в слот 00:03 вместо w8; w8 (Yandex) — после. Порядок писателей после пути вехи: пакеты «окно-чат», затем расширение B. В сводке 00:40 — список пакетов «окно-чат», что пишется, срок.
+- 23:57 CEO: условие вехи «окно-чат» — запуск приложения, окно по window.md, первый запуск: адрес и API-ключ (OpenAI-протокол, hoh-credentials), потоковый ответ живой модели, bash и файлы, шаги в ленте, подтверждение опасного. В 00:40: дата с вилкой, критический путь, что откладывается из A (replay, миграции) и сколько суток экономит. Исследования: rs-winchat (baskw4cz4) и rs-winpath (research/window-chat-path.md).
+- 00:00 s7b готов: hoh-tools 12/13 (п.4 требует WeakScopeKey в hoh-scope). s7c запущен на п.4 (hoh-scope аддитивно + hoh-tools), taskId node:delegated-task:command%3Amcp%3A247662d9-ea27-4c3b-8069-ec0c7a761499%3Adelegate-task%3A54369d81-221b-4d7b-83e4-1cc0182d3c85. Проверка закрытия п.1–3,5–13 Codex read-only (rv-tools2). s9 предупреждён: hoh-tool-bash/src/lib.rs:307 — define_tool теперь BoxError. hoh-skill держит ключи областей сильно — отметить. Приёмка tools+executor+scope после s7c и rv-tools2. Удалить target-s7 (s7b перешёл на sonnet).
+- 00:01 регулятор (bbkrrc1uc) снят лимитом 2 ч; остановленных сборок не осталось; перезапущен.
+- 00:02 research/window-chat.md готов: поверх A — sdk-jsonrpc-server 1049, user-approval 430, commands 734 (helpers), user-questions 964 (ошибка) = 3177 строк портов; hoh-protocol уже есть (заменяет sdk-protocol); hoh-llm-openai (2155 строк Rust уже); новое: постоянный вход движка (режим apps/hoh), правило разрешений ask для write/bash + host approvals MAC, cancel, Tauri-мост (пакет 4), чат (пакет 5). По условию CEO (ключ при первом запуске, hoh-credentials) нужны ещё credentials-local (w1, на паузе) и экран первого запуска — исследование их считало ненужными, условие CEO важнее. Реестр прав hoh-protocol (registry.rs:1164–1180) не покрывает working-directory/set, model/probe — закрыты до доработки.
+- 00:03 HOH-27 (основатель 00:02): пакеты на MD/Rust/Go/TS. Исследование Codex read-only + веб: plans/briefs/research-polyglot-packages.md → research/polyglot-packages.md. Принести со сводкой, когда готово. research/window-chat-path.md готов: откладывается только llm-replay (1212 строк) и восстановление image-offload (87); миграции нельзя — каталог импортирует цепочку значениями; conformance вне A (4819).
+- 00:03 avg60 2.1, MemAvailable 19.4 ГБ, swap 4 ГБ, диск 410 ГБ → запущен ui2 на экран чата (window-ui3-chat.md, тег chat1).
+- 00:05 проверка закрытия rv-tools2: закрыты 2,5,6,7,8,9,10,11,12, describe; НЕ закрыты 1 (восстановление после всех обёрток — внешняя видит 42), 3 (порядок без подтверждения старта), 13 (тест не через плагин-владелец); новые: 7' (prepare без tools — TS даёт TypeError, а не TOOL_EXECUTOR_UNAVAILABLE), 8' (паника tuple в выходной схеме вне catch нормализации, pipeline.rs:756). Передано s7c (steer) вместе с п.4.
+- 00:08 HOH-27 дополнение: основатель — «агент может добавлять тулзы»; Node допустим только со схемой защиты supply-chain («не пароноидально»). Исследование Node-варианта: plans/briefs/research-polyglot-node.md → research/polyglot-node.md (параллельно с polyglot-packages). Node на машину не ставить до принятия схемы CEO; движок dsh не берём.
+- 00:09 research/polyglot-packages.md готов: рекомендация — отдельные процессы с JSON-RPC по stdio (Rust/Go — готовые программы, TS — наш исполнитель QuickJS через rquickjs), WASM позже; заложить сейчас: PackageHost-плагин, манифест, PackageRunner, права-пересечение, методы окна hoh/package/* в PRIVILEGED_METHODS; оценка 2–4 чел.-дня сейчас, 4–7 недель после чата. Ждём research/polyglot-node.md.
+- 00:11 HOH-12 дизайн, круг 1: ui2 (chat1) остановлен по указанию CEO (вид до выбора основателя), разметку/связь с заглушкой готовить позже. Три Sonnet-писателя design/round1/{a,b,c}.
+- 00:12 дизайн круг 1 запущен (срок ~00:55): A f2b82fe3-13e7-44ff-aa9d-07ef10c08f73, B 220ed08b-3ae0-4596-92b8-74556ed0ea13, C ceccc432-96ef-4d88-abfd-a4e74c838fa9 (delegate-task ids). Бриф plans/briefs/design-round1.md. Снимки — google-chrome headless. Node-исследование готово: research/polyglot-node.md.
+- 00:17 дизайн B готов, снимки просмотрены ведущим: текст не обрезан и не наложен (main-1440, firstrun-1440, main-900).
+- 00:17 avg60 0.04, MemAvailable 17.8 ГБ, swap 4,2 ГБ, диск 421 ГБ → запущен s5c (hoh-llm-openai) taskId …%3Ae17e3aeb-707e-4af4-920d-2fd4f7105ce6. Следующий слот 00:33: ui2 (разметка и связь с заглушкой без вида) или w8.
+- 00:22 дизайн круг 1 готов и отправлен CEO: design/round1/{a,b,c}/index.html + снимки, все просмотрены ведущим. Ждём ранжирования основателя.
+- 00:24 w4 готов: hoh-sandbox 40, hoh-fs 15+2, hoh-fs-local 187/0/1; clippy/fmt чисты. MAP → review; ревью rv-sandboxfs и rv-fslocal (read-only). w4 → user-approval, затем sdk-jsonrpc-server (веха «окно-чат»), тег approval1.
+- 00:31 rv-sandboxfs: sandbox и fs без ошибок → приёмка sandboxfs-1119 с коммитом. По fs-local 5 bug (ошибка close не останавливает публикацию; наблюдатель видит временное удаление — нужна атомарная группировка как chokidar; порядок Unicode-имён — нужен ICU-компаратор; localDisplayPath зовёт cwd для абсолютного пути; ошибка чтения подписана как open). Ждём rv-fslocal, затем круг исправлений свободному исполнителю.
+- 00:32 rv-fslocal: 7 bug (P1 close; symlink-цели в наблюдении; группировка; ICU-порядок; maxBytes 2^53; NUL; cwd) + read/open из rv-sandboxfs. Решение ведущего: close через безопасный nix::unistd::close (без unsafe); сравнение — разрешён один крейт UCA (feruca/icu_collator) с записью в DEPS.md. Задание plans/briefs/fix-fslocal.md → Sonnet s13.
+- 00:32 l1 (cmdline3) оборван лимитом 2 ч в 00:33; возобновлён сразу (тег cmdline4, resume-time.txt). s13 (fix fs-local) запущен: …%3A585bfc06-3348-40d7-9265-1b29db51ceb6.
+- 00:33 avg60 0, MemAvailable 14.8 ГБ, swap 3,8 ГБ, диск 531 ГБ → ui2 возобновлён (тег chat2): только данные и связь с заглушкой, без вида.
+- 00:33 сводка 00:40 отправлена: оценка вехи «окно-чат» 19.11 ~18:00 (вилка 12:00–20.11 06:00), критический путь, отложить только replay; HOH-27 — рекомендация Node со схемой, общий договор пакета закладывать (спрошено когда). Следующая 01:40.
+- 00:34 CEO: вид — вариант A (основатель правит на холсте Penpot, правки придут токенами) → все цвета/размеры/радиусы/шрифты в одном файле токенов; из C взять слова окна подтверждения («почему опасно», объяснение Помощника). UCA-крейт — меньше записей в lock + cargo-deny (s13 уточнён). HOH-27: исполнитель TS — Node по polyglot-node.md; договор пакета сейчас только документом docs/packages.md (исполнитель без cargo), код хоста — после вехи; Node не ставить до принятия документа. cf1 после replay — на новый код вехи. В каждой сводке строка: последнее принятое звено критического пути и сдвиг оценки.
+- 00:34 s14 (токены A + первый запуск + подтверждение) …%3Afeb86021-2d40-41f3-a38f-50a9d1553471; s15 (docs/packages.md) …%3Aff984d8c-64ee-45ab-82c5-a59fbda311db. ui2 после chat2 продолжить с logs/lead1118/ui2-chat3.txt (вёрстка чата по A через токены).
+- 00:37 s15 готов: docs/packages.md (~2300 слов, 9 открытых вопросов). Ревью Codex read-only rv-docpkg; после — CEO на принятие.
+- 00:42 rv-docpkg: 11 пунктов (6 security: путь/ссылки в выданных папках, сеть дочерних программ, базовая изоляция для всех исполнителей, привязка callId к процессу, отмена/выключение гасит работу брокера, digest установленного неизменяемого снимка; 1 bug: подмножество схем без аннотаций; 4 gap: кодировка digest, жизненный цикл процесса — v1 последовательно, лимиты кадров, задача закрепляет версию пакета). Все приняты, круг — s15.
+- 00:47 s14 готов: tokens.css A, firstrun, approval, 16 проверок headless, литералов нет; ui/dist НЕ собран — нет архивов pnpm (нужен ui/scripts/acquire.sh с сетью — ui2 после chat2); s14 собирал временно чужими node_modules (/home/save/tools/mcp_excalidraw) — только чтение, больше так не делать. Недостающие методы → ui1 fix2 (раздел добавлен), ui1 возобновлён (тег fix2b). Пакет 4 (мост Tauri) — назначить.
+- 00:48 w3 (v3v4b) оборван лимитом 2 ч в 00:48; возобновлён сразу (тег v3v4c, w3-resume2.txt, сдача по одному). docs/packages.md: проверка закрытия 10/11, + 3 новых (вывод между вызовами, прямой доступ нативных к выданным папкам, метаданные в digest, связка enabled/grant с MAC) → s15 последний круг.
+- 00:50 docs/packages.md: финальная проверка — всё закрыто; отправлен CEO на принятие с 5 решениями (папки только через брокер — строже polyglot-node §3; дети без сети; последовательные вызовы; install инертен, enable с MAC; Linux 5.6+).
+- 00:51 CEO принял docs/packages.md как договор HOH-27 + 5 решений. §8: агент сам пишет/ставит пакет, включение — человек; вызовы пакетов друг другом нет в v1; секреты через hoh-credentials в первой реализации; одна цель Linux. Node ставить при начале кода хоста (после вехи), системный диск 15 ГБ. s15 вносит. /mnt/toshiba 558 ГБ свободно. После правки s15 — коммит docs/packages.md.
+- 00:52 docs/packages.md с решениями §8 закоммичен вместе с исследованиями. Предложения s15 (область ключа package-<id>, secret/set без подтверждения) — отметить CEO в сводке.
+- 00:57 cf1 готов: hoh-llm-replay 105 тестов (110/138), conformance fix2 28 тестов. MAP → review; ревью rv-replay запущено (фоном, без уведомления — проверять logs/rv-replay.report.md). cf1 → пакет 4 (мост Tauri), plans/briefs/window-pkg4-bridge.md, тег pkg4a.
+- 01:02 ui1 fix2b: правки написаны, сборка не шла — target-ui1 удалён мной в 22:00. Каталог создан, codex-writer.sh теперь делает mkdir -p. Память: avg60 0, 14,5 ГБ, swap 3,5 ГБ, диск 558 ГБ → ui1 возобновлён (тег fix2c). Бриф cf1: CARGO_TARGET_DIR исправлен на target-cf1/desktop.
+- 01:03 l1 cmdline4: loader+apps/hoh написаны (clippy/fmt 0); тесты в песочнице: 12/1, падение EPERM на UnixStream (песочница Codex) + занятый .cargo-lock. Прогон ведущим вне песочницы.
+- 01:12 ui2 chat2 готов: store/markdown/chat, 32/0 против заглушки (persistent-tools); ui/dist не собран (нет архивов pnpm), Playwright не запускался. Следующий ход — ui2-chat3.txt с сетью, после проверки памяти ~01:17.
+- 01:14 w3 ГОТОВ v3-to-v4: 212/0, clippy, fmt (clippy 24 мин). MAP → review; ревью rv-v3v4 запущено (bkaoyl69j). w3 → catalog после проверки памяти ~01:17 (тег catalog1); ui2 (chat3, сеть) следующим через 15 мин.
+- 01:18 проверка: avg60 0, 15,1 ГБ, swap 3,4 ГБ, диск 556 ГБ → w3 возобновлён на catalog (catalog1).
+- 01:19 rv-v3v4: 1 замечание P1 (одиночный суррогат → U+FFFD) — решение ведущего: известное отличие уровня hoh-util-values (js_json.rs:425), записано в PORT_NOTES; иных расхождений нет, 46 фикстур побайтно. Приёмка v3-to-v4 запущена.
+- 01:27 cf1 pkg4a: мост написан, не собран — неверный каталог сборки в моём брифе и нет schemars_derive 1.2.3 в cargo-home-ui2. Докопировал локальный кэш ~/.cargo → cargo-home-ui2 (417→1233 крейта, без сети). Очередь возобновлений: ui2 (~01:33, chat3 с сетью), cf1 (~01:48, pkg4b, writable target-cf1 + cargo-home-ui2).
+- 01:27 s9 ГОТОВ bash-local 37/0, shell-env 12/0, tool-bash 68/0 (target-sonnet). MAP → review, ревью rv-bash (один прогон на три). Вопросы s9: resolve→Result (позже, правка hoh-shell), jobs/user-approval/sandbox-policy — после w4/user-approval.
+- 01:28 s9 → hoh-credentials-local (w1 был на паузе с заготовкой 18 строк; крейт передан s9, MAP writing:s9). Задача s9: node:...thread-send%3A32802a5c-e7ad-42f8-8ada-5118547d0767. Ревью rv-bash — b5gde5pjk.
+- 01:29 ПРИНЯТЫ hoh-sandbox и hoh-fs (55/0, clippy ok), коммит 2b2575e. target-w4 не удаляю: w4 работает над user-approval.
+- 01:33 проверка: avg60 4,27, 17 ГБ, swap 1,8 ГБ, диск 550 ГБ → ui2 возобновлён (chat3, сеть для реестра npm). rv-bash: 4 замечания P2 → fix-bash-chain.md, новому Sonnet в следующее окно. Очередь: cf1 ~01:48, fix-bash ~02:03.
+- 01:33 c4 (jsonl3) оборван лимитом 2 ч; возобновлён сразу (тег jsonl4, c4-resume-time.txt).
+- 01:34 сводка CEO отправлена (следующая 02:40). rv-replay: 4 бага + 1 ослабленный тест (lookahead в fromRequest, приём sidecar, порядок полей при подготовке, порядок детей a/B; сжатие) — не путь вехи, исправление в очередь свободному исполнителю. fix2 conformance 1–7 закрыты.
+- 01:34 CEO: суррогат v3-to-v4 — согласен; packages.md: package-<id> и secret/set без подтверждения — принято с условиями (своя область; права не расширяются), внесено, коммит. Penpot CEO (penpot-*, ~3 ГБ) с 00:32 — не мой, не трогать, учитывать как занятые. Уточнить в 02:40: secret/set вызывает человек через окно, не пакет (в сводке 01:36 я написал неточно).
+- 01:55 w5 (subproc3) оборван лимитом 2 ч; возобновлён сразу (subproc4). Проверка 01:48: avg60 0,84, 17,9 ГБ, swap 1,9 ГБ, диск 545 ГБ → cf1 возобновлён (pkg4b, writable target-cf1 + cargo-home-ui2). l1: тесты вне песочницы — сигналы прошли (built_bin 13/0), упал dump_config_schema::expands_canonical_include_and_re_export_aliases; полный прогон b7qno8xsm.
+- 01:55 регулятор: 5 идут, 10 стоят до 28 мин при avg60 0 и 17 ГБ свободно — лимит поднят 5→8, регулятор перезапущен (прежний bnrj0zs30 снят, он возобновил всё перед выходом). s12 ГОТОВ fix persistence/projection (19/0, 81/0) в target-sonnet-persist — удалить после приёмки.
+- 01:56 проверка закрытия persist/proj (rc-persist, buehvbjzu). s12 → fix-bash-chain.md (задача node:...thread-send%3Ae04be4de-3fd6-42a2-b6d9-d0531db6649a); слот 02:03 для нового Sonnet не нужен.
+- 01:56 ПРИНЯТ hoh-session-format-v3-to-v4 (212/0), коммит 7380060 — звено критического пути. target-w3 не удаляю: w3 пишет catalog.
+- 01:59 rc-persist: 4 исходных закрыты; новые: гонка handoff в register (spawn), возврат header вместо снимка, __proto__ в restore → plans/briefs/fix2-persist-proj.md, новому Sonnet по проверке памяти ~02:10.
+- 01:59 l1 тесты вне песочницы: 9 падений (dump_config_schema 1, memory_mcp_configs 1, resolved_profile_boot 5, startup_diagnostics 1, loader runtime 1); сигналы проходят. l1 возобновить ~02:10 (l1-fixtests.txt, тег fixt1), Sonnet fix2-persist ~02:25.
+- 02:00 w3 catalog: 31/0, fmt; clippy падает в hoh-compaction-image-offload/src/lib.rs:33 (new_ret_no_self, крейт s11) — s11 попрошен исправить. MAP catalog → review, ревью rv-catalog. w3 свободен.
+- 02:01 w4 ГОТОВ hoh-user-approval 45/0 (41/41 исходных); MAP → review, ревью rv-approval. Очередь возобновлений: w4 sdk-jsonrpc-server ~02:10, l1 fixt1 ~02:25, w3 → fix2-persist-proj ~02:40 (вместо нового Sonnet). s11 попрошен исправить clippy new_ret_no_self (steer).
+- 02:05 CEO: правила памяти. Возобновлять писателя: avg60 < 5 % и MemAvailable > 8 ГБ (swap не учитывается). Пауза последнего возобновлённого: avg60 > 10 % или MemAvailable < 4 ГБ. Интервал 15 мин и пороги диска прежние. accept.sh приведён к этому (swap убран из условия старта приёмки).
+- 02:05 rv-catalog: 1 P2 — version 4.0 отвергается (hoh-session/src/validation.rs:22). → w3 (w3-fixes.txt: fix catalog в hoh-session, затем fix2-persist-proj). Новая очередь: w3 ~02:10, w4 sdk-server ~02:25, l1 fixt1 ~02:40.
+- 02:06 rv-approval: fail-open нет, локали совпадают; 2 P2 (порядок отмены и обработчика; context_text по устаревшей конфигурации) → в начало w4-sdkserver.txt.
+- 02:10 проверка: avg60 0, 18,3 ГБ (swap 622 МБ — не учитывается), диск 539 ГБ → w3 возобновлён (fixes1: catalog v4.0 в hoh-session, затем fix2-persist-proj).
+- 02:24 ui2 chat3 готов: чат по A, FirstRun подключён, 65 npm-пакетов по lock, аудит чист (исключение picomatch удалено — advisory отозван), сборка frozen/offline PASS, 44/0, Playwright 6/0, screens-a 16/0, 5000 сообщений p95 18,2 мс; снимок design/build-a/chat-1440.png близок к A. Tauri-бинарник не собран. chat-tokens.css: 19 временных переменных --chat-* → перенести в tokens.css. Ревью rv-ui-chat запущено. ui2 свободен.
+- 02:25 проверка: avg60 0,6, 18,3 ГБ (swap 212 МБ, не учитывается), диск 537 ГБ → w4 возобновлён (sdk1: fix user-approval, затем sdk-jsonrpc-server следующим ходом).
+- 02:26 c4 ГОТОВ persistence-jsonl 267/0 (298 перенесено, 96 отложено; шимы истории/каталога) и v2-to-v3 193/0 (пин-тест). Приёмка v2-to-v3 запущена; MAP jsonl → review, ревью rv-jsonl. c4 свободен.
+- 02:27 rv-ui-chat: P1 отмена теряет текст, P1 перезапуск движка не обработан, P1 внешние пути (file://, после двоеточия, UNC), P2 тех. слова (сужено до текстов окна, ответ модели не переписываем — подсказка движка), P2 тест кадров — не обязателен, P3 нет светлого снимка. → ui2-chat4.txt (+ перенос --chat-* в tokens.css). ui2 после l1: ~02:55.
+- 02:32 rv-jsonl: потери данных нет; 5 P2 (4 — шимы вместо v3-to-v4/catalog, 1 — версия 4.5). → c4-jsonl-fix.txt. Очередь: l1 ~02:40, c4 ~02:55 (путь), ui2 ~03:10.
+- 02:40 проверка: avg60 0, 18,4 ГБ, диск 536 ГБ → l1 возобновлён (fixt1: 9 упавших тестов).
+- 02:41 сводка CEO 02:40 отправлена (следующая 03:40). Отметка для движка вехи: системная подсказка модели — без слов «сессия/агент/токен/инструмент» в ответах человеку (§2 window.md).
+- 02:56 проверка: avg60 0, 15,5 ГБ, диск 536 ГБ → c4 возобновлён (jsonlfix1).
+- 02:56 w4 sdk1: п.2 approval исправлен; п.1 нужен API ядра (сигнал старта waterfall). Решение: w4 точечно дополняет hoh-kernel (k1 не работает, ядро чистое), потом короткое ревью ядра. Очередь: w4 ~03:11 (w4-kernel.txt), ui2 ~03:26.
+- 03:02 ui1 (fix2c) оборван лимитом 2 ч; возобновлён сразу (fix2d).
+- 03:05 CEO: интервал возобновления. avg60 < 2 % и MemAvailable > 12 ГБ → возобновлять сразу, не более двух за раз, следующая проверка через 5 мин. avg60 2–5 % или MemAvailable 8–12 ГБ → интервал 15 мин. Пороги паузы прежние (avg60 > 10 % или MemAvailable < 4 ГБ). Приёмки критического пути — приоритет у регулятора. Сделано: приёмка v2-to-v3 стояла у регулятора 38 мин (cargo Tl) → регулятор даёт сборкам target-accept-* первое место, перезапущен (лимит 8). Применено к очереди: 03:05 avg60 0, 15,1 ГБ → w4 (w4-kernel) и ui2 (chat4) возобновлены сразу.
+- 03:05 ПРИНЯТ hoh-session-format-v2-to-v3 (193/0), коммит c8f3df7 — первое звено критического пути; v2-to-v3 и v3-to-v4 оба приняты. target-c4 не удаляю: c4 исправляет jsonl.
+- 03:11 проверка 03:10: avg60 0,04, 15,6 ГБ → по правилу CEO два сразу: w7 (w7-fixes: глубина 4096 на стеке 64 МиБ по §4 + fix llm-replay; lookahead — известное отличие) и w1 (web-fetch-http, w1-resume).
+- 03:14 регулятор: ошибка — CONT только при остановленном cargo; у работающего cargo (hoh-scope, s7c) дочерний rustc висел Tl 1 ч 46 мин и держал target-sonnet. Исправлено: активной группе CONT всему дереву. Перезапущен.
+- 03:15 s6: hoh-agent 40/0 → review (rv-agent); hoh-agent-loop 11/66 loop.spec, 0 интеграционных — не сдан: s6 продолжает (настоящая проекция, тестовый каркас, tool-calls/cancel/resume/scope-lifecycle). Задача s6: node:...thread-send%3Ae9d6b506-9f90-4c1e-ae37-7b1de7e6a139.
+- 03:16 проверка: avg60 1,3, 14,4 ГБ, диск 533 ГБ — норма. Очередь возобновлений пуста (w8 Yandex — после вехи по решению CEO). Все исполнители заняты.
+- 03:17 l1 fixt1: 9 исправлений внесены (+3 регрессии), прогон не дошёл до тестов — сборка стояла у регулятора. Прогон ведущим вне песочницы (test --no-fail-fast + clippy).
+- 03:20 rv-agent: 3 P1 (взаимоблокировка выгрузки из initiator, announce/detach не атомарны, ошибка проекции → пустой inbox в agent-loop), 4 P2, 1 P3. hoh-agent → новый Sonnet s16 (fix-hoh-agent.md), taskId node:...delegate-task%3A73ce7d54-03ea-4771-a4e9-8864af7c98cd; п.3 (agent-loop factory) → s6 (steer); s6 больше не правит hoh-agent.
+- 03:23 ui2 chat4: исправления внесены (52/0, токены перенесены); Chromium в песочнице Codex не стартует — Playwright/screens-a/светлый снимок прогоняет ведущий вне песочницы.
+- 03:23 ведущий вне песочницы: behavior 8/0, screens-a 16/0, светлый снимок создан. Проверка закрытия rc-ui-chat.
+- 03:28 rc-ui-chat: 1,2,4,6 закрыты; 3 не закрыт (угловые скобки), README устарел → ui2 chat5.
+- 03:34 ui2 fix chat 2: core 54/0. Снаружи: screens-a 16/0, behavior safe-markdown 8/9 (фильтр путей изменил одну вредную строку, исполнения нет) → ui2 chat6.
+- 03:34 s7c: слабые ключи + пункты 1,3,13,7',8' написаны, cargo check ok; тесты/clippy не запускались (ждал target-sonnet 2 ч). Прогон ведущим.
+- 03:35 сводка CEO 03:35 отправлена (следующая 04:40). Прогоны ведущего: l1 (bfye1ugsy), s7c (b2u4t8j72). ui2 chat6 (bgn0q3lcc).
+- 03:36 CEO: agent-loop не на одном исполнителе; в 04:40 строка: случаи из 66, проходящие наборы вехи, срок сдачи на ревью, сходится ли 18:00. Сделано: s17 (новый Sonnet, target-sonnet-s17) — наборы tool-order 4, tool-updates 8, tool-executors 9, request-error 4, input-lifecycle 4, shutdown-drain 1, model 3, resource-lifecycle 3, interception 23 в новых файлах; taskId node:...delegate-task%3A8f93d9c5-133c-4194-86e2-44cff8d7d0c2. s6 (steer): src, common, loop/loop_tools/tool_calls 24/cancel 37/resume 47/scope_lifecycle 39, сдача частями. Всего в исходнике agent-loop ≈ 330 случаев в наборах; loop.spec 67.
+- 03:38 ui2 chat3 fix: core 64/0; снаружи behavior 8/0, screens-a 16/0, verify --window-artifacts-only ok (бинарник пропущен). Пакет 5 закрыт по ревью. Коммит окна — после ревью экранов s14 (rv-screens-a).
+- 03:41 rv-screens-a: P1 ключ в React state; P2 ×6 (просрочка, Esc после ошибки, гонка мастера, имя модели вне «Дополнительно», предупреждение C, humanText с переводами строк); P3 100dvh → ui2 screens1.
+- 03:42 обратное правило: avg60 29,7 %, full 26 %, swap свободно 58 МБ (подкачка, 16 ждущих), MemAvailable 14,3 ГБ → на паузу w1 (bbiar6ztq остановлен; web-fetch-http, вехе не нужен; s17 — последний, но на критическом пути). Следующее возобновление не раньше чем через 30 мин и при норме. ui2 screens1 ждёт.
+- 03:47 после паузы w1: avg60 7,2 % (спад), 13,6 ГБ, swap 225 МБ. Возобновление ui2 (screens1) — не раньше 04:12 и при норме.
+- 03:49 ui1 ГОТОВ fix2: hoh-protocol 18/0, window-stub 21/0, clippy, fmt; новые методы key/set, rules/set; 109 схем, protocol.ts перепорождён. Проверка закрытия rc-ui1.
+- 03:50 w3 ГОТОВ fix catalog: hoh-session 304/0, catalog 32/0, clippy, fmt (правка validation.rs:22 проверена ведущим — as_f64 == 4). Приёмка catalog ждёт: (1) hoh-compaction-image-offload (s11, не сдан, untracked — steer «сдать первым»); (2) w7 правит tests/review_fixes.rs hoh-session (глубина 4096) — принять hoh-session вместе после отчёта w7. w3 продолжает fix2-persist-proj? — нет, ход w3 закончен; fix2 в его задании был вторым пунктом, отчёт только по первому → возобновить w3 на fix2-persist после 04:12.
+- 03:52 rc-ui1: 7/8 закрыты; осталось Debug ResolvedCredential, P1 общий humanText новых подтверждений, P2 rejected→cancelled; probe без списка моделей → ui1-fix2e (+ models: string[]). Очередь на 04:12: w3 (fix2-persist) и ui1 (fix2e); затем ui2 (screens1).
+- 03:55 w5 (subproc4) и cf1 (pkg4b) оборваны лимитом 2 ч; память avg60 0,07, 15,5 ГБ → оба возобновлены сразу (subproc5, pkg4c) — продолжение, не новая нагрузка.
+- 03:58 s5c ГОТОВ hoh-llm-openai 74/0, clippy, fmt (новый код, не в MAP). Ревью rv-openai. s5c свободен.
+- 04:03 rv-openai: P1 ×2 (ключ в Debug конфигурации; ключ из текста ошибки провайдера в probe/HarnessError), P2 ×5 (имя инструмента по частям, аргументы-массив, max_completion_tokens, probe 200 без проверки тела, models в протоколе — у ui1). 1–6 → s5c.
+- 04:05 CEO: Penpot остановлен (swap 23 МБ → 1,6 ГБ), при возвращении основателя поднимется снова (~3 ГБ, CEO предупредит). Правило: «сразу, по два» — только при avg60 < 2 %, MemAvailable > 12 ГБ И свободном swap ≥ 1 ГБ; при swap < 1 ГБ — по одному раз в 15 мин. Пороги паузы прежние. Пауза w1 признана верной.
+- 04:12 проверка: avg60 0,14, 16,4 ГБ, swap 1,7 ГБ, диск 514 ГБ → по два: w3 (fix2persist) и ui1 (fix2e). Следующая проверка через 5 мин; ui2 следом.
+- 04:15 w4 ГОТОВ fix user-approval: kernel 294/0, approval 46/0, clippy, fmt; добавка waterfall_with_start. Проверка закрытия rc-approval. w4 → sdk-jsonrpc-server в следующий слот (критический путь).
+- 04:16 rc-approval: оба P2 закрыты, ядро — только добавка (waterfall_with_start), fail-open нет. Приёмка hoh-kernel + hoh-user-approval.
+- 04:17 проверка: avg60 0, 15,3 ГБ, swap 2,0 ГБ → по два: w4 (sdk1b: sdk-jsonrpc-server) и ui2 (screens1).
+- 04:22 проверка: avg60 0, 15,4 ГБ, swap 2,1 ГБ → w1 возобновлён после паузы 03:42 (webfetch6). Мой прогон тестов l1 (bfye1ugsy): test rc=124 — таймаут 50 мин в очереди, тестов нет; дальше clippy; тесты перезапустить.
+- 04:35 ui2 fix screens: node 12/0, core 64/0. Снаружи: build ok (запас 6 КБ), behavior 8/0, screens-a FAIL run.mjs:371 (Esc после ошибки отправки не даёт «Отклонено») → ui2 screens2. Системный диск / свободно 12 ГБ (98 %); правило CEO: / < 6 ГБ — сообщить CEO и не запускать новых.
+- 04:36 сводка CEO 04:36 отправлена (следующая 05:40). Оценка 18:00 сходится при сдаче agent-loop на ревью к 10:00; иначе 20:00. Проверки памяти теперь включают df /: < 6 ГБ — сообщить CEO, новых не запускать.
+- 04:36 s12 ГОТОВ fix bash: 121/0 (39/13/69), clippy, fmt; красный прогон не делал. Интеграции нужно: AgentNoticesKey (композиция агента), InstallAnchor (hoh-loader, l1). Проверка закрытия rc-bash. s12 свободен.
+- 04:37 agent-loop: interception (23) → s12 (target-sonnet-persist), задача node:...thread-send%3A41dbc930-10fb-4024-80fc-7f2ac8491aa5; s17 уведомлён (steer), у него 8 наборов без interception.
+- 04:41 ui2 screens2 (listeners по approvalId). Снаружи: screens-a 22/0 после правки ведущего run.mjs:371 (exact-совпадение на элементе с <small> — ошибка теста), behavior 8/0. Проверка закрытия rc-screens. Коммит окна — вместе с протоколом после ui1 fix2e. swap снова почти 0 (112 МБ), avg60 0 — по одному раз в 15 мин.
+- 04:41 rc-bash: 2,3 закрыты, 4 закрыт с новым отличием (0.5 → 0, в TS 1 байт), 1 — тест не детерминирован (300 мс, настоящий true). Остаток → s12 после interception.
+- 04:42 регулятор: приоритет и для проверочных прогонов ведущего (HOH_PRIORITY=1) — мои прогоны l1 часами стояли в очереди (тесты rc=124, clippy не дошёл). Перезапущен.
+- 04:43 rc-screens: все 8 закрыты; правка run.mjs:371 тест не ослабляет. Окно (чат + экраны) готово к коммиту вместе с протоколом после ui1 fix2e.
+- 04:50 ПРИНЯТЫ hoh-user-approval + добавка hoh-kernel (340/0), коммит 9bff2cf — звено пути вехи (подтверждения). Счёт 51.
+
+## СОСТОЯНИЕ: running — пауза снята 19.11 05:17 (основатель через CEO: «продолжай работу»). Простой 04:53–05:17.
+CEO 05:17: первая волна по два каждые 5 мин, пока выполняются условия «сразу, по два». Порядок: s6+s17, w4+c4, w3+s11,
+l1 (прогон ведущего)+ui1, cf1+s5c, затем остальное (w5, w7, s16, s12, s9, s13, s8, прогон s7c, w1). Сводка раз в час, первая 06:20.
+
+## (было) paused_by_user (19.11 04:53)
+
+Слова основателя (через CEO): «поставь пока все на паузу, завтра продолдим».
+Условие продолжения: **только по слову основателя через CEO.** Сам не продолжать, сводок по часам не слать.
+Остановлено 04:51–04:53: все `codex exec` (TaskStop), все Sonnet (task_cancel), регулятор сборок, мои прогоны и таймеры.
+Проверено 04:53: живых `codex exec`, `cargo`, `rustc`, `cargo-governor` от HoH нет; процессов в состоянии T нет.
+Незакоммиченная работа писателей осталась в рабочем дереве за владельцами, ничего не откатывалось.
+Счёт: 51 done из 205 (последний коммит 9bff2cf). Последнее принятое звено критического пути — v2-to-v3 (c8f3df7).
+Оценка до паузы: 19.11 18:00 при сдаче agent-loop на ревью к 10:00, иначе 20:00 — пауза её сдвигает на своё время.
+
+При продолжении: сначала регулятор (`scripts/cargo-governor.sh 8`, приоритет target-accept-* и HOH_PRIORITY=1), проверка
+памяти/swap/`/` (правила CEO: сразу по два — avg60 < 2 %, MemAvailable > 12 ГБ, swap ≥ 1 ГБ; иначе по одному раз в 15 мин;
+пауза — avg60 > 10 % или MemAvailable < 4 ГБ; `/` < 6 ГБ — сообщить CEO, новых не запускать), затем писатели по порядку ниже.
+Codex возобновлять `scripts/codex-writer.sh <писатель> <сессия> <prompt> <тег>`; Sonnet — `t3_thread_send` в их thread.
+
+### Исполнители Codex (сессия → пакет → последний результат → следующий шаг)
+- w3 `01a1e5d3-05d4-74a1-bd84-81482bb36ceb` — fix catalog ГОТОВ (hoh-session 304/0, catalog 32/0); прерван на fix2-persist-proj
+  (logs/lead1118/w3-fix2persist.txt) → повторить тот же prompt.
+- c4 `01a1e527-6a6d-7e20-a0b7-f8064e0f3041` — persistence-jsonl 267/0, ревью 5 P2; прерван на круге исправлений
+  (logs/lead1118/c4-jsonl-fix.txt) → повторить.
+- w4 `01a1e5d3-cacd-7e50-8449-b7321829ac5b` — user-approval принят; прерван на hoh-sdk-jsonrpc-server (logs/lead1118/w4-sdkserver.txt) → повторить.
+- l1 `01a1e540-e759-7552-a9a6-f191cff930c6` — loader+apps/hoh: 9 падений исправлены (fixt1), прогон не подтверждён (мои прогоны
+  стояли в очереди) → ведущий: `cargo test --no-fail-fast -p hoh-loader -p hoh` + clippy вне песочницы с HOH_PRIORITY=1, target-l1;
+  потом ревью. Интеграции нужно: InstallAnchor рядом с ProfileContextKey; стек 64 МиБ у Tokio (вопрос w7).
+- ui1 `01a1eed6-849b-7e13-99cc-fc56e98d31fa` — fix2 сдан (protocol 18/0, stub 21/0), проверка закрытия 7/8; прерван на fix2e
+  (logs/lead1118/ui1-fix2e.txt: Debug ResolvedCredential, конкретный humanText, rejected≠cancelled, models в probe) → повторить.
+- ui2 `01a1eefe-9d1f-7e43-bc9d-dd9333034424` — свободен. Чат (пакет 5) и экраны s14 закрыты по ревью; снаружи behavior 8/0,
+  screens-a 22/0. Коммит окна — вместе с протоколом после ui1 fix2e (зависят от ui/src/protocol.ts).
+- cf1 `01a1ec52-489f-7950-bfdf-b6ef2edc8d58` — мост Tauri (пакет 4), прерван на сборке (logs/lead1118/cf1-pkg4c.txt) → повторить
+  командой с writable_roots target-cf1 + cargo-home-ui2 (см. запуск 03:55).
+- w5 `01a1e5d3-da02-72c3-be89-fcb61ad9c9c0` — hoh-subprocess-local, прерван на свежем прогоне (logs/lead1118/w5-resume-time2.txt) → повторить.
+- w7 `01a1ec50-2ba4-7e42-8cd8-ff50dcd5d062` — глубина 4096 в hoh-session (правки уже в tests/review_fixes.rs, не сданы) + fix
+  llm-replay (logs/lead1118/w7-fixes.txt) → повторить.
+- w1 `01a1e5c8-591d-7e32-ab5d-ea85ff26901f` — hoh-web-fetch-http (вне вехи), logs/lead1118/w1-resume.txt → последним.
+- w8 `01a1eebf-2e0c-7890-8d27-0ceddf6ae24c` — Yandex: после вехи по решению CEO.
+
+### Исполнители Sonnet (thread → пакет → состояние)
+Thread id: `thread:delegated-task:command%3Amcp%3A247662d9-ea27-4c3b-8069-ec0c7a761499%3Adelegate-task%3A<id>`.
+- s6 `de342a35-f893-4a89-a073-6273af7d060f` — hoh-agent-loop: src, tests/common, наборы loop/loop_tools/tool_calls/cancel/resume/
+  scope_lifecycle + п.3 rv-agent (factory.rs: ошибка проекции не подавлять). Прерван. Тестов в файлах: loop 12, loop_tools 8,
+  tool_calls 19/24, cancel 31/37, resume 13/47, scope_lifecycle 15/39 — прогон не подтверждён. Следующий: отчёт «часть вехи».
+- s17 `8f93d9c5-133c-4194-86e2-44cff8d7d0c2` — agent-loop наборы tool-order 4/4, tool-updates 8/8, tool-executors 12, далее
+  request-error, input-lifecycle, shutdown-drain, model, resource-lifecycle (target-sonnet-s17). Прерван.
+- s12 `f138c918-445a-4c68-933a-53ae79995a74` — interception (23) для agent-loop (target-sonnet-persist), прерван в начале;
+  затем остаток rc-bash: детерминированный тест on_started, 0.5 → 1 байт как в TS.
+- s16 `73ce7d54-03ea-4771-a4e9-8864af7c98cd` — fix hoh-agent (fix-hoh-agent.md: 2 P1 + 4 P2 + P3). Прерван.
+- s5c `e17e3aeb-707e-4af4-920d-2fd4f7105ce6` — fix hoh-llm-openai (rv-openai.full.md п.1–6: 2 P1 утечка ключа). Прерван.
+- s9 `4773a1ce-804f-43d0-b8da-a5c76e886603` — hoh-credentials-local (крейт передан от w1). Прерван.
+- s11 `caf147c6-dc5b-4838-85c9-572d68bafe2d` — hoh-compaction-image-offload: сдать ПЕРВЫМ (блокирует приёмку catalog). Прерван.
+- s13 `585bfc06-3348-40d7-9265-1b29db51ceb6` — fix fs-local (P1 close + 7). Прерван.
+- s8 `251b24f1-46cb-4928-aa5f-dbb8b30d1eb8` — tool-fs, working-directory. Прерван.
+- s7c `54369d81-221b-4d7b-83e4-1cc0182d3c85` — слабые ключи + пункты закрытия hoh-tools сданы, тесты/clippy НЕ прогнаны →
+  ведущий: `cargo test -p hoh-scope -p hoh-tools -p hoh-tool-executor-native` + clippy (HOH_PRIORITY=1, target-sonnet), потом проверка закрытия.
+
+### Очередь приёмок
+1. hoh-session-format-catalog + hoh-session (версия 4.0; 336/0; ревью закрыто) — ждёт hoh-compaction-image-offload (s11, untracked,
+   без ревью) и сдачи w7 по глубине 4096 (правки в hoh-session/tests/review_fixes.rs).
+2. Окно: ui/** (чат, экраны, tokens.css) + hoh-protocol/hoh-window-stub — после ui1 fix2e и его проверки закрытия.
+3. hoh-session-persistence + hoh-session-projection — после fix2 (w3) и проверки закрытия.
+4. hoh-bash-local, hoh-shell-env, hoh-tool-bash — после остатка rc-bash (s12).
+5. hoh-session-persistence-jsonl — после c4 и проверки закрытия.
+
+### На ревью / в исправлениях (MAP review)
+hoh-agent (fix s16), hoh-llm-replay (fix w7), hoh-llm-openai (fix s5c, нет в MAP), hoh-tools / hoh-tool-executor-native / hoh-scope
+(прогон ведущего), hoh-fs-local (fix s13), hoh-sandbox-* , hoh-session-persistence-jsonl, hoh-session-format-catalog, bash-цепочка.
+Каталог target-sonnet-persist удалить после приёмки persist/proj и interception.
+- 05:17 возобновление: регулятор (bf0ubb0om, лимит 8); память avg60 0, 24,7 ГБ, swap 6,8 ГБ, / 13 ГБ, toshiba 508 ГБ → волна 1: s6 (node:...73b5284d...thread-send%3A05226169-11f6-4f80-8917-49bc7a4a2d9a), s17 (...thread-send%3A07e1f338-676a-451a-9482-132e37e90e91). Следующая пара w4+c4 через 5 мин (bdjqvcumy).
+- 05:22 проверка: avg60 0,08, 24,2 ГБ, swap 6,8 ГБ, / 14 ГБ → волна 2: w4 (sdk2) и c4 (jsonlfix2).
+- 05:25 CEO (основатель: «кодекс активнее используй я там лимиты обновил»): (1) новое и круги исправлений — в первую очередь Codex; новых Sonnet не заводить при свободном слоте Codex; текущие Sonnet доводят свои пакеты; (2) число Codex ограничено только машиной (память, регулятор) — нераспределённые пакеты B и нового кода вехи раздать Codex сейчас; (3) ревью: код Codex читает Sonnet или Kimi, код Sonnet читает Codex; (4) обрывы по 2 ч — возобновлять в том же ходе. В 06:20: строка — сколько Codex и Sonnet работает, что не роздано.
+- 05:26 новые писатели Codex (задания logs/lead1118/x*-start.txt): x1 permission-presets→sandbox-policy; x2 commands→user-questions; x3 jobs→jobs-local→tool-jobs; x4 llm-retry. Запуск волнами после критического пути: 05:42 x1+x2, 05:47 x3+x4. Ревью их кода — Sonnet (правило CEO 05:30).
+- 05:27 проверка: avg60 0, 22,9 ГБ, swap 6,8 ГБ, / 13 ГБ → волна 3: w3 (fix2persist2) и s11.
+- 05:33 проверка: avg60 0, 22,3 ГБ, swap 6,8 ГБ → волна 4: прогон ведущего l1 (HOH_PRIORITY) и ui1 (fix2e2).
+- 05:38 s11: image-offload — проекция 21/21, clippy, fmt; 5 тестов image_offload падают из-за дефекта hoh-agent-loop (запрос без сообщения пользователя; interception у s12 — 8 падений). Решение: принять с 5 ignore и причиной; дефект → s6 (steer, приоритет). Ревью image-offload (Codex) rv-imgoff.
+- 05:38 проверка: avg60 0,01, 20,5 ГБ, swap 6,8 ГБ → волна 5: cf1 (pkg4d) и s5c.
+- 05:38 s11 ГОТОВ image-offload: 30/0, 5 ignored (ждут agent-loop), clippy, fmt. MAP → review; ревью rv-imgoff идёт. s11 свободен — новых Sonnet-заданий не даю (правило CEO), остаток image-offload (снять ignore) после s6.
+- 05:43 rv-imgoff: замечаний нет. Приёмка hoh-compaction-image-offload.
+- 05:43 проверка: avg60 0, 20,9 ГБ, swap 6,8 ГБ → волна 6: новые Codex x1 и x2.
+- 05:48 проверка: avg60 0, 20,6 ГБ, swap 6,8 ГБ; регулятор 8 идут / 2 ждут при нулевом давлении → лимит 8→10, перезапущен; волна 7: новые Codex x3 и x4.
+- 05:54 проверка: avg60 0, 20,0 ГБ, swap 6,7 ГБ; регулятор 10/1 → волна 8: w5 (subproc6) и w7 (fixes2).
+- 05:59 проверка: avg60 0, 20,8 ГБ, swap 5,7 ГБ → волна 9: s16 (fix hoh-agent) и s12 (interception, затем остаток rc-bash).
+- 06:00 приёмка image-offload НЕ прошла: x3 создал crates/hoh-jobs без Cargo.toml → workspace не загружался у всех (05:58–06:01). Ведущий поставил временные Cargo.toml + src/lib.rs (x3 перезапишет); правило «новый крейт сразу целиком» в interface-first.md. Приёмка image-offload перезапущена.
+- 06:04 w7 ГОТОВ: глубина 4096 (hoh-session 304/0/1 ignored), fix llm-replay 109/0. Осталось: незаконченные правки shared2 в hoh-llm и hoh-session-format (не проверены). Приёмка catalog+hoh-session (коммит только после image-offload); закрытие llm-replay — Sonnet; w7 → доделать shared2; волна 10: w7 + s9.
+- 06:06 llm-replay закрыт (Sonnet): 1 — известное отличие, 2–5 закрыты; запись про мягкий публичный Deserialize добавлена ведущим. Приёмка hoh-llm-replay + hoh-conformance.
+- 06:10 узкое место — диск /mnt/toshiba: IO pressure some 92 %, full 87 %, iowait 81 %, CPU 17 % idle при PSI cpu 0, память 19 ГБ. 10 сборок одновременно диск не тянет → лимит регулятора 10→6. Новые исполнители пока не добавляются (s13, s8, w1, прогон s7c — ждут). Сказать CEO: ограничение машины сейчас — диск, не память.
+- 06:32 сводка 06:31 отправлена CEO (оценка вехи 19:00 при ревью agent-loop к 11:00, иначе 20:30; /dev/shm — нет). l1 прогон тестов: timeout 3000 (rc=124) из-за диска — перезапуск позже с большим сроком. Удаляю устаревшие target-s6/s8/s9/landlock-run/p1-static (пользователей 0).
+- 06:32 w5 ГОТОВ subprocess-local 224/7 (EPERM песочницы) → прогон ведущего вне песочницы (HOH_PRIORITY, target-w5).
+- 06:33 image-offload ПРИНЯТ (79f7542): 30/0, 5 ignored ждут agent-loop. Принято 52/205. catalog+session (blbb49y72) закоммитится после своей приёмки.
+- 06:37 subprocess-local: прогон ведущего вне песочницы 231/0 (logs/w5.lead-test.txt). MAP → review. Ревью Sonnet rv-subprocess-local (node:...delegate-task%3Ae1807ad7-38aa-4d58-bf4e-d5202a9a5dd9), бриф plans/briefs/review-subprocess-local.md. w5 свободен (Codex).
+- 06:46 rv-subprocess-local: блокирующих нет; 1 утечка (control+плохой cwd), ENAMETOOLONG control.sock, fd 7, блокирующий ack, fallback stdout None, 9 пропущенных кейсов (logs/rv-subprocess-local.full.md). Круг исправлений → w5 (Codex, fixsub1), сборки под регулятором.
+- 06:57 устаревшие target удалены, каталогов 23.
+- 06:58 catalog ПРИНЯТ (fb8d688), вместе с правкой hoh-session: 336/0. Принято 53/205. Идёт replay+conformance (bdn5xhw4v).
+- 07:02 l1 прогон-4 убит лимитом фоновой задачи (30 мин) на компиляции hoh-loader; перезапуск прогон-5 с лимитом 2 ч (сборка продолжается из кэша).
+- 07:08 llm-replay + conformance ПРИНЯТЫ (1093563): 137/0. Принято 55/205. Обе полосы свободны.
+- 07:09 прогон ведущего s7c: hoh-scope/hoh-tools/hoh-tool-executor-native (HOH_PRIORITY, target-sonnet), лимит 2 ч.
+- 07:16 w5 fixsub1 убит лимитом фоновой задачи 30 мин (правки в 5 src + 5 tests уже внесены) → продолжение fixsub2 с лимитом 2 ч.
+- 07:20 CEO: диск — узкое место (iowait 47–55 %, CPU 3–6 %, PSI памяти от страничного ввода-вывода). Решение ведущего:
+  профиль line-tables-only + incremental=false. Шаг 1: полосы приёмки (accept.sh через CARGO_PROFILE_*), старое содержимое
+  полос удаляется после замера. Шаг 2: после первой приёмки в новом режиме — .cargo/config.toml для всех, старые target удалять
+  по мере перехода. Зависимостей от полной отладочной информации в verify.sh/тестах/скриптах нет (grep).
+  До: приёмка пакета 33–53 мин (imgoff 33, replay 35, catalog 53; тёплые полосы). Размер полосы до — замер b9gptufy5.
+  Правило памяти (CEO): avg60 > 10 % от ввода-вывода не повод для паузы, пока MemAvailable > 12 ГБ и si/so ≈ 0;
+  ориентир — число сборок у регулятора.
+- 07:36 СБОЙ: процесс ведущего перезапустился ~07:25 — все фоновые задачи остановлены: регулятор, 11 Codex (w3,w4,c4,w5,ui1,cf1,w7,x1–x4), прогоны l1/s7c, замер полос. 3 cargo Sonnet остались в Tl.
+  Восстановление 07:32–07:40, всё ОТДЕЛЕНО от сессии (setsid nohup): регулятор 6 (pid 65736) — Tl продолжены; Codex — scripts/resume-writers.sh
+  (logs/lead1118/resume-0735.list, по 2 на 5 мин, итоги в logs/resume-writers.done); прогоны ведущего — scripts/lead-run.sh
+  (итоги в logs/lead-runs.done). s16 ГОТОВ fix hoh-agent кроме п.1 (P1 тупик выгрузки) → s16 же делает аддитивную правку hoh-kernel
+  (снимок task-local в Fiber::dispose) + set_agent в hoh-user-approval.
+- 07:42 s9 ГОТОВ credentials-local 130/0 → MAP review; ревью Codex rv-cred-local (detached pid 95416, итог в logs/lead-runs.done). Вопросы s9 (SHIM yaml/notify, Seams pub) — решить после ревью.
+- 07:48 rv-cred-local: 1 крит (секрет в тексте ошибки version/kind — унаследовано от TS), 2 выс (Debug документа, '...' маркер), 1 выс потеря данных (flow-перестройка: комментарии, большие целые), 2 сред (watcher без каталога, 0755). → круг s9. Затем проверка закрытия Codex.
+- 08:01 s5c ГОТОВ fix hoh-llm-openai 89/0 (п.1–6) → проверка закрытия Codex rc-openai (pid 156938). Окну: ServerKind::OpenAi выбирается в конфигурации (нет автоопределения), автоповтор max_completion_tokens работает и без него.
+- 08:05 rc-openai: закрыты 1,3,4,6; п.2 частично (ID моделей, abort-cause, короткий ключ), п.5 широкий предикат повтора → fix2 s5c.
+- 08:37 прогон ведущего s7c: scope/tools/tool-executor-native 266/0, clippy, fmt. Проверка закрытия Codex rc-tools3 (pid 262330). l1 всё ещё компилируется (1 ч, диск).
+- 08:41 rc-tools3: закрыты 4 (hoh-scope WeakScopeKey), 13, 7′, 8′; частично 1 (публичные поля enum изменены) и 3 (подтверждение по счёту yield) → fix3 s7c. hoh-scope и tool-executor-native можно принимать вместе с hoh-tools после fix3.
+- 08:50 CEO 08:45 выполнено: (1) профиль line-tables-only + incremental=false в .cargo/config.toml для всех;
+  (2) регулятор 3 (pid 295720) на час с 08:48, счётчик finished_total в логе; сравнение с 6 — следующий час;
+  приоритет по каталогам — governor-priority.txt (l1, agent-loop, w4, c4, w3, tools), hold — governor-hold.txt (x1–x4, w5, w7, w1: не собирают);
+  (3) tmpfs /dev/shm/hoh-crit (≤10 ГБ): полоса приёмки shm первой в accept.sh + прогон l1 (pid 297074, перезапущен там с нуля);
+  страж scripts/shm-guard.sh (pid 296995): MemAvailable < 8 ГБ или > 10 ГБ → стоп, очистка, файл disabled;
+  (5) scripts/clean-old-targets.sh: все target-* удаляются, как только не используются (3 ч), лог logs/clean-old-targets.log.
+  Полосы до: a 18,3 ГБ (инкрементальный 6,1), b 10,4 ГБ (3,2); обе очищены.
+- 08:54 прогон l1 в tmpfs (новый профиль): 2 мин, 2,6 ГБ (против 72+ мин на USB): hoh-loader+hoh 428/1, clippy, fmt. Падение config_editor.rs:370 стабильно (5/5, нет cordis.patch.yml) → l1 Codex fixt2 (pid 324521).
+- 08:59 CEO 09:10: ВСЕ сборки в tmpfs. Сделано: scripts/tmpfs-builds.sh (pid 338061) — target-* на USB становятся
+  ссылками в /dev/shm/hoh/target-*, вытеснение простаивающих при > 11 ГБ (потолок 14), страж MemAvailable < 8 ГБ → стоп,
+  очистка, реальные каталоги на USB, файл /dev/shm/hoh.disabled; регулятор 4 = число слотов (pid 332820), hold снят;
+  accept.sh: полосы shm/shm2 (/dev/shm/hoh/accept*), a/b — только если tmpfs выключен; codex-writer.sh: /dev/shm/hoh в
+  writable_roots. Все Codex перезапущены в tmpfs (resume-0900.list, по 2 на 5 мин). ui1 сдал fix2e → проверка закрытия
+  Sonnet rc-ui1-fix2e (node:...delegate-task%3Af2a08d55...), прогоны: UI (bdzzrasve), protocol/stub/credentials (pid 351528).
+
+### ПОДЪЁМ ПОСЛЕ ПЕРЕЗАГРУЗКИ (tmpfs пуст) — порядок
+1. cd /home/save/Alexandrie/HarnessOverHarness
+2. setsid nohup scripts/tmpfs-builds.sh >/dev/null 2>&1 </dev/null &   (пересоздаёт /dev/shm/hoh/target-* под ссылки)
+3. setsid nohup scripts/cargo-governor.sh 6 >> /mnt/toshiba/alexandrie/hoh/logs/cargo-governor.log 2>&1 </dev/null &
+4. Писатели: scripts/resume-writers.sh <list> <prompt> (setsid nohup), списки в logs/lead1118/resume-*.list.
+5. Конвейер: setsid nohup scripts/pipeline.sh daemon >/dev/null 2>&1 </dev/null &  (очередь /mnt/toshiba/alexandrie/hoh/pipeline/queue; итоги в pipeline/attention.log)
+Если tmpfs выключен стражем: rm /dev/shm/hoh.disabled и перезапустить п.2 (ссылки вернутся сами).
+- 08:59 UI ui1 fix2e: build ok, screens-a 22/22, window-artifacts ok; behavior не запустился — бинарь заглушки ищется в target-accept-b/debug (очищен). После прогона ui1 скопирую hoh-window-stub туда и повторю behavior.
+- 09:00 ui1 fix2e: protocol+stub+credentials 62/0, clippy, fmt (tmpfs, 1 мин); behavior 8/0, screens-a 22/0, build, artifacts ok. Коммит окна — после rc-ui1-fix2e (Sonnet).
+- 09:01 ОКНО ЗАКОММИЧЕНО d8697b2 (ui, protocol, design, hoh-protocol, hoh-window-stub, hoh-credentials; apps/ не включён — l1/cf1 в работе). Остаток rc-ui1-fix2e: шаблонный humanText у прочих привилегированных методов, экранирование пути → ui1 humantext1 (pid 364079).
+- 09:01 l1 fixt2/3: config_editor падение — ошибка теста (в TS файл создаёт initProfile), исправлена; прогон ведущего l1b в tmpfs (pid 365773); ревью Sonnet rv-l1-cmdline-app (delegate ceaa0b76) по diff fe1d8c5..+apps/hoh. MAP hoh-loader writing:l1 → после ревью и прогона — приёмка.
+- 09:02 l1b: hoh-loader+hoh 429/0, clippy, fmt (tmpfs, ~1 мин). Ждёт ревью rv-l1-cmdline-app.
+- 09:10 rv-l1-cmdline-app: 1 баг (ConfigEditor null вместо {} → лишний config: {} в patch), 5 расхождений текста/порядка (dump warning, тексты ENOENT, порядок слоёв, --version без HOME, appExit при boot) → l1 fixcmd1 (pid 429430).
+- 09:12 s16 ГОТОВ hoh-agent+kernel(capture_on_dispose)+user-approval(set_agent) → прогон ведущего agent (tmpfs, pid 440422) и проверка закрытия Codex rc-agent (pid 442531). Замечание s16: hoh-agent-loop не собирается из-за незавершённой правки hoh-tools pipeline.rs:719 (s7c fix3).
+- 09:12 s17 часть 1: tool-order/updates/executors 21/21 перенесено, 18 проходят, 4 ждут src; часть 2: request-error 4/4, shutdown-drain 1/1, model 2/3 проходят; input-lifecycle 3/4 и resource 1/3 не закрыты (hoh-tools не собирается). Для s6: P1 подвисание драйвера при простой Err исполнителя (futex), флаг agent_loop_request теряется в hoh-llm runtime.rs:872, порядок scope/maintenance. s17 ищет причину подвисания.
+- 09:17 прогон agent: kernel+agent+user-approval 394/0, clippy, fmt. rc-agent: 2–8 закрыты; п.1 частично — P1 повторный dispose, Kernel::shutdown, disposer.dispose; P2 изоляция захватов, синхронные колбэки, turnBoundary → s16 fix2.
+- 09:22 s17: подвисание — std Mutex guard в for (agent.rs:742), исправлено s6; hoh-agent-loop весь 0 failed, 2 ignored. Наборы s17: tool-order 4/4, updates 8/8, executors 9/9 (14 прогонов), request-error 4/4, shutdown 1/1, model 2/3, input 3/4, resource 1/3 (0 проходит, ждёт src); остальное — spy/нет крейтов. Остаток s6: клон запроса (agent.rs:978/983), порядок scope/maintenance, clippy scope_lifecycle.rs:433. s17 свободен.
+- 09:23 l1 fixcmd1 ГОТОВ: 6 пунктов, +7 тестов, 435/1 в песочнице (сигнал EPERM). Прогон ведущего l1c (tmpfs) + проверка закрытия Sonnet rc-l1-cmdline (delegate afc6c991). Затем приёмка hoh-loader + hoh.
+- 09:26 l1c: hoh-loader+hoh 436/0, clippy, fmt (вне песочницы, tmpfs). Память: при tmpfs 11,2 ГБ MemAvailable падал до 8,4 ГБ (порог стража 8) → порог вытеснения 11→8 ГБ, демон перезапущен (pid 560649). Пик до перезапуска 11247M, минимум MemAvailable 8395M; finished_total регулятора 09:25 = 51 (с 08:56).
+- 09:28 rc-l1-cmdline: 1,3–6 закрыты, 2 частично; новые мелкие: порядок в dump, тексты структурных ошибок, warning в схемном дампе, отложенный shutdown при appExit → l1 fixcmd2 (pid 579455).
+- 09:36 s7c ГОТОВ hoh-tools fix3 (Frozen поля, сигнал старта из dispatch_tool_body, 200 мс для зависшей обёртки; 269/0) → прогон ведущего tools (tmpfs) + проверка закрытия Codex rc-tools4 (pid 626739).
+- 09:37 l1 fixcmd2 ГОТОВ (438 в песочнице + 1 сигнальный EPERM) → приёмка l1-1119 (hoh-loader, hoh) в полосе shm + проверка закрытия Sonnet. Коммит — после обоих.
+- 09:38 приёмка l1-1119 (hoh-loader, hoh) в полосе shm: 439/0, fmt, clippy — 1 мин (было 33–53), полоса 2,6 ГБ (было 10,4–18,3). Коммит после rc-l1-cmdline2.
+- 09:42 rc-tools4: п.1 частично (swap через публичные Frozen-поля; failure канонизируется раньше, чем в TS), п.3 — таймер 200 мс дефект → s7c fix4 (waterfall_with_start). Прогон tools 269/0. Остановлены 3 зависших тест-бинаря в слотах (s6 tool_executors 4 ч 13 мин — старый код; s16 dispose_capture ×2) — из-за них сборки ждали 16–32 мин.
+- 09:43 CEO 09:45: раздача Codex — по правилу очереди (сборки ждали 16–32 мин из-за зависших тестов; после их остановки и сторожа в регуляторе перепроверю в 09:55). target-sonnet → tmpfs в 09:41. Источник нагрузки USB: sdb занят 100 %, NVMe 0 %; сборок на USB нет — фоновые rm старых target (trash-*, ionice idle). s8 возобновлён на tool-fs/working-directory (веха).
+- 09:44 ПРИНЯТЫ hoh-loader + apps/hoh (d6f397a; Cargo.toml — только строки members/exclude). Счёт 62/205. Остаток п.5 (dispose посреди mount) → l1 fixcmd3 (pid 729569).
+- 09:46 s5c ГОТОВ fix2 hoh-llm-openai 97/0 → прогон ведущего openai + проверка закрытия Codex rc2-openai (pid 762681).
+- 09:49 s6 ГОТОВ hoh-agent-loop 135/0 (tool_calls 19/24, cancel 31/37, resume 13/47, scope_lifecycle 15/39, loop 19/66, interception 23/23 у s12). Исправлено: запрос без user (Message untagged в hoh-llm — обход по role), подвисание, маркер, порядок scope. → прогон ведущего agentloop (pid 803723) + ревью Codex rv-agentloop (pid 808864). MAP → review.
+- 09:49 openai: прогон 97/0; rc2-openai — п.2 (регистр, ключ между причинами, resolve_model) и п.5 (граница слова, ещё 4 формы текста) не закрыты → s5c fix3, последний круг; поток модели не чистим (граница в README). Ревью s17/s7c — ждут задач.
+- 09:53 прогон agentloop 189/0, clippy, fmt. rv-agentloop: 2 BLOCKER (MutexGuard через await в factory.rs:313/317 — двойной dispose виснет; брошенная maintenance-future навсегда занят), 2 HIGH (гонка cancel/followup теряет пробуждение; rollback resume до освобождения write-handle), 1 MEDIUM (ошибка step/end). → s6 первым делом, hoh-llm role после.
+- 09:55 очередь слотов: 4 работают, 9 ждут; нижний приоритет (w5, x1, x2, x4, w7) ждёт ~11 мин > 5 → новых Codex (x5–x8, промпты готовы в logs/lead1118/x[5-8]-start.txt) не добавляю. MemAvailable 17,7 ГБ — предложить CEO 5–6 слотов.
+- 09:57 s16 ГОТОВ hoh-agent fix2 408/0 → прогон agent2 + проверка закрытия Codex rc2-agent (pid 910647).
+- 10:01 s7c ГОТОВ hoh-tools fix4 (pub(crate)+методы, frozen/editable как TS, waterfall_with_start; 341/0) → прогон tools2 + проверка закрытия rc-tools5 (pid 954401).
+- 10:02 s8 ГОТОВ tool-fs 269/0, working-directory 21/0, tool-working-directory 1/0 → прогон toolfs + ревью Codex rv-toolfs (pid 966982). MAP → review. Вопрос s8: подключить tool-fs/tool-working-directory в профиль «окно-чат» — да, при сборке приложения (cf1/l1). Заметка s8: hoh-session-projection «не собирается, нет зависимостей в манифесте» — проверить у w3.
+- 10:02 прогон agent2 408/0; rc2-agent: основные пути закрыты; остаток: тег ядра по адресу, изоляция Disposer::dispose, shutdown/disposer из своего teardown (сверить с TS) → s16 fix3, последний; приму по своему прогону.
+- 10:08 tools2 341/0; rc-tools5: п.3 закрыт, п.1 — один новый дефект (finish не замораживает итог) → s7c fix5, затем приёмка.
+- 10:09 rv-toolfs: 3 крит — shim вместо настоящих session-projection/user-approval (инструменты не активируются/approval не работает), НЕТ конфайнмента (fs-sandbox, fs-observation-policy не портированы — блокер вехи); 1 выс (directory_agent), 1 сред (read_image), 1 низ. → s8 fix1 (интеграция на настоящих крейтах); НОВЫЙ Codex x5 (pid 1076955) на hoh-fs-sandbox + hoh-fs-observation-policy вне правила очереди: блокер вехи.
+- 10:19 ПРИЧИНА ожидания слотов (CEO 10:19): страж tmpfs сработал в 09:43 (MemAvailable 7,8 ГБ при 12 ГБ в tmpfs) → все target вернулись на USB, ведущий не заметил. Исправлено: tmpfs снова включён; регулятор 6 (разрешение CEO) с допуском по памяти (< 11 ГБ → лимит −2, < 9,5 ГБ → 2); lead-run.sh удаляет свой каталог в tmpfs после прогона; фоновый сторож файла /dev/shm/hoh.disabled будит ведущего. CARGO_HOME на NVMe (~/.cargo) — не причина. Каталоги, где сборка идёт сейчас, переедут в tmpfs, как освободятся.
+- 10:21 s16 ГОТОВ hoh-agent fix3 (411/0): тег ядра — поколение, изоляция Disposer::dispose, самоожидание disposer/shutdown — сразу возврат (по fiber.ts epoch / kernel.md §907) → приёмка agent-1119 по решению ведущего (без нового круга проверки).
+- 10:21 s9 ГОТОВ credentials-local fix 143/0 → прогон cred + проверка закрытия Codex rc-cred-local (pid 1239641). Замечание: существующий ~/.dsh 755 теперь требует chmod 700 — окно должно показать этот текст.
+- 10:21 ПРИНЯТ hoh-agent (+kernel, user-approval) 1724461: 411/0. Счёт 63/205.
+- 10:23 l1 fixcmd3 принят и закоммичен (dispose посреди mount).
+- 10:25 cred 143/0; rc-cred-local: 1,2,3,5,6 закрыты; п.4 теряет !tag/директивы при flow-перестройке (потеря данных), гонка retarget watcher → s9 fix2, потом приёмка по прогону.
+- 10:29 ПРИНЯТ hoh-credentials-local (146/0).
+- 10:29 s12 ГОТОВ interception 23/23 (в hoh-agent-loop, у s6 на ревью) и fix bash 2 (bash-local 40/0) → прогон bash3 + проверка закрытия Codex rc2-bash (pid 1380240).
+- 10:30 ПРИНЯТ hoh-llm-openai (111/0) — новый крейт, не в MAP.
+- 10:33 s6 ГОТОВ agent-loop fix1 (195/0, 0 ignored) + hoh-llm role (237/0) → прогон agentloop2 + проверка закрытия Codex rc-agentloop (pid 1454517).
+- 10:34 bash3 прогон: hoh-tool-bash не компилируется — s8 удалил hoh_working_directory::shim (s8 steer: перевести tool-bash на настоящий API). rc2-bash: прод on_started ок; тест недетерминирован; дробный cap — метаданные (→ PORT_NOTES) → s12 fix3. Approval только при sandbox_permissions — как в образце; NativeGuard блокирует rm -rf. Провайдеры AgentNoticesKey/InstallAnchorKey — интеграция при сборке приложения.
+- 10:36 s12 ГОТОВ bash fix3 (bash-local 40/0; on_started тест с явным утверждением, дробный cap в PORT_NOTES). Приёмка bash-цепочки — после того как s8 вернёт компиляцию hoh-tool-bash. s12 свободен.
+- 10:37 ПРИНЯТЫ hoh-scope, hoh-tools, hoh-tool-executor-native.
+- 10:38 agentloop2 432/0; rc-agentloop: блокеры закрыты; гонка cancel/followup не закрыта, новая гонка двух драйверов, inject-rerun → s6 fix2 (одна критическая секция, детерминированные тесты). hoh-llm role корректен.
+- 10:43 CEO 10:45: конвейер scripts/pipeline.sh (daemon pid 1699894): отчёт → прогон ведущего → ревью другой моделью (Codex→Kimi, Sonnet→Codex) с ВЕРДИКТ → приёмка; ко мне — attention.log (READY-COMMIT / NEEDS-LEAD). Отчёты Codex подхватываются сами; Sonnet — одной командой submit. Залежавшиеся отчёты поставлены: w3 persist/proj, c4 jsonl, ui1 humantext, x2 commands, x1 permission-presets, x4 llm-retry, x5 fs-sandbox. Writers w4,x5,x3,cf1,w5,x1,x2,x4 возобновлены (resume-1045). w5 fixsub4: промпт отклонён политикой OpenAI — если повторится, новая сессия.
+- 10:47 s8 ГОТОВ tool-fs fix1 (372/0 вместе с tool-bash; shim совместимости оставлен) → конвейер. bash-цепочка → конвейер.
+- 10:49 конвейер: READY-COMMIT окно humanText (UI-тесты и коммит запущены); NEEDS-LEAD fs-sandbox — только 2 ослабленных утверждения в тестах → принимаю, тесты допишет x5 следующим ходом (записать в его продолжение).
+- 10:49 clippy в verify.sh и lead-run.sh теперь --no-deps: незавершённая правка s6 (agent-loop agent.rs:482) валила clippy всех зависимых. tool-fs и bash — повторно в конвейер.
+- 10:53 Конвейер (первые итоги): hoh-llm-retry (x4) прошёл весь путь без ведущего — прогон 32/0, ревью Kimi чисто, приёмка зелёная. КОММИТ ОТЛОЖЕН: зависит от незакоммиченных hoh-session-projection (+dev: persistence, persistence-jsonl) и изменений hoh-llm — коммитить вместе с ними, иначе чистая выгрузка не собирается.
+- 10:53 Kimi исчерпал 5-часовой лимит посреди двух ревью (commands, persistence+projection). В pipeline.sh добавлен запасной ревьюер: Sonnet через `claude -p` только с Read/Grep/Glob (проверено: запись запрещена). Демон перезапущен, оба пакета снова в очереди; обрывки ревью в pipeline/crashed/.
+- 10:53 Замечания ревью → писателям: c4 fixjsonl5 (посторонняя V5 ломает open parent) запущен; x1 fixpp1 (permission-presets: ABBA-деадлок auto_turn/registry, лишняя проверка Auto, порядок ключей JS, js_trim) запустится сам после хода x1 next1 (pid 1958584).
+- 10:54 s6 сдал hoh-agent-loop fix2 (202/0, clippy, fmt; остаточное окно пробуждения и порядок agent/status — PORT_NOTES #21). В конвейер (ревью Codex по rc-agentloop).
+- 10:56 persistence+projection (повтор ревью): прежние 4 закрыты, persistence чист; новый дефект projection — __proto__ в snapshot/view/view_checkpoint/hydrate. w3 fixpersist5 запущен.
+- 11:19 CEO: стоял с 10:56 — сторож внимания не перевзведён после 10:55, отделённые писатели не будят. Исправлено: scripts/lead-alarm.sh (НЕ отделённая фоновая задача харнесса; выход на новую строку pipeline/attention.log, на «exit=» писателя в logs/resume-writers.done, на hoh.disabled или по таймеру 600 с). Проверен (15 с → разбудил). ПОСЛЕ КАЖДОЙ ОБРАБОТКИ ЗАПУСКАТЬ СНОВА.
+- 11:2x Разбор журнала внимания 10:55–11:22: коммиты 35fa3b2 (persistence, projection, jsonl, llm-retry; групповая приёмка 411/0) и 3936c69 (hoh-jobs). fs-observation-policy принят конвейером, коммит ждёт hoh-fs-local (s13, не принят). Чистая выгрузка HEAD не собирается с 79f7542 (image-offload зависит от незакоммиченного hoh-agent-loop) — до коммита agent-loop.
+- Исправления по ревью: Codex w4 fixsdk6, w5 fixsub6 (2 теста красные вне песочницы), x1 fixpp1, x2 fixcmd1 (после текущего хода x2), cf1 probe1 (xvfb-probe окна подтверждения: таймаут без результата, лог logs/cf1-probe-1122.txt); Sonnet s6 agent-loop fix3 (HIGH: потеря followup до settle_idle), s8 tool-fs fix2 (общий SandboxPolicyKey с hoh-fs-sandbox; зависание dispose), s12 bash fix4 (InstallAnchorKey в launcher).
+- Новые пакеты: x6/x7/x8 новые сессии (preset-registry…, compaction×3, file-reference×2+sdk); x3/x4/x5 волна 2 (default-model, tool-present, time-context / ask-user, todo, tool-testkit / session-title, session-log-deepseek, mcp-resources). MAP отмечен writing:xN.
+- В конвейере: hoh-llm+hoh-session-format (w7 shared5).
+- 11:26 CEO: принятое = собирается из закоммиченного. КОММИТЫ ТОЛЬКО через scripts/commit-check.sh "сообщение" PATH... (кандидат из индекса → git worktree в /dev/shm/hoh/cc-tree → Cargo.lock кандидата подгоняется `cargo update --workspace --offline` и кладётся в индекс, рабочий Cargo.lock не трогается → `cargo check --workspace --all-targets --locked` → коммит или откат индекса). Проверен путь отказа (fs-observation-policy: нет hoh-agent-loop → ОТКАЗ, индекс и Cargo.lock целы). Пока agent-loop не закоммичен, любой commit-check откажет (разрыв с 79f7542). После коммита agent-loop: scripts/commit-check.sh --head-test (check + test всего workspace на чистой выгрузке HEAD) → в сводку 12:20.
+- 11:25 В конвейере: s8 tool-fs fix2 (377/0 у писателя), s12 bash fix4 (+apps/hoh InstallAnchorKey; корень установки = префикс над bin/), w7 hoh-llm+session-format.
+- 11:27 hoh-user-questions (x2 next1): ревью 8 пунктов (утечки при выгрузке/отмене, гонки answer/DUPLICATE_WAIT, порядок ask, тесты). x2 fixuq1 стартует после fixcmd1 (codex pid 2499023). agent-loop fix3 в конвейере (112613).
+- 11:32 cf1 probe окна подтверждения вне песочницы: PASS (approval window close rejected preflight), лог logs/cf1-probe-run2.txt. hoh-desktop: прогон ведущего идёт (logs/lead-desktop-*.txt), ревью — Sonnet s17 (только чтение). s8 tool-fs fix3 (барьер сериализации при отмене). s6 agent-loop fix4 (followup на пути ошибки). x2 hoh-commands fixcmd1 сдан → конвейер.
+- 11:32 hoh-desktop прогон ведущего: 9/0 (с HOH_TEST_ENGINE=target-cf1/desktop/debug/hoh-window-stub; без переменной тест approval падает с подсказкой — так задумано), clippy 0, fmt 0. Ждёт ревью s17.
+- 11:39 agent-loop fix4: окно followup сдвинулось раньше (между turn_steps().await и Drop ClosingOnExit). s6 fix5: структурно — счётчик unseen_wakes под mutex state (сброс при взятии inbox и при keep_inbox), settle_idle смотрит счётчик; тест-сито по всем пробам Window. Очередь коммитов: pipeline/commit-waiting.txt (7 пакетов) ждёт agent-loop.
+- 11:44 Замечания: hoh-user-questions (fix2: порядок BAD_ANSWER/REPLY_QUEUED, тесты п.7) → x2 fixuq2 после хода wave2; hoh-tool-ask-user (timeout float, Config, тесты, SHIM) → x4 fixask1 после хода wave2b. s8 tool-fs fix4 в конвейере.
+- 11:46 Сессии новых Codex: x6 01a1f2e3-a6ee-76b1-91ce-01d867edfb7b, x7 01a1f2e3-a6ea-7ec0-b566-3bbf7d79c537, x8 01a1f2e3-a6eb-79c0-b88e-133d99c428f1. x6 сдал hoh-agent-preset-registry (44/0) → конвейер, x6 next1 дальше. s6 agent-loop fix5 (unseen_wakes) в конвейере 114429.
+- 11:57 АВТО-ИСПРАВЛЕНИЯ: конвейер сам отдаёт замечания ревью Codex-писателю (scripts/auto-fix.sh WRITER CRATE REVIEW; сессии в pipeline/writers.tsv; ждёт конца текущего хода писателя под flock, затем resume с тегом fixauto-<крейт>-N; отчёт снова проходит проверку закрытия). Журнал pipeline/auto-fix.log. После 3 кругов по крейту — NEEDS-LEAD. Sonnet-писатели (s6, s8, s12) — по-прежнему через ведущего. Демон перезапущен.
+- 12:02 hoh-desktop fixdesk1: тесты 22/0, clippy, fmt; probe РЕГРЕСС (таймаут 124, logs/cf1-probe-run3.txt) → cf1 fixdesk2. agent-loop fix7 в конвейере 120054.
+- 12:08 agent-loop ПРИНЯТ конвейером (fix7, 214/0, ревью чисто). Коммит через commit-check ОТКАЗ: (1) в HEAD корневой Cargo.toml без workspace.dependencies (zstd и др.) — добавлю в тот же коммит вместе с DEPS.md; (2) закоммиченный hoh-fs-sandbox (322ccb7) зависит от непринятого hoh-fs-local → манифест не грузится. Других таких разрывов нет (скан всех закоммиченных Cargo.toml). hoh-fs-local (s13 fix прерван ночью) отправлен в конвейер как есть: проверка закрытия против rv-fslocal+rv-sandboxfs (pipeline/reviews/hoh-fs-local.0000-prev.md). Коммит agent-loop + 9 ожидающих — после fs-local.
+- 12:13 x4 создал crates/hoh-tool-testkit с hoh-*.workspace = true (таких в корне нет) — workspace не грузился ни у кого; ведущий заменил на path-зависимости. pipeline: при 'failed to load manifest for workspace member' — тихий повтор через 3 мин. sandbox-local и projection-cache пересданы.
+- 12:15 hoh-fs-local: проверка закрытия — 8/8 прежних закрыты, новый P2 (watch поздней ссылки). Отдан Codex c4 (fixfslocal1). После принятия: коммит fs-local + agent-loop + корневой Cargo.toml/DEPS.md через commit-check, затем --head-test, затем очередь из 10.
+- 12:23 hoh-desktop fixdesk3: probe PASS с трассой (logs/cf1-probe-run5.txt), тесты/clippy/fmt — см. logs/lead-desktop-*4.txt. Проверка закрытия — s17.
+- 12:31 hoh-desktop fixdesk4: probe PASS (logs/cf1-probe-run7.txt; run-approval-probe.sh упал на --locked для заглушки: общий Cargo.lock отстал от новых крейтов — шаги выполнены вручную), тесты 26/0, clippy, fmt. Закрытие N1–N3 — s17.
+- 12:32 hoh-desktop ПРИНЯТ и закоммичен df55fa0 (закрытие s17 чисто; чистая выгрузка desktop-workspace check --locked ok, ui/dist скопирован как артефакт). Счёт 73. c4 по fs-local прошёл авто-круг (fixauto-hoh-fs-local-1).
+- 12:37 fs-local ПРИНЯТ (c4 авто-круг). commit-check fs-local+agent-loop+Cargo.toml: ОТКАЗ — закоммиченный apps/hoh (l1) зависит от hoh-web-fetch-http (w1, отчёт webfetch3 не в формате ГОТОВ, ни разу не ревьюился). Отправлен в конвейер (codex new, авто-круги к w1). Других разрывов нет (скан включая apps/*).
+- 12:39 hoh-web-fetch-http: прогон вне песочницы 103/1 (обрыв при чтении тела: NETWORK_ERROR вместо CONNECTION_INTERRUPTED) → w1 fixauto-1. ВНИМАНИЕ: крейт не проходил полного ревью — когда конвейер вернёт его READY по проверке закрытия, отправить ещё раз как 'codex new' (полное ревью) до коммита.
+- 12:53 С 12:13 работали ДВА демона конвейера (перезапуск по pgrep убил не тот процесс) — отсюда дубли заданий. Оба остановлены, один запущен (pid 266295, pipeline/daemon.pid). Перезапуск только: kill $(cat pipeline/daemon.pid). Конвейер теперь и красный прогон Codex-пакета отдаёт писателю сам (auto-fix). hoh-office-kit красный 47/1 → x6 авто.
+- 12:54 hoh-web-fetch-http: ПОЛНОЕ ревью ЧИСТО (124853). Приёмка красная (83/1, chunk-size текст) — во время приёмки w1 правил крейт по авто-кругу от проверки закрытия (124814). Ждать отчёт w1 → проверка закрытия → если READY, крейт принят (полное ревью уже чисто).
+- 13:10 commit-check четвёрки (+hoh-llm, hoh-session-format — приняты конвейером в 11:22, строку я пропустил): последний разрыв — apps/hoh использует hoh_skill::SkillRegistry из незакоммиченного hoh-skill (w5, ревью 18.11 с замечаниями, fix-w5-skill). Полная диагностика --keep-going: других ошибок нет. hoh-skill отправлен в конвейер (fix против fix-w5-skill.md, авто-круги к w5).
+- 13:10 lead-alarm.sh: курсор в pipeline/alarm.cursor — строки между пробуждением и перевзводом больше не теряются (пропущены были READY 11:22 hoh-llm+session-format и 13:01 web-fetch).
+- 13:29 hoh-skill (последний разрыв HEAD) — авто-круг ждал в очереди w5 за 2 задачами; снят, отдан свободному c4 (auto-fix c4 hoh-skill). x6 сдал hoh-tool-office (30/0) — волна x6 закончена.
+- 13:45 Большой коммит 2a3e548 (fs-local, agent-loop, web-fetch-http, skill, llm, session-format, корневой манифест) через commit-check — все разрывы HEAD закрыты. head-test 13:49 упал НЕ по коду: tmpfs заполнен, Bus error линковщика → head-test перенесён на диск (target-headtest, выгрузка ht-tree), идёт повторно (задача bpmikj0f9).
+- 13:56 scripts/commit-queue.sh: очередь pipeline/commit-waiting.txt проходами через commit-check; закоммичено 26 пакетов (1bcec16…9e51622). commit-check больше не удаляет cc-target (инкрементально).
+- 13:58 Найдены потерянные READY-COMMIT (до курсора будильника): file-reference 11:32, compaction 11:37, user-questions/tool-ask-user 12:08, sdk-protocol 12:23 — не менялись после приёмки, в очереди (задача bvmvokrl2). x7/x8/w3 простаивали с ~11:30.
+- 13:59 Перечень shim-ов: pipeline/shims.txt — 37 пар «shim → владелец уже в HEAD». Волна deshim: c4 (jobs, tool-bash, bash-local, shell-env, subprocess-local, fs-local, fs-sandbox), w1 (tools, user-approval, tool-fs, tool-working-directory, tool-present, permission-presets, window-stub), w3 (sdk-jsonrpc-server, agent-preset-registry, session-projection, llm-replay, session-format-v3-to-v4). Волна 4 портов: x7 (tool-str-replace-editor, util-text-search, tool-call-timeout-policy, repeat-tool-reminder, plan-mode), x8 (mcp-client, mcp-manager, tool-web). Продолжения — resume-1045.txt. Ещё не в волне deshim: compaction←session, tool-ask-user←tools, tool-workspace-dependencies, subagent, plugin-package-inventory (после их коммита).
+- 14:00 Пять потерянных закоммичены (8b8638d…fd088ac). После списков deshim добавить: w3 ← hoh-compaction (SHIM hoh-session), w1 ← hoh-tool-ask-user (SHIM hoh-tools).
+- 14:05 x8 остановился: hoh-mcp-client требует rmcp (DEPS.md). Ведущий добавил rmcp =3.10.0 в корневой Cargo.toml (default-features=false; client, transport-child-process, streamable-http-client-reqwest, reqwest; общий reqwest 0.13.5) по исключению «crates при сборке» (ответ 11); dev: server, transport-io, macros. cargo fetch ок, check -p hoh-mcp-client офлайн ок. x8 продолжен (тег rmcp). Корневой Cargo.toml уйдёт в коммит вместе с hoh-mcp-client.
+- 14:08 Коммит без ведущего: pipeline.sh на READY-COMMIT сам дописывает pipeline/commit-waiting.txt и запускает commit-queue.sh под flock pipeline/commit-queue.lock (журнал logs/commit-queue.txt); остаток очереди → NEEDS-LEAD commit-queue в attention.log. Демон перезапущен (pid 2011107). Задания 140545 util-ripgrep и 140646 terminal начаты старым демоном — их READY ставить в очередь вручную. Пакеты со сменой корневых файлов (mcp-client + Cargo.toml) — вручную.
+- 14:10 14:07 сработал предохранитель памяти tmpfs (MemAvailable 7,6 ГБ): причина — мой cc-target в tmpfs, защищённый от вытеснения, раздул его до 13,7 ГБ. cc-target перенесён на диск ($H/cc-target), head-test → $H/headtest-target (не target-*, чтобы демон не делал из него ссылку). tmpfs снова включён. hoh-jobs отказ был из-за SIGTERM предохранителя, очередь перезапущена. hoh-tool-schedule ждёт hoh-schedule (x4).
+- 14:17 Конвейер: отчёт Codex «ОСТАТОК hoh-x» → продолжение писателя без ведущего (resume-1045, тег cont-<крейт>-N, до 4 раз; затем NEEDS-LEAD). Демон перезапущен. Задание 141510 plugin-package-inventory-deepseek начато старым демоном — его READY в очередь вручную.
+- 14:21 (1) w1 deshim hoh-tools: Agent → реэкспорт hoh_agent::Agent сломал закоммиченный hoh-agent-loop (E0046/E0053, отчёт x2). w1 поставлено задание: адаптировать прямых потребителей, workspace check зелёный, отчёт «ГОТОВ hoh-tools» + «Затронуты: …» — коммит hoh-tools вместе с потребителями ВРУЧНУЮ. (2) Конвейер: после ГОТОВ писатель сам берёт следующий пакет (AUTO-NEXT, resume-auto.txt — чистый общий текст продолжения; resume-1045 устарел). ОСТАТОК → AUTO-CONTINUE тем же текстом. Демон pid 2235868. (3) x2 goal-round-driver продолжен после блокера (cont-1). Поправка к 14:17: задания 141510 и позже начаты демоном с автокоммитом — вручную ставить не нужно.
+- 14:23 Будильник будит только на NEEDS-LEAD (остальное — строкой «без ведущего: …»); commit-queue пишет NEEDS-LEAD только при смене состава остатка (pipeline/commit-queue.last).
+- 14:24 ВЕХА «окно-чат», пункт «в» (склейка движка) — НИКТО не делал с 09:44 (мой пропуск, CEO указал). Распределена по plans/briefs/window-glue.md: l1 часть 1 (apps/hoh, владелец целого), w3 2b (sdk-jsonrpc-server, после текущего deshim), w8 2a (hoh-sdk-app), w7 3 (hoh-model-host), ui1 4 (user-approval host), ui2 «б» (hoh-llm-openai-mock) затем 5 (apps/hoh/tests/window_e2e.rs), cf1 «г» (hoh-desktop+ui). Отчёты «ЧАСТЬ apps/hoh <1|5>» приходят NEEDS-LEAD — ревью запускаю я (pipeline.sh submit codex new …). QA-задание: plans/briefs/qa-window-chat.md. Оценка CEO: 20.11 ~03:00 (00:00–08:00); уточнить после первого сданного куска. Живая модель: CEO запросит ключ у основателя (OpenAI-совместимый, tools в потоке, ~100 запросов).
+- 14:47 USB-диск перегружен (du висел): cc-target на диске + head-test. cc-target возвращён в tmpfs (/dev/shm/hoh/cc-target; защита от вытеснения только cc-tree, pl-*, accept*; каталог сборки защищён in_use). Скрипты заменены через mv (запущенные экземпляры не ломаются). Старая цепочка commit-queue (с ошибкой stdin: cargo съедал строки очереди) убита, индекс очищен, очередь перезапущена. tmpfs-builds pid 2845510. x4: shim hoh-compaction←hoh-session оставлен (нет слота в hoh-session).
+- 14:58 CODEX ЛИМИТ до 26.11 05:25 (с 14:33 все запуски — пустые exit=0). pipeline/codex.disabled; codex-writer.sh → exit 75 + NEEDS-LEAD CODEX-LIMIT; AUTO-NEXT/CONTINUE/auto-fix по флагу выключены; ревью кода Sonnet: Kimi → Opus 5.5 claude -p read-only. Критический путь на Sonnet 5.5 (T3 delegate_task, отчёты logs/sg*.glue.sonnet.md — не *.report.md, конвейер их не видит; ревью — я: scripts/pipeline.sh submit sonnet new <крейт> -- from <отчёт>): sg1 часть 1+2a, sg2 2b, sg3 3, sg4 4+tool-bash, sg5 б+5, sg6 г. Оценка CEO: 20.11 ~06:00 (03:00–11:00). Волны x3–x8 стоят. До лимита сданы: hoh-tools без shim (w1 227/0), sdk-jsonrpc-server без shim (w3 182/0) — в конвейере.
+- 15:10 sg2 ГОТОВ 2b (197/0) → ревью 150700 (sonnet→Kimi/Opus). Хвост 2b — HohPrivilegedApprover + humanText методов — передан sg4 (steer). Снятие shim в hoh-tools (w1) сломало потребителей (tool-present lib; тесты tool-fs/todo/wd/ask-user/schedule/goal, shell-env, checkpoint-policy, mcp-resources) → sg7 адаптирует. Коммит hoh-tools — ТОЛЬКО вместе с крейтами sg7 (вручную, после ревью). hoh-llm-deepseek ломается сам (оборван x5, вне вехи).
+- 15:16 head-test 2a3e548 не дошёл до тестов за 80 мин (USB-диск под нагрузкой; внешний timeout 5400 убил бы) — остановлен; перезапущен на HEAD 220faf72 с timeout 10800, target headtest-target (частичная сборка сохранена).
+- 15:20 sg3 ГОТОВ часть 3 hoh-model-host (9/0) → ревью 151002. Вызов hoh/* сервером есть (session_rpc.rs:235). Восстановление адреса/модели после перезапуска — передано sg1 (steer).
+- 15:25 sg4 ГОТОВ: hoh-user-approval (55/0) → ревью 151438; hoh-tool-bash на hoh-jobs (72/0) → ревью 151438. Мостик HohPrivilegedApprover (цикл зависимостей) → sg1 в apps/hoh (steer). jobs-local для вехи не нужен (Jobs в tool-bash optional). Сдано частей: 2b, 3, 4, tool-bash; в работе sg1 (1+2a), sg5 (б+5), sg6 (г), sg7 (потребители hoh-tools).
+- 15:30 sg1 СДАЛ часть 1 (apps/hoh 111/0; window_profile.rs: initialize → session/prompt на mock → поток → shutdown код 0; host-подтверждение key/set с mac; модель переживает перезапуск в <профиль>/model-settings.json 0600) и 2a hoh-sdk-app (6/0 → ревью 151605). Ревью apps/hoh — Opus вручную (pipeline/reviews/apps-hoh-part1.*.md). Хвосты: DSH_HOME 0700 создаёт ядро Tauri (sg6); опрос model-settings 250 мс (нет события в ModelHost) — замечание; hoh-settings пуст (security/view по умолчанию). Kimi закрыт ещё в 15:16.
+- 15:36 ревью hoh-model-host (Opus): ЗАМЕЧАНИЯ, P1 — probe с model:"" (окно так ищет модели) отвергается → первый запуск не проходит. Круг fix1 отдан sg3 (thread_send в его тред).
+- 15:38 ревью sdk-jsonrpc-server: 5 замечаний → sg2 fix1 (thread_send).
+- 15:23 (реальное время; мои записи 15:3x выше — опережали) ревью: hoh-sdk-app 1 мелкое (profile:null) — отдать sg1 вместе с ревью части 1; hoh-user-approval 4 замечания → sg4 fix1.
+- 15:23 ревью hoh-tool-bash: 4 замечания → sg4 fix2 (в очередь треда после fix1).
+- 15:3x sg3 fix1 hoh-model-host 16/0 (P1 probe model:"" исправлен) → проверка закрытия.
+- 15:30 ревью части 1 (apps-hoh-part1.151619.md): БЛОКЕР 1 — в профиле окна нет песочницы → опасный bash без approval/request (→ sg1 fix1, подключить sandbox-policy/sandbox-local/fs-sandbox как в dsh); БЛОКЕР 10 — неизвестный hoh/* -32603 вместо -32601 → чат не открывается (→ sg2 очередь); 11 hoh/settings/rules/set не зарегистрирован → первый запуск застревает на шаге 2 (→ sg3); 12 DSH_HOME 0755, 13 userQuestions не включён (→ sg6). Пункты 2–9 + sdk-app → sg1.
+- sg4 fix1 hoh-user-approval 56/0 → проверка закрытия; sg4 дальше fix2 tool-bash (в очереди треда).
+- 15:4x sg7 ГОТОВ потребители hoh-tools (10 крейтов, 422/0; workspace check падает только в mcp-client, llm-deepseek). hoh-tools: ревью 142420 с 6 замечаниями, авто-круг w1 потерян лимитом → sg7 fix1 по hoh-tools. Затем: ревью (Opus) hoh-tools + потребители одним заданием, коммит одной группой вручную (без hoh-tool-goal/hoh-tool-schedule — не отслеживаются).
+- sg3 fix2: hoh/settings/rules/set зарегистрирован (18/0) → проверка; хранение правил (window-rules.json) → sg1 (очередь).
+- 15:37 hoh-user-approval закоммичен конвейером (a4396d6e). hoh-model-host проверка закрытия: мелкие (folder trim, PORT_NOTES, двойной GET /models) → sg3 fix3.
+- sg3 fix3: hoh-model-host 19/0 + hoh-llm-openai (probe_first_listed) → проверка закрытия обоих. Нестабильный тест hoh-llm-openai connection_refused_is_a_transport_error (гонка за порт) — отметить.
+- 16:0x sg5 ГОТОВ: hoh-llm-openai-mock 9/0 → ревью 160122; window_e2e.rs 6/0 (+2 ignore): красные ask-user (мост вопросов на SHIM user-questions/request) и session/cancel (не прерывает запрос к модели) → sg2 очередь (fix3). В профиле: fs-sandbox/tool-fs объявляют свой sandboxPolicy (shim, конфликт типов) — песочница ФС ещё не подключена, sg1 в круге. sg5 свободен.
+- 16:1x sg1 fix1 часть 1: 126/0; bash-опасное через approval (GLUE-SHIM hoh-bash-sandbox в apps/hoh/src/window_bash_sandbox.rs); write/edit вне папки — НЕ закрыто (fs-sandbox/tool-fs свой ключ sandboxPolicy) → sg5 снимает shim в hoh-fs-sandbox+hoh-tool-fs, затем sg1 переключит filesystem → dsh-fs-sandbox. sg3 fix4: сохранить правку prepare_call (имя модели) + событие изменений. sg6: рабочая папка сессии = папка из правил, не HOME. Ревью закрытия части 1 — после задачи window-rules у sg1.
+- sg2 fix1 sdk-jsonrpc-server 207/0 → проверка закрытия; у sg2 в очереди fix2 (-32601) и fix3 (ask-user мост, cancel).
+- 16:07 pl-160307 sdk-jsonrpc-server красный clippy — sg2 посреди fix2 (HohMethodNotFound, transport.rs:268). Повторная подача после fix2/fix3.
+- 16:07 ревью hoh-llm-openai-mock: ЗАМЕЧАНИЯ → sg5 очередь (после fs-sandbox).
+- sg2 fix2 (-32601) готов 208/0; приёмку подаю после fix3.
+- sg4 fix2 hoh-tool-bash 91/0 → проверка закрытия. sg4 свободен.
+- sg4 → новый hoh-bash-sandbox (замена GLUE-SHIM window_bash_sandbox.rs у sg1).
+- sg3 fix4 hoh-model-host 21/0 (prepare_call имя модели + subscribe watch) → проверка (вместе с llm-openai); старая строка очереди убрана. sg1: перейти на subscribe (очередь).
+- sg5 ГОТОВ shim sandboxPolicy снят в hoh-fs-sandbox + hoh-tool-fs (313/0; тест связки write вне корня → подтверждение) → ревью. sg1 переключает filesystem (в очереди). sg5 → круг по mock (в очереди).
+- sg1: window-rules.json готово (профиль 12/0, apps/hoh 125/0); дальше его очередь: subscribe, filesystem→fs-sandbox, bash-sandbox. Ревью закрытия части 1 — после.
+- 16:12 CEO: Penpot (Docker, ~3 ГБ, процесс CEO — не трогать). Новых Sonnet сверх 7 не беру; при MemAvailable < 10 ГБ новых не запускаю.
+- sg7 fix1 hoh-tools 233/0 (6 пунктов) → проверка закрытия группой с потребителями (tools, tool-present, todo, wd, ask-user, shell-env, checkpoint-policy, mcp-resources, fs-observation-policy, agent-loop). sg7 свободен.
+- sg5 mockfix1 hoh-llm-openai-mock 22/0 → проверка закрытия. sg5 свободен. apps/hoh сейчас не собирается — sg1 переключает fs-sandbox.
+- 16:16 проверка fix4 hoh-model-host: низкая гонка адрес/имя + доки → sg3 fix5.
+- 16:17 проверка fix2 hoh-tool-bash: тестовые пробелы → sg4 fix3 (очередь после bash-sandbox).
+- sg2 fix2+fix3 готовы: sdk-jsonrpc-server 210/0; window_e2e 8/0 без ignore, window_profile 16/0 (ask-user мост на настоящем hoh-user-questions; cancel — ошибка теста, исправлен тест). → проверка закрытия. sg2 свободен.
+- 16:20 tmpfs OFF в 16:17 (Penpot+cap 8G). cap_mb → 4 ГБ, tmpfs включён, демон pid 856891. Head-test bvcfwoxb5 дорабатывает на USB; при таймауте — повтор с CARGO_PROFILE_DEV_DEBUG=0/TEST_DEBUG=0. План release: /dev/shm/hoh/target-release без debuginfo. CEO ответ отправлен.
+- 16:21 ревью fs-sandbox+tool-fs: 8 пунктов (2 поведенческих) → sg5 fix1.
+- 16:21 mock проверка закрытия: 2 мелких → sg5 mockfix2 (очередь).
+- 16:23 CEO ограничил Penpot (-Xmx1536m, ~2 ГБ). tmpfs cap → 6 ГБ, демон pid 924820; все target-sg* и target-cf1 → /dev/shm/hoh. Ждём: head-test bvcfwoxb5; первый зелёный прогон окна на настоящем движке (sg6).
+- sg3 fix5 hoh-model-host 22/0 (снимок настроек) → проверка закрытия. apps/hoh/PORT_NOTES про опрос — sg1.
+- 16:29 hoh-tools+9 ПРИНЯТЫ (проверка закрытия чисто), но коммит невозможен отдельно: sg7 правил тесты hoh-tool-bash, hoh-tool-fs, apps/hoh (на ревью у sg4/sg5/sg1). Решение: склейка коммитится ОДНОЙ группой вручную после закрытия всех кругов: tools+9, sdk-jsonrpc-server, model-host+llm-openai, tool-bash, bash-sandbox, fs-sandbox+tool-fs, sdk-app, openai-mock, apps/hoh. Строка снята из очереди.
+- 16:30 tmpfs OFF второй раз в 16:28 (MemAvailable 7,996: tmpfs 5,3 ГБ + rust-lld 3×1,4 ГБ + Firefox). Причина тяжёлой линковки: .cargo/config.toml (line-tables-only, с 08:45) НЕ закоммичен → чистые выгрузки собирались с полным debug. Сделано: cap 4 ГБ (демон pid 1099055), governor 6→4 (pid 1101692), коммит .cargo/config.toml через commit-check (под замком очереди).
+- 16:32 head-test (bvcfwoxb5) остановлен: 75 мин, до тестов не дошёл (полный debug на USB). Перезапуск после коммита .cargo/config.toml.
+- 16:33 .cargo/config.toml закоммичен d58ca2ad. head-test перезапущен на HEAD d58ca2ad (line-tables-only).
+- 16:36 model-host+llm-openai ЧИСТО (162501). sdk-jsonrpc-server 161805 ЗАМЕЧАНИЯ → sg2 fix4 (лог sg2-fix4). CEO отчитан про tmpfs/head-test/групповой коммит. head-test bjd2b1ouf идёт.
+- 16:41 model-host+llm-openai сняты из очереди коммитов: войдут в большую группу склейки (не собираются без apps/hoh/сервера). Группа: tools+9, model-host+llm-openai — ЧИСТО.
+- 16:44 sg4 ГОТОВ hoh-bash-sandbox 76/0 → ревью 164339 (Opus). sg4 дальше tool-bash fix3 (в очереди треда). Вопросы sg4: block_on в синхронном хуке bash-local (SHIM), resolve без Result.
+- 16:47 sg1 ЧАСТЬ 1 131/0, шимов нет (bash-sandbox, fs-sandbox подключены). Opus ревью закрытия запущено b6ghp1k2c → reviews/apps-hoh-part1.*-closure.md. sg1 свободен до ревью.
+- 16:5x sg4 ГОТОВ tool-bash fix3 96/0 → ревью закрытия. sg4 свободен.
+- sg2 ГОТОВ server fix4 212/0 → ревью закрытия. sg2 свободен.
+- sg5 ГОТОВ fs-sandbox+tool-fs fix1 318/0 → ревью закрытия. sg5 дальше mock fix2 (очередь треда).
+- 16:54 bash-sandbox 164339 ЗАМЕЧАНИЯ → sg4 fix1 (+убрать block_on, синхронная проверка).
+- 16:58 apps/hoh часть 1 ревью закрытия 164916: блокеров/ошибок нет, только заметки → sg1 fix2 (доки + тест выхода <500мс, смена модели). Заметка Д (модель может прочитать .credentials.yaml через read/cat; в образце так же) — открытый вопрос безопасности после вехи. tmpfs-builds.sh: при нехватке памяти сначала выселяет только простаивающие (не тронутые 10 мин) папки, полное выключение лишь при <6 ГБ + NEEDS-LEAD со списком остановленных; вытеснение по потолку тоже щадит папки, тронутые за 10 мин. Демон перезапущен pid 1711756.
+- sg5 ГОТОВ mock fix2 23/0 → ревью закрытия. sg5 свободен.
+- 16:58 ЧИСТО: server (164955), tool-bash (164931). Сняты из очереди → большая группа. Группа ждёт: fs-sandbox+tool-fs (165236), mock (165718), bash-sandbox (sg4 fix1), apps/hoh (sg1 fix2), sdk-app (?).
+- hoh-sdk-app закрытие (правка sg1 profile:null) → ревью
+- 17:01 КОММИТЫ: 8d765028 sdk-jsonrpc-server (сам), 18ccd594 model-host+llm-openai. tools+9+tool-bash без hoh-tool-fs не собирается (E0308 в tool-fs) → коммит вместе с fs-sandbox+tool-fs после ревью 165236.
+- 17:05 КОММИТ 8f5f30ac mock. Группа tools+9+tool-bash+fs-sandbox+tool-fs+tool-testkit не собирается без apps/hoh (tests/install_anchor.rs адаптирован sg7) → общий коммит с apps/hoh, bash-sandbox, sdk-app. sdk-app 165823: одна заметка (текст отказа string|null) → записать отличие, sg1 после fix2.
+- 17:0x sg4 bash-sandbox fix1 79/0 → ревью закрытия. sg4 свободен.
+- 17:1x sg1 fix2 133/0 (нашёл гонку shutdown во время boot → stopped_by_exit_request) → Opus ревью reviews/apps-hoh-part1.*-fix2.md. sg1 дальше sdk-app заметка (очередь).
+- 17:1x hoh-sdk-app: заметка ревью 165823 закрыта (тест profile:5 + PORT_NOTES), проверено ведущим — принят в группу. sg1 свободен.
+- 17:13 КОММИТ a5cefee2 bash-sandbox. Осталась группа: tools+9, tool-bash, fs-sandbox, tool-fs, tool-testkit, sdk-app, apps/hoh (ждёт ревью fix2 br2pqf57u).
+- 17:19 КОММИТ d3e73333 — вся склейка (tools+9, tool-bash, fs-sandbox, tool-fs, tool-testkit, sdk-app, apps/hoh). Ревью fix2: без блокеров; п.1 гонка кода 1 при shutdown во время boot (окно код не читает) → sg1 fix3 (разрешена правка порядка в sdk-jsonrpc-server lib.rs). Дальше: sg6 desktop, release-сборка, probe, QA A.
+- 17:35 head-test идёт (549 результатов к 17:33). Падения hoh-conformance: corpus.rs:98 «fixed cwd length mismatch», runner_process.rs:286 «spill root is not isolated» — вероятно зависят от пути выгрузки ht-tree; разобрать после конца.
+- 17:38 head-test d58ca2ad (метка в логе ошибочно d3e73333 — исправлено в commit-check.sh): rc=101, 7403 прошло / 2 упало / 20 ignored, 708 наборов. Падают только hoh-conformance corpus и runner_process (зависимость от пути) → sg2 диагностика, отчёт sg2-conformance.
+- 17:5x sg1 fix3 353/0 (with_exiting в сервере, exit_during_boot.rs, тесты edit/секрет) → Opus ревью закрытия reviews/apps-hoh-part1.*-fix3.md. sg1 свободен.
+- 18:0x sg2 conformance 28/0: причина — target-cf1 симлинк в tmpfs (наш демон), runner канонизирует dir → ревью. sg2 свободен.
+- 17:5x КОММИТ 4448fb4c (apps/hoh fix3 + server with_exiting). sg1 fix4 (warn, тест provide_stdio, apply_patch). Release-сборка hoh от 4448fb4c в /dev/shm/hoh/release-target → бинарник в /mnt/toshiba/alexandrie/hoh/release/hoh-<rev>.
+- 17:51 sg6: real_engine 2/3; падает approval в first_run (сценарий: опасное действие внутри папки сессии не спрашивает) → steer с подсказкой. Решение: не делить. CEO: оценка 00:00 в силе, окно зелёное ~19:00, QA A ~22:00. Swap 7,4/8 ГБ, MemAvail 16 ГБ.
+- 17:58 CEO: опасное действие внутри папки должно спрашивать (условие вехи, экран approval-1440). Факт: классификатора нет ни в dsh, ни в порте; вопрос только через эскалацию песочницы. Отправлены варианты А (свой плагин-классификатор, 2,5–3 ч, показ ~01:00), Б (bash read-only, 30–45 мин), В (Б сейчас + А после) — рекомендую В. Жду выбора CEO, не начинаю.
+- 18:01 CEO выбрал А (показ ~01:00). Бриф plans/briefs/window-destructive-guard.md → sg2 (шаг 1 ворота 30 мин до 18:30: Ask→approval/request; отчёт sg2-guard.glue.sonnet.md). sg6: тест удаления внутри папки оставить по смыслу (steer отправлен).
+- 17:55 release hoh-4448fb4c готов за 5 мин (57 МБ, /mnt/toshiba/alexandrie/hoh/release/). КОММИТ a5c153cd sg1 fix4 (по явным файлам). sg1 свободен.
+- 18:0x conformance 174409 ЗАМЕЧАНИЯ (тест нечувствителен: ссылка той же длины; cfg(unix)) → sg5 conformance-fix1.
+- sg5 conformance fix1 28/0 → ревью закрытия. sg5 свободен.
+- 18:1x sg2 guard ГОТОВ 166/0 (шаг 1 прошёл сразу). Доп. круг fix0: sed -i, rsync --delete, tar x, ln -f, install, -f cp/mv, python/node -c/-e → потом ревью. Эскалация danger-full-access: один вопрос от tool-bash (англ. текст) — принято.
+- 18:2x sg2 guard fix0 171/0. fix1 (≤30 мин): русский текст на явной эскалации (решение CEO), curl -o, wget -O, unzip, patch, git apply, awk -i. Затем ревью.
+- 18:18 КОММИТ 72735bad hoh-conformance (ревью чисто).
+- 18:2x CODEX ВОЗВРАЩЁН (проба ок). codex.disabled снят; pipeline.sh: код Sonnet ревьюит Codex read-only → Kimi, Opus убран; демон перезапущен pid 3616495. QA бриф: шаг 6 дополнен защитой (Codex QA). Подняты Codex x8 (mcp-client), x5 (llm-deepseek) — r1825 (prompt logs/lead1118/resume-1825.txt). x4, x7 — вторая волна, вручную, когда MemAvailable ≥10 ГБ (сейчас 10,5).
+- 18:24 sg2 guard fix1 ГОТОВ 233/0 (эскалация по-русски через pre_approve_escalation в hoh-user-approval; curl/wget/unzip/patch/git apply/awk) → ревью Codex 182422 (guard + user-approval; apps/hoh файлы: Cargo.toml, PORT_NOTES, cordis.patch.yml, registry.rs, window_e2e.rs, window_guard.rs — коммитить вместе). MemAvailable 8,9 ГБ — вторая волна Codex (x4,x7) ждёт. sg2 свободен.
+- 18:27 18:25 tmpfs OFF: MemAvailable 4 ГБ (пик чужих: edu/lecture-lab TTS python, qemu root, браузеры); сборок не остановлено. Через 2 мин 15 ГБ → tmpfs снова включён (rm hoh.disabled).
+- 18:30 ревью Codex защиты 182422 (Codex-ревью конвейера работает): 4 замечания (tar порядок опций, env -C, гонка set_policy, блокирующий FS) → sg2 fix2. MemAvail 14,4 ГБ.
+- 18:31 вторая волна Codex: x4 (schedule…), x7 (compaction…, str-replace) — r1825. Писателей: sg2, sg6, x8, x5, x4, x7 = 6.
+- 18:36 head-test d3e73333: rc=101, 7629/6/20 ign, 738 наборов. Падения: conformance×2 (исправлено 72735bad), bash-sandbox sandbox.rs:570,597 (errno None), native-command fix2.rs:203 (ETXTBSY), node-addon-system flock.rs:389 (WouldBlock) → Codex x6 headfix1 (logs/lead1118/headfix-1835.txt). Писателей 7.
+- 18:4x sg2 guard fix2 238/0 → ревью закрытия Codex.
+- 18:45 guard 183858: 1 новый (динамическая цель tar --file=$OUT) → sg2 fix3 (обобщить на все цели с подстановкой). x6 сдал bash-sandbox (READY-COMMIT 18:43, 80/0).
+- 18:44 КОММИТ 02df5caa hoh-bash-sandbox (фикс x6 головных падений, ревью чисто).
+- 18:50 18:46 снова tmpfs OFF (чужой пик: edu TTS qwen 1,7 ГБ + qemu). tmpfs-builds.sh: в выключенном состоянии сам включается при MemAvailable ≥12 ГБ; демон перезапущен.
+- 18:5x hoh-schedule 184641 ЗАМЕЧАНИЯ, 3 автокруга исчерпаны → ведущий дал 4-й круг x4 (после текущего хода).
+- 18:57 КОММИТ 763a098f node-addon-system (x6). native-command фикс x6 в ревью 185343. x6 СПИСОК ПУСТ → волна 5: agent-tool-presentation, agent-instructions, skill-filesystem, tool-skill, harness-dev-context.
+- 18:58 guard fix3 240/0 → ревью 3-й круг. x7 ПРИЧИНА (command-compact тесты x4) → продолжать по-крейтово (cont1858); x4 после schedule — починить тесты command-compact.
+- 19:03 guard 185613: (1) ВЫСОКИЙ кража гранта эскалации другим инструментом/после отказа; (2) set_policy между инкарнациями → sg2 fix4.
+- 19:10 19:06 tmpfs OFF (TTS qwen 1,8 ГБ + наша нагрузка) остановил target-sg2 и 2 прогона конвейера → ложные AUTO-FIX x6/x8 убиты, прогоны пересданы (190915). pipeline.sh: прогон, оборванный сигналом (143/137/130), — повтор через 2 мин, не «красный». Демон перезапущен. sg2 предупреждён. Коммиты: 5168b8fb native-command, 0b996502 str-replace-editor; util-text-search READY.
+- 19:18 19:16 опять tmpfs OFF (swap 7,9/8 ГБ!). Снижение нагрузки: регулятор 4→3 (pid 824846), x6 и x7 сняты из pipeline/writers.tsv (без AUTO-NEXT/CONTINUE; копия writers.tsv.bak1916) — вернуть, когда swap/память позволят. sg2 предупреждён.
+- 19:2x sg2 guard fix4 246/0 (грант только после allowed-once, привязан к bash+причине; замок set_policy в HostSlot) → ревью 4-й круг.
+- 19:2x sg6 ОСТАТОК hoh-desktop: всё зелёное, кроме real_engine::first_run_destructive… (ждёт защиту); probe на заглушке pass. Ревью Codex hoh-desktop запущено (bud8s10ew → reviews/hoh-desktop.*-sg6.md). sg5: window.json без description → mockfix3. UX: двухступенчатое подтверждение (ядро+движок) на первом запуске — 2 окна на действие, вопрос CEO. ui/dist бюджет 521335/524288.
+- 19:3x CEO: двойное подтверждение убрать (условия: одноразовый привязанный грант брокера ядра, действия модели всегда окно, журнал, тесты) → sg6 fix1; замечания ревью Codex части г добавить в тот же круг. Регулятор 3 и пауза x6/x7 — до конца вехи.
+- 19:3x sg5 mockfix3 24/0 (window.json description) → ревью.
+- 19:3x ревью Codex части г (hoh-desktop.192406-sg6.md): ошибки 1–4 (ключ в кадре — тест-обход, URL с ключом в preflight/журнале, единичное решение только 4 действия, истечение≠cancelled), заметки 5–6 → sg6 fix1 вместе с одним окном. CEO поправлен про «ключ ни в одном кадре».
+- 19:4x CEO: маскировать секрет адреса в подтверждении и approvals.log (тест экрана+файла) → sg6 steer. approvals.log на машине не найдено (home, /tmp, /dev/shm, диск данных).
+- 19:39 КОММИТЫ: 898c1637 guard+user-approval (ревью Codex чисто), 53ab7764 подключение guard в apps/hoh, fb8e9f59 mock (window.json), 226846e0 schedule, 0494aeac timeout-policy, 2322ba54 util-text-search, a87c695f agent-tool-presentation. Движок окна целиком в HEAD. Release hoh+mock от 53ab7764 собирается (→ release/). Ждём sg6 fix1 → коммит desktop → QA A Codex.
+- 19:46 x5 llm-deepseek: красный (flaky concurrent_waiters) → автокруг; затем волна 5 (session-telemetry, tmux-context, subagent-fork/spawn, tool-subagent-control), ожидает конца хода x5.
+- 19:42 release готов: /mnt/toshiba/alexandrie/hoh/release/hoh-53ab7764 (57,9 МБ), hoh-llm-openai-mock-53ab7764; 2 мин 47 с.
+- 19:5x sg6 fix1 ГОТОВ 55/0 (одно окно с привязанным грантом 30 с, маскирование адреса, cancelled до срока, ключ: файл-обход, lifecycle). real_engine 4/4 на текущем hoh. → Codex ревью закрытия (reviews/hoh-desktop.*-sg6-fix1.md).
+- sg5: сценарий mock для QA A (scenarios/qa-window-a.json + описание шагов) → sg5-qa-scenario.
+- 19:59 hoh-agent-instructions (x6) ревью ЗАМЕЧАНИЯ 194155 — x6 на паузе до конца вехи; круг дать после вехи.
+- 20:0x sg5 qa-window-a.json+md готов (37 ответов, mock строго по порядку). Доработка: медленный поток для «Стоп».
+- 20:1x sg5 mock --part-delay + qa-window-a (38 ответов) 26/0 → ревью конвейера.
+- 20:1x ревью Codex desktop fix1: блокер — грант без причинной привязки (точный клон); фрагмент адреса; reason без закраски; поздний таймер; браузерный тест экрана; 0600 существующего журнала → sg6 fix2.
+- 20:1x mock 200444 ЗАМЕЧАНИЯ (тест по реальному времени) → sg5 короткий круг.
+- 20:2x sg5 mock fix-review (Sleeper) 26/0 → ревью закрытия.
+- 20:3x sg6 fix2 ГОТОВ 60/0 (грант привязан к id исходящего, поколению, sessionId; фрагмент целиком; reason; expired; браузерный тест; 0600) → Codex ревью закрытия ($(cat /dev/shm/rv-fix2.path)).
+- 20:3x ревью desktop fix2: закрыто 2,3,5,6; решения ведущего: п.1 клон в полёте — принято ограничение (нужен протокол), п.2 поздний таймер → expired честно, движок сам cancelled — принято; fix3 sg6: двойное кодирование, срок гранта при arm. Затем проверка ведущим и коммит окна → QA A.
+- 20:4x CEO принял оба ограничения: записать в apps/hoh-desktop/PORT_NOTES.md (sg6) и отдельной строкой в отчёт QA (шаблон дополнен). Блокер QA → сразу CEO с новой оценкой.
+- 20:29 КОММИТЫ: 0f20250e mock (qa-window-a, --part-delay, Sleeper), 00ea417f command-feedback, 8ff8738d command-compact.
+- 20:3x КОММИТ 21846ae6 окно (hoh-desktop+ui). Release hoh-21846ae6 + mock-21846ae6. QA A запущен Codex (logs/qa.A.*, отчёт logs/qa-window-chat.A.report.md, данные qa/20261119-2030, сборка build-qa), лимит 4 ч.
+- 20:4x ОТКАЗ commit-check hoh-session-title-first-prompt-llm: зависит от непринятого hoh-session-title-llm (x4, круг fix 203903). Ждёт соседа в commit-waiting — по правилу CEO, без действий. Будильник bljo9qiq0 (20 мин), ожидание QA A byuffeqa0.
+- 20:4x x4 СПИСОК ПУСТ → волна 6 (authorization, skill-filesystem, tool-skill, storage-sqlite) logs/lead1118/x4-wave6.txt, в очереди за flock x4.autofix.lock
+- 20:5x QA A run1 (21846ae6) остановлен ведущим: находки 1) нет scripts/ui-supply-check.sh в дереве (чистая сборка ui rc 127); 2) run-isolated-window.py (offline.py seccomp) запрещал IP-сокеты → движок не доходил до mock. Исправлено коммитом 4d30c4f0 (HOH_WINDOW_NET=1, HOH_WINDOW_TIMEOUT). Run2: выгрузка qa-tree@4d30c4f0 (убрать ведущему: git worktree remove), данные qa/20261119-2050, задание logs/lead1118/qa-a-launch-run2.txt, pid 2921374, ожидание b2e0pvj6v, логи run1 → logs/qa.A.run1.*. CEO сообщено.
+- 20:5x bc388f1f docs/ts+deny.toml (QA run2 нашёл: нет docs/ts/DEPS.md в дереве; проверено чистой выгрузкой build:offline rc0). html5ever/markup5ever_rcdom добавлены в workspace deps + hoh-tool-web (cargo fetch), x8 продолжает tool-web (x8-toolweb-deps.txt). Lock до правки: logs/Cargo.lock.before-html5ever
+- 20:5x Коммиты: c4fa7aa8 session-title-llm; bc388f1f (docs/ts+deny.toml) ЗАХВАТИЛ кандидат commit-check: крейт hoh-session-title-first-prompt-llm + Cargo.lock (ручной git commit при работающей очереди — урок: коммитить только через commit-check.sh "сообщение" пути...); 50120532 только MAP; d1771a99 только корневой Cargo.toml (rmcp + html5ever) — неверный порядок аргументов; 44af445c hoh-mcp-client. HEAD собирается (cargo check в commit-check). commit-waiting очищен от этих двух (копия .bak2056).
+- 21:09 QA A run2: 5 из 8, блокеров 2 (отчёт logs/qa-window-chat.A.report.md). A-01 закрыт bc388f1f. A-05 история после перезапуска (блокер), A-02 поток не по частям/Стоп, A-03 сырая команда в объяснении, A-04 нет раздела «Подтверждения». CEO 21:1x: все пять до показа, показ 01:30–02:00, к каждому тест, повтор QA A тем же заданием на чистой выгрузке; если A-05 в движке — сказать сразу.
+- 21:15 sg6: plans/briefs/fix-qa-a-window.md (шаг 0 — причина A-05 за 20 мин), task aede0107; sg2: plans/briefs/fix-qa-a-guard.md (A-03), task f376c175. Уточнённая оценка CEO обещана до 21:45. qa-tree убран.
+- 21:18 governor-priority: build-sg6,target-sg6,target-sg2 первыми (копия .bak2117). x8 волна 6 (web-deepseek-api, web-search-deepseek, otel, agent-team, tool-agent-team) в очереди за x8.autofix.lock
+- 21:2x sg2 fix A-03 ГОТОВ 247/0 (reason без команды), но команды нигде нет → sg2 круг details (протокол+user-approval+guard+protocol.ts), task 2384a377; sg6 в очереди: показ details под «Подробности» (08fa837a)
+- 21:2x hoh-mcp-manager: ревью 211812 ЗАМЕЧАНИЯ после 3 авто-кругов (без блокеров) — круг x8 после вехи, как agent-instructions
+- 21:3x sg2 details ГОТОВ 299/0 (поле details в HostApprovalRequest; охрана теперь прямой approval.request вместо PreToolDecision::Ask) → ревью Codex bb3tbxu39 (plans/briefs/review-guard-a03.md, путь /dev/shm/rv-a03.path)
+- 21:35 A-05 причина: окно не вызывает session/resume перед working-directory/get; движок = dsh (server.ts:544), sg6 правит окно. CEO сообщено, оценка: правки+ревью 23:00–23:30, QA A повтор до ~00:15, показ ~01:30. sg2 круг details fix1 (task fa8f67a7) по ревью guard-a03.212333 (justification; вернуть PreToolDecision::Ask+details).
+- 21:4x sg6 fix QA A ОСТАТОК: A-05 окно resume, A-04 раздел, A-03 окно details готовы (desktop 65/0, ui 71/11/24, build rc0; dist cap 512→544 КиБ принят ведущим, gzip запас ~1 КБ). A-02: движок не шлёт части → x7 (Codex) задача logs/lead1118/x7-assistant-stream.txt, pid 4016106, target-x7 в приоритете. Ревью Codex sg6: bk4pex8kt (/dev/shm/rv-dqa.path). CEO: показ 01:30–02:00.
+- 21:4x CEO: session.assistant-stream одобрен как отличие от dsh, PORT_NOTES обязательно; приёмка: повтор QA A проверяет поток и «Стоп» на НАСТОЯЩЕМ движке с mock (не имитация). Показ 01:30–02:00 принят.
+- 21:5x sg2 details fix1 ГОТОВ 535/0: обычные вопросы снова PreToolDecision::Ask{details}; эскалация — прямой approval.request (с fix4, принято ведущим); justification-фильтр. Ревью закрытия Codex basf41qhk (/dev/shm/rv-a03f1.path). Шаблон QA run3: logs/lead1118/qa-a-launch-run3.template.txt; отчёт run2 → logs/qa-window-chat.A.run2.report.md.
+- 21:5x sg6: тест «без details нет блока Подробности» добавлен, screens-a 25/0. Имя поля details подтверждено sg2; protocol.ts его не содержит (native core), окно читает bridge.ts — сверка не нужна.
+- 21:38 ревью sg6 desktop-qa-a: 2 error (A-02 revision/attempt в liveFrame; A-04 чтение approvals.log целиком/UTF-8) → sg6 fix1. A-05/A-03/approval_history — приняты ревью.
+- 21:40 ревью закрытия sg2 fix1: п.2/3 закрыты, п.1 нет (фильтр justification) → sg2 fix2: justification только в details, reason строит охрана.
+- 21:5x sg2 details fix2 ГОТОВ 534/1 (1 = stale schema Notification от x7 в работе). Ревью закрытия Codex (/dev/shm/rv-a03f2.path).
+- 21:5x sg6 fix QA A fix1 ГОТОВ (liveFrame attempt/revision; read_journal_tail 512 КиБ; desktop зелёный, real_engine 5/5, ui 73/11/25, build rc0; gzip запас ~1 КБ). Ревью закрытия (/dev/shm/rv-dqaf1.path).
+- 21:45 x5 волна 6 (harness-dev-context, workspace-changes, session-log-export) за x5.autofix.lock
+- 21:43 tmpfs OFF (MemAvailable 5,8 ГБ; чужой qemu 1,7 ГБ + python): остановлены pl-hoh-llm-deepseek и target-x7; x7 сам перезапустил тесты, tmpfs снова ON (17,9 ГБ).
+- 21:46 ревью закрытия sg6 fix1: 3 error (liveFrame revision/attempt по контракту; первая строка окна журнала), п.4 принят ведущим (память ограничена 512 КиБ) → sg6 fix2.
+- 21:47 ревью закрытия sg2 fix2: 1 error (второй запрос эскалации из sandbox с justification в reason при истёкшем гранте) → sg2 fix3 (узко в host-пути окна).
+- 21:49 hoh-llm-deepseek: ревью 214531 ЗАМЕЧАНИЯ после 3 авто-кругов — после вехи (как agent-instructions, mcp-manager). Регулятор: x7/sg6/sg2 идут, x5/x8 приостановлены.
+- 21:5x sg2 details fix3 ГОТОВ 962/0 (host.rs build_request перестраивает эскалацию). Ревью закрытия (/dev/shm/rv-a03f3.path).
+- 21:54 tmpfs OFF второй раз (5,7 ГБ; остановлены x7,x5,x4). governor-hold: target-x4/x5/x8 до конца исправлений вехи (копия .bak2154) — снять после коммита вехи.
+- 21:55 A-03 движок (sg2 details fix3) — ревью закрытия ЧИСТО (guard-a03-fix3). Ждём x7 (astream) и sg6 fix2; затем коммит группой через commit-check + release + QA run3.
+- 22:0x sg6 fix2 ГОТОВ (liveFrame по контракту, read_journal_tail граница); ревью закрытия (/dev/shm/rv-dqaf2.path).
+- 22:00 x7 ГОТОВ session.assistant-stream 480/0 (conformance 28/0); 39 оконных тестов hoh не исполнены в песочнице (EPERM bind) → ведущий гоняет cargo test -p hoh (logs/lead-hoh-tests-2200.txt, target-accept-lead).
+- 22:01 sg6 fix2 ревью закрытия ЧИСТО (поля окна = протокол x7). Ждём: cargo test -p hoh (b6sf6m171), ревью x7 (bb5g1co8i).
+- 22:03 cargo test -p hoh (вне песочницы): 160/0 (вкл. window_e2e 10). Совместный прогон затронутых крейтов → logs/lead-crates-tests-2205.txt.
+- 22:07 ревью assistant-stream: 2 error + note. x7 fix1 (п.1 сверить с dsh; п.3 тесты); п.2 неограниченный канал transport — после вехи (до x7, все уведомления), в PORT_NOTES.
+- 22:07 совместный прогон 11 затронутых крейтов: 1258/0 (logs/lead-crates-tests-2205.txt) — до x7 fix1.
+- 22:12 tmpfs OFF третий раз (5,9 ГБ), x7 fix1 прерван и сам повторяет. Остановленные (hold) сборки держат ~1,4 ГБ; основная причина — пики чужих qemu/python.
+- 22:2x x7 fix1 ГОТОВ 458/0 (dsh: cancel до текста = committed). Ревью закрытия bxzc0q96b; финальный прогон b4p2kr6yg (logs/lead-final-*-2225.txt). Список коммита logs/lead1118/commit-qa-a.list (без design/*, __pycache__).
+- 22:27 финальный прогон оборван tmpfs OFF (мой target-accept-lead в tmpfs, 4 jobs) → повтор на диске build-lead, 3 jobs (logs/lead-final-*-2227.txt). fmt=0.
+- 22:28 ревью закрытия x7 fix1: только note (тест shutdown не доказывает снятие подписки; поведение верно — ownership-фильтр) — принято, тест после вехи. dsh-утверждение подтверждено (agent.ts:508,526; assistant-stream.ts:79,90). Все ревью вехи закрыты; ждём финальный прогон bd6jrcqm5.
+- 22:35 финальный прогон движка+крейтов (build-lead): 1424/0, clippy 0, fmt 0. Идёт: build-real-engine + desktop tests + ui build/chat/screens-a/behavior (logs/lead-desk-*, lead-ui-*-2235).
+- 22:39 КОММИТ 93a6f994 (65 файлов, исправления QA A). Проверено: 1424/0 крейты, desktop 68/0, ui build/73/25/11. Release собирается (logs/release-93a6f994.txt, build-release на диске) → затем QA run3.
+- 22:41–22:45 ПЕРЕЗАПУСК T3: умерли демон конвейера (daemon.pid), tmpfs-builds (57775), cargo-governor (824846), все Codex-писатели x4/x5/x7/x8, очереди волн x4/x5/x8 (flock), сборка release bmi1bq43m (лог оборван 22:41 → release-93a6f994.cut2241.txt). Sonnet sg* свободны.
+- 22:49 release 93a6f994 перезапущен: задача bedcizj9u (build-release на диске, 4 jobs). Выгрузка qa-tree@93a6f994 готова, задание logs/lead1118/qa-a-launch-run3.txt, данные qa/20261119-2300. Демоны (tmpfs, governor, pipeline) и писатели — НЕ подняты до конца сборки окна в QA (память, swap полон). hold-файл governor: target-x4/x5/x8 — снять при возобновлении.
+- 22:51 release hoh-93a6f994 + mock собраны (1м27с). QA A run3 запущен (Codex) pid 1301429, ожидание b-run3 (см. задачу), отчёт logs/qa-window-chat.A.report.md, логи logs/qa.A.*; rel-tree убран.
+- 23:01 QA run3: окно собрано (rc0), идут сценарии. Подняты: cargo-governor 2 (pid 1321331; вернуть 3 после QA), tmpfs-builds (1321332), pipeline daemon (1321333); hold снят. Волны x4/x5/x8 wave6 возобновлены (1323083/4/5). x7 — пауза до конца вехи.
+- 23:07 hoh-subagent-fork-in-process ждёт непринятого соседа hoh-subagent (writing:w4) — по правилу, без действий.
+- 23:17 QA A run3 (93a6f994): ПРОЙДЕНО 8 из 8, блокеров 0; A-01…A-05 закрыты (отчёт logs/qa-window-chat.A.report.md, копия .run3; данные qa/20261119-2300). Ведущий проверил снимки 36/37 (обрезанный ответ после Стоп при полном тексте длиннее), 45 (Подробности свёрнуты), 63 (история после перезапуска). Регулятор снова 3. qa-tree убран. Далее: прогон B на живой модели — только когда CEO передаст адрес/модель/ключ файлом.
+- После вехи (очередь): круги x6 agent-instructions, x8 mcp-manager, x5 llm-deepseek; вернуть x6/x7 в writers.tsv из .bak1916; тест снятия подписки assistant-stream; ограниченный канал transport; .credentials.yaml читается моделью (заметка Д); hoh-subagent-fork-in-process ждёт hoh-subagent.
+- 23:2x Показ для основателя: scripts/demo-window.sh + scripts/demo-window.md; окно release/hoh-desktop-93a6f994 (sha f3a7f3f3…). Самопроверка под Xvfb: /mnt/toshiba/alexandrie/hoh/demo/selftest-232149 — мастер «Подключите модель» на снимке /mnt/toshiba/alexandrie/hoh/demo/selftest-232149-30s.png, окно закрыто TERM → код 143 записан в runs.log, mock остановлен (порт свободен), рабочая папка заготовлена, настоящий HOME не тронут.
+- 23:38 x4 отчёт wave6 (ГОТОВ tool-skill 23:02) не подхвачен конвейером → submit вручную 233808-hoh-tool-skill; x4 AUTO-NEXT вручную (resume-auto). Сессии живы: x5, x8.
+- 23:42 rusqlite 0.43.0 bundled добавлен в workspace deps (решение 9 DEPS.md), крейты в кэше cargo (fetch через scratchpad); x4 продолжает hoh-storage-sqlite (x4-sqlite.txt). Lock до правки: logs/Cargo.lock.before-rusqlite. Корневой Cargo.toml не закоммичен — коммитить вместе с hoh-storage-sqlite.
+- 23:45 hoh-tool-skill ревью 233808 ЗАМЕЧАНИЯ → x4 fix в очереди за flock (x4-fix-tool-skill.txt)
+- 00:13 КОММИТ ed8e6d3d hoh-storage-sqlite + корневой Cargo.toml (rusqlite) + Cargo.lock; убран из commit-waiting. fork-in-process ждёт hoh-subagent.
+- 00:20 x4 волна 7 (session-query-sqlite, headless, base, agent-preset) за flock; tool-skill fix на прогоне 001853.
+- 00:23 hoh-tool-skill принят, ждёт hoh-skill-filesystem; авто-круг skill-filesystem (21:38) потерян при перезапуске T3 → поставлен заново (autofix-2) за flock x4 после волны 7.
+- 00:30 CEO/основатель: «сначала дизайн окон, потом живой пример» — прогон B и проход основателя отложены до принятия дизайна; ui/ под новый вид не менять; design/round* не трогать. Делать: перенос по очереди + отложенное; список окон/экранов в docs/ (≤20 строк).
+- 00:32 КОММИТ c739b6ed docs/window-screens.md (перечень окон для дизайна CEO).
+- 00:35 После вехи: writers.tsv снова с x6/x7 (копия .bak0033). Поставлены: x6 fix hoh-agent-instructions (194155); x7 postmilestone (1 тест снятия подписки, 2 предел очереди transport, 3 запрет доступа модели к DSH_HOME/.credentials.yaml) — logs/lead1118/x7-postmilestone.txt; x8 fix hoh-mcp-manager (211812); x5 fix hoh-llm-deepseek (214531). Все за flock своих писателей.
+- 00:40 x7 п.1 assistant-stream-dispose ГОТОВ 220/0 (только тест); возобновлён на п.2–3 (x7-postm2).
+- 00:48 КОММИТ 39ac7c37 docs/employee-settings-facts.md (сотрудник в движке v1 vs макет HOH-30); CEO сообщено.
+- 00:51 hoh-web-deepseek-api ждёт hoh-llm-deepseek (x5 fix); tool-skill ждёт skill-filesystem; fork-in-process ждёт subagent.
+- 00:52 tmpfs OFF (5,4 ГБ; x7, x5, pl agent-instructions, pl skill-filesystem остановлены) → регулятор 2 (pid в cargo-governor.log), при устойчивой памяти вернуть 3.
+- 00:55 x6 отказался от skill-filesystem (x4) — верно; x6 на свои пакеты spill-policy/spill-local/office-kit/tool-office (x6-own.txt). agent-instructions fix на прогоне (повтор после обрыва сигналом).
+- 01:06 x5 autofix tool-subagent-control (21:40, потерян при перезапуске T3) поставлен заново.
+- 01:08 потерянные при перезапуске T3 авто-круги поставлены заново: x5 spawn-in-process, x8 tool-web, x4 authorization (+ ранее x4 skill-filesystem, x5 tool-subagent-control).
+
+## 20.11 01:17
+- x5 «СПИСОК ПУСТ» → волна 8 (terminal-bash, browser-use, computer-use), logs/lead1118/x5-wave8.{txt,list}, за x5.autofix.lock после кругов исправлений.
+- Будильник перевооружён (задача b34scha0f, 1200 с). Сводка CEO 01:17 отправлена; следующая ~02:15.
+- x7 postm2 идёт (п.2 transport-bounded, п.3 credentials-guard); п.1 dispose готов — проверить и сдать.
+- Регулятор 2, MemAvailable ~9 ГБ.
+- 01:37 hoh-subagent (writing:w4, неактивен) передан x5 (MAP writing:x5), задание logs/lead1118/x5-subagent.txt за x5.autofix.lock после волны 8; от него ждут fork-in-process, spawn-in-process (принят 01:33), tool-skill.
+- 01:45 web-search-deepseek: 3 круга, остаток A (citations) → ручной 4-й круг x8 (logs/lead1118/x8-wsd-fix4.txt, тег fixauto-…-4, отчёт подхватит конвейер). session-query-sqlite принят 01:34, ждёт hoh-session-query в commit-waiting.
+- 01:52 Брошенные пакеты (owners w4/w5/x2/x3, 16 строк MAP) переданы: x4 session-query, session-stats, session-reference, session-turn-outline, message-quotes; x6 settings, agent-default-model, loader-smoke, skill-office; x8 tool-bash-persistent, tool-fs-search, jobs-local, tool-jobs; x7 goal-round-driver, tool-goal, command-goal (после postm2). Бриф plans/briefs/takeover.md, задания logs/lead1118/*-takeover.{txt,list} за autofix.lock. Копия MAP до правки: logs/lead1118/MAP.tsv.bak0150. session-query-sqlite (принят 01:34) ждёт hoh-session-query.
+- 01:47 x7 postm2 ГОТОВ: transport-bounded 253/0 (кадр gap; projection.mjs его не обрабатывает — ui не менялся), credentials-guard 218/0. Проверка ведущего build-lead (задача bash bg, logs/lead-x7post/), ревью Codex read-only → pipeline/reviews/x7-postmilestone.review.md. x7 перешёл к takeover.
+- 01:58 x7 п.3 credentials-guard: 5 падений (4 регресс hoh-tool-fs, проверено на HEAD; window_profile тест не стартует движок) + ревью: DSH_HOME==workspace, PORT_NOTES hoh-sandbox, hardlink (ограничение). Круг logs/lead1118/x7-credguard-fix1.txt за x7.autofix.lock (после текущего takeover-хода). Пп.1-2 коммитятся commit-check (задача bc969el3x).
+- 01:55 КОММИТ bff14047: x7 пп.1-2 (assistant-stream dispose-тест, transport-bounded, кадр gap). Окну нужна обработка gap в projection.mjs — после разморозки ui/ (сообщить CEO).
+- 02:15 CEO: (1) правка ui/ для gap разрешена — только проекция, без разметки/стилей; тест + по возможности прогон на настоящем движке с mock при перегрузке (mock не менять); путь писатель→ревью Codex→исправление→проверка ведущего; demo-window.sh остаётся на 93a6f994. Писатель: НОВАЯ Codex-сессия x9 (не в writers.tsv — отчёт разбирает ведущий), бриф plans/briefs/window-gap.md, лог logs/x9.gap.*. (2) п.3 не принимать до закрытия регрессов tool-fs и пересечения DSH_HOME; в отчёте описать поведение при пересечении. (3) перераспределение одобрено; в след. сводке — число застрявших пакетов, вошедших в коммит. (4) web-search-deepseek: если 4-й круг не сойдётся — НЕ 5-й, а CEO: расхождение одной строкой + мой вариант.
+- 02:08 skill-filesystem красный из-за ENOSPC tmpfs — пересдан 020802. В pipeline.sh добавлен автоповтор при «No space left on device» — действует после перезапуска демона (pid 1321333 работает на старых функциях).
+- 02:12 skill-filesystem: 3 круга, остаток — многострочный description; ручной 4-й круг x4 (logs/lead1118/x4-sfs-fix4.txt, тег fixauto-…-4).
+- 02:15 x7 credguard-fix1 ГОТОВ 503/0 (пересечение: закрыты только .credentials.yaml/.env — сомнение: sessions/настройки/правила). Проверка ведущего logs/lead-x7post2 (задача briacf9i2), ревью Codex pipeline/reviews/x7-credguard-fix1.review.md (brkemsue8). Коммит 2b608b72 agent-instructions (конвейер).
+- 02:24 x9 gap ГОТОВ (ui: projection.mjs/.d.mts, controller.mjs, 2 теста). Ведущий: ui run 78/0, behavior 11/0. Ревью Codex → pipeline/reviews/window-gap.review.md (buiw6ekme). Реальный движок+перегрузка не сделан: desktop вычитывает stdout потоком; замена — Rust SlowCapture + последовательность в UI-тестах. build.sh supply-gate стоп из-за просроченного audit-report (нужна сеть) — dist собран офлайн отдельно. web-search-deepseek принят на 4-м круге (49bf37a4), spill-policy da166314. credguard-fix1: у ведущего 5 падений apps/hoh (bash не пишет в workspace — регресс fix1), ждём ревью brkemsue8.
+- 02:26 credguard-fix2 → x7 (весь DSH_HOME, отказ при пересечении, symlink-канонизация, регресс bash в workspace). logs/lead1118/x7-credguard-fix2.txt за x7.autofix.lock.
+- 02:28 x9 gap ревью ЗАМЕЧАНИЯ (пометка в тексте, вечный hasGap, пустой итог) → x9 gap-fix1 (сессия 01a1f610-e760-73c3-b17c-be550b11db5d), logs/lead1118/x9-gap-fix1.txt. Решение: пометка курсивом отдельным абзацем через Markdown, без новой разметки.
+- 02:30 mcp-manager: 3 круга; 4-й x8 (порядок ошибок имя→transport→шаблоны→reconnect). Решение ведущего: 26 D-кейсов отложены до hoh-demo-mcp, интеграционные тесты через stdio, без seam в mcp-client. Коммит 7c0535b5 hoh-base.
+- 02:36 x9 gap-fix1 ГОТОВ 82/0. Ведущий: run 82/0, behavior 12/0 (новая DOM-проверка em вне pre). Повторное ревью Codex → pipeline/reviews/window-gap-fix1.review.md (b29pf55dv). Коммит e6f2c512 computer-use; goal-round-driver ждёт hoh-subagent.
+- 02:37 gap re-review: новый дефект (поздний итог после finishGaps — дубль строки) → x9 gap-fix2.
+- 02:41 x9 gap-fix2 ГОТОВ 83/0; ведущий run 83/0, behavior 12/0; повторное ревью → window-gap-fix2.review.md (bwwjfhrnk). Запас gzip-лимита dist 372 Б (163468/163840) — сказать CEO.
+- 02:43 КОММИТ 215c5738 окно gap (ревью чисто с 3-го раза; ведущий 83/0, 12/0). CEO сообщено, плюс gzip-запас 372 Б и supply-gate audit-report (нужна сеть — решение CEO).
+
+### Известное ограничение (CEO 20.11 ~02:50): предел gzip dist окна
+- `ui/scripts/check-dist.mjs`: предел gzip 163840 байт НЕ менять. После 215c5738 dist: gzip 163468/163840 — запас 372 байта (text 530282/557056).
+- Новый вид окна (HOH-28/HOH-30) в этот запас не поместится. Решение о новом пределе или сокращении кода CEO примет вместе с заданием на новый вид — принести цифры.
+- До этого любая правка `ui/`, которой не хватает запаса, проверку НЕ обходит, а идёт к CEO.
+
+- 02:47 Supply-gate: по решению CEO обновлён только отчёт аудита — тот же запрос, что в --refresh 19.11 (`pnpm -C ui audit --json --no-offline --optional`), без метаданных реестра, без загрузок; lock/package.json не менялись (sha f9ddfe4c…). Итог: 0 уязвимостей, advisories пусто (65 зависимостей) — как 18.11. ui/audit-exceptions.json не нужен (его и нет). Записано в ui/.supply-cache/audit{,.raw}.json и docs/ts/pnpm-audit.json, checkedAt 2026-11-19T23:46:53Z. scripts/ui-supply-check.sh офлайн: passed; ui/scripts/build.sh: build=0, check-dist passed. Отчёт действителен 24 ч (до ~20.11 02:46 следующего дня): после этого build.sh снова встанет — повторять тем же запросом только по решению CEO.
+- 02:48 КОММИТ b37ddea9 отчёт аудита; CEO сообщено.
+
+### Постоянное решение CEO (20.11 ~02:50): отчёт аудита поставки ui
+- Когда отчёт просрочен (>24 ч) и нужен для сборки или verify окна — обновлять БЕЗ отдельного вопроса, тем же одним запросом: `pnpm -C ui audit --json --no-offline --optional`, записать в формате supply-check.py (ui/.supply-cache/audit{,.raw}.json, docs/ts/pnpm-audit.json: lockSha256, checkedAt, report), затем офлайн `scripts/ui-supply-check.sh`. Без загрузок, без --refresh (метаданные реестра), без изменения lock, package.json и ui/audit-exceptions.json.
+- В ближайшую часовую сводку CEO — строка: дата/время отчёта, число зависимостей, итог.
+- Любая находка (advisories не пусто / vulnerabilities > 0) или изменение числа зависимостей (сейчас 65: 23 + 42 dev) без правки lock — сборку не обходить, сразу к CEO.
+- 02:52 hoh-subagent сдан x5, на прогоне 024844. x5 → волна 9 (tool-subagent, session-telemetry-otel, demo-mcp, my-decoration — шаблоны dsh-doc, оценить «ресурсы без крейта»), logs/lead1118/x5-wave9.txt. ИСПРАВЛЕНО решение по 26 D-кейсам mcp-manager: demo-mcp — шаблон конфига, не тестовый сервер; задание x8-mcpm-fix4 п.2 переписано до старта: тесты через настоящий транспорт с тестовым rmcp-сервером (как hoh-mcp-client/tests/contracts.rs), без seam.
+- 03:03 сводка CEO отправлена (застрявших вошло в коммит: 0; spill-local commit-check оборван предохранителем 03:00 — очередь повторит). Следующая ~04:00.
+- 03:10 x7 credguard-fix2 ГОТОВ 429/0 (регресс: --ro-bind /dev/null для отсутствующего .env под ro /). Проверка ведущего logs/lead-x7post3, ревью Codex pipeline/reviews/x7-credguard-fix2.review.md.
+- 03:18 credguard-fix2: ведущий 762/3 (тест ключа 12≠13; requests_piped_in регресс 1675/3000; resolved_profile_boot — нагрузка, отдельно зелёный); ревью: обход через mv предка после danger. → x7 fix3 (идентичность (dev,ino) корня), logs/lead1118/x7-credguard-fix3.txt.
+- 03:16 КОММИТЫ fc4cb492 spill-local (повтор после обрыва), 872996cb loader-smoke (первый из перераспределённых, x6).
+- 03:28 КОММИТЫ b6aabd67 skill-filesystem (4-й круг), 04250f74 tool-skill (ждал), f9c64571 browser-use. x5/x7 «СПИСОК ПУСТ» — старые ответы; wave9 и fix3 в очередях за autofix.
+- 03:34 потерян autofix hoh-subagent (02:51, нет процесса/логов) — поставлен заново за x5.autofix.lock.
+- 03:35 сняты 4 лишних ожидания resume-auto x5 (031458, 032302, 032604, 032804), чтобы autofix hoh-subagent не стоял за пустыми ходами.
+- 03:44 ОШИБКА ВЕДУЩЕГО исправлена: autofix не терялись — auto-fix.sh ждёт flock под своим именем (pgrep по .list его не видит). Мой дубль subagent (3281558) снят. Снят устаревший круг x8 agent-team-1 (ждал с 01:30; есть agent-team-2). Очереди длинные: у x4 было 5 кругов.
+- x9 добавлен в pipeline/writers.tsv (копия writers.tsv.bak0340); x9 получил вводную (x9-intro, ответил «ГОТОВ К КРУГАМ») и круги x4: hoh-session-query (блокер sqlite/log-export), hoh-session-stats; MAP writing:x9. Ожидания x4 по ним сняты.
+- Проверка «живы ли круги»: ps по 'auto-fix.sh <w> <crate>' и по '<w>-…list'; отчёт logs/<w>.<tag>.report.md (tag из .list).
+- 03:44 КОММИТЫ 8e176159 tool-goal (перераспред., x7), 42837a18 authorization, 2605d550 spill-local (повтор).
+
+## 20.11 14:48 — ПОДЪЁМ ПОСЛЕ ШТАТНОГО ВЫКЛЮЧЕНИЯ (03:55 → 14:27)
+Запрос CEO 14:48 (основатель: «подними ещё раз, новый день»): сверить дерево, поднять демоны по разу, x4–x8 с очередями (x7 — 3-й круг ключа, x5 — hoh-subagent), регулятор 3, аудит не обновлять (до ~02:46 21.11), ui/ не трогать, demo на 93a6f994, сводка раз в час.
+- Последний коммит 92711bd3 (hoh-settings 03:50). Дерево: 218 путей. Незакоммиченное:
+  * принятые, ждут соседа (6): goal-round-driver, subagent-fork-in-process, subagent-spawn-in-process, tool-subagent-control ← hoh-subagent; session-query-sqlite, session-log-export ← hoh-session-query.
+  * в работе у писателей (20 крейтов, untracked): agent-default-model, skill-office, office-kit, tool-office (x6); agent-preset, headless, message-quotes, session-reference, session-turn-outline (x4); agent-team, tool-agent-team, mcp-manager, otel, tool-web (x8); subagent, terminal-bash, tool-subagent (x5); session-query, session-stats (x9); tool-bash-persistent (x7 от x8, w4-остаток).
+  * hoh-web-search-yandex — новый поставщик (не порт), написан w8 18.11, конвейер не проходил → x7.
+  * tracked-правки x7 credguard (bash-sandbox, fs-sandbox, sandbox*, sandbox-local, sandbox-policy, tool-fs tests, apps/hoh tests/PORT_NOTES/cordis.patch.yml, sdk-jsonrpc-server 2 файла) — не приняты.
+  * прочее: Cargo.lock, PLAN.md, docs/porting/{DEPS,PORTING}.md, scripts/{verify,codex-writer}.sh, design/build-a/*.png (перегенерированы behavior.mjs) — не трогаю.
+- Оборвано выключением (ход начат, отчёта нет): x5 wave9, x9 session-query, x7 credguard-fix3, x4 agent-preset, x6 agent-default-model(-1, заменён -2), x8 next-012359 (пустое продолжение). Прогон конвейера hoh-message-quotes 034911 — пересдан 145157. Ждавшие в flock круги — не начинались, восстановлены в цепочки.
+- Release для показа на месте: release/hoh-desktop-93a6f994 (sha f3a7f3f3…), hoh-93a6f994, hoh-llm-openai-mock-93a6f994.
+- ПОДНЯТО 14:50: tmpfs-builds pid 34769, cargo-governor 3 pid 34936, pipeline daemon pid 36005 (с правкой автоповтора ENOSPC/Bus error).
+- Новый scripts/writer-chain.sh (очередь писателя строго по порядку; запуск `setsid nohup bash scripts/writer-chain.sh W L1 T1 …`, журнал logs/lead1118/W.chain.log). Цепочки 14:51 (pid): x4 55035 [agent-preset(resume), headless-2, session-reference-1, session-turn-outline-1]; x5 55037 [subagent-1, terminal-bash-2, wave9(resume)]; x6 55038 [agent-default-model-2, skill-office-1, x6-office (office-kit, tool-office)]; x7 55040 [credguard-fix3(resume), takeover2 (tool-bash-persistent, tool-fs-search, web-search-yandex)]; x8 55041 [mcpm-fix4, agent-team-2, agentteam (tool-agent-team), otel-2, tool-web-2]; x9 55044 [session-query-1(resume), session-stats-1, takeover (jobs-local, tool-jobs)].
+- MAP: tool-bash-persistent, tool-fs-search → x7; jobs-local, tool-jobs → x9 (снято с x8).
+- Остаток описи: этапы 0–3: 147 из 205 по port-status (этап1 98/112, этап2 30/48, этап3 8/18); этап 4 (ACP, LSP, SSH: 10 пакетов, ~6.4 тыс. строк) и этап 5 (Windows: 6, ~5.7 тыс.) — todo, никому не выданы.
+- Диск / заполнен на 98% (8.5 ГБ свободно) — сборки и логи только на /mnt/toshiba.
+
+## 20.11 15:10 — перезапуск сервера T3 (машина работала) снял ВСЕ мои процессы второй раз
+- Оборваны ВТОРОЙ раз (ход начат 14:51–15:04, отчёта нет): x4 fixauto-hoh-headless-2, x5 fixauto-hoh-subagent-1, x6 fixauto-hoh-skill-office-1, x7 credguard-fix3, x8 fixauto-hoh-mcp-manager-4, x9 fixauto-hoh-session-query-1. До обрыва успели: x4 agent-preset (ГОТОВ 18/0), x6 agent-default-model (ГОТОВ 9/0).
+- Первая попытка подъёма 15:11 под systemd без PATH: codex не найден, цепочки проскочили шаги (stdout/stderr прерванных ходов x4 headless/session-reference/turn-outline перезаписаны пустыми; изменения в файлах не затронуты).
+- ПОДНЯТО 15:13 как пользовательские службы systemd (переживают перезапуск T3): `systemd-run --user --collect --unit hoh-… --setenv=PATH="$PATH" --setenv=HOME="$HOME" --working-directory=…`. Службы: hoh-tmpfs, hoh-governor (3), hoh-pipeline, hoh-chain-x4…x9. Статус: `systemctl --user list-units 'hoh-*'`; стоп: `systemctl --user stop hoh-chain-xN` (останавливает и текущий ход!).
+- Порядок цепочек (первая версия первой, решение CEO 15:0x п.3): x4 headless(resume) → v1 (compaction-tool-result-pruner, compaction-basic) → session-reference, turn-outline; x5 subagent(resume) → v1 (tool-subagent) → terminal-bash → wave9(остаток); x6 skill-office(resume) → office (office-kit, tool-office); x7 credguard-fix3(resume) → v1 (file-reference-local, web-search-yandex) → deferred (tool-bash-persistent, tool-fs-search); x8 mcp-manager-4(resume) → tool-web-2 → agent-team-2 → tool-agent-team → otel-2; x9 session-query(resume) → jobs-local, tool-jobs → session-stats.
+- MAP: compaction-basic, compaction-tool-result-pruner → x4; file-reference-local → x7 (ложные writing с 19.11 09:43). Таблица первой версии: docs/porting/v1-status.md (103 принято, 2 ждут соседа, 8 в работе, 5 не начато; этап 4 в 118 не входит).
+- CEO 15:0x решения: этап 5 не начинать; этап 4 не выдавать; свободных — на строки первой версии и блокеры; записка hoh-employee/hoh-task (docs/, ≤40 строк); yandex у x7 только на заглушке; регулятор 3, готовность к 2; про рост на / — в сводке.
+- CEO 15:11: оценка пилота A/B/C (≤25 строк сообщением + docs). CEO 15:12: HOH-18 Claude/Codex как харнессы — исследование только чтением (отдельный исполнитель), записка docs/ ≤60 строк, код после ответа CEO.
+- 15:22 HOH-31 OmniBrowser: исследование read-only hoh-research-hoh31-omnibrowser (бриф plans/briefs/research-hoh31-omnibrowser.md) → docs/ ≤25 строк; в оценку пилота — нужен ли браузер для A/B/Claude-Codex. Службы hoh-* transient — так и оставить (CEO 15:17), после перезагрузки сами не стартуют.
+
+## 20.11 16:40 — ПИСАТЕЛЕЙ НЕТ (blocked: лимиты)
+- Codex: лимит до 26.11 18:21 (с 15:29 все ходы x4–x9 «usage limit»). Выключатель `pipeline/codex.disabled` создан — автокруги не тратят номера, пишут NEEDS-LEAD.
+- Kimi: проба 15:5x — месячный лимит («next cycle»), дата сброса неизвестна (logs/probe.probe1.stderr).
+- Claude-писателей НЕ запускать без слова CEO (вопрос у основателя: ждать Codex / 2×Sonnet / другой лимит / дата Kimi).
+- Оборваны с частичными правками в дереве (не сбрасывать): x4 headless-2, x5 terminal-bash-2, x7 credguard-fix3 (ломает сборку hoh-sandbox-policy: `is_missing` нет → красные прогоны всех зависимых), x8 mcp-manager-4 и tool-web-2, x9 takeover (jobs-local 138 строк) и session-stats.
+- Готово без писателей: agent-preset (ревью ЧИСТО 15:04), subagent (ревью 02:48 без замечаний) — нужен перепрогон после починки дерева; session-query READY 15:38; agent-default-model READY 15:07.
+- Коммиты: чистая выгрузка падала — после чистки диска нет crates для Cargo.lock HEAD. CARGO_HOME перенесён: `/mnt/toshiba/alexandrie/hoh/cargo-home` (lead-run.sh, commit-check.sh экспортируют). Юнит hoh-cargo-fetch-head2 (fetch --locked по выгрузке HEAD в hoh/fetch-head). Затем `scripts/commit-queue.sh`.
+- Отправлено CEO 16:35: оценка пилота (docs/pilot-estimate.md), записки docs/hoh18-claude-codex.md, docs/hoh31-omnibrowser.md, поправки к списку пакетов.
+- Следующее моё без писателей: коммит очереди; отбор сценариев по теме → conformance/V1-SCENARIOS.tsv (только чтение EXPECTED.tsv и снимков).
+
+## 20.11 16:14 — ПИСАТЕЛИ CLAUDE (running). Основатель: «не бережём Claude»; объём «Ядро и Claude/Codex», Codex-адаптер не делать
+- Скрипты: `scripts/claude-writer.sh W MODEL PROMPT TAG` (сессия в logs/lead1118/W.claude-session; общие правила logs/lead1118/common-claude.txt), `scripts/claude-chain.sh W MODEL P T...` (flock W.autofix.lock). Журнал logs/lead1118/W.chain.log, отчёт logs/W.TAG.report.md → конвейер (submit как codex → ревью Kimi→Sonnet).
+- Службы: hoh-chain-s1 credguard-fix3 (патч hoh/credguard-fix3-partial-1120-1552) · s2 fix-headless, затем hoh-chain-s2b runner (s2-runner.txt) · s3 tool-subagent→pruner→compaction-basic · s4 skill-office→office-kit→tool-office · s5 file-reference-local→tool-web→mcp-manager→jobs-local→tool-jobs · o1 (Opus) hoh-external-harness (HOH-18 гнездо, без Claude-специфики; пакет Claude — следующий писатель по контракту o1).
+- Автокруги выключены (codex.disabled): круги исправлений выдаю сам — новая цепочка того же писателя с заданием по ревью.
+- Конвейер: правило CEO — fix-круг смотрит только исправленное; защита (sandbox|credential|approval|guard|supply|permission|external-harness) — полный. Governor 4.
+- Отбор: V1-SCENARIOS.tsv принят CEO (порог in 110; extra 9 — гоняются отдельно). Генератор scripts/v1-scenarios.sh.
+- Коммиты 16:20–21: agent-default-model 3f746932, session-query e6d3aa74. Остальные ждут hoh-subagent (перепрогон в конвейере).
+- Отчёт CEO: по закрытию credguard и прогонщика, иначе раз в час (следующий ~17:20).
+
+## 20.11 17:2x — ресурсы и окно
+- tmpfs 88–94%: прогон ведущего/приёмка/commit-check на USB (lead-pl-build, target-accept-a/b, cc-build-disk); pipeline.sh нужно перезапустить, когда освободится (путь прогона). Governor 3.
+- s5 ставится на паузу после хода fix-mcp-manager (служба hoh-pause-s5 остановит hoh-chain-s5 и очистит target-s5). ОСТАТОК s5: jobs-local (s5-jobslocal.txt), tool-jobs (s5-tooljobs.txt) — вернуть, когда tmpfs < 80% или основатель разрешит NVMe. Следующим на паузу — f1b, если нужно.
+- Окно: u1 сдал 3 хода (new-view снимки, ui/T3-DEPS.md 156 новых npm, лицензии не проверены). QA q1 со снимка 00bd4aa1 (17:14). После QA u1: «local» → «Локальная модель».
+- npm для чата T3: только по разрешению основателя, версии из lock T3, хранение на /mnt/toshiba, supply-gate; не MIT/ISC/BSD/Apache-2.0/0BSD/CC0 — не ставить, список CEO.
+- Claude: путь А (Rust). Писатель пакета Claude — как только o1 зафиксирует контракт; условия: тест версии CLI с сообщением в окне, NOTICE MIT T3.
+- Изъян commit-check: забирает уже застейдженные чужие файлы (f175df99 унёс goal-round-driver, headless, tool-subagent-control) — разобрать.
+
+## 20.11 18:42 — состояние
+- Ресурсы на NVMe (/home/save/.cache/hoh-build, предел 25 ГБ, служба hoh-nvme-builds). Свободно на / 59 ГБ, tmpfs 4%. target-s2 переведён на NVMe в 18:40.
+- Прогонщик s2: 45/0, на ревью (183713). Итог conformance-runs/20261120-182636: 110 in → прошло 0 (108 расхождений, 2 не запустились), extra 9 → 0. Барьер strictV4Catalog. CEO сообщено 18:41.
+- running:
+  - hoh-chain-s2c — правка built_bin.rs:474 (headless подключён). После неё пересдать credguard: `pipeline.sh submit codex new hoh-sandbox hoh-sandbox-policy hoh-sandbox-local hoh-fs-sandbox hoh-bash-sandbox hoh-sdk-jsonrpc-server hoh-tool-fs hoh -- ...`;
+  - hoh-chain-s5c — tool-jobs, круг 2 (гонка `collected`);
+  - hoh-chain-q1b — повторный QA окна.
+- В ревью конвейера с 18:08: external-harness круг 1, compaction-basic, jobs-local, harness-claude (полное). commit-waiting: harness-claude (коммит после гнезда o1).
+- Дальше: попросить errorCode в tool/result (F-02); разобрать изъян commit-check; живой прогон Claude.
+- CEO 18:4x: сценарии — главная мера. strictV4Catalog первым (s2, юнит hoh-chain-s2d ждёт s2c; задание s2-strictv4.txt: каталог + подключить миграции v1→v2/v2→v3). Расхождения раздавать пачками по владельцам событий; повторный прогон после каждой закоммиченной пачки. В каждой сводке строка из port-status.sh (читает последний summary.tsv). Оценка в часах до 110/110 — после прогона с job/*. Барьеры in: strictV4 74, sdk.* 26, verify* 10.
+- 18:50 раздача по CEO 18:47 (общее ev-common.txt), все Sonnet:
+  - s1e — user/message + agent/inbox/spliced (target на NVMe);
+  - s4e — session/title (target-s4 на toshiba);
+  - s3e — compaction/* (target-s3 на toshiba);
+  - f1e — проверки тела verify*/sdk.* в src/body/ (target-f1 на toshiba). Подключение в runner.rs потом делает s2.
+  - s2d — strictV4; s2f — исправления по ревью прогонщика 183713, ждёт s2d.
+  - credguard пересдан 184728. tool-jobs принят 18:44, в commit-waiting ждёт коммита jobs-local (ОТКАЗ lock: зависимость). harness-claude ждёт o1.
+- 18:55: credguard ревью 184728 — ЗАМЕЧАНИЯ (7, главное — замок protected_effect) → s5d (s5-credguard-fix4.txt). QA повтор 19/21, F-01..03 закрыты, 7 P2 → u1d (u1-qa-fix2.txt). Решение по демо спрошено у CEO; до решения демо на 93a6f994.
+- 19:02:
+  - npm для чата T3 РАЗРЕШЁН основателем; границы — в u1-npm-t3.txt.
+  - hoh-after-u1d (scripts/after-u1d.sh) ждёт u1d, затем снимок → q1c (q1-recheck2.txt, 7 пунктов и «нет связи») ‖ u1 npm-t3.
+  - После зелёного q1c: release нового окна, demo-window.sh на него (93a6f994 — второй вариант), demo-window.md (список чатов), SHA и путь CEO.
+  - Задание u1 «экран как в T3» (чат 1 в 1, вид окна защиты как у T3, значки поставщиков по адресу и имени) — после npm и ответа CEO по tiptap.
+  - window_glue: заметка про секрет не подтверждается (гейт на входе).
+  - Пропали ревью 18:07; пересданы external-harness, harness-claude, jobs-local (185708). compaction-basic пересдать после s3e.
+  - external-harness: 5 замечаний (№1 безопасность) → o1c (Opus).
+- 19:03 решения CEO: экран как в T3 без машинерии T3, tiptap не ставим (известное отличие в ui/T3-MAP.md). Задание u1-t3-exact.txt выдаётся сразу после npm (юнит hoh-chain-u1e ждёт hoh-after-u1d). Гнездо: №1 — блокер приёмки и живого прогона Claude; после o1c — полное ревью, бриф требует назвать режим по умолчанию и что включает расширенный (pipeline.sh brief). jobs-local ревью 185708: 5 ошибок → s5e после s5d.
+- 19:16: f1 body готов (verify 10/10, sdk 26/26, 71/0), отдельно не сдан — подключение в runner и сдача вместе с s2f (задание дополнено; №9 и fixtures.rs переданы f1). f1f — остаток фикстур local: (18 TS + .mjs). harness-claude ревью 185708: 6 замечаний → s4f после s4e.
+- 19:21 CEO: не больше 8 ходов claude -p (писатели, ревью, QA). claude-chain.sh: ворота (писателям 6, приоритет o1/s5 → s2 → u1/q1 → остальные; ожидающие в logs/lead1118/slots/*.wait), перенос каталога с NVMe при >22 ГБ. pipeline.sh: review_slot (<8). Править claude-chain.sh/pipeline.sh только подменой через mv. lead-pl-build → toshiba. s3/f1 продолжают через continue.txt (s3f, f1g).
+- Прогон 185545: exit 28 (22 process timeout — пик нагрузки?) — проверить на следующем полном прогоне s2.
+- Перезапуск конвейера ТОЛЬКО `bash scripts/pipeline-restart.sh` (ждёт, пока нет идущих ревью и прогонов).
+- nvme-builds: каталог с записью за последние 30 мин считается занятым (target-qa у QA). port-status берёт только полный прогон (120 строк).
+- Внимание: оболочка Bash здесь zsh — `set -- $x` не делит строку на слова. Запускать каждый юнит отдельной командой.

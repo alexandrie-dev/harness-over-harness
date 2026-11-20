@@ -1,0 +1,4 @@
+{
+  "replace": {"metadata/versions/1.0.0/dist/tarball": "https://example.com/evil.tgz"},
+  "error": "source: foreign tarball"
+}

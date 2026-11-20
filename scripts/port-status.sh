@@ -54,15 +54,21 @@ awk -F'\t' '
     printf "пакеты: %d из %d\n", alldone + 0, all + 0
   }' docs/porting/MAP.tsv
 
-if [[ -f conformance/EXPECTED.tsv ]]; then
-  awk -F'\t' '
-    NR == 1 { for (i = 1; i <= NF; i++) if ($i == "status") col = i; next }
-    { n++; by[$col]++ }
+# Сценарии — из последнего прогона scripts/conformance-v1.sh (CEO 20.11: это главная мера ядра).
+# Точечные прогоны писателей (--scenario) не в счёт: берём последний полный (119 сценариев + шапка).
+last=; for f in $(ls -d /mnt/toshiba/alexandrie/hoh/conformance-runs/2*/summary.tsv 2>/dev/null | sort -r); do
+  [[ $(wc -l <"$f") -eq 120 ]] && { last=$f; break; }; done
+if [[ -n $last ]]; then
+  awk -F'\t' -v run="$(basename "$(dirname "$last")")" '
+    NR == 1 { next }
+    { n[$3]++; if ($4 == "прошло") { ok[$3]++; if ($6 != "-") unchecked[$3]++ } else if ($4 == "расхождение") ph[$5]++; else other[$4]++ }
     END {
-      printf "сценарии: %d из %d проходят", by["pass"] + 0, n
-      for (k in by) if (k != "pass") printf ", %s %d", k, by[k]
+      # «прошло» с непустым body_check = сравнения совпали, но проверка тела сценария ещё не перенесена.
+      printf "сценарии (прогон %s): in прошло %d из %d (тело не проверено %d), extra %d из %d; расхождения по фазам:", run, ok["in"] + 0, n["in"] + 0, unchecked["in"] + 0, ok["extra"] + 0, n["extra"] + 0
+      for (k in ph) printf " %s %d", k, ph[k]
+      for (k in other) printf "; %s %d", k, other[k]
       printf "\n"
-    }' conformance/EXPECTED.tsv
+    }' "$last"
 else
-  echo "сценарии: conformance/EXPECTED.tsv ещё нет"
+  echo "сценарии: прогона conformance-v1 ещё не было"
 fi

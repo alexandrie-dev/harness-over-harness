@@ -1,0 +1,11 @@
+{
+  "installed": {
+    "name": "fixture",
+    "version": "1.0.0",
+    "license": "MIT",
+    "scripts": {
+      "preinstall": "touch SHOULD_NEVER_RUN"
+    }
+  },
+  "error": "script: installed hook"
+}

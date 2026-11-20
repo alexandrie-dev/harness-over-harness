@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "audit/advisories/1247710/findings/0/version": "4.0.8"
+  },
+  "error": "outside exception version"
+}

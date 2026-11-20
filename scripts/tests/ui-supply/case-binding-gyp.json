@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "metadata/versions/1.0.0/gypfile": true
+  },
+  "error": "script: install hook"
+}

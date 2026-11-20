@@ -1,0 +1,8 @@
+{
+  "replace": {
+    "audit/advisories/1247710/findings/0/paths": [
+      ".>vite>picomatch"
+    ]
+  },
+  "error": "audit paths differ"
+}

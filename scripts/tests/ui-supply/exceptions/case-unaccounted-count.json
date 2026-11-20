@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "audit/metadata/vulnerabilities/critical": 1
+  },
+  "error": "unaccounted vulnerability counts"
+}

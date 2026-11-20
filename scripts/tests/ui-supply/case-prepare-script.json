@@ -1,0 +1,8 @@
+{
+  "replace": {
+    "metadata/versions/1.0.0/scripts": {
+      "prepare": "touch SHOULD_NEVER_RUN"
+    }
+  },
+  "error": "script: install hook"
+}

@@ -1,0 +1,8 @@
+{
+  "configChanges": {
+    "allowBuilds": {
+      "fixture": true
+    }
+  },
+  "error": "config: allowBuilds"
+}

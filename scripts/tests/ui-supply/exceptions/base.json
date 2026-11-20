@@ -1,0 +1,180 @@
+{
+  "manifest": {
+    "devDependencies": {
+      "vite": "8.3.7"
+    },
+    "engines": {
+      "pnpm": "12.21.0"
+    }
+  },
+  "lock": {
+    "lockfileVersion": "9.0",
+    "importers": {
+      ".": {
+        "devDependencies": {
+          "vite": {
+            "specifier": "8.3.7",
+            "version": "8.3.7"
+          }
+        }
+      }
+    },
+    "packages": {
+      "vite@8.3.7": {
+        "resolution": {
+          "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+      },
+      "tinyglobby@0.2.17": {
+        "resolution": {
+          "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+      },
+      "fdir@6.5.0": {
+        "resolution": {
+          "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+      },
+      "picomatch@4.0.7": {
+        "resolution": {
+          "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+        }
+      }
+    },
+    "snapshots": {
+      "vite@8.3.7": {
+        "dependencies": {
+          "tinyglobby": "0.2.17",
+          "picomatch": "4.0.7"
+        }
+      },
+      "tinyglobby@0.2.17": {
+        "dependencies": {
+          "fdir": "6.5.0",
+          "picomatch": "4.0.7"
+        }
+      },
+      "fdir@6.5.0": {
+        "dependencies": {
+          "picomatch": "4.0.7"
+        }
+      },
+      "picomatch@4.0.7": {}
+    }
+  },
+  "metadata": {
+    "vite": {
+      "versions": {
+        "8.3.7": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "tarball": "https://registry.npmjs.org/vite/-/vite-8.3.7.tgz"
+          }
+        }
+      },
+      "time": {
+        "8.3.7": "2020-01-01T00:00:00Z"
+      }
+    },
+    "tinyglobby": {
+      "versions": {
+        "0.2.17": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "tarball": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz"
+          }
+        }
+      },
+      "time": {
+        "0.2.17": "2020-01-01T00:00:00Z"
+      }
+    },
+    "fdir": {
+      "versions": {
+        "6.5.0": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "tarball": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz"
+          }
+        }
+      },
+      "time": {
+        "6.5.0": "2020-01-01T00:00:00Z"
+      }
+    },
+    "picomatch": {
+      "versions": {
+        "4.0.7": {
+          "license": "MIT",
+          "dist": {
+            "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "tarball": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz"
+          }
+        }
+      },
+      "time": {
+        "4.0.7": "2020-01-01T00:00:00Z"
+      }
+    }
+  },
+  "audit": {
+    "advisories": {
+      "1247710": {
+        "findings": [
+          {
+            "version": "4.0.7",
+            "paths": [
+              ".>vite>picomatch",
+              ".>vite>tinyglobby>picomatch",
+              ".>vite>tinyglobby>fdir>picomatch"
+            ],
+            "dev": true,
+            "optional": false,
+            "bundled": false
+          }
+        ],
+        "id": 1247710,
+        "title": "picomatch vulnerable to ReDoS through single-branch repeated extglobs",
+        "module_name": "picomatch",
+        "vulnerable_versions": "<=4.0.7",
+        "patched_versions": null,
+        "patched_versions_unpublished": true,
+        "severity": "high",
+        "cwe": "CWE-1333",
+        "github_advisory_id": "GHSA-fc5q-39xc-vjpf",
+        "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf"
+      }
+    },
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 1,
+        "critical": 0
+      },
+      "dependencies": 23,
+      "devDependencies": 42,
+      "optionalDependencies": 0,
+      "totalDependencies": 65
+    }
+  },
+  "exception": {
+    "advisory": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "version": "4.0.7",
+    "build_only": true,
+    "reason": "ReDoS на extglob-шаблонах; шаблоны только из репозитория; внешний модуль через окружение закрыт чистым окружением сборки",
+    "granted": {
+      "date": "2026-11-18",
+      "by": "CEO"
+    },
+    "review_by": "2026-12-02",
+    "status": "Withdrawn",
+    "withdrawn_on": "2026-11-18",
+    "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "manifest/packageManager": "pnpm@12.21.0"
+  },
+  "error": "direct: automatic package manager/runtime downloads forbidden"
+}

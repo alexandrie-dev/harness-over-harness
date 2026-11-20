@@ -1,0 +1,3 @@
+# Planted stronger age threshold: pinned React was published <70 days ago.
+minimumReleaseAge: 100800
+minimumReleaseAgeStrict: true

@@ -1,0 +1,258 @@
+# Сценарии dsh для определения «ядро готово» (решение CEO 20.11). Генератор: scripts/v1-scenarios.sh.
+# ПРАВИЛО (записано до отбора): сценарий входит (in), если его тема — поведение крейтов первой версии
+# (118 строк, research/v1-engine-scope.codex.md) или крейтов, уже стоящих в профиле окна apps/hoh
+# (assets/bundle/window/cordis.patch.yml). Тема определяется по имени сценария и по именам инструментов,
+# которые модель вызывает в записанной сессии (snapshots/<suite>/<имя>/*.jsonl). Исключённый (out) получает
+# одну причину — первое сработавшее правило списка в генераторе (порядок: ACP, сборка, PTC, интеграции, хуки,
+# этапы 4–5, отложенные группы описи, DeepSeek-специфичное, внешние субагенты).
+# Плагины полного набора dsh, которых нет в первой версии, в отобранных сценариях не исключают сценарий:
+# прогонщик нормализует или исключает их события (заголовки, промпт, схемы инструментов) — правило нормализации
+# записывается вместе с подключением прогонщика.
+# Общее для всех session-сценариев: профиль headless (лаунчер hoh-headless, вне 118) — нужен прогонщику.
+# extra (дополнение CEO 20.11): сценарий вне порога, но все крейты его причины уже в дереве (MAP: done/accepted).
+# Прогонщик гоняет extra отдельным числом; на «ядро готово» они не влияют и исправлений сами по себе не требуют.
+# Спорные (provider-cwd, desktop-context — in; subagent-dsh-sdk-* — out) прочитаны ведущим 20.11.
+# Для прогонщика: 140 из 242 сценариев грузят local:-фикстуры на TS (тестовые плагины dsh) — им нужен Rust-аналог.
+suite	scenario	v1	reason	note
+session	advanced-toolchain	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	advanced-toolchain-runtime	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	agent-instructions	in	-	-
+session	agent-instructions-budget	in	-	-
+session	agent-instructions-budget-chains	in	-	-
+session	agent-instructions-group-failure	in	-	-
+session	apply-patch-partial	in	-	-
+session	apply-patch-rejected	in	-	-
+session	apply-patch-update	in	-	-
+session	background-confinement-failure	in	-	-
+session	background-job-admission	in	-	-
+session	background-job-notice	in	-	-
+session	bash-same-mode-empty-justification	in	-	-
+session	bash-spill	extra	spill вне 118	-
+session	bash-startup-timeout	in	-	-
+session	bash-tool-turn	in	-	-
+session	both-mode-turn	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	browser-use-chrome-devtools-mcp	out	browser-use: интеграции вне 118	-
+session	browser-use-playwright-mcp	out	browser-use: интеграции вне 118	-
+session	browser-use-stagehand-native	out	browser-use: интеграции вне 118	-
+session	claude-code-mods	out	хуки Claude Code/Codex вне 118	-
+session	compaction-output-reserve	in	-	-
+session	compaction-recovery	in	-	-
+session	compaction-summary-headroom	in	-	-
+session	computer-use-cua-driver-mcp	out	computer-use: интеграции вне 118	-
+session	computer-use-cua-driver-native	out	computer-use: интеграции вне 118	-
+session	cordis-inspect-jsdoc	out	tool-cordis вне 118	-
+session	cordis-inspect-liveness	out	tool-cordis вне 118	-
+session	cordis-inspect-timeout	out	tool-cordis вне 118	-
+session	cua-native	out	computer-use: интеграции вне 118	-
+session	cua-ptc	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	cua-run-code	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	cua-run-code-ptc	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	cua-run-code-scoped	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	deepseek-all-deferred-tools	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	deepseek-deferred-tools	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	deepseek-fetch	in	-	-
+session	deepseek-messages-degraded-replay	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	deepseek-messages-empty-text-history	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	deepseek-messages-input-history	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	deepseek-messages-invalid-tool-history	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	deepseek-messages-replay	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	deepseek-messages-system-prompt	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	deepseek-protocol-system-prompt	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	dsh-doc-load	in	-	-
+session	dynamic-tool-prompt-updates	in	-	-
+session	dynamic-tool-updates	in	-	-
+session	empty-response-retry	in	-	-
+session	empty-response-retry-current	in	-	-
+session	error-finish	in	-	-
+session	foreground-confinement-timeout	in	-	-
+session	fs-delete-recreate	in	-	-
+session	fs-edit	in	-	-
+session	fs-glob-sampling	in	-	-
+session	fs-policy-reject	in	-	-
+session	fs-read	in	-	-
+session	fs-read-window	in	-	-
+session	fs-same-mode-empty-justification	in	-	-
+session	fs-write	in	-	-
+session	fs-write-overwrite	in	-	-
+session	fs-write-overwrite-bounded	in	-	-
+session	headless-auto-review	out	experimental auto-review вне 118	-
+session	headless-credentials	out	tool-cordis вне 118	-
+session	hook-cc-invalid-matcher	out	хуки Claude Code/Codex вне 118	-
+session	hook-cc-posttool-block	out	хуки Claude Code/Codex вне 118	-
+session	hook-cc-posttool-context	out	хуки Claude Code/Codex вне 118	-
+session	hook-cc-pretool-ask	out	хуки Claude Code/Codex вне 118	-
+session	hook-cc-pretool-deny	out	хуки Claude Code/Codex вне 118	-
+session	hook-cc-promptsubmit-block	out	хуки Claude Code/Codex вне 118	-
+session	hook-cc-promptsubmit-context	out	хуки Claude Code/Codex вне 118	-
+session	hook-cc-stop-continue	out	хуки Claude Code/Codex вне 118	-
+session	hook-codex-invalid-matcher	out	хуки Claude Code/Codex вне 118	-
+session	hook-codex-posttool-block	out	хуки Claude Code/Codex вне 118	-
+session	hook-codex-posttool-context	out	хуки Claude Code/Codex вне 118	-
+session	hook-codex-pretool-block	out	хуки Claude Code/Codex вне 118	-
+session	hook-codex-promptsubmit-block	out	хуки Claude Code/Codex вне 118	-
+session	hook-codex-promptsubmit-context	out	хуки Claude Code/Codex вне 118	-
+session	hook-codex-stop-continue	out	хуки Claude Code/Codex вне 118	-
+session	in-history-series-start	in	-	-
+session	lsp-definition	out	этап 4: LSP	-
+session	mcp-empty	extra	MCP вне 118	-
+session	mcp-empty-ptc	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	mcp-resources	extra	MCP вне 118	-
+session	mcp-resources-ptc	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	mcp-template-error	extra	MCP вне 118	-
+session	missing-sandbox-runner	in	-	-
+session	model-switch-compaction	in	-	-
+session	model-switch-notice	in	-	-
+session	model-switch-overflow-recovery	in	-	-
+session	multimodal-spill-ends	extra	spill вне 118	-
+session	multimodal-spill-middle	extra	spill вне 118	-
+session	office-authoring-checker	in	-	-
+session	office-progressive-native	in	-	-
+session	office-progressive-ptc	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	office-render-tools	in	-	-
+session	office-render-tools-ptc	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	office-skills	in	-	-
+session	office-skills-no-renderer	in	-	-
+session	packed-chunks	in	-	-
+session	parallel-tool-calls	in	-	-
+session	partial-landlock-child-failure	in	-	-
+session	persistence-provider-unload	in	-	-
+session	persistent-pwsh-padded-completion	out	этап 5: Windows/PowerShell	-
+session	persistent-pwsh-tool-turn	out	этап 5: Windows/PowerShell	-
+session	pi-ai-conversation-updates	out	llm-pi-ai вне 118	-
+session	pi-ai-malformed-tool-arguments	out	llm-pi-ai вне 118	-
+session	pi-ai-replay-metadata	out	llm-pi-ai вне 118	-
+session	plugin-manager	out	plugin-manager вне 118 (не переносится)	-
+session	plugin-manager-mcp	out	plugin-manager вне 118 (не переносится)	-
+session	product-subagent-both	out	внешние субагенты Claude/Codex/OAR вне 118 (HOH-18 — отдельная проверка)	-
+session	product-subagent-codex	out	внешние субагенты Claude/Codex/OAR вне 118 (HOH-18 — отдельная проверка)	-
+session	product-subagent-oar	out	внешние субагенты Claude/Codex/OAR вне 118 (HOH-18 — отдельная проверка)	-
+session	product-subagent-result-diagnostic	out	внешние субагенты Claude/Codex/OAR вне 118 (HOH-18 — отдельная проверка)	-
+session	provider-cwd	in	-	-
+session	ptc-console-enabled	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-inspect-image-error	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-inspect-output	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-node-read-only	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-node-workspace	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-persistent	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-persistent-scoped	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-policy-change	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-read-image	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-read-image-attachment-path	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-reset	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-scoped-repl	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-script-fresh	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-script-imports	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-script-retained	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-timeout	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-timeout-fallback	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-tool-call-limit	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-turn	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	ptc-workspace-context	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	pty-tools-sandbox-backend	out	terminal вне 118	-
+session	pwsh-tool-turn	out	этап 5: Windows/PowerShell	-
+session	ralph-loop	extra	goal вне 118	-
+session	read-image	in	-	-
+session	read-image-attachment-path	in	-	-
+session	read-image-dimension	in	-	-
+session	read-image-gif	in	-	-
+session	read-image-reencode	in	-	-
+session	read-image-text-route	in	-	-
+session	repeat-tool-reminder	out	repeat-tool-reminder вне 118	-
+session	session-query-spill	extra	spill вне 118	-
+session	session-reference-spill	out	session-reference вне 118	-
+session	session-sandbox-root	in	-	-
+session	skill-load	in	-	-
+session	skill-root-isolation	in	-	-
+session	subagent-acp-diagnostic	out	внешние субагенты Claude/Codex/OAR вне 118 (HOH-18 — отдельная проверка)	-
+session	subagent-agent-preset	in	-	-
+session	subagent-archive-lineage	in	-	-
+session	subagent-child-question-rejection	in	-	-
+session	subagent-depth-context-disabled	in	-	-
+session	subagent-depth-two-rejection	in	-	-
+session	subagent-max-tokens-partial	in	-	-
+session	subagent-multi	in	-	-
+session	subagent-no-message-tool	in	-	-
+session	subagent-parallel	in	-	-
+session	subagent-published-run-failure	in	-	-
+session	subagent-spawn-in-process	in	-	-
+session	subagent-structured-parent	in	-	-
+session	subagent-tool-filter	in	-	-
+session	system-prompt-in-history	in	-	-
+session	team-direct-inbox	out	agent-team вне 118	-
+session	team-historical-records	out	agent-team вне 118	-
+session	team-session-mode	out	agent-team вне 118	-
+session	team-targets	out	agent-team вне 118	-
+session	team-task-inbox	out	agent-team вне 118	-
+session	team-tree-messages	out	agent-team вне 118	-
+session	terminal-panel-tools	out	terminal вне 118	-
+session	text-turn	in	-	-
+session	timeline-plan	out	plan-mode вне 118	-
+session	todo-write	in	-	-
+session	tool-call-turn	in	-	-
+session	toolcall-unused-args	in	-	-
+session	web-fetch	in	-	-
+session	web-fetch-transport-failure	in	-	-
+session	web-search-account-billing	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	web-search-api-key-billing	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	web-search-endpoint-guidance	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	web-search-legacy-endpoint-guidance	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	web-search-unconfigured	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+session	windows-acl-skill	out	этап 5: Windows/PowerShell	-
+session	workflow-confinement	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	workflow-run	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+session	working-directory	in	-	-
+session	working-directory-admission	in	-	-
+session	working-directory-consumers	in	-	-
+session	workspace-dependencies	in	-	-
+session	workspace-edit	in	-	-
+session	worktree	in	-	-
+sdk	account-provider-signout	out	DeepSeek-специфичное вне 118 (llm-deepseek, api-extensions, web-search-deepseek)	-
+sdk	approval	in	-	-
+sdk	background-wait-steer	in	-	-
+sdk	bash-tool	in	-	-
+sdk	command-attachments	in	-	-
+sdk	command-identity	in	-	-
+sdk	cua-run-code	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+sdk	desktop-context	in	-	-
+sdk	desktop-ptc-context	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+sdk	dynamic-tool-updates	in	-	-
+sdk	goal-rounds	extra	goal вне 118	-
+sdk	inline-image-prompt	in	-	-
+sdk	manual-compact	in	-	-
+sdk	max-tokens-continue	in	-	-
+sdk	minimal-image-compaction	out	сборка sdk-minimal вне 118 (заменена apps/hoh)	-
+sdk	multi-turn	in	-	-
+sdk	permission-switch	in	-	-
+sdk	persistent-tools	out	сборка sdk-minimal вне 118 (заменена apps/hoh)	-
+sdk	plan-review	out	plan-mode вне 118	-
+sdk	ptc-cancel	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+sdk	ptc-turn	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+sdk	serial-created	in	-	-
+sdk	session-resume	in	-	-
+sdk	session-title-after-turn	in	-	-
+sdk	session-title-stability	in	-	-
+sdk	subagent-activation-limit	in	-	-
+sdk	subagent-continuable	in	-	-
+sdk	subagent-continuable-inheritance	in	-	-
+sdk	subagent-dsh-sdk-diagnostic	out	subagent-dsh-sdk не переносится (нет крейта в описи)	-
+sdk	subagent-dsh-sdk-dynamic-route	out	subagent-dsh-sdk не переносится (нет крейта в описи)	-
+sdk	subagent-fork-in-process	out	subagent-fork-in-process вне 118	-
+sdk	subagent-list-agents	in	-	-
+sdk	subagent-mixed	in	-	-
+sdk	subagent-send-message	in	-	-
+sdk	subagent-spawn-in-process	in	-	-
+sdk	system-prompt-in-history	in	-	-
+sdk	team-default-enabled	out	agent-team вне 118	-
+sdk	team-session-mode	out	agent-team вне 118	-
+sdk	text-turn	in	-	-
+sdk	tool-error-details	out	PTC/run_code/workflow (workflow-ptc, typert: redesign/skip)	-
+sdk	tool-scheduler-recovery	in	-	-
+acp	cancel	out	этап 4: ACP вне первой версии	-
+acp	cancel-tool-calls	out	этап 4: ACP вне первой версии	-
+acp	escalation-approved	out	этап 4: ACP вне первой версии	-
+acp	escalation-rejected	out	этап 4: ACP вне первой версии	-
+acp	fs-escalation-approved	out	этап 4: ACP вне первой версии	-
+acp	fs-same-mode	out	этап 4: ACP вне первой версии	-
+acp	handshake	out	этап 4: ACP вне первой версии	-
+acp	image-compaction	out	этап 4: ACP вне первой версии	-
+acp	reject-extra-dirs	out	этап 4: ACP вне первой версии	-

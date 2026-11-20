@@ -1,0 +1,6 @@
+{
+  "replace": {
+    "metadata/versions/1.0.0/dist/integrity": "sha512-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=="
+  },
+  "error": "integrity: registry mismatch"
+}
