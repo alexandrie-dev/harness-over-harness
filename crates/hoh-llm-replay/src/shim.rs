@@ -1,9 +1,11 @@
-//! Private owner interfaces awaiting accepted dependencies.
-use crate::{ReplayError, Result, error};
-use hoh_session::{
-    SESSION_FORMAT_VERSION, Session, SessionEvent, SessionId, SessionLogOffset,
-    SessionSeedEventState,
+//! Private owner interfaces: the compaction summary shim and the format-catalog restore.
+use crate::Result;
+use hoh_session::{SessionEvent, SessionLogOffset};
+use hoh_session_format::{
+    SessionFormatRecovery, SessionFormatRestore, SessionFormatRestoreOptions,
+    SessionFormatValidation,
 };
+use hoh_session_format_catalog::create_session_format_catalog_with_children;
 use serde::Deserialize;
 use serde_json::Value;
 // SHIM(hoh-compaction): persisted summary call facts; replace when its event data type is published.
@@ -14,14 +16,11 @@ pub(crate) struct CompactionSummary {
     pub raw_output: Option<Vec<hoh_llm::ContentBlock>>,
     pub usage: Option<hoh_llm::TokenUsage>,
 }
-// SHIM(hoh-session-format-catalog): createRestore/decodeRow/finish.
-// Header validation uses Session restore; body facts use public content validators, not runtime
-// message projection plugins. Full schema/relationships and migrations require restore integration.
-// Comparison preparation already uses the real catalog's encodeCurrentHeader/Event.
-// Replace this restore seam during the separately deferred historical-reader integration.
+/// The restore of one fixture: the source's `createSessionFormatCatalogWithChildren([])` with
+/// `recovery: 'strict'` and `validation: 'current'`, so every released generation is migrated to
+/// the current logical events and a refusal keeps its `SessionFormatError` class.
 pub(crate) struct Restore {
-    header: Value,
-    events: Vec<SessionEvent>,
+    inner: SessionFormatRestore,
 }
 pub(crate) struct Artifact {
     pub header: Value,
@@ -30,101 +29,30 @@ pub(crate) struct Artifact {
 }
 impl Restore {
     pub fn new(header: Value) -> Result<Self> {
-        if header["type"] != "session" {
-            return Err(error("first record must be a Session header"));
-        }
-        let version = header["version"]
-            .as_u64()
-            .filter(|n| *n <= hoh_session::MAX_SAFE_INTEGER)
-            .ok_or_else(|| error("Session header version must be a non-negative safe integer"))?;
-        if version != SESSION_FORMAT_VERSION {
-            return Err(Box::new(ReplayError::UnsupportedMigration {
-                message: format!(
-                    "llm-replay: migration v{version}->v{SESSION_FORMAT_VERSION} requires hoh-session-format-catalog"
-                ),
-                cause: None,
-            }));
-        }
-        let id = header["id"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| error("Session header lacks id"))?;
-        // Seed-cut validation requires body events; header facts are checked first.
-        Session::from_restore(
-            SessionId::from(id),
-            &[],
-            header.clone(),
-            SessionLogOffset::default(),
-            SessionSeedEventState::Detached,
-            None,
+        let catalog = create_session_format_catalog_with_children(vec![])?;
+        let inner = catalog.create_restore(
+            &header,
+            SessionFormatRestoreOptions {
+                recovery: SessionFormatRecovery::Strict,
+                validation: SessionFormatValidation::Current,
+            },
         )?;
-        Ok(Self {
-            header,
-            events: vec![],
-        })
+        Ok(Self { inner })
     }
-    pub fn decode_row(&mut self, mut row: Value) -> Result<()> {
-        if ["text-chunks", "reasoning-chunks", "tool-call-chunks"]
-            .contains(&row["type"].as_str().unwrap_or(""))
-        {
-            return Err(error(
-                "current Session format does not admit packed chunk rows",
-            ));
-        }
-        if let Some(ranges) = row.get_mut("sourceEventSeqs") {
-            *ranges = serde_json::to_value(hoh_session::decode_seq_ranges(
-                ranges,
-                Some(self.events.len() as u64),
-            )?)?;
-        }
-        let index = self.events.len();
-        if !row["type"].as_str().is_some_and(|t| !t.is_empty())
-            || row.get("data").is_none()
-            || row.get("ignorable").is_some_and(|v| v != true)
-        {
-            return Err(error(format!(
-                "seed event at index {index} has an invalid envelope"
-            )));
-        }
-        if row["seq"].as_u64() != Some(index as u64) {
-            return Err(error(format!(
-                "seed event at index {index} must have contiguous seq {index}"
-            )));
-        }
-        if row["time"]
-            .as_i64()
-            .is_none_or(|n| n.unsigned_abs() > hoh_session::MAX_SAFE_INTEGER)
-        {
-            return Err(error(format!(
-                "seed event at index {index} time must be a safe integer"
-            )));
-        }
-        self.events
-            .push(hoh_session::adopt_session_event(SessionEvent::from_value(
-                row,
-            ))?);
-        Ok(())
+    pub fn decode_row(&mut self, row: Value) -> Result<()> {
+        Ok(self.inner.decode_row(row)?)
     }
     pub fn finish(self) -> Result<Artifact> {
-        let marker = self
+        let artifact = self.inner.finish()?;
+        let events = artifact
             .events
-            .iter()
-            .rfind(|e| e.event_type() == "session/end-seed" && e.data()["inherited"] == true)
-            .and_then(|e| e.as_value()["seq"].as_u64());
-        let inherited = if self.header["isSeeded"] == true {
-            marker.ok_or_else(|| error("seeded Session lacks inherited session/end-seed"))?
-        } else if marker.is_some() {
-            return Err(error(
-                "unseeded Session contains an inherited end-seed marker",
-            ));
-        } else {
-            0
-        };
-        let inherited_event_count = SessionLogOffset::new(inherited)?;
+            .into_iter()
+            .map(|event| SessionEvent::from_value(event.into()))
+            .collect();
         Ok(Artifact {
-            header: self.header,
-            events: self.events,
-            inherited_event_count,
+            header: artifact.header.into(),
+            events,
+            inherited_event_count: SessionLogOffset::new(artifact.inherited_event_count)?,
         })
     }
 }

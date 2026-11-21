@@ -10,13 +10,13 @@ package.json объявляет MIT. Корень workspace, зависимос�
 | образец | перенос | состояние |
 |---|---|---|
 | src/index.ts: ReplayEntry/Config/SessionScript, exports | src/lib.rs, src/config.rs | Все именованные runtime-экспорты; plugin `llm-replay`, inject `llm`; env defaults |
-| src/index.ts: parseSessionFixture, parseSessionLog/Header, prepareSessionSnapshotFixtureForComparison | src/fixture.rs, src/shim.rs | projected/complete envelopes, исходные физические строки, cwd/tools projections, неизменность входа; зависимость от полного catalog явно отмечена ниже |
+| src/index.ts: parseSessionFixture, parseSessionLog/Header, prepareSessionSnapshotFixtureForComparison | src/fixture.rs, src/shim.rs | projected/complete envelopes, исходные физические строки, cwd/tools projections, неизменность входа; restore идёт через настоящий catalog (`createSessionFormatCatalogWithChildren([])`, strict/current), v0–v3 мигрируют в текущий формат |
 | src/index.ts: deriveReplayScript | src/script.rs | embedded Assistant streams через hoh-llm; отдельные retries; только явно помеченные local compaction calls; отсутствие finish требует override |
 | src/index.ts: overrides/fromRequest/session tokens | src/script.rs | replace/patch/append, точные формы entries, последний regex match, первый capture, deep-copy, типизированные session ordinals |
 | src/index.ts: ReplayAdapter | src/adapter.rs | catalog, context/maxTokens/efforts/default, prompt/tool update, badge, retry policy, image/offloaded pricing; provider I/O отсутствует |
 | src/index.ts: installLlmReplay/replayEntry/apply | src/replay.rs, src/lib.rs | adapter или настоящий llm/stream waterfall, независимые cursors, consumption, dispose, prefix+throw/hang, readyFile, pacing/abort, DeepSeek post-2xx acceptance |
-| tests/llm-replay.spec.ts | tests/llm_replay.rs, tests/support/mod.rs | source cases на текущем формате, настоящий LlmRuntime, исходные таблицы сведены в циклы; явные исключения ниже |
-| tests/session-format-corpus.spec.ts, inventory.ts | tests/session_format_corpus.rs | existence inventory, семь правил unsupported policy, текущие committed fixtures без переписывания; полная историческая реставрация пока недоступна |
+| tests/llm-replay.spec.ts | tests/llm_replay.rs, tests/historical.rs, tests/support/mod.rs | source cases, настоящий LlmRuntime, таблицы сведены в циклы; все clauses про старые поколения (v0–v3) и заголовки — в historical.rs; явные исключения ниже |
+| tests/session-format-corpus.spec.ts, inventory.ts | tests/session_format_corpus.rs | весь committed corpus (список из `git ls-files`, симлинки пропущены) восстанавливается через catalog; 13 точных отказов inventory сверяются дословно; protocol-фикстуры без версии и с filenameFormatVersion == 0; семь правил unsupported policy |
 
 ## Отличия от образца
 
@@ -70,20 +70,17 @@ client/api/typert/host/experimental других именованных src-им
 
 Учёт по именованным `it`/`it.each`, варианты каждой таблицы объединены в Rust-цикл:
 llm-replay.spec.ts содержит 129 clauses (121 it + 8 it.each); session-format-corpus.spec.ts — 9.
-110 из 138 clauses имеют перенос/адаптацию; 28 пока не перенесены полностью:
+Не перенесены только шесть module-mock clauses llm-replay.spec.ts:234,257,283,314,345,382 — замена
+модулей/произвольных JS throws исключена PORTING §10; отдельного catalog, версию которого можно
+сравнить при импорте, нет. Остальные 132 clauses перенесены или адаптированы.
 
-- Шесть module-mock clauses llm-replay.spec.ts:234,257,283,314,345,382 — замена модулей/произвольных JS
-  throws исключена PORTING §10; отсутствует отдельный catalog, версию которого можно сравнить при импорте.
-- 21 catalog/history clause llm-replay.spec.ts:463,481,499,538,558,583,621,662,677,699,712,744,759,
-  795,816,1068,1189,1828,1833,1841,1855 — требуют released v0–v3 decoder/migrations либо их точных ошибок.
-  Текущие аналоги empty-tools, readonly fixture и fork-cut проверены отдельно и не выданы за исторические.
-- Полный параметризованный обход всех поколений в session-format-corpus.spec.ts:80 — историческое
-  восстановление и 13 точных отказов требуют настоящего catalog. Текущие поколения обходятся отдельно,
-  без exemptions; headerless-файлы разрешены только исходным явным inventory.
+Старые поколения: все clauses :463, :481, :499, :538, :558, :583, :621, :662, :677, :699, :712, :744,
+:759, :795, :816, :1068, :1189, :1828, :1833, :1841, :1855 перенесены в tests/historical.rs
+(и llm_replay.rs для текущего формата). Параметризованный обход corpus (session-format-corpus.spec.ts:80)
+перенесён целиком: исторические файлы восстанавливаются, 13 отказов inventory совпадают дословно.
 
-Публичные replay/load/derive/adapter/stream возможности реализованы; это **не** заявление о готовности
-released format catalog. Никакие recorded tool results этому плагину не поручены: он отдаёт только
-StreamChunk, а read/write/bash исполняет настоящий агент.
+Публичные replay/load/derive/adapter/stream возможности реализованы. Никакие recorded tool results этому
+плагину не поручены: он отдаёт только StreamChunk, а read/write/bash исполняет настоящий агент.
 
 ## Не проверено
 
@@ -94,17 +91,10 @@ integration test этого crate воспроизводит recorded read/write
 
 ## Вопросы ведущему
 
-- `SHIM(hoh-session-format-catalog)` в src/shim.rs: оставлена прежняя restore seam; owner crate уже есть.
-  В этом fix round подключены настоящие current encoders, restore/history integration в задание не входит.
-  Текущий shim использует
-  Session::from_restore для header, публичный adopt_session_event для content/surface metadata,
-  непрерывность seq, safe time и final inherited marker для cut;
-  он не подменяет полный released content-only restore и исторические migrations.
-  v0–v3 явно отклоняются типизированным UnsupportedMigration с физической строкой. После приёмки catalog
-  заменить оставшуюся seam на createRestore/decodeRow/finish и включить 22 зависимых clauses.
-  Runtime surface fold намеренно не запускается: image/offload требует owning projection plugin,
-  которого content-only reader исходного catalog не загружает. Полная schema и cross-event relationships
-  остаются обязанностью настоящего catalog, и текущий shim не выдаёт их за проверенные.
+- Раньше restore был приватной заглушкой `SHIM(hoh-session-format-catalog)`, отклонявшей v0–v3. Теперь
+  `shim::Restore` — тонкая обёртка над настоящим catalog; `adopt_session_event` в `finish` убран, как в TS
+  (`index.ts:303` только приводит тип). Заглушек catalog больше нет, вопросов по нему нет.
+- Зависимость `hoh-session-format` добавлена в Cargo.toml крейта; Cargo.lock внесёт интеграция.
 - `SHIM(hoh-compaction)` в src/shim.rs: отсутствует owner-типа compaction/summary. Приватный read-only
   payload содержит только llmStreamCall/rawOutput/usage из source declaration; заменить его импортом
   владельца после публикации. StreamChunk/ContentBlock/TokenUsage уже импортированы из hoh-llm.
@@ -177,3 +167,10 @@ Unit/doc: по 0 tests, exit 0. Итого **109 passed; 0 failed; 0 ignored**.
 в `read_override` при загрузке файла; поэтому записи для replay нужно получать через загрузку файла, а не прямым
 `serde_json::from_value::<ReplayEntry>`. Крейт тестовый, прямых внешних вызовов нет; если появятся — сузить ручным
 `Deserialize` до kind chunks/throw.
+
+### Итог исправления по ревью 023936
+
+`cargo test --offline -p hoh-llm-replay` (×3): historical.rs 21, llm_replay.rs 99, session_format_corpus.rs 9
+(129 passed, 0 failed); clippy `--all-targets -D warnings` и `fmt --check` — чисто. Старые поколения
+читаются через `createSessionFormatCatalogWithChildren([])`; номера строк отказов берутся по тем же
+шаблонам, что `fixtureFormatError` в TS (`index.ts:409-435`).

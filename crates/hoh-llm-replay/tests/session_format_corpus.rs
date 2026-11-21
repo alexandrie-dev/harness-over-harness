@@ -1,9 +1,14 @@
-//! Current-generation portion of the source inventory. Historical catalog policy remains blocked
-//! on the absent owner crate; refusing old generations is tested separately, never counted as restore.
+//! The committed Session corpus of the source inventory: every generation is restored through the
+//! session format catalog, except the exact historical refusals the inventory lists.
 use hoh_llm_replay::parse_session_log;
-use std::path::{Path, PathBuf};
+use std::{collections::HashMap, path::Path};
+const REFS: &str = "/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness";
 fn inventory() -> String {
-    std::fs::read_to_string("/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness/packages/test-support/llm-replay/tests/session-format-corpus-inventory.ts").unwrap()
+    std::fs::read_to_string(
+        Path::new(REFS)
+            .join("packages/test-support/llm-replay/tests/session-format-corpus-inventory.ts"),
+    )
+    .unwrap()
 }
 fn listed_keys(source: &str) -> Vec<String> {
     regex::Regex::new(r"(?m)^  '([^']+)'")
@@ -12,42 +17,66 @@ fn listed_keys(source: &str) -> Vec<String> {
         .map(|c| c[1].to_owned())
         .collect()
 }
-fn fixtures(root: &Path) -> Vec<PathBuf> {
-    let mut pending = vec![root.to_owned()];
-    let mut files = vec![];
+/// `expectedUnsupported`: fixture key -> (source version, exact reason).
+fn expected_unsupported(source: &str) -> HashMap<String, (u64, String)> {
+    let table = source
+        .split("export const unversionedProtocolFixtures")
+        .next()
+        .unwrap();
+    regex::Regex::new(r"(?s)'([^']+)': \{\s*sourceVersion: ([0-9]+),\s*reason: '([^']*)',")
+        .unwrap()
+        .captures_iter(table)
+        .map(|c| (c[1].to_owned(), (c[2].parse().unwrap(), c[3].to_owned())))
+        .collect()
+}
+/// Committed fixtures, listed by git (the corpus lives on a slow disk: no directory walk).
+fn fixtures() -> Vec<String> {
+    let out = std::process::Command::new("git")
+        .args([
+            "-C",
+            REFS,
+            "ls-files",
+            "-s",
+            "--",
+            "snapshots",
+            "packages",
+            "scripts/snapshots/python-sdk-single-exe",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
     let canonical =
         regex::Regex::new(r"^session(?:\.[1-9][0-9]*)?(?:\.v[1-9][0-9]*)?\.jsonl$").unwrap();
-    while let Some(dir) = pending.pop() {
-        let mut entries: Vec<_> = std::fs::read_dir(dir)
-            .unwrap()
-            .map(|e| e.unwrap())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let kind = entry.file_type().unwrap();
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if kind.is_symlink() {
-                continue;
-            }
-            if kind.is_dir() {
-                if !["dist", "lib", "node_modules"].contains(&name.as_str()) {
-                    pending.push(entry.path());
-                }
-            } else if name.starts_with("session") && name.ends_with(".jsonl") {
-                assert!(canonical.is_match(&name), "{}", entry.path().display());
-                files.push(entry.path());
-            }
-        }
+    let excluded = ["dist", "lib", "node_modules"];
+    // `-s` lists the mode: tracked symlinks (120000) are skipped, as the source skips them.
+    let mut files: Vec<String> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(info, _)| !info.starts_with("120000"))
+        .map(|(_, path)| path)
+        .filter(|path| {
+            let mut parts = path.split('/');
+            let name = path.rsplit('/').next().unwrap();
+            name.starts_with("session")
+                && name.ends_with(".jsonl")
+                && !parts.any(|p| excluded.contains(&p))
+        })
+        .map(str::to_owned)
+        .collect();
+    for path in &files {
+        assert!(
+            canonical.is_match(path.rsplit('/').next().unwrap()),
+            "{path}"
+        );
     }
     files.sort();
     files
 }
 #[test]
-fn restores_committed_current_generation_fixtures_without_changing_source_bytes() {
-    let refs = Path::new("/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness");
-    let mut current = 0;
-    let mut historical_pending = 0;
+fn restores_the_whole_corpus_through_the_format_catalog_except_the_listed_refusals() {
     let inventory = inventory();
+    let unsupported = expected_unsupported(&inventory);
     let protocol = listed_keys(
         inventory
             .split("export const unversionedProtocolFixtures")
@@ -56,82 +85,80 @@ fn restores_committed_current_generation_fixtures_without_changing_source_bytes(
     );
     let canonical =
         regex::Regex::new(r"^session(?:\.[1-9][0-9]*)?(?:\.v([1-9][0-9]*))?\.jsonl$").unwrap();
-    for root in [
-        "snapshots",
-        "packages",
-        "scripts/snapshots/python-sdk-single-exe",
-    ] {
-        for file in fixtures(&refs.join(root)) {
-            let bytes = std::fs::read(&file).unwrap();
-            let source = std::str::from_utf8(&bytes).unwrap();
-            let header = source
-                .lines()
-                .find(|s| !hoh_util_values::js_trim(s).is_empty())
-                .map(hoh_util_values::js_json_parse)
-                .transpose()
-                .unwrap()
-                .unwrap_or_default();
-            if header.get("version").is_none() {
-                assert!(
-                    protocol.iter().any(|key| file == refs.join(key)),
-                    "unlisted headerless fixture: {}",
-                    file.display()
-                );
-                assert_eq!(std::fs::read(&file).unwrap(), bytes);
-                continue;
-            }
-            let version = header["version"].as_u64().unwrap();
-            let name = file.file_name().unwrap().to_str().unwrap();
-            let filename_version = canonical
-                .captures(name)
-                .unwrap()
-                .get(1)
-                .map(|m| m.as_str().parse::<u64>().unwrap())
-                .unwrap_or(0);
-            assert_eq!(
-                filename_version,
-                version,
-                "filename/header mismatch: {}",
-                file.display()
+    let (mut restored, mut refused, mut historical) = (0, 0, 0);
+    for key in fixtures() {
+        let file = Path::new(REFS).join(&key);
+        let bytes = std::fs::read(&file).unwrap();
+        let source = std::str::from_utf8(&bytes).unwrap();
+        let header = source
+            .lines()
+            .find(|s| !hoh_util_values::js_trim(s).is_empty())
+            .map(hoh_util_values::js_json_parse)
+            .transpose()
+            .unwrap()
+            .unwrap_or_default();
+        let name = key.rsplit('/').next().unwrap();
+        let filename_version = canonical
+            .captures(name)
+            .unwrap()
+            .get(1)
+            .map(|m| m.as_str().parse::<u64>().unwrap())
+            .unwrap_or(0);
+        if protocol.contains(&key) {
+            assert!(
+                header.get("version").is_none(),
+                "{key}: must remain unversioned"
             );
-            if version == hoh_session::SESSION_FORMAT_VERSION {
-                parse_session_log(source).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
-                current += 1;
-            } else {
-                assert!(version < hoh_session::SESSION_FORMAT_VERSION);
-                historical_pending += 1;
-            }
-            assert_eq!(
-                std::fs::read(&file).unwrap(),
-                bytes,
-                "source changed: {}",
-                file.display()
-            );
+            assert_eq!(filename_version, 0, "{key}: protocol fixture filename");
+            assert!(!unsupported.contains_key(&key), "{key}");
+            continue;
         }
+        let version = header["version"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("{key}: Session header must declare its format"));
+        assert_eq!(filename_version, version, "{key}: filename/header mismatch");
+        let result = parse_session_log(source).map(drop);
+        let shown = result.as_ref().err().map(ToString::to_string);
+        assert_restoration(
+            version,
+            result,
+            unsupported.get(&key).map(|(v, r)| (*v, r.as_str())),
+        )
+        .unwrap_or_else(|why| panic!("{key}: {why}: {shown:?}"));
+        if unsupported.contains_key(&key) {
+            refused += 1;
+        } else {
+            restored += 1;
+        }
+        if version < hoh_session::SESSION_FORMAT_VERSION {
+            historical += 1;
+        }
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            bytes,
+            "{key}: source changed"
+        );
     }
-    assert!(
-        current > 200,
-        "current fixture coverage disappeared: {current}"
-    );
-    assert!(
-        historical_pending > 0,
-        "historical inventory unexpectedly empty"
-    );
+    assert_eq!(refused, unsupported.len());
+    assert!(restored > 200, "corpus coverage disappeared: {restored}");
+    assert!(historical > 0, "historical inventory unexpectedly empty");
 }
 #[test]
 fn keeps_every_exception_tied_to_an_existing_fixture() {
-    let refs = Path::new("/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness");
-    let keys = listed_keys(&inventory());
-    assert_eq!(keys.len(), 25);
-    for key in keys {
-        assert!(refs.join(&key).is_file(), "{key}");
+    let inventory = inventory();
+    let keys: std::collections::HashSet<_> = fixtures().into_iter().collect();
+    let mut listed: std::collections::HashSet<_> = listed_keys(&inventory).into_iter().collect();
+    listed.extend(expected_unsupported(&inventory).into_keys());
+    assert_eq!(listed.len(), 25);
+    for key in listed {
+        assert!(keys.contains(&key), "{key}");
     }
 }
-type Refusal = (u64, &'static str);
+type Refusal<'a> = (u64, &'a str);
 fn assert_restoration(
     source: u64,
     result: hoh_llm_replay::Result<()>,
-    expected: Option<Refusal>,
+    expected: Option<Refusal<'_>>,
 ) -> std::result::Result<(), &'static str> {
     let Some((version, reason)) = expected else {
         return result.map_err(|_| "current-format restoration");

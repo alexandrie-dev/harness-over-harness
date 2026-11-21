@@ -28,7 +28,8 @@ pub(crate) fn parse_fixture(text: &str) -> Result<ParsedFixture> {
     let mut header_line = 1;
     let mut body_kind = None;
     let mut next = 0_u64;
-    let mut event_lines = vec![];
+    let mut event_lines: Vec<usize> = vec![];
+    let mut row_lines: Vec<usize> = vec![];
     for (index, line) in text.split('\n').enumerate() {
         if hoh_util_values::js_trim(line).is_empty() {
             continue;
@@ -57,7 +58,10 @@ pub(crate) fn parse_fixture(text: &str) -> Result<ParsedFixture> {
             {
                 row["cwd"] = json!(cwd.replacen("{{cwd}}", "/dsh-snapshot-cwd", 1));
             }
-            restore = Some(shim::Restore::new(row).map_err(|e| located(e, line_number))?);
+            restore = Some(
+                shim::Restore::new(row)
+                    .map_err(|e| located(e, header_line, &row_lines, &event_lines, None))?,
+            );
             continue;
         }
         normalize_row(&mut row);
@@ -96,38 +100,61 @@ pub(crate) fn parse_fixture(text: &str) -> Result<ParsedFixture> {
             1
         };
         next += cardinality as u64;
+        row_lines.push(line_number);
         event_lines.extend(std::iter::repeat_n(line_number, cardinality));
         // The header branch establishes a restore before any body row.
+        let physical_row = row_lines.len() - 1;
         restore
             .as_mut()
             .expect("header precedes body")
             .decode_row(row)
-            .map_err(|e| located(e, line_number))?;
+            .map_err(|e| located(e, header_line, &row_lines, &event_lines, Some(physical_row)))?;
     }
     let restore =
         restore.ok_or_else(|| error("session snapshot must start with a session header"))?;
-    let artifact = restore.finish().map_err(|e| {
-        let detail = e.to_string();
-        let line = regex::Regex::new(
-            r"(?:Session event | at seq |inherited Session cut |seed event at index )([0-9]+)",
-        )
-        .ok()
-        .and_then(|r| r.captures(&detail).and_then(|c| c[1].parse::<usize>().ok()))
-        .and_then(|n| event_lines.get(n))
-        .copied()
-        .unwrap_or(header_line);
-        located(e, line)
-    })?;
+    let artifact = restore
+        .finish()
+        .map_err(|e| located(e, header_line, &row_lines, &event_lines, None))?;
     Ok(ParsedFixture {
         artifact,
         source_header,
     })
 }
-fn located(e: hoh_error::BoxError, line: usize) -> hoh_error::BoxError {
-    let message = format!("session snapshot line {line}: {e}");
+/// Attach the nearest physical source line while keeping the unsupported-migration class.
+fn located(
+    e: hoh_error::BoxError,
+    header_line: usize,
+    row_lines: &[usize],
+    event_lines: &[usize],
+    physical_row: Option<usize>,
+) -> hoh_error::BoxError {
+    let detail = e.to_string();
+    // The source reads the location from the cause's message when the error carries one.
+    let location = std::error::Error::source(&*e)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| detail.clone());
+    let number = |pattern: &str| {
+        regex::Regex::new(pattern).ok().and_then(|r| {
+            r.captures(&location)
+                .and_then(|c| c[1].parse::<usize>().ok())
+        })
+    };
+    let line = if let Some(row) = physical_row {
+        row_lines[row]
+    } else if let Some(row) = number(r"^released Session row ([0-9]+)") {
+        row_lines.get(row).copied().unwrap_or(header_line)
+    } else if let Some(event) = number(r"Session event ([0-9]+)")
+        .or_else(|| number(r" at seq ([0-9]+)"))
+        .or_else(|| number(r"inherited Session cut ([0-9]+)"))
+    {
+        event_lines.get(event).copied().unwrap_or(header_line)
+    } else {
+        header_line
+    };
+    let message = format!("session snapshot line {line}: {detail}");
     if matches!(
-        e.downcast_ref::<ReplayError>(),
-        Some(ReplayError::UnsupportedMigration { .. })
+        e.downcast_ref::<hoh_session_format::SessionFormatError>(),
+        Some(hoh_session_format::SessionFormatError::UnsupportedMigration { .. })
     ) {
         Box::new(ReplayError::UnsupportedMigration {
             message,
@@ -166,11 +193,9 @@ pub fn prepare_session_snapshot_fixture_for_comparison(text: &str) -> Result<Str
     let p = parse_fixture(text)?;
     let catalog = hoh_session_format_catalog::session_format_catalog()?;
     let mut logical_header = p.artifact.header;
-    // The temporary restore shim retains the physical tag; catalog metadata excludes it.
     let logical_header = logical_header
         .as_object_mut()
         .ok_or_else(|| error("restored Session header must be an object"))?;
-    logical_header.shift_remove("type");
     let mut header = Value::Object(
         catalog.encode_current_header(logical_header, p.artifact.inherited_event_count.get())?,
     );

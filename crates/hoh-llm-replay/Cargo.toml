@@ -15,6 +15,7 @@ hoh-deepseek-llm-api-extensions = { path = "../hoh-deepseek-llm-api-extensions" 
 hoh-kernel = { path = "../hoh-kernel" }
 hoh-llm = { path = "../hoh-llm" }
 hoh-session = { path = "../hoh-session" }
+hoh-session-format = { path = "../hoh-session-format" }
 hoh-session-format-catalog = { path = "../hoh-session-format-catalog" }
 hoh-util-values = { path = "../hoh-util-values" }
 hoh-error = { path = "../hoh-error" }

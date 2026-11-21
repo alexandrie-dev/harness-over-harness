@@ -92,13 +92,14 @@ fn rejects_a_projected_header_that_lacks_required_identity_fields() {
 }
 #[test]
 fn keeps_arbitrary_future_request_header_fields_observable_after_current_format_restoration() {
-    let mut rows = vec![
-        header("p", 0),
-        json!({"type":"request/header","data":{"reason":"initial","header":{"config":{"provider":"m","model":"m"},"futureHeader":"unexpected value"}}}),
-    ];
+    let mut rows: Vec<Value> = fixture("p", 0, &[chunks("hi")])
+        .lines()
+        .map(|s| hoh_util_values::js_json_parse(s).unwrap())
+        .collect();
+    rows.insert(3, json!({"type":"request/header","data":{"reason":"initial","header":{"config":{"provider":"m","model":"m"},"futureHeader":"unexpected value"}}}));
     let first = prepare_session_snapshot_fixture_for_comparison(&jsonl(&rows)).unwrap();
     assert!(first.contains("futureHeader"));
-    rows[1]["data"]["header"]
+    rows[3]["data"]["header"]
         .as_object_mut()
         .unwrap()
         .shift_remove("futureHeader");
@@ -151,7 +152,7 @@ fn derives_current_replay_calls_from_a_fixture_with_tokenized_request_tools() {
         .lines()
         .map(|s| hoh_util_values::js_json_parse(s).unwrap())
         .collect();
-    rows.insert(1,json!({"type":"request/header","data":{"reason":"initial","header":{"config":{"provider":"m","model":"m"},"tools":"{{tools}}"}}}));
+    rows.insert(3,json!({"type":"request/header","data":{"reason":"initial","header":{"config":{"provider":"m","model":"m"},"tools":"{{tools}}"}}}));
     let text = jsonl(&rows);
     assert_eq!(
         derive_replay_script(&parse_session_log(&text).unwrap()).unwrap(),
@@ -799,16 +800,24 @@ fn rejects_retired_request_header_system_before_current_comparison() {
 }
 #[test]
 fn rejects_genuine_empty_current_tools_instead_of_treating_them_as_placeholder() {
+    let mut v3 = header("p", 0);
+    v3["version"] = json!(3);
     let rows = vec![
-        header("p", 0),
+        v3,
+        json!({"type":"turn/start","data":{"turn":1}}),
         json!({"type":"request/header","data":{"reason":"initial","header":{"config":{"provider":"m","model":"m"},"tools":[]}}}),
     ];
-    assert!(
-        parse_session_log(&jsonl(&rows))
-            .unwrap_err()
-            .to_string()
-            .contains("omit empty tools")
-    );
+    for error in [
+        parse_session_log(&jsonl(&rows)).unwrap_err(),
+        prepare_session_snapshot_fixture_for_comparison(&jsonl(&rows)).unwrap_err(),
+    ] {
+        let text = error.to_string();
+        assert!(text.starts_with("session snapshot line 3:"), "{text}");
+        assert!(
+            text.contains("empty optional header fields must be omitted"),
+            "{text}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1326,20 +1335,6 @@ fn rejects_invalid_model_capabilities_during_load() {
         );
     }
 }
-#[test]
-fn historical_generations_remain_explicit_dependency_refusals() {
-    for version in 0..4 {
-        let mut h = header("p", 0);
-        h["version"] = json!(version);
-        let e = parse_session_log(&jsonl(&[h])).unwrap_err();
-        assert!(matches!(
-            e.downcast_ref::<ReplayError>(),
-            Some(ReplayError::UnsupportedMigration { .. })
-        ));
-        assert!(e.to_string().contains("hoh-session-format-catalog"));
-    }
-}
-
 #[tokio::test]
 async fn registers_a_replay_only_provider_catalog_when_configured() {
     let mut f = Files::new(&[chunks("hi")]);
