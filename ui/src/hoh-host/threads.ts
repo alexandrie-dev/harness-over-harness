@@ -330,9 +330,9 @@ export class ThreadModel {
       ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at),
       requestId: params.approvalId, requestKind: 'permission',
       prompt: nonBlank(text(params.humanText), 'Claude asks for permission.'),
-      // T3's own buttons and order (ComposerPendingApprovalActions.tsx), without "Always allow this
-      // session": HoH allows one action at a time, so that button would promise what does not happen.
-      options: [{ decision: 'cancel', label: 'Cancel' }, { decision: 'decline', label: 'Decline' }, { decision: 'accept', label: 'Approve' }],
+      // T3's own set for a Claude request without a standing grant (apps/server ClaudeAdapterV2.ts
+      // `CLAUDE_NO_STANDING_GRANT_OPTIONS`): HoH allows one action at a time.
+      options: [{ decision: 'decline', label: 'Decline' }, { decision: 'accept', label: 'Approve' }],
     });
     if (run && run.status === 'running') run.status = 'waiting';
     this.touch(at);
@@ -465,11 +465,13 @@ export class ThreadModel {
 }
 
 /** The one project of the HoH window: the folder chats work in. `OrchestrationProjectShell`, encoded. */
+/** HoH's chats folder as T3's own "No project" (apps/server ManagedProjectFolders.ts `ensureScratchProject`). */
 export function hohProject(workspaceRoot: string, at: number) {
   return {
     id: HOH_PROJECT_ID,
-    title: 'HoH',
+    title: 'No project',
     workspaceRoot,
+    projectIcon: { kind: 'lucide', name: 'message-square-dashed', color: 'gray' },
     repositoryIdentity: null,
     defaultModelSelection: null,
     scripts: [],

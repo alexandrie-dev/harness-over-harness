@@ -1,7 +1,9 @@
 // The handshake answers of the HoH host, in the encoded (JSON) form of T3's contracts
 // (packages/contracts/src/server.ts `ServerConfig`, `ServerProvider`; settings.ts `ServerSettings`).
 // Only Claude is offered; every optional server capability is left out, which is how a T3 server
-// tells the client to hide a feature.
+// tells the client to hide a feature. The chats' folder is T3's own "No project" (its scratch project,
+// `scratchWorkspaceRoot`): T3 offers no git, branch or worktree there. What has no capability flag is
+// limited by the server's managed policy, which T3 reads the same way (`managedPolicy`).
 
 export const HOH_ENVIRONMENT_ID = 'hoh-local';
 export const HOH_LABEL = 'HoH';
@@ -48,6 +50,7 @@ export function defaultClaudeModel(discovery: ClaudeDiscovery | null): string {
   return (models.find(model => model.isDefault) ?? models[0]).slug;
 }
 
+/** What T3's welcome page and provider settings show: found or not, signed in or not, as the engine says. */
 export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
   const ready = discovery !== null && discovery.installed && discovery.auth !== 'unauthenticated';
   return {
@@ -61,10 +64,11 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
     enabled: true,
     installed: discovery?.installed ?? false,
     version: discovery?.version?.trim() || null,
-    status: discovery === null ? 'warning' : ready ? 'ready' : 'error',
+    // An engine that could not look is not "still checking" (T3 would wait for ever): Claude is not found.
+    status: ready ? 'ready' : 'error',
     auth: { status: discovery?.auth ?? 'unknown' },
     checkedAt: now,
-    ...(discovery?.detail?.trim() ? { message: discovery.detail.trim() } : {}),
+    ...(discovery === null ? { message: 'HoH could not check Claude.' } : discovery.detail?.trim() ? { message: discovery.detail.trim() } : {}),
     models: claudeModels(discovery),
     slashCommands: [],
     skills: [],
@@ -88,6 +92,21 @@ export interface ConfigInput {
   readonly now: string;
 }
 
+/**
+ * Limits T3 reads from a managed server (packages/contracts/src/managedPolicy.ts): only Claude runs, so
+ * the welcome page and the add-provider dialog offer no other agent and no ACP registry; no T3 Connect
+ * (phone, guest links); no usage data is collected, which the welcome page says instead of T3's notice.
+ */
+export const HOH_MANAGED_POLICY = {
+  organization: HOH_LABEL,
+  lockedSettings: [],
+  limits: {
+    connect: false,
+    telemetry: false,
+    providers: { allowedDrivers: [CLAUDE_INSTANCE_ID] },
+  },
+};
+
 export function serverConfig(input: ConfigInput) {
   const model = defaultClaudeModel(input.discovery);
   return {
@@ -106,6 +125,9 @@ export function serverConfig(input: ConfigInput) {
       sessionCookieName: 'hoh_session',
     },
     cwd: input.cwd,
+    // The folder HoH runs chats in is T3's "No project" (apps/server ManagedProjectFolders): no git there.
+    scratchWorkspaceRoot: input.cwd,
+    managedPolicy: HOH_MANAGED_POLICY,
     keybindingsConfigPath: input.cwd.replace(/\/$/, '') + '/.hoh-keybindings.json',
     keybindings: [],
     issues: [],

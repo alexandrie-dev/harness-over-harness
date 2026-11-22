@@ -193,3 +193,80 @@ test('T3 client: the welcome that opens the app, and a folder that is not a git 
   assert.equal((await run(client['vcs.refreshStatus']({ cwd: '/x' }))).isRepo, false);
   assert.equal((await run(client['vcs.listRefs']({ cwd: '/x' }))).isRepo, false);
 }));
+
+/** What T3's FirstRunGate passes to its own `isFreshFirstRunWorkspace`, built from the host's decoded answers. */
+async function firstRunInput(client) {
+  const config = await run(client['server.getConfig']({}));
+  const lifecycle = await collect(client['subscribeServerLifecycle']({}));
+  const { payload } = await lifecycle.until(event => event.type === 'welcome');
+  await lifecycle.stop();
+  const shell = await collect(client['orchestration.subscribeShell']({}));
+  const { snapshot } = await shell.until(item => item.kind === 'snapshot');
+  const environmentId = config.environment.environmentId;
+  return {
+    config, shell, snapshot,
+    workspace: {
+      primaryEnvironmentId: environmentId, serverCwd: config.cwd,
+      bootstrapProjectId: payload.bootstrapProjectId, bootstrapThreadId: payload.bootstrapThreadId,
+      bootstrapProjectCreated: payload.bootstrapProjectCreated, bootstrapThreadCreated: payload.bootstrapThreadCreated,
+      projects: snapshot.projects.map(project => ({ id: project.id, environmentId, workspaceRoot: project.workspaceRoot })),
+      threads: snapshot.threads.length === 1 ? [{ ...snapshot.threads[0], environmentId, runtime: snapshot.threads[0].runtime ?? null }] : [],
+    },
+  };
+}
+/** T3's welcome page grouping (apps/web/src/components/onboarding/WelcomePage.tsx `useWelcomeAgents`). */
+async function welcomeAgents(config) {
+  const { groupWelcomeAgents } = await contracts.loadWeb('web/welcomePage.logic');
+  const { isManagedDriverAllowed } = await contracts.load('index');
+  return groupWelcomeAgents(config.providers, config.settings, provider => provider.displayName, provider => isManagedDriverAllowed(config.managedPolicy, provider.driver));
+}
+
+test('T3 first run: an engine without chats is a fresh workspace (T3\'s welcome page), Claude found and ready, "Start without a project" gets T3\'s No project', () => withClient(new FakeEngine(), async client => {
+  const { isFreshFirstRunWorkspace } = await contracts.loadWeb('web/firstRun.logic');
+  const { isManagedDriverAllowed } = await contracts.load('index');
+  const { config, shell, snapshot, workspace } = await firstRunInput(client);
+  assert.deepEqual([snapshot.projects.length, snapshot.threads.length], [0, 0]);
+  assert.equal(isFreshFirstRunWorkspace(workspace), true);
+  const agents = await welcomeAgents(config);
+  assert.deepEqual({ ready: agents.readyCount, checking: agents.checking, found: agents.found.map(p => p.instanceId), available: agents.available.length }, { ready: 1, checking: false, found: ['claudeAgent'], available: 0 });
+  // No ACP registry and no other agent to add; no T3 Connect; T3's usage-data notice says it is off.
+  assert.equal(isManagedDriverAllowed(config.managedPolicy, 'acpRegistry'), false);
+  assert.equal(isManagedDriverAllowed(config.managedPolicy, 'codex'), false);
+  assert.deepEqual({ connect: config.managedPolicy.limits.connect, telemetry: config.managedPolicy.limits.telemetry }, { connect: false, telemetry: false });
+  // The Projects section (other agents' history to import) has nothing.
+  assert.equal((await run(client['agentSessions.scan']({}))).candidates.length, 0);
+  // "Start without a project": T3 needs the scratch root, asks for the project and waits for it in the list.
+  assert.equal(config.scratchWorkspaceRoot, config.cwd);
+  assert.equal((await run(client['projects.ensureScratch']({}))).projectId, 'hoh-project');
+  const project = (await shell.until(item => item.kind === 'project.updated')).project;
+  assert.deepEqual({ title: project.title, root: project.workspaceRoot, icon: project.projectIcon?.name }, { title: 'No project', root: config.scratchWorkspaceRoot, icon: 'message-square-dashed' });
+  await shell.stop();
+}));
+
+test('T3 first run: an engine with a chat opens the app; Claude not found, or not checked, is said so and Start waits for an agent', async () => {
+  const { isFreshFirstRunWorkspace } = await contracts.loadWeb('web/firstRun.logic');
+  const { welcomeAgentState } = await contracts.loadWeb('web/welcomePage.logic');
+  const seeded = new FakeEngine();
+  seeded.seed('chat-1', 'One', [['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'Привет' }] }]]);
+  await withClient(seeded, async client => {
+    const { shell, snapshot, workspace } = await firstRunInput(client);
+    assert.deepEqual([snapshot.projects.map(p => p.title), snapshot.threads.map(t => t.projectId)], [['No project'], ['hoh-project']]);
+    assert.equal(isFreshFirstRunWorkspace(workspace), false);
+    await shell.stop();
+  });
+  await withClient(new FakeEngine({ discovery: { executor: 'claude', installed: false, version: null, auth: 'unknown', models: [] } }), async client => {
+    const { config, shell } = await firstRunInput(client);
+    const agents = await welcomeAgents(config);
+    assert.deepEqual([agents.readyCount, agents.checking, welcomeAgentState(config.providers[0], config.settings)], [0, false, 'install']);
+    await shell.stop();
+  });
+  const unchecked = new FakeEngine();
+  const request = unchecked.request.bind(unchecked);
+  unchecked.request = (method, params) => method === 'hoh/executor/discover' ? Promise.reject(new Error('engine is busy')) : request(method, params);
+  await withClient(unchecked, async client => {
+    const { config, shell } = await firstRunInput(client);
+    const agents = await welcomeAgents(config);
+    assert.deepEqual([agents.readyCount, agents.checking, config.providers[0].installed, config.providers[0].message], [0, false, false, 'HoH could not check Claude.']);
+    await shell.stop();
+  });
+});

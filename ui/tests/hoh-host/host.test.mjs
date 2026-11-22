@@ -317,7 +317,9 @@ test('settings: whole values are kept, partial nested patches are not; the folde
   const { client } = connect(engine);
   const shell = await client.stream('orchestration.subscribeShell', {});
   const first = await shell.until(value => value.kind === 'snapshot');
-  assert.equal(first.snapshot.projects[0].workspaceRoot, '~/Documents/HoH');
+  // No chats yet: no project either (T3's first run); the folder is offered as T3's scratch root.
+  assert.deepEqual(first.snapshot.projects, []);
+  assert.equal((await client.call('server.getConfig', {})).scratchWorkspaceRoot, '~/Documents/HoH');
   const settings = await client.call('server.updateSettings', { patch: { responseStreamingMode: 'turn', storageCleanup: { enabled: true }, defaultRuntimeMode: 'full-access' } });
   assert.equal(settings.responseStreamingMode, 'turn');
   assert.equal('storageCleanup' in settings, false);

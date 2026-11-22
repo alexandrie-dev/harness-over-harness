@@ -4,6 +4,8 @@
 // launchThread and dispatchCommand (new chat, send, Stop, permission and question answers, mode, model),
 // forceStopThread. A thread change is sent as a fresh snapshot of that thread, which T3's client applies
 // whole (client-runtime/src/state/threads.ts `applyItemLocked`), plus `thread.updated` for the list.
+// The one project is T3's "No project", listed once there is a chat or once T3 asks for it
+// (`projects.ensureScratch`): an engine without chats is a fresh workspace, and T3 opens its welcome page.
 import {
   accessModeOf, claudeProvider, defaultClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
@@ -73,6 +75,8 @@ export class HohHost {
   private settingsOverrides: Record<string, unknown> = {};
   private workspaceRoot: string;
   private workspaceKnown = false;
+  /** Whether the "No project" project is in the list (see the head of this file). */
+  private projectShown = false;
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
@@ -129,6 +133,7 @@ export class HohHost {
       const at = Number(session.updatedAt) || this.startedAt;
       this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode }));
     }
+    if (this.threads.size) this.showProject();
   }
 
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
@@ -174,6 +179,7 @@ export class HohHost {
       thread = new ThreadModel({ id: sessionId, createdAt: this.now(), model: this.model(), mode: this.mode });
       thread.loaded = true;
       this.threads.set(sessionId, thread);
+      this.showProject();
     }
     return thread;
   }
@@ -269,7 +275,7 @@ export class HohHost {
       snapshot: {
         schemaVersion: 1,
         snapshotSequence: this.sequence,
-        projects: [hohProject(this.workspaceRoot, this.startedAt)],
+        projects: this.projectShown ? [hohProject(this.workspaceRoot, this.startedAt)] : [],
         threads: threads.filter(thread => thread.archivedAt === null).map(thread => thread.shell()),
         archivedThreads: threads.filter(thread => thread.archivedAt !== null).map(thread => thread.shell()),
       },
@@ -287,8 +293,22 @@ export class HohHost {
     const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode });
     thread.loaded = true;
     this.threads.set(threadId, thread);
+    this.showProject();
     this.changed(threadId);
     return thread;
+  }
+
+  /** Lists the "No project" project; its threads may follow it in the list. */
+  private showProject() {
+    if (this.projectShown) return;
+    this.projectShown = true;
+    this.projectChanged();
+  }
+
+  private projectChanged() {
+    if (!this.projectShown) return;
+    this.sequence++;
+    for (const sink of this.shellSinks) sink.emit({ kind: 'project.updated', sequence: this.sequence, project: hohProject(this.workspaceRoot, this.startedAt) });
   }
 
   /** The folder chats work in, as the engine names it: the project's root in T3. */
@@ -296,8 +316,7 @@ export class HohHost {
     if (typeof cwd !== 'string' || !cwd.trim() || cwd === this.workspaceRoot) return;
     this.workspaceRoot = cwd;
     this.workspaceKnown = true;
-    this.sequence++;
-    for (const sink of this.shellSinks) sink.emit({ kind: 'project.updated', sequence: this.sequence, project: hohProject(this.workspaceRoot, this.startedAt) });
+    this.projectChanged();
     this.configChanged();
   }
 
@@ -465,6 +484,15 @@ export class HohHost {
           for (const sink of this.configSinks) sink.emit({ version: 1, type: 'settingsUpdated', payload: { settings: this.settings() } });
           return this.settings();
         },
+        // T3's "Start without a project": the chats' folder is that project.
+        'projects.ensureScratch': async () => {
+          await this.start();
+          this.showProject();
+          return { projectId: HOH_PROJECT_ID };
+        },
+        // The welcome page looks for other agents' history to import; HoH imports none, and T3 then
+        // leaves its Projects section out.
+        'agentSessions.scan': () => ({ candidates: [], scannedAt: this.iso() }),
         'server.refreshProviders': async () => {
           await this.start();
           await this.readDiscovery();
@@ -506,7 +534,9 @@ export class HohHost {
           return () => { this.configSinks.delete(sink); };
         },
         // T3 shows nothing until the server welcomes it (apps/web/src/components/onboarding/FirstRunGate.tsx).
-        // No bootstrap project or thread: the workspace is not "fresh", so no first-run wizard either.
+        // No bootstrap project or thread: T3 decides on its welcome page from the list alone (no project and
+        // no chat is a fresh workspace, apps/web/src/onboarding/firstRun.logic.ts) and its own saved
+        // `onboardingCompletedAt`.
         subscribeServerLifecycle: (_payload, sink) => {
           let open = true;
           void this.start().then(() => {
