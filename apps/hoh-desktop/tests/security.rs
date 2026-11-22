@@ -205,3 +205,14 @@ fn a_new_window_request_is_never_a_window_and_a_link_needs_a_click() {
     assert_eq!(native.matches("NewWindowResponse::Allow").count(), 0);
     assert!(native.contains(".on_new_window(|_, _| deny_new_window())"));
 }
+
+/// As T3 (`MIN_MAIN_WINDOW_SIZE` 400×360): the window can be narrowed to 800×550 and below.
+#[test]
+fn the_main_window_may_shrink_as_far_as_in_t3() {
+    let conf: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let window = &conf["app"]["windows"][0];
+    assert_eq!(
+        (window["minWidth"].as_u64(), window["minHeight"].as_u64()),
+        (Some(400), Some(360))
+    );
+}
