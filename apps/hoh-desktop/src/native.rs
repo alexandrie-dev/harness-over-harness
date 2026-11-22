@@ -20,7 +20,7 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 #[cfg(target_os = "linux")]
-use webkit2gtk::WebViewExt;
+use webkit2gtk::{URIRequestExt, WebViewExt};
 
 /// Where the session's folder comes from and is remembered.
 #[derive(Clone)]
@@ -515,7 +515,16 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
     let builder = builder.on_webview_ready(|webview| {
         if webview.label() == "main" {
             let _ = webview.with_webview(|platform| {
-                platform.inner().connect_create(|_, _| None);
+                // No second page ever opens in the window; a link the person clicked goes to the system browser.
+                platform.inner().connect_create(|_, action| {
+                    let url = action.request().and_then(|request| request.uri());
+                    if let Some(link) = url
+                        .and_then(|url| crate::opener::clicked_link(&url, action.is_user_gesture()))
+                    {
+                        let _ = crate::opener::open(&link);
+                    }
+                    None
+                });
             });
         }
     });

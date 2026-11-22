@@ -86,4 +86,37 @@ assert(total < 1368 * 1024, `window text assets unexpectedly large: ${total} byt
 // 20.11.2026, меню режима доступа из T3 (@base-ui/react/menu): было 360808/378075, стало 409703/430188 (предел = факт + 5 %).
 const GZIP_LIMIT = 430188;
 assert(compressed < GZIP_LIMIT, `window compressed text assets unexpectedly large: ${compressed} bytes`);
+// CSP окна (apps/hoh-desktop/tauri.conf.json; решение CEO 22.11 20:00): наружу закрыто всё. У каждой директивы — только
+// перечисленные источники; адрес сети, схема http(s)/ws(s), `*`, 'unsafe-eval' или директива не из списка роняют проверку.
+// Директивы без строки (media-src, worker-src, manifest-src …) берут default-src 'self'.
+const CSP_ALLOWED = {
+  'default-src': ["'self'"],
+  'script-src': ["'self'"],
+  // T3 пишет style="" в разметке и <style> тем оформления (Appearance).
+  'style-src': ["'self'", "'unsafe-inline'"],
+  // data: — шрифты, которые просмотр PDF в T3 (pdf.js) вшивает в страницу как data:font/opentype.
+  'font-src': ["'self'", 'data:'],
+  // data: — значки и картинки в тексте T3; blob: — превью картинок и вложений (URL.createObjectURL).
+  'img-src': ["'self'", 'data:', 'blob:'],
+  // только мост Tauri к хосту HoH (ui/src/hoh-host); http://hoh.local и ws://hoh.local отвечает хост в странице, в сеть не уходят.
+  'connect-src': ['ipc:', 'http://ipc.localhost'],
+  'object-src': ["'none'"],
+  'frame-src': ["'none'"],
+  'base-uri': ["'none'"],
+  'form-action': ["'none'"],
+};
+const CSP_REQUIRED = ['default-src', 'script-src', 'connect-src', 'img-src', 'font-src', 'object-src', 'frame-src', 'base-uri', 'form-action'];
+const tauriConf = JSON.parse(await readFile('../apps/hoh-desktop/tauri.conf.json', 'utf8'));
+const security = tauriConf.app?.security ?? {};
+assert(typeof security.csp === 'string', 'окно без CSP');
+assert(!('dangerousDisableAssetCspModification' in security), 'CSP окна ослаблен настройкой tauri.conf.json');
+const csp = Object.fromEntries(security.csp.split(';').map(part => part.trim()).filter(Boolean)
+  .map(part => { const [name, ...sources] = part.split(/\s+/); return [name, sources]; }));
+assert.deepEqual(csp['default-src'], ["'self'"], "CSP окна: default-src не 'self'");
+for (const name of CSP_REQUIRED) assert(name in csp, `CSP окна: нет ${name}`);
+for (const [name, sources] of Object.entries(csp)) {
+  assert(name in CSP_ALLOWED, `CSP окна: директива ${name} не из списка`);
+  for (const source of sources) assert(CSP_ALLOWED[name].includes(source), `CSP окна: ${name} ${source} — источник не из списка`);
+}
+console.log(`CSP окна закрыт наружу: ${Object.keys(csp).join(', ')}`);
 console.log(`passed: dist has no external network URLs or dynamic code; text ${total}/${1368 * 1024}, gzip ${compressed}/${GZIP_LIMIT} bytes`);

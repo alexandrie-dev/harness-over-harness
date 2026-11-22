@@ -127,6 +127,17 @@ pub fn containing_folder(path: &Path) -> PathBuf {
     }
 }
 
+/// A link the person clicked in the window that asks for a new window (`target="_blank"`, `window.open` inside a
+/// click handler of the T3 client): the system browser gets it when it is a checked http(s) address. WebKit tells
+/// whether a click or a key press caused the request; a script on its own opens nothing. The window never opens
+/// a second page (native.rs, `main_security_plugin`).
+pub fn clicked_link(url: &str, user_gesture: bool) -> Option<std::ffi::OsString> {
+    if !user_gesture {
+        return None;
+    }
+    check_url(url).ok().map(Into::into)
+}
+
 /// What to hand to `xdg-open` for a request, after every check.
 pub fn resolve(kind: Kind, target: &str, folder: &Path) -> Result<std::ffi::OsString, String> {
     match kind {

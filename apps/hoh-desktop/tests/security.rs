@@ -174,3 +174,32 @@ fn the_window_opens_the_t3_client_unless_the_previous_shell_is_asked_for() {
     assert_eq!(window["url"], "index.html");
     assert_eq!(window["title"], "HoH");
 }
+
+/// The window never opens a second page: the main window's WebKit `create` handler always answers `None`, and the
+/// only thing it does is hand a clicked http(s) link to the system opener (`opener::clicked_link`, tested in
+/// tests/opener.rs). The approval window refuses new windows outright.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_new_window_request_is_never_a_window_and_a_link_needs_a_click() {
+    let native = include_str!("../src/native.rs");
+    let start = native
+        .find("connect_create(|_, action|")
+        .expect("main window create handler");
+    let handler = &native[start..start + 600];
+    assert!(
+        handler.contains("crate::opener::clicked_link(&url, action.is_user_gesture())"),
+        "{handler}"
+    );
+    assert!(handler.contains("crate::opener::open(&link)"), "{handler}");
+    assert!(
+        handler.trim_end().contains("None\n                });"),
+        "{handler}"
+    );
+    assert_eq!(
+        native.matches("connect_create(").count(),
+        1,
+        "one create handler, the main window's"
+    );
+    assert_eq!(native.matches("NewWindowResponse::Allow").count(), 0);
+    assert!(native.contains(".on_new_window(|_, _| deny_new_window())"));
+}
