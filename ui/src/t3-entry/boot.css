@@ -42,13 +42,14 @@ html[data-theme-selected="true"] #boot-shell {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 96px;
-  height: 96px;
+  width: 232px;
+  height: 250px;
 }
 
+/* HOH-41 А: на заставке — утверждённая эмблема HoH крупно (у T3 тут знак 64 px). */
 #boot-shell-logo {
-  width: 64px;
-  height: 64px;
+  width: 200px;
+  height: 216px;
   object-fit: contain;
 }
 
