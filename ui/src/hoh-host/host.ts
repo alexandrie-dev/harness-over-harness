@@ -274,7 +274,7 @@ export class HohHost {
 
   /** A new chat in the engine: a session id it has not seen is created by asking for its folder. */
   private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined) {
-    await this.applyMode(mode);
+    await this.applyMode(mode, false);
     await this.applyModel(model);
     const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
     this.setWorkspaceRoot(directory?.cwd);
@@ -295,11 +295,16 @@ export class HohHost {
     this.configChanged();
   }
 
-  /** The access mode is the person's choice in T3's composer; the engine applies it (and alone decides what a model may do). */
-  private async applyMode(mode: T3RuntimeMode | undefined) {
+  /**
+   * The access mode is the person's choice in T3's composer; the engine applies it (and alone decides
+   * what a model may do). Only the switch itself (`thread.runtime-mode.set`) or the setting may raise
+   * it to full access: a new thread or draft carries a mode T3 may have filled from its own default
+   * ("full-access", apps/web/src/types.ts), which must never widen access on its own.
+   */
+  private async applyMode(mode: T3RuntimeMode | undefined, chosen: boolean) {
     if (!mode) return;
     const wanted = accessModeOf(mode);
-    if (wanted === this.mode) return;
+    if (wanted === this.mode || (wanted === 'full' && !chosen)) return;
     await this.engine.request('hoh/executor/access/set', { executor: 'claude', mode: wanted });
     this.mode = wanted;
     for (const thread of this.threads.values()) { thread.mode = wanted; this.changed(thread.id); }
@@ -380,7 +385,7 @@ export class HohHost {
           }
           break;
         }
-        case 'thread.runtime-mode.set': needThread(); await this.applyMode(command.runtimeMode); break;
+        case 'thread.runtime-mode.set': needThread(); await this.applyMode(command.runtimeMode, true); break;
         case 'thread.model-selection.set': {
           const target = needThread();
           await this.applyModel(command.modelSelection?.model);
@@ -416,7 +421,7 @@ export class HohHost {
     const existing = await this.loaded(threadId);
     try {
       const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode);
-      if (existing) await this.applyMode(input.runtimeMode);
+      if (existing) await this.applyMode(input.runtimeMode, false);
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
@@ -441,7 +446,7 @@ export class HohHost {
           await this.start();
           const patch = payload?.patch && typeof payload.patch === 'object' ? { ...payload.patch } : {};
           // The mode is HoH's access mode; the model is the engine's choice for new chats.
-          if (typeof patch.defaultRuntimeMode === 'string') await this.applyMode(patch.defaultRuntimeMode);
+          if (typeof patch.defaultRuntimeMode === 'string') await this.applyMode(patch.defaultRuntimeMode, true);
           if (patch.defaultModelSelection?.model) await this.applyModel(patch.defaultModelSelection.model);
           delete patch.defaultRuntimeMode; delete patch.defaultModelSelection;
           // Only whole values are kept: a nested patch is partial and would not decode as a setting.

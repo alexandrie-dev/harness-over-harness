@@ -342,3 +342,24 @@ test('Stop answered only by the engine going idle still ends the turn as stopped
   engine.emitStatus('chat-i', 'idle');
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
 });
+
+test('a new thread never widens access by itself: T3\'s own default "full-access" is not applied, a narrower mode is', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  const launched = await client.call('orchestration.launchThread', {
+    commandId: 'cmd-w', threadId: 'thread-w', projectId: 'hoh-project', title: 'W', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
+    runtimeMode: 'full-access', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'm-w', text: 'hi', attachments: [] },
+  });
+  assert.equal(engine.requests.some(r => r.method === 'hoh/executor/access/set'), false);
+  assert.equal(launched.projection.thread.runtimeMode, 'approval-required', 'the thread shows the mode actually in effect');
+  // The switch is explicit: it widens.
+  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'thread-w', runtimeMode: 'full-access' });
+  assert.equal(engine.access.mode, 'full');
+  // A thread created with a narrower mode narrows (safe direction).
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'c2', threadId: 'thread-n', projectId: 'hoh-project', title: 'N', createdBy: 'user', creationSource: 'web',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
+  });
+  assert.equal(engine.access.mode, 'confirm');
+});
