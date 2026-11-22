@@ -1,5 +1,5 @@
 // Главная окна HoH (HOH-41 В2б, раунд дизайна): приветствие с датой, запущенные агенты и их субагенты, «Done», «Needs your answer» над полем ввода T3.
-// Три варианта подачи (выбор основателя): A — карточки, B — дерево строками, C — колонки по состоянию. Выбор — localStorage `hoh.design.homeVariant` (a|b|c).
+// Три варианта подачи (выбор основателя): A — карточки, B — дерево строками, C — колонки по состоянию. Выбор — переключатель корешка (notch/variant.ts).
 // Это не отдельный экран: vite.ts подставляет <HomeBody/> в пустой разговор T3 (ChatView, DraftHeroHeadline), так что поле ввода,
 // чип модели с уровнями, Permissions, выбор проекта и отправка — настоящие, их. Здесь только содержимое над ними.
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
@@ -9,6 +9,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { ClaudeAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
+import { readHomeVariant, subscribeHomeVariant } from '../notch/variant';
 import './home.css';
 
 interface Entry {
@@ -24,11 +25,9 @@ interface Home {
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
 }
 const ENVIRONMENT_ID = 'hoh-local';
-const VARIANT_KEY = 'hoh.design.homeVariant';
-const readVariant = (): Variant => { try { const value = localStorage.getItem(VARIANT_KEY); return value === 'b' || value === 'c' ? value : 'a'; } catch { return 'a'; } };
-// The variant is read from the same storage as the notch's switch (Settings → Appearance, Ctrl+Alt+1/2/3); the window has no event for it, so it is polled.
+// The variant is the notch's (../notch/variant.ts): Settings → Appearance, Ctrl+Alt+1/2/3, localStorage `hoh.homeVariant`.
 function useVariant(): Variant {
-  return useSyncExternalStore((listener) => { const timer = setInterval(listener, 250); window.addEventListener('storage', listener); return () => { clearInterval(timer); window.removeEventListener('storage', listener); }; }, readVariant, () => 'a');
+  return useSyncExternalStore((listener) => subscribeHomeVariant(listener), () => readHomeVariant(), () => 'a');
 }
 const home = (): Home | undefined => (globalThis as { __HOH_HOME__?: Home }).__HOH_HOME__;
 
@@ -248,15 +247,6 @@ export function HomeBody() {
   const variant = useVariant();
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(timer); }, []);
-  // Ctrl+Alt+1/2/3 as in the notch's switch (same key): the variant is a design-round choice.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const index = ['1', '2', '3'].indexOf(event.key);
-      if (event.ctrlKey && event.altKey && index >= 0) { try { localStorage.setItem(VARIANT_KEY, 'abc'[index]!); } catch { /* storage unavailable */ } }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
   const navigate = useNavigate();
   const now = Date.now();
   const entries = host?.entries() ?? [];
