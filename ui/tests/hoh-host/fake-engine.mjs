@@ -48,7 +48,11 @@ export class FakeEngine {
     this.requests.push({ method, params });
     switch (method) {
       case 'hoh/executor/discover': return this.discovery;
-      case 'hoh/executor/access/get': return { executor: 'claude', mode: this.access.mode, effective: { mode: this.access.mode, flags: [] }, selected: this.access.selected };
+      case 'hoh/executor/access/get': {
+        const answer = { executor: 'claude', mode: this.access.mode, effective: { mode: this.access.mode, flags: [] }, selected: this.access.selected };
+        const bound = params.sessionId ? this.store.get(params.sessionId)?.model : undefined;
+        return bound ? { ...answer, session: { executor: 'claude', model: bound, privacy: 'remote', mode: this.access.mode, running: null, pending: false } } : answer;
+      }
       case 'hoh/executor/access/set': this.access = { ...this.access, mode: params.mode }; return {};
       case 'hoh/executor/select': this.access = { ...this.access, selected: { executor: params.executor, model: params.model } }; return {};
       case 'session/list': return { sessions: [...this.store.entries()].map(([id, s]) => ({ id, title: s.title, employeeId: 'employee-1', updatedAt: s.updatedAt })) };

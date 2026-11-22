@@ -144,6 +144,11 @@ export class HohHost {
           afterSeq = page.nextSeq;
         }
         thread.settleUnfinished(this.now());
+        // The model this chat is bound to (a chat that has had a turn keeps its own).
+        try {
+          const own = (await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: threadId }))?.session;
+          if (own?.executor === 'claude' && typeof own.model === 'string' && own.model) thread.model = own.model;
+        } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
         if (!this.workspaceKnown) {
           try { this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }

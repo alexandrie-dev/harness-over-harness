@@ -240,9 +240,11 @@ test('after a restart the chat comes back from the engine\'s history; an unfinis
     ['turn/start', {}],
     ['tool/call', { turn: 2, callId: 'c1', name: 'Read', arguments: { file_path: 'note.txt' } }],
   ]);
+  store.get('chat-r').model = 'claude-opus';
   const engine = new FakeEngine({ store });
   const { client } = connect(engine);
   const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-r' });
+  assert.equal(projection.thread.modelSelection.model, 'claude-opus', 'the chat keeps the model it was bound to');
   assert.equal(engine.requests.findIndex(r => r.method === 'session/resume') < engine.requests.findIndex(r => r.method === 'session/events'), true, 'resumed before reading');
   assert.deepEqual(projection.runs.map(run => run.status), ['completed', 'interrupted']);
   assert.deepEqual(projection.turnItems.map(item => [item.type, item.status]), [
