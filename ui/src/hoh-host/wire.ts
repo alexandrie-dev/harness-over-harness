@@ -60,7 +60,8 @@ export class WireServer {
     let closed = false;
     const write = (message: unknown) => { if (!closed) send(JSON.stringify(message)); };
 
-    const unary = (id: string, method: string, payload: unknown) => {
+    // Replies carry the request id exactly as it came (effect encodes its bigint ids as strings).
+    const unary = (id: unknown, method: string, payload: unknown) => {
       const handler = this.handlers.unary[method];
       const run = async () => {
         if (!handler) {
@@ -78,14 +79,15 @@ export class WireServer {
       void run().then(write);
     };
 
-    const stream = (id: string, method: string, payload: unknown) => {
+    const stream = (id: unknown, method: string, payload: unknown) => {
+      const key = String(id);
       const handler = this.handlers.stream[method];
       // Hidden features keep their subscriptions open and quiet: no data, no error, no retry loop.
-      if (!handler) { open.set(id, () => {}); return; }
+      if (!handler) { open.set(key, () => {}); return; }
       let done = false;
       const finish = (message: unknown) => {
         if (done) return;
-        done = true; open.delete(id); write(message);
+        done = true; open.delete(key); write(message);
       };
       const sink: StreamSink = {
         emit: (...values) => { if (!done && values.length) write({ _tag: 'Chunk', requestId: id, values }); },
@@ -95,12 +97,12 @@ export class WireServer {
           finish({ _tag: 'Exit', requestId: id, exit: exitFailure(error instanceof RpcFailure ? error.error : error, error instanceof RpcFailure) });
         },
       };
-      open.set(id, () => { done = true; });
+      open.set(key, () => { done = true; });
       try {
         const stop = handler(payload, sink);
         if (stop) {
           if (done) stop();
-          else open.set(id, () => { done = true; stop(); });
+          else open.set(key, () => { done = true; stop(); });
         }
       } catch (error) { sink.fail(error); }
     };
@@ -109,7 +111,7 @@ export class WireServer {
       switch (message?._tag) {
         case 'Ping': write({ _tag: 'Pong' }); return;
         case 'Request': {
-          const id = String(message.id); const method = String(message.tag);
+          const id = message.id; const method = String(message.tag);
           this.options.onRequest?.(method, message.payload);
           if (STREAM_METHODS.has(method) || this.handlers.stream[method]) stream(id, method, message.payload);
           else unary(id, method, message.payload);

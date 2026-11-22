@@ -66,6 +66,7 @@ export class HohHost {
   private selectedModel: string | null = null;
   private settingsOverrides: Record<string, unknown> = {};
   private workspaceRoot: string;
+  private workspaceKnown = false;
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
@@ -144,6 +145,9 @@ export class HohHost {
         }
         thread.settleUnfinished(this.now());
         thread.loaded = true;
+        if (!this.workspaceKnown) {
+          try { this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }
+        }
         return thread;
       })().finally(() => this.loading.delete(threadId));
       this.loading.set(threadId, pending);
@@ -268,15 +272,22 @@ export class HohHost {
     await this.applyMode(mode);
     await this.applyModel(model);
     const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
-    if (typeof directory?.cwd === 'string' && directory.cwd.trim() && this.workspaceRoot !== directory.cwd) {
-      this.workspaceRoot = directory.cwd;
-      this.configChanged();
-    }
+    this.setWorkspaceRoot(directory?.cwd);
     const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode });
     thread.loaded = true;
     this.threads.set(threadId, thread);
     this.changed(threadId);
     return thread;
+  }
+
+  /** The folder chats work in, as the engine names it: the project's root in T3. */
+  private setWorkspaceRoot(cwd: unknown) {
+    if (typeof cwd !== 'string' || !cwd.trim() || cwd === this.workspaceRoot) return;
+    this.workspaceRoot = cwd;
+    this.workspaceKnown = true;
+    this.sequence++;
+    for (const sink of this.shellSinks) sink.emit({ kind: 'project.updated', sequence: this.sequence, project: hohProject(this.workspaceRoot, this.startedAt) });
+    this.configChanged();
   }
 
   /** The access mode is the person's choice in T3's composer; the engine applies it (and alone decides what a model may do). */
@@ -427,7 +438,11 @@ export class HohHost {
           if (typeof patch.defaultRuntimeMode === 'string') await this.applyMode(patch.defaultRuntimeMode);
           if (patch.defaultModelSelection?.model) await this.applyModel(patch.defaultModelSelection.model);
           delete patch.defaultRuntimeMode; delete patch.defaultModelSelection;
-          this.settingsOverrides = { ...this.settingsOverrides, ...patch };
+          // Only whole values are kept: a nested patch is partial and would not decode as a setting.
+          const primitive = (value: unknown) => value === null || ['string', 'number', 'boolean'].includes(typeof value);
+          for (const [key, value] of Object.entries(patch)) {
+            if (primitive(value) || (Array.isArray(value) && value.every(primitive))) this.settingsOverrides = { ...this.settingsOverrides, [key]: value };
+          }
           for (const sink of this.configSinks) sink.emit({ version: 1, type: 'settingsUpdated', payload: { settings: this.settings() } });
           return this.settings();
         },

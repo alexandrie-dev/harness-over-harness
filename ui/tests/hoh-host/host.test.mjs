@@ -308,3 +308,22 @@ test('installHohHost puts socket and fetch in place and starts the host', async 
   assert(host);
   uninstall();
 });
+
+test('settings: whole values are kept, partial nested patches are not; the folder of the engine becomes the project root', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const first = await shell.until(value => value.kind === 'snapshot');
+  assert.equal(first.snapshot.projects[0].workspaceRoot, '~/Documents/HoH');
+  const settings = await client.call('server.updateSettings', { patch: { responseStreamingMode: 'turn', storageCleanup: { enabled: true }, defaultRuntimeMode: 'full-access' } });
+  assert.equal(settings.responseStreamingMode, 'turn');
+  assert.equal('storageCleanup' in settings, false);
+  assert.equal(settings.defaultRuntimeMode, 'full-access');
+  assert.equal(engine.access.mode, 'full');
+  await client.call('orchestration.launchThread', {
+    commandId: 'cmd-f', threadId: 'thread-f', projectId: 'hoh-project', title: 'F', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
+    runtimeMode: 'full-access', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+  });
+  const project = await shell.until(value => value.kind === 'project.updated');
+  assert.equal(project.project.workspaceRoot, '/home/person/Documents/HoH');
+});
