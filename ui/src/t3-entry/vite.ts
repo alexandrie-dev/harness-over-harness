@@ -105,6 +105,25 @@ export function themePalettes(code: string): string {
   ]);
 }
 
+/**
+ * Главная (HOH-41 В2б) — пустой разговор T3 целиком: `/` у T3 открывает черновик, в нём их поле ввода (чип модели с уровнями,
+ * Permissions, выбор проекта, отправка). Над полем подставлено содержимое главной (hoh-screens/HomeBody.tsx):
+ * ChatView.tsx — колонка вместо центрирования в «пустом» состоянии и тело главной над заголовком черновика.
+ */
+const HOME_BODY = resolve(UI, 'src/t3-entry/hoh-screens/HomeBody.tsx');
+export function chatViewHome(code: string): string {
+  return anchorPatch('ChatView.tsx', code, [
+    ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
+    ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
+  ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
+}
+/** Главная без проектов — «What should we work on?» T3 (эмблема, «Add project», «Start without a project»), заголовок — приветствие с датой. */
+export function noProjectsHero(code: string): string {
+  return anchorPatch('NoProjectsHero.tsx', code, [
+    ['<T>What should we work on?</T>', '<HohGreeting />'],
+  ], `import { Greeting as HohGreeting } from ${JSON.stringify(HOME_BODY)};\n`);
+}
+
 /** Модуль вместо модуля компонента T3: всё как у него, кроме названных компонентов — они ничего не рисуют. */
 export function hiddenComponentModule(original: string, names: readonly string[]): string {
   return `export * from ${JSON.stringify(original)};\n`
@@ -148,8 +167,6 @@ function hohT3(): Plugin {
       if (!importer?.startsWith(T3_BASE)) return null;
       const route = /(?:^|\/)routes\/([^/]+?)(?:\.tsx)?$/.exec(source)?.[1];
       if (route && route in HIDDEN_ROUTES) return ROUTE_PREFIX + route;
-      // Главная `/` — наш экран (HOH-41 В2), тот же id маршрута.
-      if (route === '_chat.index') return resolve(UI, 'src/t3-entry/hoh-screens/homeRoute.tsx');
       // Логика палитры: импорт из кода T3 ведёт на обёртку (из самой обёртки — на настоящий файл).
       if (basename(source, '.ts') === 'CommandPalette.logic') {
         const resolved = await this.resolve(source, importer, { skipSelf: true });
@@ -181,6 +198,8 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };
       if (id === resolve(T3_BASE, 'shared/themePalettes.ts')) return { code: themePalettes(code), map: null };
+      if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
+      if (id === resolve(T3_WEB, 'components/NoProjectsHero.tsx')) return { code: noProjectsHero(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderInstanceCard.tsx')) return { code: providerInstanceCard(code), map: null };
       return null;
     },

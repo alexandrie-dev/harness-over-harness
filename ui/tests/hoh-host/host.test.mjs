@@ -567,3 +567,37 @@ test('home screen data: working chats with real steps, a chat waiting for the pe
   assert.equal(host.home.entries().find(entry => entry.id === id).state, 'working');
   assert.equal(host.home.projectTitle('hoh-project'), 'No project');
 });
+
+test('home screen = the chat\'s own data: the request text and kind are the chat\'s approval item, the steps are the chat\'s tool items, the answer is the chat\'s answer', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-h', 'H', [['turn/start', { turn: 1 }], ['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'Fix the notes' }] }]]);
+  const { client, host } = connect(engine);
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-h' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitStatus('chat-h', 'running');
+  // Two finished tool calls, then a file write that waits for the person.
+  for (const [n, name, args] of [[1, 'bash', { command: 'ls' }], [2, 'read', { file_path: '/home/person/a.txt' }]]) {
+    engine.emitEvent('chat-h', 'tool/call', { turn: 1, step: n, callId: 'c' + n, name, arguments: JSON.stringify(args) });
+    engine.emitEvent('chat-h', 'tool/result', { turn: 1, message: { toolCallId: 'c' + n, content: [{ type: 'text', text: 'ok' }] } });
+  }
+  engine.emitEvent('chat-h', 'tool/call', { turn: 1, step: 3, callId: 'c3', name: 'write', arguments: JSON.stringify({ file_path: '/home/person/notes.txt', content: 'x' }) });
+  engine.askApproval('chat-h', 'appr-h2', 'Claude хочет записать файл');
+  engine.emitEvent('chat-h', 'approval/asked', { id: 'appr-h2', toolName: 'write', callId: 'c3' });
+  const snap = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.length === 1);
+  host.flush();
+  const entry = host.home.entries().find(candidate => candidate.id === 'chat-h');
+  const item = itemsOf(snap).find(candidate => candidate.type === 'approval_request');
+  // What the person is asked is what the chat shows: the same kind and text (no "step 1").
+  assert.deepEqual(entry.request, { id: item.requestId, kind: 'approval', requestKind: item.requestKind, text: item.prompt });
+  assert.deepEqual([entry.request.requestKind, entry.request.text], ['file-change', 'Write: /home/person/notes.txt']);
+  // The strip counts the chat's tool items: three calls, two finished.
+  const tools = itemsOf(snap).filter(candidate => ['command_execution', 'file_change', 'file_search', 'web_search', 'dynamic_tool'].includes(candidate.type));
+  assert.equal(entry.steps.total, tools.length);
+  assert.deepEqual(entry.steps, { done: tools.filter(candidate => candidate.status === 'completed').length, total: 3 });
+  assert.equal(entry.state, 'waiting');
+  // Approve on the home goes the same way as the chat's own button.
+  await host.home.answer('chat-h', 'appr-h2', 'accept');
+  assert.deepEqual(engine.decisions, [{ approvalId: 'appr-h2', outcome: 'allowed-once' }]);
+  const answered = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests[0]?.status === 'resolved');
+  assert.equal(answered.projection.runtimeRequests[0].decision, 'accept');
+});

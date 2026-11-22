@@ -11,10 +11,28 @@ function headerBottom(): number {
   return Number.isFinite(topbar) ? topbar : 52;
 }
 
+// Приветствие главной (hoh-screens/HomeBody.tsx) стоит в начале прокручиваемого тела; эмблема над ним добавляет отступ HOME_EXTRA.
+// Она показывается, только если с отступом всё тело помещается без прокрутки; иначе скрыта (не накладывается на карточки).
+const HOME_EXTRA = 126;
+
 function fit(): void {
   const top = headerBottom();
+  const home = document.querySelector('[data-hoh-home-body]');
   for (const heading of document.querySelectorAll<HTMLElement>(HEADINGS)) {
-    heading.toggleAttribute('data-hoh-emblem', heading.getBoundingClientRect().top - top >= NEED);
+    // Заголовок пустого разговора при главной не рисует эмблему: она у приветствия.
+    heading.toggleAttribute('data-hoh-emblem', !home && heading.getBoundingClientRect().top - top >= NEED);
+  }
+  for (const head of document.querySelectorAll<HTMLElement>('.hoh-home__head')) {
+    const body = head.closest<HTMLElement>('[data-hoh-home-body]');
+    const inner = body?.firstElementChild as HTMLElement | null | undefined;
+    if (!body || !inner) continue;
+    // Высота содержимого (колонка карточек и «Needs your answer» рядом или друг под другом), а не растянутой обёртки.
+    const style = getComputedStyle(inner);
+    const heights = [...inner.children].map(child => (child as HTMLElement).offsetHeight);
+    const content = style.flexDirection.startsWith('column') ? heights.reduce((a, b) => a + b, 0) + (parseFloat(style.rowGap) || 0) * Math.max(0, heights.length - 1) : Math.max(0, ...heights);
+    const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0) + (parseFloat(getComputedStyle(body).paddingBottom) || 0);
+    const natural = content + padding - (head.hasAttribute('data-hoh-emblem') ? HOME_EXTRA : 0);
+    head.toggleAttribute('data-hoh-emblem', natural + HOME_EXTRA <= body.clientHeight);
   }
 }
 
