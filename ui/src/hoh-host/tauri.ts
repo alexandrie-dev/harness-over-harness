@@ -3,7 +3,7 @@
 // requests answered in the chat.
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { EngineNotification, EngineQuestion, EngineStatus, HohEngine } from './engine.ts';
+import type { EngineNotification, EngineQuestion, EngineStatus, FolderListing, HohEngine } from './engine.ts';
 
 export function tauriEngine(): HohEngine {
   return {
@@ -13,5 +13,7 @@ export function tauriEngine(): HohEngine {
     subscribeQuestions: listener => listen<EngineQuestion>('engine-question', event => listener(event.payload)),
     answerQuestion: (requestId, answer) => invoke<void>('question_answer', { requestId, answer }),
     decideApproval: (approvalId, outcome) => invoke<void>('approval_decide', { approvalId, outcome }),
+    // `browse_folders` of the Tauri host (apps/hoh-desktop, u4): T3's folder list for "Add project".
+    browseFolders: input => invoke<FolderListing>('browse_folders', { partialPath: input.partialPath, cwd: input.cwd ?? null }),
   };
 }
