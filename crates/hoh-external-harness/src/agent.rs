@@ -40,8 +40,8 @@ use tokio_util::sync::CancellationToken;
 use crate::contract::{
     AccessMode, ApprovalDecision, ApprovalMode, EndReason, FileChange, FileChangeKind,
     HarnessAction, HarnessEvent, HarnessFailure, HarnessPolicy, HarnessQuestion, HarnessResponse,
-    ItemOutcome, NativeSessionId, NetworkAccess, PromptParams, QuestionAnswer, RespondParams,
-    SandboxMode, StartParams, code,
+    ItemOutcome, NativeSessionId, NetworkAccess, PromptImage, PromptParams, QuestionAnswer,
+    RespondParams, SandboxMode, StartParams, code,
 };
 use crate::executor::{BINDING_RECORD, Launched, Shared};
 use crate::harness::HarnessSession;
@@ -531,12 +531,17 @@ impl ExternalAgent {
             return TurnOutcome::Failed(HarnessFailure::new(code::CLOSED, "no harness session"));
         };
         let turn_id = format!("{}#{}", self.id, log.turn);
+        let images = match prompt_images(&self.ctx, messages, signal).await {
+            Ok(images) => images,
+            Err(failure) => return TurnOutcome::Failed(failure),
+        };
         // The answer to the prompt is awaited together with the events: a harness may stream
         // the turn before it answers, and a stop before the answer must not be lost.
         let mut prompt = session.control.prompt(PromptParams {
             session_id: self.id.to_string(),
             turn_id: turn_id.clone(),
             text: prompt_text(messages),
+            images,
         });
         let mut prompted = false;
         let mut deadline: Option<tokio::time::Instant> = None;
@@ -935,6 +940,38 @@ fn prompt_text(messages: &[UserMessage]) -> String {
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// The pictures of a turn's messages (HOH-41), read back from the engine's attachment store: the
+/// copy the store made when the window sent the bytes (`session/prompt`, checked there against the
+/// store's limits and types), never a file the window named.
+async fn prompt_images(
+    ctx: &Context,
+    messages: &[UserMessage],
+    signal: &AbortSignal,
+) -> Result<Vec<PromptImage>, HarnessFailure> {
+    use base64::Engine as _;
+    let mut images = Vec::new();
+    for image in messages
+        .iter()
+        .flat_map(|message| message.content.iter().filter_map(ContentBlock::image))
+    {
+        let store = ctx.get::<hoh_attachment::Attachments>().ok_or_else(|| {
+            HarnessFailure::new(code::HARNESS, "the engine has no attachment store")
+        })?;
+        let stored = store
+            .read_image(&image.attachment, Some(signal))
+            .await
+            .map_err(|error| {
+                HarnessFailure::new(code::HARNESS, format!("an attached picture: {error}"))
+            })?;
+        images.push(PromptImage {
+            media_type: stored.r#ref.media_type.as_str().to_owned(),
+            data: base64::engine::general_purpose::STANDARD.encode(&stored.data),
+            name: stored.r#ref.name.clone(),
+        });
+    }
+    Ok(images)
 }
 
 /// One line the window shows as it is, at most [`MAX_HEADLINE_CHARS`] characters: every character

@@ -1182,6 +1182,26 @@ fn questions_from(input: &Value) -> (Vec<HarnessQuestion>, Vec<String>) {
 /// T3 `ClaudeAdapterV2.test.ts:14176`: an interrupt the CLI never follows with a result is
 /// bounded. The turn ends once as aborted, the open steps as interrupted, and the process is
 /// closed.
+/// The content of a user turn as Claude reads it (HOH-41): the pictures first, each a base64 block,
+/// then the text, as T3's Claude adapter sends them. A turn of pictures alone carries no empty
+/// text block (the model refuses one).
+fn prompt_content(params: &PromptParams) -> Value {
+    let mut content: Vec<Value> = params
+        .images
+        .iter()
+        .map(|image| {
+            json!({
+                "type": "image",
+                "source": { "type": "base64", "media_type": image.media_type, "data": image.data },
+            })
+        })
+        .collect();
+    if content.is_empty() || !params.text.is_empty() {
+        content.push(json!({ "type": "text", "text": params.text }));
+    }
+    Value::Array(content)
+}
+
 fn spawn_interrupt_watch(inner: &Arc<Inner>, turn_id: String) {
     let handle = tokio::spawn(settle_unanswered_interrupt(inner.clone(), turn_id));
     let mut timers = lock(&inner.timers);
@@ -1268,7 +1288,7 @@ impl HarnessSession for ClaudeSession {
             let sent = inner
                 .send(json!({
                     "type": "user",
-                    "message": { "role": "user", "content": [{ "type": "text", "text": params.text }] },
+                    "message": { "role": "user", "content": prompt_content(&params) },
                     "parent_tool_use_id": null,
                     "session_id": native,
                     "uuid": uuid,
@@ -1511,6 +1531,35 @@ mod tests {
         assert_eq!(non_execution_kind(&message, "a"), Some("interrupted"));
         assert_eq!(non_execution_kind(&message, "b"), None);
         assert_eq!(non_execution_kind(&json!({}), "a"), None);
+    }
+
+    #[test]
+    fn pictures_go_first_as_base64_blocks_then_the_text() {
+        let image = |media_type: &str, data: &str| hoh_external_harness::PromptImage {
+            media_type: media_type.into(),
+            data: data.into(),
+            name: Some("a.png".into()),
+        };
+        let mut params = PromptParams {
+            text: "what is on it?".into(),
+            images: vec![image("image/png", "iVBO"), image("image/webp", "UklG")],
+            ..Default::default()
+        };
+        assert_eq!(
+            prompt_content(&params),
+            json!([
+                { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "iVBO" } },
+                { "type": "image", "source": { "type": "base64", "media_type": "image/webp", "data": "UklG" } },
+                { "type": "text", "text": "what is on it?" },
+            ])
+        );
+        params.text.clear();
+        assert_eq!(prompt_content(&params).as_array().map(Vec::len), Some(2));
+        params.images.clear();
+        assert_eq!(
+            prompt_content(&params),
+            json!([{ "type": "text", "text": "" }])
+        );
     }
 }
 
@@ -1794,6 +1843,7 @@ mod round2_tests {
                 session_id: "s".into(),
                 turn_id: "t1".into(),
                 text: "hi".into(),
+                ..Default::default()
             })
             .await
             .expect_err("the prompt cannot reach the process");

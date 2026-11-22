@@ -216,6 +216,7 @@ fn send(started: &Started, text: &str) {
         session_id: "hoh-1".into(),
         turn_id: "t1".into(),
         text: text.into(),
+        ..Default::default()
     }));
 }
 

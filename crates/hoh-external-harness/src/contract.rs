@@ -288,13 +288,28 @@ pub struct StartResult {
 }
 
 /// `harness/prompt`: one user turn.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptParams {
     pub session_id: String,
     /// HoH's id of the turn; every turn event carries it back.
     pub turn_id: String,
     pub text: String,
+    /// The pictures the person attached to the turn's messages, in order (HOH-41): the copies the
+    /// engine's attachment store keeps, never a path the window named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<PromptImage>,
+}
+
+/// One picture of a turn: its media type (`image/png`, `image/jpeg`, `image/gif`, `image/webp`)
+/// and its bytes in standard base64.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptImage {
+    pub media_type: String,
+    pub data: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Parameters of `harness/interrupt` and `harness/stop`.

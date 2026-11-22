@@ -1512,9 +1512,11 @@ dependencies = [
 name = "hoh-external-harness"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "futures-util",
  "hoh-agent",
  "hoh-atomic-write",
+ "hoh-attachment",
  "hoh-brand",
  "hoh-destructive-classifier",
  "hoh-error",

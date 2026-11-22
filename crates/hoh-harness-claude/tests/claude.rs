@@ -116,6 +116,7 @@ fn prompt(session: &Arc<dyn HarnessSession>, turn: &str, text: &str) {
         session_id: "hoh-1".into(),
         turn_id: turn.into(),
         text: text.into(),
+        ..Default::default()
     });
     tokio::spawn(fut);
 }
@@ -977,6 +978,7 @@ async fn a_second_prompt_during_a_turn_is_refused() {
             session_id: "hoh-1".into(),
             turn_id: "t2".into(),
             text: "hello".into(),
+            ..Default::default()
         })
         .await;
     assert_eq!(second.unwrap_err().code, code::HARNESS);

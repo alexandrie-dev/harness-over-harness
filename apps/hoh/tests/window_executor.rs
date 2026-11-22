@@ -171,6 +171,15 @@ impl Workspace {
             .collect()
     }
 
+    /// The content of every prompt the fake got, in order.
+    fn prompts(&self) -> Vec<Value> {
+        std::fs::read_to_string(self.root.path().join("claude-prompts.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("prompt record"))
+            .collect()
+    }
+
     /// Every answer the fake got to a `can_use_tool`, in order.
     fn answers(&self) -> Vec<Answer> {
         std::fs::read_to_string(self.root.path().join("claude-answers.jsonl"))
@@ -233,7 +242,8 @@ impl Workspace {
 /// - anything else: a one-line answer.
 ///
 /// Every answer to a `can_use_tool` is appended to `claude-answers.jsonl`; a step runs only after
-/// `allow`.
+/// `allow`. The content of every prompt is appended to `claude-prompts.jsonl`; its last text block
+/// picks the step.
 const FAKE_CLAUDE: &str = r##"#!/usr/bin/python3 -I
 import json, os, shutil, subprocess, sys, time
 
@@ -486,7 +496,10 @@ while True:
             write({"type": "result", "subtype": "success", "is_error": False, "result": "", "num_turns": 0,
                    "origin": {"kind": "task-notification"}, "session_id": SESSION})
         content = (message.get("message") or {}).get("content") or [{}]
-        turn(content[0].get("text", "") if isinstance(content[0], dict) else "")
+        with open(os.path.join(os.path.dirname(STARTS), "claude-prompts.jsonl"), "a") as file:
+            file.write(json.dumps(content) + "\n")
+        texts = [block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"]
+        turn(texts[-1] if texts else "")
 "##;
 
 struct Host {
@@ -729,9 +742,19 @@ impl Host {
         text: &str,
         outcome: Option<&str>,
     ) -> Vec<HostApprovalRequest> {
+        let blocks = json!([{"type": "text", "text": text}]);
+        self.turn_with(session, blocks, outcome).await
+    }
+
+    /// [`turn`](Self::turn) with the prompt's content blocks as they are.
+    async fn turn_with(
+        &mut self,
+        session: &str,
+        blocks: Value,
+        outcome: Option<&str>,
+    ) -> Vec<HostApprovalRequest> {
         let from = self.frames.len();
-        let mut params =
-            json!({"sessionId": session, "contentBlocks": [{"type": "text", "text": text}]});
+        let mut params = json!({"sessionId": session, "contentBlocks": blocks});
         if !self.effort.is_null() {
             params["effort"] = self.effort.clone();
         }
@@ -2817,5 +2840,83 @@ async fn t19_a_queued_prompt_runs_at_its_own_effort() {
         assert_eq!(start.value_of("--resume"), Some(native), "{start:?}");
     }
     assert_eq!(notes(&workspace), "notes\nedited\n");
+    host.shutdown().await;
+}
+
+// ---------------------------------------------------------------- pictures (HOH-41 package 1)
+
+/// A red 2×2 PNG.
+const RED_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==";
+
+/// 15. A picture the window sends with the prompt is kept by the engine's attachment store (a copy
+/// under the window's data, not a path the page named) and reaches Claude's stdin as T3's Claude
+/// adapter sends it: a base64 image block first, then the text.
+#[tokio::test]
+async fn p15_a_picture_reaches_claude_as_a_base64_block_before_the_text() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let blocks = json!([
+        {"type": "image", "data": RED_PNG, "mimeType": "image/png", "name": "red.png"},
+        {"type": "text", "text": "what is on it?"},
+    ]);
+    let asked = host.turn_with(SESSION, blocks, None).await;
+    assert!(asked.is_empty(), "{asked:?}");
+    let prompts = workspace.prompts();
+    assert_eq!(prompts.len(), 1, "{prompts:?}");
+    let content = prompts[0].as_array().expect("content blocks");
+    assert_eq!(content.len(), 2, "{content:?}");
+    assert_eq!(content[0]["type"], "image", "{content:?}");
+    assert_eq!(content[0]["source"]["type"], "base64", "{content:?}");
+    assert_eq!(
+        content[0]["source"]["media_type"], "image/png",
+        "{content:?}"
+    );
+    let data = content[0]["source"]["data"].as_str().expect("base64 data");
+    assert!(data.starts_with("iVBORw0KGgo"), "not a PNG: {data}");
+    assert_eq!(
+        content[1],
+        json!({"type": "text", "text": "what is on it?"})
+    );
+    // The copy lives in the window's data folder.
+    let kept = workspace
+        .files()
+        .into_iter()
+        .filter(|(path, _)| {
+            path.starts_with(workspace.root.path().join("home").join("attachments"))
+        })
+        .count();
+    assert!(kept >= 1, "no copy of the picture in the window's data");
+    host.shutdown().await;
+}
+
+/// 15 (refusals). A picture over T3's 10 MiB, of a type the store does not take, or whose bytes are
+/// not the type it names is refused with the store's reason; Claude is not started for it.
+#[tokio::test]
+async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    // 10 MiB and 2 bytes of zeros: the size is checked before the bytes are looked at.
+    let big = "AAAA".repeat((10 * 1024 * 1024 + 2) / 3);
+    for (data, mime, reason) in [
+        (big.as_str(), "image/png", "byte limit"),
+        (RED_PNG, "image/jpeg", "does not match"),
+        (RED_PNG, "image/svg+xml", "image/svg+xml"),
+    ] {
+        let blocks = json!([
+            {"type": "image", "data": data, "mimeType": mime, "name": "x"},
+            {"type": "text", "text": "hello"},
+        ]);
+        let id = host
+            .send(
+                "session/prompt",
+                json!({"sessionId": SESSION, "contentBlocks": blocks}),
+            )
+            .await;
+        let (frame, _) = host.response(&id, None).await;
+        let message = frame["error"]["message"].as_str().unwrap_or_default();
+        assert!(message.contains(reason), "{mime}: {frame}");
+    }
+    assert!(workspace.prompts().is_empty(), "{:?}", workspace.prompts());
+    assert!(workspace.sessions().is_empty());
     host.shutdown().await;
 }
