@@ -8,7 +8,7 @@ import { basename, resolve } from 'node:path';
 import type { Plugin, UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { HIDDEN_COMPONENTS, HIDDEN_ROUTES, VISIBLE_SETTINGS } from './features';
+import { HIDDEN_COMPONENTS, HIDDEN_PALETTE_ITEMS, HIDDEN_ROUTES, VISIBLE_SETTINGS } from './features';
 import { HOH_HTTP_URL } from './host';
 
 const UI = resolve(import.meta.dirname, '../..');
@@ -61,11 +61,26 @@ export function hiddenComponentModule(original: string, names: readonly string[]
       : `export function ${name}() { return null; }\n`).join('');
 }
 
+/** Модуль вместо логики палитры команд T3: всё как у неё, только группы, которые палитра показывает
+ * (filterCommandPaletteGroups), отдаются без пунктов HIDDEN_PALETTE_ITEMS и без опустевших групп. */
+export function paletteFilterModule(original: string, patterns: readonly string[]): string {
+  return `export * from ${JSON.stringify(original)};\n`
+    + `import { filterCommandPaletteGroups as t3FilterCommandPaletteGroups } from ${JSON.stringify(original)};\n`
+    + `const hidden = [${patterns.map((pattern) => `new RegExp(${JSON.stringify(pattern)})`).join(', ')}];\n`
+    + `export function filterCommandPaletteGroups(...args) {\n`
+    + `  return t3FilterCommandPaletteGroups(...args)\n`
+    + `    .map((group) => ({ ...group, items: group.items.filter((item) => !hidden.some((pattern) => pattern.test(item.value))) }))\n`
+    + `    .filter((group) => group.items.length > 0);\n}\n`;
+}
+
+const PALETTE_LOGIC = 'components/CommandPalette.logic.ts';
+
 /** Имена файлов скрытых компонентов: по ним импорт сверяется, прежде чем его разрешать полностью. */
 const HIDDEN_COMPONENT_NAMES = new Set(Object.keys(HIDDEN_COMPONENTS).map((file) => basename(file, '.tsx')));
 
 const ROUTE_PREFIX = '\0hoh-hidden-route:';
 const COMPONENT_PREFIX = '\0hoh-hidden-component:';
+const PALETTE_MODULE = '\0hoh-palette-filter';
 const VIRTUAL_HOST = 'virtual:hoh-host';
 const VIRTUAL_BOOTSTRAP = 'virtual:t3-bootstrap';
 
@@ -81,6 +96,11 @@ function hohT3(): Plugin {
       if (!importer?.startsWith(T3_BASE)) return null;
       const route = /(?:^|\/)routes\/([^/]+?)(?:\.tsx)?$/.exec(source)?.[1];
       if (route && route in HIDDEN_ROUTES) return ROUTE_PREFIX + route;
+      // Логика палитры: импорт из кода T3 ведёт на обёртку (из самой обёртки — на настоящий файл).
+      if (basename(source, '.ts') === 'CommandPalette.logic') {
+        const resolved = await this.resolve(source, importer, { skipSelf: true });
+        return resolved?.id === resolve(T3_WEB, PALETTE_LOGIC) ? PALETTE_MODULE : null;
+      }
       // Скрытый компонент: импорт из кода T3 ведёт на модуль-замену (из самой замены — на настоящий файл).
       if (!HIDDEN_COMPONENT_NAMES.has(basename(source, '.tsx'))) return null;
       const resolved = await this.resolve(source, importer, { skipSelf: true });
@@ -88,6 +108,7 @@ function hohT3(): Plugin {
       return file && file in HIDDEN_COMPONENTS ? COMPONENT_PREFIX + file : null;
     },
     load(id) {
+      if (id === PALETTE_MODULE) return paletteFilterModule(resolve(T3_WEB, PALETTE_LOGIC), HIDDEN_PALETTE_ITEMS);
       if (id.startsWith(COMPONENT_PREFIX)) {
         const file = id.slice(COMPONENT_PREFIX.length);
         return hiddenComponentModule(resolve(T3_WEB, file), HIDDEN_COMPONENTS[file]!);
@@ -156,8 +177,12 @@ export function checkHiddenRoutes(web: string): void {
   }
 }
 
-/** Скрытые компоненты сверяются с файлами T3: файл есть, названный экспорт в нём есть, иначе сборка останавливается. */
+/** Скрытые компоненты сверяются с файлами T3: файл есть, названный экспорт в нём есть, иначе сборка останавливается.
+ * Так же — логика палитры: filterCommandPaletteGroups в ней есть. */
 export function checkHiddenComponents(web: string): void {
+  if (!/export function filterCommandPaletteGroups\b/.test(readFileSync(resolve(web, PALETTE_LOGIC), 'utf8'))) {
+    throw new Error(`features.ts: ${PALETTE_LOGIC} не экспортирует filterCommandPaletteGroups`);
+  }
   for (const [file, names] of Object.entries(HIDDEN_COMPONENTS)) {
     const path = resolve(web, file);
     if (!existsSync(path)) throw new Error(`features.ts: нет компонента T3 ${file}`);

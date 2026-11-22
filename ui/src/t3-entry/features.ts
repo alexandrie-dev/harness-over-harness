@@ -7,10 +7,11 @@
 //   component — модуль компонента T3 подменяется при сборке: всё, что он экспортирует, остаётся, а названные
 //           компоненты ничего не рисуют (HIDDEN_COMPONENTS); файл T3 не меняется;
 //   css   — элемент, который T3 рисует без условия внутри общего компонента, скрывается правилом по его
-//           подписи/атрибуту (HIDDEN_SELECTORS, стиль входа src/t3-entry/hidden.css собирается из этого списка).
+//           подписи/атрибуту (HIDDEN_SELECTORS, стиль входа src/t3-entry/hidden.css собирается из этого списка);
+//   palette — пункт палитры команд убирается из её групп при сборке (HIDDEN_PALETTE_ITEMS, см. vite.ts).
 // Перечень `HIDDEN_AREAS` — договор с хостом (u3): области с `host` хост не сообщает в конфиге/возможностях сервера.
 
-export type HideMechanism = 'host' | 'route' | 'nav' | 'component' | 'css';
+export type HideMechanism = 'host' | 'route' | 'nav' | 'component' | 'css' | 'palette';
 
 export interface HiddenArea {
   readonly id: string;
@@ -86,8 +87,16 @@ export const HIDDEN_SELECTORS: readonly string[] = [
   'section > div.min-w-0 > [data-slot="collapsible"]:has(> [data-slot="collapsible-trigger"] > span.text-sm.text-muted-foreground)',
 ];
 
+/** Пункты палитры команд T3 (components/CommandPalette.tsx), которые не показываются: образец значения пункта. Все
+ * показанные группы палитры (корень, поиск, подменю «Add project») проходят через filterCommandPaletteGroups
+ * (components/CommandPalette.logic.ts); при сборке её вывод отдаётся без этих пунктов (vite.ts), файл T3 не меняется. */
+export const HIDDEN_PALETTE_ITEMS: readonly string[] = [
+  // «Git URL» в «Add project» (клон по адресу): git у HoH нет.
+  '^action:add-project:.+:url$',
+];
+
 export const HIDDEN_AREAS: readonly HiddenArea[] = [
-  { id: 'vcs', title: 'git/vcs, source control, «Initialize Git»', how: ['host', 'route', 'nav', 'component'] },
+  { id: 'vcs', title: 'git/vcs, source control, «Initialize Git», «Git URL» в «Add project»', how: ['host', 'route', 'nav', 'component', 'palette'] },
   { id: 'pull-requests', title: 'pull requests', how: ['host', 'route', 'css'] },
   { id: 'issues', title: 'issues и трекеры', how: ['host', 'route', 'css'] },
   { id: 'review', title: 'review', how: ['host'] },

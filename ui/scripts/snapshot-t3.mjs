@@ -3,7 +3,8 @@
 // page.route на выдуманном адресе (роутеру T3 нужен путь «/», а не file://). Движок — подделка tests/chat/fake-engine.mjs
 // за хостом HoH (ui/src/hoh-host): вход берёт её из window.__HOH_T3_TEST_ENGINE__ только вне Tauri (src/t3-entry/main.ts).
 //   node scripts/snapshot-t3.mjs [папка-снимков]      (по умолчанию test-results/t3-entry)
-// Экраны: первый запуск, пустой разговор, разговор с ответом и шагом, запрос разрешения, меню модели, меню режима, настройки.
+// Экраны: первый запуск, пустой разговор, разговор с ответом и шагом, запрос разрешения, меню модели, меню режима,
+// «Add project», настройки.
 import { chromium } from 'playwright-core';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -116,7 +117,7 @@ const screens = [
   {
     name: 'first-run', engine: () => engineWith([]),
     // Хост u3 (fix1): движок без разговоров → T3 сам открывает /welcome; хост до fix1 — сразу поле ввода.
-    run: async page => { await page.getByText('Welcome to T3 Code').or(page.getByRole('textbox')).first().waitFor(); },
+    run: async page => { await page.getByText(/^Welcome to /).or(page.getByRole('textbox')).first().waitFor(); },
   },
   {
     name: 'empty-conversation', engine: () => engineWith([CHAT]),
@@ -153,6 +154,16 @@ const screens = [
       await page.getByRole('textbox').first().waitFor();
       await page.getByRole('button', { name: /access|permission|разрешени|доступ/i }).last().click();
       await page.getByRole('menu').or(page.getByRole('listbox')).or(page.getByRole('dialog')).first().waitFor();
+    },
+  },
+  {
+    // «Add project»: источник — только папка на диске; «Git URL» (клон) скрыт (features.ts, HIDDEN_PALETTE_ITEMS).
+    name: 'add-project', engine: () => engineWith([CHAT]),
+    run: async page => {
+      await page.getByRole('textbox').first().waitFor();
+      await page.getByRole('button', { name: 'Add project' }).first().click();
+      await page.getByText('Local folder').first().waitFor();
+      if (await page.getByText('Git URL').count()) throw new Error('«Git URL» виден в «Add project»');
     },
   },
   {
