@@ -252,8 +252,10 @@ pub(crate) struct Launch {
 /// network call the CLI does not settle itself is a question to the slot, which has no automatic
 /// "yes" here; read-only is `default` too, with `--tools` limited to the read tools and no
 /// `--allowedTools`. Full: `bypassPermissions` when it widens the policy, `dontAsk` with the read
-/// tools when the session is read-only. `approval: never` under confirm is refused before this
-/// point ([`NEVER_REFUSED`]).
+/// tools when the session is read-only. The two modes between them (CEO 23.11 00:07, T3
+/// `ClaudeAdapterV2.ts:3395-3404`): accept-edits → `acceptEdits`, auto → `auto`, each with
+/// confirm's callback and network limit; a read-only session stays confirm's read-only launch.
+/// `approval: never` under an asking mode is refused before this point ([`NEVER_REFUSED`]).
 pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
     if access == AccessMode::Full && policy.sandbox == SandboxMode::ReadOnly {
         // Full access does not widen a read-only session (a reviewer stays one): the read tools
@@ -284,8 +286,15 @@ pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
         };
     }
     let read_only = policy.sandbox == SandboxMode::ReadOnly;
+    let permission_mode = match access {
+        _ if read_only => "default",
+        AccessMode::AcceptEdits => "acceptEdits",
+        AccessMode::Auto => "auto",
+        // Full that does not widen is read-only, handled above.
+        AccessMode::Confirm | AccessMode::Full => "default",
+    };
     Launch {
-        permission_mode: "default",
+        permission_mode,
         permission_prompt: true,
         bypass: false,
         tools: read_only.then_some(READ_ONLY_TOOLS),
@@ -868,7 +877,7 @@ impl ExternalHarness for ClaudeHarness {
         let command_snapshots = self.command_snapshots.clone();
         Box::pin(async move {
             // In full access nothing is asked by definition, so `never` changes nothing there.
-            if params.policy.approval == ApprovalMode::Never && access == AccessMode::Confirm {
+            if params.policy.approval == ApprovalMode::Never && access.asks() {
                 return Err(HarnessFailure::new(code::ESCALATION_DENIED, NEVER_REFUSED));
             }
             // Only a level of the list follows `--effort` (the slot passes no other).
@@ -1170,6 +1179,39 @@ mod tests {
         let args = probe_args();
         let at = args.iter().position(|a| a == "--setting-sources").unwrap();
         assert_eq!(args[at + 1], "");
+    }
+
+    /// CEO 23.11 00:07, T3 `ClaudeAdapterV2.ts:3395-3404`: the CLI's own mode for each of the
+    /// window's four, the two in between with confirm's question channel and closed network; a
+    /// read-only session stays confirm's read-only launch under them.
+    #[test]
+    fn each_mode_of_the_window_is_its_permission_mode() {
+        let policy = HarnessPolicy::default();
+        for (access, mode) in [
+            (AccessMode::Confirm, "default"),
+            (AccessMode::AcceptEdits, "acceptEdits"),
+            (AccessMode::Auto, "auto"),
+            (AccessMode::Full, "bypassPermissions"),
+        ] {
+            let launch = launch_for(&policy, access);
+            assert_eq!(launch.permission_mode, mode);
+            assert!(launch.permission_prompt);
+            assert_eq!(launch.bypass, access == AccessMode::Full);
+            assert_eq!(
+                launch.disallowed_tools,
+                access.asks().then_some("WebFetch,WebSearch")
+            );
+        }
+        let read_only = HarnessPolicy {
+            sandbox: SandboxMode::ReadOnly,
+            ..HarnessPolicy::default()
+        };
+        for between in [AccessMode::AcceptEdits, AccessMode::Auto] {
+            assert_eq!(
+                launch_for(&read_only, between),
+                launch_for(&read_only, AccessMode::Confirm)
+            );
+        }
     }
 
     #[test]

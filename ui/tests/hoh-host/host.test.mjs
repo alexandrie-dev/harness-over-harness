@@ -36,7 +36,8 @@ test('handshake: config snapshot, probe, settings, ping; only Claude is offered'
   assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent']);
   assert.deepEqual(first.config.providers[0].models.map(model => model.slug), ['claude-sonnet', 'claude-opus']);
   assert.equal(first.config.providers[0].status, 'ready');
-  assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'full-access']);
+  // T3's four modes for Claude, in T3's order (CEO 23.11 00:07).
+  assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
   assert.deepEqual(first.config.settings.defaultModelSelection, { instanceId: 'claudeAgent', model: 'claude-sonnet' });
   assert.equal(first.config.settings.defaultRuntimeMode, 'approval-required');
   // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
@@ -235,9 +236,9 @@ test('access mode: T3\'s switch goes to the engine at once and every thread show
   assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-m' })).thread.runtimeMode, 'full-access');
   // T3 shows the mode chip under the composer of a started thread while its mode differs from this setting.
   assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'approval-required');
-  // T3's in-between modes ask first.
+  // T3's in-between modes are the engine's own (CEO 23.11 00:07).
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c2', threadId: 'chat-m', runtimeMode: 'auto-accept-edits' });
-  assert.equal(engine.access.mode, 'confirm');
+  assert.equal(engine.access.mode, 'acceptEdits');
 });
 
 test('after a restart the chat comes back from the engine\'s history; an unfinished turn ends as stopped', async () => {
@@ -875,4 +876,58 @@ test('permission request text for the person: the point of a subagent, the comma
   const unknown = ask(4, 'Frobnicate', { target: 'db', retries: 3, nested: { a: 1 }, items: [1, 2] });
   for (const request of [agent, bash, edit, unknown]) assert(!/[{}]"|":/.test(request.text), 'no raw JSON: ' + request.text);
   assert.equal(unknown.text, 'Frobnicate\ntarget: db\nretries: 3\nnested: {…}\nitems: 2 items');
+});
+
+// ---- four modes (CEO 23.11 00:07): T3's Supervised, Auto-accept edits, Auto, Full access
+
+const RUNTIME = { confirm: 'approval-required', acceptEdits: 'auto-accept-edits', auto: 'auto', full: 'full-access' };
+// Every switch between two of the four modes, each once (each mode is left for each other one exactly once).
+const EVERY_SWITCH = ['confirm', 'acceptEdits', 'confirm', 'auto', 'confirm', 'full', 'acceptEdits', 'auto', 'acceptEdits', 'full', 'auto', 'full', 'confirm'];
+
+test('four modes: every switch between them goes to the engine as its own mode, before the next message', async () => {
+  const switches = new Set(EVERY_SWITCH.slice(1).map((to, n) => EVERY_SWITCH[n] + '>' + to));
+  assert.equal(switches.size, 12);
+  const engine = new FakeEngine();
+  engine.seed('chat-4', 'Four', []);
+  const { client } = connect(engine);
+  for (const [n, to] of EVERY_SWITCH.slice(1).entries()) {
+    engine.requests.length = 0;
+    await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'm' + n, threadId: 'chat-4', runtimeMode: RUNTIME[to] });
+    await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 's' + n, threadId: 'chat-4', messageId: 'm-4-' + n, text: 'next ' + n, attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
+    const sent = engine.requests.filter(r => r.method === 'hoh/executor/access/set' || r.method === 'session/prompt').map(r => [r.method, r.params.mode ?? r.params.contentBlocks?.[0]?.text]);
+    assert.deepEqual(sent, [['hoh/executor/access/set', to], ['session/prompt', 'next ' + n]], `${EVERY_SWITCH[n]} → ${to}`);
+    assert.equal(engine.access.mode, to);
+    assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-4' })).thread.runtimeMode, RUNTIME[to]);
+  }
+});
+
+test('four modes: the mode the engine keeps is what every thread shows after the window starts again', async () => {
+  for (const mode of ['acceptEdits', 'auto']) {
+    const engine = new FakeEngine();
+    engine.seed('chat-k', 'Kept', []);
+    engine.access = { ...engine.access, mode };
+    const { client } = connect(engine);
+    assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-k' })).thread.runtimeMode, RUNTIME[mode]);
+  }
+});
+
+test('four modes: creating a thread never raises the mode every chat runs in; a narrower one is applied', async () => {
+  const order = ['confirm', 'acceptEdits', 'auto', 'full'];
+  for (const [rank, current] of order.entries()) {
+    for (const [wanted, mode] of order.entries()) {
+      const engine = new FakeEngine();
+      engine.access = { ...engine.access, mode: current };
+      const { client } = connect(engine);
+      const threadId = `thread-${current}-${mode}`;
+      await client.call('orchestration.dispatchCommand', {
+        type: 'thread.create', commandId: 'c-' + threadId, threadId, projectId: 'hoh-project', title: 'N', createdBy: 'user', creationSource: 'web',
+        modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: RUNTIME[mode], interactionMode: 'default', branch: null, worktreePath: null,
+      });
+      const set = engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params.mode);
+      const expected = wanted < rank ? mode : current;
+      assert.deepEqual(set, wanted < rank ? [mode] : [], `${current} + new thread in ${mode}`);
+      assert.equal(engine.access.mode, expected, `${current} + new thread in ${mode}`);
+      assert.equal((await client.call('orchestration.getThreadProjection', { threadId })).thread.runtimeMode, RUNTIME[expected]);
+    }
+  }
 });

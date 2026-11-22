@@ -808,7 +808,9 @@ fn assert_main_window_signature(core: &AuditEntry) {
 #[test]
 fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_person() {
     let broker = broker();
-    for (n, mode) in ["full", "confirm"].iter().enumerate() {
+    // CEO 23.11 00:07: the four modes of T3, each the same way.
+    let modes = ["full", "acceptEdits", "auto", "confirm"];
+    for (n, mode) in modes.iter().enumerate() {
         let params = json!({"executor":"claude","mode":mode});
         broker
             .confirm_from_main_window(ACCESS_SET, &params, None, NOW)
@@ -822,8 +824,9 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
         assert!(is_signed(&begun), "{mode}: signed without a window");
     }
     let log = broker.audit_log();
-    assert_eq!(log.len(), 4);
-    for (human, core) in [(&log[0], &log[1]), (&log[2], &log[3])] {
+    assert_eq!(log.len(), 2 * modes.len());
+    for pair in log.chunks(2) {
+        let (human, core) = (&pair[0], &pair[1]);
         assert_eq!(
             (human.who, human.via, human.outcome.as_str()),
             ("human", "main-window", "allowed-once")
@@ -835,14 +838,24 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
         );
         assert_main_window_signature(core);
     }
-    assert!(
-        log[0]
-            .human_text
-            .starts_with("Включить полный доступ для Claude?")
-    );
+    for (n, start) in [
+        "Включить полный доступ для Claude?",
+        "Включить режим «Правки без вопросов» для Claude?",
+        "Включить режим «Автоматически» для Claude?",
+        "Вернуть режим «Спрашивать разрешение» для Claude?",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            log[2 * n].human_text.starts_with(start),
+            "{}",
+            log[2 * n].human_text
+        );
+    }
     // The person reads it in the history as their own decision.
     let history = broker.history(10);
-    assert_eq!(history.len(), 2);
+    assert_eq!(history.len(), modes.len());
     assert!(history.iter().all(|entry| entry["asker"] == "you"));
 }
 

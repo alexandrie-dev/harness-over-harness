@@ -2371,6 +2371,8 @@
       "type": "string",
       "enum": [
         "confirm",
+        "acceptEdits",
+        "auto",
         "full"
       ]
     },

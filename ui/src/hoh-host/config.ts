@@ -14,14 +14,31 @@ export const CLAUDE_INSTANCE_ID = 'claudeAgent';
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 
 export type T3RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
-export type HohAccessMode = 'confirm' | 'full';
+export type HohAccessMode = 'confirm' | 'acceptEdits' | 'auto' | 'full';
 
-/** HoH has two modes: Claude asks first, or works on its own. T3's in-between modes ask first. */
+/**
+ * T3's four modes for Claude and the engine's, one to one (CEO 23.11 00:07; T3 ClaudeAdapterV2.ts
+ * `permissionModeForClaudeRuntimePolicy`: default, acceptEdits, auto, bypassPermissions), in T3's
+ * order, which is also the order from the narrowest to the widest.
+ */
+const MODES: readonly (readonly [T3RuntimeMode, HohAccessMode])[] = [
+  ['approval-required', 'confirm'], ['auto-accept-edits', 'acceptEdits'], ['auto', 'auto'], ['full-access', 'full'],
+];
+export const RUNTIME_MODES: readonly T3RuntimeMode[] = MODES.map(([runtime]) => runtime);
+
+/** A mode nobody knows asks first. */
 export function accessModeOf(mode: T3RuntimeMode): HohAccessMode {
-  return mode === 'full-access' ? 'full' : 'confirm';
+  return MODES.find(([runtime]) => runtime === mode)?.[1] ?? 'confirm';
 }
 export function runtimeModeOf(mode: HohAccessMode): T3RuntimeMode {
-  return mode === 'full' ? 'full-access' : 'approval-required';
+  return MODES.find(([, access]) => access === mode)?.[0] ?? 'approval-required';
+}
+export function isAccessMode(value: unknown): value is HohAccessMode {
+  return MODES.some(([, access]) => access === value);
+}
+/** How wide a mode is: confirm < acceptEdits < auto < full. */
+export function accessRank(mode: HohAccessMode): number {
+  return MODES.findIndex(([, access]) => access === mode);
 }
 
 /** `hoh/executor/discover` for Claude (ui/src/lib/executor.d.mts `DiscoverResult`). */
@@ -143,7 +160,7 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
     driver: CLAUDE_INSTANCE_ID,
     displayName: 'Claude',
     showInteractionModeToggle: false,
-    supportedRuntimeModes: ['approval-required', 'full-access'],
+    supportedRuntimeModes: RUNTIME_MODES,
     supportsConversationRollback: false,
     supportsTextGeneration: false,
     enabled: true,

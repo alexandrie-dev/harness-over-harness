@@ -862,6 +862,8 @@ fn access_switches(words: &[String]) -> Vec<Vec<String>> {
 fn mode_of(start: &Start) -> &'static str {
     match start.value_of("--permission-mode") {
         Some("default") => "confirm",
+        Some("acceptEdits") => "acceptEdits",
+        Some("auto") => "auto",
         Some("bypassPermissions" | "dontAsk") => "full",
         other => panic!("unexpected permission mode {other:?}: {start:?}"),
     }
@@ -927,6 +929,54 @@ fn assert_full(start: &Start) {
         "{start:?}"
     );
     assert_clean_environment(start);
+}
+
+/// The two modes between confirm and full (CEO 23.11 00:07, as T3): Claude's own mode
+/// (`acceptEdits`, `auto`) with confirm's question channel and closed network, never a bypass.
+fn assert_asking(start: &Start, permission_mode: &str) {
+    assert_eq!(
+        start.value_of("--permission-mode"),
+        Some(permission_mode),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--permission-prompt-tool"),
+        Some("stdio"),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--disallowedTools"),
+        Some("WebFetch,WebSearch"),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--setting-sources"),
+        Some("user,project,local"),
+        "{start:?}"
+    );
+    for wide in [
+        "--allow-dangerously-skip-permissions",
+        "--dangerously-skip-permissions",
+        "--tools",
+    ] {
+        assert!(
+            !start.has(wide),
+            "{wide} under {permission_mode}: {start:?}"
+        );
+    }
+    assert_clean_environment(start);
+}
+
+/// The command line of `mode` (the window's name for it).
+fn assert_mode(start: &Start, mode: &str) {
+    match mode {
+        "confirm" => assert_confirm(start),
+        "acceptEdits" => assert_asking(start, "acceptEdits"),
+        "auto" => assert_asking(start, "auto"),
+        "full" => assert_full(start),
+        other => panic!("no mode {other}"),
+    }
+    assert_eq!(mode_of(start), mode, "{start:?}");
 }
 
 /// What `hoh/executor/access/get` shows is what Claude runs with: the mode and the switches of
@@ -3104,6 +3154,111 @@ async fn p16_only_a_folder_the_engine_knows_is_searched_or_probed() {
     host.shutdown().await;
 }
 
+// ---------------------------------------------------------------- four modes (CEO 23.11 00:07)
+
+/// The four modes from the narrowest; every switch between two of them, each once, in one walk
+/// (each mode is left for each other mode exactly once).
+const MODES: [&str; 4] = ["confirm", "acceptEdits", "auto", "full"];
+const EVERY_SWITCH: [&str; 13] = [
+    "confirm",
+    "acceptEdits",
+    "confirm",
+    "auto",
+    "confirm",
+    "full",
+    "acceptEdits",
+    "auto",
+    "acceptEdits",
+    "full",
+    "auto",
+    "full",
+    "confirm",
+];
+
+/// m1. From every mode to every other one: the first message after the switch starts Claude with
+/// that mode's command line (`default`, `acceptEdits`, `auto`, `bypassPermissions`), the live
+/// process of the old mode having ended at the switch; `access/get` says the same.
+#[tokio::test]
+async fn m1_every_switch_between_the_four_modes_reaches_the_first_message_after_it() {
+    let switches: std::collections::BTreeSet<(&str, &str)> = EVERY_SWITCH
+        .windows(2)
+        .map(|pair| (pair[0], pair[1]))
+        .collect();
+    assert_eq!(switches.len(), 12, "every ordered pair once");
+    assert!(
+        switches
+            .iter()
+            .all(|(from, to)| from != to && MODES.contains(to))
+    );
+
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+    host.turn("chat-m", "hello", None).await;
+    assert_mode(&only_session(&workspace, &host), "confirm");
+
+    for (n, pair) in EVERY_SWITCH.windows(2).enumerate() {
+        let (from, to) = (pair[0], pair[1]);
+        let before = workspace.sessions();
+        let chosen = host.set_access(to, "allowed-once").await;
+        assert_eq!(chosen["result"]["mode"], to, "{from} → {to}: {chosen}");
+        let last = before.last().expect("a start");
+        assert!(
+            until_dead(last.pid).await,
+            "{from} → {to}: {last:?} still runs"
+        );
+        let waiting = host.access_of("chat-m").await;
+        assert_no_process(&waiting, to, &format!("{from} → {to}, not yet sent"));
+
+        host.turn("chat-m", &format!("message {n}"), None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), before.len() + 1, "{from} → {to}: {starts:?}");
+        let start = starts.last().expect("the new start");
+        assert_mode(start, to);
+        assert!(start.has("--resume"), "{from} → {to}: {start:?}");
+        let access = host.access_of("chat-m").await;
+        assert_session(&access, to, to, &format!("{from} → {to}"));
+        assert_effective_of(&access, start, &format!("{from} → {to}"));
+    }
+    host.shutdown().await;
+}
+
+/// m2. Creating a conversation changes no mode: a new chat starts in the mode in effect (not a
+/// wider one) and the mode stays; a mode in the composition widens nothing. Under the two new
+/// modes what Claude asks still reaches the human: the engine allows nothing by itself.
+#[tokio::test]
+async fn m2_a_new_chat_starts_in_the_mode_in_effect_and_the_new_modes_still_ask_the_human() {
+    let workspace = Workspace::with("    access: full\n", "");
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+    for mode in ["acceptEdits", "auto"] {
+        host.set_access(mode, "allowed-once").await;
+        let chat = format!("chat-{mode}");
+        host.turn(&chat, "hello", None).await;
+        assert_mode(workspace.sessions().last().expect("a start"), mode);
+        assert_eq!(
+            host.access().await["mode"],
+            mode,
+            "a new chat changed the mode"
+        );
+        let asked = host.turn(&chat, "edit", Some("allowed-once")).await;
+        assert_eq!(asked.len(), 1, "{mode}: {asked:?}");
+        assert_eq!(asked[0].tool_name, "edit_file", "{mode}: {asked:?}");
+    }
+    let answers = workspace.answers();
+    assert_eq!(
+        answers
+            .iter()
+            .map(|answer| (answer.tool.as_str(), answer.behavior.as_str()))
+            .collect::<Vec<_>>(),
+        [("Edit", "allow"), ("Edit", "allow")],
+        "{answers:?}"
+    );
+    host.shutdown().await;
+}
+
 /// 16 (limits). `@` takes at most 200 entries and 256 characters of query, as T3; the answer says
 /// when there were more.
 #[tokio::test]
@@ -3385,4 +3540,43 @@ async fn p19_composer_folder_calls_share_the_inflight_result_and_thirty_second_c
     assert_eq!(cached, first, "the answer is cached for thirty seconds");
 
     host.shutdown().await;
+}
+
+/// m3. The two new modes outlive «Стоп» and a restart of the engine: the message after a Stop and
+/// the first message after the restart start Claude in the same mode, on the same conversation.
+#[tokio::test]
+async fn m3_the_new_modes_outlive_stop_and_a_restart() {
+    for mode in ["acceptEdits", "auto"] {
+        let workspace = Workspace::new();
+        let mut host = Host::start(&workspace);
+        host.initialize(&workspace).await;
+        host.select_claude().await;
+        host.set_access(mode, "allowed-once").await;
+        hang_turn(&mut host, "chat-s", "hang").await;
+        stop_turn(&mut host, "chat-s").await;
+        host.turn("chat-s", "after the stop", None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), 2, "{mode}: {starts:?}");
+        for start in &starts {
+            assert_mode(start, mode);
+        }
+        assert!(starts[1].has("--resume"), "{mode}: {:?}", starts[1]);
+        host.shutdown().await;
+
+        let mut host = Host::start(&workspace);
+        host.initialize(&workspace).await;
+        assert_eq!(
+            host.access().await["mode"],
+            mode,
+            "{mode} after the restart"
+        );
+        host.ok("session/resume", json!({"sessionId": "chat-s"}))
+            .await;
+        host.turn("chat-s", "after the restart", None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), 3, "{mode}: {starts:?}");
+        assert_mode(&starts[2], mode);
+        assert!(starts[2].has("--resume"), "{mode}: {:?}", starts[2]);
+        host.shutdown().await;
+    }
 }

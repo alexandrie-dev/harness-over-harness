@@ -108,15 +108,42 @@ pub struct PeerInfo {
 /// Who settles the harness's permission checks. Chosen only by the user in the window
 /// (`hoh/executor/access/set`, a privileged command); nothing in a session — the chat, the model,
 /// the harness, a file in the working folder, the parameters a session is created with — sets it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "lowercase")]
+///
+/// The four modes T3 Code has for Claude (CEO 23.11 00:07), in this order from the narrowest
+/// (`Ord`): confirm < accept-edits < auto < full. The two in between keep confirm's sandbox (the
+/// session folder, no network) and its questions for what the CLI does not settle itself: only the
+/// CLI's own mode differs, so neither reaches past full access.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum AccessMode {
-    /// «С подтверждением»: the CLI keeps its sandbox (the session folder, no network) and puts
-    /// every command, write and network step it does not settle itself to the user through HoH.
+    /// «С подтверждением» (T3 Supervised): the CLI keeps its sandbox (the session folder, no
+    /// network) and puts every command, write and network step it does not settle itself to the
+    /// user through HoH.
+    #[serde(rename = "confirm")]
     Confirm,
+    /// T3 «Auto-accept edits»: as confirm, but the CLI makes file edits in its working folders
+    /// without asking (Claude Code `acceptEdits`).
+    #[serde(rename = "acceptEdits")]
+    AcceptEdits,
+    /// T3 «Auto»: as confirm, but the CLI itself decides which steps are safe to run without
+    /// asking (Claude Code `auto`); the others still reach the user.
+    #[serde(rename = "auto")]
+    Auto,
     /// «Полный доступ», as in T3 Code: the CLI runs commands without questions and without a
     /// sandbox. A session configured read-only stays read-only (a reviewer stays one): full access
     /// only takes the questions away (review 232500, item 4).
+    #[serde(rename = "full")]
     Full,
 }
 
@@ -133,8 +160,15 @@ impl AccessMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Confirm => "confirm",
+            Self::AcceptEdits => "acceptEdits",
+            Self::Auto => "auto",
             Self::Full => "full",
         }
+    }
+
+    /// The CLI's questions it does not settle itself reach the user: every mode but full access.
+    pub fn asks(self) -> bool {
+        self != Self::Full
     }
 
     /// A session started with `policy` under this mode runs with the harness's full-access

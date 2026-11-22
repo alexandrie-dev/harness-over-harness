@@ -45,4 +45,4 @@ export interface FolderListing {
 }
 
 /** `hoh/executor/access/get` (the engine's contract): the mode asked for and the one in effect. */
-export type AccessMode = 'confirm' | 'full';
+export type AccessMode = 'confirm' | 'acceptEdits' | 'auto' | 'full';

@@ -610,3 +610,18 @@ SettingSources::Personal` (`harness.rs`). Значение берётся из �
   `launch_flags` = срез argv (с `--effort high`); `user,project,local` в `tests/claude.rs`,
   `tests/slot.rs`; сквозной `apps/hoh/tests/window_executor.rs` `t18_…` (PORT_NOTES
   `hoh-external-harness`, HOH-40).
+
+## HOH-41: четыре режима (i7, решение CEO 23.11 00:07)
+
+- `launch_for` соответствует T3 (`ClaudeAdapterV2.ts:3395-3404`, `permissionModeForClaudeRuntimePolicy`):
+
+  | режим окна | `--permission-mode` |
+  |---|---|
+  | `confirm` | `default` |
+  | `acceptEdits` | `acceptEdits` |
+  | `auto` | `auto` |
+  | `full` | `bypassPermissions` + `--allow-dangerously-skip-permissions` |
+
+  Оба значения есть в `claude --help` 2.1.329 (choices: acceptEdits, auto, bypassPermissions, manual, dontAsk, plan). `default` в этом списке нет, но CLI его принимает и сам называет режим `default` (снимок q1 22.11).
+- Остальные ключи новых режимов как у `confirm`: `--permission-prompt-tool stdio`, без bypass, `--disallowedTools WebFetch,WebSearch` (сеть закрыта). Сеанс только для чтения под ними остаётся запуском `confirm` только для чтения (`default` + `--tools`).
+- Тест — `each_mode_of_the_window_is_its_permission_mode`.

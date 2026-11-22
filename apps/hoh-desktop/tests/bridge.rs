@@ -613,8 +613,7 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
     );
     wait_memory_ready(&event_rx);
     let broker = Arc::new(Broker::new([0x21; 32]).unwrap());
-    let params = json!({"executor":"claude","mode":"full"});
-    let send = |label: &str| {
+    let send = |label: &str, params: &Value| {
         let arm = {
             let (broker, params) = (broker.clone(), params.clone());
             Box::new(move |generation: u64, id: &str| {
@@ -632,28 +631,34 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
             Some(arm),
         )
     };
-    for label in ["approval-1", "executor", "claude"] {
-        assert!(send(label).is_err(), "{label}");
+    let sent = |mode: &str| {
+        frames.lock().unwrap().iter().any(|frame| {
+            frame["method"] == "hoh/executor/access/set" && frame["params"]["mode"] == mode
+        })
+    };
+    // CEO 23.11 00:07: the four modes of T3 take the same path, each of them.
+    let mut params = json!({});
+    for (n, mode) in ["full", "acceptEdits", "auto", "confirm"]
+        .into_iter()
+        .enumerate()
+    {
+        params = json!({"executor":"claude","mode":mode});
+        for label in ["approval-1", "executor", "claude"] {
+            assert!(send(label, &params).is_err(), "{mode} from {label}");
+        }
+        assert_eq!(
+            broker.audit_log().len(),
+            n,
+            "{mode}: nothing journaled for a refusal"
+        );
+        assert!(!sent(mode), "{mode} reached the engine from another window");
+        send("main", &params).unwrap();
+        assert!(sent(mode), "{mode} from the main window");
+        let log = broker.audit_log();
+        assert_eq!(log.len(), n + 1, "{mode}");
+        assert_eq!((log[n].who, log[n].via), ("human", "main-window"), "{mode}");
+        assert_eq!(log[n].method, "hoh/executor/access/set", "{mode}");
     }
-    assert!(broker.audit_log().is_empty());
-    assert!(
-        !frames
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|frame| frame["method"] == "hoh/executor/access/set")
-    );
-    send("main").unwrap();
-    assert!(
-        frames
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|frame| frame["method"] == "hoh/executor/access/set")
-    );
-    let log = broker.audit_log();
-    assert_eq!(log.len(), 1);
-    assert_eq!((log[0].who, log[0].via), ("human", "main-window"));
     // The plain path without the host's confirmation step stays closed.
     assert!(bridge::request(&engine, "main", "hoh/executor/access/set", params.clone()).is_err());
     // Lead 22.11 20:43: choosing Claude and the folder of its conversation — the same rule; from
@@ -688,7 +693,7 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
                 .any(|frame| frame["method"] == method)
         );
     }
-    assert_eq!(broker.audit_log().len(), 1);
+    assert_eq!(broker.audit_log().len(), 4, "the four modes, nothing more");
     // HOH-41: "Add project" in the main window is the person's confirmation of that folder.
     let add = json!({"cwd":"/home/u/work"});
     assert!(bridge::needs_approval("hoh/workspace/add", &add));
@@ -709,10 +714,10 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
             .any(|frame| frame["method"] == "hoh/workspace/add")
     );
     let log = broker.audit_log();
-    assert_eq!(log.len(), 2);
-    assert_eq!((log[1].who, log[1].via), ("human", "main-window"));
+    assert_eq!(log.len(), 5);
+    assert_eq!((log[4].who, log[4].via), ("human", "main-window"));
     assert_eq!(
-        log[1].human_text,
+        log[4].human_text,
         "Добавить папку «/home/u/work» как проект?"
     );
     engine.stop();

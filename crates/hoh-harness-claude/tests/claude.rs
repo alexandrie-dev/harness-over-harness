@@ -2327,7 +2327,12 @@ async fn an_input_without_questions_has_no_questions_key_in_the_answer() {
 
 #[tokio::test]
 async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
-    for access in [AccessMode::Confirm, AccessMode::Full] {
+    for access in [
+        AccessMode::Confirm,
+        AccessMode::AcceptEdits,
+        AccessMode::Auto,
+        AccessMode::Full,
+    ] {
         let mut env = Env::new();
         env.access = access;
         let policy = HarnessPolicy::default();
@@ -2347,11 +2352,18 @@ async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
         assert_eq!(argv[1..], args[..], "{access:?}");
         let has = |flag: &str| args.iter().any(|a| a == flag);
         match access {
-            AccessMode::Confirm => {
+            AccessMode::Confirm | AccessMode::AcceptEdits | AccessMode::Auto => {
+                // CEO 23.11 00:07: the two modes in between are Claude's own, with confirm's
+                // question channel.
                 assert!(has("--permission-prompt-tool"));
                 assert!(!has("--allow-dangerously-skip-permissions"));
                 let at = args.iter().position(|a| a == "--permission-mode").unwrap();
-                assert_eq!(args[at + 1], "default");
+                let mode = match access {
+                    AccessMode::AcceptEdits => "acceptEdits",
+                    AccessMode::Auto => "auto",
+                    _ => "default",
+                };
+                assert_eq!(args[at + 1], mode);
             }
             AccessMode::Full => {
                 // The callback stays for what even bypass refuses.

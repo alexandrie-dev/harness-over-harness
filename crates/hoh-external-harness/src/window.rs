@@ -655,6 +655,8 @@ impl Window {
         self.known(&params.executor)?;
         let mode = match params.mode {
             ExecutorAccessMode::Confirm => AccessMode::Confirm,
+            ExecutorAccessMode::AcceptEdits => AccessMode::AcceptEdits,
+            ExecutorAccessMode::Auto => AccessMode::Auto,
             ExecutorAccessMode::Full => AccessMode::Full,
         };
         self.commit(Change::Access(params.executor.clone(), mode))
@@ -840,6 +842,8 @@ fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
 fn wire(mode: AccessMode) -> ExecutorAccessMode {
     match mode {
         AccessMode::Confirm => ExecutorAccessMode::Confirm,
+        AccessMode::AcceptEdits => ExecutorAccessMode::AcceptEdits,
+        AccessMode::Auto => ExecutorAccessMode::Auto,
         AccessMode::Full => ExecutorAccessMode::Full,
     }
 }

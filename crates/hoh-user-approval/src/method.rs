@@ -130,6 +130,15 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
                 hoh_protocol::ExecutorAccessMode::Confirm => {
                     format!("Вернуть режим «Спрашивать разрешение» для {name}?")
                 }
+                hoh_protocol::ExecutorAccessMode::AcceptEdits => format!(
+                    "Включить режим «Правки без вопросов» для {name}? Помощник сам меняет файлы \
+                     в папке разговора, команды и сеть — после вашего подтверждения."
+                ),
+                hoh_protocol::ExecutorAccessMode::Auto => format!(
+                    "Включить режим «Автоматически» для {name}? Помощник сам решает, какие \
+                     действия безопасны, и выполняет их без вопросов; остальное — после вашего \
+                     подтверждения."
+                ),
             })
         }
         "hoh/executor/select" => {

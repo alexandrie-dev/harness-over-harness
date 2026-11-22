@@ -506,7 +506,9 @@ object!(SettingsRulesSetParams {
 });
 // External agent harnesses in the window (HOH-18): the access mode of an executor (Claude Code),
 // chosen only by the user; discovery and the choice of the executor that new chats go to.
-choices!(ExecutorAccessMode { Confirm => "confirm", Full => "full" });
+// Four modes as T3 has them for Claude (CEO 23.11 00:07), from the narrowest: Supervised, Auto-accept
+// edits, Auto, Full access.
+choices!(ExecutorAccessMode { Confirm => "confirm", AcceptEdits => "acceptEdits", Auto => "auto", Full => "full" });
 choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
 choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
 object!(ExecutorParams { executor: String });

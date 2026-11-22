@@ -179,13 +179,22 @@ pub(crate) fn access_text(executor: &str, access: AccessMode) -> String {
             "С подтверждением: команды, правки файлов и сеть {name} выполняет после вашего \
              подтверждения"
         ),
+        AccessMode::AcceptEdits => format!(
+            "Правки без вопросов: файлы в папке разговора {name} меняет сам, команды и сеть — \
+             после вашего подтверждения"
+        ),
+        AccessMode::Auto => format!(
+            "Автоматически: что безопасно, {name} решает и выполняет сам, остальное — после \
+             вашего подтверждения"
+        ),
         AccessMode::Full => format!("Полный доступ: {name} выполняет команды без вопросов"),
     }
 }
 
 /// The policy a native session is started with under `access`. [`AccessMode::Confirm`] caps the
 /// configured sandbox and network to the safe default (the folder, no network): the
-/// configuration does not widen what the user chose. [`AccessMode::Full`] runs without the
+/// configuration does not widen what the user chose; the two modes between it and full access
+/// (accept-edits, auto) cap it the same way. [`AccessMode::Full`] runs without the
 /// CLI's sandbox and with the network, except a session configured read-only: it stays read-only
 /// with its own network (review 232500, item 4; as `hoh-harness-claude` launches it).
 pub(crate) fn launch_policy(configured: &HarnessPolicy, access: AccessMode) -> HarnessPolicy {
@@ -200,7 +209,7 @@ pub(crate) fn launch_policy(configured: &HarnessPolicy, access: AccessMode) -> H
             approval: ApprovalMode::OnRequest,
             network: NetworkAccess::Allowed,
         },
-        AccessMode::Confirm => HarnessPolicy {
+        AccessMode::Confirm | AccessMode::AcceptEdits | AccessMode::Auto => HarnessPolicy {
             sandbox: match configured.sandbox {
                 SandboxMode::FullAccess => SandboxMode::WorkspaceWrite,
                 other => other,
@@ -805,7 +814,7 @@ impl ExternalAgent {
         let policy = self.policy_for(access)?;
         // `never` (built only with `never-mode`) is put to the user once per process; full
         // access was already the user's own action in the window, so it is not asked again.
-        let escalated = if access == AccessMode::Confirm && policy.approval == ApprovalMode::Never {
+        let escalated = if access.asks() && policy.approval == ApprovalMode::Never {
             self.ask_escalation(&policy, signal).await?;
             true
         } else {
@@ -910,12 +919,13 @@ impl ExternalAgent {
             ));
         }
         let policy = launch_policy(&configured, access);
-        if access == AccessMode::Confirm && policy != configured {
+        if access.asks() && policy != configured {
             self.ctx.logger().warn(format_args!(
                 "the configured policy {} of harness \"{}\" is wider than the access mode the \
-                 user chose (confirm): started with {}",
+                 user chose ({}): started with {}",
                 js_json_stringify(&json!(configured)),
                 self.shared.name,
+                access.as_str(),
                 js_json_stringify(&json!(policy))
             ));
         }
@@ -1399,7 +1409,7 @@ impl TurnLog {
     fn new(agent: Arc<ExternalAgent>, turn: u64, step: u64, signal: AbortSignal) -> Self {
         // Under full access the CLI asks nothing: `never`'s rule applies only with confirmation.
         let never = agent.shared.config.policy.approval == ApprovalMode::Never
-            && agent.shared.access() == AccessMode::Confirm;
+            && agent.shared.access().asks();
         Self {
             agent,
             turn,
@@ -2710,6 +2720,38 @@ mod tests {
         assert_eq!(
             launch_policy(&HarnessPolicy::default(), AccessMode::Full),
             wide
+        );
+        // The two modes between them (CEO 23.11 00:07) cap the configuration as confirm does.
+        for between in [AccessMode::AcceptEdits, AccessMode::Auto] {
+            assert_eq!(launch_policy(&wide, between), HarnessPolicy::default());
+            assert_eq!(
+                launch_policy(&reviewer, between),
+                launch_policy(&reviewer, AccessMode::Confirm)
+            );
+        }
+    }
+
+    /// The four modes in their order from the narrowest, by the window's names; only full access
+    /// stops the questions.
+    #[test]
+    fn the_four_modes_keep_their_order_and_names() {
+        let modes = [
+            AccessMode::Confirm,
+            AccessMode::AcceptEdits,
+            AccessMode::Auto,
+            AccessMode::Full,
+        ];
+        assert!(modes.windows(2).all(|pair| pair[0] < pair[1]));
+        for mode in modes {
+            let wire = serde_json::to_value(mode).unwrap();
+            assert_eq!(wire, mode.as_str());
+            assert_eq!(serde_json::from_value::<AccessMode>(wire).unwrap(), mode);
+            assert_eq!(mode.asks(), mode != AccessMode::Full);
+            assert!(access_text("claude", mode).contains("Claude"));
+        }
+        assert_eq!(
+            modes.map(AccessMode::as_str),
+            ["confirm", "acceptEdits", "auto", "full"]
         );
     }
 

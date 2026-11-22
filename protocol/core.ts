@@ -135,7 +135,7 @@ export type ExecutorAccessGetParams = { "executor": string; "sessionId"?: (strin
 
 export type ExecutorAccessGetResult = { "executor": string; "mode": ExecutorAccessMode; "effective": ExecutorEffectiveAccess; "selected": ExecutorSelection; "session"?: (ExecutorSessionAccess | null); };
 
-export type ExecutorAccessMode = "confirm" | "full";
+export type ExecutorAccessMode = "confirm" | "acceptEdits" | "auto" | "full";
 
 export type ExecutorAccessSetParams = { "executor": string; "mode": ExecutorAccessMode; };
 

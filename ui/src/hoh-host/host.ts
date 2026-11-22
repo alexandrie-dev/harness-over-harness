@@ -17,7 +17,7 @@
 // (`projects.searchEntries` → `hoh/workspace/entries`, nothing for "No project"); pictures are checked and kept
 // (`assets.persistChatAttachments`) until their message goes to the engine with them (`session/prompt`).
 import {
-  accessModeOf, CLAUDE_INSTANCE_ID, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
+  accessModeOf, accessRank, CLAUDE_INSTANCE_ID, claudeProvider, defaultClaudeModel, effortOf, isAccessMode, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
@@ -180,7 +180,7 @@ export class HohHost {
     for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
-    if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
+    if (isAccessMode(saved?.defaultMode)) this.defaultMode = saved.defaultMode;
     // Last-known-good list metadata makes the first post-restart snapshot lossless even when the
     // engine's first disk scan is temporarily incomplete. History still comes only from the engine.
     for (const entry of Array.isArray(saved?.sessions) ? saved.sessions : []) {
@@ -343,7 +343,7 @@ export class HohHost {
   private async readAccess() {
     try {
       const access = await this.engine.request('hoh/executor/access/get', { executor: 'claude' });
-      if (access?.mode === 'full' || access?.mode === 'confirm') this.mode = access.mode;
+      if (isAccessMode(access?.mode)) this.mode = access.mode;
       if (typeof access?.selected?.model === 'string' && access.selected.model) this.selectedModel = access.selected.model;
     } catch { /* the engine has no Claude access setting: the default mode stays */ }
   }
@@ -731,6 +731,16 @@ export class HohHost {
     this.configChanged();
   }
 
+  /**
+   * A thread created on its own (T3 `thread.create`, no message of the person with it) does not raise
+   * the mode every chat runs in: a narrower mode is applied, a wider one is not (CEO 23.11 00:07;
+   * confirm < acceptEdits < auto < full). The person raises it with the mode switch, or by sending
+   * the first message of a new thread in the mode they picked (`orchestration.launchThread`).
+   */
+  private notWider(mode: T3RuntimeMode | undefined): T3RuntimeMode | undefined {
+    return mode && accessRank(accessModeOf(mode)) <= accessRank(this.mode) ? mode : undefined;
+  }
+
   private async applyModel(model: string | undefined) {
     if (!model || model === this.selectedModel) return;
     await this.engine.request('hoh/executor/select', { executor: 'claude', model });
@@ -894,7 +904,7 @@ export class HohHost {
     try {
       switch (type) {
         case 'thread.create':
-          if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId);
+          if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, this.notWider(command.runtimeMode), command.projectId);
           break;
         case 'message.dispatch': {
           const target = needThread();
