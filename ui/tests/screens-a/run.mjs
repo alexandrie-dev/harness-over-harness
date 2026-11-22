@@ -57,22 +57,33 @@ async function open(kind, { viewport = { width: 1440, height: 900 }, init, hook 
 // ───── первый запуск ─────
 const engineCalls = [];
 let refuse = null; let unanswered = false;
+// What `engine_request` of the host rejects with: the object of apps/hoh-desktop/src/errors.rs (`HostError`), the same
+// words and codes as its Rust test asserts. The page gets exactly this, not an Error with invented words.
+const HOST = {
+  rejected: { code: 'rejected', message: 'Действие отклонено' },
+  expired: { code: 'expired', message: 'Подтверждение не получено' },
+  refused: { code: 'refused', message: 'Помощник отклонил запрос' },
+  failed: { code: 'failed', message: '' },
+};
 // Подмена без заглушки: те же четыре ответа discover, что у hoh-window-stub.
 const MODELS = [{ id: 'default', isDefault: true }, { id: 'opus', displayName: 'Opus' }];
 const CLAUDE = {
   found: { executor: 'claude', installed: true, version: '2.1.3', versionStatus: 'supported', auth: 'authenticated', models: MODELS, detail: null },
   noauth: { executor: 'claude', installed: true, version: '2.1.3', versionStatus: 'supported', auth: 'unauthenticated', models: [], detail: 'claude: вход не выполнен' },
   missing: { executor: 'claude', installed: false, version: null, versionStatus: 'unknown', auth: 'unknown', models: [], detail: 'claude: команда не найдена' },
-  unknown: { executor: 'claude', installed: true, version: '9.9.9', versionStatus: 'unknown', auth: 'authenticated', models: MODELS, detail: 'Версия claude 9.9.9 не проверялась' },
+  unsupported: { executor: 'claude', installed: true, version: '1.0.0', versionStatus: 'unsupported', auth: 'unknown', models: [], detail: 'Версия claude 1.0.0 не поддерживается' },
+  unknown: { executor: 'claude', installed: true, version: null, versionStatus: 'unknown', auth: 'unknown', models: [], detail: 'Версию claude не удалось определить' },
 };
 let claudeState = 'found';
+let accessSources = 'user'; // `--setting-sources` of the next start of Claude (access/get of the fake engine)
 const setClaude = async state => { claudeState = state; await writeFile(claudeFile, state); };
 const fake = async (method, params) => {
   engineCalls.push({ method, params });
-  if (refuse && refuse.method === method) throw new Error(refuse.message);
+  if (refuse && refuse.method === method) return { __hostError: refuse.error };
   if (unanswered && method === 'hoh/model/probe') return { ok: false, latencyMs: 0, toolCalls: false };
   if (stub) return stub.request(method, params);
   if (method === 'hoh/executor/discover') return CLAUDE[claudeState];
+  if (method === 'hoh/executor/access/get') return { executor: 'claude', mode: 'confirm', effective: { mode: 'confirm', flags: ['--permission-mode', 'default', '--setting-sources', accessSources, '--permission-prompt-tool', 'stdio'], text: 'С подтверждением' }, selected: null };
   if (method === 'hoh/executor/select') return { executor: params.executor, model: params.model };
   if (method === 'hoh/settings/get') return { model: { baseUrl: 'http://127.0.0.1:8000', model: 'local' }, security: {}, view: {} };
   if (method === 'session/working-directory/get') return { cwd: '/home/me/Documents/HoH' };
@@ -91,7 +102,8 @@ const firstrunHook = async (kind, a, b) => {
 };
 const withExtras = () => {
   window.__HOH_ENGINE__ = {
-    request: (m, p) => window.__hoh_call('request', m, p),
+    // Tauri rejects the command's promise with the serialized `HostError` itself (an object), not with an Error.
+    request: async (m, p) => { const r = await window.__hoh_call('request', m, p); if (r && r.__hostError) throw r.__hostError; return r; },
     storeApiKey: k => window.__hoh_call('storeApiKey', k),
     saveRules: r => window.__hoh_call('saveRules', r),
     pickFolder: () => window.__hoh_call('pickFolder'),
@@ -101,12 +113,12 @@ const withExtras = () => {
 // there is no special key hook to hide behind.
 const realPath = () => {
   window.__HOH_ENGINE__ = {
-    request: (m, p) => window.__hoh_call('request', m, p),
+    request: async (m, p) => { const r = await window.__hoh_call('request', m, p); if (r && r.__hostError) throw r.__hostError; return r; },
     saveRules: r => window.__hoh_call('saveRules', r),
     pickFolder: () => window.__hoh_call('pickFolder'),
   };
 };
-const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.__hoh_call('request', m, p) }; };
+const requestOnly = () => { window.__HOH_ENGINE__ = { request: async (m, p) => { const r = await window.__hoh_call('request', m, p); if (r && r.__hostError) throw r.__hostError; return r; } }; };
 
 {
   const { page, context, errors, outside } = await open('firstrun', { init: realPath, hook: firstrunHook });
@@ -335,13 +347,24 @@ const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.
 
   await setClaude('unknown');
   await recheck();
-  await page.locator('[data-claude-warning]').waitFor();
-  assert.match(await page.locator('[data-claude-warning]').innerText(), /Не удалось проверить, подходит ли эта версия Claude/);
-  assert.match(await result.innerText(), /Готово\. Ничего вводить не нужно\./);
-  assert.match(await page.locator('[data-claude-version]').innerText(), /версия 9\.9\.9/);
-  assert(await next.isEnabled(), 'версия неизвестна — предупреждение, но «Дальше» не заблокирована молча');
+  await page.getByText('Не удалось определить версию Claude').waitFor();
+  assert.equal(await result.innerText(), 'Не удалось определить версию Claude, поэтому работа с ним не начнётся. Нужна версия 2.x — обновите Claude и нажмите «Проверить ещё раз».');
+  assert.equal(await page.getByRole('button', { name: 'Проверить ещё раз' }).count(), 1);
+  await next.click();
+  await page.waitForFunction(() => /Не удалось определить версию Claude/.test(document.querySelector('.fr-foot-note')?.textContent ?? ''));
+  assert.equal(await page.locator('[data-screen=firstrun]').getAttribute('data-step'), '1', 'версия не распознана — старт отклонил бы, «Дальше» не пускает');
   await page.screenshot({ path: join(t3shots, 'claude-unknown-1440.png'), animations: 'disabled' });
-  ok('версия неизвестна: предупреждение текстом, «Дальше» открыта');
+  ok('версия не распознана: отказ, как у настоящего движка (auth unknown), «Дальше» не пускает');
+
+  await setClaude('unsupported');
+  await recheck();
+  await page.getByText('Эта версия Claude не поддерживается.').waitFor();
+  assert.equal(await result.innerText(), 'Эта версия Claude не поддерживается. Нужна версия 2.x — обновите Claude и нажмите «Проверить ещё раз».');
+  assert.equal(await page.getByRole('button', { name: 'Проверить ещё раз' }).count(), 1);
+  await next.click();
+  await page.waitForFunction(() => /Эта версия Claude не поддерживается/.test(document.querySelector('.fr-foot-note')?.textContent ?? ''));
+  assert.equal(await page.locator('[data-screen=firstrun]').getAttribute('data-step'), '1');
+  ok('версия не поддерживается: отказ дословно, «Проверить ещё раз», «Дальше» не пускает');
 
   await setClaude('found');
   await recheck();
@@ -354,9 +377,29 @@ const requestOnly = () => { window.__HOH_ENGINE__ = { request: (m, p) => window.
   assert.deepEqual(sent.map(c => c.method), ['hoh/executor/select'], 'на шаге «Модель» сохранение — только select');
   assert.deepEqual(sent[0].params, { executor: 'claude', model: 'opus' });
   ok('«Дальше» сохраняет выбор привилегированной hoh/executor/select {claude, opus}');
+  const CONFIRM_LEAD = 'Помощник спрашивает перед изменениями.';
+  const CONFIRM_FULL = `${CONFIRM_LEAD} Действуют и ваши собственные настройки Claude: их разрешающие правила могут пропускать действия без вопроса.`;
+  await page.locator('.fr-lock').getByText(CONFIRM_LEAD).waitFor();
+  assert((await page.locator('.fr-lock').innerText()).includes(CONFIRM_FULL), 'источник user: обе фразы');
+  ok('мастер: источник user — подпись «Спрашивать» с двумя фразами');
+  if (!stub) {
+    accessSources = '';
+    await page.getByRole('button', { name: 'Назад' }).click();
+    await recheck();
+    await page.getByText('Готово. Ничего вводить не нужно.').waitFor();
+    await next.click();
+    await page.getByRole('heading', { name: 'Правила работы' }).waitFor();
+    await page.locator('.fr-lock').getByText(CONFIRM_LEAD).waitFor();
+    const lock = await page.locator('.fr-lock').innerText();
+    assert(lock.includes(CONFIRM_LEAD) && !lock.includes('собственные настройки Claude'), 'изолированно: только первая фраза');
+    accessSources = 'user';
+    ok('мастер: изолированно (`--setting-sources ""`) — только первая фраза');
+  }
   if (stub) {
     const got = await stub.request('hoh/executor/access/get', { executor: 'claude' });
     assert.deepEqual(got.selected, { executor: 'claude', model: 'opus' }, 'заглушка помнит выбор');
+    assert.equal(got.effective.flags[got.effective.flags.indexOf('--setting-sources') + 1], 'user', 'движок запускает Claude только с настройками пользователя');
+    assert.deepEqual(got.effective.flags.slice(0, 4), ['--permission-mode', 'default', '--setting-sources', 'user'], '--setting-sources сразу за --permission-mode, как в настоящем запуске');
     await stub.request('session/prompt', { sessionId: 'claude-chat-1', contentBlocks: [{ type: 'text', text: 'привет' }] });
     const { calls } = await stub.request('hoh/stub/executor-calls', {});
     assert.deepEqual(calls.map(c => [c.executor, c.model, c.sessionId]), [['claude', 'opus', 'claude-chat-1']], 'новый чат прошёл через Claude с выбранной моделью');
@@ -412,27 +455,31 @@ if (askingStub) {
   unanswered = false;
   ok('адрес по умолчанию не ответил: честный текст, шаг не пройден');
   // правка 2: «Отклонить» в окне защиты
-  refuse = { method: 'hoh/model/probe', message: 'Подтверждение отклонено' };
+  refuse = { method: 'hoh/model/probe', error: HOST.rejected };
   await page.getByRole('button', { name: 'Дальше', exact: true }).click();
   await page.getByText(/Вы не разрешили проверку/).waitFor();
   assert.equal(await page.locator('.fr-result').innerText(), 'Вы не разрешили проверку. Нажмите «Дальше» и выберите «Разрешить один раз».');
   assert(!(await body()).includes('Неизвестная ошибка'));
   await page.screenshot({ path: join(t3shots, 'ux-wizard-refusal-1440.png'), animations: 'disabled' });
-  refuse = { method: 'hoh/model/probe', message: 'Подтверждение истекло' };
+  refuse = { method: 'hoh/model/probe', error: HOST.expired };
   await page.getByRole('button', { name: 'Дальше', exact: true }).click();
   await page.getByText(/Время на ответ вышло/).waitFor();
   refuse = null;
   await page.getByRole('button', { name: 'Дальше', exact: true }).click();
   await page.getByRole('heading', { name: 'Правила работы' }).waitFor();
-  refuse = { method: 'hoh/settings/set', message: 'Подтверждение отклонено' };
+  refuse = { method: 'hoh/settings/set', error: HOST.rejected };
   await page.getByRole('button', { name: 'Назад' }).click();
   await page.getByRole('button', { name: 'Дальше', exact: true }).click();
   await page.getByText('Вы не разрешили сохранение. Нажмите «Дальше» и выберите «Разрешить один раз».').waitFor();
   assert(!(await body()).includes('Неизвестная ошибка'));
-  refuse = { method: 'hoh/settings/set', message: '' };
+  refuse = { method: 'hoh/settings/set', error: HOST.failed };
   await page.getByRole('button', { name: 'Дальше', exact: true }).click();
   await page.getByText(/Что-то пошло не так\. Попробуйте ещё раз\./).waitFor();
   assert(!(await body()).includes('Неизвестная ошибка'), 'пустая ошибка не даёт «Неизвестная ошибка»');
+  refuse = { method: 'hoh/settings/set', error: HOST.refused };
+  await page.getByRole('button', { name: 'Дальше', exact: true }).click();
+  await page.getByText('Не удалось сохранить. Помощник отклонил запрос').waitFor();
+  assert(!(await body()).includes('Неизвестная ошибка'));
   refuse = null;
   ok('отказ в окне защиты и истёкший срок: понятный текст на «Дальше» (проверка и сохранение), «Неизвестная ошибка» нет');
   // слова первого экрана: ничего из списка запрещённых слов, данные уходят в сервис — сказано
@@ -603,6 +650,49 @@ async function openApproval(view, viewport, options = {}) {
   ok('сырая команда только под «Подробностями», основной текст — объяснение');
 }
 
+// Просьба Claude (ядро ставит `risk: unassessed`; в заголовке — старое слово ядра «Исполнитель «claude»»): окно говорит человеческими словами.
+{
+  const ask = (patch = {}) => request({ risk: 'unassessed', humanText: 'Исполнитель «claude» просит выполнить команду', reason: 'Исполнитель «claude» просит выполнить команду', details: 'Команда: ls -la ~/Документы', ...patch });
+  const { page, context, errors } = await openApproval(ask());
+  await page.getByRole('alertdialog').waitFor();
+  const body = await page.locator('body').innerText();
+  assert.equal(await page.locator('.ap-what').innerText(), 'Claude просит выполнить команду', 'вместо «Исполнитель «claude»» — Claude');
+  assert(!/исполнител/i.test(body), 'слова «исполнитель» в окне защиты нет');
+  assert.equal(await page.locator('.ap-risk').innerText(), 'Риск не оценён');
+  assert.equal(await page.locator('.ap-risk').getAttribute('data-risk'), 'unassessed');
+  assert(!body.includes('Высокий риск'), 'не красный «Высокий риск»');
+  assert.equal(await page.locator('.ap-why').getAttribute('data-risk'), 'unassessed');
+  assert.equal(await page.locator('.ap-said').count(), 0, 'объяснение равно заголовку: блока нет');
+  assert.equal(await page.locator('.ap-details').getAttribute('open'), '', '«Подробности» раскрыты');
+  await page.getByText('Команда: ls -la ~/Документы').waitFor();
+  assert(await page.getByText('Команда: ls -la ~/Документы').isVisible(), 'команда видна без нажатия');
+  await page.screenshot({ path: join(t3shots, 'ux-approval-claude-1440.png'), animations: 'disabled' });
+  assert.deepEqual(errors, []);
+  await context.close();
+  ok('просьба Claude: команда видна сразу, «Риск не оценён», без слова «исполнитель» и без повтора заголовка');
+}
+{
+  const { page, context } = await openApproval(request({ risk: 'unassessed', humanText: 'Claude просит изменить файл заметки.txt', reason: '', details: 'Edit: заметки.txt' }));
+  await page.getByRole('alertdialog').waitFor();
+  assert.equal(await page.locator('.ap-said').count(), 0, 'пустое объяснение просьбы Claude не показывается');
+  assert.equal(await page.locator('.ap-details').getAttribute('open'), '');
+  await context.close();
+  const next = await openApproval(request({ risk: 'unassessed', humanText: 'Claude просит записать файл новое.txt', reason: 'Нужно сохранить результат.', details: 'Write: новое.txt' }));
+  await next.page.getByRole('alertdialog').waitFor();
+  assert.equal(await next.page.locator('.ap-said p').innerText(), 'Нужно сохранить результат.', 'настоящее объяснение остаётся');
+  assert(!(await next.page.locator('.ap-why').innerText()).includes('Прежний вариант'), 'про прежний вариант — только для существующего файла');
+  await next.context.close();
+  const old = await openApproval(request({ humanText: 'Изменить файл отчёт.docx', reason: 'Поправить цифры.' }));
+  await old.page.getByRole('alertdialog').waitFor();
+  await old.page.getByText('Содержимое файла изменится. Прежний вариант может быть потерян.').waitFor();
+  assert.equal(await old.page.locator('.ap-details').count(), 0);
+  await old.context.close();
+  const fresh = await openApproval(request({ humanText: 'Записать файл новый.docx', reason: 'Нужен новый файл.' }));
+  await fresh.page.getByRole('alertdialog').waitFor();
+  assert(!(await fresh.page.locator('.ap-why').innerText()).includes('Прежний вариант может быть потерян'));
+  await fresh.context.close();
+  ok('пустое объяснение Claude скрыто, «Прежний вариант» — только у существующего файла');
+}
 {
   const { page, context } = await openApproval(request());
   await page.getByRole('alertdialog').waitFor();

@@ -43,6 +43,15 @@ function relativeInside(address, offset, whole) {
   return !token.startsWith('/') && !parts.includes('..') && !/^[.\-_]/.test(token) && /\.[A-Za-z0-9]{1,8}(?::\d+)*$/.test(parts.at(-1))
     && !/^(?:etc|usr|var|home|root|tmp|mnt|opt|bin|sbin|lib|proc|dev|sys|boot|srv|run|media|Users|workspace)$/i.test(parts[0]);
 }
+const SYSTEM_ROOT = /^\/(?:etc|usr|var|home|root|tmp|mnt|opt|bin|sbin|lib|proc|dev|sys|boot|srv|run|media|Users|workspace)(?:\/|$)/i;
+/** Is this match a path or ordinary text? A '/' that continues a word («км/ч», «и/или», «24/7», «TCP/IP») or stands alone («10 / 2») is text.
+ *  A '/' glued to a word is a path only when what follows is a system folder or climbs out with '..' (`sub/../../etc/passwd`). */
+function startsAPath(address, offset, whole) {
+  if (!address.startsWith('/')) return true;
+  if (address === '/') return false;
+  const glued = offset > 0 && /[\p{L}\p{N}_]/u.test(whole[offset - 1]);
+  return !glued || SYSTEM_ROOT.test(address) || address.split('/').includes('..');
+}
 function redactPaths(value, folder) {
   const file = path => humanFile(fileAddress(path), folder);
   let result = value;
@@ -56,7 +65,7 @@ function redactPaths(value, folder) {
   // A data URI's MIME header is not a path; its payload is still filtered.
   return result.replace(
     /data:[-\w!#$%&'*+.^`|~]+\/[-\w!#$%&'*+.^`|~]+(?=[;,])|[A-Za-z][A-Za-z\d+.-]*:\/{2}[^\s<>"'`()\[\]{};,]*|(?:[A-Za-z]:[\\/]|\\\\|\/|\.\.[\\/])[^\s<>"'`()\[\]{};,]*/gimu,
-    (address, offset, whole) => /^data:/i.test(address) || /^[A-Za-z][A-Za-z\d+.-]*:\/{2}/.test(address) && !/^file:\/{2}/i.test(address) || relativeInside(address, offset, whole) ? address : file(address),
+    (address, offset, whole) => /^data:/i.test(address) || /^[A-Za-z][A-Za-z\d+.-]*:\/{2}/.test(address) && !/^file:\/{2}/i.test(address) || relativeInside(address, offset, whole) || !startsAPath(address, offset, whole) ? address : file(address),
   );
 }
 export function visibleText(value, folder) {
@@ -218,7 +227,8 @@ export class ChatProjection {
   append(entry) { const index = this.entries.length; this.entries = [...this.entries, entry]; return index; }
   optimistic(value) {
     const id = 'local-' + ++this.counter;
-    this.append({ id, kind: 'user', text: visibleText(value, this.folder), pending: true, at: Date.now() });
+    // What the person typed is shown as typed: no filter ever touches it.
+    this.append({ id, kind: 'user', text: text(value), pending: true, at: Date.now() });
     return id;
   }
   receipt(localId, messageId) {
@@ -347,7 +357,7 @@ export class ChatProjection {
       else this.setRunning(false);
     }
     if (event.type === 'user/message' && data.source?.kind === 'user') {
-      const id = text(data.id); const value = visibleText(contentText(data.content), this.folder);
+      const id = text(data.id); const value = contentText(data.content);
       if (!id || !value || this.users.has(id)) return;
       const pending = this.entries.findIndex(e => e.kind === 'user' && e.pending && e.text === value);
       if (pending >= 0) { this.users.set(id, pending); this.replace(pending, { ...this.entries[pending], pending: false }); }

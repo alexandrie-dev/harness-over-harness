@@ -1,1 +1,1 @@
-{"jsonrpc":"2.0","id":"hoh/executor/access/get","method":"hoh/executor/access/get","params":{"executor":"claude"}}
+{"jsonrpc":"2.0","id":"hoh/executor/access/get","method":"hoh/executor/access/get","params":{"executor":"claude","sessionId":"s-1"}}

@@ -1,15 +1,15 @@
-import { DEFAULT_ACCESS_MODE, discoverView } from '../../lib/executor.mjs';
+import { DEFAULT_ACCESS_MODE, discoverView, personalSettingsApply, projectSettingsIgnored } from '../../lib/executor.mjs';
+import { errorText, hostError, hostWords, refusalWords } from '../../lib/hostError.mjs';
 import { detectProvider } from '../../lib/providers.mjs';
 import { numberRepeatedSteps, assistantChunks, ChatProjection, humanFile, windowText } from './projection.mjs';
 
 // Observable behavior without React or a particular transport. The production
 // frame scheduler is injectable so cancellation races can be tested deterministically.
 const WINDOW_SESSION = 'window-main';
-const METHOD_UNAVAILABLE = 'method-unavailable';
 /** The native host marks only "engine has no such method"; every other failure stays a failure. */
 async function unlessMissing(call, fallback) {
   try { return await call(); } catch (error) {
-    if ((error?.message ?? String(error)) !== METHOD_UNAVAILABLE) throw error;
+    if (hostError(error).code !== 'unavailable') throw error;
     return fallback();
   }
 }
@@ -28,11 +28,10 @@ function folderLabelOf(normalized, name) {
 }
 /** Why the window could not reach the assistant, in words, and what to do. The host's own Russian refusals are passed on. */
 function connectionProblem(error) {
-  const message = (error?.message ?? (typeof error === 'string' ? error : '')).trim();
-  const reason = message === 'Помощник ещё подключается' ? 'Помощник ещё запускается.'
-    : /[А-Яа-яЁё]/.test(message) && message.length < 160 ? message
-    : message === METHOD_UNAVAILABLE ? 'Окно и Помощник из разных версий программы.'
-    : 'Помощник не отвечает.';
+  const { code } = hostError(error);
+  const reason = code === 'connecting' ? 'Помощник ещё запускается.'
+    : code === 'unavailable' ? 'Окно и Помощник из разных версий программы.'
+    : hostWords(error) || 'Помощник не отвечает.';
   return `Не удалось связаться с Помощником. ${reason} Подождите немного и нажмите «Подключиться ещё раз»; если не помогает, закройте HoH и откройте снова.`;
 }
 export class ChatController {
@@ -42,8 +41,8 @@ export class ChatController {
     this.epoch = 0; this.generation = 0; this.queue = Promise.resolve(); this.received = new Set();
     this.ignoreUntilNextTurn = false; this.allowNextTurn = false; this.cancelUnconfirmed = false;
     this.statusOff = undefined; this.statusPending = undefined; this.lifecycle = 0;
-    this.active = false; this.reloading = false;
-    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', model: '', modelIcon: '', modelScope: '', executor: '', executorModel: '', executorModels: [], executorBusy: false, permissions: '', notice: '', folderPath: '', draft: '', questions: [],
+    this.active = false; this.reloading = false; this.accessSeq = 0; this.sessionPrivacy = '';
+    this.state = { entries: [], connection: 'connecting', busy: false, canceling: false, error: '', privacy: 'unknown', folderLabel: 'Рабочая папка', model: '', modelIcon: '', modelScope: '', executor: '', executorModel: '', projectSettingsOff: false, personalSettings: false, accessPending: false, folderFixed: false, newExecutor: '', newExecutorModel: '', executorModels: [], executorBusy: false, permissions: '', notice: '', folderPath: '', draft: '', questions: [],
       sessions: [], currentId: '', working: [] };
     this.questionsOff = undefined;
     // `link` counts real connections of the window to the engine; opening another chat keeps the same link.
@@ -73,7 +72,7 @@ export class ChatController {
     if (seq !== this.listSeq || !this.active) return;
     const rows = listed.map(item => {
       const raw = typeof item.title === 'string' ? item.title.trim() : '';
-      return { id: item.id, title: raw ? windowText(raw, this.projection.folder ?? '', '') || 'Разговор' : '', updatedAt: Number(item.updatedAt) || 0 };
+      return { id: item.id, title: raw, updatedAt: Number(item.updatedAt) || 0 };
     });
     if (this.sessionId && !rows.some(row => row.id === this.sessionId)) rows.unshift({ id: this.sessionId, title: '', updatedAt: 0 });
     this.update({ sessions: rows });
@@ -87,7 +86,7 @@ export class ChatController {
   /** Open an existing chat: its history is read again from the engine, nothing is shared between chats. */
   async openSession(id) {
     if (!id || id === this.sessionId || !this.active || this.state.connection === 'connecting') return;
-    this.update({ notice: '' });
+    this.update({ notice: '', folderFixed: false });
     await this.connect(false, id);
   }
   /** A chat that was never written to is reused instead of piling up empty ones. */
@@ -98,7 +97,7 @@ export class ChatController {
     const empty = this.state.sessions.find(row => row.id !== this.sessionId && row.title === '');
     if (empty) { await this.openSession(empty.id); return; }
     const id = globalThis.crypto?.randomUUID ? `chat-${globalThis.crypto.randomUUID()}` : `chat-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-    this.update({ notice: '' });
+    this.update({ notice: '', folderFixed: false });
     await this.connect(false, id);
   }
   async consume(task, current) {
@@ -127,6 +126,8 @@ export class ChatController {
         this.projection.finishGaps(); this.publish();
       }
       if (event.type === 'turn/end') void this.refreshSessions();
+      // The mode of the next message and of the process may have changed: ask the engine again (start and end of every turn).
+      if (event.type === 'turn/start' || event.type === 'turn/end') void this.readAccess(this.transport, this.epoch);
       if (event.type === 'turn/end' && event.data?.reason?.kind === 'error')
         this.update({ error: 'Ответ прервался. Попробуйте ещё раз.' });
     }
@@ -295,7 +296,7 @@ export class ChatController {
       if (recovering) projection.stop();
       this.projection = projection; this.publish(); this.reloading = false;
       this.basePrivacy = summary.model.local ? 'local' : 'remote';
-      this.update({ privacy: this.state.executor === 'claude' ? 'remote' : this.basePrivacy, connection: 'ready', error: '' });
+      this.update({ privacy: this.privacyNow(this.state.executor === 'claude') || this.basePrivacy, connection: 'ready', error: '' });
       void this.refreshSessions();
       loading = false;
       for (const event of buffered) this.enqueue(event);
@@ -317,20 +318,45 @@ export class ChatController {
       this.update({ model: windowText(found.label, '', ''), modelIcon: found.icon ?? '', modelScope: found.scope, permissions });
     } catch { /* the line simply shows less */ }
   }
-  /** Which executor runs new chats (`selected`) and its access mode as the engine really runs it (`effective`), never as the window last asked. Without a selected Claude: ''. */
+  /**
+   * What the engine says about the OPEN chat (`session` of `access/get` with its `sessionId`): its executor, model, where its data
+   * goes and the mode of its NEXT turn (`mode`), with the mode of the live process (`running`) and whether the change waits for the
+   * next message (`pending`). `selected` is only the choice for NEW chats and is kept apart. An engine that does not name the
+   * session is read as before: `selected` stands for the chat. Returns the mode shown for the chat ('' without Claude).
+   */
   async readAccess(transport, ownEpoch) {
+    const sid = this.sessionId; const seq = ++this.accessSeq;
     try {
-      const answer = await transport.request('hoh/executor/access/get', { executor: 'claude' });
+      const answer = await transport.request('hoh/executor/access/get', { executor: 'claude', ...(sid ? { sessionId: sid } : {}) });
       if (ownEpoch !== undefined && ownEpoch !== this.epoch) return '';
-      const claude = answer?.selected?.executor === 'claude';
-      const mode = answer?.effective?.mode ?? DEFAULT_ACCESS_MODE;
+      const newClaude = answer?.selected?.executor === 'claude';
+      const own = answer?.session && typeof answer.session === 'object' ? answer.session : null;
+      const claude = own ? own.executor === 'claude' : newClaude;
+      const mode = (own ? own.mode : undefined) ?? answer?.effective?.mode ?? DEFAULT_ACCESS_MODE;
       const access = claude && (mode === 'full' || mode === 'confirm') ? mode : '';
-      // With Claude the messages go to a service on the internet, whatever the engine's own model is.
-      this.update({ access, executor: claude ? 'claude' : '', executorModel: claude ? String(answer.selected.model ?? '') : '', ...(claude ? { privacy: 'remote' } : this.basePrivacy ? { privacy: this.basePrivacy } : {}) });
-      if (claude) void this.loadExecutorModels(); // the names of the models for the composer line
+      const running = own && (own.running === 'full' || own.running === 'confirm') ? own.running : '';
+      const pending = access !== '' && own !== null && (own.pending === true || (running !== '' && running !== access));
+      const model = claude ? String((own ? own.model : answer.selected.model) ?? '') : '';
+      this.sessionPrivacy = own && (own.privacy === 'remote' || own.privacy === 'local') ? own.privacy : '';
+      if (sid === this.sessionId && seq === this.accessSeq) {
+        // With Claude the messages go to a service on the internet, whatever the engine's own model is.
+        this.update({
+          access, accessPending: pending, executor: claude ? 'claude' : '', executorModel: model,
+          newExecutor: newClaude ? 'claude' : '', newExecutorModel: newClaude ? String(answer.selected.model ?? '') : '',
+          projectSettingsOff: claude && projectSettingsIgnored(answer.effective?.flags), personalSettings: claude && personalSettingsApply(answer.effective?.flags),
+          ...(this.privacyNow(claude) ? { privacy: this.privacyNow(claude) } : {}),
+        });
+        if (claude || newClaude) void this.loadExecutorModels(); // the names of the models for the composer line and the menu
+      }
       return access;
-    } catch { this.update({ access: '', executor: '', executorModel: '' }); return ''; }
+    } catch {
+      // A read that fails after the window left (disconnect, another connection) must not publish anything.
+      if ((ownEpoch === undefined || ownEpoch === this.epoch) && sid === this.sessionId && seq === this.accessSeq) this.update({ access: '', accessPending: false, executor: '', executorModel: '', newExecutor: '', newExecutorModel: '', projectSettingsOff: false, personalSettings: false });
+      return '';
+    }
   }
+  /** Where the data of the open chat goes: what the engine said about the chat, else by its executor. */
+  privacyNow(claude) { return this.sessionPrivacy || (claude ? 'remote' : this.basePrivacy || ''); }
   /** `hoh/executor/discover`: a real, read-only call every time. The raw answer goes to the screen that shows it. */
   async discoverClaude() {
     if (!this.transport) throw new Error('нет связи с Помощником');
@@ -352,7 +378,7 @@ export class ChatController {
     try { await this.transport.request('hoh/executor/select', { executor, model }); } catch { refused = true; }
     await this.readAccess(this.transport, ownEpoch);
     if (ownEpoch !== this.epoch) return false;
-    const actual = this.state.executor === 'claude' ? this.state.executorModel : null;
+    const actual = this.state.newExecutor === 'claude' ? this.state.newExecutorModel : null;
     const asked = executor === 'claude' ? model : null;
     const failed = refused || actual !== asked;
     this.update({ executorBusy: false, notice: failed ? 'Поставщик не изменён: действие не разрешено или не удалось.' : '' });
@@ -398,15 +424,21 @@ export class ChatController {
   async setFolder(path) {
     if (!path || !this.transport || this.state.connection !== 'ready' || this.state.busy) return;
     const ownEpoch = this.epoch;
+    this.update({ folderFixed: false });
     try {
       await this.transport.request('session/working-directory/set', { sessionId: this.sessionId, path });
       if (ownEpoch !== this.epoch) return;
       this.projection.folder = path;
       const normalized = path.replaceAll('\\', '/').replace(/\/$/, '');
       const name = humanFile(normalized, normalized.slice(0, normalized.lastIndexOf('/')));
-      this.update({ folderPath: path, folderLabel: folderLabelOf(path.replaceAll('\\', '/').replace(/\/$/, ''), name), error: '' });
-    } catch {
-      if (ownEpoch === this.epoch) this.update({ error: 'Не удалось сменить папку. Попробуйте ещё раз.' });
+      this.update({ folderPath: path, folderLabel: folderLabelOf(path.replaceAll('\\', '/').replace(/\/$/, ''), name), error: '', folderFixed: false });
+    } catch (error) {
+      if (ownEpoch !== this.epoch) return;
+      // By the code of the refusal: a chat of Claude keeps its folder (the person starts a new chat), no answer in the window is its own matter.
+      const fixed = hostError(error).code === 'folder-fixed';
+      this.update({ folderFixed: fixed, error: fixed ? refusalWords(error)
+        : hostError(error).code === 'rejected' ? 'Вы не разрешили смену папки. Выберите папку ещё раз и нажмите «Разрешить один раз».'
+        : errorText(error, 'Не удалось сменить папку. Попробуйте ещё раз.') });
     }
   }
   disconnect() {

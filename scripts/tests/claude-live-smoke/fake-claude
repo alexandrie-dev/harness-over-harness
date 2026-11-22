@@ -1,0 +1,238 @@
+#!/usr/bin/python3 -I
+"""A stand-in for the `claude` CLI, only to test scripts/claude-live-smoke.sh without the real one:
+`--version`, the stream-json `initialize`, and the smoke's two tasks.
+
+What it copies from the CLI is only what the smoke's report checks:
+- `bypassPermissions` runs every step without a question; otherwise a step is asked with
+  `can_use_tool`, unless an allow rule or a PreToolUse hook answering "allow" settles it;
+- the task folder's `.claude/settings.json` (area `project`) and `.claude/settings.local.json`
+  (`local`) are loaded when `--setting-sources` is absent or names the area; its `.mcp.json`
+  servers (with `enableAllProjectMcpServers`) too, unless `--strict-mcp-config` is given;
+- with the area `project` also its instructions and skills: every `HOH-MARK-…` word of
+  `CLAUDE.md` and `.claude/rules/*.md` ends each reply, that of `sub/CLAUDE.md` once a file under
+  `sub/` is read; `.claude/skills/<name>/SKILL.md` puts `<name>` in `system/init.skills`; the
+  `SessionStart` and `UserPromptSubmit` hooks of its settings run.
+It reads nothing of the user's own settings. With FAKE_CLAUDE_IGNORES_SOURCES set it loads the
+folder's settings and servers whatever the switches say (to see the smoke's isolated rows fail).
+"""
+import json, os, re, subprocess, sys, time
+
+ARGS = sys.argv[1:]
+if "--version" in ARGS:
+    print("2.1.0 (Claude Code)")
+    sys.exit(0)
+
+
+def value_of(flag):
+    return ARGS[ARGS.index(flag) + 1] if flag in ARGS and ARGS.index(flag) + 1 < len(ARGS) else None
+
+
+SESSION = value_of("--session-id") or value_of("--resume") or "fake-session"
+BYPASS = value_of("--permission-mode") == "bypassPermissions"
+SOURCES = (value_of("--setting-sources") if "--setting-sources" in ARGS else "user,project,local").split(",")
+if os.environ.get("FAKE_CLAUDE_IGNORES_SOURCES"):
+    # A CLI that loads the folder's settings whatever it is told: the smoke's isolated rows must fail.
+    SOURCES, ARGS = ["project", "local"], [arg for arg in ARGS if arg != "--strict-mcp-config"]
+CWD = os.getcwd()
+
+
+def load(name):
+    try:
+        with open(os.path.join(CWD, ".claude", name), encoding="utf-8") as file:
+            return json.load(file)
+    except (OSError, ValueError):
+        return {}
+
+
+SETTINGS = [load(name) for area, name in (("project", "settings.json"), ("local", "settings.local.json"))
+            if area in SOURCES]
+ALLOW = [rule for s in SETTINGS for rule in (s.get("permissions") or {}).get("allow", [])]
+HOOKS = {event: [entry for s in SETTINGS for entry in (s.get("hooks") or {}).get(event, [])]
+         for event in ("PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit")}
+PROJECT = "project" in SOURCES
+
+
+def text_of(*path):
+    try:
+        with open(os.path.join(CWD, *path), encoding="utf-8") as file:
+            return file.read()
+    except OSError:
+        return ""
+
+
+def marks(text):
+    return re.findall(r"HOH-MARK-[A-Z]+", text) if PROJECT else []
+
+
+RULES = os.path.join(CWD, ".claude", "rules")
+MEMORY = marks(text_of("CLAUDE.md") + "".join(text_of(".claude", "rules", name) for name in
+                                              (sorted(os.listdir(RULES)) if os.path.isdir(RULES) else [])))
+SKILLS_DIR = os.path.join(CWD, ".claude", "skills")
+SKILLS = sorted(name for name in (os.listdir(SKILLS_DIR) if PROJECT and os.path.isdir(SKILLS_DIR) else [])
+                if os.path.exists(os.path.join(SKILLS_DIR, name, "SKILL.md")))
+counter = 0
+
+
+def write(value):
+    sys.stdout.write(json.dumps(value) + "\n")
+    sys.stdout.flush()
+
+
+def next_id(prefix):
+    global counter
+    counter += 1
+    return f"{prefix}-{counter}"
+
+
+def read():
+    line = sys.stdin.readline()
+    if not line:
+        sys.exit(0)
+    try:
+        return json.loads(line)
+    except ValueError:
+        return {}
+
+
+def assistant(block):
+    write({"type": "assistant", "session_id": SESSION, "parent_tool_use_id": None,
+           "message": {"id": next_id("msg"), "role": "assistant", "model": "fake-model-1", "content": [block]}})
+
+
+def tool_result(tool_id, text, is_error):
+    write({"type": "user", "session_id": SESSION, "parent_tool_use_id": None,
+           "message": {"role": "user", "content": [
+               {"type": "tool_result", "tool_use_id": tool_id, "content": text, "is_error": is_error}]}})
+
+
+def hooks(event, tool, tool_input):
+    """Runs the matching hooks; True when one answered "allow"."""
+    allowed = False
+    for entry in HOOKS[event]:
+        if not re.fullmatch(entry.get("matcher") or ".*", tool):
+            continue
+        for hook in entry.get("hooks", []):
+            done = subprocess.run(["/bin/sh", "-c", hook.get("command", "")], capture_output=True, text=True,
+                                  input=json.dumps({"hook_event_name": event, "tool_name": tool, "tool_input": tool_input}))
+            try:
+                answer = json.loads(done.stdout or "{}")
+            except ValueError:
+                answer = {}
+            allowed |= (answer.get("hookSpecificOutput") or {}).get("permissionDecision") == "allow"
+    return allowed
+
+
+def ask(tool, tool_id, tool_input):
+    request = next_id("perm")
+    write({"type": "control_request", "request_id": request,
+           "request": {"subtype": "can_use_tool", "tool_name": tool, "input": tool_input, "tool_use_id": tool_id}})
+    while True:
+        message = read()
+        if message.get("type") == "control_response" and (message.get("response") or {}).get("request_id") == request:
+            return ((message["response"].get("response") or {}).get("behavior")) == "allow"
+
+
+def step(tool, tool_input, rule, run):
+    tool_id = next_id("toolu")
+    assistant({"type": "tool_use", "id": tool_id, "name": tool, "input": tool_input})
+    allowed = BYPASS or hooks("PreToolUse", tool, tool_input) or (rule is not None and rule in ALLOW)
+    if not allowed:
+        allowed = ask(tool, tool_id, tool_input)
+    if allowed:
+        tool_result(tool_id, run(), False)
+        hooks("PostToolUse", tool, tool_input)
+    else:
+        tool_result(tool_id, "The user denied this step.", True)
+    return allowed
+
+
+def append_edited():
+    with open(os.path.join(CWD, "notes.txt"), "a", encoding="utf-8") as file:
+        file.write("edited\n")
+    return "edited"
+
+
+class Mcp:
+    """The `.mcp.json` server named hoh-live, started as the CLI would."""
+
+    def __init__(self):
+        self.process = None
+        settings = {k: v for s in SETTINGS for k, v in s.items()}
+        if "--strict-mcp-config" in ARGS or not settings.get("enableAllProjectMcpServers"):
+            return
+        try:
+            with open(os.path.join(CWD, ".mcp.json"), encoding="utf-8") as file:
+                server = json.load(file)["mcpServers"]["hoh-live"]
+        except (OSError, ValueError, KeyError):
+            return
+        self.process = subprocess.Popen([server["command"], *server.get("args", [])], stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, text=True)
+        self.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "fake"}})
+        self.call("tools/list", {})
+
+    def call(self, method, params):
+        self.process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": next_id("mcp"), "method": method, "params": params}) + "\n")
+        self.process.stdin.flush()
+        return json.loads(self.process.stdout.readline())
+
+
+MCP = None
+
+
+def turn(text):
+    global MCP
+    MCP = MCP or Mcp()
+    tools = ["Read", "Edit", "Bash"] + (["mcp__hoh-live__hoh_live_write"] if MCP.process else [])
+    write({"type": "system", "subtype": "init", "session_id": SESSION, "model": "fake-model-1", "cwd": CWD, "tools": tools,
+           "skills": SKILLS, "slash_commands": SKILLS})
+    hooks("UserPromptSubmit", "", {"prompt": text})
+    extra = list(MEMORY)
+    if "hoh_live_write" in text:
+        if MCP.process:
+            ok = step("mcp__hoh-live__hoh_live_write", {"text": "edited"}, None,
+                      lambda: json.dumps(MCP.call("tools/call", {"name": "hoh_live_write", "arguments": {"text": "edited"}})))
+            reply = "written" if ok else "the call was denied"
+        else:
+            reply = "the tool hoh_live_write is not available"
+    elif "notes.txt" not in text:
+        # The project rows' task: read the one file it names and say its first line.
+        name = re.search(r"read (\S+\.txt)", text).group(1)
+        tool_id = next_id("toolu")
+        assistant({"type": "tool_use", "id": tool_id, "name": "Read", "input": {"file_path": os.path.join(CWD, name)}})
+        reply = text_of(name).split("\n")[0]
+        tool_result(tool_id, reply, False)
+        if os.path.dirname(name):
+            extra += marks(text_of(os.path.dirname(name), "CLAUDE.md"))
+    else:
+        tool_id = next_id("toolu")
+        assistant({"type": "tool_use", "id": tool_id, "name": "Read", "input": {"file_path": os.path.join(CWD, "first.txt")}})
+        with open(os.path.join(CWD, "first.txt"), encoding="utf-8") as file:
+            first = file.readline().strip()
+        tool_result(tool_id, first, False)
+        edited = step("Edit", {"file_path": os.path.join(CWD, "notes.txt"), "old_string": "notes\n", "new_string": "notes\nedited\n"},
+                      "Edit", append_edited)
+        counted = step("Bash", {"command": "wc -l first.txt"}, "Bash(wc:*)",
+                       lambda: subprocess.run(["wc", "-l", "first.txt"], capture_output=True, text=True, cwd=CWD).stdout)
+        reply = f"{first}; edit {'done' if edited else 'denied'}; command {'ran' if counted else 'denied'}"
+    reply = " ".join([reply, *extra])
+    assistant({"type": "text", "text": reply})
+    # The real CLI takes seconds; the smoke reads this process's command line from /proc meanwhile.
+    time.sleep(1)
+    write({"type": "result", "subtype": "success", "is_error": False, "result": reply, "session_id": SESSION,
+           "duration_ms": 1, "num_turns": 1})
+
+
+hooks("SessionStart", "", {"source": "startup"})
+while True:
+    message = read()
+    if message.get("type") == "control_request":
+        request = message.get("request") or {}
+        response = {}
+        if request.get("subtype") == "initialize":
+            response = {"models": [{"value": "default", "displayName": "Default"}],
+                        "account": {"email": "user@example.com", "tokenSource": "claude.ai"}}
+        write({"type": "control_response",
+               "response": {"subtype": "success", "request_id": message.get("request_id"), "response": response}})
+    elif message.get("type") == "user":
+        content = (message.get("message") or {}).get("content") or [{}]
+        turn(content[0].get("text", "") if isinstance(content[0], dict) else "")

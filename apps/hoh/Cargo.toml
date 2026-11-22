@@ -65,6 +65,9 @@ hoh-tools = { path = "../../crates/hoh-tools" }
 hoh-user-questions = { path = "../../crates/hoh-user-questions" }
 hoh-user-approval = { path = "../../crates/hoh-user-approval" }
 hoh-window-destructive-guard = { path = "../../crates/hoh-window-destructive-guard" }
+hoh-destructive-classifier = { path = "../../crates/hoh-destructive-classifier" }
+hoh-external-harness = { path = "../../crates/hoh-external-harness" }
+hoh-harness-claude = { path = "../../crates/hoh-harness-claude" }
 hoh-working-directory = { path = "../../crates/hoh-working-directory" }
 hoh-agent-default-model = { path = "../../crates/hoh-agent-default-model" }
 hoh-agent-instructions = { path = "../../crates/hoh-agent-instructions" }

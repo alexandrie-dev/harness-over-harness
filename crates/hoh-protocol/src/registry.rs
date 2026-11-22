@@ -109,7 +109,7 @@ pub enum Request {
     #[serde(rename = "hoh/executor/select")]
     ExecutorSelect(ExecutorSelectParams),
     #[serde(rename = "hoh/executor/access/get")]
-    ExecutorAccessGet(ExecutorParams),
+    ExecutorAccessGet(ExecutorAccessGetParams),
     #[serde(rename = "hoh/executor/access/set")]
     ExecutorAccessSet(ExecutorAccessSetParams),
     #[serde(rename = "approval/request")]
@@ -350,7 +350,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/security/summary" => admit::<Empty>(value),
         "hoh/executor/discover" => admit::<ExecutorParams>(value),
         "hoh/executor/select" => admit::<ExecutorSelectParams>(value),
-        "hoh/executor/access/get" => admit::<ExecutorParams>(value),
+        "hoh/executor/access/get" => admit::<ExecutorAccessGetParams>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetParams>(value),
         "approval/request" => admit::<ApprovalRequestParams>(value),
         "user-question/ask" => admit::<SdkUserQuestionRequest>(value),
@@ -1100,7 +1100,7 @@ pub fn schemas() -> Vec<(String, Value)> {
         (
             "ExecutorAccessGet",
             "hoh/executor/access/get",
-            schema_for!(ExecutorParams),
+            schema_for!(ExecutorAccessGetParams),
             schema_for!(ExecutorAccessGetResult),
         ),
         (
@@ -1231,7 +1231,7 @@ enum RequestDecode {
     #[serde(rename = "hoh/executor/select")]
     ExecutorSelect(ExecutorSelectParams),
     #[serde(rename = "hoh/executor/access/get")]
-    ExecutorAccessGet(ExecutorParams),
+    ExecutorAccessGet(ExecutorAccessGetParams),
     #[serde(rename = "hoh/executor/access/set")]
     ExecutorAccessSet(ExecutorAccessSetParams),
     #[serde(rename = "approval/request")]

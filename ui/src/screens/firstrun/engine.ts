@@ -40,6 +40,14 @@ export async function discoverClaude(): Promise<DiscoverResult> {
   return (await send('hoh/executor/discover', { executor: 'claude' })) as DiscoverResult;
 }
 
+/** `hoh/executor/access/get`: как движок запустит Claude в следующий раз (`effective.flags`). Не ответил — `undefined`: окно ничего не домысливает. */
+export async function claudeLaunchFlags(): Promise<unknown> {
+  try {
+    const answer = (await send('hoh/executor/access/get', { executor: 'claude' })) as { effective?: { flags?: unknown } } | null;
+    return answer?.effective?.flags;
+  } catch { return undefined; }
+}
+
 /** `hoh/executor/select`: привилегированная, хост спрашивает человека. После неё новые чаты идут через Claude с этой моделью. */
 export async function selectClaude(model: string): Promise<void> {
   await send('hoh/executor/select', { executor: 'claude', model });

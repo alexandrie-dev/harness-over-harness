@@ -186,6 +186,14 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// What the page gets of an engine notification. The text of an `approval.pending` request
+/// (`humanText`, `reason`, `details`) goes through as the engine wrote it: a mask over the engine's
+/// own text could hide a nested command from the person who is asked. The mask stays in the shell's
+/// own settings text (`approval::begin_preflight`) and in the journal.
+fn window_frame(frame: Value) -> Value {
+    frame
+}
+
 fn handle_event(
     handle: &tauri::AppHandle,
     approvals: &Arc<Broker>,
@@ -200,18 +208,7 @@ fn handle_event(
             {
                 questions.cancel(id);
             }
-            let mut frame = frame;
-            if frame["method"] == "approval.pending"
-                && let Some(text) = frame["params"]["humanText"].as_str()
-            {
-                // The window is told only that a decision waits; an address in it stays closed.
-                frame["params"]["humanText"] = Value::String(crate::approval::redact_text(text));
-                for key in ["reason", "details"] {
-                    if let Some(text) = frame["params"][key].as_str() {
-                        frame["params"][key] = Value::String(crate::approval::redact_text(text));
-                    }
-                }
-            }
+            let frame = window_frame(frame);
             let _ = handle.emit_to("main", "engine-notification", frame);
         }
         HostEvent::Status(status) => {
@@ -566,7 +563,7 @@ pub async fn engine_request(
     state: tauri::State<'_, Host>,
     method: String,
     params: Value,
-) -> Result<Value, String> {
+) -> Result<Value, crate::errors::HostError> {
     #[cfg(feature = "probe")]
     crate::probe::trace(format!("invoke:engine_request:received:{method}"));
     let label = window.label().to_owned();
@@ -575,7 +572,7 @@ pub async fn engine_request(
     let ready = state.ready.clone();
     let workspace = state.workspace.clone();
     let handle = window.app_handle().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         let mut params = params;
         let chosen_folder = if method == "hoh/settings/rules/set" && label == "main" {
             Some(normalize_rules_folder(&mut params, &workspace)?)
@@ -608,7 +605,7 @@ pub async fn engine_request(
                 if !ready.load(Ordering::Acquire) {
                     #[cfg(feature = "probe")]
                     crate::probe::trace(format!("preflight:{method}:engine-not-ready"));
-                    return Err("Помощник ещё подключается".into());
+                    return Err(crate::errors::CONNECTING.into());
                 }
                 let (open, receiver) = approvals.begin_preflight(&method, params, now_ms())?;
                 let approval_label = open.label.clone();
@@ -624,7 +621,7 @@ pub async fn engine_request(
                     Ok(false) => {
                         #[cfg(feature = "probe")]
                         crate::probe::trace(format!("preflight:{method}:complete:rejected"));
-                        Err("Действие отклонено".into())
+                        Err(crate::errors::REJECTED.into())
                     }
                     Err(_) => {
                         #[cfg(feature = "probe")]
@@ -633,7 +630,7 @@ pub async fn engine_request(
                             dispatch_resolution(&handle, resolution);
                             destroy_window(&handle, &approval_label);
                         }
-                        Err("Подтверждение не получено".into())
+                        Err(crate::errors::NOT_RECEIVED.into())
                     }
                 }
             },
@@ -653,7 +650,10 @@ pub async fn engine_request(
         Ok(answer)
     })
     .await
-    .map_err(|_| "Запрос прерван".to_owned())?
+    .map_err(|_| "Запрос прерван".to_owned())
+    .and_then(|answer| answer);
+    // The window gets the reason as a code (`errors::HostError`), not only as words.
+    outcome.map_err(crate::errors::host_error)
 }
 
 /// The window sends a display name or a picked path; the engine and the person's confirmation
@@ -846,6 +846,19 @@ mod tests {
             }
             Resolution::Engine { .. } => panic!("expected preflight resolution"),
         }
+    }
+
+    #[test]
+    fn the_engines_approval_text_reaches_the_window_without_a_mask() {
+        let url = "https://h.example/p?token=$(touch /x)&n=1#`id`";
+        let frame = json!({"method":"approval.pending","params":{
+            "humanText": format!("Запустить curl «{url}»?"),
+            "reason": format!("Адрес {url}"),
+            "details": format!("curl {url}")}});
+        assert_eq!(window_frame(frame.clone()), frame);
+        // the journal still closes the same text, and says so
+        let (journal, nested) = crate::approval::redact_text_checked(&format!("curl {url}"));
+        assert!(nested && !journal.contains("touch"), "{journal}");
     }
 
     #[test]

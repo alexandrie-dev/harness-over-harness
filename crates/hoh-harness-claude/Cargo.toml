@@ -26,6 +26,17 @@ tokio.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 hoh-destructive-classifier = { path = "../hoh-destructive-classifier" }
+# The slot's kernel for `tests/slot.rs`: Claude mounted as a plugin and reached as the slot does.
+hoh-agent = { path = "../hoh-agent" }
+hoh-session = { path = "../hoh-session" }
+hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-user-approval = { path = "../hoh-user-approval" }
+hoh-user-questions = { path = "../hoh-user-questions" }
+# The window of the slot behind the SDK server, for `effective.flags` in `tests/slot.rs`.
+hoh-llm = { path = "../hoh-llm" }
+hoh-loader = { path = "../hoh-loader" }
+hoh-sdk-jsonrpc-server = { path = "../hoh-sdk-jsonrpc-server" }
+hoh-timeout = { path = "../hoh-timeout" }
 # Turns the `stub` feature on for the tests only, so the stub binary is not part of a normal build.
 hoh-harness-claude = { path = ".", features = ["stub"] }
 

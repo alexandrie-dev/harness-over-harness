@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hoh_external_harness::{
-    ApprovalDecision, ApprovalMode, AuthState, EndReason, ExternalHarness, HarnessAction,
-    HarnessEvent, HarnessPolicy, HarnessResponse, HarnessSession, ItemOutcome, PromptParams,
-    QuestionAnswer, RespondParams, SandboxMode, StartParams, Started, code,
+    AccessMode, ApprovalDecision, ApprovalMode, AuthState, EndReason, ExternalHarness,
+    HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse, HarnessSession, ItemOutcome,
+    PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, Started, code,
 };
-use hoh_harness_claude::{ClaudeConfig, ClaudeHarness};
+use hoh_harness_claude::{ClaudeConfig, ClaudeHarness, SettingSources};
 use tokio::sync::mpsc::Receiver;
 
 const STUB: &str = env!("CARGO_BIN_EXE_claude-stub");
@@ -21,7 +21,8 @@ struct Env {
     version: Option<&'static str>,
     executable: PathBuf,
     init_timeout: Duration,
-    access: hoh_harness_claude::Access,
+    access: AccessMode,
+    setting_sources: SettingSources,
     event_queue: usize,
     interrupt_timeout: Duration,
 }
@@ -34,7 +35,8 @@ impl Env {
             version: None,
             executable: PathBuf::from(STUB),
             init_timeout: Duration::from_secs(10),
-            access: hoh_harness_claude::Access::Confirm,
+            access: AccessMode::Confirm,
+            setting_sources: ClaudeConfig::default().setting_sources,
             event_queue: 64,
             interrupt_timeout: Duration::from_secs(10),
         }
@@ -69,8 +71,8 @@ impl Env {
         );
         ClaudeHarness::new(ClaudeConfig {
             executable: self.executable.clone(),
+            setting_sources: self.setting_sources,
             extra_env: env,
-            access: self.access,
             version_timeout: Duration::from_secs(10),
             init_timeout: self.init_timeout,
             event_queue: self.event_queue,
@@ -99,7 +101,10 @@ fn params(dir: &Path, resume: Option<&str>, policy: HarnessPolicy) -> StartParam
 
 async fn start(env: &Env, resume: Option<&str>) -> Started {
     env.harness()
-        .start_or_resume(params(env.dir.path(), resume, HarnessPolicy::default()))
+        .start_with_access(
+            params(env.dir.path(), resume, HarnessPolicy::default()),
+            env.access,
+        )
         .await
         .map_err(|e| e.message)
         .unwrap()
@@ -530,7 +535,7 @@ async fn a_session_resumes_by_its_native_id_and_a_missing_one_is_reported() {
         .harness()
         .start_or_resume(params(
             env.dir.path(),
-            Some("0000-lost"),
+            Some("00000000-0000-4000-8000-00000000105e"),
             HarnessPolicy::default(),
         ))
         .await
@@ -702,9 +707,9 @@ async fn approval_never_is_refused_and_no_mode_gets_a_way_around_the_questions()
             .iter()
             .any(|a| a.contains("bypass") || a.contains("dangerously"))
     );
-    // No settings file (the user's `allow` rules) decides in place of the slot.
+    // The human's user settings by default; not those of the working folder.
     let at = args.iter().position(|a| a == "--setting-sources").unwrap();
-    assert_eq!(args[at + 1], "");
+    assert_eq!(args[at + 1], "user");
     started.session.terminate(Duration::from_millis(500)).await;
 
     // Read-only: `default` (a read outside the folder is a question), only the read tools, and no
@@ -1246,7 +1251,7 @@ async fn start_with(env: &Env, model: Option<&str>, policy: HarnessPolicy) -> St
     let mut p = params(env.dir.path(), None, policy);
     p.model = model.map(Into::into);
     env.harness()
-        .start_or_resume(p)
+        .start_with_access(p, env.access)
         .await
         .map_err(|e| e.message)
         .unwrap()
@@ -1452,20 +1457,40 @@ async fn a_command_is_shown_with_the_folder_the_session_runs_in() {
 }
 
 #[tokio::test]
-async fn user_settings_do_not_decide_for_the_slot_in_any_mode() {
-    let env = Env::new();
-    for policy in [
-        HarnessPolicy::default(),
-        HarnessPolicy {
-            sandbox: SandboxMode::ReadOnly,
-            ..HarnessPolicy::default()
-        },
+async fn the_setting_sources_are_the_same_for_every_policy() {
+    for (setting_sources, value, strict) in [
+        (SettingSources::Personal, "user", false),
+        (SettingSources::Isolated, "", true),
     ] {
-        let started = start_with(&env, None, policy).await;
-        let args = env.args();
-        let at = args.iter().position(|a| a == "--setting-sources").unwrap();
-        assert_eq!(args[at + 1], "");
-        started.session.terminate(Duration::from_millis(500)).await;
+        let mut env = Env::new();
+        env.setting_sources = setting_sources;
+        for policy in [
+            HarnessPolicy::default(),
+            HarnessPolicy {
+                sandbox: SandboxMode::ReadOnly,
+                ..HarnessPolicy::default()
+            },
+        ] {
+            let started = start_with(&env, None, policy).await;
+            let args = env.args();
+            let at = args.iter().position(|a| a == "--setting-sources").unwrap();
+            assert_eq!(args[at + 1], value, "{setting_sources:?} {policy:?}");
+            // The working folder's settings are never a source: a file someone put there does not
+            // turn the questions off.
+            assert!(
+                !args[at + 1]
+                    .split(',')
+                    .any(|source| source == "project" || source == "local"),
+                "{args:?}"
+            );
+            assert_eq!(
+                args.iter().filter(|a| *a == "--setting-sources").count(),
+                1,
+                "{args:?}"
+            );
+            assert_eq!(args.contains(&"--strict-mcp-config".to_owned()), strict);
+            started.session.terminate(Duration::from_millis(500)).await;
+        }
     }
 }
 
@@ -1790,32 +1815,31 @@ async fn an_input_without_questions_has_no_questions_key_in_the_answer() {
 
 #[tokio::test]
 async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
-    use hoh_harness_claude::Access;
-    for access in [Access::Confirm, Access::Full] {
+    for access in [AccessMode::Confirm, AccessMode::Full] {
         let mut env = Env::new();
         env.access = access;
         let policy = HarnessPolicy::default();
         let started = env
             .harness()
-            .start_or_resume(params(env.dir.path(), None, policy))
+            .start_with_access(params(env.dir.path(), None, policy), env.access)
             .await
             .map_err(|e| e.message)
             .unwrap();
         let args = env.args();
         let at = args.iter().position(|a| a == "--session-id").unwrap();
         let native = args[at + 1].clone();
-        let argv = env.harness().argv(&policy, None, None, &native);
+        let argv = env.harness().argv(&policy, access, None, None, &native);
         assert_eq!(argv[0], STUB);
         assert_eq!(argv[1..], args[..], "{access:?}");
         let has = |flag: &str| args.iter().any(|a| a == flag);
         match access {
-            Access::Confirm => {
+            AccessMode::Confirm => {
                 assert!(has("--permission-prompt-tool"));
                 assert!(!has("--allow-dangerously-skip-permissions"));
                 let at = args.iter().position(|a| a == "--permission-mode").unwrap();
                 assert_eq!(args[at + 1], "default");
             }
-            Access::Full => {
+            AccessMode::Full => {
                 // The callback stays for what even bypass refuses.
                 assert!(has("--permission-prompt-tool"));
                 assert!(has("--allow-dangerously-skip-permissions"));
@@ -1830,7 +1854,7 @@ async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
 #[tokio::test]
 async fn in_full_access_nothing_is_asked() {
     let mut env = Env::new();
-    env.access = hoh_harness_claude::Access::Full;
+    env.access = AccessMode::Full;
     let Started {
         session,
         mut events,
@@ -1855,7 +1879,6 @@ async fn in_full_access_nothing_is_asked() {
 
 #[tokio::test]
 async fn approval_never_is_refused_in_confirm_and_changes_nothing_in_full() {
-    use hoh_harness_claude::Access;
     let never = HarnessPolicy {
         approval: ApprovalMode::Never,
         ..HarnessPolicy::default()
@@ -1874,10 +1897,10 @@ async fn approval_never_is_refused_in_confirm_and_changes_nothing_in_full() {
     );
 
     let mut env = Env::new();
-    env.access = Access::Full;
+    env.access = AccessMode::Full;
     let started = env
         .harness()
-        .start_or_resume(params(env.dir.path(), None, never))
+        .start_with_access(params(env.dir.path(), None, never), env.access)
         .await
         .map_err(|e| e.message)
         .expect("in full nothing is asked, so never changes nothing");
@@ -1890,9 +1913,8 @@ async fn approval_never_is_refused_in_confirm_and_changes_nothing_in_full() {
 #[tokio::test]
 async fn full_does_not_widen_a_read_only_session_and_does_not_narrow_by_network() {
     use hoh_external_harness::NetworkAccess;
-    use hoh_harness_claude::Access;
     let mut env = Env::new();
-    env.access = Access::Full;
+    env.access = AccessMode::Full;
     let flag = |args: &[String], name: &str| args.iter().position(|a| a == name);
 
     // Full + read-only + on-request: the read tools only, no questions, no bypass.
@@ -1939,9 +1961,8 @@ async fn full_does_not_widen_a_read_only_session_and_does_not_narrow_by_network(
 
 #[tokio::test]
 async fn full_access_resumes_a_session_with_the_same_flags() {
-    use hoh_harness_claude::Access;
     let mut env = Env::new();
-    env.access = Access::Full;
+    env.access = AccessMode::Full;
     let first = start(&env, None).await;
     let native: String = first.result.native_session_id.clone().into();
     first.session.terminate(Duration::from_millis(500)).await;
@@ -1959,11 +1980,14 @@ async fn full_access_resumes_a_session_with_the_same_flags() {
 #[tokio::test]
 async fn the_refusal_of_bypass_as_root_is_named() {
     let mut env = Env::new();
-    env.access = hoh_harness_claude::Access::Full;
+    env.access = AccessMode::Full;
     env.mode = Some("root-refusal");
     let error = env
         .harness()
-        .start_or_resume(params(env.dir.path(), None, HarnessPolicy::default()))
+        .start_with_access(
+            params(env.dir.path(), None, HarnessPolicy::default()),
+            env.access,
+        )
         .await
         .err()
         .unwrap();
@@ -1996,7 +2020,7 @@ async fn in_full_access_a_question_is_not_asked() {
     // Without the callback the CLI sends no `can_use_tool` (the stub answers by itself): no
     // `QuestionAsked` reaches the window, and the turn goes on.
     let mut env = Env::new();
-    env.access = hoh_harness_claude::Access::Full;
+    env.access = AccessMode::Full;
     let Started {
         session,
         mut events,
@@ -2115,7 +2139,7 @@ async fn the_stderr_of_a_dying_process_is_masked_in_the_end_and_in_the_diagnosti
 #[tokio::test]
 async fn in_full_access_what_bypass_refuses_still_reaches_the_human() {
     let mut env = Env::new();
-    env.access = hoh_harness_claude::Access::Full;
+    env.access = AccessMode::Full;
     let Started {
         session,
         mut events,
@@ -2164,7 +2188,7 @@ async fn in_full_access_what_bypass_refuses_still_reaches_the_human() {
 async fn under_bypass_the_removal_check_of_the_cli_is_not_overridden_by_a_question() {
     // Full access: T3 denies, in the model's words, and does not ask the human.
     let mut env = Env::new();
-    env.access = hoh_harness_claude::Access::Full;
+    env.access = AccessMode::Full;
     let Started {
         session,
         mut events,
@@ -2239,8 +2263,7 @@ async fn first_event_of_an_asking_turn(
 
 #[tokio::test]
 async fn turn_started_comes_before_the_first_request_of_the_turn_in_both_modes_and_after_resume() {
-    use hoh_harness_claude::Access;
-    for access in [Access::Confirm, Access::Full] {
+    for access in [AccessMode::Confirm, AccessMode::Full] {
         let mut env = Env::new();
         env.access = access;
         let first = start(&env, None).await;

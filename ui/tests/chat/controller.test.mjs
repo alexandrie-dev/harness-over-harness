@@ -809,6 +809,99 @@ test('Claude access defaults to confirm, and a change is shown only after the mo
     assert.equal(controller.state.access, 'full');
   }, { engine: { access: 'confirm' } });
 });
+test('the project-settings line follows effective.flags of the engine, not a constant of the window', async () => {
+  for (const [sources, off] of [['user', true], ['user,project,local', false], ['', true], [undefined, false]]) {
+    await withChats(async controller => {
+      assert.equal(controller.state.executor, 'claude');
+      assert.equal(controller.state.projectSettingsOff, off, `--setting-sources ${JSON.stringify(sources)}`);
+      assert.equal(controller.state.personalSettings, sources !== undefined && sources.split(',').includes('user'), `personal: ${JSON.stringify(sources)}`);
+    }, { engine: { access: 'confirm', settingSources: sources } });
+  }
+});
+const sendAndWait = async (controller, text) => {
+  controller.setDraft(text); await controller.send();
+  await waitUntil(() => !controller.state.busy && controller.state.entries.some(e => e.text === `Ответ на: ${text}`));
+};
+const accessReads = engine => engine.requests.filter(r => r.method === 'hoh/executor/access/get');
+test('the mode of the open chat is the mode of its next turn; a change waits for the next message and can be taken back', async () => {
+  await withChats(async (controller, engine) => {
+    await sendAndWait(controller, 'первое');
+    assert.deepEqual([controller.state.access, controller.state.accessPending], ['confirm', false]);
+    assert.equal(accessReads(engine).at(-1).params.sessionId, 'window-main', 'the engine is asked about the open chat');
+    await controller.setAccess('full');
+    assert.deepEqual([controller.state.access, controller.state.accessPending], ['full', true], 'chosen mode shown, change waits for the next message');
+    await controller.setAccess('confirm');
+    assert.deepEqual([controller.state.access, controller.state.accessPending], ['confirm', false], 'taken back before any message');
+    await controller.setAccess('full');
+    assert.equal(controller.state.accessPending, true);
+    const before = accessReads(engine).length;
+    controller.setDraft('второе'); const sending = controller.send();
+    assert.equal(controller.state.accessPending, true, 'sending does not erase the line');
+    await sending; await waitUntil(() => controller.state.entries.some(e => e.text === 'Ответ на: второе') && !controller.state.busy);
+    assert.deepEqual([controller.state.access, controller.state.accessPending], ['full', false], 'the next turn runs in the chosen mode');
+    assert(accessReads(engine).length >= before + 2, 'read again at the start and at the end of the turn');
+    await controller.setAccess('confirm');
+    assert.deepEqual([controller.state.access, controller.state.accessPending], ['confirm', true], 'the other way round');
+  }, { engine: { access: 'confirm' } });
+});
+test('two chats keep their own mode: each shows the mode of its own process', async () => {
+  await withChats(async (controller, engine) => {
+    await sendAndWait(controller, 'в первом');
+    await controller.setAccess('full');
+    await controller.openSession('chat-old'); await waitUntil(() => controller.state.currentId === 'chat-old' && controller.state.connection === 'ready');
+    assert.deepEqual([controller.state.access, controller.state.accessPending], ['full', false], 'a chat that has not run yet follows the chosen mode');
+    await sendAndWait(controller, 'во втором');
+    await controller.openSession('window-main'); await waitUntil(() => controller.state.currentId === 'window-main' && controller.state.connection === 'ready');
+    assert.deepEqual([controller.state.access, controller.state.accessPending], ['full', true], 'the first chat still has a process in the old mode');
+    await controller.openSession('chat-old'); await waitUntil(() => controller.state.currentId === 'chat-old' && controller.state.connection === 'ready');
+    assert.deepEqual([controller.state.access, controller.state.accessPending], ['full', false], 'the second one runs as chosen');
+  }, { engine: { access: 'confirm' } });
+});
+test('a chat of Claude stays a chat of Claude after the choice for new chats returns to the engine\'s own model', async () => {
+  await withChats(async (controller, engine) => {
+    await sendAndWait(controller, 'через Claude');
+    assert.deepEqual([controller.state.executor, controller.state.privacy], ['claude', 'remote']);
+    assert(await controller.selectExecutor(null, 'default'));
+    assert.deepEqual([controller.state.newExecutor, controller.state.executor, controller.state.privacy], ['', 'claude', 'remote'], 'the open chat is still Claude, its data go to the internet');
+    assert.equal(controller.state.access, 'confirm', 'and its mode is still shown');
+    await controller.openSession('chat-old'); await waitUntil(() => controller.state.currentId === 'chat-old' && controller.state.connection === 'ready');
+    assert.deepEqual([controller.state.executor, controller.state.access, controller.state.privacy], ['', '', 'local'], 'a chat on the engine\'s own model');
+    assert(await controller.selectExecutor('claude', 'opus'));
+    assert.deepEqual([controller.state.newExecutor, controller.state.newExecutorModel], ['claude', 'opus'], 'the choice for new chats is kept apart');
+    await controller.openSession('window-main'); await waitUntil(() => controller.state.currentId === 'window-main' && controller.state.connection === 'ready');
+    assert.deepEqual([controller.state.executor, controller.state.executorModel], ['claude', 'default'], 'the chat shows its own model, not the new choice');
+  }, { engine: { access: 'confirm', selected: { executor: 'claude', model: 'default' } } });
+});
+test('a chat of Claude keeps its folder: the refusal is told by its code, with a way out', async () => {
+  await withChats(async (controller, engine) => {
+    await sendAndWait(controller, 'в папке');
+    await controller.setFolder('/home/me/Другая');
+    assert.equal(controller.state.error, 'Чат с Claude работает в одной папке. Чтобы работать в другой, начните новый чат.');
+    assert.equal(controller.state.folderFixed, true, 'the screen offers a new chat');
+    assert.notEqual(controller.state.folderPath, '/home/me/Другая', 'the folder shown is the real one');
+    await controller.newChat(); await waitUntil(() => controller.state.currentId !== 'window-main' && controller.state.connection === 'ready');
+    assert.equal(controller.state.folderFixed, false);
+    await controller.setFolder('/home/me/Другая');
+    assert.equal(controller.state.error, ''); assert.equal(controller.state.folderPath, '/home/me/Другая', 'the new chat takes the folder');
+  }, { engine: { access: 'confirm', folderFixed: true } });
+});
+test('a refusal in the protection window while the folder changes is told by the code', async () => {
+  await withChats(async (controller, engine) => {
+    engine.request = async (method, params) => { if (method === 'session/working-directory/set') throw { code: 'rejected', message: 'Действие отклонено' }; return FakeEngine.prototype.request.call(engine, method, params); };
+    await controller.setFolder('/home/me/Другая');
+    assert.equal(controller.state.error, 'Вы не разрешили смену папки. Выберите папку ещё раз и нажмите «Разрешить один раз».');
+    assert.equal(controller.state.folderFixed, false);
+  });
+});
+test('titles of chats are shown as they are: no path filter, no word filter', async () => {
+  const titles = ['Скорость 50 км/ч и/или 10 / 2', 'Прочитай /home/me/заметки.txt', 'Как читать json в 24/7 режиме'];
+  await withChats(async (controller, engine) => {
+    titles.forEach((title, index) => engine.seed(`titled-${index}`, { title, user: 'x' }));
+    await controller.refreshSessions();
+    const shown = controller.state.sessions.map(row => row.title);
+    for (const title of titles) assert(shown.includes(title), `${title} → ${shown.join(' | ')}`);
+  });
+});
 test('when the engine runs in another mode than the chosen one the actual mode is shown with a warning', async () => {
   await withChats(async controller => {
     await controller.setAccess('full');

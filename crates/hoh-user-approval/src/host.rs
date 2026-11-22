@@ -268,7 +268,7 @@ fn build_request(
         reason,
         details,
         approval_id: approval_id.to_owned(),
-        risk: Risk::High,
+        risk: risk_of(approval),
         human_text: match &escalation {
             Some(text) => text.human_text.clone(),
             None => human_text(approval),
@@ -279,6 +279,23 @@ fn build_request(
     };
     hoh_protocol::approval::validate_host_request(&request)?;
     Ok(request)
+}
+
+/// The key of the display reason that marks a request nothing judged the risk of: a request of an
+/// external executor the destructive classifier found harmless or could not weigh. Not a locale.
+pub const UNASSESSED_RISK_KEY: &str = "x-risk";
+
+/// Every request is high risk unless its sender says it was not assessed; a request the
+/// classifier found dangerous carries no such mark and stays high.
+fn risk_of(approval: &ApprovalRequest) -> Risk {
+    match approval
+        .display_reason
+        .as_ref()
+        .and_then(|reason| reason.get(UNASSESSED_RISK_KEY))
+    {
+        Some("unassessed") => Risk::Unassessed,
+        _ => Risk::High,
+    }
 }
 
 fn human_text(approval: &ApprovalRequest) -> String {

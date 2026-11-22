@@ -20,10 +20,12 @@ export interface ApprovalRecord {
 }
 export type AccessMode = 'confirm' | 'full';
 /** `hoh/executor/access/get` (the engine's contract; not in the generated protocol yet): the mode asked for and the one in effect. */
-export interface AccessState { mode: AccessMode; effective: { mode: AccessMode; flags: string[] }; selected: { executor: 'claude'; model: string } | null }
+/** With a `sessionId` the engine also answers for that chat (`session`): its executor, model, where its data goes, the mode of its next turn, the mode of its live process and whether the change waits for the next message. */
+export interface AccessSession { executor: 'claude' | null; model: string | null; privacy: 'local' | 'remote' | null; mode: AccessMode | null; running: AccessMode | null; pending: boolean }
+export interface AccessState { mode: AccessMode; effective: { mode: AccessMode; flags: string[] }; selected: { executor: 'claude'; model: string } | null; session?: AccessSession }
 export interface ChatTransport {
   request<M extends ChatMethod>(method: M, params: MethodMap[M]['params']): Promise<MethodMap[M]['result']>;
-  request(method: 'hoh/executor/access/get', params: { executor: 'claude' }): Promise<AccessState>;
+  request(method: 'hoh/executor/access/get', params: { executor: 'claude'; sessionId?: string }): Promise<AccessState>;
   /** Privileged: the host asks the person in the guard window before the engine applies it. */
   request(method: 'hoh/executor/access/set', params: { executor: 'claude'; mode: AccessMode }): Promise<unknown>;
   /** Read-only, a real check every time: is `claude` there, signed in, which models. */

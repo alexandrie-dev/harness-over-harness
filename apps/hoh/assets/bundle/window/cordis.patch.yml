@@ -101,6 +101,20 @@
     - id: destructive-guard
       name: 'hoh:window-destructive-guard'
 
+    # The external-harness slot: the shared destructive-command classifier, the harness registry
+    # with Claude Code in it, and the hoh/executor/* methods the window calls.
+    - id: destructive-classifier
+      name: 'hoh:destructive-classifier'
+
+    - id: external-harness
+      name: 'hoh:external-harness'
+
+    - id: harness-claude
+      name: 'hoh:harness-claude'
+
+    - id: external-harness-window
+      name: 'hoh:external-harness-window'
+
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 

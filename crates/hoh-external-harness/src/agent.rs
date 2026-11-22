@@ -143,7 +143,6 @@ pub(crate) struct ExternalAgent {
     options: AgentOptions,
     model: ExternalModel,
     inbox: ExternalInbox,
-    cwd: String,
     status: watch::Sender<AgentStatus>,
     wake: Notify,
     state: Mutex<State>,
@@ -154,6 +153,8 @@ pub(crate) struct ExternalAgent {
 struct State {
     last_turn: u64,
     native: Option<NativeSessionId>,
+    /// The model the last binding record names.
+    recorded_model: Option<String>,
     /// The running native session, for teardown.
     control: Option<Arc<dyn HarnessSession>>,
     /// The open turn.
@@ -174,7 +175,8 @@ pub(crate) struct NewAgent {
     pub ctx: Context,
     pub scope_key: ScopeKey,
     pub options: AgentOptions,
-    pub cwd: String,
+    /// The conversation's own model (`None`: the harness's default), never another provider's.
+    pub model: Option<String>,
     pub last_turn: u64,
     pub native: Option<NativeSessionId>,
 }
@@ -183,7 +185,7 @@ impl ExternalAgent {
     pub(crate) fn new(init: NewAgent) -> Arc<ExternalAgent> {
         let model = ExternalModel {
             provider: init.shared.name.clone(),
-            model: Mutex::new(init.options.model()),
+            model: Mutex::new(init.model.clone()),
             restart: AtomicBool::new(false),
             log: init.ctx.logger(),
         };
@@ -197,12 +199,12 @@ impl ExternalAgent {
             options: init.options,
             model,
             inbox: ExternalInbox::default(),
-            cwd: init.cwd,
             status: watch::channel(AgentStatus::Idle).0,
             wake: Notify::new(),
             state: Mutex::new(State {
                 last_turn: init.last_turn,
                 native: init.native,
+                recorded_model: init.model,
                 ..State::default()
             }),
             revision: AtomicU64::new(0),
@@ -277,23 +279,44 @@ impl ExternalAgent {
         Duration::from_millis(self.shared.config.terminate_grace_ms)
     }
 
+    /// The conversation's folder, read where it is used: a new chat may still change it; once the
+    /// conversation has worked there, a change is refused (`Shared::started_in_folder`).
+    fn cwd(&self) -> String {
+        crate::executor::session_cwd(&self.shared, &self.session)
+    }
+
     /// The running native session, if any (teardown terminates it).
     pub(crate) fn control(&self) -> Option<Arc<dyn HarnessSession>> {
         lock(&self.state).control.clone()
     }
 
-    /// Record the native id durably when it is new (`replaces`: a lost id it replaces).
+    /// Record the native id durably with the model it runs, when either is new (`replaces`: a
+    /// lost id it replaces).
     fn record_native(&self, id: &NativeSessionId, replaces: Option<&NativeSessionId>) {
-        if lock(&self.state).native.as_ref() == Some(id) && replaces.is_none() {
-            return;
+        let model = lock(&self.model.model).clone();
+        {
+            let state = lock(&self.state);
+            if state.native.as_ref() == Some(id)
+                && state.recorded_model == model
+                && replaces.is_none()
+            {
+                return;
+            }
         }
         let mut data = json!({"harness": self.shared.name, "nativeSessionId": id});
+        if let Some(model) = &model {
+            data["model"] = json!(model);
+        }
         if let Some(lost) = replaces {
             data["replaces"] = json!(lost);
         }
         // Not under the state lock: listeners of the append may call back into the agent.
         match append_plugin_record(&self.session, BINDING_RECORD, data) {
-            Ok(_) => lock(&self.state).native = Some(id.clone()),
+            Ok(_) => {
+                let mut state = lock(&self.state);
+                state.native = Some(id.clone());
+                state.recorded_model = model;
+            }
             Err(error) => self
                 .ctx
                 .logger()
@@ -612,7 +635,12 @@ impl ExternalAgent {
                 }
             }
             let chosen = session.access != self.shared.access();
-            if session.dead || chosen || self.model.restart.swap(false, Ordering::SeqCst) {
+            // The window's mode choice ends an idle process outside this driver and forgets its
+            // launch (`Shared::retire_idle`); a terminate may say nothing on the events, so the
+            // mode being back to this session's does not make the process alive again.
+            let retired = self.shared.running_launch_of(self.id.as_ref()).is_none();
+            if session.dead || chosen || retired || self.model.restart.swap(false, Ordering::SeqCst)
+            {
                 if let Some(old) = live.take() {
                     old.control.terminate(self.terminate_grace()).await;
                 }
@@ -638,7 +666,7 @@ impl ExternalAgent {
         let resume = lock(&self.state).native.clone();
         let mut params = StartParams {
             session_id: self.id.to_string(),
-            cwd: self.cwd.clone(),
+            cwd: self.cwd(),
             model: lock(&self.model.model).clone(),
             policy,
             resume: resume.clone(),
@@ -667,11 +695,14 @@ impl ExternalAgent {
             }
         };
         self.record_native(&started.result.native_session_id, lost.as_ref());
-        *lock(&self.shared.launched) = Some(Launched {
-            access,
-            flags,
-            session: Arc::downgrade(&started.session),
-        });
+        self.shared.record_launch(
+            self.id.as_ref(),
+            Launched {
+                access,
+                flags,
+                session: Arc::downgrade(&started.session),
+            },
+        );
         lock(&self.state).control = Some(started.session.clone());
         *live = Some(LiveSession {
             control: started.session,
@@ -756,7 +787,7 @@ impl ExternalAgent {
     /// tool call never is. Links in the part of a path that exists are followed (on a blocking
     /// thread).
     async fn within_workspace(&self, action: HarnessAction) -> bool {
-        let base = PathBuf::from(&self.cwd);
+        let base = PathBuf::from(self.cwd());
         let inside_all = move || match &action {
             HarnessAction::Command { command, cwd } => {
                 let dir = cwd
@@ -790,7 +821,7 @@ impl ExternalAgent {
 
     /// The classifier's question for an action; `None` when it is not dangerous.
     async fn danger(&self, action: &HarnessAction) -> Option<Question> {
-        let base = PathBuf::from(&self.cwd);
+        let base = PathBuf::from(self.cwd());
         let classifier = &self.shared.classifier;
         match action {
             HarnessAction::Command { command, cwd } => {
@@ -848,13 +879,22 @@ fn prompt_text(messages: &[UserMessage]) -> String {
         .join("\n\n")
 }
 
-/// One line without control characters, at most [`MAX_HEADLINE_CHARS`] characters.
+/// One line the window shows as it is, at most [`MAX_HEADLINE_CHARS`] characters: every character
+/// the protocol refuses in `humanText` (a control, spacing other than a plain space, an invisible
+/// mark such as U+FE0F, U+00A0 or U+200B) becomes a space, and runs of spaces become one. A
+/// refused headline would be replaced by the host's fallback without the command.
 fn one_line(text: &str) -> String {
+    let mut buffer = [0; 4];
     let cleaned: String = text
         .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| {
+            let refused =
+                hoh_protocol::approval::validate_human_text(c.encode_utf8(&mut buffer)).is_err();
+            if refused { ' ' } else { c }
+        })
         .collect();
-    truncate_chars(cleaned.trim(), MAX_HEADLINE_CHARS)
+    let words: Vec<&str> = cleaned.split(' ').filter(|word| !word.is_empty()).collect();
+    truncate_chars(&words.join(" "), MAX_HEADLINE_CHARS)
 }
 
 /// `path` (relative to `base`, or absolute) lies within `base`, as the system would open it.
@@ -984,30 +1024,44 @@ fn step_call(action: &HarnessAction) -> (String, Value) {
 
 /// The question for an action the classifier finds harmless (or cannot judge).
 fn plain_question(harness: &str, action: &HarnessAction, reason: Option<&str>) -> Question {
+    // The executor by its name as a word (`Claude`), and what it asks for by what it does: the
+    // words of a person who never saw a command line.
+    let who = display_name(harness);
     let (headline, details) = match action {
         HarnessAction::Command { command, .. } => (
-            format!("Исполнитель «{harness}» просит выполнить команду"),
+            format!("{who} просит выполнить команду: {command}"),
             format!("Команда: {command}"),
         ),
         HarnessAction::FileChange { changes } => {
-            let names: Vec<&str> = changes.iter().map(|change| change.path.as_str()).collect();
-            let shown = names.iter().take(4).copied().collect::<Vec<_>>().join(", ");
-            let more = if names.len() > 4 {
-                " и другие"
-            } else {
-                ""
+            let shown = match changes.as_slice() {
+                [only] => match (&only.move_path, only.kind) {
+                    (Some(_), _) => format!("переместить файл {}", only.path),
+                    (None, FileChangeKind::Add) => format!("создать файл {}", only.path),
+                    (None, FileChangeKind::Update) => format!("изменить файл {}", only.path),
+                    (None, FileChangeKind::Delete) => format!("удалить файл {}", only.path),
+                },
+                _ => {
+                    let names: Vec<&str> =
+                        changes.iter().map(|change| change.path.as_str()).collect();
+                    let more = if names.len() > 4 {
+                        " и другие"
+                    } else {
+                        ""
+                    };
+                    format!(
+                        "изменить файлы: {}{more}",
+                        names.iter().take(4).copied().collect::<Vec<_>>().join(", ")
+                    )
+                }
             };
-            (
-                format!("Исполнитель «{harness}» просит изменить файлы: {shown}{more}"),
-                change_list(changes),
-            )
+            (format!("{who} просит {shown}"), change_list(changes))
         }
         HarnessAction::Tool { name, input } => (
-            format!("Исполнитель «{harness}» просит разрешения на действие «{name}»"),
+            format!("{who} просит разрешения на действие «{name}»"),
             format!("Данные: {}", js_json_stringify(input)),
         ),
         HarnessAction::Permission { description } => (
-            format!("Исполнитель «{harness}» просит дополнительное разрешение"),
+            format!("{who} просит дополнительное разрешение"),
             description.clone(),
         ),
     };
@@ -1015,8 +1069,9 @@ fn plain_question(harness: &str, action: &HarnessAction, reason: Option<&str>) -
         Some(reason) => format!("{details}\nОбоснование исполнителя: {reason}"),
         None => details,
     };
+    // Nothing to add to the headline: the explanation stays empty (the window shows no block).
     Question {
-        explanation: one_line(&headline),
+        explanation: String::new(),
         headline: one_line(&headline),
         details: truncate_chars(&details, MAX_DETAILS_CHARS),
     }
@@ -1820,6 +1875,8 @@ async fn answer_approval(
     let decision = if by_itself {
         Some(ApprovalDecision::Allow)
     } else {
+        // A question the classifier raised is a judged one; a plain one is not judged at all.
+        let assessed = danger.is_some();
         let question = match (danger, &action) {
             // The classifier names only the dangerous files; the question shows every change.
             (Some(mut question), HarnessAction::FileChange { changes }) => {
@@ -1836,9 +1893,15 @@ async fn answer_approval(
             Some(subject) => {
                 let mut request = ApprovalRequest::new(subject, approval_tool(&action));
                 request.call_id = item_id.clone().map(ToolCallId::from);
-                request.reason = Some(question.explanation);
+                request.reason = Some(question.explanation).filter(|text| !text.is_empty());
                 request.details = Some(question.details);
-                request.display_reason = Some(DisplayReason::new(question.headline));
+                let mut headline = DisplayReason::new(question.headline);
+                if !assessed {
+                    // No judgment of the risk behind this question: the window says so. The key is
+                    // that of `hoh-user-approval`'s `host.rs` (`UNASSESSED_RISK_KEY`).
+                    headline.insert("x-risk", "unassessed");
+                }
+                request.display_reason = Some(headline);
                 request.signal = Some(signal.clone());
                 match agent.shared.approval.request(request).await {
                     Ok(ApprovalOutcome::AllowedOnce) => Some(ApprovalDecision::Allow),

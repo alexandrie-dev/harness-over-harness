@@ -33,6 +33,7 @@ use hoh_llm::Llm;
 use hoh_session::Sessions;
 use hoh_user_approval::Approval;
 use hoh_user_questions::UserQuestions;
+use hoh_working_directory::WorkingDirectoryAccess;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -151,7 +152,7 @@ impl ExternalHarnessesService {
             classifier: inner.deps.classifier.clone(),
             config: inner.config.clone(),
             choices: inner.choices.clone(),
-            launched: Mutex::new(None),
+            launched: Mutex::new(Vec::new()),
         });
         let executor: Arc<dyn SessionExecutor> = Arc::new(ExternalExecutor(shared.clone()));
         ctx.try_effect(
@@ -226,6 +227,21 @@ pub struct Deps {
     classifier: Service<DestructiveClassifier>,
 }
 
+/// The code of the refusal to change the folder of a conversation of an external executor; the
+/// wire carries only the message, so the message starts with it.
+pub const EXECUTOR_FOLDER_FIXED: &str = "EXECUTOR_FOLDER_FIXED";
+
+fn folder_fixed(executor: &str) -> BoxError {
+    let name = agent::display_name(executor);
+    Box::new(hoh_error::HarnessError::new(
+        format!(
+            "{EXECUTOR_FOLDER_FIXED}: Чат с {name} работает в одной папке. Чтобы работать в \
+             другой, начните новый чат"
+        ),
+        EXECUTOR_FOLDER_FIXED,
+    ))
+}
+
 pub struct ExternalHarnessPlugin;
 
 impl Plugin for ExternalHarnessPlugin {
@@ -246,7 +262,31 @@ impl Plugin for ExternalHarnessPlugin {
                 harnesses: Mutex::new(Vec::new()),
             }),
         };
-        ctx.provide::<ExternalHarnesses>(Arc::new(service)).await?;
+        let service = Arc::new(service);
+        // A conversation of an external executor works in the folder it started in: the process
+        // runs there, and Claude keeps its conversations by folder. Once it has worked there, the
+        // window's folder change is refused with a word the window can tell from other failures;
+        // a new chat (no turn yet) still takes another folder.
+        let known = service.clone();
+        ctx.listen()
+            .prepend()
+            .on_waterfall::<WorkingDirectoryAccess, String, _>(move |event, next| {
+                let known = known.clone();
+                async move {
+                    // The event's agent is the folder service's adapter without a model: the
+                    // conversation's own agent says whose it is.
+                    if event.path.is_some()
+                        && let Some(live) = known.inner.deps.agents.get(event.agent.id())
+                        && let Some(chosen) = live.model().current()
+                        && let Some(shared) = known.shared(&chosen.provider)
+                        && shared.started_in_folder(live.session())
+                    {
+                        return Err(folder_fixed(&chosen.provider));
+                    }
+                    next.run().await
+                }
+            })?;
+        ctx.provide::<ExternalHarnesses>(service).await?;
         Ok(())
     }
 }

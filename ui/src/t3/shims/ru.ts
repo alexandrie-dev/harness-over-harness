@@ -1,10 +1,10 @@
 // Русские тексты для перенесённого кода T3 (английская строка -> русская). Ключ — точная строка из кода T3.
 // Строка без перевода показывается как есть: так её видно при проверке и можно добавить сюда.
-import { FULL_ACCESS_DESCRIPTION } from '../../lib/executor.mjs';
+import { CONFIRM_ACCESS_LEAD, FULL_ACCESS_DESCRIPTION } from '../../lib/executor.mjs';
 
 export const RU: Record<string, string> = {
   Supervised: 'Спрашивать разрешение',
-  'Ask before commands and file changes.': 'Перед тем как удалить или изменить файлы, запустить программу или отправить данные, Помощник спросит вас.',
+  'Ask before commands and file changes.': CONFIRM_ACCESS_LEAD,
   'Full access': 'Полный доступ',
   'Allow commands and edits without prompts.': FULL_ACCESS_DESCRIPTION,
   Permissions: 'Доступ',

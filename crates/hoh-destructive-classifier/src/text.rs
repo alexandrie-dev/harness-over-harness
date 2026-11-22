@@ -303,8 +303,8 @@ fn clean(text: &str) -> String {
 
 fn invisible(c: char) -> bool {
     matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{115f}' | '\u{1160}'
-        | '\u{17b4}'..='\u{17b5}' | '\u{180e}' | '\u{200b}'..='\u{200f}'
-        | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{3164}'
+        | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180f}' | '\u{200b}'..='\u{200f}'
+        | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{2800}' | '\u{3164}'
         | '\u{fe00}'..='\u{fe0f}' | '\u{feff}' | '\u{ffa0}' | '\u{fff9}'..='\u{fffb}'
         | '\u{1bca0}'..='\u{1bca3}' | '\u{1d173}'..='\u{1d17a}'
         | '\u{e0000}'..='\u{e007f}' | '\u{e0100}'..='\u{e01ef}')
@@ -329,8 +329,17 @@ fn capitalize(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::folder_display;
+    use super::{clean, folder_display};
     use std::path::Path;
+
+    #[test]
+    fn a_character_the_protocol_refuses_becomes_a_space() {
+        for c in [
+            '\u{180b}', '\u{180f}', '\u{2800}', '\u{200b}', '\u{fe0f}', '\u{a0}',
+        ] {
+            assert_eq!(clean(&format!("rm a{c}b")), "rm a b", "{:?}", c);
+        }
+    }
 
     #[test]
     fn the_folder_is_named_by_its_whole_path_with_home_as_tilde() {

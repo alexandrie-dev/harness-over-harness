@@ -3,19 +3,20 @@
 // Окно показывает два режима: «Спрашивать разрешение» (approval-required) и «Полный доступ» (full-access).
 import { Menu as MenuPrimitive } from '@base-ui/react/menu';
 import { useEffect, useId, useState } from 'react';
-import { FULL_ACCESS_DESCRIPTION } from '../../lib/executor.mjs';
+import { CONFIRM_ACCESS_DESCRIPTION, CONFIRM_ACCESS_LEAD, FULL_ACCESS_DESCRIPTION } from '../../lib/executor.mjs';
 import type { AccessMode } from './transport';
 import { resolveRuntimeModeOption, type RuntimeModeOption } from './runtimeMode';
 
 const OPTIONS: ReadonlyArray<AccessMode> = ['confirm', 'full'];
 export const FULL_ACCESS_TEXT = 'Полный доступ: без вопросов';
 
-export function AccessMode(props: { mode: AccessMode; busy: boolean; disabled: boolean; onChange: (mode: AccessMode) => void }) {
+export function AccessMode(props: { personalSettings: boolean; mode: AccessMode; busy: boolean; disabled: boolean; onChange: (mode: AccessMode) => void }) {
   const [preview, setPreview] = useState<AccessMode | null>(null);
   const [asking, setAsking] = useState(false);
   const descriptionId = useId();
   const shownMode = preview ?? props.mode;
-  const options = OPTIONS.map(mode => resolveRuntimeModeOption(mode));
+  // The second phrase of «Спрашивать разрешение» only when the engine ran Claude with the person's own settings.
+  const options = OPTIONS.map(mode => resolveRuntimeModeOption(mode)).map(option => option.mode === 'confirm' ? { ...option, description: props.personalSettings ? CONFIRM_ACCESS_DESCRIPTION : CONFIRM_ACCESS_LEAD } : option);
   const current = options.find(option => option.mode === props.mode) as RuntimeModeOption;
   const shown = options.find(option => option.mode === shownMode) as RuntimeModeOption;
   const chipText = props.mode === 'full' ? FULL_ACCESS_TEXT : current.label;

@@ -99,6 +99,50 @@ privileged_test!(
 privileged_test!(probe_requires_mac, "hoh/model/probe");
 privileged_test!(model_key_requires_mac, "hoh/model/key/set");
 privileged_test!(setup_rules_requires_mac, "hoh/settings/rules/set");
+
+/// After the host's approval the stub answers `hoh/executor/access/set` as the engine does: the
+/// protocol's result `{executor, mode}`, the fixture's answer (the host refuses any other form).
+#[test]
+fn executor_access_set_answers_the_engine_result() {
+    let method = "hoh/executor/access/set";
+    let fixture = |kind: &str| -> Value {
+        let path = root().join(format!(
+            "protocol/fixtures/hoh-executor-access-set.{kind}.json"
+        ));
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let (request, response) = (fixture("request"), fixture("response"));
+    let mut client = Client::new("text-turn", vec![], true);
+    let id = json!("access-set");
+    client.send(framing::request(
+        id.clone(),
+        method,
+        request["params"].clone(),
+    ));
+    let asked = loop {
+        let f = client.receive();
+        assert_ne!(f["id"], id, "replied without approval: {f}");
+        if f["method"] == "approval/request" {
+            break f;
+        }
+    };
+    let native: hoh_protocol::HostApprovalRequest =
+        serde_json::from_value(asked["params"].clone()).unwrap();
+    let mac = approval::mac(&[0x42; 32], &native, "allowed-once");
+    let answer = json!({"approvalId":native.approval_id,"outcome":"allowed-once","mac":mac});
+    client.send(framing::success(asked["id"].clone(), answer));
+    let reply = loop {
+        let f = client.receive();
+        if f["id"] == id {
+            break f;
+        }
+    };
+    let result = &reply["result"];
+    hoh_protocol::validate_result(method, result)
+        .unwrap_or_else(|error| panic!("{error}: {reply}"));
+    assert_eq!(*result, response["result"], "{reply}");
+    client.shutdown();
+}
 #[test]
 fn model_route_requires_mac() {
     privileged_params_case(
@@ -833,6 +877,27 @@ fn plan_review_matches_harness_choices_and_command_completions() {
     }
     client.shutdown();
 }
+/// The stub names the switches of `ClaudeConfig::launch_flags` (confirm): the order, the sources right
+/// after the mode, the permission prompt over stdio and the closed network.
+#[test]
+fn confirm_flags_are_those_of_the_real_launch() {
+    let mut client = Client::new("text-turn", vec![], false);
+    let got = client.call("hoh/executor/access/get", json!({"executor":"claude"}));
+    assert_eq!(
+        got["result"]["effective"]["flags"],
+        json!([
+            "--permission-mode",
+            "default",
+            "--setting-sources",
+            "user",
+            "--permission-prompt-tool",
+            "stdio",
+            "--disallowedTools",
+            "WebFetch,WebSearch"
+        ])
+    );
+    client.shutdown();
+}
 #[test]
 fn every_hoh_method_uses_fixture_result() {
     let mut client = Client::new("text-turn", vec![], false);
@@ -858,11 +923,28 @@ fn every_hoh_method_uses_fixture_result() {
             let mut result = reply["result"].clone();
             let mut expected = response["result"].clone();
             if *method == "hoh/executor/access/get" {
+                // The engine runs Claude with the user's own settings only; the fixture's flags do not name the sources.
+                let flags = result["effective"]["flags"].as_array_mut().unwrap();
+                let at = flags.iter().position(|f| f == "--setting-sources").unwrap();
+                assert_eq!(flags[at + 1], "user");
+                flags.drain(at..at + 2);
+                // Confirm closes the network (`--disallowedTools`): the fixture does not show that switch either.
+                let at = flags.iter().position(|f| f == "--disallowedTools").unwrap();
+                assert_eq!(flags[at + 1], "WebFetch,WebSearch");
+                flags.drain(at..at + 2);
                 // The fixture shows an engine with Claude already chosen; the stub starts on the engine's own model
-                // (`selected: null`) and answers the choice only after `hoh/executor/select`.
-                assert!(result["selected"].is_null());
+                // (`selected` empty, as the engine answers it) and answers the choice only after `hoh/executor/select`.
+                assert_eq!(result["selected"], json!({"executor":null,"model":null}));
                 result["selected"] = Value::Null;
                 expected["selected"] = Value::Null;
+                // The fixture's conversation runs on Claude with a pending mode; the stub knows no such
+                // conversation, and says so the way the engine does.
+                assert_eq!(
+                    result["session"],
+                    json!({"executor":null,"model":null,"privacy":null,"mode":null,"running":null,"pending":false})
+                );
+                result["session"] = Value::Null;
+                expected["session"] = Value::Null;
             }
             assert_eq!(result, expected);
         }

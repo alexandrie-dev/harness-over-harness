@@ -14,6 +14,16 @@
     },
     "selected": {
       "$ref": "#/$defs/ExecutorSelection"
+    },
+    "session": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutorSessionAccess"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -68,6 +78,55 @@
           ]
         }
       }
+    },
+    "ExecutorSessionAccess": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "privacy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorAccessMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "running": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorAccessMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pending"
+      ]
     }
   },
   "x-method": "hoh/executor/access/get"

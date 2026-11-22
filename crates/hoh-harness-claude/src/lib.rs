@@ -23,7 +23,7 @@ use hoh_kernel::{Cfg, Context, Inject, Plugin, Service};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use harness::{Access, ClaudeConfig, ClaudeHarness};
+pub use harness::{ClaudeConfig, ClaudeHarness, DEFAULT_SETTING_SOURCES, SettingSources};
 
 /// The name Claude is registered under: also the provider route of a session it drives.
 pub const HARNESS_NAME: &str = "claude";
@@ -34,8 +34,14 @@ pub const HARNESS_NAME: &str = "claude";
 pub struct Config {
     /// The `claude` program; `claude` in `PATH` when absent.
     pub executable: Option<String>,
-    /// `confirm` (default) or `full`: chosen by the human in the window.
-    pub access: Access,
+    /// Whose settings Claude runs with: `personal` (the human's own, as in T3) or `isolated`
+    /// (none of them). [`DEFAULT_SETTING_SOURCES`] when absent. Set in the profile, not by a
+    /// workspace or a chat.
+    pub setting_sources: Option<SettingSources>,
+    /// Ignored, with a warning in the log. The access mode is chosen only by the user in the
+    /// window (`hoh/executor/access/set`) and reaches Claude from the slot; a line here, from an
+    /// older profile or written by hand, never changes it and never widens anything.
+    pub access: Option<serde_json::Value>,
 }
 
 #[derive(Inject)]
@@ -51,12 +57,19 @@ impl Plugin for HarnessClaudePlugin {
     type Deps = Deps;
 
     async fn apply(ctx: Context, deps: Deps, config: Cfg<Config>) -> Result<(), BoxError> {
-        let mut claude = ClaudeConfig {
-            access: config.get().access,
-            ..ClaudeConfig::default()
-        };
+        if let Some(access) = &config.get().access {
+            ctx.logger().warn(format_args!(
+                "the configuration of {} names an access mode ({access}): it is ignored, the \
+                 mode is chosen only by the user in the window (hoh/executor/access/set)",
+                Self::NAME
+            ));
+        }
+        let mut claude = ClaudeConfig::default();
         if let Some(executable) = config.get().executable.as_deref() {
             claude.executable = PathBuf::from(executable);
+        }
+        if let Some(sources) = config.get().setting_sources {
+            claude.setting_sources = sources;
         }
         let _registration =
             deps.harnesses
@@ -70,11 +83,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn access_comes_from_the_configuration_and_defaults_to_confirm() {
-        let config: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.access, Access::Confirm);
+    fn an_access_mode_in_the_configuration_is_accepted_but_not_used() {
+        // Accepted, so an older profile does not take the window down; nothing reads it but the
+        // warning (the plugin builds its `ClaudeConfig`, which has no mode, without it).
         let config: Config = serde_json::from_str(r#"{"access":"full"}"#).unwrap();
-        assert_eq!(config.access, Access::Full);
-        assert!(serde_json::from_str::<Config>(r#"{"access":"bypass"}"#).is_err());
+        assert_eq!(config.access, Some(serde_json::json!("full")));
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.access, None);
+        assert!(serde_json::from_str::<Config>(r#"{"other":1}"#).is_err());
+    }
+
+    #[test]
+    fn the_setting_sources_are_named_in_the_configuration() {
+        let config: Config = serde_json::from_str(r#"{"settingSources":"isolated"}"#).unwrap();
+        assert_eq!(config.setting_sources, Some(SettingSources::Isolated));
+        let config: Config = serde_json::from_str(r#"{"settingSources":"personal"}"#).unwrap();
+        assert_eq!(config.setting_sources, Some(SettingSources::Personal));
+        assert!(serde_json::from_str::<Config>(r#"{"settingSources":"all"}"#).is_err());
+        assert_eq!(
+            ClaudeConfig::default().setting_sources,
+            DEFAULT_SETTING_SOURCES
+        );
     }
 }

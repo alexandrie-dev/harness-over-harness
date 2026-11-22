@@ -1,0 +1,272 @@
+#!/usr/bin/python3 -I
+"""A stand-in for the `claude` CLI, only to test scripts/claude-live-extra.sh (no network, no model).
+
+It follows the prompts of that script (a model would too):
+  Remember the word W.            -> keeps W for the session (FAKE_STATE/<id>.json, with the folder)
+  What word did I ask you ...     -> the kept word
+  Run this shell command ... `C`  -> Bash step with C (asked unless bypassPermissions)
+  Use the AskUserQuestion tool .. options A and B.  -> asks (not under bypassPermissions)
+  Read the file P and ...         -> Read step (asked when P is outside the folder, unless bypass)
+  Write the text T into the file P, ... -> Edit step (asked unless bypass)
+`--resume ID` of an unknown session or from another folder prints the real CLI's message and exits 1.
+Environment: FAKE_STATE (state folder, required), FAKE_SURVIVES=1 (ignore the end of stdin),
+FAKE_LEAKY_STOP=1 (an interrupt leaves the command running), FAKE_SHOW_SECRET=1 (a leak line in stderr).
+"""
+import json, os, re, select, signal, subprocess, sys, time
+
+ARGS = sys.argv[1:]
+if "--version" in ARGS:
+    print("2.1.0 (Claude Code)")
+    sys.exit(0)
+
+
+def value_of(flag):
+    return ARGS[ARGS.index(flag) + 1] if flag in ARGS[:-1] else None
+
+
+CWD = os.getcwd()
+STATE = os.environ["FAKE_STATE"]
+SESSION = value_of("--session-id") or value_of("--resume") or "fake-session"
+BYPASS = value_of("--permission-mode") == "bypassPermissions"
+STATE_FILE = os.path.join(STATE, SESSION + ".json")
+counter = [0]
+buffer = b""
+interrupted = [False]
+current = [None]
+
+
+def write(value):
+    sys.stdout.write(json.dumps(value) + "\n")
+    sys.stdout.flush()
+
+
+def next_id(prefix):
+    counter[0] += 1
+    return "%s-%d" % (prefix, counter[0])
+
+
+if value_of("--resume"):
+    try:
+        with open(STATE_FILE) as file:
+            if json.load(file).get("cwd") != CWD:
+                raise OSError
+    except (OSError, ValueError):
+        sys.stderr.write("No conversation found with session ID: %s\n" % SESSION)
+        sys.stderr.flush()
+        sys.exit(1)
+if os.environ.get("FAKE_SHOW_SECRET"):
+    sys.stderr.write("auth: %s\n" % os.environ["FAKE_SHOW_SECRET"])
+
+
+def load():
+    try:
+        with open(STATE_FILE) as file:
+            return json.load(file)
+    except (OSError, ValueError):
+        return {"cwd": CWD}
+
+
+def save(state):
+    with open(STATE_FILE, "w") as file:
+        json.dump(state, file)
+
+
+def messages(timeout):
+    """Complete JSON lines from stdin; EOF ends the process unless FAKE_SURVIVES."""
+    global buffer
+    ready, _, _ = select.select([0], [], [], timeout)
+    if ready:
+        chunk = os.read(0, 65536)
+        if not chunk:
+            if os.environ.get("FAKE_SURVIVES"):
+                time.sleep(120)
+            sys.exit(0)
+        buffer += chunk
+    found = []
+    while b"\n" in buffer:
+        line, buffer = buffer.split(b"\n", 1)
+        try:
+            found.append(json.loads(line))
+        except ValueError:
+            pass
+    return found
+
+
+pending = []
+
+
+def respond(message, response):
+    write({"type": "control_response", "response": {"subtype": "success", "request_id": message.get("request_id"), "response": response}})
+
+
+def control(message):
+    request = message.get("request") or {}
+    if request.get("subtype") == "interrupt":
+        interrupted[0] = True
+        process = current[0]
+        if process is not None and process.poll() is None:
+            try:
+                if os.environ.get("FAKE_LEAKY_STOP"):
+                    process.kill()
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        respond(message, {})
+        return
+    response = {}
+    if request.get("subtype") == "initialize":
+        response = {"models": [{"value": "default", "displayName": "Default"}],
+                    "account": {"email": "user@example.com", "tokenSource": "claude.ai"}}
+    respond(message, response)
+
+
+def next_user_message():
+    while True:
+        if pending:
+            return pending.pop(0)
+        for message in messages(0.2):
+            if message.get("type") == "control_request":
+                control(message)
+            elif message.get("type") == "user":
+                pending.append(message)
+
+
+def ask(tool, tool_input, reason=None):
+    """can_use_tool; returns the answer dict of the host."""
+    request = next_id("perm")
+    body = {"subtype": "can_use_tool", "tool_name": tool, "input": tool_input, "tool_use_id": next_id("toolu")}
+    if reason:
+        body["decision_reason"] = reason
+    write({"type": "control_request", "request_id": request, "request": body})
+    while True:
+        for message in messages(0.2):
+            response = message.get("response") or {}
+            if message.get("type") == "control_response" and response.get("request_id") == request:
+                return response.get("response") or {}
+            if message.get("type") == "control_request":
+                control(message)
+            elif message.get("type") == "user":
+                pending.append(message)
+
+
+def assistant(block):
+    write({"type": "assistant", "session_id": SESSION, "parent_tool_use_id": None,
+           "message": {"id": next_id("msg"), "role": "assistant", "model": "claude-x-1", "content": [block]}})
+
+
+def tool_result(tool_id, text, error=False):
+    write({"type": "user", "session_id": SESSION, "parent_tool_use_id": None,
+           "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_id, "content": text, "is_error": error}]}})
+
+
+def mcp_servers():
+    try:
+        with open(os.path.join(CWD, ".mcp.json")) as file:
+            servers = json.load(file)["mcpServers"]
+        with open(os.path.join(os.environ.get("HOME", ""), ".claude", "settings.json")) as file:
+            enabled = json.load(file).get("enableAllProjectMcpServers")
+    except (OSError, ValueError, KeyError):
+        return []
+    found = []
+    for name, server in servers.items():
+        if enabled:
+            args = server.get("args") or []
+            open(os.path.join(args[-1], "mcp-started"), "a").close()
+        found.append({"name": name, "status": "connected" if enabled else "pending", "source": "project"})
+    return found
+
+
+def step(tool, tool_input, asked, reason=None):
+    """Runs an asked step; returns True when it may go on."""
+    if asked and not BYPASS:
+        answer = ask(tool, tool_input, reason)
+        return answer.get("behavior") == "allow"
+    return True
+
+
+def run_command(command):
+    process = subprocess.Popen(["/bin/sh", "-c", command], cwd=CWD, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               start_new_session=True)
+    current[0] = process
+    out = b""
+    while process.poll() is None:
+        for message in messages(0.1):
+            if message.get("type") == "control_request":
+                control(message)
+            elif message.get("type") == "user":
+                pending.append(message)
+    out = process.stdout.read()
+    current[0] = None
+    return out.decode("utf-8", "replace").strip()
+
+
+def turn(text):
+    interrupted[0] = False
+    state = load()
+    state["cwd"] = CWD
+    save(state)
+    write({"type": "system", "subtype": "init", "session_id": SESSION, "model": "claude-x-1", "cwd": CWD,
+           "tools": ["Read", "Edit", "Bash"], "mcp_servers": mcp_servers(), "permissionMode": value_of("--permission-mode")})
+    reply = "ok"
+    tool_id = next_id("toolu")
+    found = re.search(r"Remember the word (\S+?)\.", text)
+    if found:
+        state["word"] = found.group(1)
+        save(state)
+    elif "What word did I ask you to remember" in text:
+        reply = state.get("word", "unknown")
+    elif re.search(r"Run this shell command[^`]*`([^`]+)`", text):
+        command = re.search(r"Run this shell command[^`]*`([^`]+)`", text).group(1)
+        assistant({"type": "tool_use", "id": tool_id, "name": "Bash", "input": {"command": command}})
+        if step("Bash", {"command": command}, True):
+            output = run_command(command)
+            if interrupted[0]:
+                write({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "interrupted",
+                       "session_id": SESSION, "duration_ms": 1, "num_turns": 1})
+                return
+            tool_result(tool_id, output)
+            reply = output.splitlines()[-1] if output else "ok"
+        else:
+            tool_result(tool_id, "denied", True)
+            reply = "denied"
+    elif "AskUserQuestion" in text:
+        options = re.search(r"options (\S+) and (\S+?)\.", text)
+        labels = [options.group(1), options.group(2)] if options else ["a", "b"]
+        if BYPASS:
+            reply = "no question asked"
+        else:
+            tool_input = {"questions": [{"question": "Which token?", "header": "Token", "multiSelect": False,
+                                         "options": [{"label": l, "description": l} for l in labels]}]}
+            assistant({"type": "tool_use", "id": tool_id, "name": "AskUserQuestion", "input": tool_input})
+            answer = ask("AskUserQuestion", tool_input)
+            picked = (answer.get("updatedInput") or {}).get("answers") or {}
+            reply = next(iter(picked.values()), "no answer")
+    elif re.search(r"Read the file (\S+) and", text):
+        path = re.search(r"Read the file (\S+) and", text).group(1)
+        assistant({"type": "tool_use", "id": tool_id, "name": "Read", "input": {"file_path": path}})
+        outside = not os.path.realpath(path).startswith(os.path.realpath(CWD) + os.sep)
+        if step("Read", {"file_path": path}, outside):
+            with open(path) as file:
+                reply = file.readline().strip()
+        else:
+            reply = "denied"
+    elif re.search(r"Write the text (\S+) into the file (\S+?),", text):
+        found = re.search(r"Write the text (\S+) into the file (\S+?),", text)
+        tool_input = {"file_path": found.group(2), "old_string": "", "new_string": found.group(1)}
+        assistant({"type": "tool_use", "id": tool_id, "name": "Edit", "input": tool_input})
+        if step("Edit", tool_input, True):
+            with open(found.group(2), "w") as file:
+                file.write(found.group(1))
+            reply = "written"
+        else:
+            reply = "denied"
+    assistant({"type": "text", "text": reply})
+    write({"type": "result", "subtype": "success", "is_error": False, "result": reply, "session_id": SESSION,
+           "duration_ms": 1, "num_turns": 1})
+
+
+while True:
+    message = next_user_message()
+    content = (message.get("message") or {}).get("content") or [{}]
+    turn(content[0].get("text", "") if isinstance(content[0], dict) else "")

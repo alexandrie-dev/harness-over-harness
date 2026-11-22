@@ -10,9 +10,10 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
-    ApprovalMode, AuthState, Discovery, ExternalHarness, HarnessFailure, HarnessModel,
-    HarnessPolicy, HarnessResult, NetworkAccess, ProcessSpec, SandboxMode, StartParams,
-    StartResult, Started, Supervisor, SupervisorLimits, code,
+    AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, ExternalHarness,
+    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, NetworkAccess, ProcessSpec,
+    SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits, VersionStatus,
+    code,
 };
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
@@ -20,36 +21,57 @@ use tokio::io::AsyncReadExt;
 use crate::session::{ClaudeSession, SessionSettings};
 use crate::version;
 
-/// How much the human let Claude do, chosen in the window and handed over by the slot's
-/// configuration; nothing else (the policy of a session, the CLI's answers) decides it.
+/// Which of the human's own Claude Code settings a session runs with. Chosen in the profile (the
+/// plugin's configuration, `settingSources`), never by the workspace or the chat; the access mode
+/// is not one of them (the CLI is always given it on the command line).
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
-pub enum Access {
-    /// With confirmation: every command, write and network call the CLI does not settle itself
-    /// is a question to the slot.
-    #[default]
-    Confirm,
-    /// Full access: no questions for an ordinary session (a read-only one stays read-only).
-    Full,
+pub enum SettingSources {
+    /// The human's own settings: those of [`PERSONAL_SETTING_SOURCES`] (their permission rules,
+    /// hooks, plugins, `CLAUDE.md`); their MCP servers are not turned off. The settings of the
+    /// working folder (`.claude/settings.json`, `.claude/settings.local.json`) are not among them.
+    Personal,
+    /// Nothing of the human's: no settings file (`--setting-sources ""`) and no MCP server
+    /// (`--strict-mcp-config`, none given). What the organization manages still applies.
+    Isolated,
 }
 
-/// How a [`ClaudeHarness`] finds and starts the CLI.
+/// The only place the default is set: the human's own settings apply, as in T3 (the founder and
+/// the CEO, 21.11). [`SettingSources::Isolated`] stays available in the profile.
+pub const DEFAULT_SETTING_SOURCES: SettingSources = SettingSources::Personal;
+
+/// The setting sources of [`SettingSources::Personal`], the only place they are named: the
+/// human's user settings only (the CEO, 21.11 ~02:00). The project and local settings live in the
+/// working folder, where anyone who wrote to it (another person, the model itself) could put an
+/// `allow` rule or a hook that answers in place of the window's question. The other choice (as T3
+/// reads them, `ClaudeAdapterV2.ts:5595`) is this constant set to `"user,project,local"`.
+const PERSONAL_SETTING_SOURCES: &str = "user";
+
+impl SettingSources {
+    /// The switches of this choice, in the order they are passed.
+    fn args(self) -> Vec<String> {
+        let args: &[&str] = match self {
+            // `--setting-sources` loads only the listed ones (`claude --help`).
+            Self::Personal => &["--setting-sources", PERSONAL_SETTING_SOURCES],
+            // "Only use MCP servers from --mcp-config, ignoring all other MCP configurations"
+            // (`claude --help`); none is given.
+            Self::Isolated => &["--setting-sources", "", "--strict-mcp-config"],
+        };
+        args.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+}
+
+/// How a [`ClaudeHarness`] finds and starts the CLI. It has no access mode: what a session may
+/// do without asking comes only from the slot ([`ExternalHarness::start_with_access`]), which
+/// takes it from the user's choice in the window.
 #[derive(Clone)]
 pub struct ClaudeConfig {
-    /// Confirm (default) or full access.
-    pub access: Access,
     /// The `claude` program (a name looked up in `PATH`, or a path).
     pub executable: PathBuf,
+    /// Whose settings the CLI reads ([`DEFAULT_SETTING_SOURCES`] unless the profile says).
+    pub setting_sources: SettingSources,
     /// Added to the environment of every `claude` process.
     pub extra_env: Vec<(String, String)>,
     /// How long `--version` may take.
@@ -67,8 +89,8 @@ impl std::fmt::Debug for ClaudeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Environment values may be secrets: only the names are shown.
         f.debug_struct("ClaudeConfig")
-            .field("access", &self.access)
             .field("executable", &self.executable)
+            .field("setting_sources", &self.setting_sources)
             .field(
                 "extra_env",
                 &self
@@ -88,8 +110,8 @@ impl std::fmt::Debug for ClaudeConfig {
 impl Default for ClaudeConfig {
     fn default() -> Self {
         Self {
-            access: Access::Confirm,
             executable: PathBuf::from("claude"),
+            setting_sources: DEFAULT_SETTING_SOURCES,
             extra_env: Vec::new(),
             version_timeout: Duration::from_secs(20),
             init_timeout: Duration::from_secs(25),
@@ -100,20 +122,37 @@ impl Default for ClaudeConfig {
 }
 
 impl ClaudeConfig {
-    /// The command line a session is started with, program first: exactly what is run for these
-    /// arguments, so the window can show the mode from it. `native_id` is the id of a new session
-    /// (`--session-id`), unless `resume` names one to continue (`--resume`).
+    /// The command line a session is started with under `access`, program first: exactly what is
+    /// run for these arguments. `native_id` is the id of a new session (`--session-id`), unless
+    /// `resume` names one to continue (`--resume`). The part that decides what the session may do
+    /// without asking is [`launch_flags`](Self::launch_flags) of the same policy and mode, in the
+    /// same place.
     pub fn argv(
         &self,
         policy: &HarnessPolicy,
+        access: AccessMode,
         model: Option<&str>,
         resume: Option<&str>,
         native_id: &str,
     ) -> Vec<String> {
-        let launch = launch_for(policy, self.access);
+        let launch = launch_for(policy, access);
         let mut argv = vec![self.executable.to_string_lossy().into_owned()];
-        argv.extend(session_args(&launch, model, resume, native_id));
+        argv.extend(session_args(
+            &launch,
+            self.setting_sources,
+            model,
+            resume,
+            native_id,
+        ));
         argv
+    }
+
+    /// The switches that decide what a session started with `policy` under `access` may do
+    /// without asking (permission mode, setting sources, permission prompt, tool limits): the
+    /// slice of [`argv`](Self::argv) between the fixed stream flags and the model and session ids.
+    /// No ids, no secrets.
+    pub fn launch_flags(&self, policy: &HarnessPolicy, access: AccessMode) -> Vec<String> {
+        permission_args(&launch_for(policy, access), self.setting_sources)
     }
 }
 
@@ -130,11 +169,12 @@ impl ClaudeHarness {
     pub fn argv(
         &self,
         policy: &HarnessPolicy,
+        access: AccessMode,
         model: Option<&str>,
         resume: Option<&str>,
         native_id: &str,
     ) -> Vec<String> {
-        self.config.argv(policy, model, resume, native_id)
+        self.config.argv(policy, access, model, resume, native_id)
     }
 }
 
@@ -160,13 +200,15 @@ pub(crate) struct Launch {
 }
 
 /// `permissionModeForClaudeRuntimePolicy`, T3 `ClaudeAdapterV2.ts:3358-3407`, reduced to the
-/// contract's policy: `default` + `can_use_tool`, so every command, write and network call the CLI
-/// does not settle itself is a question to the slot, which has no automatic "yes" here.
-/// `bypassPermissions` is never used. Read-only is `default` too, with `--tools` limited to the
-/// read tools (the CLI is not given the others at all) and no `--allowedTools`: a read outside the
-/// folder is a question like any other. `approval: never` is refused before this point ([`NEVER_REFUSED`]).
-pub(crate) fn launch_for(policy: &HarnessPolicy, access: Access) -> Launch {
-    if access == Access::Full && policy.sandbox == SandboxMode::ReadOnly {
+/// contract's policy and the access mode the slot passes (the human's choice in the window, never
+/// the plugin's configuration). Confirm: `default` + `can_use_tool`, so every command, write and
+/// network call the CLI does not settle itself is a question to the slot, which has no automatic
+/// "yes" here; read-only is `default` too, with `--tools` limited to the read tools and no
+/// `--allowedTools`. Full: `bypassPermissions` when it widens the policy, `dontAsk` with the read
+/// tools when the session is read-only. `approval: never` under confirm is refused before this
+/// point ([`NEVER_REFUSED`]).
+pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
+    if access == AccessMode::Full && policy.sandbox == SandboxMode::ReadOnly {
         // Full access does not widen a read-only session (a reviewer stays one): the read tools
         // only, as T3 does for read-only (`ClaudeAdapterV2.ts:3380-3386`, `dontAsk` + tools), and
         // no questions.
@@ -178,7 +220,7 @@ pub(crate) fn launch_for(policy: &HarnessPolicy, access: Access) -> Launch {
             disallowed_tools: None,
         };
     }
-    if access == Access::Full {
+    if access.widens(policy) {
         // The human's choice of full access widens an ordinary session to `bypassPermissions`
         // with `allowDangerouslySkipPermissions` (the flags T3 uses for `never` with a full
         // sandbox, `ClaudeAdapterV2.ts:3364-3378`, `:3417-3468`; our choice of mode replaces
@@ -221,15 +263,33 @@ fn base_args() -> Vec<String> {
 
 pub(crate) fn session_args(
     launch: &Launch,
+    sources: SettingSources,
     model: Option<&str>,
     resume: Option<&str>,
     new_id: &str,
 ) -> Vec<String> {
     let mut args = base_args();
-    args.extend(["--permission-mode".into(), launch.permission_mode.into()]);
-    // No settings file decides for the slot: the user's own `allow: Bash(*)` would let the CLI run
-    // a command without `can_use_tool`. An empty list loads none (managed policy still applies).
-    args.extend(["--setting-sources".into(), String::new()]);
+    args.extend(permission_args(launch, sources));
+    if let Some(model) = model.filter(|model| *model != "default") {
+        args.extend(["--model".into(), model.into()]);
+    }
+    match resume {
+        Some(id) => args.extend(["--resume".into(), id.into()]),
+        None => args.extend(["--session-id".into(), new_id.into()]),
+    }
+    args
+}
+
+/// The permission switches of a launch, in the order they are passed.
+fn permission_args(launch: &Launch, sources: SettingSources) -> Vec<String> {
+    let mut args = vec![
+        "--permission-mode".to_owned(),
+        launch.permission_mode.to_owned(),
+    ];
+    // Whose settings the CLI reads (the profile's choice). Under `Personal` the human's own
+    // `allow` rules and hooks answer before `can_use_tool`, as in their terminal and in T3 (SDK
+    // `types.py` `can_use_tool`); managed settings apply under both (`claude --help`).
+    args.extend(sources.args());
     if launch.permission_prompt {
         args.extend(["--permission-prompt-tool".into(), "stdio".into()]);
     }
@@ -243,13 +303,6 @@ pub(crate) fn session_args(
     }
     if let Some(tools) = launch.disallowed_tools {
         args.extend(["--disallowedTools".into(), tools.into()]);
-    }
-    if let Some(model) = model.filter(|model| *model != "default") {
-        args.extend(["--model".into(), model.into()]);
-    }
-    match resume {
-        Some(id) => args.extend(["--resume".into(), id.into()]),
-        None => args.extend(["--session-id".into(), new_id.into()]),
     }
     args
 }
@@ -290,6 +343,17 @@ fn settings_of(config: &ClaudeConfig, bypass: bool) -> SessionSettings {
     }
 }
 
+/// The form of a Claude Code session id (`8-4-4-4-12` hex digits). A stored id of another form is
+/// never put after `--resume` (it could read as a switch): such a conversation counts as lost.
+fn is_uuid(id: &str) -> bool {
+    let groups: Vec<&str> = id.split('-').collect();
+    groups.len() == 5
+        && groups
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(group, len)| group.len() == len && group.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 fn random_uuid() -> Result<String, HarnessFailure> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes)
@@ -315,6 +379,20 @@ enum VersionCheck {
         version: Option<String>,
         message: String,
     },
+}
+
+impl VersionCheck {
+    /// Where the found version stands against the range of `version.rs`: a version outside it is
+    /// `unsupported`; no version read (not installed, unreadable, failing) is `unknown`.
+    fn status(&self) -> VersionStatus {
+        match self {
+            Self::Supported(_) => VersionStatus::Supported,
+            Self::Refused {
+                version: Some(_), ..
+            } => VersionStatus::Unsupported,
+            Self::NotInstalled | Self::Refused { version: None, .. } => VersionStatus::Unknown,
+        }
+    }
 }
 
 async fn check_version(config: &ClaudeConfig) -> VersionCheck {
@@ -495,77 +573,106 @@ pub(crate) fn models_from(response: &Value) -> Vec<HarnessModel> {
     models
 }
 
+/// Installed, version, sign-in and models, from `claude --version` and the CLI's own answer to
+/// `initialize` of a probe that starts nothing; and where the version stands against the range of
+/// `version.rs`. No token or sign-in file is read.
+async fn discover_claude(config: &ClaudeConfig) -> (Discovery, VersionStatus) {
+    let checked = check_version(config).await;
+    let status = checked.status();
+    let version = match checked {
+        VersionCheck::Supported(version) => version,
+        VersionCheck::NotInstalled => {
+            let discovery = Discovery {
+                installed: false,
+                version: None,
+                auth: AuthState::Unknown,
+                models: Vec::new(),
+                detail: Some(version::not_installed_message()),
+            };
+            return (discovery, status);
+        }
+        VersionCheck::Refused { version, message } => {
+            let discovery = Discovery {
+                installed: true,
+                version,
+                auth: AuthState::Unknown,
+                models: Vec::new(),
+                detail: Some(hoh_external_harness::redact::redact(&message)),
+            };
+            return (discovery, status);
+        }
+    };
+    let probe = spec(config, probe_args(), std::env::temp_dir(), true);
+    let started = match spawn(&probe).await {
+        Ok(sup) => {
+            ClaudeSession::start(
+                sup,
+                String::new(),
+                std::env::temp_dir(),
+                &version,
+                settings_of(config, false),
+            )
+            .await
+        }
+        Err(failure) => Err(failure),
+    };
+    let (session, _events, init) = match started {
+        Ok(started) => started,
+        Err(failure) => {
+            let discovery = Discovery {
+                installed: true,
+                version: Some(version),
+                auth: AuthState::Unknown,
+                models: Vec::new(),
+                detail: Some(hoh_external_harness::redact::redact(&failure.message)),
+            };
+            return (discovery, status);
+        }
+    };
+    session.terminate_now().await;
+    let auth = auth_from(init.response.get("account"));
+    let discovery = Discovery {
+        installed: true,
+        version: Some(version),
+        auth,
+        models: models_from(&init.response),
+        detail: (auth == AuthState::Unauthenticated).then(|| {
+            "Вход в Claude Code не выполнен: запустите `claude` в терминале и войдите.".to_owned()
+        }),
+    };
+    (discovery, status)
+}
+
 impl ExternalHarness for ClaudeHarness {
     fn discover(&self) -> BoxFuture<'static, HarnessResult<Discovery>> {
         let config = self.config.clone();
-        Box::pin(async move {
-            let version = match check_version(&config).await {
-                VersionCheck::Supported(version) => version,
-                VersionCheck::NotInstalled => {
-                    return Ok(Discovery {
-                        installed: false,
-                        version: None,
-                        auth: AuthState::Unknown,
-                        models: Vec::new(),
-                        detail: Some(version::not_installed_message()),
-                    });
-                }
-                VersionCheck::Refused { version, message } => {
-                    return Ok(Discovery {
-                        installed: true,
-                        version,
-                        auth: AuthState::Unknown,
-                        models: Vec::new(),
-                        detail: Some(hoh_external_harness::redact::redact(&message)),
-                    });
-                }
-            };
-            let probe = spec(&config, probe_args(), std::env::temp_dir(), true);
-            let started = match spawn(&probe).await {
-                Ok(sup) => {
-                    ClaudeSession::start(
-                        sup,
-                        String::new(),
-                        std::env::temp_dir(),
-                        &version,
-                        settings_of(&config, false),
-                    )
-                    .await
-                }
-                Err(failure) => Err(failure),
-            };
-            let (session, _events, init) = match started {
-                Ok(started) => started,
-                Err(failure) => {
-                    return Ok(Discovery {
-                        installed: true,
-                        version: Some(version),
-                        auth: AuthState::Unknown,
-                        models: Vec::new(),
-                        detail: Some(hoh_external_harness::redact::redact(&failure.message)),
-                    });
-                }
-            };
-            session.terminate_now().await;
-            let auth = auth_from(init.response.get("account"));
-            Ok(Discovery {
-                installed: true,
-                version: Some(version),
-                auth,
-                models: models_from(&init.response),
-                detail: (auth == AuthState::Unauthenticated).then(|| {
-                    "Вход в Claude Code не выполнен: запустите `claude` в терминале и войдите."
-                        .to_owned()
-                }),
-            })
-        })
+        Box::pin(async move { Ok(discover_claude(&config).await.0) })
     }
 
+    fn discover_with_status(
+        &self,
+    ) -> BoxFuture<'static, HarnessResult<(Discovery, VersionStatus)>> {
+        let config = self.config.clone();
+        Box::pin(async move { Ok(discover_claude(&config).await) })
+    }
+
+    /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).
     fn start_or_resume(&self, params: StartParams) -> BoxFuture<'static, HarnessResult<Started>> {
+        self.start_with_access(params, DEFAULT_ACCESS)
+    }
+
+    /// The mode is the slot's argument and nothing else: not this package's configuration, not
+    /// the session's policy, not what the CLI says. Full access widens only an ordinary session
+    /// ([`AccessMode::widens`]); a read-only one stays read-only.
+    fn start_with_access(
+        &self,
+        params: StartParams,
+        access: AccessMode,
+    ) -> BoxFuture<'static, HarnessResult<Started>> {
         let config = self.config.clone();
         Box::pin(async move {
             // In full access nothing is asked by definition, so `never` changes nothing there.
-            if params.policy.approval == ApprovalMode::Never && config.access == Access::Confirm {
+            if params.policy.approval == ApprovalMode::Never && access == AccessMode::Confirm {
                 return Err(HarnessFailure::new(code::ESCALATION_DENIED, NEVER_REFUSED));
             }
             // No chat with a version outside the range (the CEO's condition).
@@ -582,18 +689,24 @@ impl ExternalHarness for ClaudeHarness {
                 }
             };
             let resume = params.resume.as_ref().map(|id| String::from(id.clone()));
+            if resume.as_deref().is_some_and(|id| !is_uuid(id)) {
+                return Err(HarnessFailure::new(
+                    code::SESSION_NOT_FOUND,
+                    "Сессия Claude Code не найдена: её нельзя продолжить.",
+                ));
+            }
             let native = match &resume {
                 Some(id) => id.clone(),
                 None => random_uuid()?,
             };
-            let args = config
-                .argv(
-                    &params.policy,
-                    params.model.as_deref(),
-                    resume.as_deref(),
-                    &native,
-                )
-                .split_off(1);
+            let launch = launch_for(&params.policy, access);
+            let args = session_args(
+                &launch,
+                config.setting_sources,
+                params.model.as_deref(),
+                resume.as_deref(),
+                &native,
+            );
             let cwd = PathBuf::from(&params.cwd);
             let sup = spawn(&spec(&config, args, cwd.clone(), false)).await?;
             let (session, events, _init) = ClaudeSession::start(
@@ -601,7 +714,7 @@ impl ExternalHarness for ClaudeHarness {
                 native.clone(),
                 cwd,
                 &version,
-                settings_of(&config, launch_for(&params.policy, config.access).bypass),
+                settings_of(&config, launch.bypass),
             )
             .await?;
             Ok(Started {
@@ -613,6 +726,11 @@ impl ExternalHarness for ClaudeHarness {
                 events,
             })
         })
+    }
+
+    /// The same switches [`start_with_access`](Self::start_with_access) passes (for the window).
+    fn launch_flags(&self, policy: &HarnessPolicy, access: AccessMode) -> Vec<String> {
+        self.config.launch_flags(policy, access)
     }
 }
 
@@ -650,6 +768,22 @@ mod tests {
     }
 
     #[test]
+    fn only_a_session_id_of_the_cli_form_is_resumed() {
+        assert!(is_uuid(&random_uuid().unwrap()));
+        assert!(is_uuid("67ED0A1B-2c3d-4e5f-8a9b-0c1d2e3f4a5b"));
+        for bad in [
+            "",
+            "--dangerously-skip-permissions",
+            "67ed0a1b-2c3d-4e5f-8a9b-0c1d2e3f4a5",
+            "67ed0a1b-2c3d-4e5f-8a9b-0c1d2e3f4a5bz",
+            "67ed0a1b2c3d-4e5f-8a9b-0c1d2e3f4a5b",
+            "g7ed0a1b-2c3d-4e5f-8a9b-0c1d2e3f4a5b",
+        ] {
+            assert!(!is_uuid(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn models_start_with_default_and_fall_back_to_aliases() {
         let reported = json!({ "models": [{ "value": "default" }, { "value": "opus", "displayName": "Opus" }] });
         let ids: Vec<_> = models_from(&reported).into_iter().map(|m| m.id).collect();
@@ -673,10 +807,10 @@ mod tests {
                             approval,
                             network,
                         },
-                        Access::Confirm,
+                        AccessMode::Confirm,
                     );
                     assert_eq!(launch.permission_mode, "default");
-                    let args = session_args(&launch, None, None, "id");
+                    let args = session_args(&launch, DEFAULT_SETTING_SOURCES, None, None, "id");
                     let at = args
                         .iter()
                         .position(|a| a == "--permission-prompt-tool")
@@ -694,19 +828,113 @@ mod tests {
 
     #[test]
     fn full_access_is_bypass_permissions_with_the_callback_kept_for_what_bypass_refuses() {
-        let config = ClaudeConfig {
-            access: Access::Full,
-            ..ClaudeConfig::default()
-        };
-        let argv = config.argv(&HarnessPolicy::default(), None, None, "id");
+        let config = ClaudeConfig::default();
+        let argv = config.argv(
+            &HarnessPolicy::default(),
+            AccessMode::Full,
+            None,
+            None,
+            "id",
+        );
         let at = argv.iter().position(|a| a == "--permission-mode").unwrap();
         assert_eq!(argv[at + 1], "bypassPermissions");
         assert!(argv.contains(&"--allow-dangerously-skip-permissions".to_owned()));
         assert!(argv.contains(&"--permission-prompt-tool".to_owned()));
         assert!(!argv.contains(&"--disallowedTools".to_owned()));
         assert!(!argv.contains(&"--tools".to_owned()));
-        // The default is confirm.
-        assert_eq!(ClaudeConfig::default().access, Access::Confirm);
+    }
+
+    #[test]
+    fn the_launch_flags_are_the_slice_of_the_argv_between_the_stream_flags_and_the_ids() {
+        let read_only = HarnessPolicy {
+            sandbox: SandboxMode::ReadOnly,
+            ..HarnessPolicy::default()
+        };
+        let full_sandbox = HarnessPolicy {
+            sandbox: SandboxMode::FullAccess,
+            network: NetworkAccess::Allowed,
+            ..HarnessPolicy::default()
+        };
+        for setting_sources in [SettingSources::Personal, SettingSources::Isolated] {
+            let config = ClaudeConfig {
+                setting_sources,
+                ..ClaudeConfig::default()
+            };
+            for policy in [HarnessPolicy::default(), read_only, full_sandbox] {
+                for access in [AccessMode::Confirm, AccessMode::Full] {
+                    for resume in [None, Some("old")] {
+                        let argv = config.argv(&policy, access, Some("opus"), resume, "new");
+                        let mut expected = vec!["claude".to_owned()];
+                        expected.extend(base_args());
+                        expected.extend(config.launch_flags(&policy, access));
+                        expected.extend(["--model".to_owned(), "opus".to_owned()]);
+                        match resume {
+                            Some(id) => expected.extend(["--resume".to_owned(), id.to_owned()]),
+                            None => expected.extend(["--session-id".to_owned(), "new".to_owned()]),
+                        }
+                        assert_eq!(argv, expected, "{setting_sources:?} {policy:?} {access:?}");
+                    }
+                }
+            }
+        }
+        // What the window shows for each mode, with the default sources (the human's settings).
+        let config = ClaudeConfig::default();
+        assert_eq!(config.setting_sources, SettingSources::Personal);
+        assert_eq!(
+            config.launch_flags(&HarnessPolicy::default(), AccessMode::Confirm),
+            [
+                "--permission-mode",
+                "default",
+                "--setting-sources",
+                "user",
+                "--permission-prompt-tool",
+                "stdio",
+                "--disallowedTools",
+                "WebFetch,WebSearch"
+            ]
+        );
+        assert_eq!(
+            config.launch_flags(&full_sandbox, AccessMode::Full),
+            [
+                "--permission-mode",
+                "bypassPermissions",
+                "--setting-sources",
+                "user",
+                "--permission-prompt-tool",
+                "stdio",
+                "--allow-dangerously-skip-permissions"
+            ]
+        );
+        assert_eq!(
+            config.launch_flags(&read_only, AccessMode::Full),
+            [
+                "--permission-mode",
+                "dontAsk",
+                "--setting-sources",
+                "user",
+                "--tools",
+                "Read,Glob,Grep,LS,NotebookRead,TodoWrite"
+            ]
+        );
+        // Isolated: nothing of the human's.
+        let isolated = ClaudeConfig {
+            setting_sources: SettingSources::Isolated,
+            ..ClaudeConfig::default()
+        };
+        assert_eq!(
+            isolated.launch_flags(&HarnessPolicy::default(), AccessMode::Confirm),
+            [
+                "--permission-mode",
+                "default",
+                "--setting-sources",
+                "",
+                "--strict-mcp-config",
+                "--permission-prompt-tool",
+                "stdio",
+                "--disallowedTools",
+                "WebFetch,WebSearch"
+            ]
+        );
     }
 
     #[test]
@@ -718,8 +946,14 @@ mod tests {
 
     #[test]
     fn default_model_adds_no_model_flag() {
-        let launch = launch_for(&HarnessPolicy::default(), Access::Confirm);
-        assert!(!session_args(&launch, Some("default"), None, "id").contains(&"--model".into()));
-        assert!(session_args(&launch, Some("opus"), None, "id").contains(&"--model".into()));
+        let launch = launch_for(&HarnessPolicy::default(), AccessMode::Confirm);
+        let sources = DEFAULT_SETTING_SOURCES;
+        assert!(
+            !session_args(&launch, sources, Some("default"), None, "id")
+                .contains(&"--model".into())
+        );
+        assert!(
+            session_args(&launch, sources, Some("opus"), None, "id").contains(&"--model".into())
+        );
     }
 }

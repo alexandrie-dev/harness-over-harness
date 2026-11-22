@@ -92,6 +92,33 @@ impl Transport for MemoryTransport {
                 .unwrap();
             return Ok(());
         }
+        if frame["method"] == "hoh/test/folder-fixed-prefix" {
+            // Exactly what the engine sends: the code in front of the text, no `data`.
+            let error = framing::error(
+                frame["id"].clone(),
+                -32000,
+                "EXECUTOR_FOLDER_FIXED: Чат с Claude работает в одной папке. Чтобы работать в другой, начните новый чат",
+            );
+            self.inbox
+                .send(Message::Incoming(self.generation, classify(error).unwrap()))
+                .unwrap();
+            return Ok(());
+        }
+        if frame["method"] == "hoh/test/folder-fixed" || frame["method"] == "hoh/test/refused" {
+            let mut error = framing::error(
+                frame["id"].clone(),
+                -32000,
+                "secret path /home/u/.ssh/id_rsa",
+            );
+            if frame["method"] == "hoh/test/folder-fixed" {
+                error["error"]["data"] =
+                    json!({"code": "EXECUTOR_FOLDER_FIXED", "cwd": "/home/u/secret"});
+            }
+            self.inbox
+                .send(Message::Incoming(self.generation, classify(error).unwrap()))
+                .unwrap();
+            return Ok(());
+        }
         let result = if frame["method"] == "initialize" && self.host {
             json!({"serverInfo":{"name":"deepseek-harness-sdk-runtime","version":"test"},"hoh":{"protocolVersion":1,"approvals":"host"}})
         } else if frame["method"] == "initialize" {
@@ -168,6 +195,67 @@ fn missing_engine_method_is_marked_without_leaking_error_text() {
     wait_memory_ready(&event_rx);
     let error = engine.request("hoh/test/missing", json!({})).unwrap_err();
     assert_eq!(error, hoh_desktop::engine::METHOD_UNAVAILABLE);
+    engine.stop();
+}
+
+/// What the window gets from `engine_request` is `host_error(<what the engine layer says>)`: the reasons are codes, and the
+/// engine's own text and data never travel on.
+#[test]
+fn the_window_gets_codes_for_the_engine_and_host_refusals() {
+    let (controls, _control_rx) = mpsc::channel();
+    let (events, event_rx) = mpsc::channel();
+    let engine = Engine::start(
+        Arc::new(MemoryConnector {
+            host: true,
+            frames: Arc::default(),
+            launches: Arc::default(),
+            controls,
+        }),
+        json!({}),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
+    );
+    wait_memory_ready(&event_rx);
+    let sent =
+        |error: String| serde_json::to_value(hoh_desktop::errors::host_error(error)).unwrap();
+    let missing = sent(engine.request("hoh/test/missing", json!({})).unwrap_err());
+    assert_eq!(
+        missing,
+        json!({"code": "unavailable", "message": "method-unavailable"})
+    );
+    let fixed = sent(
+        engine
+            .request("hoh/test/folder-fixed", json!({}))
+            .unwrap_err(),
+    );
+    assert_eq!(fixed["code"], "folder-fixed");
+    assert!(!fixed.to_string().contains("secret"), "{fixed}");
+    let by_prefix = sent(
+        engine
+            .request("hoh/test/folder-fixed-prefix", json!({}))
+            .unwrap_err(),
+    );
+    assert_eq!(
+        by_prefix,
+        json!({"code": "folder-fixed", "message": "Чат с Claude работает в одной папке. Чтобы работать в другой, начните новый чат"})
+    );
+    let refused = sent(engine.request("hoh/test/refused", json!({})).unwrap_err());
+    assert_eq!(
+        refused,
+        json!({"code": "refused", "message": "Помощник отклонил запрос"})
+    );
+    assert!(!refused.to_string().contains("id_rsa"), "{refused}");
+    // The bridge's own refusals of the confirmation (what `native.rs` returns for «Отклонить» and for a timeout).
+    for (message, code) in [
+        (hoh_desktop::errors::REJECTED, "rejected"),
+        (hoh_desktop::errors::NOT_RECEIVED, "expired"),
+    ] {
+        assert_eq!(
+            sent(message.to_owned()),
+            json!({"code": code, "message": message})
+        );
+    }
     engine.stop();
 }
 

@@ -7,6 +7,8 @@ import { Icon } from '../shared/icons';
 import { ProviderMark } from '../shared/ProviderMark';
 
 export interface ExecutorModelPickerProps {
+  /** The model chosen for NEW chats ('' when new chats do not go through Claude); `model` is the model of the open chat. */
+  newModel: string;
   model: string;
   models: { id: string; name: string }[];
   busy: boolean;
@@ -16,9 +18,9 @@ export interface ExecutorModelPickerProps {
   onChangeProvider(): void;
 }
 
-export function ExecutorModelPicker({ model, models, busy, disabled, onOpen, onPick, onChangeProvider }: ExecutorModelPickerProps) {
+export function ExecutorModelPicker({ model, newModel, models, busy, disabled, onOpen, onPick, onChangeProvider }: ExecutorModelPickerProps) {
   const label = claudeModelLabel(model, models);
-  const listed = models.some(item => item.id === model) ? models : [{ id: model, name: label }, ...models];
+  const listed = !newModel || models.some(item => item.id === newModel) ? models : [{ id: newModel, name: claudeModelLabel(newModel, models) }, ...models];
   return (
     <MenuPrimitive.Root onOpenChange={open => { if (open) onOpen(); }}>
       <MenuPrimitive.Trigger
@@ -30,8 +32,9 @@ export function ExecutorModelPicker({ model, models, busy, disabled, onOpen, onP
       <MenuPrimitive.Portal>
         <MenuPrimitive.Positioner side="top" align="start" sideOffset={8}>
           <MenuPrimitive.Popup className="chat-access-menu" data-model-menu>
-            <div className="chat-access-head">Модель Claude</div>
-            <MenuPrimitive.RadioGroup aria-label="Модель Claude" value={model} className="chat-model-group" onValueChange={(value: string) => { if (value !== model) onPick(value); }}>
+            <div className="chat-access-head">Модель Claude для новых чатов</div>
+            <div className="chat-model-fact" data-new-chats-line>Этот чат остаётся на модели «{label}».</div>
+            <MenuPrimitive.RadioGroup aria-label="Модель Claude" value={newModel} className="chat-model-group" onValueChange={(value: string) => { if (value !== newModel) onPick(value); }}>
               {listed.map(item => (
                 <MenuPrimitive.RadioItem key={item.id} value={item.id} label={item.name} data-model-option={item.id} closeOnClick className="chat-model-item">
                   <ProviderMark icon="claude" /><span>{item.name}</span>

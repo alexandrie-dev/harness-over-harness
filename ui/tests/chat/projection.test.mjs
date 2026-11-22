@@ -393,3 +393,24 @@ test('no step heading uses the words «команда» or «код»', () => {
     assert.doesNotMatch(label, /команд|код/i, `${operation}/${status}: ${label}`);
   }
 });
+
+test('ordinary text with a slash is not a path: nothing in it changes', () => {
+  for (const source of ['50 км/ч', 'и/или', '10 / 2', 'км/ч', '24/7', '1/2', 'TCP/IP', 'ввод/вывод', 'Скорость 50 км/ч, оплата и/или доставка, 10 / 2 = 5, режим 24/7, 1/2 порции'])
+    assert.equal(visibleText(source, WORKSPACE), source, source);
+});
+test('real paths are still hidden as before', () => {
+  for (const [source, expected] of [
+    ['/home/x/a.txt', 'файл'], ['~/doc.md', '~файл'], ['./src/main.rs', '.файл'], [String.raw`C:\Users\a`, 'файл'], ['C:/Users/a/b.txt', 'файл'],
+    ['Открой /home/x/a.txt и ~/doc.md', 'Открой файл и ~файл'], ['см. ../out.txt', 'см. файл'], ['Ошибка:/etc/passwd', 'Ошибка:файл'],
+    ['[x](sub/../../etc/passwd)', '[x](subфайл)'],
+  ]) assert.equal(visibleText(source, WORKSPACE), expected, source);
+});
+test('what the person typed and the titles of chats are never touched, even when they look like paths', () => {
+  const typed = ['50 км/ч и/или 10 / 2', 'прочитай /home/me/заметки.txt и ~/doc.md', String.raw`в папке C:\Users\a`, 'Ошибка:/etc/passwd'];
+  const p = new ChatProjection(WORKSPACE);
+  typed.forEach((value, index) => {
+    p.optimistic(value);
+    p.event(event('user/message', index, { id: `u${index}`, source: { kind: 'user' }, content: [{ type: 'text', text: value }] }));
+  });
+  assert.deepEqual(p.entries.filter(e => e.kind === 'user').map(e => e.text), typed, 'one entry each, as typed');
+});

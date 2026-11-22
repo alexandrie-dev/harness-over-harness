@@ -4,9 +4,10 @@ import { Emblem } from '../shared/Emblem';
 import { keyNote } from '../../lib/keyNote';
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../shared/icons';
-import { discoverView } from '../../lib/executor.mjs';
+import { confirmDescription, discoverView } from '../../lib/executor.mjs';
+import { errorText, refusalWords } from '../../lib/hostError.mjs';
 import { ClaudeConnect } from '../shared/ClaudeConnect';
-import { MethodMissing, discoverClaude, loadModelSettings, loadWorkFolder, modelsFromProbe, pickFolder, probeModel, saveModel, saveRules, selectClaude, storeApiKey } from './engine';
+import { MethodMissing, claudeLaunchFlags, discoverClaude, loadModelSettings, loadWorkFolder, modelsFromProbe, pickFolder, probeModel, saveModel, saveRules, selectClaude, storeApiKey } from './engine';
 import '../shared/primitives.css';
 import './firstrun.css';
 
@@ -24,22 +25,14 @@ const STEPS = ['Модель', 'Правила'] as const;
 
 
 
-/** The person pressed «Отклонить» (or the time ran out) in the protection window: the host and the engine refuse with these words. */
-const DENIED = /Подтверждение отклонено|approval rejected|rejected/i;
-const EXPIRED = /Подтверждение истекло|approval expired|expired/i;
 type Doing = 'check' | 'save';
-/** What the person sees when the protection window said no: what happened and what to press. Never «unknown error». */
+/** What the person sees when the protection window said no: what happened and what to press, by the CODE the host gave (`lib/hostError`). Never «unknown error». */
 function refusalText(error: unknown, doing: Doing): string {
-  const message = error instanceof Error ? error.message : '';
-  const what = doing === 'check' ? 'проверку' : 'сохранение';
-  const button = 'Дальше';
-  if (EXPIRED.test(message)) return `Время на ответ вышло. Нажмите «${button}» ещё раз.`;
-  if (DENIED.test(message)) return `Вы не разрешили ${what}. Нажмите «${button}» и выберите «Разрешить один раз».`;
-  return '';
+  return refusalWords(error, { what: doing === 'check' ? 'проверку' : 'сохранение', button: 'Дальше' });
 }
 function problemText(error: unknown): string {
   if (error instanceof MethodMissing) return `Эта версия пока не умеет: ${error.what}.`;
-  return error instanceof Error && /[А-Яа-яЁё]/.test(error.message) ? error.message : 'Что-то пошло не так. Попробуйте ещё раз.';
+  return errorText(error, 'Что-то пошло не так. Попробуйте ещё раз.');
 }
 
 export interface FirstRunProps {
@@ -59,6 +52,8 @@ export function FirstRun({ onFinish }: FirstRunProps) {
   const [probe, setProbe] = useState<Probe>({ kind: 'idle' });
   const [claudeState, setClaudeState] = useState({ ready: false, model: '' });
   const [claudeRun, setClaudeRun] = useState(0);
+  // How the engine will start Claude (`effective.flags`): the caption of «Спрашивать разрешение» follows it, as in the chat.
+  const [claudeFlags, setClaudeFlags] = useState<unknown>(undefined);
   const [internet, setInternet] = useState<'ask' | 'public'>('ask');
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
   // The default folder is shown as the real path on this computer; until it is known (or if it cannot be) no folder name is invented.
@@ -91,6 +86,7 @@ export function FirstRun({ onFinish }: FirstRunProps) {
 
   const cloud = mode === 'cloud';
   const claude = mode === 'claude';
+  useEffect(() => { if (claude) void claudeLaunchFlags().then(setClaudeFlags); }, [claude, claudeRun]);
   const verified = claude ? claudeState.ready : probe.kind === 'ok';
 
   function invalidate() {
@@ -304,7 +300,7 @@ export function FirstRun({ onFinish }: FirstRunProps) {
               </div>
               <div className="fr-lock">
                 <Icon name="alert" />
-                <div><b>Опасное подтверждаю в отдельном окне</b>Удаление, запуск программ и отправка данных наружу идут только после вашего «Разрешить» в окне защиты. Так будет, пока вы сами не включили «Полный доступ».</div>
+                <div><b>Опасное подтверждаю в отдельном окне</b>Удаление, запуск программ и отправка данных наружу идут только после вашего «Разрешить» в окне защиты. Так будет, пока вы сами не включили «Полный доступ».{claude && <> {confirmDescription(claudeFlags)}</>}</div>
               </div>
             </section>
           )}

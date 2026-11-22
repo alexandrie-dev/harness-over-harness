@@ -23,6 +23,13 @@ struct SessionState {
     cwd: String,
     history: Vec<Value>,
 }
+/// What a conversation bound to Claude runs with.
+struct ClaudeBinding {
+    /// The model chosen when the chat was created (`default` when none).
+    model: String,
+    /// The mode of this conversation's live process: set when a turn starts it, kept between turns.
+    running: Option<&'static str>,
+}
 struct Active {
     session: String,
     action: Action,
@@ -89,6 +96,11 @@ pub struct Engine<W> {
     selected: Option<String>,
     /// Every prompt that went through the Claude executor, for the window's checks (`hoh/stub/executor-calls`).
     claude_calls: Vec<Value>,
+    /// The conversations bound to Claude, as the engine's binding record keeps them: bound at the
+    /// first prompt of a new chat while Claude is selected, and kept whatever is selected later.
+    claude_sessions: HashMap<String, ClaudeBinding>,
+    /// The mode of the Claude process started last, while it runs (as `running_launch` of the engine).
+    last_running: Option<&'static str>,
     /// A Claude turn waiting for the answer to its confirmation question.
     claude_turn: Option<(String, u64)>,
     /// Scenario file and fallback text for `discover` (HOH_STUB_CLAUDE_FILE / HOH_STUB_CLAUDE, read at start).
@@ -118,6 +130,8 @@ impl<W: Write> Engine<W> {
             access_mode: "confirm",
             selected: None,
             claude_calls: Vec::new(),
+            claude_sessions: HashMap::new(),
+            last_running: None,
             claude_turn: None,
             claude_file: std::env::var_os("HOH_STUB_CLAUDE_FILE").map(PathBuf::from),
             claude_state: std::env::var("HOH_STUB_CLAUDE").ok(),
@@ -247,31 +261,61 @@ impl<W: Write> Engine<W> {
         match method {
             "hoh/executor/access/get" => {
                 let mode = self.access_mode;
-                let (flags, text) = if mode == "full" {
+                let asked = params["sessionId"].as_str();
+                let binding = asked.and_then(|id| self.claude_sessions.get(id));
+                // The mode of the process asked about: the conversation's own, else (no
+                // `sessionId`) the one started last; none running: what the next start would use.
+                let shown = match asked {
+                    Some(_) => binding.and_then(|bound| bound.running),
+                    None => self.last_running,
+                }
+                .unwrap_or(mode);
+                let (flags, text) = if shown == "full" {
                     (
-                        json!(["--permission-mode", "bypassPermissions"]),
+                        // The order and the switches of `ClaudeConfig::launch_flags` (confirm/full).
+                        json!([
+                            "--permission-mode",
+                            "bypassPermissions",
+                            "--setting-sources",
+                            "user",
+                            "--permission-prompt-tool",
+                            "stdio",
+                            "--allow-dangerously-skip-permissions"
+                        ]),
                         "Полный доступ: Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить.",
                     )
                 } else {
                     (
+                        // Confirm closes the network: the CLI's two network tools stay off.
                         json!([
                             "--permission-mode",
                             "default",
+                            "--setting-sources",
+                            "user",
                             "--permission-prompt-tool",
-                            "stdio"
+                            "stdio",
+                            "--disallowedTools",
+                            "WebFetch,WebSearch"
                         ]),
                         "С подтверждением: команды, правки файлов и сеть Claude выполняет после вашего подтверждения",
                     )
                 };
                 let selected = self.selected.as_ref().map_or(
-                    Value::Null,
+                    json!({"executor":null,"model":null}),
                     |model| json!({"executor":"claude","model":model}),
                 );
-                self.reply(
-                    id,
-                    json!({"executor":"claude","mode":mode,"effective":{"mode":mode,"flags":flags,"text":text},"selected":selected}),
-                )
-                .map_err(|e| e.to_string())
+                let mut result = json!({"executor":"claude","mode":mode,"effective":{"mode":shown,"flags":flags,"text":text},"selected":selected});
+                if let Some(id) = asked {
+                    result["session"] = match self.claude_sessions.get(id) {
+                        Some(bound) => {
+                            json!({"executor":"claude","model":bound.model,"privacy":"remote",
+                            "mode":mode,"running":bound.running,"pending":bound.running.is_some_and(|r| r != mode)})
+                        }
+                        None => json!({"executor":null,"model":null,"privacy":null,
+                            "mode":null,"running":null,"pending":false}),
+                    };
+                }
+                self.reply(id, result).map_err(|e| e.to_string())
             }
             "hoh/executor/access/set" => {
                 let mode: &'static str = match params["mode"].as_str() {
@@ -279,11 +323,12 @@ impl<W: Write> Engine<W> {
                     Some("full") => "full",
                     _ => return Err("executor access: mode must be confirm or full".into()),
                 };
+                // The engine's answer (`ExecutorAccessSetResult`): the executor is checked above.
                 self.defer(
                     id,
                     method,
                     params,
-                    json!({"mode":mode}),
+                    json!({"executor":"claude","mode":mode}),
                     Effect::Access(mode),
                 )
             }
@@ -320,9 +365,13 @@ impl<W: Write> Engine<W> {
                 json!({"executor":"claude","installed":false,"version":null,"versionStatus":"unknown",
                 "auth":"unknown","models":[],"detail":"claude: команда не найдена"})
             }
+            "unsupported" => {
+                json!({"executor":"claude","installed":true,"version":"1.0.0","versionStatus":"unsupported",
+                "auth":"unknown","models":[],"detail":"Версия claude 1.0.0 не поддерживается"})
+            }
             "unknown" => {
-                json!({"executor":"claude","installed":true,"version":"9.9.9","versionStatus":"unknown",
-                "auth":"authenticated","models":models,"detail":"Версия claude 9.9.9 не проверялась"})
+                json!({"executor":"claude","installed":true,"version":null,"versionStatus":"unknown",
+                "auth":"unknown","models":[],"detail":"Версию claude не удалось определить"})
             }
             _ => {
                 json!({"executor":"claude","installed":true,"version":"2.1.3","versionStatus":"supported",
@@ -359,6 +408,13 @@ impl<W: Write> Engine<W> {
         self.session(session).history.push(event.clone());
         self.notify("session.event", json!({"sessionId":session,"event":event}))
     }
+    /// A prompt goes to Claude when its conversation is bound to it, or is a new chat while Claude
+    /// is selected (a known conversation is never moved by what is selected later).
+    fn goes_to_claude(&self, params: &Value) -> bool {
+        let id = params["sessionId"].as_str().unwrap_or("");
+        self.claude_sessions.contains_key(id)
+            || (self.selected.is_some() && !self.sessions.contains_key(id))
+    }
     /// A prompt of a new chat while Claude is selected: recorded for the checks, then a short synthetic turn.
     /// In `confirm` the turn stops at a confirmation question; in `full` there is none.
     fn claude_prompt(&mut self, id: Value, query: bool, params: &Value) -> Result<(), String> {
@@ -370,8 +426,27 @@ impl<W: Write> Engine<W> {
             return Err("sessionId must not be empty".into());
         }
         let text = params["contentBlocks"][0]["text"].as_str().unwrap_or("");
-        let model = self.selected.clone().unwrap_or_default();
         let mode = self.access_mode;
+        // The first prompt of a new chat binds it to the selected model; a bound one goes on as it
+        // was bound, whatever is selected now.
+        let model = match self.claude_sessions.get(&session) {
+            Some(bound) => bound.model.clone(),
+            None => self.selected.clone().unwrap_or_default(),
+        };
+        // A turn starts the process anew when its mode is not the chosen one (the engine does it
+        // at the start of the turn).
+        self.claude_sessions
+            .entry(session.clone())
+            .or_insert_with(|| ClaudeBinding {
+                model: if model.is_empty() {
+                    "default".into()
+                } else {
+                    model.clone()
+                },
+                running: None,
+            })
+            .running = Some(mode);
+        self.last_running = Some(mode);
         self.claude_calls.push(
             json!({"executor":"claude","model":model,"mode":mode,"sessionId":session,"text":text}),
         );
@@ -410,7 +485,11 @@ impl<W: Write> Engine<W> {
         self.claude_finish(turn, true).map_err(io)
     }
     fn claude_finish(&mut self, (session, turn): (String, u64), allowed: bool) -> io::Result<()> {
-        let model = self.selected.clone().unwrap_or_default();
+        let model = self
+            .claude_sessions
+            .get(&session)
+            .map(|bound| bound.model.clone())
+            .unwrap_or_default();
         let answer = if allowed {
             format!(
                 "Готово. Ответ Claude (модель {model}, режим {}).",
@@ -444,7 +523,7 @@ impl<W: Write> Engine<W> {
                     let calls = json!({"calls":self.claude_calls});
                     return self.reply(id, calls).map_err(|e| e.to_string());
                 }
-                "session/prompt" | "session/query" if self.selected.is_some() => {
+                "session/prompt" | "session/query" if self.goes_to_claude(&params) => {
                     return self.claude_prompt(id, method == "session/query", &params);
                 }
                 _ => {}
@@ -1339,6 +1418,121 @@ mod expiry_tests {
             .unwrap();
         engine
     }
+    /// `access/get` of one conversation, as the window reads it: the `session` part, and the mode of
+    /// the process the answer's `effective` shows.
+    fn session_access(engine: &mut Engine<Vec<u8>>, session: &str) -> (Value, Value) {
+        engine
+            .request(
+                json!(60),
+                "hoh/executor/access/get",
+                json!({"executor":"claude","sessionId":session}),
+            )
+            .unwrap();
+        let old = std::mem::replace(&mut engine.writer, FrameWriter::new(Vec::new()));
+        let out = String::from_utf8(old.into_inner()).unwrap();
+        let result =
+            serde_json::from_str::<Value>(out.lines().last().unwrap()).unwrap()["result"].clone();
+        (
+            result["session"].clone(),
+            result["effective"]["mode"].clone(),
+        )
+    }
+    #[test]
+    fn each_conversation_keeps_its_own_executor_model_and_mode() {
+        let mut engine = plain_engine();
+        engine.set_local_approvals(true);
+        let set = |engine: &mut Engine<Vec<u8>>, executor: Value, mode: Option<&str>| {
+            match mode {
+                Some(mode) => engine.request(
+                    json!(61),
+                    "hoh/executor/access/set",
+                    json!({"executor":"claude","mode":mode}),
+                ),
+                None => engine.request(
+                    json!(62),
+                    "hoh/executor/select",
+                    json!({"executor":executor,"model":"opus"}),
+                ),
+            }
+            .unwrap();
+        };
+        let prompt = |engine: &mut Engine<Vec<u8>>, session: &str| {
+            engine
+                .request(
+                    json!(63),
+                    "session/prompt",
+                    json!({"sessionId":session,"contentBlocks":[{"type":"text","text":"hi"}]}),
+                )
+                .unwrap();
+            // Confirm asks a question only when the stub is set to; answer nothing here.
+            engine.pending = None;
+            engine.claude_turn = None;
+        };
+        set(&mut engine, json!("claude"), None);
+        prompt(&mut engine, "a");
+        let (session, effective) = session_access(&mut engine, "a");
+        assert_eq!(
+            session,
+            json!({"executor":"claude","model":"opus","privacy":"remote","mode":"confirm","running":"confirm","pending":false})
+        );
+        assert_eq!(effective, "confirm");
+
+        // The choice is made between two turns: the next turn will run in the new mode, the live
+        // process still runs in the old one.
+        set(&mut engine, Value::Null, Some("full"));
+        let (session, effective) = session_access(&mut engine, "a");
+        assert_eq!(
+            (
+                session["mode"].clone(),
+                session["running"].clone(),
+                session["pending"].clone()
+            ),
+            (json!("full"), json!("confirm"), json!(true))
+        );
+        assert_eq!(effective, "confirm");
+        prompt(&mut engine, "a");
+        let (session, effective) = session_access(&mut engine, "a");
+        assert_eq!(
+            (
+                session["mode"].clone(),
+                session["running"].clone(),
+                session["pending"].clone()
+            ),
+            (json!("full"), json!("full"), json!(false))
+        );
+        assert_eq!(effective, "full");
+
+        // Back again.
+        set(&mut engine, Value::Null, Some("confirm"));
+        assert_eq!(session_access(&mut engine, "a").0["pending"], true);
+        prompt(&mut engine, "a");
+        assert_eq!(session_access(&mut engine, "a").0["running"], "confirm");
+
+        // A second chat does not overwrite the first, and the first stays on Claude when new chats
+        // return to the engine's own model.
+        set(&mut engine, Value::Null, Some("full"));
+        prompt(&mut engine, "b");
+        assert_eq!(session_access(&mut engine, "b").0["running"], "full");
+        assert_eq!(session_access(&mut engine, "a").0["running"], "confirm");
+        engine
+            .request(
+                json!(64),
+                "hoh/executor/select",
+                json!({"executor":null,"model":"default"}),
+            )
+            .unwrap();
+        let (session, _) = session_access(&mut engine, "a");
+        assert_eq!(
+            (
+                session["executor"].clone(),
+                session["privacy"].clone(),
+                session["model"].clone()
+            ),
+            (json!("claude"), json!("remote"), json!("opus"))
+        );
+        // A conversation the stub does not know to be Claude's is not.
+        assert_eq!(session_access(&mut engine, "c").0["executor"], Value::Null);
+    }
     #[test]
     fn claude_executor_is_discovered_selected_and_runs_new_chats() {
         let mut engine = plain_engine();
@@ -1373,7 +1567,15 @@ mod expiry_tests {
         let unknown = discover(&mut engine, "unknown");
         assert_eq!(
             (unknown["versionStatus"].clone(), unknown["auth"].clone()),
-            (json!("unknown"), json!("authenticated"))
+            (json!("unknown"), json!("unknown"))
+        );
+        let unsupported = discover(&mut engine, "unsupported");
+        assert_eq!(
+            (
+                unsupported["versionStatus"].clone(),
+                unsupported["auth"].clone()
+            ),
+            (json!("unsupported"), json!("unknown"))
         );
         fs::remove_file(&file).unwrap();
 

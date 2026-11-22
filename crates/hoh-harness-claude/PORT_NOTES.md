@@ -21,7 +21,7 @@ Agent SDK не используется и не поставляется. Всё
 | Что | Где здесь | Образец T3 |
 |---|---|---|
 | Запуск `claude -p … stream-json --verbose`, `model`, `sessionId`/`resume` | `harness.rs` `session_args` | `ClaudeAdapterV2.ts:676-715`, `:1484-1555` (опции SDK, которые SDK превращает в эти флаги) |
-| Политика → режим (всегда `default` + `can_use_tool`; `bypassPermissions` и `dontAsk` не используются) | `harness.rs` `launch_for` | `ClaudeAdapterV2.ts:3358-3407` (`permissionModeForClaudeRuntimePolicy`), `:3417-3468` (`claudeRuntimeQueryPolicyForRuntimePolicy`, `installPermissionCallback`) |
+| Политика и режим гнезда → флаги (confirm: `default` + `can_use_tool`; full: `bypassPermissions`, для read-only `dontAsk`; см. «Режим только из гнезда») | `harness.rs` `launch_for` | `ClaudeAdapterV2.ts:3358-3407` (`permissionModeForClaudeRuntimePolicy`), `:3417-3468` (`claudeRuntimeQueryPolicyForRuntimePolicy`, `installPermissionCallback`) |
 | Список read-only инструментов: только `--tools` (остальных инструментов у модели нет), без `--allowedTools` | `READ_ONLY_TOOLS` | `ClaudeAdapterV2.ts:3436-3466`, `CLAUDE_READ_ONLY_ALLOWED_TOOLS` (сокращён до инструментов чтения) |
 | `can_use_tool` → запрос разрешения; allow с `updatedInput`, deny с сообщением, отмена с `interrupt` | `session.rs` `can_use_tool`, `respond` | `ClaudeAdapterV2.ts:12468-12585` (`canUseToolEffect`), `:4388-4430` (`permissionResultFromDecision`) |
 | `AskUserQuestion` → вопрос; ответы по тексту вопроса через «, » | `session.rs` `questions_from`, `answers_by_question` | `ClaudeAdapterV2.ts:12378-12445`, `:5389-5401` (`claudeSdkUserInputAnswers`) |
@@ -258,9 +258,10 @@ stream-json --verbose --include-partial-messages --setting-sources ""`, зате
 
 ## Два режима доступа (решение основателя 20.11)
 
-Режим выбирает человек в окне; адаптер получает его полем `ClaudeConfig.access` (`Access::Confirm`
-по умолчанию, `Access::Full`; в конфигурации плагина `access: "confirm" | "full"`). Больше нигде он
-не выводится: ни из политики `session/create`, ни из ответов CLI. `approval: never` с белым списком
+Режим выбирает человек в окне; адаптер получает его только аргументом гнезда
+`start_with_access(params, AccessMode)` (см. «Режим только из гнезда»; поле `ClaudeConfig.access`
+убрано). Больше нигде он не выводится: ни из конфигурации плагина, ни из политики `session/create`,
+ни из ответов CLI. `approval: never` с белым списком
 по-прежнему выключен в обоих режимах.
 
 - **confirm** (режим (а), без изменений): `-p --input-format stream-json --output-format
@@ -274,7 +275,7 @@ stream-json --verbose --include-partial-messages --setting-sources ""`, зате
   --setting-sources "" --permission-prompt-tool stdio` (колбэк остаётся, см. раунд 223024), **без** `--tools`, `--disallowedTools`. Песочница и
   сеть политики сессии режим не сужают. `--setting-sources ""` оставлен и здесь (наше добавление: T3
   его не передаёт; разрешения при `bypassPermissions` от него не зависят).
-- `ClaudeConfig::argv(policy, model, resume, native_id)` (и `ClaudeHarness::argv`) возвращает
+- `ClaudeConfig::argv(policy, access, model, resume, native_id)` (и `ClaudeHarness::argv`) возвращает
   фактический argv вместе с программой; запуск использует ту же функцию, окно показывает режим по ней.
 
 ## Раунд ревью 221515
@@ -359,3 +360,195 @@ stream-json его нет.
 - **`api_retry` и Stop во время повтора** (`:12214`, `:12430`): повтор запроса CLI виден только как
   служебные кадры; остановка и так ограничена по времени (`interrupt_timeout`).
 - `preview` у вариантов `AskUserQuestion` отбрасывается (контракт вопроса его не имеет).
+
+## Режим только из гнезда (21.11, выравнивание по main d88aef04)
+
+Факт o1: режим брался из `Config.access` плагина, а не из гнезда; методы контракта
+`start_with_access`, `launch_flags`, `discover_with_status` не были переопределены (выбор человека
+не доходил до флагов, `effective.flags` пусты, `full` из окна давал `POLICY_UNAVAILABLE`).
+
+- Типа `Access` и поля `ClaudeConfig.access` больше нет. Режим — только аргумент
+  `start_with_access(params, AccessMode)`, который гнездо передаёт по выбору человека
+  (`hoh/executor/access/set`). `start_or_resume` = `start_with_access(params, DEFAULT_ACCESS)`
+  (confirm). Отказ `approval: never` в confirm тоже по аргументу гнезда.
+- `launch_flags(policy, access)` (метод контракта и функция крейта) = `permission_args(launch_for(…))`,
+  та же функция, что вставляет флаги в argv между потоковыми флагами и `--model`/идентификаторами:
+  `effective.flags` окна = фактический argv.
+  - confirm: `--permission-mode default --setting-sources "" --permission-prompt-tool stdio`
+    (+ `--tools …` для read-only, + `--disallowedTools WebFetch,WebSearch` без сети);
+  - full: `--permission-mode bypassPermissions --setting-sources "" --permission-prompt-tool stdio
+    --allow-dangerously-skip-permissions`;
+  - full + read-only: `--permission-mode dontAsk --setting-sources "" --tools Read,…` (full не
+    расширяет read-only).
+- `discover_with_status`: та же разведка (`claude --version`, затем `initialize` пробы; файлы
+  входа и токены не читаются) и `versionStatus` по `version.rs`: в диапазоне — `supported`; версия
+  прочитана, но вне диапазона — `unsupported`; не установлен, версия не читается или `--version`
+  падает — `unknown`.
+- **`access` в конфигурации плагина принимается и игнорируется с предупреждением в журнал**
+  (`… names an access mode (…): it is ignored …`). Почему не отказ разбора: ядро проверяет
+  конфигурацию по схеме, и отказ уронил бы профиль окна из-за строки старого профиля (до этой правки
+  поле было законным): человек остался бы без Claude совсем. Игнорирование никогда не расширяет
+  права: значение не читает никто, кроме предупреждения. Любое другое неизвестное поле — по-прежнему
+  отказ (`deny_unknown_fields`).
+
+Тесты `tests/slot.rs`: Claude смонтирован плагином в ядре со слотом и вызывается как
+`dyn ExternalHarness` из `ExternalHarnesses` (так его зовут окно и исполнитель гнезда); файл
+пользуется только трейтом, поэтому собирается и против кода main.
+- (а) `the_slot_mode_decides_even_when_the_configuration_says_full`: конфигурация `access: full`,
+  гнездо confirm → `--permission-mode default … --permission-prompt-tool stdio`, без bypass;
+  `run: echo hi` → `ApprovalRequested`; предупреждение в журнале. На коде main (подмена `src/` на
+  d88aef04) падает: `left: Some("bypassPermissions") right: Some("default")`.
+- (б) `full_from_the_slot_runs_full_whatever_the_configuration_says`: конфигурация `{}` и
+  `access: confirm`, гнездо full → bypass, вопроса нет, команда выполнена (на main —
+  `POLICY_UNAVAILABLE`).
+- (в) `the_launch_flags_are_the_flags_the_process_gets`: 2 режима × 3 политики, argv заглушки =
+  поток + `launch_flags` + `--session-id`; точные флаги трёх случаев. Юнит-тест
+  `the_launch_flags_are_the_slice_of_the_argv…` — то же для `argv()` с `--model` и `--resume`.
+- (г) `discover_with_status_places_the_version_against_the_checked_range`: 2.0.31 → supported
+  (вход, модели, совпадает с `discover`); 3.1.0 и 1.0.128 → unsupported; нечитаемая версия и
+  отсутствие программы → unknown.
+- Тесты файла идут по одному (общий замок): каждый пишет скрипт-запускатель, и форк соседнего
+  теста в момент записи дал бы «text file busy».
+- Новые dev-зависимости (крейты рабочего пространства, уже в `Cargo.lock`): hoh-agent,
+  hoh-session, hoh-session-projection, hoh-user-approval, hoh-user-questions.
+
+Вопрос о версии вне диапазона закрыт: окно показывает `unsupported` с текстом «Версия {version} не
+поддерживается: чат с ней не начнётся» (`window.rs`), старт такую версию отклоняет
+(`UNSUPPORTED_VERSION`, условие CEO), `detail` разведки говорит «не поддерживается». Текст окна и
+поведение старта совпадают.
+
+### Дополнение (аудит стыков гнезда, CEO 21.11)
+
+От аргумента гнезда, а не от конфигурации, зависят все производные режима.
+`launch_for(&params.policy, access)` решает:
+- запрет сети (`--disallowedTools WebFetch,WebSearch`);
+- ветку read-only (`default` + callback или `dontAsk`);
+- наличие канала вопросов.
+
+Признак `bypass` сессии (`settings_of(&config, launch.bypass)`) берётся из того же `launch`. От него
+зависит автоотказ проверки удаления (`session.rs` `is_removal_safety_refusal`), поэтому и он идёт от
+режима гнезда.
+
+Тесты `tests/slot.rs`: конфигурация везде `access: full`, гнездо confirm.
+- (1) `confirm_from_the_slot_keeps_the_network_tools_off…` — сеть закрыта → `--disallowedTools
+  WebFetch,WebSearch`. На main: `left: None`.
+- (2) `confirm_from_the_slot_keeps_a_read_only_session_asking…` — read-only → `default`,
+  `--permission-prompt-tool stdio`, `--tools Read,…`, без `dontAsk`. На main: `left: Some("dontAsk")`.
+- (3) `under_confirm_from_the_slot_the_removal_check_is_a_question…` — `Dangerous rm` →
+  `ApprovalRequested` с командой, без автоотказа. На main: автоотказ, тест падает.
+
+**MCP пользователя при `--setting-sources ""`.** Сам по себе этот флаг MCP пользователя не
+отключает (код CLI в `refs/` нет, вывод по T3 и SDK):
+- SDK, `claude_agent_sdk/types.py:2721-2726`: `setting_sources` управляет только файлами
+  `settings.json` (user, project, local).
+- `types.py:2439-2444`: отдельный `strict_mcp_config` (`--strict-mcp-config`) отбрасывает MCP из
+  `.mcp.json`, настроек user/global и плагинов.
+- Свои e2e-тесты SDK для изоляции передают оба флага (`e2e-tests/test_run_end.py:34-35`,
+  `test_verbatim_prompts.py:43-44`).
+- T3, `ClaudeProvider.ts:287-297`: проба исключает MCP файловой системы через
+  `mcpServers: {}` + `strictMcpConfig: true`. Флаг не передаётся, если `managed-mcp.json` его
+  запрещает. MCP claude.ai отключается переменной `ENABLE_CLAUDEAI_MCP_SERVERS=false` («discovered
+  outside filesystem config»).
+- Сессии T3 `strictMcpConfig` не передают.
+
+У нас `--strict-mcp-config` стоит у пробы и в режиме `isolated` (сессии `personal` его не
+передают). В confirm вызов инструмента MCP идёт через
+`can_use_tool` (правил разрешения нет: настройки не загружаются), в full он выполняется без вопроса.
+Проверить вживую можно по `system/init.mcp_servers[].source`.
+
+**Модель при `default`.** Прочитать можно:
+- `system/init.model` (SDK `types.py` `SystemInitData.model`). Приходит в начале хода, а не при
+  старте процесса: T3 `isClaudeTurnStartMessage`, `ClaudeAdapterV2.ts:3725-3727`.
+- `assistant.message.model` корневых сообщений, кроме `<synthetic>`: T3 `executedModel`,
+  `:10770-10775`, отдаёт его в ход, `:6342`, `:6984-6986`.
+- Ключи `result.modelUsage`.
+
+Ответ `initialize` даёт только список с `default` и не говорит, во что тот развернулся. Отдать
+модель гнезду нельзя без правки контракта: в `StartResult` и событиях `HarnessEvent` поля модели нет.
+
+## Личные настройки человека (решение основателя и CEO 21.11)
+
+**Решение 21.11 (основатель и CEO), уточнено CEO ~02:00:** по умолчанию действуют личные настройки
+человека, но «как в T3» = только `user` (см. раздел «"Как в T3" = только `user`» ниже). Режим
+«изолированно» остаётся параметром. Умолчание задано в одном месте: `DEFAULT_SETTING_SOURCES =
+SettingSources::Personal` (`harness.rs`). Значение берётся из конфигурации плагина в профиле:
+`settingSources: "personal" | "isolated"` (`ClaudeConfig.setting_sources`). Workspace и чат его не
+задают, режим доступа на него не влияет. С этого раунда `--setting-sources ""` из прошлых раундов
+стоит только в «изолированно».
+
+- `personal`: `--setting-sources user` (решение CEO 21.11 ~02:00; у первой версии раунда было
+  `user,project,local`, как T3 читает сам, `ClaudeAdapterV2.ts:5595`, `:5628`). Причина:
+  настройки рабочей папки (`project`, `local`) не должны отключать режим «Спрашивать разрешение»:
+  файл мог положить чужой человек или сама модель. Флаг передаётся явно: по `claude --help` он грузит только
+  перечисленные источники, и окно видит выбор в `effective.flags`. Без флага CLI грузит все
+  источники (SDK `types.py:2728`, «matches CLI defaults»). Что передаёт TS SDK T3 по умолчанию, по
+  `refs/` не установлено. MCP и хуки человека не отключаются.
+- `isolated`: `--setting-sources "" --strict-mcp-config`. По help: «Only use MCP servers from
+  --mcp-config, ignoring all other MCP configurations». `--mcp-config` не передаётся.
+- Флаги стоят сразу после `--permission-mode` и входят в `launch_flags`, поэтому
+  `effective.flags` окна = argv.
+- `--safe-mode` не используется. Help 2.1.329 говорит: «Auth, model selection, built-in tools and
+  plugins, and permissions work normally». О `-p` и stream-json там ничего нет, так что условие
+  ведущего не доказано. `--bare` не годится: OAuth не читается.
+- Проба (discover) не изменилась: `--setting-sources "" --strict-mcp-config --mcp-config {}`.
+  Разведка не запускает хуки человека; T3 для пробы ставит `disableAllHooks`.
+
+Что из личного действует в confirm:
+- `permissions.allow` (в `personal` только user; project и local не грузятся). В `personal` разрешённое правилом выполняется **без
+  вопроса окна**: «can_use_tool… is *not* invoked for… `permissions.allow` rules in settings»
+  (SDK `types.py:2584-2597`, `:2310`). В `isolated` правила не загружаются.
+- Хуки. `PreToolUse` с ответом allow тоже минует вопрос (`types.py:2595-2597`). Хуки из файлов
+  настроек в `isolated` не грузятся. Хуки установленных плагинов в `isolated` не установлены.
+- MCP. Серверы человека в `personal` стартуют сами, а вызов их инструментов в confirm — вопрос, если
+  нет allow-правила. Коннекторы claude.ai T3 отключает отдельно: `ENABLE_CLAUDEAI_MCP_SERVERS=false`
+  (`ClaudeProvider.ts:296-297`). У нас переменная стоит только у пробы (`harness.rs`, `spec(..,
+  probe: true)`); в запуске хода, в том числе в `isolated`, её нет. Покрывает ли коннекторы claude.ai
+  `--strict-mcp-config` — открыто: решает строка `mcp.claudeai.isolated` живого прогона (решение
+  CEO).
+- Управляемые (managed) настройки действуют всегда, флагами не отключаются (help). На этой машине
+  их нет (ведущий).
+- `permissions.defaultMode` человека. По коду CLI 2.1.329 он учитывается, только когда режим не
+  задан флагом: явный `--permission-mode` важнее. Подтвердить живым прогоном.
+
+Живая проверка: в `system/init` есть `mcp_servers[].source`, `plugins`, `skills`.
+
+Тесты:
+- `tests/slot.rs`: `the_setting_sources_of_the_profile_reach_the_command_line` (оба значения, оба
+  режима); `the_window_shows_the_setting_sources_the_session_starts_with` — реальное окно
+  (`access/get` через SDK-сервер): `effective.flags` содержит выбор и равны срезу argv;
+  `the_launch_flags_are_the_flags_the_process_gets` — для обоих значений.
+- Юнит-тест `launch_flags` = срез argv, 2 значения × 3 политики × 2 режима × resume;
+  `the_setting_sources_are_named_in_the_configuration`.
+
+Фактическая модель: в контракте нет места (ни поля `StartResult`, ни события `HarnessEvent`), см.
+отчёт для o1.
+
+## «Как в T3» = только `user` (решение CEO 21.11 ~02:00)
+
+**Решение:** `personal` передаёт `--setting-sources user`. Настройки рабочей папки (`project`:
+`.claude/settings.json`, `local`: `.claude/settings.local.json`) не действуют.
+
+**Причина:** режим «Спрашивать разрешение» не должен отключаться файлом из папки. Правило `allow`
+или хук там мог положить чужой человек или сама модель. Оба ревью кандидата cand/i4 сочли это
+блокирующим.
+
+- Источники названы в одном месте: `PERSONAL_SETTING_SOURCES = "user"` (`harness.rs`), его берёт
+  `SettingSources::args`. `DEFAULT_SETTING_SOURCES = Personal` не менялся, «изолированно» тоже.
+- **Вариант Б** (как T3 читает сам, `ClaudeAdapterV2.ts:5595`): смена `PERSONAL_SETTING_SOURCES`
+  на `"user,project,local"`, плюс тесты, где это значение записано буквально.
+- Следствие по SDK (`types.py:2731-2732`, «Must include "project" to load CLAUDE.md files»):
+  `CLAUDE.md` проекта при `user` не грузится, личный `~/.claude/CLAUDE.md` — по источнику `user`.
+  Подтвердить живым прогоном (`get_context_usage.memoryFiles`).
+- Не установлено: грузятся ли MCP-серверы проекта (`.mcp.json`) без источника `project`. Проверка —
+  `system/init.mcp_servers[].source`.
+- Тесты:
+  - argv `personal` = `--setting-sources user` (`tests/claude.rs`
+    `the_setting_sources_are_the_same_for_every_policy`): `project` и `local` не передаются,
+    флаг один;
+  - `launch_flags` = argv (юнит-тест и `tests/slot.rs`), окно `effective.flags`
+    (`the_window_shows_the_setting_sources…`).
+
+## i8b (итоговое ревью Fable cand/i8, 144603)
+
+- «Стоп» во время запуска: у `ClaudeSession` есть `Drop` — последний дескриптор, брошенный без остановки (слот отменил `start` до ответа на `initialize`), убивает группу процесса (`Supervisor::abandon`), как сторож `Owner` у `StdioHarness`. `read_loop` держит `Inner`, а не сессию, и процесс больше не переживает отмену. Тест: `apps/hoh/tests/window_executor.rs` `t9_…` (поддельный claude не отвечает на `initialize`, отмена, pid мёртв; до правки падал).
+- `--resume` получает только id формы UUID (`is_uuid`); сохранённый id другой формы не попадает в argv (его можно принять за ключ) и даёт `SESSION_NOT_FOUND`, после чего слот начинает новую сессию. Тест `only_a_session_id_of_the_cli_form_is_resumed`; `a_session_resumes_by_its_native_id_and_a_missing_one_is_reported` берёт несуществующий id правильной формы, чтобы отказ по-прежнему шёл от CLI.

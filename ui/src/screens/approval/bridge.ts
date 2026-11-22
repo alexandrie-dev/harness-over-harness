@@ -7,7 +7,8 @@ import type { ApprovalOutcome, Risk } from '../../protocol';
 /** То, что ядро показывает пользователю. Поля, кроме `details`, покрыты mac на стороне ядра; `details` только для показа. */
 export interface ApprovalView {
   approvalId: string;
-  risk: Risk;
+  /** `unassessed`: the engine could not judge the action (a request of Claude); the window says so and does not paint it red. */
+  risk: Risk | 'unassessed';
   /** Текст на языке пользователя, собран движком из структуры действия. */
   humanText: string;
   /** Объяснение, написанное моделью. Недоверенный текст: только показывать. */

@@ -52,14 +52,17 @@ fn an_engine_that_ignores_shutdown_is_killed_after_the_grace_period_without_orph
         }
     }
     let until = Instant::now() + Duration::from_secs(10);
-    // The file is created before it is filled: wait for both pids.
-    while std::fs::read_to_string(&pids).is_ok_and(|text| text.split_whitespace().count() < 2)
-        || !pids.exists()
-    {
-        assert!(Instant::now() < until, "the fake engine did not start");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let text = std::fs::read_to_string(&pids).unwrap();
+    // The file is created before it is filled, and `echo` ends the line: one read decides. (Checking
+    // `exists()` after a failed read let a file created in between, still empty, through.)
+    let text = loop {
+        match std::fs::read_to_string(&pids) {
+            Ok(text) if text.ends_with('\n') => break text,
+            _ => {
+                assert!(Instant::now() < until, "the fake engine did not start");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
     let ids: Vec<i32> = text
         .split_whitespace()
         .map(|p| p.parse().unwrap())
@@ -75,7 +78,7 @@ fn an_engine_that_ignores_shutdown_is_killed_after_the_grace_period_without_orph
         "it did not wait for shutdown: {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_millis(2500),
+        elapsed < hoh_desktop::engine::SHUTDOWN_GRACE + Duration::from_secs(2),
         "stop took {elapsed:?}"
     );
     // The grandchild is adopted by init once its parent is gone; init reaps it a moment later.

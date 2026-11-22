@@ -46,11 +46,12 @@ try {
       if (route.request().url().startsWith(pathToFileURL(join(UI, 'dist') + '/').href)) return route.continue();
       remote.push(route.request().url()); return route.abort();
     });
-    await page.exposeBinding('__hohChatRequest', (_, method, params) => stub.request(method, params));
+    // A refusal of the host is an object ({code, message}); it crosses the binding as a value and is thrown again in the page.
+    await page.exposeBinding('__hohChatRequest', async (_, method, params) => { try { return await stub.request(method, params); } catch (error) { if (error && !(error instanceof Error) && typeof error.code === 'string') return { __hostError: error }; throw error; } });
     await page.addInitScript(() => {
       const listeners = new Set(); const statusListeners = new Set();
       window.__HOH_CHAT_TEST_TRANSPORT__ = {
-        request: (method, params) => window.__hohChatRequest(method, params),
+        request: async (method, params) => { const result = await window.__hohChatRequest(method, params); if (result && result.__hostError) throw result.__hostError; return result; },
         subscribe: async listener => { listeners.add(listener); return () => listeners.delete(listener); },
         subscribeStatus: async listener => { statusListeners.add(listener); return () => statusListeners.delete(listener); },
         subscribeQuestions: async listener => { window.__hohAsk = listener; return () => { window.__hohAsk = undefined; }; },
@@ -273,7 +274,8 @@ try {
     assert(labels.some(label => label === 'Выполнено'));
     assert(!/(инструмент|токен|сесси|str_replace_editor|\{\s*")/i.test(labels.join('\n')));
     await page.locator('[data-operation="write"] summary').first().click();
-    const visible = await page.locator('body').innerText();
+    // What the person typed is shown as typed; everything else (answers, steps, details) must not show outside paths.
+    const visible = (await page.locator('[data-chat-entry]:not([data-chat-entry="user"])').allInnerTexts()).join('\n');
     assert(!visible.includes('/workspace/') && !visible.includes('/tmp'), 'external absolute paths must be hidden');
   }, [], { viewport: { width: 1440, height: 900 }, shot: 'chat-1440.png' });
 
@@ -394,7 +396,7 @@ try {
     assert.equal(await chip.getAttribute('data-access-mode'), 'confirm', 'умолчание — с подтверждением');
     assert.equal(await chip.locator('.chat-access-text').textContent(), 'Спрашивать разрешение');
     assert.deepEqual(accessCalls(engine).map(r => r.method), ['hoh/executor/access/get']);
-    assert.deepEqual(accessCalls(engine)[0].params, { executor: 'claude' });
+    assert.deepEqual(accessCalls(engine)[0].params, { executor: 'claude', sessionId: 'window-main' }, 'движок спрашивают про открытый чат');
     assert.equal(await page.locator('[data-chat-permissions]').count(), 0, 'вместо слов о папке — переключатель');
     await page.screenshot({ path: join(t3shots, 'access-confirm-1440.png'), animations: 'disabled' });
     await chip.click();
@@ -418,16 +420,67 @@ try {
     await page.locator('[data-access-option="confirm"]').click();
     await page.waitForSelector('[data-chat-access][data-access-mode="confirm"]');
   }, [], { fake: accessEngine(), viewport: { width: 1440, height: 900 } });
-  await check('access-mode-shows-the-effective-mode', '', async (page, engine) => {
+  const say = async (page, text) => {
+    await page.locator('[data-chat-input]').fill(text);
+    await page.locator('[data-chat-send]').click();
+    await page.getByText(`Ответ на: ${text}`).waitFor();
+    await page.waitForFunction(() => !document.querySelector('[data-chat-stop]'));
+  };
+  await check('access-mode-follows-the-next-message-and-can-be-taken-back', '', async (page, engine) => {
+    const chip = page.locator('[data-chat-access]');
+    await chip.waitFor();
+    await say(page, 'первое');
+    assert.equal(await page.locator('[data-access-pending]').count(), 0, 'пока ничего не менялось, строки нет');
+    await chip.click(); await page.locator('[data-access-option="full"]').click(); await page.locator('[data-enable-full]').click();
+    await page.waitForSelector('[data-chat-access][data-access-mode="full"]');
+    assert.equal(await page.locator('[data-access-pending]').textContent(), 'Вступит в силу со следующего сообщения', 'выбранный режим на чипе, процесс ещё в прежнем');
+    assert.equal(await page.locator('[data-link-notice]').count(), 0, 'расхождения с процессом не выдаются за ошибку');
+    // передумал до сообщения: «Спрашивать разрешение» можно выбрать снова
+    await chip.click(); await page.locator('[data-access-option="confirm"]').click();
+    await page.waitForSelector('[data-chat-access][data-access-mode="confirm"]');
+    assert.equal(await page.locator('[data-access-pending]').count(), 0, 'вернули до сообщения: ждать нечего');
+    await chip.click(); await page.locator('[data-access-option="full"]').click(); await page.locator('[data-enable-full]').click();
+    await page.waitForSelector('[data-chat-access][data-access-mode="full"]');
+    await page.screenshot({ path: join(UX, 'ux-access-pending-1440.png'), animations: 'disabled' });
+    await page.locator('[data-chat-input]').fill('второе');
+    await page.locator('[data-chat-send]').click();
+    assert.equal(await page.locator('[data-access-pending]').count(), 1, 'отправка строку не стирает');
+    await page.getByText('Ответ на: второе').waitFor();
+    await page.waitForFunction(() => !document.querySelector('[data-access-pending]'));
+    assert.equal(await page.locator('[data-chat-access]').getAttribute('data-access-mode'), 'full', 'следующий ход пошёл в выбранном режиме');
+    await chip.click(); await page.locator('[data-access-option="confirm"]').click();
+    await page.waitForSelector('[data-chat-access][data-access-mode="confirm"]');
+    assert.equal(await page.locator('[data-access-pending]').count(), 1, 'и в обратную сторону');
+    assert(engine.requests.filter(r => r.method === 'hoh/executor/access/get').every(r => r.params.sessionId === 'window-main'), 'движок спрашивают про открытый чат');
+  }, [], { fake: accessEngine(), viewport: { width: 1440, height: 900 } });
+  await check('two-chats-show-their-own-mode-and-provider', '', async (page, engine) => {
+    const open = async title => { await page.locator('[data-chat-row]', { hasText: title }).click(); await page.waitForFunction(t => document.querySelector('[data-chat-row][aria-current="true"]')?.textContent.includes(t), title); await page.waitForSelector('[data-chat-input]:not([disabled])'); };
     await page.locator('[data-chat-access]').waitFor();
-    await page.locator('[data-chat-access]').click();
-    await page.locator('[data-access-option="full"]').click();
-    await page.locator('[data-enable-full]').click();
-    await page.waitForFunction(() => document.querySelector('[data-link-notice]'));
-    assert.equal(await page.locator('[data-chat-access]').getAttribute('data-access-mode'), 'confirm', 'показан фактический режим, не выбранный');
-    assert.match(await page.locator('[data-link-notice]').textContent(), /работает в режиме «Спрашивать разрешение», а выбран «Полный доступ»/);
-    assert.equal(accessCalls(engine).filter(r => r.method.endsWith('/set')).length, 1);
-  }, [], { fake: accessEngine({ accessIgnore: true }), viewport: { width: 1440, height: 900 } });
+    await say(page, 'в первом');
+    await page.locator('[data-chat-access]').click(); await page.locator('[data-access-option="full"]').click(); await page.locator('[data-enable-full]').click();
+    await page.waitForSelector('[data-chat-access][data-access-mode="full"]');
+    await open('Старый');
+    await page.waitForSelector('[data-chat-access][data-access-mode="full"]');
+    assert.equal(await page.locator('[data-access-pending]').count(), 0, 'второй чат ещё не шёл: вопросов нет');
+    await say(page, 'во втором');
+    await open('Привет');
+    await page.waitForSelector('[data-access-pending]');
+    assert.equal(await page.locator('[data-chat-access]').getAttribute('data-access-mode'), 'full');
+    // новый выбор поставщика не меняет открытый чат: он остаётся на Claude и в интернете
+    await page.locator('[data-chat-model-chip]').click();
+    await page.locator('[data-new-chats-line]').waitFor();
+    assert.match(await page.locator('[data-new-chats-line]').textContent(), /^Этот чат остаётся на модели «По умолчанию»\./);
+    await page.locator('[data-change-provider]').click();
+    await page.locator('[data-provider-choice="engine"]').click();
+    await page.locator('[data-provider-apply]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-provider-dialog]'));
+    assert.equal(await page.locator('[data-chat-model-chip][data-executor="claude"]').count(), 1, 'открытый чат — по-прежнему Claude');
+    assert.equal(await page.locator('.chat-privacy').textContent(), 'Отвечает Claude, сервис в интернете');
+    assert.equal(await page.locator('[data-chat-access]').count(), 1);
+    await open('Старый');
+    await page.waitForSelector('[data-chat-model-chip][data-executor="claude"]');
+    await page.screenshot({ path: join(UX, 'ux-two-chats-1440.png'), animations: 'disabled' });
+  }, [], { fake: () => { const engine = new FakeEngine(); engine.seed('window-main', { user: 'Привет', assistant: 'Здравствуйте.' }); engine.seed('chat-old', { user: 'Старый', assistant: 'Ответ' }); engine.access = 'confirm'; return engine; }, viewport: { width: 1440, height: 900 } });
   await check('access-mode-refused', '', async page => {
     await page.locator('[data-chat-access]').click();
     await page.locator('[data-access-option="full"]').click();
@@ -511,9 +564,15 @@ try {
     await page.locator('[data-change-provider]').click();
     await page.locator('[data-provider-choice="engine"]').click();
     await page.locator('[data-provider-apply]').click();
-    await page.waitForFunction(() => !document.querySelector('[data-chat-model-chip][data-executor="claude"]'));
+    await page.waitForFunction(() => !document.querySelector('[data-provider-dialog]'));
     assert.deepEqual(executorCalls(engine).filter(r => r.method === 'hoh/executor/select').at(-1).params, { executor: null, model: 'default' });
-    assert.equal(await page.locator('[data-chat-access]').count(), 0);
+    // The choice is for new chats: the open chat has had a turn through Claude and stays a chat of Claude.
+    assert.equal(await page.locator('[data-chat-model-chip][data-executor="claude"]').count(), 1);
+    assert.equal(await page.locator('[data-chat-access]').count(), 1);
+    assert.equal(await page.locator('.chat-privacy').textContent(), 'Отвечает Claude, сервис в интернете');
+    await page.locator('[data-new-chat]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-chat-model-chip][data-executor="claude"]'));
+    assert.equal(await page.locator('[data-chat-access]').count(), 0, 'новый чат — на модели движка');
   }, [], { fake: claudeEngine({ selected: null }), viewport: { width: 1440, height: 900 } });
   await check('provider-switch-claude-not-ready', '', async (page, engine) => {
     await page.locator('[data-chat-model-chip]').click();
@@ -597,6 +656,44 @@ try {
     assert(!(await page.locator('body').innerText()).includes('Только чтение'));
     await page.screenshot({ path: join(UX, 'ux-composer-1440.png'), animations: 'disabled' });
   }, [], { fake: () => { const engine = new FakeEngine(); engine.cwd = '/home/me/Documents/HoH'; engine.seed('window-main', { user: 'Привет', assistant: 'Ок' }); return engine; }, viewport: { width: 1440, height: 900 } });
+  await check('claude-says-project-settings-are-not-applied', '', async page => {
+    const line = page.locator('[data-project-line]');
+    await line.waitFor();
+    assert.equal(await line.textContent(), 'Настройки Claude из папки проекта не применяются');
+    assert(await line.isVisible(), 'видимая строка, не подсказка');
+    const [privacy, project] = await Promise.all([page.locator('.chat-privacy').boundingBox(), line.boundingBox()]);
+    assert(project.y >= privacy.y && project.y - privacy.y < 80, 'строка рядом с «Отвечает Claude»');
+    await page.screenshot({ path: join(UX, 'ux-project-line-1440.png'), animations: 'disabled' });
+  }, [], { fake: claudeEngine({ settingSources: 'user' }), viewport: { width: 1440, height: 900 } });
+  await check('confirm-caption-names-the-persons-claude-settings-only-when-they-apply', '', async page => {
+    await page.locator('[data-chat-access]').click();
+    await page.locator('[data-access-option="confirm"]').hover();
+    assert.equal(await page.locator('.chat-access-preview').textContent(), 'Спрашивать разрешениеПомощник спрашивает перед изменениями. Действуют и ваши собственные настройки Claude: их разрешающие правила могут пропускать действия без вопроса.');
+  }, [], { fake: claudeEngine({ settingSources: 'user' }), viewport: { width: 1440, height: 900 } });
+  await check('confirm-caption-is-the-first-phrase-when-isolated', '', async page => {
+    await page.locator('[data-chat-access]').click();
+    await page.locator('[data-access-option="confirm"]').hover();
+    assert.equal(await page.locator('.chat-access-preview').textContent(), 'Спрашивать разрешениеПомощник спрашивает перед изменениями.');
+  }, [], { fake: claudeEngine({ settingSources: '' }), viewport: { width: 1440, height: 900 } });
+  await check('claude-keeps-quiet-when-project-settings-apply', '', async page => {
+    await page.locator('[data-chat-model-chip]').waitFor();
+    assert.equal(await page.locator('[data-project-line]').count(), 0);
+  }, [], { fake: claudeEngine({ settingSources: 'user,project,local' }), viewport: { width: 1440, height: 900 } });
+  await check('claude-chat-keeps-its-folder', '', async (page, engine) => {
+    await say(page, 'в папке');
+    // the folder dialog of the host is a native one: the test hands the picked path to the page (as the folder test below does)
+    await page.evaluate(() => { window.__HOH_ENGINE__ = { request: async () => ({}), pickFolder: async () => '/home/me/Другая' }; });
+    await page.locator('[data-chat-folder]').click();
+    const note = page.locator('.chat-error');
+    await note.waitFor();
+    assert.match(await note.textContent(), /^Чат с Claude работает в одной папке\. Чтобы работать в другой, начните новый чат\./);
+    assert.doesNotMatch(await note.textContent(), /Не удалось сменить папку/);
+    await page.screenshot({ path: join(UX, 'ux-folder-fixed-1440.png'), animations: 'disabled' });
+    await page.locator('[data-new-chat-folder]').click();
+    await page.waitForFunction(() => !document.querySelector('.chat-error'));
+    for (let i = 0; i < 100 && engine.cwd !== '/home/me/Другая'; i++) await page.waitForTimeout(50);
+    assert.equal(engine.cwd, '/home/me/Другая', 'в новом чате папка принята');
+  }, [], { fake: claudeEngine({ folderFixed: true }), viewport: { width: 1440, height: 900 } });
   await check('header-names-who-answers', '', async page => {
     assert.equal(await page.locator('.chat-privacy').textContent(), 'Отвечает Claude, сервис в интернете');
     await page.screenshot({ path: join(UX, 'ux-header-claude-1440.png'), animations: 'disabled' });

@@ -649,10 +649,7 @@ async fn a_harmless_command_is_asked_plainly_and_recorded_as_a_step() {
     let asked = env.asked();
     assert_eq!(asked.len(), 1, "{asked:?}");
     assert_eq!(asked[0].tool, "bash");
-    assert_eq!(
-        asked[0].headline,
-        "Исполнитель «stub» просит выполнить команду"
-    );
+    assert_eq!(asked[0].headline, "Stub просит выполнить команду: ls");
     assert_eq!(last_answer(&agent), "decision allow");
     let call = &of_type(&agent, "tool/call")[0];
     assert_eq!(call["callId"], "c1");
@@ -2229,10 +2226,10 @@ async fn the_window_turns_full_access_on_and_shows_the_switches_that_run() {
         .await
         .expect("access/set");
     assert_eq!(set, json!({"executor": "stub", "mode": "full"}));
-    // The running process keeps its launch until its next turn.
+    // The process that idled between turns ended with the choice: nothing runs in the old mode.
     let shown = window.access().await;
     assert_eq!(shown["mode"], "full");
-    assert_eq!(shown["effective"]["mode"], "confirm");
+    assert_eq!(shown["effective"]["mode"], "full");
     turn(&agent, "hello").await;
     assert_eq!(last_turn_end(&agent), json!({"kind": "completed"}));
     assert_eq!(counter(&dirs, "starts"), 2, "restarted under the new mode");
@@ -2281,6 +2278,33 @@ async fn the_window_turns_full_access_on_and_shows_the_switches_that_run() {
         window.access().await["effective"],
         json!({"mode": "confirm", "flags": [], "text": CONFIRM_TEXT})
     );
+    window.close().await;
+}
+
+/// verify-3, P3: a choice the disk refuses is not applied. Two human decisions in a row used to
+/// leave `full` active (each reverted to what the other had applied); now the mode stays what it
+/// was, and the refusal is told.
+#[tokio::test]
+async fn a_choice_the_disk_refuses_changes_nothing_even_when_two_come_in_a_row() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    // The file of the choices cannot be written: a folder stands in its place.
+    std::fs::create_dir_all(dirs.profile.join(hoh_external_harness::CHOICES_FILE))
+        .expect("a folder in the place of the file");
+    let full = json!({"executor": HARNESS, "mode": "full"});
+    let (first, second) = tokio::join!(
+        window.call("hoh/executor/access/set", full.clone()),
+        window.call("hoh/executor/access/set", full),
+    );
+    for refused in [first, second] {
+        let refused = refused.expect_err("the disk refused");
+        assert!(refused.contains("could not be saved"), "{refused}");
+    }
+    assert_eq!(window.access().await["mode"], "confirm");
+    let agent = window.base.create("s-disk").await;
+    turn(&agent, "hello").await;
+    assert_eq!(stub_argv(&dirs), base_argv(&dirs));
+    assert_eq!(started_with(&dirs)["access"], "confirm");
     window.close().await;
 }
 

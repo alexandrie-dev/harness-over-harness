@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/hostError.mjs';
 import { tidyHuman } from '../../lib/humanText';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Risk } from '../../protocol';
@@ -11,7 +12,11 @@ export const ALLOW_DELAY_MS = 1000;
 /** Счёт времени показывается только в последнюю минуту: до неё окно человека не торопит. */
 export const LAST_MINUTE_S = 60;
 
-const WHY: Record<Risk, { title: string; text: string }> = {
+const WHY: Record<Risk | 'unassessed', { title: string; text: string }> = {
+  unassessed: {
+    title: 'Почему Помощник спрашивает',
+    text: 'Помощник не может заранее оценить это действие. Посмотрите, что именно он собирается сделать, в подробностях ниже. Если вы не просили об этом, нажмите «Отклонить».',
+  },
   high: {
     title: 'Почему это опасно',
     text: 'Это действие, возможно, нельзя будет отменить, или оно затрагивает ваши данные и права. После «Разрешить один раз» оно выполнится сразу. Если вы не просили об этом, нажмите «Отклонить».',
@@ -31,14 +36,18 @@ const WHY: Record<Risk, { title: string; text: string }> = {
 export function consequence(view: ApprovalView): { title: string; text: string } {
   const text = view.humanText.toLowerCase();
   const title = 'Почему это опасно';
+  if (view.risk === 'unassessed') return WHY.unassessed;
   if (/(?:^|[^\p{L}])(?:удалить|удаление|стереть|стирание)(?:$|[^\p{L}])/u.test(text))
     return { title, text: 'Файлы не попадут в корзину. Восстановить их будет нельзя.' };
   if (/(?:отправить|передать|отправка)\s+(?:данные|файл|файлы|документ)/u.test(text))
     return { title, text: 'Данные получит другой сервис. После отправки забрать их обратно нельзя.' };
   if (/(?:запустить|выполнить)\s+(?:программу|команду)/u.test(text))
     return { title, text: 'Программа выполнится на этом компьютере и сможет изменить доступные ей файлы.' };
-  if (/(?:записать|изменить|перезаписать)\s+(?:файл|файлы|документ)/u.test(text))
+  // «Прежний вариант» есть только у файла, который уже существует: слова «изменить» и «перезаписать» его называют, «записать» — нет.
+  if (/(?:изменить|перезаписать)\s+(?:файл|файлы|документ)/u.test(text))
     return { title, text: 'Содержимое файла изменится. Прежний вариант может быть потерян.' };
+  if (/записать\s+(?:файл|файлы|документ)/u.test(text))
+    return { title, text: 'Файл будет записан. Если такой файл уже есть, его прежнее содержимое заменится.' };
   return WHY[view.risk];
 }
 
@@ -46,7 +55,17 @@ export function consequence(view: ApprovalView): { title: string; text: string }
 export const isOwnAction = (view: ApprovalView) => view.approvalId.startsWith('native-preflight-');
 const OWN_WHY = 'Это вы меняете настройки. Окно нужно, чтобы никто не поменял их за вас.';
 
-const RISK_LABEL: Record<Risk, string> = { high: 'Высокий риск', medium: 'Средний риск', low: 'Низкий риск' };
+const RISK_LABEL: Record<Risk | 'unassessed', string> = { high: 'Высокий риск', medium: 'Средний риск', low: 'Низкий риск', unassessed: 'Риск не оценён' };
+
+/** Слово «исполнитель» — слово ядра, не человека: в окне защиты вместо «Исполнитель «claude»» стоит имя, как его знает человек. */
+export function plainWords(text: string): string {
+  return text
+    .replace(/исполнител[а-яё]*\s*[«"]([^»"]*)[»"]/giu, (_, name: string) => (name.trim().toLowerCase() === 'claude' ? 'Claude' : name.trim() || 'Помощник'))
+    .replace(/исполнител[а-яё]*/giu, 'Помощник');
+}
+
+/** A request of Claude (the engine's executor): its command is the whole point, so «Подробности» are open and nothing is said twice. */
+export const fromExecutor = (view: ApprovalView) => view.risk === 'unassessed' || /^(?:исполнитель\s*[«"]?claude|claude\b)/iu.test(view.humanText.trim());
 
 type Phase =
   | { kind: 'loading' }
@@ -68,6 +87,8 @@ export function ApprovalWindow() {
   const sent = useRef(false);
   const decideRef = useRef<(outcome: WindowDecision) => void>(() => {});
   const [sending, setSending] = useState(false);
+  // «Подробности» of a request of Claude start open; once the person opens or closes them, their choice stays.
+  const [detailsOpen, setDetailsOpen] = useState<boolean | null>(null);
   const view = phase.kind === 'pending' || phase.kind === 'error' ? phase.view ?? null : null;
   const expired = !!view && Date.now() >= view.expiresAt;
   const own = !!view && isOwnAction(view);
@@ -76,7 +97,7 @@ export function ApprovalWindow() {
     let alive = true;
     approvalHost().current().then(
       v => { if (alive) { total.current = Math.max(1, v.expiresAt - Date.now()); setNow(Date.now()); setPhase({ kind: 'pending', view: v }); } },
-      e => { if (alive) setPhase({ kind: 'error', text: e instanceof Error ? e.message : 'Не удалось получить запрос.' }); },
+      e => { if (alive) setPhase({ kind: 'error', text: errorText(e, 'Не удалось получить запрос.') }); },
     );
     return () => { alive = false; };
   }, []);
@@ -112,7 +133,7 @@ export function ApprovalWindow() {
         : { kind: 'done', title: 'Отклонено', note: own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.' });
     } catch (e) {
       sent.current = false;
-      setPhase({ kind: 'error', view, text: e instanceof Error ? e.message : 'Не удалось передать ответ.' });
+      setPhase({ kind: 'error', view, text: errorText(e, 'Не удалось передать ответ.') });
     } finally {
       setSending(false);
     }
@@ -130,7 +151,11 @@ export function ApprovalWindow() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('pagehide', onHide); };
   }, [view?.approvalId]);
 
-  const headline = view ? tidyHuman(view.humanText) : undefined;
+  const headline = view ? plainWords(tidyHuman(view.humanText)) : undefined;
+  const reason = view?.reason ? plainWords(view.reason.trim()) : '';
+  const executorAsks = !!view && fromExecutor(view);
+  // The explanation is shown when it says something the headline does not; for Claude's requests silence is not a message.
+  const showSaid = !own && reason !== headline && (executorAsks ? reason !== '' : true);
   const left = view ? (view.expiresAt - now) / 1000 : 0;
   const share = view ? Math.min(1, Math.max(0, (view.expiresAt - now) / total.current)) : 0;
   const why = view ? consequence(view) : WHY.high;
@@ -156,11 +181,11 @@ export function ApprovalWindow() {
                 <Icon name={own ? 'shield' : 'alert'} />
                 {own ? <div>{OWN_WHY}</div> : <div><h2>{why.title}</h2>{why.text}</div>}
               </div>
-              {!own && <div className="ap-said">
+              {showSaid && <div className="ap-said">
                 <h2>Объяснение Помощника</h2>
-                {view.reason?.trim() ? <p>{view.reason}</p> : <p className="ap-said-empty">Помощник не объяснил, зачем ему это нужно.</p>}
+                {reason ? <p>{reason}</p> : <p className="ap-said-empty">Помощник не объяснил, зачем ему это нужно.</p>}
               </div>}
-              {view.details?.trim() && <details className="ap-details"><summary>Подробности</summary><pre>{view.details}</pre></details>}
+              {view.details?.trim() && <details className="ap-details" open={detailsOpen ?? executorAsks} data-details-open={(detailsOpen ?? executorAsks) ? 'true' : 'false'} onToggle={event => setDetailsOpen(event.currentTarget.open)}><summary>Подробности</summary><pre>{view.details}</pre></details>}
               {left > LAST_MINUTE_S
                 ? <p className="ap-timer-note" data-calm>Можно не спешить. Если не ответить, действие отклонится само.</p>
                 : <>

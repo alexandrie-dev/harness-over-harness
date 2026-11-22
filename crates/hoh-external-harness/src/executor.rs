@@ -36,7 +36,8 @@ use crate::harness::{ExternalHarness, HarnessSession};
 use crate::{Choices, Config};
 
 /// The plugin record that binds a session to its harness. The first one is written at creation
-/// (seq 0, `nativeSessionId: null`); every later one records a new native id. Declared by
+/// (seq 0, `nativeSessionId: null`); every later one records a new native id or model. Each names
+/// the conversation's model (`model`), so a resumed conversation keeps it. Declared by
 /// `hoh-agent`, whose registry refuses to continue such a session on the loop.
 pub use hoh_agent::EXECUTOR_BINDING_RECORD as BINDING_RECORD;
 
@@ -58,8 +59,9 @@ pub(crate) struct Shared {
     pub config: Arc<Config>,
     /// The user's choices in the window (the access mode).
     pub choices: Arc<Choices>,
-    /// How the last native session of this harness was started, while it runs.
-    pub launched: Mutex<Option<Launched>>,
+    /// How each conversation's native session was started, while it runs; the one started last
+    /// is the last entry. One entry per conversation: another chat's start does not replace it.
+    pub launched: Mutex<Vec<(String, Launched)>>,
 }
 
 /// The access mode and command-line switches a native session was started with.
@@ -78,9 +80,62 @@ impl Shared {
     /// The mode and switches of the running native session started last, if it still runs.
     pub(crate) fn running_launch(&self) -> Option<(AccessMode, Vec<String>)> {
         lock(&self.launched)
-            .as_ref()
-            .filter(|launched| launched.session.strong_count() > 0)
+            .iter()
+            .rev()
+            .map(|(_, launched)| launched)
+            .find(|launched| launched.session.strong_count() > 0)
             .map(|launched| (launched.access, launched.flags.clone()))
+    }
+
+    /// The mode and switches of the native session of conversation `session`, if it still runs.
+    pub(crate) fn running_launch_of(&self, session: &str) -> Option<(AccessMode, Vec<String>)> {
+        lock(&self.launched)
+            .iter()
+            .find(|(id, launched)| id == session && launched.session.strong_count() > 0)
+            .map(|(_, launched)| (launched.access, launched.flags.clone()))
+    }
+
+    /// Conversation `session` has worked in its folder: its native session is recorded, or its
+    /// process runs. Until then (a new chat) its folder may still change.
+    pub(crate) fn started_in_folder(&self, session: &Session) -> bool {
+        recorded_native(&session.snapshot_events(None, None)).is_some()
+            || self.running_launch_of(session.id().as_ref()).is_some()
+    }
+
+    /// The grace of a stop: a graceful end, then SIGTERM, then a kill.
+    pub(crate) fn terminate_grace(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.config.terminate_grace_ms)
+    }
+
+    /// Take out the live native sessions started in another mode than `mode` whose conversation
+    /// `idle` says is between turns, and forget their launch (they are about to end: nothing runs
+    /// in the old mode any more, so the conversation shows no live process).
+    pub(crate) fn retire_idle(
+        &self,
+        mode: AccessMode,
+        idle: impl Fn(&str) -> bool,
+    ) -> Vec<Arc<dyn HarnessSession>> {
+        let mut all = lock(&self.launched);
+        let mut ended = Vec::new();
+        all.retain(|(id, launched)| {
+            let Some(session) = launched.session.upgrade() else {
+                return false;
+            };
+            if launched.access == mode || !idle(id) {
+                return true;
+            }
+            ended.push(session);
+            false
+        });
+        ended
+    }
+
+    /// A native session of conversation `session` started: it replaces that conversation's
+    /// earlier entry (and any entry whose process is gone), and is the one started last.
+    pub(crate) fn record_launch(&self, session: &str, launched: Launched) {
+        let mut all = lock(&self.launched);
+        all.retain(|(id, old)| id != session && old.session.strong_count() > 0);
+        all.push((session.to_owned(), launched));
     }
 }
 
@@ -131,6 +186,16 @@ fn recorded_native(events: &[Arc<SessionEvent>]) -> Option<NativeSessionId> {
         .find(|event| event.event_type() == BINDING_RECORD)
         .and_then(|event| event.data().get("nativeSessionId").and_then(Value::as_str))
         .map(NativeSessionId::from)
+}
+
+/// The conversation's model the log records: that of the last binding record naming one.
+fn recorded_model(events: &[Arc<SessionEvent>]) -> Option<String> {
+    events
+        .iter()
+        .rev()
+        .filter(|event| event.event_type() == BINDING_RECORD)
+        .find_map(|event| event.data().get("model").and_then(Value::as_str))
+        .map(str::to_owned)
 }
 
 /// Header metadata of a created session (the agent loop's `session_meta`).
@@ -332,7 +397,7 @@ struct Init {
 
 /// The folder the harness works in: the working-directory service's, else the session header's,
 /// else the process's.
-fn session_cwd(shared: &Shared, session: &Session) -> String {
+pub(crate) fn session_cwd(shared: &Shared, session: &Session) -> String {
     if let Some(working_directory) = shared.ctx.get::<WorkingDirectoryKey>() {
         return working_directory.get(session);
     }
@@ -379,14 +444,19 @@ async fn initialize(
             return Err(error);
         }
     };
-    let cwd = session_cwd(&shared, &session);
+    // The conversation's own model: the route it is given when that names this harness (a new
+    // chat), else the one its log records (a resume is given the engine's route, not Claude's).
+    let model = match options.provider() {
+        Some(provider) if provider == shared.name => options.model(),
+        _ => recorded_model(&session.snapshot_events(None, None)),
+    };
     let agent = ExternalAgent::new(NewAgent {
         shared: shared.clone(),
         session: session.clone(),
         ctx: scope.ctx.clone(),
         scope_key,
         options,
-        cwd,
+        model: model.clone(),
         last_turn,
         native,
     });
@@ -407,11 +477,11 @@ async fn initialize(
         *lock(&lifecycle.detach_session) = Some(detach);
         shared.sessions.announce(&session)?;
         if bind {
-            append_plugin_record(
-                &session,
-                BINDING_RECORD,
-                json!({"harness": shared.name, "nativeSessionId": null}),
-            )?;
+            let mut binding = json!({"harness": shared.name, "nativeSessionId": null});
+            if let Some(model) = &model {
+                binding["model"] = json!(model);
+            }
+            append_plugin_record(&session, BINDING_RECORD, binding)?;
         }
         if let Some(setup) = &setup
             && let Some(commit) = setup(dyn_agent.ctx().clone(), dyn_agent.clone()).await?

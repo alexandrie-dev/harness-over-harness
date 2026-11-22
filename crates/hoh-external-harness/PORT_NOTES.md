@@ -420,3 +420,53 @@
 
 ## Вопросы ведущему
 См. отчёт исполнителя o1.
+
+## Режим открытого разговора (i7, решение CEO 21.11 ~03:40)
+
+Находки: claude-executor-01, window-ui-02/-03, logic-e2e-02/-03 — окно показывало режим и
+исполнителя «для новых чатов» или процесса, запущенного последним, а не разговора на экране.
+
+- `hoh/executor/access/get` принимает необязательный `sessionId`. С ним в ответе есть `session`:
+  `{executor, model, privacy, mode, running, pending}`. Без него ответ прежний, `session` нет.
+  - `executor`, `model`: у живого агента — маршрут провайдера и модель (`agent.model().current()`),
+    у не открытого — по записи привязки журнала (`stored_executor_binding`), модель тогда `null`.
+    Выбор «для новых чатов» (`selected`) на них не влияет.
+  - `privacy`: `"remote"` для разговора внешнего исполнителя (слова уходят в интернет).
+  - `mode`: режим, в котором пойдёт СЛЕДУЮЩИЙ ход (выбор человека для исполнителя).
+    `running`: режим живого процесса этого разговора или `null`. `pending`: `running ≠ mode`.
+  - Разговор без внешнего исполнителя (цикл агента) или неизвестный: `executor`, `model`,
+    `privacy`, `mode`, `running` равны `null`, `pending` = `false`. Это отличие от контракта
+    ведущего: `mode` и `running` допускают `null`.
+  - `effective` с `sessionId` — процесс этого разговора (режим и флаги его запуска), а при
+    отсутствии процесса — то, с чем стартовал бы следующий ход.
+- Запись о запуске ведётся по разговору: `Shared.launched` — список `(id разговора, Launched)`,
+  запись разговора заменяется при его новом запуске, записи вымерших процессов отбрасываются.
+  `running_launch()` без `sessionId` — запущенный последним, как раньше.
+- Смена режима по-прежнему вступает в силу в начале следующего хода (`ensure_live`); процесс при
+  `access/set` не останавливается, расхождение отдаётся полем `pending`.
+- Заглушка окна (`hoh-window-stub`) приведена к тому же: привязка разговора к Claude при первом
+  сообщении нового чата, `running` по разговору, `selected` без Claude — `{executor: null,
+  model: null}`, как отвечает движок.
+- Тесты: `apps/hoh/tests/window_executor.rs` `s1_…` (смена режима туда и обратно, `pending`,
+  `effective` = argv поддельного claude) и `s2_…` (два чата, возврат «для новых чатов»); заглушка
+  — `each_conversation_keeps_its_own_executor_model_and_mode`.
+
+## i7-add (verify-4 CEO verdict)
+
+- **Idle process ends with the mode choice.** `access/set` ends the Claude processes of the executor that idle between turns (`Shared::retire_idle`, `terminate_grace`), so no turn started in the background runs in the old mode. A conversation that runs a turn keeps its process until the turn ends (the mode applies from its next turn, as before). The window then shows no live process (`running` null) until the next message.
+- **Choices are written before they apply.** `Window::commit` takes one lock, writes the file, and only then applies the change. A refused write keeps the previous state and returns "the choice could not be saved to …"; two decisions in a row take effect in order (the old apply-then-revert left `full` active).
+- **Folder is fixed.** A `working-directory/access` listener (prepend) refuses a folder *set* for a conversation of a registered harness. The event's agent is the folder service's model-less adapter, so the conversation's own agent is looked up by id. The JSON-RPC wire carries only the message text, so the code `EXECUTOR_FOLDER_FIXED` is the prefix: `EXECUTOR_FOLDER_FIXED: Чат с Claude работает в одной папке. Чтобы работать в другой, начните новый чат`.
+- **Approval window wording.** Headline is by meaning with the display name ("Claude просит выполнить команду: …" / "… изменить файл …"), no "Исполнитель"/quoted name; explanation is empty when there is nothing to add. Risk of a request the classifier did not judge is `unassessed` (protocol `Risk::Unassessed`), marked by `display_reason["x-risk"] = "unassessed"` and mapped in `hoh-user-approval/src/host.rs::risk_of` (only that file of the crate changed). A request the classifier called dangerous stays `high`.
+
+## i8 (independent review of cand/i7)
+
+- **Folder of a new chat.** The folder refusal above now applies only once the conversation has worked in its folder: its native session is recorded in the log (`plugin:external-harness/session` with a `nativeSessionId`) or its process runs (`Shared::started_in_folder`). A new chat with Claude (no turn yet) takes another folder, which is what the window's «Новый чат в другой папке» does. The agent no longer keeps the folder it was created in: `ExternalAgent::cwd()` reads the session's folder where it is used (start, workspace checks), so the first turn runs in the folder chosen before it.
+- **Model after a restart.** The binding record also names the conversation's model: `{harness, nativeSessionId[, model][, replaces]}`, written at creation and whenever the native id or the model changes. A conversation keeps the model of its route only when that route names the harness (a new chat); otherwise (a resume, which the server hands the engine's route, e.g. `window-mock`) it takes the model of its last binding record, or none (the CLI's default). Another provider's model never reaches `--model` or `access/get{sessionId}.session.model`. Logs written before have no `model`: such a conversation continues on the CLI's default.
+- Tests: `apps/hoh/tests/window_executor.rs` `t6_…` (new chat takes a folder, its turn runs there, then `EXECUTOR_FOLDER_FIXED`) and `t7_…` (restart: `access/get{sessionId}` before and after `session/resume` keeps executor, mode and data line, the model after the resume, and the next start has the same `--model`). Both failed before the change.
+- **Headline of a question (final review Fable, B).** `one_line` turns every character the protocol refuses in `humanText` (checked with `hoh_protocol::approval::validate_human_text` one character at a time: controls, spacing other than a plain space, invisible marks such as U+FE0F, U+00A0, U+200B) into a space and joins runs of spaces, as the classifier's `text.rs::clean` does. Before, one such character in a command or a file name made the host replace the headline with "Allow tool action bash?". Test: `t4b_…`.
+- **Saved choices after a restart (final review Fable, C).** `t8_…`: `access/set full` and `select` are saved to `external-harness.json`; the next engine starts with mode `full`, Claude selected, and Claude runs with the full-access switches; a damaged file leaves `confirm` and no executor. `restore_choices` now warns when no profile is named (the launcher always names it before the plugins start, so the window's path reads the file).
+
+## i9b (narrow review Fable cand/i9, 152628)
+
+- **Mode changed and changed back between turns.** `retire_idle` ends an idle process outside the driver and forgets its launch; a terminate may end the events without `SessionEnded` (the contract allows it for a clean close), so `ensure_live` no longer took the session as alive once the mode was back to its own, and the next message failed with "harness stdin is closed". Now a live session without its launch (`Shared::running_launch_of`) is restarted: the next message starts Claude anew in the mode in effect, with `--resume`. Test `t10_…` in `apps/hoh/tests/window_executor.rs` (also: the same mode chosen again ends nothing; a change during a turn leaves that turn's process, the next message starts in the new mode); it failed before the change.
+- `t11_…`: the CLI names its session `--dangerously-skip-permissions`; after a mode change the next start has `--session-id`, no `--resume` and not that word (the UUID check of `hoh-harness-claude`; without it the test fails).

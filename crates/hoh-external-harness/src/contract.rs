@@ -144,8 +144,9 @@ impl AccessMode {
     }
 }
 
-/// Where a found version stands against the range the harness was checked with. Outside the
-/// range is a warning, not a refusal.
+/// Where a found version stands against the range the harness was checked with. A version
+/// outside the range is refused when a chat starts (`unsupported-version`); `discover` reports the
+/// status so the window can say so before that.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VersionStatus {

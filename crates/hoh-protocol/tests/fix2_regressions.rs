@@ -132,6 +132,9 @@ fn dialog_text_and_expiry_admission_prevent_spoofing_and_unbounded_grants() {
         "a\u{202e}b".into(),
         "a\u{2066}b".into(),
         "a\u{200b}b".into(),
+        "a\u{180b}b".into(),
+        "a\u{180f}b".into(),
+        "a\u{2800}b".into(),
         "a\u{feff}b".into(),
         "a\u{e0001}b".into(),
     ] {

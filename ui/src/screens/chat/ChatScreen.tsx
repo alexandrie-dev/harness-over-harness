@@ -13,6 +13,7 @@ import { ChatIcon } from './icons';
 import { QuestionCard } from './QuestionCard';
 import { ApprovalsScreen } from './ApprovalsScreen';
 import { AccessMode } from './AccessMode';
+import { ACCESS_PENDING_NOTE, PROJECT_SETTINGS_OFF_NOTE } from '../../lib/executor.mjs';
 import { ExecutorModelPicker } from './ExecutorModelPicker';
 import { ProviderSettings } from './ProviderSettings';
 import '../shared/primitives.css';
@@ -67,6 +68,7 @@ export function ChatScreen() {
   const busy = useChatStore(state => state.busy);
   const canceling = useChatStore(state => state.canceling);
   const error = useChatStore(state => state.error);
+  const folderFixed = useChatStore(state => state.folderFixed);
   const privacy = useChatStore(state => state.privacy);
   const folderLabel = useChatStore(state => state.folderLabel);
   const model = useChatStore(state => state.model);
@@ -77,6 +79,11 @@ export function ChatScreen() {
   const accessBusy = useChatStore(state => state.accessBusy);
   const executor = useChatStore(state => state.executor);
   const executorModel = useChatStore(state => state.executorModel);
+  const accessPending = useChatStore(state => state.accessPending);
+  const newExecutor = useChatStore(state => state.newExecutor);
+  const newExecutorModel = useChatStore(state => state.newExecutorModel);
+  const projectSettingsOff = useChatStore(state => state.projectSettingsOff);
+  const personalSettings = useChatStore(state => state.personalSettings);
   const executorModels = useChatStore(state => state.executorModels);
   const executorBusy = useChatStore(state => state.executorBusy);
   const discoverClaude = useChatStore(state => state.discoverClaude);
@@ -123,6 +130,12 @@ export function ChatScreen() {
   }, [compact, menuOpen]);
   const renderItem = useCallback(({ item }: { item: ChatEntry }) => <ChatRow key={item.id} entry={item} />, []);
   function submit(event: FormEvent) { event.preventDefault(); if (busy) void stop(); else void send(); }
+  /** A chat of Claude keeps its folder: a new chat is the way to work in another one, and its folder is asked for right away. */
+  async function newChatElsewhere() {
+    setSection('chat'); setMenuOpen(false);
+    await newChat();
+    await chooseFolder();
+  }
   async function chooseFolder() {
     try { const picked = await pickFolder(); if (picked) await setFolder(picked); } catch { /* no system dialog here: the folder stays as it is */ }
   }
@@ -183,6 +196,7 @@ export function ChatScreen() {
           <span className="chat-privacy" data-privacy={privacy} title={privacyText}><ChatIcon name="lock" small /><span className="chat-privacy-text">{privacyText}</span></span>
         </p>
       </header>
+      {executor === 'claude' && projectSettingsOff && <p className="chat-project-line" data-project-line><ChatIcon name="lock" small /><span>{PROJECT_SETTINGS_OFF_NOTE}</span></p>}
       {section === 'approvals' && <ApprovalsScreen />}
       <section className="chat-conversation-area" aria-label="Чат с Помощником" hidden={section !== 'chat'}>
         <section className="chat-conversation" aria-label="Переписка" aria-busy={busy}>
@@ -199,21 +213,22 @@ export function ChatScreen() {
             className="chat-timeline" tabIndex={0} aria-label="Сообщения" data-testid="chat-timeline" />
         </section>
         <output className="chat-sr-only" aria-live="polite" data-chat-status>{connection === 'recovering' ? 'Связь с Помощником прервалась, восстанавливаю…' : canceling ? 'Останавливаю…' : busy ? 'Помощник отвечает…' : ready ? 'Можно написать сообщение' : ''}</output>
-        {error && <div className="chat-error chat-col" role="alert">{error}{connection === 'error' && <button className="btn" type="button" onClick={() => void connect()}>Подключиться ещё раз</button>}</div>}
+        {error && <div className="chat-error chat-col" role="alert">{error}{connection === 'error' && <button className="btn" type="button" onClick={() => void connect()}>Подключиться ещё раз</button>}{folderFixed && <button className="btn" type="button" data-new-chat-folder onClick={() => void newChatElsewhere()}>Новый чат в другой папке</button>}</div>}
         {notice && <div className="chat-notice chat-col" role="status" data-link-notice><span>{notice}</span><button className="btn" type="button" onClick={() => dismissNotice()}>Закрыть</button></div>}
         {question && <QuestionCard key={question.requestId} question={question} />}
         <form className="chat-composer" onSubmit={submit} aria-label="Написать Помощнику"><div className="chat-col">
           {sendHint && <p className="chat-send-hint" role="status" data-send-hint>{sendHint}</p>}
+          {access && accessPending && <p className="chat-access-pending" role="status" data-access-pending>{ACCESS_PENDING_NOTE}</p>}
           <div className="chat-input-box">
           <label className="chat-sr-only" htmlFor="chat-message-input">Сообщение Помощнику</label>
           <textarea id="chat-message-input" className="chat-input" data-chat-input rows={1} value={draft}
             onChange={event => setDraft(event.target.value)} onKeyDown={keyDown} disabled={!ready} placeholder="Напишите, что нужно сделать" />
           <div className="chat-composer-actions">
             {executor === 'claude'
-              ? <ExecutorModelPicker model={executorModel} models={executorModels} busy={executorBusy} disabled={!ready || busy}
+              ? <ExecutorModelPicker model={executorModel} newModel={newExecutor === 'claude' ? newExecutorModel : ''} models={executorModels} busy={executorBusy} disabled={!ready || busy}
                   onOpen={() => void loadExecutorModels()} onPick={id => void selectExecutor('claude', id)} onChangeProvider={() => setProviderOpen(true)} />
               : model && <button type="button" className="chat-pick chat-pick-text chat-pick-model" data-chat-model-chip title={`${model}. Сменить поставщика`} disabled={!ready || busy} onClick={() => setProviderOpen(true)}><ProviderMark icon={modelIcon} /><span data-chat-model>{model}</span></button>}
-            {access ? <AccessMode mode={access} busy={accessBusy} disabled={!ready || busy} onChange={mode => void setAccess(mode)} />
+            {access ? <AccessMode personalSettings={personalSettings} mode={access} busy={accessBusy} disabled={!ready || busy} onChange={mode => void setAccess(mode)} />
               : permissions && <span className="chat-pick chat-pick-text" data-chat-permissions><Icon name="shield" small /><span>{permissions}</span></span>}
             <button className="chat-pick" type="button" data-chat-folder disabled={!ready || busy} onClick={() => void chooseFolder()} title="Выбрать рабочую папку"><Icon name="folder" small /><span>{folderLabel}</span></button>
             {busy
@@ -222,7 +237,7 @@ export function ChatScreen() {
           </div>
         </div></div></form>
       </section>
-      {providerOpen && <ProviderSettings executor={executor} claudeModel={executorModel} engineModel={model} engineIcon={modelIcon} busy={executorBusy} discover={discoverClaude}
+      {providerOpen && <ProviderSettings executor={newExecutor} claudeModel={newExecutorModel} engineModel={model} engineIcon={modelIcon} busy={executorBusy} discover={discoverClaude}
         onClose={() => setProviderOpen(false)} onApply={(next, chosen) => { void selectExecutor(next, chosen).finally(() => setProviderOpen(false)); }} />}
     </div>
   </main></LinkContext.Provider>;

@@ -7,4 +7,5 @@ import './t3.test.mjs';
 import './providers.test.mjs';
 import './guard.test.mjs';
 import './executor.test.mjs';
+import './host-error.test.mjs';
 import './words.test.mjs';

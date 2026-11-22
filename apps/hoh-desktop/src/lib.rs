@@ -1,6 +1,7 @@
 pub mod approval;
 pub mod bridge;
 pub mod engine;
+pub mod errors;
 #[cfg(feature = "desktop")]
 pub mod native;
 pub mod opener;

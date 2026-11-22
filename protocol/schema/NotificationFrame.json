@@ -1102,7 +1102,8 @@
       "enum": [
         "low",
         "medium",
-        "high"
+        "high",
+        "unassessed"
       ]
     },
     "ApprovalResolved": {

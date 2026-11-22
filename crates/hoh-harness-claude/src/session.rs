@@ -100,6 +100,15 @@ pub(crate) struct ClaudeSession {
     inner: Arc<Inner>,
 }
 
+/// The last handle gone without a stop kills the process group: a start the caller gave up on
+/// («Стоп» before `initialize` is answered) must not leave the CLI waiting on its stdin. The
+/// reader holds `Inner`, not this, as the stdout pump of the stdio harness does (its `Owner`).
+impl Drop for ClaudeSession {
+    fn drop(&mut self) {
+        self.inner.sup.abandon();
+    }
+}
+
 /// What a session needs besides the process.
 pub(crate) struct SessionSettings {
     pub event_queue: usize,

@@ -822,7 +822,7 @@
           "const": "hoh/executor/access/get"
         },
         "params": {
-          "$ref": "#/$defs/ExecutorParams"
+          "$ref": "#/$defs/ExecutorAccessGetParams"
         }
       },
       "required": [
@@ -2287,6 +2287,23 @@
         "model"
       ]
     },
+    "ExecutorAccessGetParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "executor"
+      ]
+    },
     "ExecutorAccessSetParams": {
       "type": "object",
       "properties": {
@@ -2335,7 +2352,8 @@
           "enum": [
             "low",
             "medium",
-            "high"
+            "high",
+            "unassessed"
           ]
         },
         "humanText": {

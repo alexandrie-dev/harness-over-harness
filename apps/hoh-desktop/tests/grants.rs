@@ -322,7 +322,7 @@ fn a_secret_inside_the_model_address_is_shown_and_journaled_closed() {
         )
         .unwrap();
 
-    // the engine's own request carries the address as it was given: the window still shows it closed
+    // the engine's own request carries the address as it was given: the window shows it as given
     arm(&broker, KEY_SET, &params, NOW);
     let mut request = engine_request(KEY_SET, &params, "eng-r", NOW + 1);
     request["humanText"] = json!(format!("Сохранить API-ключ для провайдера «{url}»?"));
@@ -333,10 +333,8 @@ fn a_secret_inside_the_model_address_is_shown_and_journaled_closed() {
     let Begun::Window(window) = begin(&broker, request, NOW + 2) else {
         panic!("second needs a window")
     };
-    assert!(
-        window.view.human_text.contains("user:•••@") && !window.view.human_text.contains("hunter2")
-    );
-    assert!(!window.view.human_text.contains("SECRET2"));
+    // the engine's text is shown as it is (a mask there could hide a nested command)
+    assert!(window.view.human_text.contains(url));
     drop(broker.reject(&window.label, NOW + 3));
 
     let journal = std::fs::read_to_string(&path).unwrap();
@@ -476,7 +474,7 @@ fn the_journal_file_is_owner_only() {
 const SECRET_VIEW: &str = include_str!("../../../ui/tests/screens-a/secret-address-view.json");
 
 #[test]
-fn the_window_receives_the_address_and_the_reason_closed_and_the_journal_too() {
+fn the_window_receives_the_engine_text_as_it_is_and_the_journal_closed() {
     let fixture: Value = serde_json::from_str(SECRET_VIEW).unwrap();
     let path = std::env::temp_dir().join(format!("hoh-view-{}.log", std::process::id()));
     let _ = std::fs::remove_file(&path);
@@ -500,8 +498,9 @@ fn the_window_receives_the_address_and_the_reason_closed_and_the_journal_too() {
         )
         .unwrap();
     for view in [&open.view, &seen] {
-        assert_eq!(json!(view.human_text), fixture["view"]["humanText"]);
-        assert_eq!(json!(view.reason), fixture["view"]["reason"]);
+        // the engine's own text is shown as it is; only the journal is closed
+        assert_eq!(json!(view.human_text), fixture["raw"]["humanText"]);
+        assert_eq!(json!(view.reason), fixture["raw"]["reason"]);
     }
     drop(broker.reject(&open.label, NOW + 1));
     let journal = std::fs::read_to_string(&path).unwrap();
@@ -713,4 +712,69 @@ fn an_older_journal_file_becomes_private() {
             .starts_with("старая запись")
     );
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn the_mask_marks_a_hidden_nested_command_and_the_journal_keeps_it_closed() {
+    use hoh_desktop::approval::redact_text_checked;
+    // a substitution inside the closed part of an address
+    let text = "curl «https://h.example/p?token=$(touch /x)&n=1»";
+    let (shown, nested) = redact_text_checked(text);
+    assert!(
+        nested && shown.contains("token=•••") && !shown.contains("$("),
+        "{shown}"
+    );
+    let (shown, nested) = redact_text_checked("curl https://h.example/p#`id`");
+    assert!(nested && shown.ends_with("#•••"), "{shown}");
+    // an ordinary closed secret, and an address nothing changed in, are not marked
+    assert_eq!(
+        redact_text_checked("https://h/p?api_key=1&n=1"),
+        ("https://h/p?api_key=•••&n=1".to_owned(), false)
+    );
+    assert_eq!(
+        redact_text_checked("https://h/p?a=$(id)"),
+        ("https://h/p?a=$(id)".to_owned(), false)
+    );
+}
+
+#[test]
+fn a_hidden_nested_command_in_the_settings_text_blocks_allow_once() {
+    let path = std::env::temp_dir().join(format!("hoh-nested-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let broker = Broker::new(KEY).unwrap().with_audit_file(path.clone());
+    let url = "https://host.example/v1?api_key=$(touch${IFS}/x)";
+    let params = key_params("sk-k", url);
+    let (open, _receiver) = broker.begin_preflight(KEY_SET, &params, NOW).unwrap();
+    let text = &open.view.human_text;
+    assert!(
+        text.contains("Часть команды скрыта, в ней есть вложенная команда"),
+        "{text}"
+    );
+    assert!(!text.contains("touch"), "{text}");
+    let read = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
+    broker.current(&open.label, NOW, read).unwrap();
+    let denied = broker.decide(
+        &open.label,
+        &open.view.approval_id,
+        ApprovalOutcome::AllowedOnce,
+        NOW,
+        Instant::now(),
+    );
+    assert!(denied.is_err_and(|e| e.contains("разрешить один раз нельзя")));
+    // rejecting is still possible
+    broker
+        .decide(
+            &open.label,
+            &open.view.approval_id,
+            ApprovalOutcome::Rejected,
+            NOW,
+            Instant::now(),
+        )
+        .unwrap();
+    let journal = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        journal.contains("\"masked\":true") && !journal.contains("touch"),
+        "{journal}"
+    );
+    let _ = std::fs::remove_file(&path);
 }

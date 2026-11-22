@@ -372,7 +372,9 @@ optional!(SettingsSetParams {
     #[schemars(required)]
     view: Option<ViewSettings>,
 });
-choices!(Risk { Low => "low", Medium => "medium", High => "high" });
+// `unassessed`: nothing judged how risky the action is (a request of an external executor the
+// classifier could not weigh); the window says so instead of showing a risk.
+choices!(Risk { Low => "low", Medium => "medium", High => "high", Unassessed => "unassessed" });
 object!(SecurityModel {
     local: bool,
     host: String
@@ -525,11 +527,31 @@ object!(ExecutorSelection {
     executor: Option<String>,
     model: Option<String>
 });
-object!(ExecutorAccessGetResult {
+// `hoh/executor/access/get`: the executor's mode, and with `sessionId` also what one open
+// conversation runs with.
+optional!(ExecutorAccessGetParams {
+    executor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    session_id: Option<String>,
+});
+// What one conversation runs with, from its own binding in the engine (not from the choice for
+// new chats). `executor` is null for a conversation the agent loop drives; then `model`, `mode`
+// and `running` are null and `pending` is false.
+object!(ExecutorSessionAccess {
+    executor: Option<String>,
+    model: Option<String>,
+    privacy: Option<String>,
+    mode: Option<ExecutorAccessMode>,
+    running: Option<ExecutorAccessMode>,
+    pending: bool
+});
+optional!(ExecutorAccessGetResult {
     executor: String,
     mode: ExecutorAccessMode,
     effective: ExecutorEffectiveAccess,
-    selected: ExecutorSelection
+    selected: ExecutorSelection,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    session: Option<ExecutorSessionAccess>,
 });
 object!(ExecutorSelectParams {
     executor: Option<String>,

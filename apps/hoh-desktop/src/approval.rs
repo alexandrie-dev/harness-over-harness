@@ -176,6 +176,26 @@ fn is_secret_name(name: &str) -> bool {
 
 /// Every address inside a text (`scheme://...` up to a space or quote) with its secret part closed.
 pub fn redact_text(text: &str) -> String {
+    redact_text_checked(text).0
+}
+
+/// The note the window shows when the mask hid a part that holds a nested command.
+const HIDDEN_NESTED_NOTE: &str = "⚠ Часть команды скрыта, в ней есть вложенная команда. Это опасно: «Разрешить один раз» недоступно.";
+
+/// A shell would run something inside this word: a substitution `$(…)`, backticks, a pipe, or a
+/// `;` / `&` outside the query (inside the query they only separate its pairs).
+fn has_nested_command(word: &str) -> bool {
+    if word.contains("$(") || word.contains('`') || word.contains('|') {
+        return true;
+    }
+    let (head, fragment) = word.split_once('#').unwrap_or((word, ""));
+    let head = head.split_once('?').map_or(head, |(head, _)| head);
+    head.contains([';', '&']) || fragment.contains([';', '&'])
+}
+
+/// [`redact_text`], and whether the mask changed a word that holds a nested command.
+pub fn redact_text_checked(text: &str) -> (String, bool) {
+    let mut nested = false;
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find("://") {
@@ -191,11 +211,14 @@ pub fn redact_text(text: &str) -> String {
             })
             .map_or(rest.len(), |i| after + i);
         out.push_str(&rest[..start]);
-        out.push_str(&redact_address(&rest[start..end]));
+        let word = &rest[start..end];
+        let masked = redact_address(word);
+        nested |= masked != word && has_nested_command(word);
+        out.push_str(&masked);
         rest = &rest[end..];
     }
     out.push_str(rest);
-    out
+    (out, nested)
 }
 
 const MAX_DECODE_LAYERS: usize = 5;
@@ -280,6 +303,9 @@ pub struct AuditEntry {
     pub details: Option<String>,
     pub outcome: String,
     pub note: &'static str,
+    /// The text above is closed by the mask (an address in it had a secret part).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub masked: bool,
 }
 
 /// What the core does with an approval request of the engine.
@@ -336,6 +362,8 @@ struct Pending {
     request: HostApprovalRequest,
     shown_at: Option<Instant>,
     destination: Destination,
+    /// The mask hid a nested command in the text the shell composed: no "allow once".
+    blocks_allow: bool,
 }
 
 pub struct Broker {
@@ -426,17 +454,27 @@ impl Broker {
         outcome: &str,
         note: &'static str,
     ) {
+        let (human_text, _) = redact_text_checked(&request.human_text);
+        let reason = request.reason.as_deref().map(redact_text_checked);
+        let details = request.details.as_deref().map(redact_text_checked);
+        let masked = human_text != request.human_text
+            || human_text.contains(MASK)
+            || [&reason, &details]
+                .into_iter()
+                .flatten()
+                .any(|(text, _)| text.contains(MASK));
         let entry = AuditEntry {
             at: now,
             who,
             via,
             method: request.tool_name.clone(),
             action_hash: request.action_hash.clone(),
-            human_text: redact_text(&request.human_text),
-            reason: request.reason.as_deref().map(redact_text),
-            details: request.details.as_deref().map(redact_text),
+            human_text,
+            reason: reason.map(|(text, _)| text),
+            details: details.map(|(text, _)| text),
             outcome: outcome.to_owned(),
             note,
+            masked,
         };
         if let Some(path) = &self.audit_file {
             use std::io::Write;
@@ -556,6 +594,12 @@ impl Broker {
         }
         let sequence = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let action = redacted_action(method, params)?;
+        // Only here, in the text the shell composes itself from the settings, the mask applies.
+        let (mut human_text, nested) = redact_text_checked(&preflight_text(method, params)?);
+        if nested {
+            human_text.push(' ');
+            human_text.push_str(HIDDEN_NESTED_NOTE);
+        }
         let request = HostApprovalRequest {
             session_id: "native".into(),
             tool_name: method.into(),
@@ -564,13 +608,13 @@ impl Broker {
             details: None,
             approval_id: format!("native-preflight-{sequence}"),
             risk: Risk::High,
-            human_text: redact_text(&preflight_text(method, params)?),
+            human_text,
             action_hash: hoh_protocol::approval::action_hash(&action),
             expires_at: now.saturating_add(MAX_LIFETIME_MS),
             action,
         };
         let (reply, receiver) = mpsc::sync_channel(1);
-        let open = self.insert(request, Destination::Preflight(reply))?;
+        let open = self.insert(request, Destination::Preflight(reply), nested)?;
         Ok((open, receiver))
     }
 
@@ -600,7 +644,7 @@ impl Broker {
         now: u64,
     ) -> Result<OpenApproval, String> {
         let request = Self::parse_engine_request(method, params, now)?;
-        self.insert(request, Destination::Engine { generation, id })
+        self.insert(request, Destination::Engine { generation, id }, false)
     }
 
     /// The engine's request gets a window, except the one the person has just confirmed in the
@@ -619,7 +663,7 @@ impl Broker {
             .map_err(|_| "Некорректное подтверждение".to_owned())?;
         if !self.take_grant(generation, &request, now) {
             return self
-                .insert(request, Destination::Engine { generation, id })
+                .insert(request, Destination::Engine { generation, id }, false)
                 .map(Begun::Window);
         }
         let decision = HostApprovalDecision {
@@ -648,6 +692,7 @@ impl Broker {
         &self,
         request: HostApprovalRequest,
         destination: Destination,
+        blocks_allow: bool,
     ) -> Result<OpenApproval, String> {
         hoh_protocol::approval::validate_host_request(&request)
             .map_err(|_| "Некорректное подтверждение".to_owned())?;
@@ -656,9 +701,10 @@ impl Broker {
         let view = ApprovalView {
             approval_id: request.approval_id.clone(),
             risk: request.risk.clone(),
-            human_text: redact_text(&request.human_text),
-            reason: request.reason.as_deref().map(redact_text),
-            details: request.details.as_deref().map(redact_text),
+            // The engine's text is shown as it is; the shell's own text was masked when composed.
+            human_text: request.human_text.clone(),
+            reason: request.reason.clone(),
+            details: request.details.clone(),
             expires_at: request.expires_at,
         };
         let mut slot = self
@@ -673,6 +719,7 @@ impl Broker {
             request,
             shown_at: None,
             destination,
+            blocks_allow,
         });
         Ok(OpenApproval { label, view })
     }
@@ -691,9 +738,9 @@ impl Broker {
         Ok(ApprovalView {
             approval_id: pending.request.approval_id.clone(),
             risk: pending.request.risk.clone(),
-            human_text: redact_text(&pending.request.human_text),
-            reason: pending.request.reason.as_deref().map(redact_text),
-            details: pending.request.details.as_deref().map(redact_text),
+            human_text: pending.request.human_text.clone(),
+            reason: pending.request.reason.clone(),
+            details: pending.request.details.clone(),
             expires_at: pending.request.expires_at,
         })
     }
@@ -723,6 +770,12 @@ impl Broker {
             }
             if pending.request.approval_id != approval_id {
                 return Err("Подтверждение уже сменилось".into());
+            }
+            if outcome == ApprovalOutcome::AllowedOnce && pending.blocks_allow {
+                return Err(
+                    "Часть команды скрыта, в ней есть вложенная команда: разрешить один раз нельзя"
+                        .into(),
+                );
             }
             if outcome == ApprovalOutcome::AllowedOnce
                 && pending.shown_at.is_none_or(|shown_at| {
@@ -763,6 +816,19 @@ impl Broker {
         decision: HostApprovalDecision,
         now: u64,
     ) -> Result<DecisionOutcome, String> {
+        if decision.outcome == ApprovalOutcome::AllowedOnce
+            && self
+                .pending
+                .lock()
+                .map_err(|_| "Подтверждение недоступно")?
+                .as_ref()
+                .is_some_and(|pending| pending.label == label && pending.blocks_allow)
+        {
+            return Err(
+                "Часть команды скрыта, в ней есть вложенная команда: разрешить один раз нельзя"
+                    .into(),
+            );
+        }
         let pending = self.take_exact(label, approval_id)?;
         let settings_window = matches!(pending.destination, Destination::Preflight(_));
         let verified =

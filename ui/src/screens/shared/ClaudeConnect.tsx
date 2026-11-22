@@ -1,6 +1,7 @@
 // Подключение Claude: найден ли `claude`, выполнен ли вход, какие модели. Всё — из `hoh/executor/discover`;
 // окно не читает файлов Claude и не просит ключ. Один компонент для мастера и для смены поставщика в чате.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { errorText } from '../../lib/hostError.mjs';
 import { discoverView, type DiscoverResult, type DiscoverView } from '../../lib/executor.mjs';
 import { ProviderMark } from './ProviderMark';
 import { Icon } from './icons';
@@ -39,7 +40,7 @@ export function ClaudeConnect({ discover, onChange, current }: ClaudeConnectProp
       report.current({ ready: view.ready && !!picked, model: picked });
     } catch (error) {
       if (id !== run.current) return;
-      const text = error instanceof Error && error.message ? error.message : 'Попробуйте ещё раз.';
+      const text = errorText(error, 'Попробуйте ещё раз.');
       setCheck({ kind: 'failed', text: `Не удалось проверить Claude. ${text}` });
     }
   }, [discover, current]);

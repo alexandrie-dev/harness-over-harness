@@ -18,6 +18,29 @@ use std::{
 /// Marker the window checks to tell "engine has no such method" from other failures.
 pub const METHOD_UNAVAILABLE: &str = "method-unavailable";
 
+/// The machine-readable code an engine error names, when it is a plain upper-case word. The engine puts it in front of
+/// its text (`CODE: words`, the JSON-RPC error carries nothing else); `data.code` is the fallback. The error's own text
+/// never leaves the host.
+fn error_code(error: &hoh_protocol::framing::RpcError) -> Option<&str> {
+    let plain = |code: &&str| {
+        !code.is_empty()
+            && code.len() <= 40
+            && code.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
+    };
+    error
+        .message
+        .split_once(": ")
+        .map(|(code, _)| code)
+        .filter(plain)
+        .or_else(|| {
+            error
+                .data
+                .as_ref()
+                .and_then(|data| data["code"].as_str())
+                .filter(plain)
+        })
+}
+
 /// Runs on the engine thread as an outgoing request gets its id, before its frame is written.
 pub type OnSend = Box<dyn FnOnce(u64, &str) + Send>;
 pub type Reply = mpsc::Sender<Result<Value, String>>;
@@ -279,6 +302,11 @@ pub fn spawn_problem(kind: std::io::ErrorKind) -> String {
         _ => "Помощник не запускается".to_owned(),
     }
 }
+/// How long the engine gets, after `shutdown`, to write what it keeps (the session log is written
+/// in batches up to 200 ms behind) and exit; the wait ends as soon as it has exited. Killing it
+/// earlier loses the end of the conversation: a restart under load found no session to resume. An
+/// engine that ignores `shutdown` is still killed once this has passed.
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// After this many failed starts in a row the window is told the assistant is not starting, with the reason.
 pub const START_FAILURES_BEFORE_REPORT: u32 = 4;
 fn supervise(
@@ -351,7 +379,7 @@ fn supervise(
                         "shutdown",
                         json!({}),
                     ));
-                    let until = Instant::now() + Duration::from_millis(500);
+                    let until = Instant::now() + SHUTDOWN_GRACE;
                     while !transport.exited() && Instant::now() < until {
                         thread::sleep(Duration::from_millis(10));
                     }
@@ -423,8 +451,11 @@ fn supervise(
                                 // pick its fallback; error text and data can hold secrets.
                                 Err(if error.code == Some(-32601) {
                                     METHOD_UNAVAILABLE.into()
+                                } else if error_code(&error) == Some("EXECUTOR_FOLDER_FIXED") {
+                                    // A closed list of codes may pass on (no text): the window explains this one.
+                                    crate::errors::FOLDER_FIXED.into()
                                 } else {
-                                    "Помощник отклонил запрос".into()
+                                    crate::errors::REFUSED.into()
                                 })
                             } else {
                                 hoh_protocol::validate_result(&p.method, &result)
@@ -461,7 +492,7 @@ fn supervise(
                         "shutdown",
                         json!({}),
                     ));
-                    let until = Instant::now() + Duration::from_millis(500);
+                    let until = Instant::now() + SHUTDOWN_GRACE;
                     while !transport.exited() && Instant::now() < until {
                         thread::sleep(Duration::from_millis(10));
                     }
