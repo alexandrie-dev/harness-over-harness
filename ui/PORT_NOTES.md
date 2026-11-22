@@ -39,3 +39,11 @@
 - Корневой `NOTICE` не менялся (вне ui/); при желании строка о T3 переносится туда из `ui/NOTICE.md`.
 
 - Код T3 Code (дополнение 20.11): `ui/src/t3/` + `ui/T3-MAP.md`. Переключатель рендера — `ui/src/t3/render.tsx`; включение отложенных файлов описано в его шапке (флаг `deferredEnabled` в `manifest.json`, `t3-sync.py`, строка `@source not "../t3"` в tokens.css, замена тела `ChatMarkdown`). В tsconfig lib поднят до ES2023 (T3 использует `toSorted`).
+
+## HOH-40, этапы 1–2 (22.11.2026, u2): весь веб-клиент T3 как основа окна
+
+План — `plans/hoh40-t3-base.md`. Старая оболочка не тронута и собирается как раньше; основа в сборку пока не входит (э3).
+
+- Пакеты: `ui/T3-DEPS.md`, раздел «HOH-40» — замыкание импортов от `apps/web/src/main.tsx` (`ui/scripts/t3graph.py`, `ui/scripts/t3-deps.py`), версии и патчи из lock T3, отдельно — что заглушено вместо установки.
+- Перенос: `ui/src/t3/base/` (`web`, `contracts`, `shared`, `client-runtime`) — раздел `base` в `ui/src/t3/manifest.json`, `ui/scripts/t3-sync.py`. Файлы T3 без правок, кроме двух замен знака и трёх правок-выключателей (`ui/src/t3/base-patches/`); заглушки пакетов скрытых частей — `ui/src/t3/base/stubs` (создаются), рукописные прослойки — `shims/`, `types/`. Подробно — `ui/T3-MAP.md`, раздел «Основа HOH-40».
+- Проверки основы: `python3 -I scripts/t3-check.py` (импорты обоих наборов), `tsc --noEmit -p src/t3/base/tsconfig.json` (неотложенные файлы). Отложенные пересчитывает `t3-sync.py` по `ui/package.json` и `ui/node_modules`: после установки пакетов из T3-DEPS — запустить его снова.

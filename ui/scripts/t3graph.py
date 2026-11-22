@@ -63,10 +63,49 @@ FORCE_STUB = {'@clerk/react': 'облачный вход Clerk, устройст
 # Импорты типов, которые дают пакеты @types/*.
 TYPES_ONLY = {'hast': '@types/hast', 'mdast': '@types/mdast', 'unist': '@types/unist'}
 
+# Неявные зависимости: глобальные объявления, которые TypeScript применяет ко всей программе, а не через импорт.
+# (шаблон в тексте файла, файл T3 с объявлением)
+ROUTER = re.compile(r'from\s+[\'"]@tanstack/react-router[\'"]')
+IMPLICIT = [
+    (re.compile(r'\b(desktopBridge|t3dev)\b'), 'apps/web/src/vite-env.d.ts'),                       # declare global { interface Window }
+    (re.compile(r'from\s+[\'"]mdast[\'"]'), 'packages/shared/src/markdownMath.ts'),              # /// <reference types="mdast-util-to-hast" />
+    (re.compile(r'from\s+[\'"]effect/Schema[\'"]'), 'packages/contracts/src/settings.ts'),       # declare module "effect/Schema" (Annotations)
+    (re.compile(r'<webview\b|querySelector\(\s*[\'"]webview'), 'apps/web/src/browser/HostedBrowserWebview.tsx'),  # HTMLElementTagNameMap
+    # Маршрутизатор: типы маршрутов (routeTree.gen.ts), Register (router.ts) и HistoryState — на всю программу.
+    (ROUTER, 'apps/web/src/routeTree.gen.ts'), (ROUTER, 'apps/web/src/router.ts'),
+    (ROUTER, 'apps/web/src/components/settings/settingsLayout.tsx'), (ROUTER, 'apps/web/src/lib/assistantCitationNavigation.ts'),
+]
 IMPORT = re.compile(r'''(?:^|[\s;}])(import|export)\s+(type\s+)?(?:[\w*{}\s,$]+?\s+from\s+)?['"]([^'"\n]+)['"]|import\(\s*['"]([^'"\n]+)['"]\s*\)|new\s+URL\(\s*['"](\.[^'"\n]+)['"]\s*,\s*import\.meta\.url''', re.M)
 REFERENCE = re.compile(r'^///\s*<reference\s+types="([^"]+)"', re.M)
 LINE_COMMENT = re.compile(r'^\s*//.*$', re.M)
 BLOCK_COMMENT = re.compile(r'/\*.*?\*/', re.S)
+
+
+def importers(lock_path):
+    """{importer: {пакет: версия с суффиксом peer}} из последнего раздела importers: pnpm-lock.yaml."""
+    lines = open(lock_path).read().split('\n')
+    start = [n for n, l in enumerate(lines) if l == 'importers:'][-1]
+    out, cur, name = {}, None, None
+    for l in lines[start + 1:]:
+        if l and not l.startswith(' '): break
+        m = re.match(r'^  (\S[^:]*):$', l)
+        if m: cur = out.setdefault(m.group(1), {}); continue
+        m = re.match(r"^      '?([^']+?)'?:$", l)
+        if m: name = m.group(1); continue
+        m = re.match(r'^        version: (\S+)', l)
+        if m and cur is not None and name: cur[name] = m.group(1)
+    return out
+
+
+IMPORTER_ORDER = ['apps/web', 'packages/shared', 'packages/client-runtime', 'packages/contracts']
+
+
+def t3_versions(t3=T3_DEFAULT):
+    """{пакет: версия из lock T3} для прямых зависимостей apps/web и перенесённых packages (первый по IMPORTER_ORDER)."""
+    imp, out = importers(os.path.join(t3, 'pnpm-lock.yaml')), {}
+    for i in reversed(IMPORTER_ORDER):
+        out.update({k: v.split('(')[0] for k, v in imp.get(i, {}).items()})
+    return out
 
 
 def hidden_part(path):
@@ -119,6 +158,8 @@ class Graph:
     def _edges(self, path):
         text = open(os.path.join(self.t3, path), encoding='utf-8', errors='replace').read()
         out = [(spec, 'type', self.resolve(path, spec)) for spec in REFERENCE.findall(text)]
+        out += [(target, 'ambient', ('file', target)) for pattern, target in IMPLICIT
+                if target != path and target in self.set and pattern.search(text)]
         text = LINE_COMMENT.sub('', BLOCK_COMMENT.sub('', text))
         for m in IMPORT.finditer(text):
             spec = m.group(3) or m.group(4) or m.group(5)

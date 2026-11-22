@@ -50,15 +50,15 @@
 `packages/client-runtime`, `packages/contracts`); транзитивные — по `snapshots` без peer- и необязательных зависимостей (окно их не ставит: `autoInstallPeers: false`, `ignoredOptionalDependencies: '*'`), в скобках — сколько из них нет в lock окна. Патчи и закрепления —
 `patchedDependencies` и `overrides` из `pnpm-workspace.yaml` T3; `--ignore-scripts` (в окне `ignoreScripts: true`).
 
-Файлов T3 к переносу: **1944** (весь `apps/web/src` без тестов и нужные файлы packages), из них в видимом замыкании **1349**,
-файлов скрытых частей, до которых доходит видимая часть: 167. Импортов без адресата в T3: 2
+Файлов T3 к переносу: **1944** (весь `apps/web/src` без тестов и нужные файлы packages), из них в видимом замыкании **1350**,
+файлов скрытых частей, до которых доходит видимая часть: 168. Импортов без адресата в T3: 2
 (`components/T3AppIcon.tsx` → `../../../../assets/prod/t3-black-web-apple-touch-180.png`; `i18n/locales.ts` → `../../gt.config.json`).
 
 ### Пакеты к установке
 
 Прямых пакетов: **73**; из них нет в окне или нужна другая версия: **42**. Уникальных пакетов с транзитивными: 256, из них новых для lock окна: **116**.
 
-| Пакет | Версия (lock T3) | В окне сейчас | Патч / закрепление T3 | Какой перенесённый файл импортирует | Транзитивных (новых) |
+| Пакет | Версия (lock T3) | В окне сейчас (ui/package.json) | Патч / закрепление T3 | Какой перенесённый файл импортирует | Транзитивных (новых) |
 |---|---|---|---|---|---|
 | `@base-ui/react` | 1.9.0 | есть | — | components/ui/menu.tsx, components/ui/badge.tsx, components/ui/input.tsx и ещё 33 | 8 (1) |
 | `@dnd-kit/core` | 6.3.1 | нет | — | components/Sidebar.tsx, components/Sidebar.drag.ts, components/RightPanelTabs.tsx и ещё 3 | 3 (3) |
@@ -151,7 +151,7 @@
 | `@betteroffice/pptx` | 0.5.1 | офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic) | components/files/office/slide-text.ts, components/files/office/slide-fonts.ts, components/files/office/presentation.worker.ts | — |
 | `@betteroffice/xlsx` | 0.5.1 | офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic) | components/files/office/sheet-cells.ts, components/files/office/sheet-fonts.ts, components/files/office/sheet-frame.ts и ещё 4 | — |
 | `@clerk/electron` | 0.1.10 | облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh | components/clerk/ElectronManagedAuthShell.tsx | — |
-| `@clerk/react` | 6.18.6 | MCP Apps; облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh; разделы настроек, кроме общих, вида, чата, провайдеров и доступа | cloud/managedAuth.tsx, cloud/useCloudLinkController.ts, components/HostedEmptyState.tsx и ещё 12 | components/onboarding/WelcomePage.tsx |
+| `@clerk/react` | 6.18.6 | MCP Apps; облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh | cloud/managedAuth.tsx, cloud/useCloudLinkController.ts, components/HostedEmptyState.tsx и ещё 12 | components/onboarding/WelcomePage.tsx |
 | `@daypicker/react` | 10.0.1 | запланированные задачи и отложенные разговоры (snooze) | components/ui/calendar.tsx | — |
 | `@noble/curves` | 1.9.1 | облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh | shared/src/dpop.ts | — |
 | `canvas-confetti` | 1.9.4 | GitHub-звезда и конфетти | components/GitHubStarPrompt.tsx | — |
@@ -164,7 +164,7 @@
 | `sql.js` | 1.15.0 | офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic) | components/files/binaryPreview.worker.ts | — |
 | `three` | 0.180.0 | облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh | client-runtime/src/device/duoSnap.ts, client-runtime/src/device/duoScene.ts, client-runtime/src/device/duoViewer.ts и ещё 7 | — |
 | `tiff` | 7.1.3 | офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic) | components/files/imageDecode.worker.ts | — |
-| `vite-plus` | 1.4.0 | сборка T3 (Vite+): окно собирает обычным vite, типы `vite-plus/client` дают `vite/client` | vite-env.d.ts | — |
+| `vite-plus` | 1.4.0 | сборка T3 (Vite+): окно собирает обычным vite, типы `vite-plus/client` дают `vite/client` | vite-env.d.ts | vite-env.d.ts |
 | `@t3tools/issue-tracker-linear` (`@t3tools/issue-tracker-linear/shared/issueUrl`) | пакет T3 | задачи и трекеры | client-runtime/src/issueLinks.ts | client-runtime/src/issueLinks.ts |
 | `@t3tools/provider-acp-registry` (`@t3tools/provider-acp-registry/client`) | пакет T3 | провайдеры T3 (установка, вход, ACP-реестр) | client-runtime/src/providerClients.ts | client-runtime/src/providerClients.ts |
 | `@t3tools/provider-core` (`@t3tools/provider-core/client`, `@t3tools/provider-core/modelShortName`) | пакет T3 | провайдеры T3 (установка, вход, ACP-реестр) | client-runtime/src/providerClients.ts, components/chat/ProviderPackageIcon.tsx, components/settings/ProviderInstanceCard.tsx и ещё 2 | client-runtime/src/providerClients.ts, components/chat/ProviderPackageIcon.tsx, components/settings/ProviderInstanceCard.tsx и ещё 2 |

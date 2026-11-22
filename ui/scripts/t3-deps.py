@@ -109,21 +109,6 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import t3graph
 
-def importers(path):
-    """{importer: {пакет: версия с суффиксом peer}} из последнего раздела importers: lock T3."""
-    lines = open(path).read().split('\n')
-    start = [n for n, l in enumerate(lines) if l == 'importers:'][-1]
-    out, cur, name = {}, None, None
-    for l in lines[start + 1:]:
-        if l and not l.startswith(' '): break
-        m = re.match(r'^  (\S[^:]*):$', l)
-        if m: cur = out.setdefault(m.group(1), {}); continue
-        m = re.match(r"^      '?([^']+?)'?:$", l)
-        if m: name = m.group(1); continue
-        m = re.match(r'^        version: (\S+)', l)
-        if m and cur is not None and name: cur[name] = m.group(1)
-    return out
-
 def peers(path):
     """{имя@версия: имена peerDependencies} из раздела packages: — peer ставит тот, кто использует пакет, а не он сам."""
     lines = open(path).read().split('\n')
@@ -175,8 +160,8 @@ def lock_overrides(path):
     part = text[text.rindex('\noverrides:\n') + 12:]
     return dict((k.strip("'"), v.strip("'")) for k, v in re.findall(r"^  ('[^']+'|[^\s:]+): (\S+)$", part.split('\n\n')[0], re.M))
 
-IMP = importers(T3 + '/pnpm-lock.yaml')
-ORDER = ['apps/web', 'packages/shared', 'packages/client-runtime', 'packages/contracts']
+IMP = t3graph.importers(T3 + '/pnpm-lock.yaml')
+ORDER = t3graph.IMPORTER_ORDER
 PEERS = peers(T3 + '/pnpm-lock.yaml'); OPTIONAL = optionals(T3 + '/pnpm-lock.yaml')
 def t3_full(name):
     return next((IMP[i][name] for i in ORDER if name in IMP.get(i, {})), None)
@@ -185,9 +170,10 @@ def t3_version(name):
     return full.split('(')[0] if full else None
 def types_pkg(name):
     return '@types/' + (name[1:].replace('/', '__') if name.startswith('@') else name)
+WINDOW_PKG = json.load(open(os.path.join(UI, 'package.json')))
 def window_version(name):
-    try: return json.load(open(os.path.join(UI, 'node_modules', name, 'package.json')))['version']
-    except OSError: return None
+    """Версия в ui/package.json (закоммиченное состояние окна; node_modules может меняться во время установки)."""
+    return {**WINDOW_PKG.get('devDependencies', {}), **WINDOW_PKG.get('dependencies', {})}.get(name)
 ws_text = open(T3 + '/pnpm-workspace.yaml').read()
 PATCHES = dict(re.findall(r'^  "?([^":\s]+@[^":\s]+)"?: (patches/\S+)$', ws_text.split('patchedDependencies:')[1].split('\n\n')[0], re.M))
 OVERRIDES = lock_overrides(T3 + '/pnpm-lock.yaml')
@@ -238,7 +224,10 @@ def parts_of(f, name):
     return {own} if own else (reach.get(f) or {t3graph.FORCE_STUB.get(name, 'не достижим из видимой части')})
 stub_rows = []
 for name, files in sorted(r['stubbed'].items()):
-    parts = sorted(set().union(*(parts_of(f, name) for f in files)) | ({t3graph.FORCE_STUB[name]} if name in t3graph.FORCE_STUB else set()))
+    if name in t3graph.FORCE_STUB:  # видимые импортёры есть: часть — та, что назначена, и собственные части скрытых импортёров
+        parts = sorted({t3graph.FORCE_STUB[name]} | {t3graph.hidden_part(f) for f in files if t3graph.hidden_part(f)})
+    else:
+        parts = sorted(set().union(*(parts_of(f, name) for f in files)))
     seen = [f for f in files if f in r['visible']]
     stub_rows.append(f'| `{name}` | {t3_version(name) or "—"} | {"; ".join(parts)} | {who(files)} | {who(seen) if seen else "—"} |')
 for name, files in sorted(r['ws'].items()):
@@ -266,7 +255,7 @@ hoh40 = f"""
 
 Прямых пакетов: **{len(rows)}**; из них нет в окне или нужна другая версия: **{len(to_add)}**. Уникальных пакетов с транзитивными: {len(union)}, из них новых для lock окна: **{len(new_union)}**.
 
-| Пакет | Версия (lock T3) | В окне сейчас | Патч / закрепление T3 | Какой перенесённый файл импортирует | Транзитивных (новых) |
+| Пакет | Версия (lock T3) | В окне сейчас (ui/package.json) | Патч / закрепление T3 | Какой перенесённый файл импортирует | Транзитивных (новых) |
 |---|---|---|---|---|---|
 """ + '\n'.join(rows) + f"""
 
