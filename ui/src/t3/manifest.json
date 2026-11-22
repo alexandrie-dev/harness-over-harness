@@ -179,7 +179,7 @@
       "gt.config.json": "apps/web/gt.config.json"
     },
     "replaced": {
-      "web/components/T3Wordmark.tsx": "знак T3 не берём: на его месте эмблема HoH (src/assets/emblem-48.png)",
+      "web/components/T3Wordmark.tsx": "знак T3 не берём: на его месте эмблема HoH (прозрачные растры src/assets/emblem-brand-*.png из emblem-a.webp, srcset 1×/1.5×/2×/3×)",
       "web/components/T3AppIcon.tsx": "значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src"
     },
     "patched": {

@@ -20,11 +20,14 @@ html.dark body {
   color: #f5f5f5;
 }
 
+/* HOH-41: заставка всегда по центру окна — слой привязан к окну (fixed, inset), а не к высоте страницы; знак по центру слоя
+   в строке flex (центровка без «безопасного» сдвига: в окне ниже знака он выходит за края поровну, а не уходит в угол). Без
+   transform: сдвиг на полпикселя при нечётном размере окна размыл бы растр. */
 #boot-shell {
-  position: relative;
+  position: fixed;
+  inset: 0;
   overflow: hidden;
   display: flex;
-  min-height: 100%;
   align-items: center;
   justify-content: center;
   background: inherit;
@@ -39,15 +42,13 @@ html[data-theme-selected="true"] #boot-shell {
 #boot-shell-card {
   position: relative;
   z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 232px;
-  height: 250px;
+  flex: none;
 }
 
-/* HOH-41 А: на заставке — утверждённая эмблема HoH крупно (у T3 тут знак 64 px). */
+/* HOH-41 А: на заставке — утверждённая эмблема HoH крупно (у T3 тут знак 64 px), прозрачный растр 200×216 px;
+   растры 1×/1.5×/2×/3× (srcset в t3.html) не масштабируются браузером. */
 #boot-shell-logo {
+  display: block;
   width: 200px;
   height: 216px;
   object-fit: contain;

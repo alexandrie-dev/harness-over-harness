@@ -1,41 +1,55 @@
 /* Эмблема HoH в экранах T3 (HOH-41 А) без правки файлов T3: рисуется стилем над заголовками.
-   Утверждённая эмблема — design/round2/shared/emblem.png (ui/src/assets/emblem-250.png, emblem-96.png). */
+   Растры — прозрачные (src/assets/emblem-{hero,chat}-{1x,15x,2x,3x}.png), из исходника emblem-a.webp, scripts/emblem-assets.sh;
+   image-set отдаёт растр под плотность экрана (масштаб окна 100 %, 150 %…), поэтому браузер сам их не масштабирует. */
 
-/* Welcome: над заголовком «Welcome to …». */
+/* Welcome: над заголовком «Welcome to …», по левому краю текстовой колонки. */
 div.max-w-3xl > h1.text-2xl.font-semibold::before {
   content: "";
   display: block;
   width: 108px;
   height: 116px;
-  margin: 0 0 18px -6px;
-  background: url("../assets/emblem-250.png") center / contain no-repeat;
+  margin: 0 0 18px 0;
+  background: url("../assets/emblem-hero-1x.png") left center / 108px 116px no-repeat;
+  background-image: -webkit-image-set(
+    url("../assets/emblem-hero-1x.png") 1x, url("../assets/emblem-hero-15x.png") 1.5x,
+    url("../assets/emblem-hero-2x.png") 2x, url("../assets/emblem-hero-3x.png") 3x);
+  background-image: image-set(
+    url("../assets/emblem-hero-1x.png") 1x, url("../assets/emblem-hero-15x.png") 1.5x,
+    url("../assets/emblem-hero-2x.png") 2x, url("../assets/emblem-hero-3x.png") 3x);
 }
 
 /* Пустой разговор («What should we build in …?» / «What should we work on?») и главный экран без проекта:
-   эмблема над заголовком. Высота зависит от высоты окна; в низком окне (в том числе при увеличенном масштабе)
-   эмблемы нет — она не заходит под шапку и не сдвигает заголовок и поле ввода (как T3 прячет часть заголовка:
-   [@media(max-height:28rem)]). */
+   эмблема 96×104 над заголовком. Она вне потока (absolute над блоком заголовка): не двигает заголовок и поле ввода.
+   Показывается, только когда над заголовком хватает места между шапкой и заголовком (emblem-fit.ts ставит
+   data-hoh-emblem с учётом высоты шапки и масштаба окна), поэтому никогда не уходит под шапку и не обрезается. */
+div.mx-auto.max-w-5xl.flex-col.items-center:has(> h1, > div[data-inline]),
+[data-slot="empty-header"]:has(> [data-slot="empty-title"]) {
+  position: relative;
+}
 div.mx-auto.max-w-5xl.flex-col.items-center:has(> h1, > div[data-inline])::before,
 [data-slot="empty-header"]:has(> [data-slot="empty-title"])::before {
   content: "";
-  display: block;
-  width: clamp(44px, 14vh, 96px);
-  height: clamp(47px, 15vh, 104px);
-  margin: 0 auto 22px;
-  background: url("../assets/emblem-250.png") center / contain no-repeat;
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  width: 96px;
+  height: 104px;
+  margin: 0 0 22px -48px;
+  visibility: hidden;
+  pointer-events: none;
+  background: url("../assets/emblem-chat-1x.png") center / 96px 104px no-repeat;
+  background-image: -webkit-image-set(
+    url("../assets/emblem-chat-1x.png") 1x, url("../assets/emblem-chat-15x.png") 1.5x,
+    url("../assets/emblem-chat-2x.png") 2x, url("../assets/emblem-chat-3x.png") 3x);
+  background-image: image-set(
+    url("../assets/emblem-chat-1x.png") 1x, url("../assets/emblem-chat-15x.png") 1.5x,
+    url("../assets/emblem-chat-2x.png") 2x, url("../assets/emblem-chat-3x.png") 3x);
 }
-@media (max-height: 31rem) {
-  div.mx-auto.max-w-5xl.flex-col.items-center:has(> h1, > div[data-inline])::before,
-  [data-slot="empty-header"]:has(> [data-slot="empty-title"])::before {
-    display: none;
-  }
+[data-hoh-emblem]::before {
+  visibility: visible !important;
 }
 
-/* Шапка боковой панели: знак крупнее, чем у T3 (там высота в одну заглавную букву), по центру с подписью. */
+/* Шапка боковой панели: знак (T3Wordmark.tsx, 32×34 px) по центру с подписью. */
 a[href="/"] > span.inline-flex {
   align-items: center !important;
-}
-a[href="/"] svg[aria-label="HoH"] {
-  height: 26px !important;
-  width: 26px !important;
 }
