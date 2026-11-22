@@ -1,0 +1,14 @@
+--- a/web/components/settings/ThemeSettings.tsx
++++ b/web/components/settings/ThemeSettings.tsx
+@@ -918,10 +918,7 @@
+             <PaintbrushIcon />
+             <T>Create theme</T>
+           </Button>
+-          <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
+-            <PlusIcon />
+-            <T>Add theme</T>
+-          </Button>
++          {/* HoH (ui/T3-MAP.md): импорт тем VS Code / Open VSX выключен — кнопки «Add theme» нет. */}
+         </div>
+       </div>
+       {renderPairGrid()}

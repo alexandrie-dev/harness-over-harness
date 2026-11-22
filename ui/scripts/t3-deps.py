@@ -281,7 +281,13 @@ hoh40 = f"""
 |---|---|
 """ + hidden_rows + f"""
 
-Новые пакеты целиком ({len(new_union)}): """ + ', '.join(f'`{n}`' for n in new_union) + '\n'
+Новые пакеты целиком ({len(new_union)}): """ + ', '.join(f'`{n}`' for n in new_union) + '\n' + """
+### Типы, которых нет у окна
+
+`@types/trusted-types` 2.0.7 — у T3 необязательная зависимость `dompurify` (его d.ts импортирует `trusted-types/lib/index.js`;
+без них `DOMPurify(window)` в `components/chat/MermaidDiagram.tsx` не проходит tsc). Пока не поставлен — объявления
+`src/t3/base/types/trusted-types/lib/index.d.ts` (typePaths манифеста).
+"""
 
 open(os.path.join(UI, 'T3-DEPS.md'), 'w').write(text + hoh40)
 print('T3-DEPS.md:', len(allset), 'unique,', len(new), 'new; HOH-40:', len(rows), 'direct,', len(to_add), 'to add,', len(new_union), 'new with transitive,', len(stub_rows), 'stubbed')

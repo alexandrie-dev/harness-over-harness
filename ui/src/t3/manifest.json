@@ -185,7 +185,12 @@
     "patched": {
       "web/routeTree.gen.ts": "выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются",
       "web/components/settings/settingsSearch.ts": "выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS)",
-      "web/components/sidebar/SidebarChrome.tsx": "имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3"
+      "web/components/sidebar/SidebarChrome.tsx": "имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3",
+      "web/terminalUiStateStore.ts": "выключатель: терминал — ящик терминала не открывается (normalizeThreadTerminalUiState держит terminalOpen: false), клавиши и действия ничего не открывают",
+      "web/components/chat/PanelLayoutControls.tsx": "выключатель: терминал — кнопки ящика терминала нет (showTerminalControl по умолчанию false)",
+      "web/components/settings/ThemeSettings.tsx": "выключатель: импорт тем VS Code / Open VSX — кнопки «Add theme» нет, диалог импорта не открывается",
+      "gt.config.json": "языки интерфейса: английский и русский (остальные переводы не переносятся); gt.config.json T3 читает web/i18n/locales.ts",
+      "web/branding.ts": "имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет"
     },
     "switches": [
       [
@@ -195,8 +200,8 @@
       ],
       [
         "терминал",
-        "возможности окружения для терминала у T3 нет: ящик открывают клавиши (keybindings.ts), useChatTerminalActions.ts и вкладка RightPanelTabs.tsx; хост отвечает на terminal.* «не поддерживается»",
-        "не выключено: место — названные файлы (э3/э4)"
+        "ящик терминала не открывается (правка terminalUiStateStore.ts: terminalOpen всегда false), кнопки ящика нет (правка PanelLayoutControls.tsx); пункт «Terminal» в меню правой панели — по области AuthTerminalOperateScope от хоста (как Browser, Diff, Device): хост её не даёт; terminal.* хост отвечает «не поддерживается»",
+        "правка + хост (э3)"
       ],
       [
         "превью и встроенный браузер",
@@ -240,8 +245,8 @@
       ],
       [
         "импорт и экспорт тем VS Code / Open VSX",
-        "поиск и импорт тем в настройках вида (ThemeSearchSection.tsx, ThemeImportDialog.tsx) остаются, пакеты — заглушки, импорт отказывает",
-        "не выключено: место — названные файлы (э4)"
+        "кнопки «Add theme» в настройках вида нет (правка ThemeSettings.tsx) — диалог импорта и поиск тем (ThemeImportDialog.tsx, ThemeSearchSection.tsx) не открываются; пакеты — заглушки",
+        "правка"
       ],
       [
         "секреты и 1Password",
@@ -278,6 +283,13 @@
         "раздел «Интеграции» не регистрируется; импорт сессий остаётся в карточке провайдера (AcpSessionManagementSection.tsx из ProviderInstanceCard.tsx) и на странице приветствия (WelcomePage.tsx) — выключит хост, не объявив сессий агентов",
         "правка; остаток — э3/э4"
       ]
-    ]
+    ],
+    "exclude": {
+      "^apps/web/src/components/device/models/.*\\.glb$": "3D-модели устройств скрытой части «устройства и пары» (~12 МБ): не переносятся (решение ведущего); импорты `?url` — адрес-заглушка stubs/absent-url.ts",
+      "^apps/web/src/i18n/translations/(?!(en|ru)\\.json$)[^/]+$": "переводы, кроме en и ru, не переносятся (решение ведущего); список языков сужен правкой gt.config.json"
+    },
+    "typePaths": {
+      "trusted-types/lib/index.js": "types/trusted-types/lib/index.d.ts"
+    }
   }
 }

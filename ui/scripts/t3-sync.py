@@ -46,14 +46,18 @@ print(f'copied {len(copied)} files, {len(exclude)} skipped by tsc (deferred), {l
 # Отложенные — файлы, в замыкании импортов которых есть пакет, которого нет в ui/package.json и ui/node_modules в версии, совместимой с lock T3:
 # их не проверяет tsc (src/t3/base/tsconfig.json перечисляет только остальные). После установки пакетов список пуст.
 STUB_HEAD = '// Заглушка окна HoH вместо `{spec}` (T3 Code, MIT): {why}. Пакет не ставится; файл пишет scripts/t3-sync.py.\n'
-ABSENT = '''// Заглушки окна HoH (src/t3/base/stubs) — значения скрытых частей T3: вызов даёт undefined, new — пустой объект,
-// любое свойство — undefined. Код скрытой части загружается, но ничего не делает. Для видимых импортёров (T3-DEPS.md,
-// «Видимые импортёры») в э3 — рабочие заглушки вместо этих. Файл пишет scripts/t3-sync.py.
+ABSENT = '''// Заглушки окна HoH (src/t3/base/stubs) — значения скрытых частей T3. Значение заглушки — функция; её вызов (и new)
+// даёт объект, любое свойство которого — функция, возвращающая undefined (then — undefined: это не обещание; перебор —
+// пустой). Так код скрытой части загружается и на уровне модуля (`export const { a, b } = make(...)`) не падает,
+// но ничего не делает. Образец — пробная сборка u4 (HOH-40 веха 1). Файл пишет scripts/t3-sync.py.
 /** Тип значения заглушки: его можно вызвать, создать через new, унаследовать и читать любые свойства. */
 export type Anything = { (...args: any[]): any; new (...args: any[]): any; [key: string]: any };
 
+const leaf = () => undefined;
+const made: any = new Proxy({}, { get: (_target, key) => (key === 'then' ? undefined : key === Symbol.iterator ? function* () {} : leaf) });
+
 export function absent(spec: string, name: string): Anything {
-  const value = function () { return undefined; };
+  const value = function () { return made; };
   Object.defineProperty(value, 'name', { value: `${spec}:${name}` });
   return value as unknown as Anything;
 }
@@ -95,14 +99,41 @@ def stub_names(graph, files, spec):
 
 def stub_text(spec, why, names, absent_rel):
     generic = '<A = any, B = any, C = any, D = any>'
-    out = [STUB_HEAD.format(spec=spec, why=why), f"import {{ absent, type Anything }} from '{absent_rel}';\n"]
+    out = [STUB_HEAD.format(spec=spec, why=why), f"import {{ absent }} from '{absent_rel}';\n"]
     for n, members in names.items():
         local, export = ('value', '') if n == 'default' else (n, 'export ')
-        out.append(f"{export}const {local}: Anything = absent('{spec}', '{n}');\n")
+        out.append(f"{export}const {local}: any = absent('{spec}', '{n}');\n")
         if members: out.append(f"{export}declare namespace {local} {{ " + ' '.join(f'type {m}{generic} = any;' for m in members) + ' }\n')
         out.append(f"{export}type {local}{generic} = any;\n")
         if n == 'default': out.append('export default value;\n')
     return ''.join(out)
+
+
+def write_declarations(out, tsconfig, on_stubs):
+    """Объявления файлов на заглушках: tsc --noCheck во временную папку /dev/shm/hoh, затем рядом с файлом X.hoh.d.ts и
+    X.hoh.ts (реэкспорт); tsconfig получает moduleSuffixes ['.hoh', ''], а сами файлы на заглушках в files не входят."""
+    import tempfile
+    os.makedirs('/dev/shm/hoh', exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix='t3-sync-decl-', dir='/dev/shm/hoh')
+    try:
+        config = os.path.join(tmp, 'tsconfig.json')
+        options = {**tsconfig['compilerOptions'], 'noEmit': False, 'declaration': True, 'emitDeclarationOnly': True, 'noCheck': True,
+                   'outDir': os.path.join(tmp, 'out'), 'rootDir': out, 'baseUrl': out,
+                   'typeRoots': [os.path.normpath(os.path.join(out, t)) for t in tsconfig['compilerOptions']['typeRoots']]}
+        options['paths'] = {k: [os.path.join(out, v) for v in vs] for k, vs in options['paths'].items()}
+        json.dump({'compilerOptions': options, 'files': [os.path.join(out, f) for f in on_stubs]}, open(config, 'w'))
+        subprocess.run([os.path.join(UI, 'node_modules/.bin/tsc'), '-p', config], cwd=UI, capture_output=True)  # TS7056 у чужих файлов — не наши
+        for f in on_stubs:
+            stem = re.sub(r'\.tsx?$', '', f)
+            decl = open(os.path.join(tmp, 'out', stem + '.d.ts')).read()
+            head = f'// Объявления {f} (файл скрытой части на заглушках) для tsc основы. Пишет scripts/t3-sync.py.\n'
+            open(os.path.join(out, stem + '.hoh.d.ts'), 'w').write(head + decl)
+            name = os.path.basename(stem)
+            default = f"export {{ default }} from './{name}.hoh.d';\n" if re.search(r'^export default |^export \{[^}]*\bdefault\b', decl, re.M) else ''
+            open(os.path.join(out, stem + '.hoh.ts'), 'w').write(head + f"export * from './{name}.hoh.d';\n" + default)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    tsconfig['compilerOptions']['moduleSuffixes'] = ['.hoh', '']
 
 
 def sync_base(base):
@@ -113,6 +144,9 @@ def sync_base(base):
     r = t3graph.analyse(T3); g = r['graph']
     rel = lambda f: next(f'{k}/{f[len(v) + 1:]}' for k, v in t3graph.ROOTS.items() if f.startswith(v + '/'))
     replaced, patched = base.get('replaced', {}), base.get('patched', {})
+    # Не переносятся (манифест, exclude: шаблон пути T3 -> причина): файлы данных скрытых частей и лишние переводы.
+    excluded = [f for f in r['transfer'] if any(re.search(p, f) for p in base.get('exclude', {}))]
+    r['transfer'] = [f for f in r['transfer'] if f not in excluded]
     keep = {rel(f) for f in r['transfer']} | set(replaced)
     # Перенос: всё из списка, кроме наших замен; лишнее из прежних переносов удаляется (кроме наших файлов).
     for root in t3graph.ROOTS:
@@ -138,7 +172,7 @@ def sync_base(base):
     for f in r['transfer']:
         for spec, _, target in g.edges.get(f, ()):
             if target[0] in ('npm', 'ws') and target[1] in stubbed: specs.setdefault(spec, set()).add(f)
-    paths, aliases = {}, {}
+    paths, aliases, stub_pkgs = {}, {}, set()
     for spec, files in sorted(specs.items()):
         pkg = t3graph.root_pkg(spec.split('?')[0])
         if '?' in spec:
@@ -146,14 +180,19 @@ def sync_base(base):
         why = t3graph.ws_reason(pkg) if pkg.startswith('@t3tools/') else (t3graph.FORCE_STUB.get(pkg) or '; '.join(sorted({t3graph.hidden_part(f) or 'скрытые части' for f in files})))
         if os.path.isfile(os.path.join(out, 'types', spec, 'index.d.ts')):
             continue  # /// <reference types>: paths на них не действуют, прослойка лежит в types/ и находится через typeRoots
-        if os.path.isfile(os.path.join(out, 'shims', spec + '.ts')):
+        shim = next((f'shims/{spec}{e}' for e in ('.ts', '.tsx') if os.path.isfile(os.path.join(out, 'shims', spec + e))), None)
+        if shim:
             # Рукописная прослойка (наш файл с типами или поведением) вместо созданной заглушки.
-            paths[spec] = [f'./shims/{spec}.ts']; aliases[spec] = f"{base['out']}/shims/{spec}.ts"; continue
+            paths[spec] = ['./' + shim]; aliases[spec] = f"{base['out']}/{shim}"; continue
         target = f'stubs/{spec}.ts'
         os.makedirs(os.path.dirname(os.path.join(out, target)), exist_ok=True)
         absent_rel = os.path.relpath(os.path.join(stubs_dir, 'absent'), os.path.dirname(os.path.join(out, target)))
         open(os.path.join(out, target), 'w').write(stub_text(spec, why, stub_names(g, files, spec), absent_rel if absent_rel.startswith('.') else './' + absent_rel))
-        paths[spec] = ['./' + target]; aliases[spec] = f"{base['out']}/{target}"
+        paths[spec] = ['./' + target]; aliases[spec] = f"{base['out']}/{target}"; stub_pkgs.add(pkg)
+    # Импорты непереносимых файлов (`./models/x.glb?url`) — адрес-заглушка; типы `?url` даёт vite/client.
+    for f in r['transfer']:
+        for spec, _, target in g.edges.get(f, ()):
+            if target[0] == 'file' and target[1] in excluded: aliases[spec] = f"{base['out']}/stubs/absent-url.ts"
     # Пакеты T3, которые переносятся: псевдонимы по exports их package.json — только на перенесённые файлы.
     for spec, target in sorted(g.exports.items()):
         if target in g.set and rel(target) in keep:
@@ -169,7 +208,7 @@ def sync_base(base):
         if pkg not in listed: return False
         try: v = json.load(open(os.path.join(UI, 'node_modules', pkg, 'package.json')))['version']
         except OSError: return False
-        if pkg not in want or pkg == '@types/node': return True
+        if pkg not in want or pkg == '@types/node' or pkg in t3graph.WINDOW_VERSION: return True
         # Совместимая версия (тот же major, для 0.x — тот же minor) годится для проверки типов; точную ставит ведущий по T3-DEPS.md.
         a, b = (re.findall(r'\d+', x)[:2] for x in (v, want[pkg]))
         return a[:1] == b[:1] and (a[0] != '0' or a[1:2] == b[1:2])
@@ -189,29 +228,44 @@ def sync_base(base):
         deferred.add(f); stack.extend(back.get(f, ()))
     if base.get('deferredEnabled'): deferred = set()
     code = [f for f in r['transfer'] if f.endswith(t3graph.CODE)]
-    checked = sorted(rel(f) for f in code if f not in deferred)
+    # На заглушках: файлы скрытых частей, из которых через файлы скрытых частей достижим пакет-заглушка (без прослойки).
+    # Их тела без настоящих пакетов не проверить (значения заглушек — any, колбэки без контекста типов), как и у
+    # отложенных. tsc берёт вместо них объявления (X.hoh.d.ts из tsc --noCheck, X.hoh.ts реэкспортирует их; moduleSuffixes),
+    # так что все их импортёры, включая видимые, проверяются полностью. Видимые файлы на заглушках не бывают.
+    hidden_code = [f for f in code if f not in r['visible'] and f not in deferred]
+    on_stubs = {f for f in hidden_code if any(t[0] == 'npm' and t[1] in stub_pkgs for _, _, t in g.edges.get(f, ()))}
+    grew = True
+    while grew:
+        grew = False
+        for f in hidden_code:
+            if f not in on_stubs and any(t[0] == 'file' and t[1] in on_stubs for _, _, t in g.edges.get(f, ())):
+                on_stubs.add(f); grew = True
+    on_stubs = {f for f in on_stubs if rel(f) not in replaced}
+    checked = sorted(rel(f) for f in code if f not in deferred and f not in on_stubs)
     checked += sorted(os.path.relpath(os.path.join(dp, n), out) for d in ('stubs', 'shims') for dp, _, ns in os.walk(os.path.join(out, d)) for n in ns)
     checked += sorted(x for x in replaced if not any(rel(f) == x and f in deferred for f in code))
     tsconfig = {
-        '//': 'Проект tsc основы HOH-40 (src/t3/base). Пишет scripts/t3-sync.py; настройки — как apps/web/tsconfig.json и tsconfig.base.json T3, кроме noImplicitAny: код скрытых частей получает из заглушек значения типа any, и его колбэки без явных типов (у T3 он проверен с настоящими пакетами). files — неотложенные файлы.',
+        '//': 'Проект tsc основы HOH-40 (src/t3/base). Пишет scripts/t3-sync.py; настройки — как apps/web/tsconfig.json и tsconfig.base.json T3. files — неотложенные файлы.',
         'compilerOptions': {
             'target': 'ES2023', 'module': 'Preserve', 'moduleResolution': 'Bundler', 'jsx': 'react-jsx', 'noEmit': True,
             'lib': ['ES2023', 'ES2024.Promise', 'ESNext.Disposable', 'DOM', 'DOM.Iterable'], 'types': ['vite-plus/client', 'node'],
             'typeRoots': ['./types', '../../../node_modules/@types'],
-            'allowImportingTsExtensions': True, 'strict': True, 'noImplicitAny': False, 'noUncheckedIndexedAccess': True, 'exactOptionalPropertyTypes': True,
+            'allowImportingTsExtensions': True, 'strict': True, 'noUncheckedIndexedAccess': True, 'exactOptionalPropertyTypes': True,
             'noImplicitOverride': True, 'useDefineForClassFields': True, 'forceConsistentCasingInFileNames': True, 'skipLibCheck': True,
             'allowSyntheticDefaultImports': True, 'esModuleInterop': True, 'resolveJsonModule': True, 'isolatedModules': True,
-            'paths': {'~/*': ['./web/*'], **dict(sorted(paths.items()))},
+            'paths': {'~/*': ['./web/*'], **dict(sorted(paths.items())), **{k: ['./' + v] for k, v in base.get('typePaths', {}).items()}},
         },
         'files': checked,
     }
+    write_declarations(out, tsconfig, sorted(rel(f) for f in on_stubs))
     json.dump(tsconfig, open(os.path.join(out, 'tsconfig.json'), 'w'), indent=2, ensure_ascii=False)
     json.dump({'~': f"{base['out']}/web", **dict(sorted(aliases.items()))}, open(os.path.join(out, 'aliases.json'), 'w'), indent=2, ensure_ascii=False)
-    state = {'transferred': len(r['transfer']), 'code': len(code), 'deferred': len([f for f in code if f in deferred]),
+    state = {'transferred': len(r['transfer']), 'excluded': len(excluded), 'code': len(code), 'deferred': len([f for f in code if f in deferred]),
              'replaced': sorted(replaced), 'patched': sorted(patched), 'stubs': sorted(specs),
-             'missing_packages': {p: len(fs) for p, fs in sorted(missing.items())}}
+             'missing_packages': {p: len(fs) for p, fs in sorted(missing.items())}, 'checked': len(checked),
+             'on_stubs': sorted(rel(f) for f in on_stubs)}
     json.dump(state, open(os.path.join(out, 'state.json'), 'w'), indent=2, ensure_ascii=False)
-    print(f"base: {len(r['transfer'])} files ({len(code)} code, {state['deferred']} deferred), {len(replaced)} replaced, {len(patched)} patched, {len(specs)} stub specs")
+    print(f"base: {len(r['transfer'])} files ({len(code)} code, {state['deferred']} deferred, {len(on_stubs)} on stubs), {len(replaced)} replaced, {len(patched)} patched, {len(specs)} stub specs, tsc files {len(checked)}")
 
 
 if 'base' in manifest:
