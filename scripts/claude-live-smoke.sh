@@ -8,14 +8,16 @@
 #   full)    the same task under full access: no question at all, the edit happens, and the
 #            report shows the exact switches the `claude` process ran with.
 # Then the personal settings of the CLI under confirm (CEO 21.11), each in both values of the
-# settings sources (`t3`: as in T3, only the human's `user` settings apply, CEO 21.11 ~02:00;
-# `isolated`: none apply), on the run's own fixtures in the task folder (the human's ~/.claude is
-# neither read nor changed):
+# settings sources (`t3`: as in T3, the human's settings and the folder's apply,
+# `user,project,local`, HOH-40 22.11; `isolated`: none apply), on the run's own fixtures in the
+# task folder (the human's ~/.claude is neither read nor changed):
 #   confirm-allow-*)  permissions.allow in .claude/settings.json and .claude/settings.local.json;
-#   confirm-mcp-*)    a stub MCP server in .mcp.json whose tool writes a marker file;
+#   confirm-mcp-*)    a stub MCP server in .mcp.json whose tool writes a marker file (under `t3`
+#                     it must load: started and its tools listed);
 #   confirm-hooks-*)  PreToolUse/PostToolUse hooks that write markers and answer "allow".
 # And the project's own instructions (CEO 21.11: the founder works with project CLAUDE.md and
-# rules), the fact "loaded: yes/no" with its proof, in both values:
+# rules), "loaded: yes/no" with its proof: under `t3` each must load (HOH-40), under `isolated`
+# the fact:
 #   confirm-project.claude_md-*)        CLAUDE.md asking for the word HOH-MARK-PROJ in every answer;
 #   confirm-project.rules-*)            .claude/rules/hoh.md, the same with HOH-MARK-RULES;
 #   confirm-project.skills-*)           .claude/skills/hoh-live-skill/SKILL.md: its name in system/init;
@@ -98,7 +100,7 @@ PLUGINS=(hoh:destructive-classifier hoh:external-harness hoh:harness-claude)
 
 # --- settings sources (s4, `harness-claude` config `settingSources`): the one place that knows
 # how the value reaches the Claude package and which switches each value adds. The runs say `t3`
-# for the package's `personal` (as in T3: only the human's `user` settings, CEO 21.11 ~02:00); the
+# for the package's `personal` (as in T3: the human's settings and the folder's, HOH-40 22.11); the
 # package's default (no value given) is `personal`.
 SOURCES_DEFAULT=t3
 sources_value() { case $1 in t3) echo personal ;; isolated) echo isolated ;; esac; }
@@ -107,7 +109,7 @@ sources_config() { # $1: t3 | isolated | '' (the default); the lines under `harn
 }
 sources_flags() { # $1: t3 | isolated
   case $1 in
-    t3) echo "--setting-sources user" ;;
+    t3) echo "--setting-sources user,project,local" ;;
     isolated) echo "--setting-sources '' --strict-mcp-config" ;;
   esac
 }
@@ -355,9 +357,10 @@ if [ $DRY = 1 ]; then
   done
   echo "проверки: version; для каждого прогона <run>.bound, <run>.turn, <run>.flags;"
   echo "          confirm.asked, confirm.denied, confirm.unchanged; full.questions (0), full.edited;"
-  echo "          confirm.personal.<allow|mcp|hooks>.isolated (PASS/FAIL) и .t3 (факт: да/нет);"
-  echo "          confirm.project.<claude_md|rules|skills|hooks|nested_claude_md>.<t3|isolated>"
-  echo "          (факт: загружено да/нет и доказательство) и их таблица;"
+  echo "          confirm.personal.<allow|mcp|hooks>.isolated (PASS/FAIL), .mcp.t3 (PASS/FAIL: .mcp.json"
+  echo "          загружен) и .<allow|hooks>.t3 (факт: да/нет);"
+  echo "          confirm.project.<claude_md|rules|skills|hooks|nested_claude_md>.t3 (PASS/FAIL: загружено)"
+  echo "          и .isolated (факт: загружено да/нет), с доказательством, и их таблица;"
   echo "          managed (наличие); модель по ответу CLI; secrets; leftovers (предупреждение)"
   echo "отчёт:   $RUN/report.txt; код 0 — всё прошло, 1 — проверка не прошла, 2/3 — не запускалось"
   exit 0
@@ -602,7 +605,11 @@ for name in runs:
             loaded = start or prompt
             proof = f"файлы-метки хуков из .claude/settings.json: SessionStart {yes(start)}, UserPromptSubmit {yes(prompt)}"
         project[(row, sources)] = yes(loaded)
-        fact(f"confirm.{row}.{sources}", f"загружено: {yes(loaded)}; {proof}")
+        if sources == "t3":
+            # HOH-40: the folder's settings apply, as in T3 (`user,project,local`).
+            check(f"confirm.{row}.{sources}", loaded, f"загружено: {yes(loaded)} (ждали: да); {proof}")
+        else:
+            fact(f"confirm.{row}.{sources}", f"загружено: {yes(loaded)}; {proof}")
     else:
         line = f"confirm.personal.{row}.{sources}"
         if row == "allow":
@@ -617,6 +624,12 @@ for name in runs:
             what = (f"сервер из .mcp.json запущен CLI {yes(started)}, список инструментов запрошен {yes(listed_tools)}, "
                     f"вызов hoh_live_write спрошен окном {yes(mcp_asked)}, метка вызова {'есть' if called else 'нет'}")
             ok = not called and (not listed_tools or mcp_asked)
+            if sources == "t3":
+                # HOH-40: the folder's .mcp.json loads (`project`, enabled in `local`), as in T3.
+                loaded = started and listed_tools
+                check(line, loaded, f".mcp.json загружен: {yes(loaded)} (ждали: да); "
+                                    f"действие выполнено без вопроса окна: {yes(silent)}; {what}")
+                continue
         else:
             pre, post, allow = (marked(name, m) for m in ("hook-pre", "hook-post", "hook-allow"))
             silent = (edited and not edit_asked) or (command_ran and not command_asked)

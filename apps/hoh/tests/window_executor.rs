@@ -2753,3 +2753,69 @@ async fn t18_the_effort_of_a_prompt_reaches_the_start_of_claude() {
     assert_eq!(end["kind"], "completed", "{end}\n{}", host.context());
     host.shutdown().await;
 }
+
+/// HOH-40 (i7's report, «два запроса в очереди»): prompts queued behind a running turn each run
+/// at the level they named, not at the level of the last one sent. The first turn waits for the
+/// host's answer to its edit while two more prompts, `high` then `max`, queue behind it.
+#[tokio::test]
+async fn t19_a_queued_prompt_runs_at_its_own_effort() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let prompt = |text: &str, effort: &str| {
+        json!({
+            "sessionId": SESSION,
+            "contentBlocks": [{"type": "text", "text": text}],
+            "effort": effort,
+        })
+    };
+    let from = host.frames.len();
+    host.send("session/prompt", prompt("edit", "low")).await;
+    let request = loop {
+        let frame = host.next().await;
+        if frame["method"] == "approval/request" {
+            break frame;
+        }
+    };
+    for (text, effort) in [("hello", "high"), ("again", "max")] {
+        let id = host.send("session/prompt", prompt(text, effort)).await;
+        let (frame, asked) = host.response(&id, None).await;
+        assert!(frame["result"]["messageId"].is_string(), "{frame}");
+        assert_eq!(asked, 0, "{}", host.context());
+    }
+    host.answer_approval(&request, Some("allowed-once")).await;
+    let ended = |host: &Host| {
+        host.frames[from..]
+            .iter()
+            .filter(|frame| {
+                frame["method"] == "session.event"
+                    && frame["params"]["sessionId"] == SESSION
+                    && frame["params"]["event"]["type"] == "turn/end"
+            })
+            .count()
+    };
+    while ended(&host) < 3 {
+        host.next().await;
+    }
+    assert_eq!(
+        host.turn_end(SESSION)["kind"],
+        "completed",
+        "{}",
+        host.context()
+    );
+    let starts = workspace.sessions();
+    let efforts: Vec<_> = starts
+        .iter()
+        .map(|start| start.value_of("--effort"))
+        .collect();
+    assert_eq!(
+        efforts,
+        [Some("low"), Some("high"), Some("max")],
+        "{starts:?}"
+    );
+    let native = starts[0].value_of("--session-id").expect("a new session");
+    for start in &starts[1..] {
+        assert_eq!(start.value_of("--resume"), Some(native), "{start:?}");
+    }
+    assert_eq!(notes(&workspace), "notes\nedited\n");
+    host.shutdown().await;
+}

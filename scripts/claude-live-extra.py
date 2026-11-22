@@ -727,7 +727,7 @@ def row_v3(ctx):
     def body():
         env = Env(ctx, name)
         argv = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-                "--permission-mode", "default", "--setting-sources", "user", "--permission-prompt-tool", "stdio",
+                "--permission-mode", "default", "--setting-sources", "user,project,local", "--permission-prompt-tool", "stdio",
                 "--disallowedTools", "WebFetch,WebSearch", "--resume", str(uuid.uuid4())]
         proc = subprocess.Popen([ctx.claude, *argv], cwd=env.work, env=env.environ(), stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -873,6 +873,8 @@ def mcp_row(ctx, name, enable):
             if enable:
                 Env.write(os.path.join(env.home, ".claude", "settings.json"), json.dumps({"enableAllProjectMcpServers": True}))
             done = host.turn("chat-mcp", P_OK)
+            sessions = env.sessions()
+            sources = value_of(sessions[-1]["argv"], "--setting-sources") if sessions else None
             init = env.last_init()
             started = os.path.exists(os.path.join(env.marks, "mcp-started"))
             if init is None:
@@ -882,7 +884,7 @@ def mcp_row(ctx, name, enable):
                 shown = ", ".join(f"{clean(s.get('name'), 40)} (status {clean(s.get('status'), 20)}, source {clean(s.get('source', 'поля нет'), 20)})" for s in servers)
                 mine = any(s.get("name") == "hoh-live" for s in servers)
                 ctx.row("PASS", name,
-                        f".mcp.json в папке при --setting-sources user{' и enableAllProjectMcpServers в личных настройках изолированного дома' if enable else ''}: "
+                        f".mcp.json в папке при --setting-sources {sources if sources is not None else '(флага нет)'}{' и enableAllProjectMcpServers в личных настройках изолированного дома' if enable else ''}: "
                         f"mcp_servers [{shown or 'пусто'}]; сервер проекта hoh-live объявлен: {yes(mine)}; запущен (метка): {yes(started)}; ход: {done['kind']}")
             host.shutdown()
         finally:

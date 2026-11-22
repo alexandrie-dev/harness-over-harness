@@ -889,7 +889,7 @@ fn confirm_flags_are_those_of_the_real_launch() {
             "--permission-mode",
             "default",
             "--setting-sources",
-            "user",
+            "user,project,local",
             "--permission-prompt-tool",
             "stdio",
             "--disallowedTools",
@@ -923,10 +923,10 @@ fn every_hoh_method_uses_fixture_result() {
             let mut result = reply["result"].clone();
             let mut expected = response["result"].clone();
             if *method == "hoh/executor/access/get" {
-                // The engine runs Claude with the user's own settings only; the fixture's flags do not name the sources.
+                // The engine runs Claude with the human's settings and the folder's (HOH-40); the fixture's flags do not name the sources.
                 let flags = result["effective"]["flags"].as_array_mut().unwrap();
                 let at = flags.iter().position(|f| f == "--setting-sources").unwrap();
-                assert_eq!(flags[at + 1], "user");
+                assert_eq!(flags[at + 1], "user,project,local");
                 flags.drain(at..at + 2);
                 // Confirm closes the network (`--disallowedTools`): the fixture does not show that switch either.
                 let at = flags.iter().position(|f| f == "--disallowedTools").unwrap();

@@ -443,8 +443,9 @@ async fn registry_refuses_undeclared_and_duplicate_methods_and_unregisters_on_di
     env.close().await;
 }
 
-/// HOH-40: the one `session/prompt` listener hears each prompt's session and whole params (the
-/// window's `effort`, which the server itself does not read), until it is disposed.
+/// HOH-40: the one `session/prompt` listener hears each prompt's session, the id of the message
+/// it queued and the whole params (the window's `effort`, which the server itself does not read),
+/// until it is disposed; `session/query` says nothing to it.
 #[tokio::test]
 async fn a_prompt_listener_hears_the_params_of_every_prompt() {
     let env = Env::new().await;
@@ -452,13 +453,15 @@ async fn a_prompt_listener_hears_the_params_of_every_prompt() {
     let heard = Arc::new(Mutex::new(Vec::new()));
     let log = heard.clone();
     let guard = registry
-        .on_prompt(&env.ctx, move |session, params| {
-            log.lock()
-                .unwrap()
-                .push((session.to_owned(), params["effort"].clone()));
+        .on_prompt(&env.ctx, move |session, message, params| {
+            log.lock().unwrap().push((
+                session.to_owned(),
+                message.to_owned(),
+                params["effort"].clone(),
+            ));
         })
         .unwrap();
-    assert!(registry.on_prompt(&env.ctx, |_, _| {}).is_err());
+    assert!(registry.on_prompt(&env.ctx, |_, _, _| {}).is_err());
     env.initialize().await;
     let prompt = |effort: &str| {
         json!({
@@ -467,15 +470,26 @@ async fn a_prompt_listener_hears_the_params_of_every_prompt() {
             "effort": effort,
         })
     };
-    env.server
+    let receipt = env
+        .server
         .handle_request("session/prompt", prompt("high"))
         .await
         .unwrap();
     env.wait("s1").await;
+    let message = receipt["messageId"].as_str().unwrap().to_owned();
     assert_eq!(
         *heard.lock().unwrap(),
-        vec![("s1".to_owned(), json!("high"))]
+        vec![("s1".to_owned(), message, json!("high"))]
     );
+    env.server
+        .handle_request(
+            "session/query",
+            json!({"sessionId": "s1", "contentBlocks": [{"type": "text", "text": "hi"}]}),
+        )
+        .await
+        .unwrap();
+    env.wait("s1").await;
+    assert_eq!(heard.lock().unwrap().len(), 1);
     guard.dispose().await;
     env.server
         .handle_request("session/prompt", prompt("max"))

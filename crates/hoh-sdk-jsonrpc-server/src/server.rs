@@ -614,13 +614,15 @@ impl HarnessSdkJsonRpcServer {
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()?;
-        self.prompt_blocks(SessionId::from(params.session_id), blocks)
+        self.prompt_blocks(SessionId::from(params.session_id), blocks, None)
             .await
     }
+    /// `params`: those of a `session/prompt` request, for its listener (HOH-40).
     async fn prompt_blocks(
         &self,
         session_id: SessionId,
         blocks: Vec<Value>,
+        params: Option<&Value>,
     ) -> Result<SessionPromptResult, BoxError> {
         self.assert_initialized()?;
         let rec = self.get_or_create_session(session_id.clone()).await?;
@@ -634,6 +636,11 @@ impl HarnessSdkJsonRpcServer {
             source: MessageSource::new("user"),
         });
         let message_id = message.id.to_string();
+        // HOH-40: the rest of the params (the window's `effort`) to the plugin that serves it,
+        // with the message they belong to, before the message can start a turn.
+        if let (Some(params), Some(methods)) = (params, self.inner.ctx.get::<HohRpcMethods>()) {
+            methods.prompted(session_id.as_ref(), &message_id, params);
+        }
         rec.handle.agent.followup(message)?;
         Ok(SessionPromptResult { message_id })
     }
@@ -744,7 +751,7 @@ impl HarnessSdkJsonRpcServer {
                 });
             }
         }
-        let receipt = self.prompt_blocks(session_id, blocks).await?;
+        let receipt = self.prompt_blocks(session_id, blocks, None).await?;
         Ok(SessionQueryResult::Prompt {
             message_id: receipt.message_id,
         })
@@ -1219,13 +1226,11 @@ impl HarnessSdkJsonRpcServer {
                     .and_then(Value::as_array)
                     .cloned()
                     .ok_or_else(|| type_error("session/prompt requires contentBlocks"))?;
-                // HOH-40: the rest of the params (the window's `effort`) to the plugin that
-                // serves it, before the message can start a turn.
-                if let Some(methods) = self.inner.ctx.get::<HohRpcMethods>() {
-                    methods.prompted(id, &params);
-                }
-                serde_json::to_value(self.prompt_blocks(SessionId::from(id), blocks).await?)
-                    .map_err(Into::into)
+                serde_json::to_value(
+                    self.prompt_blocks(SessionId::from(id), blocks, Some(&params))
+                        .await?,
+                )
+                .map_err(Into::into)
             }
             "session/query" => {
                 let valid = params

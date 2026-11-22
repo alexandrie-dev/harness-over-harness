@@ -12,7 +12,7 @@ use std::{
 
 type MethodHandler =
     Arc<dyn Fn(Value) -> BoxFuture<'static, Result<Value, BoxError>> + Send + Sync>;
-type PromptListener = Arc<dyn Fn(&str, &Value) + Send + Sync>;
+type PromptListener = Arc<dyn Fn(&str, &str, &Value) + Send + Sync>;
 
 struct MethodEntry {
     token: u64,
@@ -99,13 +99,14 @@ impl HohRpcMethodRegistry {
         })
     }
 
-    /// GLUE (HOH-40): hear the parameters of every `session/prompt` (the session id, then the
-    /// whole `params`) before its message can start a turn, for the lifetime of `ctx`. The fields
-    /// the server does not read itself (the window's `effort`) reach the plugin that serves them.
-    /// One listener.
+    /// GLUE (HOH-40): hear every `session/prompt` — the session id, the id of the message it
+    /// queues, the whole `params` — once its session and message exist and before the message
+    /// can start a turn, for the lifetime of `ctx`. The fields the server does not read itself
+    /// (the window's `effort`) reach the plugin that serves them, tied to their own message. One
+    /// listener.
     pub fn on_prompt<F>(&self, ctx: &Context, listener: F) -> Result<Disposer, BoxError>
     where
-        F: Fn(&str, &Value) + Send + Sync + 'static,
+        F: Fn(&str, &str, &Value) + Send + Sync + 'static,
     {
         let listener: PromptListener = Arc::new(listener);
         let registry = self.clone();
@@ -138,13 +139,13 @@ impl HohRpcMethodRegistry {
         )
     }
 
-    pub(crate) fn prompted(&self, session_id: &str, params: &Value) {
+    pub(crate) fn prompted(&self, session_id: &str, message_id: &str, params: &Value) {
         let listener = lock(&self.state)
             .prompt_listener
             .as_ref()
             .map(|(_, listener)| listener.clone());
         if let Some(listener) = listener {
-            listener(session_id, params);
+            listener(session_id, message_id, params);
         }
     }
 
