@@ -56,15 +56,41 @@ export function settingsNavFilter(code: string): string {
 const PROVIDER_ANCHORS = [
   ['const visibleProviderSettings = PROVIDER_SETTINGS.filter(', 'const visibleProviderSettings = PROVIDER_SETTINGS.filter((entry) => HOH_PROVIDER_DRIVERS.includes(entry.provider)).filter('],
   ['const canAddProvider =\n', 'const canAddProvider = false &&\n'],
+  // Настройки, которых движок не исполняет (путь к claude, свои аргументы, «Usage providers», проверка состояния, сжатие): не рисуются.
+  ['<UsageProviderSettings\n', '<HohNone\n'],
+  ['      <SettingsSection title={gt("Advanced")}>', '      {false ? <SettingsSection title={gt("Advanced")}>'],
+  ['        <CompactIdleThreadsRow />\n      </SettingsSection>\n', '        <CompactIdleThreadsRow />\n      </SettingsSection> : null}\n'],
 ] as const;
-/** Providers (ProviderSettingsPanel.tsx): только поставщики VISIBLE_PROVIDER_DRIVERS, без «Add provider» и «+». */
-export function providerSettingsPanel(code: string): string {
+const CARD_ANCHORS = [
+  // Карточка поставщика: остаются название и состояние; «Runtime», «Environment» и «Models» движок не исполняет.
+  ['!driverOption || deriveProviderSettingsFields(driverOption, undefined, m).length > 0 ? (', 'false ? ('],
+  ['      <SettingsSection\n        title={gt("Environment")}', '      {false ? <SettingsSection\n        title={gt("Environment")}'],
+  ['      </SettingsSection>\n      {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (', '      </SettingsSection> : null}\n      {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? ('],
+  ['{driverOption !== undefined ? (\n        <SettingsSection title={gt("Models")}>', '{false ? (\n        <SettingsSection title={gt("Models")}>'],
+] as const;
+function anchorPatch(file: string, code: string, edits: ReadonlyArray<readonly [string, string]>, header = ''): string {
   let out = code;
-  for (const [from, to] of PROVIDER_ANCHORS) {
-    if (!out.includes(from)) throw new Error(`ProviderSettingsPanel.tsx: нет «${from.trim()}» — T3 изменился, проверьте features.ts`);
+  for (const [from, to] of edits) {
+    if (!out.includes(from)) throw new Error(`${file}: нет «${from.trim()}» — T3 изменился, проверьте features.ts`);
     out = out.replace(from, to);
   }
-  return `const HOH_PROVIDER_DRIVERS: readonly string[] = ${JSON.stringify(VISIBLE_PROVIDER_DRIVERS)}; // HoH (vite.ts, features.ts)\n` + out;
+  return header + out;
+}
+/** Providers (ProviderSettingsPanel.tsx): только поставщики VISIBLE_PROVIDER_DRIVERS, без «Add provider» и «+», без настроек, которых движок не исполняет. */
+export function providerSettingsPanel(code: string): string {
+  return anchorPatch('ProviderSettingsPanel.tsx', code, PROVIDER_ANCHORS,
+    `const HOH_PROVIDER_DRIVERS: readonly string[] = ${JSON.stringify(VISIBLE_PROVIDER_DRIVERS)}; // HoH (vite.ts, features.ts)\nconst HohNone = (_props: Record<string, unknown>) => null;\n`);
+}
+export function providerInstanceCard(code: string): string {
+  return anchorPatch('ProviderInstanceCard.tsx', code, CARD_ANCHORS);
+}
+
+/** Имена тем в Appearance → Themes: без названий продуктов T3 («T3 Code» → «Default», «T3 Chat» → «Chat»). */
+export function themeCards(code: string): string {
+  return anchorPatch('ThemePreviewCircles.tsx', code, [['label: "T3 Code",', 'label: "Default",']]);
+}
+export function themePalettes(code: string): string {
+  return anchorPatch('themePalettes.ts', code, [['label: "T3 Chat",', 'label: "Chat",']]);
 }
 
 /** Модуль вместо модуля компонента T3: всё как у него, кроме названных компонентов — они ничего не рисуют. */
@@ -138,6 +164,9 @@ function hohT3(): Plugin {
     transform(code, id) {
       if (id === resolve(T3_WEB, 'components/settings/settingsSearch.ts')) return { code: settingsNavFilter(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderSettingsPanel.tsx')) return { code: providerSettingsPanel(code), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
+      if (id === resolve(T3_BASE, 'shared/themePalettes.ts')) return { code: themePalettes(code), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/ProviderInstanceCard.tsx')) return { code: providerInstanceCard(code), map: null };
       return null;
     },
   };

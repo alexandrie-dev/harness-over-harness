@@ -374,9 +374,11 @@ export class ThreadModel {
       run.status = 'running'; run.completedAt = null; this.settledByGuess = false; this.running = true;
       return true;
     }
-    if (this.running === running) return false;
+    // The engine says idle: no run stays open, whatever this flag held (the sidebar lists a thread with an open run as working).
+    const open = !running && !!run && (run.status === 'running' || run.status === 'waiting') && this.outgoing.length === 0;
+    if (this.running === running && !open) return false;
     this.running = running;
-    if (!running && run && (run.status === 'running' || run.status === 'waiting')) this.endTurn('completed', at);
+    if (open) this.endTurn('completed', at);
     return true;
   }
 
