@@ -90,7 +90,8 @@ async function settle(page) {
 const screens = [
   {
     name: 'first-run', engine: () => engineWith([]),
-    run: async page => { await page.getByRole('textbox').first().waitFor(); },
+    // Хост u3 (fix1): движок без разговоров → T3 сам открывает /welcome; хост до fix1 — сразу поле ввода.
+    run: async page => { await page.getByText('Welcome to T3 Code').or(page.getByRole('textbox')).first().waitFor(); },
   },
   {
     name: 'empty-conversation', engine: () => engineWith([CHAT]),
