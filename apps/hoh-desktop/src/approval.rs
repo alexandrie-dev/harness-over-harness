@@ -286,6 +286,12 @@ fn session_of(action: &Value) -> String {
         .to_owned()
 }
 
+/// Privileged window methods whose confirmation is the person's action in the main window itself,
+/// without a separate confirmation window: the executor's access mode (founder 22.11 19:16, as in
+/// T3). Only the main window may send them (`bridge::check_main`); the executor, the model and the
+/// SDK server never reach this path, and the engine's own request still needs the core's signature.
+pub const MAIN_WINDOW_CONFIRMED: &[&str] = &["hoh/executor/access/set"];
+
 /// One line of the approval journal: who confirmed what, where and when. No secrets: the model key
 /// appears only as its hash inside `actionHash`.
 #[derive(Clone, Debug, Serialize)]
@@ -616,6 +622,53 @@ impl Broker {
         let (reply, receiver) = mpsc::sync_channel(1);
         let open = self.insert(request, Destination::Preflight(reply), nested)?;
         Ok((open, receiver))
+    }
+
+    /// The person's own action in the main window is the confirmation (founder 22.11 19:16): for the
+    /// methods in `MAIN_WINDOW_CONFIRMED` no confirmation window opens. The core journals it as the
+    /// person's (`who: human`, `via: main-window`) and keeps the grant for exactly this action, so the
+    /// engine's own approval request for it is signed once, as after the settings window. The caller
+    /// must have checked that the request came from the main window (`bridge::check_main`).
+    pub fn confirm_from_main_window(
+        &self,
+        method: &str,
+        params: &Value,
+        now: u64,
+    ) -> Result<(), String> {
+        if !MAIN_WINDOW_CONFIRMED.contains(&method) {
+            return Err("Действие подтверждается в отдельном окне".into());
+        }
+        if !hoh_protocol::requires_host_approval(method, params) {
+            return Err("Действие не требует подтверждения".into());
+        }
+        let sequence = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        let action = redacted_action(method, params)?;
+        let (human_text, _) = redact_text_checked(&preflight_text(method, params)?);
+        let request = HostApprovalRequest {
+            session_id: "native".into(),
+            tool_name: method.into(),
+            call_id: None,
+            reason: None,
+            details: None,
+            approval_id: format!("main-window-{sequence}"),
+            risk: Risk::High,
+            human_text,
+            action_hash: hoh_protocol::approval::action_hash(&action),
+            expires_at: now.saturating_add(MAX_LIFETIME_MS),
+            action,
+        };
+        hoh_protocol::approval::validate_host_request(&request)
+            .map_err(|_| "Некорректное подтверждение".to_owned())?;
+        self.confirm(&request, now);
+        self.log(
+            now,
+            "human",
+            "main-window",
+            &request,
+            "allowed-once",
+            "подтверждено человеком действием в главном окне",
+        );
+        Ok(())
     }
 
     fn parse_engine_request(

@@ -123,6 +123,8 @@ impl Transport for MemoryTransport {
             json!({"serverInfo":{"name":"deepseek-harness-sdk-runtime","version":"test"},"hoh":{"protocolVersion":1,"approvals":"host"}})
         } else if frame["method"] == "initialize" {
             json!({"serverInfo":{"name":"deepseek-harness-sdk-runtime","version":"legacy"}})
+        } else if frame["method"] == "hoh/executor/access/set" {
+            frame["params"].clone()
         } else {
             json!({})
         };
@@ -585,4 +587,70 @@ fn window_may_call_exactly_the_four_executor_methods_and_no_new_ones() {
             &json!({"executor":"claude"})
         ));
     }
+}
+
+/// The access mode goes from the main window straight to the engine (no confirmation window): the
+/// main window's own action is journaled as the person's. Any other window is refused before
+/// anything is confirmed or sent.
+#[test]
+fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_refused() {
+    let (controls, _control_rx) = mpsc::channel();
+    let (events, event_rx) = mpsc::channel();
+    let frames: Frames = Arc::default();
+    let engine = Engine::start(
+        Arc::new(MemoryConnector {
+            host: true,
+            frames: frames.clone(),
+            launches: Arc::default(),
+            controls,
+        }),
+        json!({}),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
+    );
+    wait_memory_ready(&event_rx);
+    let broker = Arc::new(Broker::new([0x21; 32]).unwrap());
+    let params = json!({"executor":"claude","mode":"full"});
+    let send = |label: &str| {
+        let arm = {
+            let (broker, params) = (broker.clone(), params.clone());
+            Box::new(move |generation: u64, id: &str| {
+                broker.arm_in_flight("hoh/executor/access/set", &params, generation, id, now_ms());
+            })
+        };
+        bridge::request_with_approval_armed(
+            &engine,
+            label,
+            "hoh/executor/access/set",
+            params.clone(),
+            |params| broker.confirm_from_main_window("hoh/executor/access/set", params, now_ms()),
+            Some(arm),
+        )
+    };
+    for label in ["approval-1", "executor", "claude"] {
+        assert!(send(label).is_err(), "{label}");
+    }
+    assert!(broker.audit_log().is_empty());
+    assert!(
+        !frames
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame["method"] == "hoh/executor/access/set")
+    );
+    send("main").unwrap();
+    assert!(
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame["method"] == "hoh/executor/access/set")
+    );
+    let log = broker.audit_log();
+    assert_eq!(log.len(), 1);
+    assert_eq!((log[0].who, log[0].via), ("human", "main-window"));
+    // The plain path without the host's confirmation step stays closed.
+    assert!(bridge::request(&engine, "main", "hoh/executor/access/set", params.clone()).is_err());
+    engine.stop();
 }

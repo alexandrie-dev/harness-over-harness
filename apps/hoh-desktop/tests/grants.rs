@@ -778,3 +778,124 @@ fn a_hidden_nested_command_in_the_settings_text_blocks_allow_once() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+const ACCESS_SET: &str = "hoh/executor/access/set";
+
+/// Founder 22.11 19:16: the access mode of the executor changes from the main window itself, as in
+/// T3. The person's action there is the confirmation: no window, one `human` line in the journal
+/// (channel `main-window`), and the engine's own request for exactly that action is signed once.
+#[test]
+fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_person() {
+    let broker = broker();
+    for (n, mode) in ["full", "confirm"].iter().enumerate() {
+        let params = json!({"executor":"claude","mode":mode});
+        broker
+            .confirm_from_main_window(ACCESS_SET, &params, NOW)
+            .unwrap();
+        arm(&broker, ACCESS_SET, &params, NOW);
+        let begun = begin(
+            &broker,
+            engine_request(ACCESS_SET, &params, &format!("acc-{n}"), NOW + 5),
+            NOW + 5,
+        );
+        assert!(is_signed(&begun), "{mode}: signed without a window");
+    }
+    let log = broker.audit_log();
+    assert_eq!(log.len(), 4);
+    for (human, core) in [(&log[0], &log[1]), (&log[2], &log[3])] {
+        assert_eq!(
+            (human.who, human.via, human.outcome.as_str()),
+            ("human", "main-window", "allowed-once")
+        );
+        assert_eq!(human.method, ACCESS_SET);
+        assert_eq!(
+            human.note,
+            "подтверждено человеком действием в главном окне"
+        );
+        assert_eq!((core.who, core.outcome.as_str()), ("core", "allowed-once"));
+    }
+    assert!(
+        log[0]
+            .human_text
+            .starts_with("Включить полный доступ для Claude?")
+    );
+    // The person reads it in the history as their own decision.
+    let history = broker.history(10);
+    assert_eq!(history.len(), 2);
+    assert!(history.iter().all(|entry| entry["asker"] == "you"));
+}
+
+/// The grant is the main window's only: without that action (the executor, the model or the SDK
+/// server asking the engine), or for another mode or executor, the engine's request gets a window.
+#[test]
+fn an_access_change_not_made_in_the_main_window_still_gets_a_window() {
+    let broker = broker();
+    let full = json!({"executor":"claude","mode":"full"});
+    close_window(
+        &broker,
+        begin(&broker, engine_request(ACCESS_SET, &full, "x1", NOW), NOW),
+        NOW,
+    );
+    let confirm = json!({"executor":"claude","mode":"confirm"});
+    broker
+        .confirm_from_main_window(ACCESS_SET, &confirm, NOW)
+        .unwrap();
+    arm(&broker, ACCESS_SET, &confirm, NOW);
+    close_window(
+        &broker,
+        begin(
+            &broker,
+            engine_request(ACCESS_SET, &full, "x2", NOW + 1),
+            NOW + 1,
+        ),
+        NOW + 1,
+    );
+    // Confirmed but never sent from the window: nothing is in flight, nothing is signed.
+    let other = Broker::new(KEY).unwrap();
+    other
+        .confirm_from_main_window(ACCESS_SET, &full, NOW)
+        .unwrap();
+    close_window(
+        &other,
+        begin(
+            &other,
+            engine_request(ACCESS_SET, &full, "x3", NOW + 1),
+            NOW + 1,
+        ),
+        NOW + 1,
+    );
+}
+
+/// Every other privileged method keeps its confirmation window.
+#[test]
+fn only_the_access_mode_is_confirmed_by_the_main_window_itself() {
+    let broker = broker();
+    for (method, params) in [
+        (KEY_SET, key_params("sk-x", "http://127.0.0.1:8080/v1")),
+        (
+            "hoh/executor/select",
+            json!({"executor":"claude","model":"opus"}),
+        ),
+        (
+            "hoh/settings/rules/set",
+            json!({"internet":"ask","folder":"/home/u/Documents/HoH"}),
+        ),
+        (
+            "hoh/settings/set",
+            json!({"model":{"baseUrl":"http://127.0.0.1:8080/v1","model":"local"}}),
+        ),
+    ] {
+        assert!(
+            broker
+                .confirm_from_main_window(method, &params, NOW)
+                .is_err(),
+            "{method}"
+        );
+    }
+    assert!(
+        broker
+            .confirm_from_main_window(ACCESS_SET, &json!({"executor":"claude","mode":"root"}), NOW)
+            .is_err()
+    );
+    assert!(broker.audit_log().is_empty());
+}

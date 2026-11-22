@@ -607,6 +607,10 @@ pub async fn engine_request(
                     crate::probe::trace(format!("preflight:{method}:engine-not-ready"));
                     return Err(crate::errors::CONNECTING.into());
                 }
+                // `check_main` has passed: the person's own action in the main window confirms it.
+                if crate::approval::MAIN_WINDOW_CONFIRMED.contains(&method.as_str()) {
+                    return approvals.confirm_from_main_window(&method, params, now_ms());
+                }
                 let (open, receiver) = approvals.begin_preflight(&method, params, now_ms())?;
                 let approval_label = open.label.clone();
                 #[cfg(feature = "probe")]
