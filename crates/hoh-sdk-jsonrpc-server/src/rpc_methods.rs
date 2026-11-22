@@ -12,6 +12,7 @@ use std::{
 
 type MethodHandler =
     Arc<dyn Fn(Value) -> BoxFuture<'static, Result<Value, BoxError>> + Send + Sync>;
+type PromptListener = Arc<dyn Fn(&str, &Value) + Send + Sync>;
 
 struct MethodEntry {
     token: u64,
@@ -22,6 +23,7 @@ struct MethodEntry {
 struct State {
     next_token: u64,
     methods: HashMap<String, MethodEntry>,
+    prompt_listener: Option<(u64, PromptListener)>,
 }
 
 /// GLUE-SHIM(4): decides one privileged call (`hoh_protocol::PRIVILEGED_METHODS`) in host mode.
@@ -95,6 +97,55 @@ impl HohRpcMethodRegistry {
             }))?;
             Ok(())
         })
+    }
+
+    /// GLUE (HOH-40): hear the parameters of every `session/prompt` (the session id, then the
+    /// whole `params`) before its message can start a turn, for the lifetime of `ctx`. The fields
+    /// the server does not read itself (the window's `effort`) reach the plugin that serves them.
+    /// One listener.
+    pub fn on_prompt<F>(&self, ctx: &Context, listener: F) -> Result<Disposer, BoxError>
+    where
+        F: Fn(&str, &Value) + Send + Sync + 'static,
+    {
+        let listener: PromptListener = Arc::new(listener);
+        let registry = self.clone();
+        ctx.try_effect(
+            "hohRpcMethods.onPrompt",
+            move |undos| -> Result<(), BoxError> {
+                let token = {
+                    let mut state = lock(&registry.state);
+                    if state.prompt_listener.is_some() {
+                        return Err(error("a session/prompt listener is already registered"));
+                    }
+                    state.next_token += 1;
+                    let token = state.next_token;
+                    state.prompt_listener = Some((token, listener.clone()));
+                    token
+                };
+                let cleanup = registry.clone();
+                undos.push(Undo::sync(move || {
+                    let mut state = lock(&cleanup.state);
+                    if state
+                        .prompt_listener
+                        .as_ref()
+                        .is_some_and(|(owner, _)| *owner == token)
+                    {
+                        state.prompt_listener = None;
+                    }
+                }))?;
+                Ok(())
+            },
+        )
+    }
+
+    pub(crate) fn prompted(&self, session_id: &str, params: &Value) {
+        let listener = lock(&self.state)
+            .prompt_listener
+            .as_ref()
+            .map(|(_, listener)| listener.clone());
+        if let Some(listener) = listener {
+            listener(session_id, params);
+        }
     }
 
     pub(crate) fn is_registered(&self, method: &str) -> bool {

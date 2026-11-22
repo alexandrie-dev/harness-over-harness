@@ -89,6 +89,23 @@ impl Plugin for ExternalHarnessWindowPlugin {
                 async move { window.call(method, params).await }
             })?;
         }
+        // HOH-40: the window names the effort level with each prompt (`effort`); it holds for
+        // the conversation's next start.
+        let choices = window.service().choices().clone();
+        let log = ctx.logger();
+        deps.methods.on_prompt(&ctx, move |session, params| {
+            let effort = match params.get("effort") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(effort)) => Some(effort.clone()),
+                Some(_) => {
+                    log.warn(format_args!(
+                        "session/prompt effort is not a string: the turn runs without one"
+                    ));
+                    None
+                }
+            };
+            choices.set_effort(session, effort);
+        })?;
         Ok(())
     }
 }

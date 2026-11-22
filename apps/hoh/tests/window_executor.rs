@@ -499,6 +499,8 @@ struct Host {
     frames: Vec<Value>,
     /// The label the host picks for every question of Claude (none: no question is expected).
     pick: Option<String>,
+    /// The `effort` every `session/prompt` names (HOH-40); null: none is named.
+    effort: Value,
     /// The `user-question/ask` requests the host was sent.
     questions: Vec<Value>,
 }
@@ -537,6 +539,7 @@ impl Host {
             next_id: 0,
             frames: Vec::new(),
             pick: None,
+            effort: Value::Null,
             questions: Vec::new(),
         }
     }
@@ -727,8 +730,11 @@ impl Host {
         outcome: Option<&str>,
     ) -> Vec<HostApprovalRequest> {
         let from = self.frames.len();
-        let params =
+        let mut params =
             json!({"sessionId": session, "contentBlocks": [{"type": "text", "text": text}]});
+        if !self.effort.is_null() {
+            params["effort"] = self.effort.clone();
+        }
         let id = self.send("session/prompt", params).await;
         let mut asked = Vec::new();
         let (mut answered, mut running, mut index) = (false, false, from);
@@ -858,10 +864,10 @@ fn assert_confirm(start: &Start) {
         Some("stdio"),
         "{start:?}"
     );
-    // The human's own settings only: not the folder's (`project`, `local`).
+    // The human's settings and the folder's, as T3 (HOH-40).
     assert_eq!(
         start.value_of("--setting-sources"),
-        Some("user"),
+        Some("user,project,local"),
         "{start:?}"
     );
     assert!(!start.has("--strict-mcp-config"), "{start:?}");
@@ -2683,5 +2689,67 @@ async fn t16_stop_right_after_a_message_to_a_resumed_claude_ends_it() {
         "{:?}",
         starts[2]
     );
+    host.shutdown().await;
+}
+
+/// HOH-40: the effort the window names in `session/prompt` follows `--effort` of the start of
+/// Claude (and the folder's settings are read: `--setting-sources user,project,local`). The same
+/// level keeps the process; another one starts Claude anew on the same conversation (`--resume`),
+/// as T3; a level Claude does not have is not passed on (the engine's log says so; the window
+/// profile does not export it); a prompt without one runs at Claude's own level.
+#[tokio::test]
+async fn t18_the_effort_of_a_prompt_reaches_the_start_of_claude() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.effort = json!("high");
+    host.prompt("hello").await;
+    let first = only_session(&workspace, &host);
+    assert_eq!(first.value_of("--effort"), Some("high"), "{first:?}");
+    assert_eq!(
+        first.value_of("--setting-sources"),
+        Some("user,project,local"),
+        "{first:?}"
+    );
+    let native = first
+        .value_of("--session-id")
+        .expect("a new session")
+        .to_owned();
+
+    host.prompt("again").await;
+    assert_eq!(
+        workspace.sessions().len(),
+        1,
+        "the same level, the same process"
+    );
+
+    host.effort = json!("max");
+    host.prompt("more").await;
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert_eq!(
+        starts[1].value_of("--effort"),
+        Some("max"),
+        "{:?}",
+        starts[1]
+    );
+    assert_eq!(
+        starts[1].value_of("--resume"),
+        Some(native.as_str()),
+        "{:?}",
+        starts[1]
+    );
+    assert_eq!(mode_of(&starts[1]), "confirm", "{:?}", starts[1]);
+
+    host.effort = json!("turbo");
+    host.prompt("odd").await;
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 3, "{starts:?}");
+    assert!(!starts[2].has("--effort"), "{:?}", starts[2]);
+
+    host.effort = Value::Null;
+    host.prompt("plain").await;
+    assert_eq!(workspace.sessions().len(), 3, "no level, as the last start");
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "completed", "{end}\n{}", host.context());
     host.shutdown().await;
 }

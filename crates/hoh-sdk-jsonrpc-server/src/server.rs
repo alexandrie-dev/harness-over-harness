@@ -1,5 +1,6 @@
 //! packages/sdk/server/src/server.ts. One SDK owner over an existing harness runtime.
 use crate::{
+    HohRpcMethods,
     error::{ForeignErrorValue, SdkServerError, error, type_error},
     lock,
     query_activity::{QUERY_INVOCATION, QueryActivity},
@@ -1218,6 +1219,11 @@ impl HarnessSdkJsonRpcServer {
                     .and_then(Value::as_array)
                     .cloned()
                     .ok_or_else(|| type_error("session/prompt requires contentBlocks"))?;
+                // HOH-40: the rest of the params (the window's `effort`) to the plugin that
+                // serves it, before the message can start a turn.
+                if let Some(methods) = self.inner.ctx.get::<HohRpcMethods>() {
+                    methods.prompted(id, &params);
+                }
                 serde_json::to_value(self.prompt_blocks(SessionId::from(id), blocks).await?)
                     .map_err(Into::into)
             }

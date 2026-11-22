@@ -92,6 +92,9 @@ struct Inner {
 #[derive(Default)]
 pub(crate) struct Choices {
     access: Mutex<HashMap<String, AccessMode>>,
+    /// The `effort` of the last `session/prompt` of each conversation (by HoH session id); none
+    /// when that prompt named none.
+    efforts: Mutex<HashMap<String, Option<String>>>,
 }
 
 impl Choices {
@@ -108,6 +111,14 @@ impl Choices {
 
     pub(crate) fn all_access(&self) -> HashMap<String, AccessMode> {
         lock(&self.access).clone()
+    }
+
+    pub(crate) fn set_effort(&self, session: &str, effort: Option<String>) {
+        lock(&self.efforts).insert(session.to_owned(), effort);
+    }
+
+    pub(crate) fn effort(&self, session: &str) -> Option<String> {
+        lock(&self.efforts).get(session).cloned().flatten()
     }
 }
 
