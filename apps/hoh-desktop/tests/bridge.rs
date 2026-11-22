@@ -624,7 +624,9 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
             label,
             "hoh/executor/access/set",
             params.clone(),
-            |params| broker.confirm_from_main_window("hoh/executor/access/set", params, now_ms()),
+            |params| {
+                broker.confirm_from_main_window("hoh/executor/access/set", params, None, now_ms())
+            },
             Some(arm),
         )
     };
@@ -652,5 +654,37 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
     assert_eq!((log[0].who, log[0].via), ("human", "main-window"));
     // The plain path without the host's confirmation step stays closed.
     assert!(bridge::request(&engine, "main", "hoh/executor/access/set", params.clone()).is_err());
+    // Lead 22.11 20:43: choosing Claude and the folder of its conversation — the same rule; from
+    // any other window they are refused before the person's confirmation is even considered.
+    for (method, params) in [
+        (
+            "hoh/executor/select",
+            json!({"executor":"claude","model":"default"}),
+        ),
+        (
+            "session/working-directory/set",
+            json!({"sessionId":"s-claude","path":"/home/u/work"}),
+        ),
+    ] {
+        for label in ["approval-1", "executor", "claude"] {
+            let sent = bridge::request_with_approval_armed(
+                &engine,
+                label,
+                method,
+                params.clone(),
+                |params| broker.confirm_from_main_window(method, params, Some("claude"), now_ms()),
+                None,
+            );
+            assert!(sent.is_err(), "{label} {method}");
+        }
+        assert!(
+            !frames
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|frame| frame["method"] == method)
+        );
+    }
+    assert_eq!(broker.audit_log().len(), 1);
     engine.stop();
 }

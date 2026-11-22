@@ -667,8 +667,20 @@ pub async fn engine_request(
                     return Err(crate::errors::CONNECTING.into());
                 }
                 // `check_main` has passed: the person's own action in the main window confirms it.
-                if crate::approval::MAIN_WINDOW_CONFIRMED.contains(&method.as_str()) {
-                    return approvals.confirm_from_main_window(&method, params, now_ms());
+                let session_executor = (method == "session/working-directory/set")
+                    .then(|| session_executor(&engine, params))
+                    .flatten();
+                if crate::approval::main_window_confirms(
+                    &method,
+                    params,
+                    session_executor.as_deref(),
+                ) {
+                    return approvals.confirm_from_main_window(
+                        &method,
+                        params,
+                        session_executor.as_deref(),
+                        now_ms(),
+                    );
                 }
                 let (open, receiver) = approvals.begin_preflight(&method, params, now_ms())?;
                 let approval_label = open.label.clone();
@@ -807,6 +819,19 @@ pub fn shutdown(handle: &tauri::AppHandle, host: &Host) {
         destroy_window(handle, &label);
     }
     host.engine.stop();
+}
+
+/// The executor that runs a conversation, as the engine reports it (`hoh/executor/access/get`):
+/// `None` for the built-in agent loop, or when the engine cannot tell — then the window asks.
+fn session_executor(engine: &Engine, params: &Value) -> Option<String> {
+    let session_id = params["sessionId"].as_str()?;
+    let answer = engine
+        .request(
+            "hoh/executor/access/get",
+            json!({ "executor": crate::approval::MAIN_WINDOW_EXECUTOR, "sessionId": session_id }),
+        )
+        .ok()?;
+    answer["session"]["executor"].as_str().map(str::to_owned)
 }
 
 /// Open a link of an answer. Only the main window; the session's folder is asked from the engine,

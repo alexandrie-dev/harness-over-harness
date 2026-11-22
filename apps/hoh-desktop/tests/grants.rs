@@ -790,7 +790,7 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
     for (n, mode) in ["full", "confirm"].iter().enumerate() {
         let params = json!({"executor":"claude","mode":mode});
         broker
-            .confirm_from_main_window(ACCESS_SET, &params, NOW)
+            .confirm_from_main_window(ACCESS_SET, &params, None, NOW)
             .unwrap();
         arm(&broker, ACCESS_SET, &params, NOW);
         let begun = begin(
@@ -838,7 +838,7 @@ fn an_access_change_not_made_in_the_main_window_still_gets_a_window() {
     );
     let confirm = json!({"executor":"claude","mode":"confirm"});
     broker
-        .confirm_from_main_window(ACCESS_SET, &confirm, NOW)
+        .confirm_from_main_window(ACCESS_SET, &confirm, None, NOW)
         .unwrap();
     arm(&broker, ACCESS_SET, &confirm, NOW);
     close_window(
@@ -853,7 +853,7 @@ fn an_access_change_not_made_in_the_main_window_still_gets_a_window() {
     // Confirmed but never sent from the window: nothing is in flight, nothing is signed.
     let other = Broker::new(KEY).unwrap();
     other
-        .confirm_from_main_window(ACCESS_SET, &full, NOW)
+        .confirm_from_main_window(ACCESS_SET, &full, None, NOW)
         .unwrap();
     close_window(
         &other,
@@ -866,38 +866,122 @@ fn an_access_change_not_made_in_the_main_window_still_gets_a_window() {
     );
 }
 
-/// Every other privileged method keeps its confirmation window.
+/// Every other privileged request keeps its confirmation window: the built-in agent loop's model and
+/// folder, the key, the rules and the settings.
 #[test]
-fn only_the_access_mode_is_confirmed_by_the_main_window_itself() {
+fn only_the_choices_for_claude_are_confirmed_by_the_main_window_itself() {
     let broker = broker();
-    for (method, params) in [
-        (KEY_SET, key_params("sk-x", "http://127.0.0.1:8080/v1")),
+    for (method, params, session_executor) in [
         (
-            "hoh/executor/select",
-            json!({"executor":"claude","model":"opus"}),
+            KEY_SET,
+            key_params("sk-x", "http://127.0.0.1:8080/v1"),
+            None,
+        ),
+        (SELECT, json!({"executor":null,"model":"local"}), None),
+        (SELECT, json!({"executor":"codex","model":"gpt"}), None),
+        (
+            FOLDER_SET,
+            json!({"sessionId":"s-loop","path":"/home/u/work"}),
+            None,
+        ),
+        (
+            FOLDER_SET,
+            json!({"sessionId":"s-other","path":"/home/u/work"}),
+            Some("codex"),
         ),
         (
             "hoh/settings/rules/set",
             json!({"internet":"ask","folder":"/home/u/Documents/HoH"}),
+            None,
         ),
         (
             "hoh/settings/set",
             json!({"model":{"baseUrl":"http://127.0.0.1:8080/v1","model":"local"}}),
+            Some("claude"),
         ),
     ] {
         assert!(
             broker
-                .confirm_from_main_window(method, &params, NOW)
+                .confirm_from_main_window(method, &params, session_executor, NOW)
                 .is_err(),
-            "{method}"
+            "{method} {params}"
         );
     }
     assert!(
         broker
-            .confirm_from_main_window(ACCESS_SET, &json!({"executor":"claude","mode":"root"}), NOW)
+            .confirm_from_main_window(
+                ACCESS_SET,
+                &json!({"executor":"claude","mode":"root"}),
+                None,
+                NOW
+            )
             .is_err()
     );
     assert!(broker.audit_log().is_empty());
+}
+
+const SELECT: &str = "hoh/executor/select";
+const FOLDER_SET: &str = "session/working-directory/set";
+
+/// Lead 22.11 20:43: choosing Claude to answer (the T3 model picker, before the first message) and
+/// the folder of a conversation Claude runs (a T3 project) are confirmed by the person's action in
+/// the main window: no window, one `human` line via `main-window`, the engine's request signed once.
+#[test]
+fn choosing_claude_and_its_folder_in_the_main_window_needs_no_window() {
+    let broker = broker();
+    let select = json!({"executor":"claude","model":"default"});
+    let folder = json!({"sessionId":"s-claude","path":"/home/u/work"});
+    for (n, (method, params, session_executor)) in [
+        (SELECT, &select, None),
+        (FOLDER_SET, &folder, Some("claude")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        broker
+            .confirm_from_main_window(method, params, session_executor, NOW)
+            .unwrap();
+        arm(&broker, method, params, NOW);
+        let begun = begin(
+            &broker,
+            engine_request(method, params, &format!("main-{n}"), NOW + 5),
+            NOW + 5,
+        );
+        assert!(is_signed(&begun), "{method}: signed without a window");
+    }
+    let log = broker.audit_log();
+    assert_eq!(log.len(), 4);
+    for (human, core) in [(&log[0], &log[1]), (&log[2], &log[3])] {
+        assert_eq!(
+            (human.who, human.via, human.outcome.as_str()),
+            ("human", "main-window", "allowed-once")
+        );
+        assert_eq!((core.who, core.outcome.as_str()), ("core", "allowed-once"));
+    }
+    assert_eq!(
+        (log[0].method.as_str(), log[2].method.as_str()),
+        (SELECT, FOLDER_SET)
+    );
+    assert_eq!(log[0].human_text, "Отвечать будет Claude (модель default)?");
+    assert_eq!(
+        log[2].human_text,
+        "Разрешить работу в папке «/home/u/work»?"
+    );
+    // Not confirmed in the main window: the engine's own request for Claude still gets a window.
+    close_window(
+        &broker,
+        begin(
+            &broker,
+            engine_request(
+                SELECT,
+                &json!({"executor":"claude","model":"opus"}),
+                "x-sel",
+                NOW + 6,
+            ),
+            NOW + 6,
+        ),
+        NOW + 6,
+    );
 }
 
 /// A permission request of the engine as the T3 client shows it in its conversation.

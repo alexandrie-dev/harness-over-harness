@@ -286,11 +286,25 @@ fn session_of(action: &Value) -> String {
         .to_owned()
 }
 
-/// Privileged window methods whose confirmation is the person's action in the main window itself,
-/// without a separate confirmation window: the executor's access mode (founder 22.11 19:16, as in
-/// T3). Only the main window may send them (`bridge::check_main`); the executor, the model and the
-/// SDK server never reach this path, and the engine's own request still needs the core's signature.
-pub const MAIN_WINDOW_CONFIRMED: &[&str] = &["hoh/executor/access/set"];
+/// The executor whose choices the person makes in the main window itself (the T3 client: its model
+/// picker, its mode chip, its project folder).
+pub const MAIN_WINDOW_EXECUTOR: &str = "claude";
+
+/// Privileged window requests whose confirmation is the person's action in the main window itself,
+/// without a separate confirmation window (founder 22.11 19:16, lead 22.11 20:43; as in T3): the
+/// executor's access mode, Claude chosen to answer, and the folder of a conversation Claude runs
+/// (`session_executor` — what the engine reports for that conversation). The built-in agent loop's
+/// model and folder keep their window. Only the main window may send these (`bridge::check_main`);
+/// the executor, the model and the SDK server never reach this path, and the engine's own request
+/// still needs the core's signature.
+pub fn main_window_confirms(method: &str, params: &Value, session_executor: Option<&str>) -> bool {
+    match method {
+        "hoh/executor/access/set" => true,
+        "hoh/executor/select" => params["executor"].as_str() == Some(MAIN_WINDOW_EXECUTOR),
+        "session/working-directory/set" => session_executor == Some(MAIN_WINDOW_EXECUTOR),
+        _ => false,
+    }
+}
 
 /// One line of the approval journal: who confirmed what, where and when. No secrets: the model key
 /// appears only as its hash inside `actionHash`.
@@ -638,7 +652,7 @@ impl Broker {
     }
 
     /// The person's own action in the main window is the confirmation (founder 22.11 19:16): for the
-    /// methods in `MAIN_WINDOW_CONFIRMED` no confirmation window opens. The core journals it as the
+    /// requests `main_window_confirms` names no confirmation window opens. The core journals it as the
     /// person's (`who: human`, `via: main-window`) and keeps the grant for exactly this action, so the
     /// engine's own approval request for it is signed once, as after the settings window. The caller
     /// must have checked that the request came from the main window (`bridge::check_main`).
@@ -646,9 +660,10 @@ impl Broker {
         &self,
         method: &str,
         params: &Value,
+        session_executor: Option<&str>,
         now: u64,
     ) -> Result<(), String> {
-        if !MAIN_WINDOW_CONFIRMED.contains(&method) {
+        if !main_window_confirms(method, params, session_executor) {
             return Err("Действие подтверждается в отдельном окне".into());
         }
         if !hoh_protocol::requires_host_approval(method, params) {
