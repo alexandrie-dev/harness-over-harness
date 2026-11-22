@@ -12,7 +12,7 @@
       {
         "label": "main",
         "create": true,
-        "title": "HoH — Помощник",
+        "title": "HoH",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
       "capabilities": [
         "main",
         "approval"

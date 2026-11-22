@@ -106,6 +106,12 @@ fn engine_launch(engine_home: &std::path::Path) -> Result<EngineLaunch, String> 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "probe")]
     crate::probe::trace("native:setup:start");
+    if legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref())
+        && let Some(window) = app.get_webview_window("main")
+    {
+        let legacy = window.url()?.join("legacy.html")?;
+        window.navigate(legacy)?;
+    }
     let mut key = [0_u8; 32];
     use std::io::Read;
     std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
@@ -228,8 +234,9 @@ fn handle_event(
                 destroy_window(handle, &label);
             }
             if let Some(window) = handle.get_webview_window("main") {
+                // The window's name is HoH (founder 22.11 19:16); while the engine is not ready the title says why.
                 let title = if is_ready {
-                    "HoH — Помощник".to_owned()
+                    "HoH".to_owned()
                 } else {
                     format!(
                         "HoH — {}",
@@ -430,10 +437,34 @@ pub fn main_navigation_allowed(url: &tauri::Url) -> bool {
         // Tauri canonicalizes `WebviewUrl::App("index.html")` to its bare
         // application origin before invoking navigation hooks.
         "" | "/" | "/index.html" => true,
+        // The previous window shell, kept until it is removed (HOH_WINDOW_SHELL=legacy).
+        "/legacy.html" => true,
         #[cfg(feature = "probe")]
         "/probe.html" => true,
-        _ => false,
+        // A page of the T3 client's own router (/settings/general, /<env>/<thread>) when the window reloads
+        // there: the app's index.html is served for it. Never a file: no extension anywhere in the path.
+        path => is_app_route(path),
     }
+}
+
+/// A route path of the window's router, not a file of the app: `/a/b-c/$d`, no dots, no empty segments.
+fn is_app_route(path: &str) -> bool {
+    path.len() <= 512
+        && path.strip_prefix('/').is_some_and(|rest| {
+            !rest.is_empty()
+                && rest.split('/').all(|segment| {
+                    !segment.is_empty()
+                        && segment.bytes().all(|b| {
+                            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'$' | b'%')
+                        })
+                })
+        })
+}
+
+/// The window opens the T3 client (dist/index.html); `HOH_WINDOW_SHELL=legacy` opens the previous shell
+/// (dist/legacy.html) instead, until that shell is removed.
+pub fn legacy_shell_requested(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|value| value == "legacy")
 }
 
 pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {

@@ -1,4 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
@@ -21,12 +22,24 @@ const inertNames = new Set([
       'theme-changed', 'window-created', 'suspended', 'resumed', 'webview-created',
       'drag-enter', 'drag-over', 'drag-drop', 'drag-leave'].map(name => 'tauri://' + name),
 ]);
+// Вход окна на веб-клиенте T3 (HOH-40, `vite build --mode t3`): dist/index.html, dist/boot-theme.js, dist/t3-assets/**.
+// Для него те же правила (ни одного внешнего адреса, кроме перечисленных; без eval/new Function), адреса из текста T3 —
+// только из проверенного списка src/t3-entry/dist-urls.txt; пределы размера прежней оболочки к нему не относятся.
+const t3Build = existsSync('dist/t3-assets');
+const isT3 = path => t3Build && (path === join('dist', 'index.html') || path === join('dist', 'boot-theme.js') || path.startsWith(join('dist', 't3-assets') + '/'));
+const t3Urls = new Set(existsSync('src/t3-entry/dist-urls.txt')
+  ? (await readFile('src/t3-entry/dist-urls.txt', 'utf8')).split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'))
+  : []);
+const t3Unknown = new Set();
+let t3Total = 0;
+let t3Compressed = 0;
 let total = 0;
 let compressed = 0;
 for (const path of await files('dist')) {
   const bytes = await readFile(path);
   if (!/\.(?:html|css|js)$/.test(path)) continue;
-  total += bytes.length;
+  const t3 = isT3(path);
+  if (!t3) total += bytes.length;
   const source = bytes.toString();
   // Every URL-like value is rejected except exact inert namespace/event names
   // and the first-run loopback configuration. No remote diagnostic URLs allowed.
@@ -39,12 +52,20 @@ for (const path of await files('dist')) {
     const value = scheme + match[0];
     // Without a scheme only a real host counts (host.tld, localhost, IPv4, [IPv6]); a regex tail such as //g,r=/ is code, not an address.
     if (!scheme && !/^\/\/(?:(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[/:?#]|$)|localhost\b|\d{1,3}(?:\.\d{1,3}){3}\b|\[)/i.test(match[0])) continue;
+    if (t3 && !inertNames.has(value) && !t3Urls.has(value)) { t3Unknown.add(value); continue; }
     assert(inertNames.has(value), `external URL ${value} in ${path}`);
+  }
+  assert(!/\beval\s*\(|\bnew\s+Function\s*\(/.test(source), `dynamic code in ${path}`);
+  if (t3) {
+    t3Total += bytes.length;
+    t3Compressed += gzipSync(bytes).length;
+    continue;
   }
   compressed += gzipSync(bytes).length;
   assert(bytes.length < 512 * 1024, `unexpectedly large individual text asset: ${path}`);
-  assert(!/\beval\s*\(|\bnew\s+Function\s*\(/.test(source), `dynamic code in ${path}`);
 }
+assert(t3Unknown.size === 0, `T3 entry: ${t3Unknown.size} external URLs not in src/t3-entry/dist-urls.txt:\n${[...t3Unknown].sort().join('\n')}`);
+if (t3Build) console.log(`T3 entry: text ${t3Total}, gzip ${t3Compressed} bytes, reviewed URLs ${t3Urls.size}`);
 // Package 1's empty-shell cap covered one screen; this build has chat, first run
 // and approval entries. Keep both a whole-window cap and a compressed payload cap.
 // 20.11.2026 отображение чата как в T3 (решение основателя 20.11): предел на один файл 256 -> 512 КиБ (кусок разметки react-markdown + remark 388 КБ; katex 259 КБ).

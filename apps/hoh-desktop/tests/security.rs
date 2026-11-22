@@ -1,4 +1,6 @@
-use hoh_desktop::native::{approval_navigation_allowed, deny_new_window, main_navigation_allowed};
+use hoh_desktop::native::{
+    approval_navigation_allowed, deny_new_window, legacy_shell_requested, main_navigation_allowed,
+};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -88,13 +90,27 @@ fn approval_probe_marks_the_stub_as_a_test_engine() {
 
 #[test]
 fn navigation_is_exact_origin_and_path_and_new_windows_are_denied() {
-    for url in ["tauri://localhost/index.html", "tauri://localhost/"] {
+    for url in [
+        "tauri://localhost/index.html",
+        "tauri://localhost/",
+        "tauri://localhost/legacy.html",
+        // routes of the T3 client's router after a reload
+        "tauri://localhost/settings/general",
+        "tauri://localhost/env-1/thread-2",
+        "tauri://localhost/draft/$draftId",
+    ] {
         assert!(main_navigation_allowed(&url.parse().unwrap()), "{url}");
     }
     for url in [
         "https://example.test/index.html",
+        "https://example.test/settings/general",
         "tauri://evil.test/index.html",
+        "tauri://evil.test/settings/general",
         "tauri://localhost/approval.html",
+        "tauri://localhost/firstrun.html",
+        "tauri://localhost/assets/main.js",
+        "tauri://localhost/settings//general",
+        "tauri://localhost/settings/../approval.html",
         "http://tauri.localhost/other.html",
         "http://tauri.localhost:4173/index.html",
         "tauri://localhost:4173/index.html",
@@ -142,4 +158,17 @@ fn tauri_base_origin_is_valid_main_entrypoint() {
     let initial_url: tauri::Url = "tauri://localhost".parse().unwrap();
     assert_eq!(initial_url.path(), "");
     assert!(main_navigation_allowed(&initial_url));
+}
+
+#[test]
+fn the_window_opens_the_t3_client_unless_the_previous_shell_is_asked_for() {
+    use std::ffi::OsStr;
+    assert!(!legacy_shell_requested(None));
+    assert!(!legacy_shell_requested(Some(OsStr::new(""))));
+    assert!(!legacy_shell_requested(Some(OsStr::new("t3"))));
+    assert!(legacy_shell_requested(Some(OsStr::new("legacy"))));
+    let conf: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let window = &conf["app"]["windows"][0];
+    assert_eq!(window["url"], "index.html");
+    assert_eq!(window["title"], "HoH");
 }
