@@ -79,6 +79,11 @@ struct State {
     released: bool,
     /// The CLI called the last assistant message `authentication_failed`.
     auth_failed: bool,
+    /// The uuid the running turn's prompt was sent with.
+    prompt_uuid: Option<String>,
+    /// This CLI has named a prompt of this session by its uuid (an echo in a `result`, or a
+    /// `command_lifecycle`): T3 `promptEchoMode` other than `unknown`.
+    echoes: bool,
 }
 
 struct Inner {
@@ -466,6 +471,15 @@ async fn handle_message(inner: &Inner, message: &Value) {
         Some("assistant") => handle_assistant(inner, message).await,
         Some("user") => handle_user(inner, message).await,
         Some("result") => handle_result(inner, message).await,
+        // The CLI names the prompt it took: it echoes prompts (T3 `claudePromptLifecycle`).
+        Some("command_lifecycle") => {
+            let mut state = lock(&inner.state);
+            if let Some(uuid) = text(message, "command_uuid")
+                && state.prompt_uuid.as_deref() == Some(uuid)
+            {
+                state.echoes = true;
+            }
+        }
         // keep_alive, rate_limit_event, auth_status and anything newer: not part of the contract.
         _ => {}
     }
@@ -815,9 +829,48 @@ fn tool_result_text(content: Option<&Value>) -> String {
     }
 }
 
+/// The prompt uuids a `result` names as the ones it answers (T3 `claudeEchoedPromptUuids`).
+fn echoed_uuids(message: &Value) -> Vec<&str> {
+    match message.get("user_message_uuids").and_then(Value::as_array) {
+        Some(uuids) => uuids.iter().filter_map(Value::as_str).collect(),
+        None => text(message, "user_message_uuid").into_iter().collect(),
+    }
+}
+
+/// A `result` of a turn the CLI ran on its own (a background task's notification, a wake), not
+/// of the prompt this session sent: it ends no turn here (T3 `isClaudeResultForOtherTurn`,
+/// `isClaudeEmptyTaskNotificationSuccess`). Pilot 22.11: a CLI resumed after «Стоп» answered a
+/// background command lost with the old process first; taken for the prompt's answer, it closed
+/// the turn at once, the window went idle with no «Стоп» to press, and the real answer came
+/// between turns. Without an echo, an origin other than `human` proves another turn only on a
+/// CLI that echoes prompts (on another, the prompt may be folded into that turn).
+fn of_another_turn(state: &mut State, message: &Value) -> bool {
+    let echoed = echoed_uuids(message);
+    if !echoed.is_empty() {
+        state.echoes = true;
+        return !state
+            .prompt_uuid
+            .as_deref()
+            .is_some_and(|ours| echoed.contains(&ours));
+    }
+    let origin = message
+        .get("origin")
+        .and_then(|origin| text(origin, "kind"));
+    let lifecycle = origin == Some("task-notification")
+        && text(message, "subtype") == Some("success")
+        && message.get("is_error").and_then(Value::as_bool) != Some(true)
+        && message.get("num_turns").and_then(Value::as_u64) == Some(0)
+        && text(message, "result").unwrap_or("").is_empty();
+    lifecycle || (state.echoes && origin.is_some_and(|kind| kind != "human"))
+}
+
 async fn handle_result(inner: &Inner, message: &Value) {
     let (turn, interrupted, open, withdrawn, auth_failed) = {
         let mut state = lock(&inner.state);
+        if state.turn.is_some() && of_another_turn(&mut state, message) {
+            return;
+        }
+        state.prompt_uuid = None;
         let open: Vec<String> = state.started.drain().collect();
         state.declined.clear();
         state.subagent_tools.clear();
@@ -1197,6 +1250,15 @@ impl HarnessSession for ClaudeSession {
                 state.turn = Some(params.turn_id.clone());
                 state.interrupting = false;
             }
+            // A fresh uuid for every prompt: the CLI skips a prompt it has recorded before.
+            let uuid = match crate::harness::random_uuid() {
+                Ok(uuid) => uuid,
+                Err(failure) => {
+                    lock(&inner.state).turn = None;
+                    return Err(failure);
+                }
+            };
+            lock(&inner.state).prompt_uuid = Some(uuid.clone());
             let native = lock(&inner.state).native.clone();
             inner
                 .emit(HarnessEvent::TurnStarted {
@@ -1209,6 +1271,7 @@ impl HarnessSession for ClaudeSession {
                     "message": { "role": "user", "content": [{ "type": "text", "text": params.text }] },
                     "parent_tool_use_id": null,
                     "session_id": native,
+                    "uuid": uuid,
                 }))
                 .await;
             if sent.is_err() {

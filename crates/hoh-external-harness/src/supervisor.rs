@@ -1,7 +1,8 @@
 //! Supervision of one harness process, the same for every harness: start in its own process
 //! group, JSON lines on stdout (anything else is a contract violation), stdin as a bounded queue
 //! of lines, stderr kept apart as a short masked tail, and the end of the road — SIGTERM to the
-//! group, a bounded wait, then killing the group.
+//! group and to every process under the harness, a bounded wait, then killing them all. A guard
+//! process does the same killing when the engine itself is gone, even by SIGKILL.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -165,6 +166,8 @@ impl Supervisor {
                 // All three were requested as pipes above.
                 _ => return Err(HarnessFailure::new(code::IO, "harness pipes are missing")),
             };
+        // Dropping `child` on a failure here kills the harness (`kill_on_drop`).
+        let watched = pid.map(spawn_guard).transpose()?;
 
         let (exit_tx, exit) = watch::channel(None);
         tokio::spawn(async move {
@@ -178,6 +181,8 @@ impl Supervisor {
                 }
                 Err(_) => ExitInfo::default(),
             };
+            // The harness is gone: its guard clears what it left behind and ends.
+            drop(watched);
             exit_tx.send_replace(Some(info));
         });
 
@@ -298,37 +303,200 @@ impl Supervisor {
 
     /// Send `signal` to the whole process group. Errors (the group is gone) are ignored.
     pub fn signal_group(&self, signal: rustix::process::Signal) {
-        if let Some(pid) = self
-            .pid
-            .and_then(|pid| i32::try_from(pid).ok())
-            .and_then(rustix::process::Pid::from_raw)
-        {
+        if let Some(pid) = self.pid.and_then(raw_pid) {
             let _ = rustix::process::kill_process_group(pid, signal);
         }
     }
 
-    /// Kill the process group now, without the graceful steps of [`terminate`](Self::terminate),
-    /// unless it was terminated or has exited; stdin is closed. For an owner that gives up on the
-    /// process (a start the caller stopped). Idempotent.
+    /// The processes under the harness now, read from `/proc` off the runtime's threads
+    /// (PORTING.md §6): a command it started in a session of its own is out of its group, not out
+    /// of this.
+    async fn tree(&self) -> Vec<u32> {
+        let Some(pid) = self.pid else {
+            return Vec::new();
+        };
+        tokio::task::spawn_blocking(move || descendants(pid))
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Kill the process group and every process under the harness now, without the graceful
+    /// steps of [`terminate`](Self::terminate), unless it was terminated or has exited; stdin is
+    /// closed. For an owner that gives up on the process (a start the caller stopped).
+    /// Idempotent. The walk of `/proc` and the kill run on a blocking thread of the runtime, or
+    /// on a thread of their own outside one: the caller may be a runtime's thread or a `Drop`.
     pub fn abandon(&self) {
         lock(&self.stdin).take();
-        if !self.terminated.swap(true, Ordering::SeqCst) && self.exit_status().is_none() {
-            self.signal_group(rustix::process::Signal::KILL);
+        if self.terminated.swap(true, Ordering::SeqCst) || self.exit_status().is_some() {
+            return;
+        }
+        let Some(pid) = self.pid else {
+            return;
+        };
+        let kill = move || signal_tree(pid, &descendants(pid), rustix::process::Signal::KILL);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn_blocking(kill)),
+            Err(_) => {
+                if std::thread::Builder::new()
+                    .name("hoh-harness-kill".into())
+                    .spawn(kill)
+                    .is_err()
+                {
+                    kill();
+                }
+            }
         }
     }
 
-    /// Close stdin; SIGTERM to the group; wait at most `grace` for the process; kill the group
-    /// (members that ignore SIGTERM included); wait for the process. Idempotent.
+    /// Close stdin; SIGTERM to the group and to every process under the harness; wait at most
+    /// `grace` for the process; kill them all (those that ignore SIGTERM included); wait for the
+    /// process. A harness that exited before is not signalled: its pid and group may name others
+    /// by now (its guard cleared its group when it exited). Dropped before its kill, this still
+    /// kills what it found. Idempotent.
     pub async fn terminate(&self, grace: Duration) -> ExitInfo {
         lock(&self.stdin).take();
         if self.terminated.swap(true, Ordering::SeqCst) {
             return self.wait().await;
         }
-        self.signal_group(rustix::process::Signal::TERM);
+        let Some(pid) = self.pid.filter(|_| self.exit_status().is_none()) else {
+            return self.wait().await;
+        };
+        let mut end = KillOnDrop {
+            pid,
+            tree: Vec::new(),
+        };
+        // Taken before any signal: once the harness is gone, what it started is no longer under
+        // it.
+        end.tree = self.tree().await;
+        signal_tree(pid, &end.tree, rustix::process::Signal::TERM);
         let _ = self.wait_timeout(grace).await;
-        self.signal_group(rustix::process::Signal::KILL);
+        if self.exit_status().is_none() {
+            let more = self.tree().await;
+            end.tree.extend(more);
+        }
+        drop(end);
         self.wait().await
     }
+}
+
+/// The kill at the end of [`Supervisor::terminate`], also when it is dropped before.
+struct KillOnDrop {
+    pid: u32,
+    tree: Vec<u32>,
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        signal_tree(self.pid, &self.tree, rustix::process::Signal::KILL);
+    }
+}
+
+/// `signal` to the process group `pid` and to every process of `tree`. Errors (gone) are ignored.
+fn signal_tree(pid: u32, tree: &[u32], signal: rustix::process::Signal) {
+    if let Some(group) = raw_pid(pid) {
+        let _ = rustix::process::kill_process_group(group, signal);
+    }
+    for pid in tree.iter().copied().filter_map(raw_pid) {
+        let _ = rustix::process::kill_process(pid, signal);
+    }
+}
+
+fn raw_pid(pid: u32) -> Option<rustix::process::Pid> {
+    i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+}
+
+/// Every process under `root` — its children, theirs, and so on — as `/proc` shows them now.
+fn descendants(root: u32) -> Vec<u32> {
+    let parents: Vec<(u32, u32)> = std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read(entry.path().join("stat")).ok()?;
+            Some((pid, parent_in_stat(&stat)?))
+        })
+        .collect();
+    let mut tree = vec![root];
+    let mut next = 0;
+    while let Some(&parent) = tree.get(next) {
+        tree.extend(
+            parents
+                .iter()
+                .filter(|(_, ppid)| *ppid == parent)
+                .map(|(pid, _)| *pid),
+        );
+        next += 1;
+    }
+    tree.remove(0);
+    tree
+}
+
+/// The parent pid in `/proc/<pid>/stat`, `pid (name) state ppid …`. Read as bytes and split at
+/// the last `)`: the name is up to 15 bytes of whatever the program was started as — `)`, spaces,
+/// line breaks, and a character cut in half (`проверка.sh` is 19 bytes), which is no UTF-8.
+fn parent_in_stat(stat: &[u8]) -> Option<u32> {
+    let end_of_name = stat.iter().rposition(|&byte| byte == b')')?;
+    let rest = std::str::from_utf8(&stat[end_of_name + 1..]).ok()?;
+    rest.split_ascii_whitespace().nth(1)?.parse().ok()
+}
+
+/// The guard of a harness process (`$1`): it waits for the end of a pipe only the engine holds,
+/// which comes when the engine stops watching the harness — the harness exited, or the engine is
+/// gone, even killed by SIGKILL. It then finds every process under the harness in `/proc` (a
+/// command in a session of its own included; the whole `stat` is read, a name may hold a line
+/// break; the shell runs without a locale, so a name that is no UTF-8 is read as bytes) and kills
+/// them, the harness and its group. A plain shell, so that nothing of the engine
+/// has to outlive it. The harness is not stopped first: its
+/// group, orphaned by the engine's death with a stopped member, would get SIGHUP from the kernel,
+/// and a harness ended by it leaves its commands to another parent before they are found.
+const GUARD: &str = r#"read -r _
+tree=" $1 "
+grown=1
+while [ -n "$grown" ]; do
+  grown=
+  for stat in /proc/[0-9]*/stat; do
+    pid=${stat#/proc/}
+    pid=${pid%/stat}
+    case $tree in *" $pid "*) continue ;; esac
+    line=
+    { while IFS= read -r part; do line="$line$part "; done < "$stat"; } 2>/dev/null
+    rest=${line##*) }
+    rest=${rest#* }
+    case $tree in *" ${rest%% *} "*) tree="$tree$pid " grown=1 ;; esac
+  done
+done
+kill -9 $tree 2>/dev/null
+kill -9 -"$1" 2>/dev/null
+"#;
+
+/// Start the guard of the harness `pid`, in a process group of its own (a signal to the engine's
+/// group or to the harness's must not take it away first); the returned end of its pipe is held
+/// as long as the harness is watched.
+fn spawn_guard(pid: u32) -> Result<std::io::PipeWriter, HarnessFailure> {
+    let failure = |error: std::io::Error| {
+        HarnessFailure::new(
+            code::IO,
+            format!("cannot start the guard of the harness process: {error}"),
+        )
+    };
+    let (guard_end, engine_end) = std::io::pipe().map_err(failure)?;
+    let mut guard = tokio::process::Command::new("/bin/sh")
+        .args(["-c", GUARD, "hoh-harness-guard", &pid.to_string()])
+        .stdin(guard_end)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env_clear()
+        .current_dir("/")
+        .process_group(0)
+        .spawn()
+        .map_err(failure)?;
+    tokio::spawn(async move {
+        let _ = guard.wait().await;
+    });
+    Ok(engine_end)
 }
 
 impl Drop for Supervisor {
@@ -474,6 +642,7 @@ fn keep_stderr_line(
 mod tests {
     use super::*;
     use crate::redact::REDACTED;
+    use std::path::Path;
 
     /// Review 221315, item 3: printing a spec shows the names of its environment, not the values.
     #[test]
@@ -568,6 +737,162 @@ mod tests {
             .await
             .expect("killed");
         assert_eq!(exit.signal, Some(9), "{pid}: {exit:?}");
+    }
+
+    fn alive(pid: u32) -> bool {
+        std::fs::read(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| {
+                let end_of_name = stat.iter().rposition(|&byte| byte == b')')?;
+                stat.get(end_of_name + 2).copied()
+            })
+            .is_some_and(|state| state != b'Z')
+    }
+
+    /// Waits until `pid` runs as `program`: the kernel names a process by the first 15 bytes of
+    /// the file name it was started by.
+    fn until_named(pid: u32, program: &Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let name = program.file_name().expect("a file name").as_bytes();
+        let comm = [&name[..name.len().min(15)], b"\n"].concat();
+        for _ in 0..100 {
+            if std::fs::read(format!("/proc/{pid}/comm")).is_ok_and(|now| now == comm) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("{pid} does not run as {}", program.display());
+    }
+
+    /// `/bin/sleep` under the name `name`, in a folder of its own.
+    fn sleep_named(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let folder = tempfile::tempdir().expect("folder");
+        let program = folder.path().join(name);
+        std::os::unix::fs::symlink("/bin/sleep", &program).expect("a strange name");
+        (folder, program)
+    }
+
+    /// Pilot 22.11 («Стоп»): a command the harness runs in a session of its own, as Claude Code
+    /// runs its commands, is out of the harness's group and still ends with it.
+    #[tokio::test]
+    async fn terminating_ends_a_command_in_a_session_of_its_own() {
+        terminating_ends_the_command(Path::new("sleep")).await;
+    }
+
+    /// Ревью Fable 174941: a command named `проверка.sh` (19 bytes, the kernel keeps 15 and cuts
+    /// the `а` in half) has a `stat` that is no UTF-8, and still ends with its harness.
+    #[tokio::test]
+    async fn terminating_ends_a_command_whose_name_is_cut_in_a_character() {
+        let (_folder, program) = sleep_named("проверка.sh");
+        terminating_ends_the_command(&program).await;
+    }
+
+    async fn terminating_ends_the_command(program: &Path) {
+        let supervisor = shell(&format!(
+            "setsid '{}' 60 & echo \"{{\\\"command\\\":$!}}\"; exec sleep 60",
+            program.display()
+        ))
+        .await;
+        let mut frames = supervisor.take_frames().expect("frames");
+        let Some(Frame::Message(said)) = next_frame(&mut frames).await else {
+            panic!("no pid of the command");
+        };
+        let command = u32::try_from(said["command"].as_u64().expect("pid")).expect("pid");
+        until_named(command, program);
+        assert_eq!(descendants(supervisor.pid().expect("pid")), [command]);
+        supervisor.terminate(Duration::from_millis(200)).await;
+        for _ in 0..100 {
+            if !alive(command) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("command {command} outlived its harness");
+    }
+
+    /// Ревью Fable 173026: a `terminate` dropped between its SIGTERM and its kill (a caller's
+    /// timeout) still kills the process that ignores SIGTERM.
+    #[tokio::test]
+    async fn a_terminate_dropped_in_its_grace_still_kills() {
+        let supervisor = shell("trap '' TERM; echo '{}'; while :; do sleep 1; done").await;
+        let mut frames = supervisor.take_frames().expect("frames");
+        assert!(
+            next_frame(&mut frames).await.is_some(),
+            "SIGTERM is ignored"
+        );
+        let stop = supervisor.terminate(Duration::from_secs(60));
+        let cut = tokio::time::timeout(Duration::from_millis(300), stop).await;
+        assert!(cut.is_err(), "the grace was not over");
+        let exit = supervisor
+            .wait_timeout(Duration::from_secs(10))
+            .await
+            .expect("killed");
+        assert_eq!(exit.signal, Some(9), "{exit:?}");
+    }
+
+    /// PORTING.md §6: abandoned outside a runtime (a `Drop` on another thread), the process is
+    /// killed by a thread of its own.
+    #[test]
+    fn abandoning_outside_a_runtime_kills_the_group() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let supervisor = runtime.block_on(shell("exec sleep 30"));
+        supervisor.abandon();
+        let exit = runtime
+            .block_on(supervisor.wait_timeout(Duration::from_secs(10)))
+            .expect("killed");
+        assert_eq!(exit.signal, Some(9), "{exit:?}");
+    }
+
+    /// Ревью Fable 173026: the name of a process (`comm`, the file name it was started by) may
+    /// hold a line break, and its `/proc/<pid>/stat` is then two lines: the guard and the engine
+    /// still find it under the harness.
+    #[test]
+    fn a_name_with_a_line_break_does_not_hide_a_process() {
+        the_guard_ends_a_command_named("x\n) S 1");
+    }
+
+    /// Ревью Fable 174941: nor does a name cut in the middle of a character (no UTF-8).
+    #[test]
+    fn a_name_cut_in_a_character_does_not_hide_a_process() {
+        the_guard_ends_a_command_named("проверка.sh");
+    }
+
+    fn the_guard_ends_a_command_named(name: &str) {
+        use std::os::unix::process::CommandExt;
+        let (_folder, program) = sleep_named(name);
+        // The harness in a group of its own, its command in a session of its own: only the walk
+        // finds the command.
+        let mut root = std::process::Command::new("/bin/sh")
+            .args(["-c", "setsid \"$1\" 60 & echo $!; wait", "sh"])
+            .arg(&program)
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .expect("sh");
+        let mut said = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(root.stdout.take().expect("stdout")),
+            &mut said,
+        )
+        .expect("the pid of the child");
+        let child: u32 = said.trim().parse().expect("a pid");
+        until_named(child, &program);
+        assert_eq!(descendants(root.id()), [child]);
+        // As `spawn_guard` starts it: no environment, so no locale.
+        std::process::Command::new("/bin/sh")
+            .args(["-c", GUARD, "hoh-harness-guard", &root.id().to_string()])
+            .stdin(Stdio::null())
+            .env_clear()
+            .status()
+            .expect("the guard");
+        root.wait().expect("the harness is collected");
+        for _ in 0..100 {
+            if !alive(child) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("{child} outlived the guard");
     }
 
     #[tokio::test]

@@ -354,7 +354,7 @@ fn is_uuid(id: &str) -> bool {
             .all(|(group, len)| group.len() == len && group.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-fn random_uuid() -> Result<String, HarnessFailure> {
+pub(crate) fn random_uuid() -> Result<String, HarnessFailure> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes)
         .map_err(|error| HarnessFailure::new(code::IO, format!("no randomness: {error}")))?;
@@ -654,6 +654,13 @@ impl ExternalHarness for ClaudeHarness {
     ) -> BoxFuture<'static, HarnessResult<(Discovery, VersionStatus)>> {
         let config = self.config.clone();
         Box::pin(async move { Ok(discover_claude(&config).await) })
+    }
+
+    /// Pilot 22.11: after the CLI's own interrupt a running command went on (`sleep 120`), and its
+    /// late result became the next answer. «Стоп» ends the CLI and every command under it; the
+    /// next turn continues the conversation with `--resume`.
+    fn stop_ends_process(&self) -> bool {
+        true
     }
 
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).

@@ -39,19 +39,23 @@ done
 # live.v2.cwd follows the i7 contract (a folder change of a Claude chat is refused); the engine of this
 # tree has it (an engine that accepts the change, as of cand/i6, makes this row the one FAIL).
 has "v2.cwd" "$T/all.out" "PASS live.v2.cwd: смена папки: отклонена с EXECUTOR_FOLDER_FIXED"
+# «Стоп» ends the CLI with its command, and the next turn starts it anew (i10b).
+has "stop.confirm ends claude" "$T/all.out" "процесс claude после «Стоп»: нет, запущен заново"
 lacks "no FAIL" "$T/all.out" "FAIL live."
 
-# 2. a claude that outlives the engine's KILL is a FAIL
+# 2. a claude that would outlive the end of its stdin does not outlive the engine's KILL: the
+# engine's guard ends it (i10b; before, this row was the FAIL «claude пережил остановку движка»)
 FAKE_SURVIVES=1 run survives --only v5
-has "survives exit" "$T/survives.code" 1
-has "survives fail" "$T/survives.out" "FAIL live.v5.kill-full:"
-has "survives words" "$T/survives.out" "claude пережил остановку движка"
+has "survives exit" "$T/survives.code" 0
+has "survives pass" "$T/survives.out" "PASS live.v5.kill-full:"
+lacks "survives words" "$T/survives.out" "claude пережил остановку движка"
 
-# 3. a command left running after «Стоп» is a FAIL
+# 3. a claude whose interrupt leaves its command running loses it all the same: «Стоп» ends the
+# CLI and every process under it (i10b; before, this row was the FAIL «команда sleep осталась: да»)
 FAKE_LEAKY_STOP=1 run leaky --only stop
-has "leaky exit" "$T/leaky.code" 1
-has "leaky fail" "$T/leaky.out" "FAIL live.stop.confirm:"
-has "leaky words" "$T/leaky.out" "команда sleep осталась: да"
+has "leaky exit" "$T/leaky.code" 0
+has "leaky pass" "$T/leaky.out" "PASS live.stop.confirm:"
+has "leaky words" "$T/leaky.out" "команда sleep осталась: нет"
 
 # 4. usage
 scripts/claude-live-extra.sh --only bogus --hoh "$HOH" --claude "$FAKE" --dir "$T/u" >/dev/null 2>&1

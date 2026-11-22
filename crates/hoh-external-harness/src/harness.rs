@@ -49,6 +49,13 @@ pub trait ExternalHarness: Send + Sync + 'static {
         Vec::new()
     }
 
+    /// Whether «Стоп» ends the process of the session, with every process under it, instead of
+    /// trusting the native interrupt: for a harness whose interrupt may leave a command running.
+    /// The next turn starts the process again on the same native session. Default: no.
+    fn stop_ends_process(&self) -> bool {
+        false
+    }
+
     /// [`discover`](Self::discover), and where the found version stands against the range the
     /// harness was checked with. Default: the range is not known.
     fn discover_with_status(

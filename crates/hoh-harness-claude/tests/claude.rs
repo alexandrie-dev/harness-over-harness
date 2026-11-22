@@ -495,6 +495,44 @@ async fn interrupt_during_a_command_aborts_the_turn_and_closes_the_step() {
     session.terminate(Duration::from_millis(500)).await;
 }
 
+/// Живой пилот 22.11 (i12b): a result of a turn the CLI ran on its own — the notification of a
+/// background command lost with the old process, a wake — does not end the prompt's turn; the
+/// turn ends with the prompt's own answer. Before, the first result closed the turn at once and
+/// the answer came between turns.
+#[tokio::test]
+async fn a_result_of_another_turn_does_not_end_the_prompts_turn() {
+    for scenario in ["wake-first", "wake-turn-first"] {
+        let env = Env::new();
+        let Started {
+            session,
+            mut events,
+            ..
+        } = start(&env, None).await;
+        prompt(&session, "t1", scenario);
+        let seen = until(&mut events, turn_end).await;
+        let ends: Vec<&HarnessEvent> = seen.iter().filter(|event| turn_end(event)).collect();
+        assert!(
+            matches!(ends.as_slice(), [HarnessEvent::TurnCompleted { turn_id }] if turn_id == "t1"),
+            "{scenario}: {seen:?}"
+        );
+        let answer = seen
+            .iter()
+            .any(|event| matches!(event, HarnessEvent::TextFinal { text, .. } if text == "Hello"));
+        assert!(
+            answer,
+            "{scenario}: the turn ended before its answer: {seen:?}"
+        );
+        // The next prompt is a turn of its own, answered and ended once.
+        prompt(&session, "t2", "hello");
+        let next = until(&mut events, turn_end).await;
+        assert!(
+            matches!(next.last(), Some(HarnessEvent::TurnCompleted { turn_id }) if turn_id == "t2"),
+            "{scenario}: {next:?}"
+        );
+        session.terminate(Duration::from_secs(1)).await;
+    }
+}
+
 #[tokio::test]
 async fn a_failed_result_fails_the_turn() {
     let env = Env::new();

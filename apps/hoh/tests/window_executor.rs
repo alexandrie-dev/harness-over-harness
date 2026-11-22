@@ -222,12 +222,20 @@ impl Workspace {
 ///   the CLI sends no callback for it (PORT_NOTES of `hoh-harness-claude`, `AskUserQuestion` in
 ///   full), so nothing is asked and nothing is recorded;
 /// - `leak`: writes the `ANTHROPIC_API_KEY` it was given to stderr and dies mid-turn;
+/// - `long`: runs `sleep 120` in a session of its own, as Claude Code runs its commands, writes its
+///   pid to `claude-commands/<pid of the CLI>` and says `working`; like Claude Code 2.1.329 in the
+///   pilot of 22.11, its interrupt ends the turn and leaves the command running, and the end of
+///   its stdin does not end the turn; `long <name>` runs it as `<name>` (a link to `sleep` in the
+///   root);
+/// - `short`: the one-word answer `ok1`, streamed (`stream_event`) before its message;
+/// - with `wake-on-resume` in the root, a CLI started with `--resume` first answers a lost
+///   background command's notification (a result of no turn) when the first prompt comes;
 /// - anything else: a one-line answer.
 ///
 /// Every answer to a `can_use_tool` is appended to `claude-answers.jsonl`; a step runs only after
 /// `allow`.
 const FAKE_CLAUDE: &str = r##"#!/usr/bin/python3 -I
-import json, os, shutil, sys, time
+import json, os, shutil, subprocess, sys, time
 
 STARTS = "@STARTS@"
 ARGS = sys.argv[1:]
@@ -364,12 +372,64 @@ def hang(listens):
             control(message)
 
 
+def long_command(name):
+    assistant({"type": "tool_use", "id": next_id("toolu"), "name": "Bash",
+               "input": {"command": "sleep 120", "description": "Wait"}})
+    program = "sleep"
+    if name:
+        program = os.path.join(os.path.dirname(STARTS), name)
+        if not os.path.lexists(program):
+            os.symlink(shutil.which("sleep"), program)
+    command = subprocess.Popen([program, "120"], start_new_session=True)
+    commands = os.path.join(os.path.dirname(STARTS), "claude-commands")
+    os.makedirs(commands, exist_ok=True)
+    with open(os.path.join(commands, "%d.part" % os.getpid()), "w") as file:
+        file.write("%d\n" % command.pid)
+    os.rename(os.path.join(commands, "%d.part" % os.getpid()), os.path.join(commands, str(os.getpid())))
+    assistant({"type": "text", "text": "working"})
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            command.wait()
+            sys.exit(0)
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        request = message.get("request") or {}
+        if message.get("type") == "control_request":
+            control(message)
+            if request.get("subtype") == "interrupt":
+                write({"type": "result", "subtype": "error_during_execution", "is_error": True,
+                       "result": "interrupted", "session_id": SESSION, "duration_ms": 1, "num_turns": 1})
+                return
+
+
+def short_answer():
+    message_id = next_id("msg")
+    stream = {"type": "stream_event", "session_id": SESSION, "parent_tool_use_id": None}
+    write(dict(stream, event={"type": "message_start", "message": {"id": message_id, "role": "assistant"}}))
+    write(dict(stream, event={"type": "content_block_delta", "index": 0,
+                              "delta": {"type": "text_delta", "text": "ok1"}}))
+    write({"type": "assistant", "session_id": SESSION, "parent_tool_use_id": None,
+           "message": {"id": message_id, "role": "assistant", "model": "claude-x-1",
+                       "content": [{"type": "text", "text": "ok1"}]}})
+    write({"type": "result", "subtype": "success", "is_error": False, "result": "ok1",
+           "session_id": SESSION, "duration_ms": 1, "num_turns": 1})
+
+
 def turn(text):
     write({"type": "system", "subtype": "init", "session_id": SESSION, "model": "claude-x-1",
            "cwd": CWD, "tools": ["Read", "Edit", "Bash"], "permissionMode": value_of("--permission-mode")})
     if text in ("hang", "hang-deaf"):
         assistant({"type": "text", "text": "working"})
         hang(text == "hang")
+        return
+    if text == "long" or text.startswith("long "):
+        long_command(text[len("long "):])
+        return
+    if text == "short":
+        short_answer()
         return
     if text.startswith("remember "):
         with open(MEMORY, "a") as file:
@@ -411,11 +471,20 @@ def turn(text):
            "session_id": SESSION, "duration_ms": 1, "num_turns": 1})
 
 
+# While this file exists a resumed CLI first answers the notification of a background command
+# lost with the old process: a result of no turn (origin task-notification), before the prompt's.
+WAKE_ON_RESUME = os.path.join(os.path.dirname(STARTS), "wake-on-resume")
+woke = [False]
+
 while True:
     message = read()
     if message.get("type") == "control_request":
         control(message)
     elif message.get("type") == "user":
+        if "--resume" in ARGS and os.path.exists(WAKE_ON_RESUME) and not woke[0]:
+            woke[0] = True
+            write({"type": "result", "subtype": "success", "is_error": False, "result": "", "num_turns": 0,
+                   "origin": {"kind": "task-notification"}, "session_id": SESSION})
         content = (message.get("message") or {}).get("content") or [{}]
         turn(content[0].get("text", "") if isinstance(content[0], dict) else "")
 "##;
@@ -815,6 +884,11 @@ fn assert_full(start: &Start) {
     );
     assert!(
         start.has("--allow-dangerously-skip-permissions"),
+        "{start:?}"
+    );
+    // Full access limits no tool.
+    assert!(
+        !start.has("--disallowedTools") && !start.has("--tools"),
         "{start:?}"
     );
     assert_clean_environment(start);
@@ -1655,12 +1729,16 @@ async fn s2_two_chats_keep_their_own_mode_and_a_chat_stays_on_claude_when_new_ch
 
 // ---------------------------------------------------------------- i7 additions (verify-4)
 
-/// Whether a process still runs (a zombie that nobody collected does not count: it is dead).
+/// Whether a process still runs (a zombie that nobody collected does not count: it is dead). Its
+/// name, before the state, may be no UTF-8.
 fn alive(pid: u32) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+    std::fs::read(format!("/proc/{pid}/stat"))
         .ok()
-        .and_then(|stat| stat.rsplit(')').next().map(str::to_owned))
-        .is_some_and(|rest| !rest.trim_start().starts_with('Z'))
+        .and_then(|stat| {
+            let end_of_name = stat.iter().rposition(|&byte| byte == b')')?;
+            stat.get(end_of_name + 2).copied()
+        })
+        .is_some_and(|state| state != b'Z')
 }
 
 async fn until_dead(pid: u32) -> bool {
@@ -1760,7 +1838,8 @@ async fn t1_a_mode_chosen_between_turns_ends_the_idle_process_at_once() {
 }
 
 /// Блокер 2. "Стоп" in the middle of a turn: the turn ends as stopped, the CLI does not hang, and
-/// the next turn works. A CLI that ignores the interrupt is killed after the grace.
+/// the next turn works. Since the pilot of 22.11 «Стоп» ends the CLI whether it listens to its
+/// interrupt or not, and the next turn starts a new one.
 #[tokio::test]
 async fn t2_stop_in_the_middle_of_a_turn_ends_it_and_the_next_turn_works() {
     let workspace = Workspace::with(
@@ -1771,34 +1850,24 @@ async fn t2_stop_in_the_middle_of_a_turn_ends_it_and_the_next_turn_works() {
     host.initialize(&workspace).await;
     host.select_claude().await;
 
-    // A CLI that listens: the turn is interrupted, the process stays for the next turn.
-    host.turn_then_stop("chat-s", "hang").await;
-    let reason = host.turn_end("chat-s");
-    assert_eq!(reason["kind"], "aborted", "{reason}\n{}", host.context());
-    let first = workspace.sessions();
-    assert_eq!(first.len(), 1, "{first:?}");
-    host.turn("chat-s", "hello", None).await;
-    assert_eq!(
-        host.turn_end("chat-s")["kind"],
-        "completed",
-        "{}",
-        host.context()
-    );
-
-    // A CLI that does not: it is ended (not left hanging), and the next turn starts a new one.
-    host.turn_then_stop("chat-d", "hang-deaf").await;
-    let all = workspace.sessions();
-    let deaf = all.last().expect("the deaf CLI started");
-    assert!(until_dead(deaf.pid).await, "{deaf:?} still runs");
-    host.turn("chat-d", "hello", None).await;
-    let after = workspace.sessions();
-    assert_eq!(after.len(), all.len() + 1, "{after:?}");
-    assert_eq!(
-        host.turn_end("chat-d")["kind"],
-        "completed",
-        "{}",
-        host.context()
-    );
+    // A CLI that listens to its interrupt, and one that does not.
+    for (chat, text) in [("chat-s", "hang"), ("chat-d", "hang-deaf")] {
+        host.turn_then_stop(chat, text).await;
+        let reason = host.turn_end(chat);
+        assert_eq!(reason["kind"], "aborted", "{reason}\n{}", host.context());
+        let all = workspace.sessions();
+        let stopped = all.last().expect("the CLI started");
+        assert!(until_dead(stopped.pid).await, "{stopped:?} still runs");
+        host.turn(chat, "hello", None).await;
+        let after = workspace.sessions();
+        assert_eq!(after.len(), all.len() + 1, "{after:?}");
+        assert_eq!(
+            host.turn_end(chat)["kind"],
+            "completed",
+            "{}",
+            host.context()
+        );
+    }
     host.shutdown().await;
 }
 
@@ -2130,6 +2199,21 @@ async fn t8_the_saved_choices_are_what_the_next_engine_runs_with() {
 async fn t9_stop_while_claude_starts_leaves_no_process() {
     let workspace = Workspace::new();
     let mut host = engine_with_claude(&workspace, "full").await;
+    let start = stop_at_launch(&mut host, &workspace).await;
+    assert_eq!(
+        host.turn_end(SESSION)["kind"],
+        "aborted",
+        "{}",
+        host.context()
+    );
+    assert!(until_dead(start.pid).await, "{start:?} outlived the stop");
+    host.shutdown().await;
+}
+
+/// A message to the chat [`SESSION`], and «Стоп» while the Claude it starts does not yet answer
+/// `initialize`; returns that start once the chat is idle.
+async fn stop_at_launch(host: &mut Host, workspace: &Workspace) -> Start {
+    let before = workspace.sessions().len();
     let slow = workspace.root.path().join("slow-initialize");
     std::fs::write(&slow, "").expect("a slow start");
     let params =
@@ -2137,8 +2221,9 @@ async fn t9_stop_while_claude_starts_leaves_no_process() {
     let prompt = host.send("session/prompt", params).await;
     let until = std::time::Instant::now() + FRAME_TIMEOUT;
     let start = loop {
-        if let Some(start) = workspace.sessions().pop() {
-            break start;
+        let mut sessions = workspace.sessions();
+        if sessions.len() > before {
+            break sessions.remove(before);
         }
         assert!(
             std::time::Instant::now() < until,
@@ -2165,19 +2250,12 @@ async fn t9_stop_while_claude_starts_leaves_no_process() {
             && frame["params"]["status"] == "idle";
     }
     std::fs::remove_file(&slow).expect("the start is quick again");
-    assert_eq!(
-        host.turn_end(SESSION)["kind"],
-        "aborted",
-        "{}",
-        host.context()
-    );
-    assert!(until_dead(start.pid).await, "{start:?} outlived the stop");
-    host.shutdown().await;
+    start
 }
 
-/// The turn of `session` in the middle: "hang" sent, the fake says it is working.
-async fn hang_turn(host: &mut Host, session: &str) {
-    let params = json!({"sessionId": session, "contentBlocks": [{"type": "text", "text": "hang"}]});
+/// The turn of `session` in the middle: `text` ("hang", "long") sent, the fake says it is working.
+async fn hang_turn(host: &mut Host, session: &str, text: &str) {
+    let params = json!({"sessionId": session, "contentBlocks": [{"type": "text", "text": text}]});
     host.send("session/prompt", params).await;
     while !host.frames.iter().any(|frame| {
         frame["method"] == "session.event"
@@ -2246,7 +2324,7 @@ async fn t10_a_mode_changed_and_changed_back_between_turns_starts_claude_anew() 
     assert_eq!(workspace.sessions().len(), 2, "the same mode ended nothing");
     assert!(alive(starts[1].pid), "{:?}", starts[1]);
 
-    hang_turn(&mut host, "chat-a").await;
+    hang_turn(&mut host, "chat-a", "hang").await;
     host.set_access("full", "allowed-once").await;
     assert!(alive(starts[1].pid), "the turn's process ended under it");
     stop_turn(&mut host, "chat-a").await;
@@ -2322,5 +2400,288 @@ async fn t10b_a_mode_changed_back_to_full_between_turns_starts_claude_anew() {
         .iter()
         .any(|frame| frame.to_string().contains("you said: green"));
     assert!(said, "no answer to the message\n{}", host.context());
+    host.shutdown().await;
+}
+
+/// The pid of the long command the CLI of `start` runs (`long`).
+fn command_of(workspace: &Workspace, start: &Start) -> u32 {
+    let path = workspace
+        .root
+        .path()
+        .join("claude-commands")
+        .join(start.pid.to_string());
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+        .trim()
+        .parse()
+        .expect("a pid")
+}
+
+/// Пилот 22.11, «Стоп» (блокер) in the middle of a turn whose command runs in a session of its
+/// own: the CLI and the command end; the next message starts the CLI anew on the same
+/// conversation (`--resume`) and nothing of the stopped turn reaches it.
+async fn stop_ends_claude_and_its_command(mode: &str, long: &str) {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, mode).await;
+    hang_turn(&mut host, SESSION, long).await;
+    let first = only_session(&workspace, &host);
+    let native = first
+        .value_of("--session-id")
+        .expect("a new session")
+        .to_owned();
+    let command = command_of(&workspace, &first);
+    assert!(alive(first.pid) && alive(command), "{first:?}, {command}");
+    stop_turn(&mut host, SESSION).await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "aborted", "{end}\n{}", host.context());
+    assert!(until_dead(first.pid).await, "{first:?} outlived «Стоп»");
+    assert!(
+        until_dead(command).await,
+        "its command {command} outlived «Стоп»"
+    );
+    let access = host.access_of(SESSION).await;
+    assert_eq!(access["session"]["running"], Value::Null, "{access}");
+
+    let from = host.frames.len();
+    host.prompt("hello").await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "completed", "{end}\n{}", host.context());
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert_eq!(mode_of(&starts[1]), mode, "{:?}", starts[1]);
+    assert_eq!(
+        starts[1].value_of("--resume"),
+        Some(native.as_str()),
+        "{:?}",
+        starts[1]
+    );
+    let next = host.frames[from..]
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        next.contains("\"done\""),
+        "no answer to the message\n{next}"
+    );
+    assert!(
+        !next.contains("working") && !next.contains("sleep 120"),
+        "the stopped turn reached the next one\n{next}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn t12_confirm_stop_ends_claude_and_its_command() {
+    stop_ends_claude_and_its_command("confirm", "long").await;
+}
+
+#[tokio::test]
+async fn t12_full_stop_ends_claude_and_its_command() {
+    stop_ends_claude_and_its_command("full", "long").await;
+}
+
+/// Ревью Fable 174941: a command named `проверка.sh` — the kernel keeps 15 bytes of a name and cuts
+/// its `а` in half, so its `/proc/<pid>/stat` is no UTF-8 — still ends on «Стоп».
+#[tokio::test]
+async fn t17_stop_ends_a_command_whose_name_is_no_utf8() {
+    stop_ends_claude_and_its_command("confirm", "long проверка.sh").await;
+}
+
+/// Пилот 22.11, «Стоп» (блокер) at the launch of Claude: the mode changed between turns, so the
+/// next message starts Claude anew, and «Стоп» comes before it answers `initialize`. No process is
+/// left; the next message starts it again on the same conversation.
+async fn stop_at_launch_then_resume(mode: &str) {
+    let other = if mode == "full" { "confirm" } else { "full" };
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, other).await;
+    host.prompt("hello").await;
+    let first = only_session(&workspace, &host);
+    let native = first
+        .value_of("--session-id")
+        .expect("a new session")
+        .to_owned();
+    host.set_access(mode, "allowed-once").await;
+    assert!(until_dead(first.pid).await, "{first:?} still runs");
+
+    let launched = stop_at_launch(&mut host, &workspace).await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "aborted", "{end}\n{}", host.context());
+    assert!(
+        until_dead(launched.pid).await,
+        "{launched:?} outlived «Стоп»"
+    );
+
+    host.prompt("hello").await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "completed", "{end}\n{}", host.context());
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 3, "{starts:?}");
+    for start in &starts[1..] {
+        assert_eq!(mode_of(start), mode, "{start:?}");
+        assert_eq!(
+            start.value_of("--resume"),
+            Some(native.as_str()),
+            "{start:?}"
+        );
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn t13_confirm_stop_at_the_launch_leaves_no_process_and_the_chat_goes_on() {
+    stop_at_launch_then_resume("confirm").await;
+}
+
+#[tokio::test]
+async fn t13_full_stop_at_the_launch_leaves_no_process_and_the_chat_goes_on() {
+    stop_at_launch_then_resume("full").await;
+}
+
+/// Пилот 22.11, `live.v5.kill-full` (блокер). The engine killed with SIGKILL in the middle of a
+/// long command: neither Claude nor its command (in a session of its own) outlives it.
+#[tokio::test]
+async fn t14_killing_the_engine_ends_claude_and_its_command() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "full").await;
+    hang_turn(&mut host, SESSION, "long").await;
+    let start = only_session(&workspace, &host);
+    let command = command_of(&workspace, &start);
+    assert!(alive(start.pid) && alive(command), "{start:?}, {command}");
+    host.child.start_kill().expect("SIGKILL to the engine");
+    host.child.wait().await.expect("the engine is gone");
+    assert!(until_dead(start.pid).await, "{start:?} outlived the engine");
+    assert!(
+        until_dead(command).await,
+        "its command {command} outlived the engine (claude {})",
+        start.pid
+    );
+}
+
+/// Пилот 22.11, the answer shown twice: a one-word answer is held back whole while it streams (it
+/// may be the start of a key), and must still reach the window as live text before the recorded
+/// answer that takes its place — a piece after the record is shown as a second answer.
+#[tokio::test]
+async fn t15_a_one_word_answer_reaches_the_window_before_its_record() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let from = host.frames.len();
+    host.prompt("short").await;
+    let frames = &host.frames[from..];
+    let records: Vec<usize> = (0..frames.len())
+        .filter(|&at| {
+            frames[at]["method"] == "session.event"
+                && frames[at]["params"]["event"]["type"] == "assistant/message"
+        })
+        .collect();
+    let chunks: Vec<usize> = (0..frames.len())
+        .filter(|&at| {
+            frames[at]["method"] == "session.assistant-stream"
+                && frames[at]["params"]["frame"]["type"] == "chunk"
+        })
+        .collect();
+    let shown: String = chunks
+        .iter()
+        .filter_map(|&at| frames[at]["params"]["frame"]["chunk"]["text"].as_str())
+        .collect();
+    let all = frames
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(records.len(), 1, "{all}");
+    assert_eq!(shown, "ok1", "{all}");
+    assert!(
+        chunks.iter().all(|&at| at < records[0]),
+        "live text after its record\n{all}"
+    );
+}
+
+/// Предварительная живая проверка 939feabd (s3, 22.11): «Стоп» about a second after a message to
+/// Claude resumed after an earlier «Стоп». The resumed CLI first answers the notification of the
+/// background command lost with the old process — a result of no turn. Taken for the message's
+/// answer, it closed the turn at once: the window went idle and its «Стоп» was gone, the CLI went
+/// on with the message between turns, and the next message went to the same process. Now the turn
+/// runs until its own answer: «Стоп» ends the CLI and its command, the turn ends as stopped, and
+/// the next message resumes the conversation in a new process.
+#[tokio::test]
+async fn t16_stop_right_after_a_message_to_a_resumed_claude_ends_it() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    hang_turn(&mut host, SESSION, "long").await;
+    let first = only_session(&workspace, &host);
+    let native = first
+        .value_of("--session-id")
+        .expect("a new session")
+        .to_owned();
+    stop_turn(&mut host, SESSION).await;
+    assert!(until_dead(first.pid).await, "{first:?} outlived «Стоп»");
+
+    std::fs::write(workspace.root.path().join("wake-on-resume"), "").expect("a lost command");
+    let params = json!({"sessionId": SESSION, "contentBlocks": [{"type": "text", "text": "long"}]});
+    host.send("session/prompt", params).await;
+    // The resumed CLI has answered the notification and runs the message's command.
+    let until = std::time::Instant::now() + FRAME_TIMEOUT;
+    let commands = workspace.root.path().join("claude-commands");
+    let (second, command) = loop {
+        let mut sessions = workspace.sessions();
+        if sessions.len() > 1 && commands.join(sessions[1].pid.to_string()).exists() {
+            let second = sessions.remove(1);
+            let command = command_of(&workspace, &second);
+            break (second, command);
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "claude did not run the message\n{}",
+            host.context()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    assert_eq!(
+        second.value_of("--resume"),
+        Some(native.as_str()),
+        "{second:?}"
+    );
+
+    let cancel = host
+        .send("session/cancel", json!({"sessionId": SESSION}))
+        .await;
+    let stopped = |host: &Host| {
+        host.frames.iter().find_map(|frame| {
+            let event = &frame["params"]["event"];
+            (frame["method"] == "session.event"
+                && frame["params"]["sessionId"] == SESSION
+                && event["type"] == "turn/end"
+                && event["data"]["turn"] == 2)
+                .then(|| event["data"]["reason"].clone())
+        })
+    };
+    let mut answered = false;
+    while !answered || stopped(&host).is_none() {
+        let frame = host.next().await;
+        if frame["id"] == cancel.as_str() && frame.get("method").is_none() {
+            assert!(frame.get("error").is_none(), "{frame}\n{}", host.context());
+            answered = true;
+        }
+    }
+    let reason = stopped(&host).expect("the end of the turn");
+    assert_eq!(reason["kind"], "aborted", "{reason}\n{}", host.context());
+    assert!(until_dead(second.pid).await, "{second:?} outlived «Стоп»");
+    assert!(
+        until_dead(command).await,
+        "its command {command} outlived «Стоп»"
+    );
+
+    host.prompt("hello").await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "completed", "{end}\n{}", host.context());
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 3, "{starts:?}");
+    assert_eq!(
+        starts[2].value_of("--resume"),
+        Some(native.as_str()),
+        "{:?}",
+        starts[2]
+    );
     host.shutdown().await;
 }

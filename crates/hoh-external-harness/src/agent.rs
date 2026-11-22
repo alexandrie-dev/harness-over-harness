@@ -577,8 +577,17 @@ impl ExternalAgent {
                     }
                 }
                 _ = signal.cancelled(), if !stopping => {
-                    deadline = Some(tokio::time::Instant::now() + self.interrupt_grace());
                     log.withdraw_requests();
+                    if self.shared.harness.stop_ends_process() {
+                        // Nothing of the stopped turn runs on or reaches the next one: that turn
+                        // starts the process again and continues the native session. Until then
+                        // the window shows no running process.
+                        session.control.terminate(self.terminate_grace()).await;
+                        *live = None;
+                        lock(&self.state).control = None;
+                        return TurnOutcome::Aborted;
+                    }
+                    deadline = Some(tokio::time::Instant::now() + self.interrupt_grace());
                     // Before the harness accepts the prompt it has no turn to interrupt: the
                     // interrupt goes out with its answer.
                     if prompted {
@@ -1445,7 +1454,8 @@ impl TurnLog {
             .live
             .iter()
             .position(|live| live.message_id == message_id)
-            .map(|index| self.live.remove(index));
+            .map(|index| self.live.remove(index))
+            .map(|live| self.shown_whole(live));
         let seq = self.write_assistant(text, false, Vec::new());
         if let Some(live) = live {
             self.end_live(live, seq);
@@ -1514,9 +1524,19 @@ impl TurnLog {
         }
     }
 
-    fn end_live(&self, mut live: LiveText, seq: Option<SessionSeq>) {
+    /// The rest of a live text the wait for a whole word held back, shown before the answer is
+    /// recorded: the window puts the recorded answer in the place of the live text it has seen, so
+    /// a piece after the record would show the answer twice (pilot 22.11: a one-word «ok1» is held
+    /// back whole until its final).
+    fn shown_whole(&self, mut live: LiveText) -> LiveText {
         let rest = redact(&live.text[live.shown..]);
         self.agent.emit_frame_of(&mut live, &rest);
+        live.shown = live.text.len();
+        live
+    }
+
+    /// The end of a live text, [`shown_whole`](Self::shown_whole) already.
+    fn end_live(&self, live: LiveText, seq: Option<SessionSeq>) {
         self.agent.emit_frame(AssistantStreamFrame::End {
             attempt_id: live.attempt_id.clone(),
             revision: live.revision,
@@ -1821,6 +1841,7 @@ impl TurnLog {
         drop(open);
         for live in std::mem::take(&mut self.live) {
             self.settled.insert(format!("text:{}", live.message_id));
+            let live = self.shown_whole(live);
             let seq = self.write_assistant(live.text.clone(), !completed, Vec::new());
             self.end_live(live, seq);
         }

@@ -34,6 +34,8 @@ struct Stub {
     /// `bypassPermissions`: the CLI approves by itself what it can; only what even bypass
     /// refuses (protected paths, removal safety) is asked, by the scenarios that say so.
     no_callback: bool,
+    /// The uuid the last prompt came with.
+    prompt_uuid: Value,
 }
 
 fn main() {
@@ -109,6 +111,7 @@ fn main() {
         session,
         next: 0,
         no_callback: value_of("--permission-mode").as_deref() == Some("bypassPermissions"),
+        prompt_uuid: Value::Null,
     };
     while let Ok(message) = stub.rx.recv() {
         stub.handle(&message);
@@ -158,6 +161,7 @@ impl Stub {
                     .as_str()
                     .unwrap_or_default()
                     .to_owned();
+                self.prompt_uuid = message["uuid"].clone();
                 self.turn(&text);
             }
             _ => {}
@@ -272,6 +276,52 @@ impl Stub {
     }
 
     fn turn(&mut self, text: &str) {
+        if text == "wake-first" {
+            // A CLI resumed after its background command was lost answers that command's
+            // notification first: a result of no turn, then the prompt's own.
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false, "result": "",
+                "num_turns": 0, "origin": { "kind": "task-notification" },
+                "session_id": self.session,
+            }));
+            self.system_init();
+            let message_id = self.id("msg");
+            self.start_message(&message_id);
+            self.say(&message_id, 0, &["Hello"]);
+            self.result("success", false, "Hello");
+            return;
+        }
+        if text == "wake-turn-first" {
+            // The CLI takes the prompt (it echoes prompts), runs a turn of its own first, then the
+            // prompt's; only the second result names the prompt.
+            write_line(&json!({
+                "type": "command_lifecycle", "command_uuid": self.prompt_uuid,
+                "state": "queued", "session_id": self.session,
+            }));
+            self.system_init();
+            let wake = self.id("msg");
+            self.start_message(&wake);
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false,
+                "result": "The background command ended.", "num_turns": 1,
+                "origin": { "kind": "task-notification" }, "session_id": self.session,
+            }));
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false, "result": "other",
+                "num_turns": 1, "user_message_uuids": ["00000000-0000-4000-8000-0000000000aa"],
+                "session_id": self.session,
+            }));
+            self.system_init();
+            let message_id = self.id("msg");
+            self.start_message(&message_id);
+            self.say(&message_id, 0, &["Hello"]);
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false, "result": "Hello",
+                "num_turns": 1, "user_message_uuids": [self.prompt_uuid],
+                "session_id": self.session,
+            }));
+            return;
+        }
         if text == "ask-first" {
             // The very first line of the turn is the permission request (nothing before it).
             let request = self.id("perm");

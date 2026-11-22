@@ -448,12 +448,14 @@ async fn until_event(agent: &Arc<dyn Agent>, event_type: &str) {
 }
 
 fn alive(pid: u32) -> bool {
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+    match std::fs::read(format!("/proc/{pid}/stat")) {
         Err(_) => false,
-        // The state follows the parenthesised command name.
+        // The state follows the parenthesised command name, which may be no UTF-8.
         Ok(stat) => !stat
-            .rsplit_once(')')
-            .is_some_and(|(_, rest)| rest.trim_start().starts_with(['Z', 'X'])),
+            .iter()
+            .rposition(|&byte| byte == b')')
+            .and_then(|end_of_name| stat.get(end_of_name + 2))
+            .is_some_and(|state| matches!(state, b'Z' | b'X')),
     }
 }
 
