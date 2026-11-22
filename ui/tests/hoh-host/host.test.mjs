@@ -622,3 +622,26 @@ test('home screen subagents: Claude\'s Task (Agent) calls are the chat\'s subage
   assert(entry.agents[0].doneAt >= entry.agents[0].startedAt && entry.agents[1].doneAt === null);
   assert.deepEqual(entry.steps, { done: 1, total: 1 });
 });
+
+test('restart persistence: an engine still starting answers nothing at first — the chats and Claude\'s check arrive when it is ready (they were lost for good before)', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-r1', 'First', [['turn/start', { turn: 1 }], ['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'first' }] }]]);
+  engine.seed('chat-r2', 'Second', []);
+  let starting = true;
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => starting ? Promise.reject(new Error('engine is starting')) : request(method, params);
+  const { client, host } = connect(engine, { loadRetryMs: 5 });
+  const config = await client.stream('subscribeServerConfig', {});
+  const first = await config.until(value => value.type === 'snapshot');
+  assert.equal(first.config.providers[0].message, 'Failed to execute Claude Agent CLI health check.');
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await shell.until(value => value.kind === 'snapshot');
+  assert.deepEqual(host.home.entries(), []);
+  starting = false;
+  // The chats come to the window as the engine answers; Claude's check is announced on the config stream.
+  const threads = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-r2');
+  assert.equal(threads.thread.id, 'chat-r2');
+  const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].message !== 'Failed to execute Claude Agent CLI health check.');
+  assert.equal(ready.config.providers[0].status, 'ready');
+  host.stop();
+});

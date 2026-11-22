@@ -28,6 +28,9 @@ export interface HohHostOptions {
   readonly throttleMs?: number;
   /** Where folder projects are kept between runs (the window's localStorage by default; null: not kept). */
   readonly storage?: HohStorage | null;
+  /** The engine may still be starting when the window asks (its handshake takes seconds): the first reads are repeated this often, and this many times, until it answers. */
+  readonly loadRetryMs?: number;
+  readonly loadRetries?: number;
 }
 
 export interface HohStorage {
@@ -90,6 +93,9 @@ export class HohHost {
   private readonly engine: HohEngine;
   private readonly now: () => number;
   private readonly throttleMs: number;
+  private readonly loadRetryMs: number;
+  private readonly loadRetries: number;
+  private stopped = false;
   private readonly threads = new Map<string, ThreadModel>();
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
   private readonly questions = new Map<string, EngineQuestion>();
@@ -128,6 +134,8 @@ export class HohHost {
     this.engine = options.engine;
     this.now = options.now ?? Date.now;
     this.throttleMs = options.throttleMs ?? 40;
+    this.loadRetryMs = options.loadRetryMs ?? 500;
+    this.loadRetries = options.loadRetries ?? 60;
     this.workspaceRoot = options.workspaceRoot ?? PLACEHOLDER_ROOT;
     this.startedAt = this.now();
     this.storage = options.storage === undefined ? windowStorage() : options.storage;
@@ -235,6 +243,7 @@ export class HohHost {
   }
 
   stop() {
+    this.stopped = true;
     for (const off of this.unsubscribers) off();
     this.unsubscribers = [];
     if (this.flushTimer) clearTimeout(this.flushTimer);
@@ -246,7 +255,19 @@ export class HohHost {
     if (this.engine.subscribeStatus) this.unsubscribers.push(await this.engine.subscribeStatus(status => {
       if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
     }));
-    await Promise.all([this.readDiscovery(), this.readAccess(), this.readSessions()]);
+    const [, , sessionsRead] = await Promise.all([this.readDiscovery(), this.readAccess(), this.readSessions()]);
+    // The engine that was still starting answers nothing at first (and the window never asks again): go on asking in the background.
+    if (this.discovery === null || !sessionsRead) void this.retryLoad(this.discovery !== null, sessionsRead);
+  }
+
+  /** The reads of `load` that failed, repeated until the engine answers; what arrives late is announced to the window. */
+  private async retryLoad(discovered: boolean, sessionsRead: boolean) {
+    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && !(discovered && sessionsRead); attempt++) {
+      await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
+      if (this.stopped) return;
+      if (!discovered) { await this.readDiscovery(); discovered = this.discovery !== null; if (discovered) { await this.readAccess(); this.configChanged(); } }
+      if (!sessionsRead) { sessionsRead = await this.readSessions(); if (sessionsRead) for (const id of this.threads.keys()) this.changed(id); }
+    }
   }
 
   private async readDiscovery() {
@@ -261,9 +282,9 @@ export class HohHost {
     } catch { /* the engine has no Claude access setting: the default mode stays */ }
   }
 
-  private async readSessions() {
+  private async readSessions(): Promise<boolean> {
     let sessions: any[] = [];
-    try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return; }
+    try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return false; }
     for (const session of sessions) {
       if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
       const at = Number(session.updatedAt) || this.startedAt;
@@ -271,6 +292,7 @@ export class HohHost {
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
     await this.peekToday();
+    return true;
   }
 
   /**
