@@ -27,8 +27,10 @@ const inertNames = new Set([
 // только из проверенного списка src/t3-entry/dist-urls.txt; пределы размера прежней оболочки к нему не относятся.
 const t3Build = existsSync('dist/t3-assets');
 const isT3 = path => t3Build && (path === join('dist', 'index.html') || path === join('dist', 'boot-theme.js') || path.startsWith(join('dist', 't3-assets') + '/'));
+// Подстановка `${…}` в адресе — имя, которое минификатор даёт заново при каждой сборке; сверяется адрес без неё.
+const urlShape = value => value.replace(/\$\{[^}]*\}?/g, '${}');
 const t3Urls = new Set(existsSync('src/t3-entry/dist-urls.txt')
-  ? (await readFile('src/t3-entry/dist-urls.txt', 'utf8')).split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'))
+  ? (await readFile('src/t3-entry/dist-urls.txt', 'utf8')).split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#')).map(urlShape)
   : []);
 const t3Unknown = new Set();
 let t3Total = 0;
@@ -52,7 +54,7 @@ for (const path of await files('dist')) {
     const value = scheme + match[0];
     // Without a scheme only a real host counts (host.tld, localhost, IPv4, [IPv6]); a regex tail such as //g,r=/ is code, not an address.
     if (!scheme && !/^\/\/(?:(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[/:?#]|$)|localhost\b|\d{1,3}(?:\.\d{1,3}){3}\b|\[)/i.test(match[0])) continue;
-    if (t3) { if (!inertNames.has(value) && !t3Urls.has(value)) t3Unknown.add(value); continue; }
+    if (t3) { if (!inertNames.has(value) && !t3Urls.has(urlShape(value))) t3Unknown.add(value); continue; }
     assert(inertNames.has(value), `external URL ${value} in ${path}`);
   }
   assert(!/\beval\s*\(|\bnew\s+Function\s*\(/.test(source), `dynamic code in ${path}`);
