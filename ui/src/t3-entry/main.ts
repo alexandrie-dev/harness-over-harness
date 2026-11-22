@@ -5,6 +5,7 @@ import { installHohHost, tauriEngine } from 'virtual:hoh-host';
 import type { HohEngineLike } from './host';
 import { HIDDEN_SELECTORS } from './features';
 import './brand.css';
+import { startEmblemFit } from './emblem-fit';
 
 declare global {
   // Только снимки и проверки в браузере без Tauri (scripts/snapshot-t3.mjs): подделка движка.
@@ -20,4 +21,5 @@ hidden.textContent = HIDDEN_SELECTORS.map((selector) => `${selector} { display: 
 // `.wco` берёт её через env(titlebar-area-height); у веб-клиента без этого класса — 52 px (index.css, :root).
 hidden.textContent += '\nhtml:root { --workspace-topbar-height: 40px; }';
 document.head.append(hidden);
+startEmblemFit();
 void import('virtual:t3-bootstrap');

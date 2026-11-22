@@ -281,7 +281,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 
 | Файл (в `ui/src/t3/base`) | Как | Зачем |
 |---|---|---|
-| `web/components/T3Wordmark.tsx` | замена (наш файл) | знак T3 не берём: на его месте эмблема HoH (src/assets/emblem-52.png); размер в шапке панели — src/t3-entry/brand.css (HOH-41 А) |
+| `web/components/T3Wordmark.tsx` | замена (наш файл) | знак T3 не берём: на его месте эмблема HoH (прозрачные растры src/assets/emblem-brand-*.png из emblem-a.webp, srcset 1×/1.5×/2×/3×) |
 | `web/components/T3AppIcon.tsx` | замена (наш файл) | значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src |
 | `web/routeTree.gen.ts` | правка (`ui/src/t3/base-patches/web/routeTree.gen.ts.patch`) | выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются |
 | `web/components/settings/settingsSearch.ts` | правка (`ui/src/t3/base-patches/web/components/settings/settingsSearch.ts.patch`) | выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS) |
@@ -292,9 +292,6 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `gt.config.json` | правка (`ui/src/t3/base-patches/gt.config.json.patch`) | языки интерфейса: английский и русский (остальные переводы не переносятся); gt.config.json T3 читает web/i18n/locales.ts |
 | `web/branding.ts` | правка (`ui/src/t3/base-patches/web/branding.ts.patch`) | имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет |
 | `web/components/chat/turnDetailAnnouncement.ts` | правка (`ui/src/t3/base-patches/web/components/chat/turnDetailAnnouncement.ts.patch`) | имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code» |
-
-Providers: строку Codex и «Add provider»/«+» T3 рисует по своим умолчаниям на клиенте (`ProviderSettingsPanel.tsx`: `PROVIDER_SETTINGS`, `canAddProvider`) — хост их не отдаёт; при сборке `vite.ts` (`providerSettingsPanel`) сужает список до `VISIBLE_PROVIDER_DRIVERS` (`features.ts`) и гасит `canAddProvider`; файл T3 не правится.
-Карточка Claude в Providers: остаются название и состояние; Runtime, Environment, Models, Usage providers, Advanced (движок их не исполняет) не рисуются — `vite.ts` (`providerInstanceCard`, `providerSettingsPanel`), якоря в `ProviderInstanceCard.tsx`/`ProviderSettingsPanel.tsx`. Имена тем «T3 Code»/«T3 Chat» → «Default»/«Chat»: `vite.ts` (`themeCards`, `themePalettes`).
 
 Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
 `desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 136 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).
@@ -378,6 +375,3 @@ Providers: строку Codex и «Add provider»/«+» T3 рисует по с�
 - Значки — `lucide-react` (ISC) и встроенные SVG компонентов T3; логотипы MCP-приложений (`web/components/mcp/logos/*.png`) перенесены
   с MCP Apps (скрыты). Значки приложения T3 (`apps/web/public/*`, `assets/prod/*`) не берутся: знак — эмблема HoH (`src/assets/emblem-*.png`).
 - Объём перенесённого: 38.7 МБ; крупнее всего — .glb — 12.1 МБ, .ts — 9.3 МБ, .tsx — 7.8 МБ, .json — 7.5 МБ, .woff2 — 1.2 МБ, .wasm — 0.7 МБ. Переводы T3 (`web/i18n/translations/*.json`) — все 10 языков, как у T3.
-
-Тема «HoH» (HOH-41 В1, палитра «Эмблема»): встроенная тема в их механизме тем, только тёмная, по умолчанию окна (`hoh-defaults.js` пишет `t3code:theme=hoh`). Цвета — `src/t3-entry/hoh-theme.ts`; в `shared/themePalettes.ts` и `settings/ThemeSettings.tsx` тема добавляется сборочной подменой `vite.ts` (`themePalettes`, `themeSettings`), в `boot-theme.js` (выходит из «без изменений») — её стартовая палитра. «Stop» в поле ввода — как у T3, красный (`bg-destructive`, роль error). Шрифт, размеры, радиусы — T3.
-Роль T3 → цвет HoH: canvas/chrome/toolbar/sidebar — #080809 (рамка, фон окна); surface — #0e0e10 (панель, поле ввода); surfaceRaised/Overlay, toolbarControl, secondary, muted, accentSurface, codeBackground, наведение строки — #141516; messageSurface, строка выбранная/активная, toolbarControlHover — #1b1c1d; border/toolbarBorder/sidebarBorder — белый 8 % (#ffffff14); input — #272829; text — #f2f3f5; textMuted/mutedForeground/sidebarMuted — #a3a3a3; placeholder/secondaryLabel/iconMuted — #8f8f8f; accent/focus/messageAction (отправка)/update/terminalCursor — синий #4dacf6 (текст на нём #080809); warning («ждёт вас»: approval, внимание) — красный #fe3f4f; error (их «Удалить», сбой запроса) — как у T3 (#fb414a), т.к. он общий для destructive и сбоя; поиск, терминал — как у T3.
