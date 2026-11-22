@@ -14,12 +14,13 @@ const FULL = 'Помощник сам удаляет и меняет файлы 
 const UX = join(UI, 'test-results/t3-exact');
 await mkdir(UX, { recursive: true });
 const RESULTS = join(UI, 'test-results/chat');
-const INDEX = join(UI, 'dist/index.html');
+// Прежняя оболочка — dist/legacy.html (HOH-40: dist/index.html — веб-клиент T3).
+const INDEX = join(UI, 'dist/legacy.html');
 await mkdir(RESULTS, { recursive: true });
 let chromium;
 const missing = [];
 try { ({ chromium } = await import('playwright-core')); } catch { missing.push('playwright-core@1.65.0 is not installed'); }
-try { await access(INDEX); } catch { missing.push('ui/dist/index.html has not been built'); }
+try { await access(INDEX); } catch { missing.push('ui/dist/legacy.html has not been built'); }
 if (missing.length) {
   await writeFile(join(RESULTS, 'behavior.json'), JSON.stringify({ status: 'blocked', missing, passed: 0 }, null, 2) + '\n');
   console.error('BLOCKED: ' + missing.join('; '));

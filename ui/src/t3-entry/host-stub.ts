@@ -3,7 +3,7 @@
 import type { InstallHohHost, TauriEngine } from './host';
 
 export const installHohHost: InstallHohHost = () => {
-  console.warn('HoH: хост данных не подключён (нет ui/src/hoh-host/index.ts) — окно T3 без движка');
+  console.warn('HoH: хост данных не подключён (нет ui/src/hoh-host/index.ts) — окно T3 без данных');
 };
 export const tauriEngine: TauriEngine = () => ({
   request: async () => { throw new Error('HoH: нет хоста данных'); },

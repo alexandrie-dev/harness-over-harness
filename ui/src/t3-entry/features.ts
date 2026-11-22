@@ -99,11 +99,11 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'office', title: 'офисные форматы', how: ['host'] },
   { id: 'usage', title: 'использование/телеметрия/диагностика/ресурсы', how: ['host', 'route', 'nav', 'css'] },
   { id: 'updates', title: 'обновления приложения', how: ['host'] },
-  { id: 'providers-install', title: 'ACP-реестр, установка и вход провайдеров T3; в выборе модели только Claude', how: ['host'] },
+  { id: 'providers-install', title: 'ACP-реестр, установка и вход поставщиков моделей T3; в выборе модели только Claude', how: ['host'] },
   { id: 'secrets', title: 'секреты/1Password', how: ['host', 'route', 'nav'] },
   { id: 'github-star', title: 'GitHub-звезда/конфетти', how: ['host'] },
   { id: 'voice', title: 'голосовой ввод', how: ['host', 'route', 'nav', 'component'] },
   { id: 'editor', title: 'открыть в редакторе («Open in VS Code»)', how: ['host', 'component'] },
   { id: 'project-scripts', title: 'скрипты проекта («Add project script»)', how: ['component'] },
-  { id: 'settings', title: 'разделы настроек кроме общих, вида, чата, провайдеров, доступа', how: ['route', 'nav'] },
+  { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Access', how: ['route', 'nav'] },
 ];

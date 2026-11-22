@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
-const indexUrl = pathToFileURL(resolve('dist/index.html')).href;
+// Прежняя оболочка — dist/legacy.html (HOH-40: dist/index.html — веб-клиент T3).
+const indexUrl = pathToFileURL(resolve('dist/legacy.html')).href;
 const probeUrl = pathToFileURL(resolve('dist/probe.html')).href;
 const home = await mkdtemp(join(tmpdir(), 'hoh-chromium-'));
 let browser;

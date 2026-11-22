@@ -19,10 +19,10 @@ test('the guard window stays a separate window the chat can neither open nor pre
   const main = JSON.parse(await readFile(join(DESKTOP, 'capabilities/main.json'), 'utf8'));
   const approval = JSON.parse(await readFile(join(DESKTOP, 'capabilities/approval.json'), 'utf8'));
   assert.deepEqual(main.windows, ['main']); assert.deepEqual(approval.windows, ['approval-*']);
-  for (const right of ['allow-approval-current', 'allow-approval-decide']) {
-    assert(!main.permissions.includes(right), `the main window has ${right}`);
-    assert(approval.permissions.includes(right));
-  }
+  for (const right of ['allow-approval-current', 'allow-approval-decide']) assert(approval.permissions.includes(right));
+  assert(!main.permissions.includes('allow-approval-current'), 'the main window has allow-approval-current');
+  // HOH-40: the T3 chat answers a request shown in the conversation; the host accepts from `main` only those (native.rs decide_in_chat)
+  assert(main.permissions.includes('allow-approval-decide'), 'the main window lacks allow-approval-decide');
   // no code of the chat, the first run or the shared parts talks to the guard's commands or its host object
   for (const dir of ['screens/chat', 'screens/firstrun', 'screens/shared', 'lib']) {
     for (const file of await sources(join(UI, 'src', dir))) {
