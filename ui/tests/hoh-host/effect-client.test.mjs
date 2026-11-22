@@ -168,3 +168,13 @@ test('T3 client: list, new chat, streamed answer, tool step, permission, questio
     await thread.stop(); await shell.stop();
   });
 });
+
+test('T3 schemas: the HTTP answers before the socket decode (session state, environment descriptor)', async () => {
+  const Schema = await import('effect/Schema');
+  const index = await contracts.load('index');
+  const http = await built.load('http');
+  const session = Schema.decodeUnknownSync(index.AuthSessionState)(await http.hohHttpResponse('GET', '/api/auth/session').json());
+  assert.equal(session.authenticated, true);
+  const descriptor = Schema.decodeUnknownSync(index.ExecutionEnvironmentDescriptor)(await http.hohHttpResponse('GET', '/.well-known/t3/environment').json());
+  assert.equal(descriptor.environmentId, 'hoh-local');
+});
