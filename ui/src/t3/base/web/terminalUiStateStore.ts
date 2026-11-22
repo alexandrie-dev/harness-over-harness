@@ -208,7 +208,8 @@ function normalizeThreadTerminalUiState(state: ThreadTerminalUiState): ThreadTer
     terminalGroups.find((group) => group.terminalIds.includes(activeTerminalId))?.id ?? null;
 
   const normalized: ThreadTerminalUiState = {
-    terminalOpen: state.terminalOpen,
+    // HoH (ui/T3-MAP.md): терминал выключен — ящик терминала не открывается (клавиши, действия, вкладки).
+    terminalOpen: false,
     terminalHeight:
       Number.isFinite(state.terminalHeight) && state.terminalHeight > 0
         ? state.terminalHeight

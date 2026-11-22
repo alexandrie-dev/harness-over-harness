@@ -10,6 +10,7 @@ UI = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 T3DIR = os.path.join(UI, 'src', 't3')
 pkg = json.load(open(os.path.join(UI, 'package.json')))
 have = set(pkg['dependencies']) | set(pkg['devDependencies']) | {'react/jsx-runtime', 'react-dom/client'}
+TYPES_ONLY = {'hast': '@types/hast', 'mdast': '@types/mdast', 'unist': '@types/unist'}  # как в t3graph.py
 imp = re.compile(r'''(?:import|export)\s(?:type\s)?[^;'"]*?from\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|^import\s+['"]([^'"]+)['"]''', re.S | re.M)
 def root_pkg(spec):
     parts = spec.split('/'); return '/'.join(parts[:2]) if spec.startswith('@') else parts[0]
@@ -26,8 +27,10 @@ def check(name, top, aliases, tilde, roots, deferred):
                 if not n.endswith(('.ts', '.tsx')) or n.endswith('.d.ts'): continue
                 path = os.path.join(dirpath, n); rel = os.path.relpath(path, top); files += 1
                 for m in imp.finditer(open(path, encoding='utf-8').read()):
-                    spec = (m.group(1) or m.group(2) or m.group(3)).split('?')[0]
-                    if spec.startswith('.'):
+                    full = m.group(1) or m.group(2) or m.group(3); spec = full.split('?')[0]
+                    if full in aliases:  # точный псевдоним (адрес-заглушка `?url`, в т.ч. непереносимых файлов)
+                        if not exists(os.path.join(UI, aliases[full])): bad.append((rel, full))
+                    elif spec.startswith('.'):
                         if not exists(os.path.normpath(os.path.join(dirpath, spec))): bad.append((rel, spec))
                     elif spec.startswith('~/'):
                         if not exists(os.path.join(tilde, spec[2:])): bad.append((rel, spec))
@@ -38,7 +41,7 @@ def check(name, top, aliases, tilde, roots, deferred):
                     elif spec == 'effect' or spec.startswith('effect/'):
                         if 'effect' not in have and name == 'прежний перенос': bad.append((rel, spec))
                         elif 'effect' not in have: missing.setdefault('effect', set()).add((rel, rel in deferred))
-                    elif root_pkg(spec) in have or spec.startswith('@base-ui/react'): pass
+                    elif root_pkg(spec) in have or TYPES_ONLY.get(root_pkg(spec)) in have or spec.startswith('@base-ui/react'): pass
                     else: missing.setdefault(root_pkg(spec), set()).add((rel, rel in deferred))
     print(f'=== {name}: {files} файлов')
     for rel, spec in sorted(bad): print('НЕТ АДРЕСАТА', rel, spec)
@@ -53,9 +56,13 @@ legacy_deferred = {f"{r}/{e['file']}" for r, es in manifest['files'].items() for
 bad = check('прежний перенос', T3DIR, json.load(open(os.path.join(T3DIR, 'aliases.json'))), os.path.join(T3DIR, 'web'),
             ['web', 'shared', 'client-runtime', 'shims'], legacy_deferred)
 if 'base' in manifest:
+    sys.dont_write_bytecode = True; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import t3graph
     base = os.path.join(UI, manifest['base']['out'])
     checked = set(json.load(open(os.path.join(base, 'tsconfig.json')))['files'])
+    on_stubs = set(json.load(open(os.path.join(base, 'state.json'))).get('on_stubs', []))
     aliases = json.load(open(os.path.join(base, 'aliases.json')))
-    code = {os.path.relpath(os.path.join(dp, n), base) for r in ('web', 'contracts', 'shared', 'client-runtime') for dp, _, ns in os.walk(os.path.join(base, r)) for n in ns}
-    bad += check('основа HOH-40', base, aliases, os.path.join(base, 'web'), ['web', 'contracts', 'shared', 'client-runtime', 'stubs', 'shims'], code - checked)
+    roots = list(t3graph.ROOTS)
+    code = {os.path.relpath(os.path.join(dp, n), base) for r in roots for dp, _, ns in os.walk(os.path.join(base, r)) for n in ns}
+    bad += check('основа HOH-40', base, aliases, os.path.join(base, 'web'), roots + ['stubs', 'shims'], code - checked - on_stubs)
 sys.exit(1 if bad else 0)

@@ -41,7 +41,8 @@ export interface PanelLayoutControlsProps {
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
   showThreadPanelControl = true,
-  showTerminalControl = true,
+  // HoH (ui/T3-MAP.md): терминал выключен — кнопки ящика терминала нет.
+  showTerminalControl = false,
   showRightPanelControl = true,
   terminalAvailable,
   terminalOpen,

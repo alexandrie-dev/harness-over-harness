@@ -221,25 +221,61 @@
 ## Основа HOH-40: весь веб-клиент T3 (`ui/src/t3/base`)
 
 План — `plans/hoh40-t3-base.md` (этап 2). Переносит `ui/scripts/t3-sync.py` по разделу `base` манифеста: весь `apps/web/src` без тестов
-(`*.test.*`, `*.browser.test.*`, `*.bench.*`) и файлы `packages/{contracts,shared,client-runtime}/src`, до которых дотягиваются его импорты
-(граф — `ui/scripts/t3graph.py`), плюс `apps/web/gt.config.json` → `ui/src/t3/base/gt.config.json` (его читает `i18n/locales.ts`).
+(`*.test.*`, `*.browser.test.*`, `*.bench.*`) и файлы пакетов T3 `packages/*/src`, до которых дотягиваются его импорты (граф —
+`ui/scripts/t3graph.py`): `contracts`, `shared`, `client-runtime` и клиентские определения (`provider-core/client`, `provider-*/client`,
+`source-control-*/shared`, `secret-provider-*`, `issue-tracker-linear/shared`) — видимый код строит по ним списки на уровне модуля.
+Плюс `apps/web/gt.config.json` → `ui/src/t3/base/gt.config.json` (его читает `i18n/locales.ts`).
 Свой проект tsc — `ui/src/t3/base/tsconfig.json` (настройки T3, псевдонимы `~/*` и `@t3tools/*` по `exports`; прежний tsconfig основу
-не видит), псевдонимы для vite — `ui/src/t3/base/aliases.json`. В сборку окна основа пока не входит (э3), Tailwind её не сканирует
-(`@source not "../t3"`). Проверка импортов — `ui/scripts/t3-check.py` (оба набора).
+не видит), псевдонимы для vite — `ui/src/t3/base/aliases.json`. В окно основу подключает вход u4 (`ui/src/t3-entry`); отдельная сборка
+основы для проверки — `ui/src/t3/base/vite.config.ts` (`index.html` → их `web/bootstrap.ts`; с `T3_BASE_QA=1` ещё `qa.html`: T3 на хосте
+u3 с пустым движком), снимки — `ui/scripts/t3-snapshot.mjs`; точка подключения описана в `ui/src/t3/base/README-HOH.md`.
+Tailwind прежней оболочки её не сканирует (`@source not "../t3"`). Проверка импортов — `ui/scripts/t3-check.py` (оба набора).
 
-Файлов перенесено: **1944**, из них без изменений: **1939**, правок файлов T3: **5** (таблица ниже).
-Отложено (не проверяет tsc: в замыкании импортов есть пакет, которого нет в `ui/package.json` и `ui/node_modules` в версии, совместимой с lock T3: тот же major, для 0.x — тот же minor): **1698** из 1906 файлов кода;
-не хватает пакетов (сколько файлов T3 их импортирует): `@dnd-kit/core` (7), `@dnd-kit/modifiers` (4), `@dnd-kit/sortable` (8), `@dnd-kit/utilities` (6), `@effect/atom-react` (183), `@noble/hashes` (4), `@pierre/diffs` (32), `@pierre/trees` (5), `@tanstack/react-pacer` (4), `@tanstack/react-router` (126), `@tiptap/core` (6), `@tiptap/extension-blockquote` (1), `@tiptap/extension-bold` (1), `@tiptap/extension-code` (1), `@tiptap/extension-code-block` (1), `@tiptap/extension-heading` (1), `@tiptap/extension-horizontal-rule` (1), `@tiptap/extension-italic` (1), `@tiptap/extension-list` (1), `@tiptap/extension-strike` (1), `@tiptap/extension-task-item` (1), `@tiptap/extension-task-list` (1), `@tiptap/pm` (7), `@tiptap/react` (2), `@tiptap/starter-kit` (1), `culori` (1), `effect` (538), `get-east-asian-width` (1), `gt-i18n` (102), `gt-react` (706), `lucide-react` (332), `mdast-util-to-hast` (1), `unbash` (1), `use-sync-external-store` (1). Когда пакеты из `ui/T3-DEPS.md` (раздел HOH-40) стоят, отложенных нет —
-`t3-sync.py` пересчитывает список сам. tsc основы: `noImplicitAny` выключен — код скрытых частей получает из заглушек значения `any`,
-и его колбэки без явных типов (у T3 этот код проверен с настоящими пакетами); остальные настройки — как в T3 (`strict`,
-`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`).
+Не переносятся (раздел `exclude` манифеста; файлов: **13**):
 
-| Папка T3 | Папка у нас | Файлов | Из них кода | Без изменений | Правок | Отложено |
-|---|---|---|---|---|---|---|
-| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1468 | 5 | 1294 |
-| `packages/contracts/src` | `ui/src/t3/base/contracts` | 79 | 79 | 79 | 0 | 79 |
-| `packages/shared/src` | `ui/src/t3/base/shared` | 125 | 124 | 125 | 0 | 83 |
-| `packages/client-runtime/src` | `ui/src/t3/base/client-runtime` | 267 | 267 | 267 | 0 | 242 |
+| Шаблон пути T3 | Почему |
+|---|---|
+| `^apps/web/src/components/device/models/.*\.glb$` | 3D-модели устройств скрытой части «устройства и пары» (~12 МБ): не переносятся (решение ведущего); импорты `?url` — адрес-заглушка stubs/absent-url.ts |
+| `^apps/web/src/i18n/translations/(?!(en\|ru)\.json$)[^/]+$` | переводы, кроме en и ru, не переносятся (решение ведущего); список языков сужен правкой gt.config.json |
+
+Файлов перенесено: **1974**, из них без изменений: **1965**, правок файлов T3: **10** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
+Отложено (не проверяет tsc: в замыкании импортов есть пакет, которого нет в `ui/package.json` и `ui/node_modules` в версии, совместимой с lock T3: тот же major, для 0.x — тот же minor): **0** из 1949 файлов кода;
+не хватает пакетов (сколько файлов T3 их импортирует): нет. Когда пакеты из `ui/T3-DEPS.md` (раздел HOH-40) стоят, отложенных нет —
+`t3-sync.py` пересчитывает список сам. tsc основы — с настройками T3 (`strict`, `noImplicitAny`, `noUncheckedIndexedAccess`,
+`exactOptionalPropertyTypes`); в проекте **1900** файлов. На заглушках: **81** файлов скрытых частей, из
+которых через файлы скрытых частей достижим пакет-заглушка (офис, sql.js, three, heic/tiff, Clerk, daypicker и т.п.). Их тела без
+настоящих пакетов не проверить (значения заглушек — `any`, у колбэков нет типов), поэтому tsc берёт вместо них объявления:
+`X.hoh.d.ts` (tsc `--noCheck`) и `X.hoh.ts` с реэкспортом рядом с файлом, `moduleSuffixes: [".hoh", ""]`; все их импортёры, в том числе
+видимые, проверяются полностью. Видимых файлов среди них нет. Пишет их `t3-sync.py`; vite эти файлы не берёт.
+
+| Папка T3 | Папка у нас | Файлов | Из них кода | Без изменений | Правок | Отложено | На заглушках |
+|---|---|---|---|---|---|---|---|
+| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1451 | 9 | 0 | 70 |
+| `packages/contracts/src` | `ui/src/t3/base/contracts` | 79 | 79 | 79 | 0 | 0 | 0 |
+| `packages/shared/src` | `ui/src/t3/base/shared` | 126 | 125 | 126 | 0 | 0 | 1 |
+| `packages/client-runtime/src` | `ui/src/t3/base/client-runtime` | 267 | 267 | 267 | 0 | 0 | 10 |
+| `packages/issue-tracker-linear/src` | `ui/src/t3/base/issue-tracker-linear` | 1 | 1 | 1 | 0 | 0 | 0 |
+| `packages/provider-acp-registry/src` | `ui/src/t3/base/provider-acp-registry` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/provider-core/src` | `ui/src/t3/base/provider-core` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/provider-cursor/src` | `ui/src/t3/base/provider-cursor` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/provider-fx/src` | `ui/src/t3/base/provider-fx` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/provider-grok/src` | `ui/src/t3/base/provider-grok` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/provider-kiro/src` | `ui/src/t3/base/provider-kiro` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/provider-muse/src` | `ui/src/t3/base/provider-muse` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/provider-opencode/src` | `ui/src/t3/base/provider-opencode` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/provider-pi/src` | `ui/src/t3/base/provider-pi` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/secret-provider-core/src` | `ui/src/t3/base/secret-provider-core` | 1 | 1 | 1 | 0 | 0 | 0 |
+| `packages/secret-provider-definitions/src` | `ui/src/t3/base/secret-provider-definitions` | 1 | 1 | 1 | 0 | 0 | 0 |
+| `packages/secret-provider-onepassword/src` | `ui/src/t3/base/secret-provider-onepassword` | 1 | 1 | 1 | 0 | 0 | 0 |
+| `packages/source-control-azure-devops/src` | `ui/src/t3/base/source-control-azure-devops` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/source-control-bitbucket/src` | `ui/src/t3/base/source-control-bitbucket` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/source-control-core/src` | `ui/src/t3/base/source-control-core` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/source-control-cursor-origin/src` | `ui/src/t3/base/source-control-cursor-origin` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/source-control-definitions/src` | `ui/src/t3/base/source-control-definitions` | 1 | 1 | 1 | 0 | 0 | 0 |
+| `packages/source-control-forgejo/src` | `ui/src/t3/base/source-control-forgejo` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/source-control-gitcafe/src` | `ui/src/t3/base/source-control-gitcafe` | 2 | 2 | 2 | 0 | 0 | 0 |
+| `packages/source-control-github/src` | `ui/src/t3/base/source-control-github` | 4 | 4 | 4 | 0 | 0 | 0 |
+| `packages/source-control-gitlab/src` | `ui/src/t3/base/source-control-gitlab` | 3 | 3 | 3 | 0 | 0 | 0 |
 
 ### Правки файлов T3
 
@@ -250,9 +286,14 @@
 | `web/routeTree.gen.ts` | правка (`ui/src/t3/base-patches/web/routeTree.gen.ts.patch`) | выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются |
 | `web/components/settings/settingsSearch.ts` | правка (`ui/src/t3/base-patches/web/components/settings/settingsSearch.ts.patch`) | выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS) |
 | `web/components/sidebar/SidebarChrome.tsx` | правка (`ui/src/t3/base-patches/web/components/sidebar/SidebarChrome.tsx.patch`) | имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3 |
+| `web/terminalUiStateStore.ts` | правка (`ui/src/t3/base-patches/web/terminalUiStateStore.ts.patch`) | выключатель: терминал — ящик терминала не открывается (normalizeThreadTerminalUiState держит terminalOpen: false), клавиши и действия ничего не открывают |
+| `web/components/chat/PanelLayoutControls.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/PanelLayoutControls.tsx.patch`) | выключатель: терминал — кнопки ящика терминала нет (showTerminalControl по умолчанию false) |
+| `web/components/settings/ThemeSettings.tsx` | правка (`ui/src/t3/base-patches/web/components/settings/ThemeSettings.tsx.patch`) | выключатель: импорт тем VS Code / Open VSX — кнопки «Add theme» нет, диалог импорта не открывается |
+| `gt.config.json` | правка (`ui/src/t3/base-patches/gt.config.json.patch`) | языки интерфейса: английский и русский (остальные переводы не переносятся); gt.config.json T3 читает web/i18n/locales.ts |
+| `web/branding.ts` | правка (`ui/src/t3/base-patches/web/branding.ts.patch`) | имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет |
 
-Имя продукта: `APP_BASE_NAME` и `APP_DISPLAY_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()` — имя HoH передаст
-хост (э3), правка не нужна. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 138 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).
+Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
+`desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 137 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).
 
 ### Скрытые части: чем выключены
 
@@ -262,7 +303,7 @@
 | Часть | Чем выключена | Состояние |
 |---|---|---|
 | git и source control, запросы на слияние, задачи и трекеры, review, worktree, клон проекта | маршруты /pull-requests и /issues и разделы настроек не регистрируются (правка routeTree.gen.ts, settingsSearch.ts); кнопки в боковой колонке и палитре — по возможностям окружения (usePullRequestsSupported, useIssuesSupported, capabilities.pullRequests/issues/vcsBranchStatus): хост их не объявляет | правка + хост (э3) |
-| терминал | возможности окружения для терминала у T3 нет: ящик открывают клавиши (keybindings.ts), useChatTerminalActions.ts и вкладка RightPanelTabs.tsx; хост отвечает на terminal.* «не поддерживается» | не выключено: место — названные файлы (э3/э4) |
+| терминал | ящик терминала не открывается (правка terminalUiStateStore.ts: terminalOpen всегда false), кнопки ящика нет (правка PanelLayoutControls.tsx); пункт «Terminal» в меню правой панели — по области AuthTerminalOperateScope от хоста (как Browser, Diff, Device): хост её не даёт; terminal.* хост отвечает «не поддерживается» | правка + хост (э3) |
 | превью и встроенный браузер | capabilities.serverBrowser и находимые порты — от хоста; раздел настроек «Браузер» не регистрируется | правка + хост (э3) |
 | облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh | оболочка входа грузится только при VITE_CLERK_PUBLISHABLE_KEY (main.tsx) — в окне пусто; маршруты /connect, /connect-agent, /approve-agent, /pair, /guest не регистрируются; capabilities.peerLinks — от хоста; @clerk/* — заглушки | правка + переменная сборки + хост (э3) |
 | запланированные задачи и отложенные разговоры (snooze) | раздел настроек не регистрируется; capabilities.threadSnooze, oneTimeSchedules — от хоста | правка + хост (э3) |
@@ -271,7 +312,7 @@
 | офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic) | просмотр включается по типу файла в панели файлов; пакеты — заглушки (jszip — прослойка с типами), файлы таких типов не открываются | заглушки; отказ — э3 |
 | вложения (загрузка) и снимки экрана (snap-shot) | capabilities.fileAttachments, attachmentUploads, questionAttachments — от хоста; раздел «SnapShots» не регистрируется | правка + хост (э3) |
 | использование, телеметрия, диагностика, ресурсы | маршрут /usage и разделы «Диагностика», «Хранилище» не регистрируются; capabilities.usageLimitSources — от хоста; трассы уходят только при VITE_RELAY_OTLP_TRACES_URL — в окне пусто | правка + переменная сборки + хост (э3) |
-| импорт и экспорт тем VS Code / Open VSX | поиск и импорт тем в настройках вида (ThemeSearchSection.tsx, ThemeImportDialog.tsx) остаются, пакеты — заглушки, импорт отказывает | не выключено: место — названные файлы (э4) |
+| импорт и экспорт тем VS Code / Open VSX | кнопки «Add theme» в настройках вида нет (правка ThemeSettings.tsx) — диалог импорта и поиск тем (ThemeImportDialog.tsx, ThemeSearchSection.tsx) не открываются; пакеты — заглушки | правка |
 | секреты и 1Password | раздел есть в навигации только при T3CODE_FEATURE_SECRETS (в окне пусто) и не регистрируется; capabilities.secretSourceCheck — от хоста | правка + переменная сборки |
 | GitHub-звезда и конфетти | GitHubStarPrompt.tsx никто не импортирует (у T3 тоже); звезда — через source control, которого нет | не подключено у T3 |
 | голосовой ввод | capabilities.voiceTranscription, cloudVoiceTranscription — от хоста; раздел «Голос» не регистрируется | правка + хост (э3) |
@@ -283,14 +324,20 @@
 ### Заглушки и прослойки пакетов
 
 Пакеты скрытых частей и пакеты T3, которые не берутся (список и причины — `ui/T3-DEPS.md`, «Заглушено вместо установки»). Созданная
-заглушка отдаёт значения, которые можно вызвать, создать через `new` и читать (`stubs/absent.ts`); типы — `any` с пространством имён
+заглушка — функция: её вызов и `new` дают объект, любое свойство которого — функция, возвращающая `undefined` (`stubs/absent.ts`,
+образец — пробная сборка u4: так проходит `export const { a } = make(...)` на уровне модуля); типы — `any` с пространством имён
 для обращений через точку. Где коду нужны точные типы или поведение, вместо созданной лежит наша прослойка (`shims/`, `types/`).
-Адреса файлов пакетов (`?url`) указывают на `stubs/absent-url.ts`. Для видимых импортёров (`@clerk/react`, `@t3tools/provider-*`,
-`@t3tools/source-control-*`, `@t3tools/issue-tracker-linear`, `@t3tools/secret-provider-definitions`) в э3 нужны рабочие прослойки.
+Адреса файлов пакетов (`?url`) и непереносимых файлов (модели `.glb`) указывают на `stubs/absent-url.ts`. Пакеты T3 (`@t3tools/*`)
+не заглушаются: их клиентские файлы переносятся. i18n (`gt-react`, `gt-i18n`) — прослойка окна: строки T3 по-английски как есть,
+подстановка переменных ICU, перевод — по словарю языка (`registerDictionary`, пока пусто), без сети.
 
 | Пакет (путь импорта) | Что | Файл | Почему |
 |---|---|---|---|
+| `shims/gt-i18n.ts` | прослойка (наш файл) | `ui/src/t3/base/shims/gt-i18n.ts` | Прослойка окна HoH вместо gt-i18n (General Translation, i18n T3 Code). Настоящий пакет не ставим (решение CEO): |
+| `shims/gt-react.tsx` | прослойка (наш файл) | `ui/src/t3/base/shims/gt-react.tsx` | Прослойка окна HoH вместо gt-react (General Translation, i18n T3 Code). Настоящий пакет не ставим (решение CEO): |
 | `jszip` | прослойка (наш файл) | `ui/src/t3/base/shims/jszip.ts` | офисные и двоичные форматы и импорт тем VS Code скрыты, архивы |
+| `shims/gt-i18n/types.ts` | прослойка (наш файл) | `ui/src/t3/base/shims/gt-i18n/types.ts` | Прослойка окна HoH вместо gt-i18n/types (General Translation, i18n T3 Code): тип функции сообщений. |
+| `types/trusted-types/lib/index.d.ts` | прослойка типов (наш файл) | `ui/src/t3/base/types/trusted-types/lib/index.d.ts` | Типы Trusted Types для dompurify (его d.ts импортирует `trusted-types/lib/index.js` из @types/trusted-types — у T3 он |
 | `vite-plus/client` | прослойка типов (наш файл) | `ui/src/t3/base/types/vite-plus/client/index.d.ts` | T3 собирает через Vite+, окно — обычным vite, типы те же. |
 | `canvas-confetti` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/canvas-confetti.ts` | GitHub-звезда и конфетти |
 | `entities` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/entities.ts` | офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic) |
@@ -313,22 +360,6 @@
 | `@clerk/electron/react` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@clerk/electron/react.ts` | облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh |
 | `@daypicker/react` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@daypicker/react.ts` | скрытые части |
 | `@noble/curves/nist` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@noble/curves/nist.ts` | скрытые части |
-| `@t3tools/issue-tracker-linear/shared/issueUrl` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/issue-tracker-linear/shared/issueUrl.ts` | задачи и трекеры |
-| `@t3tools/provider-acp-registry/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-acp-registry/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-core/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-core/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-core/modelShortName` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-core/modelShortName.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-cursor/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-cursor/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-fx/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-fx/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-grok/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-grok/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-kiro/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-kiro/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-muse/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-muse/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-opencode/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-opencode/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/provider-pi/client` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/provider-pi/client.ts` | провайдеры T3 (установка, вход, ACP-реестр) |
-| `@t3tools/secret-provider-definitions/registry` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/secret-provider-definitions/registry.ts` | секреты и 1Password |
-| `@t3tools/secret-provider-onepassword/shared/definition` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/secret-provider-onepassword/shared/definition.ts` | секреты и 1Password |
-| `@t3tools/source-control-core/shared/definition` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/source-control-core/shared/definition.ts` | git и source control |
-| `@t3tools/source-control-core/shared/threadPullRequests` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/source-control-core/shared/threadPullRequests.ts` | git и source control |
-| `@t3tools/source-control-definitions/registry` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/@t3tools/source-control-definitions/registry.ts` | git и source control |
 | `heic-to/csp` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/heic-to/csp.ts` | вложения (загрузка) и снимки экрана (snap-shot); офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic) |
 | `three/addons/environments/RoomEnvironment.js` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/three/addons/environments/RoomEnvironment.js.ts` | облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh |
 | `three/addons/loaders/GLTFLoader.js` | заглушка (создана t3-sync.py) | `ui/src/t3/base/stubs/three/addons/loaders/GLTFLoader.js.ts` | облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh |
@@ -342,4 +373,4 @@
   `web/terminal/ghostty/fonts/SymbolsNerdFontMono-Regular.woff2` — MIT (Ryan L McIntyre, файл `LICENSE` рядом), перенесён с терминалом (скрыт).
 - Значки — `lucide-react` (ISC) и встроенные SVG компонентов T3; логотипы MCP-приложений (`web/components/mcp/logos/*.png`) перенесены
   с MCP Apps (скрыты). Значки приложения T3 (`apps/web/public/*`, `assets/prod/*`) не берутся: знак — эмблема HoH (`src/assets/emblem-*.png`).
-- Объём перенесённого: 38.6 МБ; крупнее всего — .glb — 12.1 МБ, .ts — 9.1 МБ, .tsx — 7.8 МБ, .json — 7.5 МБ, .woff2 — 1.2 МБ, .wasm — 0.7 МБ. Переводы T3 (`web/i18n/translations/*.json`) — все 10 языков, как у T3.
+- Объём перенесённого: 38.7 МБ; крупнее всего — .glb — 12.1 МБ, .ts — 9.3 МБ, .tsx — 7.8 МБ, .json — 7.5 МБ, .woff2 — 1.2 МБ, .wasm — 0.7 МБ. Переводы T3 (`web/i18n/translations/*.json`) — все 10 языков, как у T3.

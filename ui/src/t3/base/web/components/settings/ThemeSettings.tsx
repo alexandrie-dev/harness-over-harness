@@ -918,10 +918,7 @@ export function ThemeLibrary({
             <PaintbrushIcon />
             <T>Create theme</T>
           </Button>
-          <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
-            <PlusIcon />
-            <T>Add theme</T>
-          </Button>
+          {/* HoH (ui/T3-MAP.md): импорт тем VS Code / Open VSX выключен — кнопки «Add theme» нет. */}
         </div>
       </div>
       {renderPairGrid()}

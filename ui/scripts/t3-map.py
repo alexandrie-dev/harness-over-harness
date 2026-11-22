@@ -113,6 +113,7 @@ if base:
     import t3graph
     out = os.path.join(UI, base['out']); state = json.load(open(os.path.join(out, 'state.json')))
     checked = set(json.load(open(os.path.join(out, 'tsconfig.json')))['files'])
+    on_stubs = set(state.get('on_stubs', []))
     r = t3graph.analyse(T3)
     rel = lambda f: next(f'{k}/{f[len(v) + 1:]}' for k, v in t3graph.ROOTS.items() if f.startswith(v + '/'))
     edited = set(base.get('replaced', {})) | set(base.get('patched', {}))
@@ -123,8 +124,10 @@ if base:
         same = [f for f in fs if os.path.isfile(os.path.join(out, rel(f))) and filecmp.cmp(os.path.join(T3, f), os.path.join(out, rel(f)), shallow=False)]
         diff_unexpected += [rel(f) for f in fs if f not in same and rel(f) not in edited]
         same_total += len(same)
-        deferred = [f for f in code if rel(f) not in checked]
-        dir_rows.append(f'| `{src}` | `ui/{base["out"]}/{root}` | {len(fs)} | {len(code)} | {len(same)} | {len([f for f in fs if rel(f) in edited])} | {len(deferred)} |')
+        if not fs: continue
+        deferred = [f for f in code if rel(f) not in checked and rel(f) not in on_stubs]
+        dir_rows.append(f'| `{src}` | `ui/{base["out"]}/{root}` | {len(fs)} | {len(code)} | {len(same)} | {len([f for f in fs if rel(f) in edited])} | {len(deferred)} | {len([f for f in code if rel(f) in on_stubs])} |')
+    exclude_rows = '\n'.join(f'| `{pattern.replace("|", chr(92) + "|")}` | {why} |' for pattern, why in base.get('exclude', {}).items())
     edit_rows = [f'| `{x}` | замена (наш файл) | {why} |' for x, why in base.get('replaced', {}).items()]
     edit_rows += [f'| `{x}` | правка (`ui/{base["patches"]}/{x}.patch`) | {why} |' for x, why in base.get('patched', {}).items()]
     switch_rows = [f'| {a} | {b} | {c} |' for a, b, c in base.get('switches', [])]
@@ -148,21 +151,34 @@ if base:
 ## Основа HOH-40: весь веб-клиент T3 (`ui/{base['out']}`)
 
 План — `plans/hoh40-t3-base.md` (этап 2). Переносит `ui/scripts/t3-sync.py` по разделу `base` манифеста: весь `apps/web/src` без тестов
-(`*.test.*`, `*.browser.test.*`, `*.bench.*`) и файлы `packages/{{contracts,shared,client-runtime}}/src`, до которых дотягиваются его импорты
-(граф — `ui/scripts/t3graph.py`), плюс `apps/web/gt.config.json` → `ui/{base['out']}/gt.config.json` (его читает `i18n/locales.ts`).
+(`*.test.*`, `*.browser.test.*`, `*.bench.*`) и файлы пакетов T3 `packages/*/src`, до которых дотягиваются его импорты (граф —
+`ui/scripts/t3graph.py`): `contracts`, `shared`, `client-runtime` и клиентские определения (`provider-core/client`, `provider-*/client`,
+`source-control-*/shared`, `secret-provider-*`, `issue-tracker-linear/shared`) — видимый код строит по ним списки на уровне модуля.
+Плюс `apps/web/gt.config.json` → `ui/{base['out']}/gt.config.json` (его читает `i18n/locales.ts`).
 Свой проект tsc — `ui/{base['out']}/tsconfig.json` (настройки T3, псевдонимы `~/*` и `@t3tools/*` по `exports`; прежний tsconfig основу
-не видит), псевдонимы для vite — `ui/{base['out']}/aliases.json`. В сборку окна основа пока не входит (э3), Tailwind её не сканирует
-(`@source not "../t3"`). Проверка импортов — `ui/scripts/t3-check.py` (оба набора).
+не видит), псевдонимы для vite — `ui/{base['out']}/aliases.json`. В окно основу подключает вход u4 (`ui/src/t3-entry`); отдельная сборка
+основы для проверки — `ui/{base['out']}/vite.config.ts` (`index.html` → их `web/bootstrap.ts`; с `T3_BASE_QA=1` ещё `qa.html`: T3 на хосте
+u3 с пустым движком), снимки — `ui/scripts/t3-snapshot.mjs`; точка подключения описана в `ui/{base['out']}/README-HOH.md`.
+Tailwind прежней оболочки её не сканирует (`@source not "../t3"`). Проверка импортов — `ui/scripts/t3-check.py` (оба набора).
+
+Не переносятся (раздел `exclude` манифеста; файлов: **{state.get('excluded', 0)}**):
+
+| Шаблон пути T3 | Почему |
+|---|---|
+{exclude_rows}
 
 Файлов перенесено: **{state['transferred']}**, из них без изменений: **{same_total}**, правок файлов T3: **{len(edited)}** (таблица ниже){'' if not diff_unexpected else ', НЕОЖИДАННО ОТЛИЧАЮТСЯ: ' + ', '.join(diff_unexpected)}.
 Отложено (не проверяет tsc: в замыкании импортов есть пакет, которого нет в `ui/package.json` и `ui/node_modules` в версии, совместимой с lock T3: тот же major, для 0.x — тот же minor): **{state['deferred']}** из {state['code']} файлов кода;
 не хватает пакетов (сколько файлов T3 их импортирует): {missing}. Когда пакеты из `ui/T3-DEPS.md` (раздел HOH-40) стоят, отложенных нет —
-`t3-sync.py` пересчитывает список сам. tsc основы: `noImplicitAny` выключен — код скрытых частей получает из заглушек значения `any`,
-и его колбэки без явных типов (у T3 этот код проверен с настоящими пакетами); остальные настройки — как в T3 (`strict`,
-`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`).
+`t3-sync.py` пересчитывает список сам. tsc основы — с настройками T3 (`strict`, `noImplicitAny`, `noUncheckedIndexedAccess`,
+`exactOptionalPropertyTypes`); в проекте **{state.get('checked', len(checked))}** файлов. На заглушках: **{len(on_stubs)}** файлов скрытых частей, из
+которых через файлы скрытых частей достижим пакет-заглушка (офис, sql.js, three, heic/tiff, Clerk, daypicker и т.п.). Их тела без
+настоящих пакетов не проверить (значения заглушек — `any`, у колбэков нет типов), поэтому tsc берёт вместо них объявления:
+`X.hoh.d.ts` (tsc `--noCheck`) и `X.hoh.ts` с реэкспортом рядом с файлом, `moduleSuffixes: [".hoh", ""]`; все их импортёры, в том числе
+видимые, проверяются полностью. Видимых файлов среди них нет. Пишет их `t3-sync.py`; vite эти файлы не берёт.
 
-| Папка T3 | Папка у нас | Файлов | Из них кода | Без изменений | Правок | Отложено |
-|---|---|---|---|---|---|---|
+| Папка T3 | Папка у нас | Файлов | Из них кода | Без изменений | Правок | Отложено | На заглушках |
+|---|---|---|---|---|---|---|---|
 """ + '\n'.join(dir_rows) + """
 
 ### Правки файлов T3
@@ -171,8 +187,8 @@ if base:
 |---|---|---|
 """ + '\n'.join(edit_rows) + """
 
-Имя продукта: `APP_BASE_NAME` и `APP_DISPLAY_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()` — имя HoH передаст
-хост (э3), правка не нужна. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — """ + str(sum(1 for dp, _, ns in os.walk(os.path.join(out, 'web')) for n in ns if n.endswith(('.ts', '.tsx')) and 'i18n' not in dp for line in open(os.path.join(dp, n), encoding='utf-8') if 'T3 Code' in line and not line.lstrip().startswith(('//', '*', '/*')))) + """ строк, в русском переводе `web/i18n/translations/ru.json` — """ + str(open(os.path.join(out, 'web/i18n/translations/ru.json'), encoding='utf-8').read().count('T3 Code')) + """; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).
+Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
+`desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — """ + str(sum(1 for dp, _, ns in os.walk(os.path.join(out, 'web')) for n in ns if n.endswith(('.ts', '.tsx')) and 'i18n' not in dp for line in open(os.path.join(dp, n), encoding='utf-8') if 'T3 Code' in line and not line.lstrip().startswith(('//', '*', '/*')))) + """ строк, в русском переводе `web/i18n/translations/ru.json` — """ + str(open(os.path.join(out, 'web/i18n/translations/ru.json'), encoding='utf-8').read().count('T3 Code')) + """; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).
 
 ### Скрытые части: чем выключены
 
@@ -186,10 +202,12 @@ if base:
 ### Заглушки и прослойки пакетов
 
 Пакеты скрытых частей и пакеты T3, которые не берутся (список и причины — `ui/T3-DEPS.md`, «Заглушено вместо установки»). Созданная
-заглушка отдаёт значения, которые можно вызвать, создать через `new` и читать (`stubs/absent.ts`); типы — `any` с пространством имён
+заглушка — функция: её вызов и `new` дают объект, любое свойство которого — функция, возвращающая `undefined` (`stubs/absent.ts`,
+образец — пробная сборка u4: так проходит `export const { a } = make(...)` на уровне модуля); типы — `any` с пространством имён
 для обращений через точку. Где коду нужны точные типы или поведение, вместо созданной лежит наша прослойка (`shims/`, `types/`).
-Адреса файлов пакетов (`?url`) указывают на `stubs/absent-url.ts`. Для видимых импортёров (`@clerk/react`, `@t3tools/provider-*`,
-`@t3tools/source-control-*`, `@t3tools/issue-tracker-linear`, `@t3tools/secret-provider-definitions`) в э3 нужны рабочие прослойки.
+Адреса файлов пакетов (`?url`) и непереносимых файлов (модели `.glb`) указывают на `stubs/absent-url.ts`. Пакеты T3 (`@t3tools/*`)
+не заглушаются: их клиентские файлы переносятся. i18n (`gt-react`, `gt-i18n`) — прослойка окна: строки T3 по-английски как есть,
+подстановка переменных ICU, перевод — по словарю языка (`registerDictionary`, пока пусто), без сети.
 
 | Пакет (путь импорта) | Что | Файл | Почему |
 |---|---|---|---|

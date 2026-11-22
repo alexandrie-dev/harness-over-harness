@@ -1,7 +1,7 @@
 """Граф импортов веб-клиента T3 Code (MIT, только чтение) для HOH-40: что переносится, что ставится, что заглушается.
 
 Общий модуль для t3-deps.py (список пакетов) и t3-sync.py (перенос). Сам ничего не пишет.
-Корни переноса: apps/web/src целиком (кроме тестов) и нужные файлы packages/{contracts,shared,client-runtime}/src.
+Корни переноса: apps/web/src целиком (кроме тестов) и нужные файлы packages/*/src (клиентские части пакетов T3).
 Видимая часть — замыкание импортов от apps/web/src/main.tsx, в которое не входят файлы скрытых частей (HIDDEN).
 Пакеты видимой части ставятся; пакеты, которые импортируют только скрытые части, и пакеты T3, которые не берутся
 (провайдеры, source-control, секреты, трекеры), заменяются заглушками через псевдонимы.
@@ -11,8 +11,18 @@ import json, os, re, subprocess
 T3_DEFAULT = '/mnt/toshiba/alexandrie/third-party/t3code'
 ENTRY = 'apps/web/src/main.tsx'
 # Папка T3 -> папка в ui/src/t3/base (имена как у прежнего переноса: web, shared, client-runtime; плюс contracts).
+# Пакеты T3 (packages/*) берутся файлами: переносится только то, до чего дотягиваются импорты apps/web/src — клиентские
+# определения (provider-core/client, provider-*/client, source-control-*/shared/definition, secret-provider-*, issue-tracker-*):
+# видимый код (боковая колонка, ChatView, настройки провайдеров) строит по ним списки на уровне модуля. Новых npm-пакетов
+# они не требуют. Папка в src/t3/base — имя папки пакета у T3.
+def _t3_packages(t3):
+    listed = subprocess.run(['git', '-C', t3, 'ls-files', 'packages/*/package.json'], capture_output=True, text=True, check=True).stdout.split()
+    return {json.load(open(os.path.join(t3, f)))['name']: os.path.dirname(f) for f in sorted(listed)}
+
+
 ROOTS = {'web': 'apps/web/src', 'contracts': 'packages/contracts/src', 'shared': 'packages/shared/src', 'client-runtime': 'packages/client-runtime/src'}
-TAKEN_PKGS = {'@t3tools/contracts': 'packages/contracts', '@t3tools/shared': 'packages/shared', '@t3tools/client-runtime': 'packages/client-runtime'}
+TAKEN_PKGS = {name: pdir for name, pdir in _t3_packages(T3_DEFAULT).items() if name.startswith('@t3tools/')}
+ROOTS.update({os.path.basename(pdir): pdir + '/src' for pdir in sorted(TAKEN_PKGS.values()) if os.path.basename(pdir) not in ROOTS})
 CODE = ('.ts', '.tsx', '.mts', '.js', '.mjs')
 # Тесты и замеры T3 не переносятся.
 TEST = re.compile(r'\.test\.|\.bench\.|/testing/')
@@ -48,7 +58,8 @@ HIDDEN = [
     ('разделы настроек, кроме общих, вида, чата, провайдеров и доступа', [
         r'apps/web/src/routes/_chat\.settings\.(about|archived|beta|browser|connections|devices|diagnostics|diffs|integrations|keybindings|labs|maintenance|open-source-licenses|projects|scheduled-tasks|secrets|snap-shot|source-control|storage|threads|voice|worktrees)\.tsx$', ]),
 ]
-# Пакеты T3, которые не берутся (план: файлы данных T3 — провайдеры, source-control, секреты, трекеры, ssh, tailscale).
+# Причины для пакетов @t3tools, которых нет в packages/* T3 (их импорты заменяются заглушками). С веха 1 HOH-40 все
+# пакеты packages/* берутся файлами (TAKEN_PKGS), так что заглушек пакетов T3 нет.
 NOT_TAKEN_WS = {
     'provider': 'провайдеры T3 (установка, вход, ACP-реестр)', 'source-control': 'git и source control',
     'secret-provider': 'секреты и 1Password', 'issue-tracker': 'задачи и трекеры', 'tailscale': 'tailscale/ssh', 'ssh': 'tailscale/ssh',
@@ -59,7 +70,12 @@ NOT_TAKEN_WS = {
 FORCE_STUB = {'@clerk/react': 'облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh',
               '@clerk/electron': 'облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh',
               '@clerk/clerk-js': 'облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh',
-              'vite-plus': 'сборка T3 (Vite+): окно собирает обычным vite, типы `vite-plus/client` дают `vite/client`'}
+              'vite-plus': 'сборка T3 (Vite+): окно собирает обычным vite, типы `vite-plus/client` дают `vite/client`',
+              'gt-react': 'i18n T3 (General Translation): настоящий не ставим (решение CEO) — прослойка окна shims/gt-react.tsx, без сети, английские строки T3 как есть',
+              'gt-i18n': 'i18n T3 (General Translation): настоящий не ставим (решение CEO) — прослойка окна shims/gt-i18n.ts, без сети, английские строки T3 как есть'}
+# Пакеты, у которых окно держит свою версию, хотя major отличается от lock T3 (решение ведущего, HOH-40 веха 1):
+# файлы с ними не откладываются; отличия (нет иконки и т.п.) называет проверка tsc основы.
+WINDOW_VERSION = {'lucide-react': 'окно держит lucide-react 1.x (T3 — 0.564): все иконки, которые берёт T3, в 1.x есть'}
 # Импорты типов, которые дают пакеты @types/*.
 TYPES_ONLY = {'hast': '@types/hast', 'mdast': '@types/mdast', 'unist': '@types/unist'}
 
@@ -127,7 +143,7 @@ class Graph:
         self.set = set(self.all)
         self.exports = {}
         for name, pdir in TAKEN_PKGS.items():
-            for key, value in json.load(open(os.path.join(t3, pdir, 'package.json')))['exports'].items():
+            for key, value in json.load(open(os.path.join(t3, pdir, 'package.json'))).get('exports', {}).items():
                 target = value if isinstance(value, str) else (value.get('types') or value.get('import') or value.get('default'))
                 self.exports[name + key[1:]] = os.path.normpath(os.path.join(pdir, target))
         self.edges = {f: self._edges(f) for f in self.all if f.endswith(CODE)}
