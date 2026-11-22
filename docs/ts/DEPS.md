@@ -20,7 +20,8 @@
     "0BSD",
     "Apache-2.0 WITH LLVM-exception",
     "Unicode-3.0",
-    "Zlib"
+    "Zlib",
+    "Unlicense"
   ],
   "direct": {
     "react": "19.3.1",
@@ -192,10 +193,6 @@
     "dompurify@3.4.17": {
       "license": "(MPL-2.0 OR Apache-2.0)",
       "reason": "двойная лицензия, используется ветка Apache-2.0; решение CEO 20.11.2026"
-    },
-    "isbot@5.2.3": {
-      "license": "Unlicense",
-      "reason": "ВРЕМЕННО: ждёт решения CEO (HOH-40, 22.11)"
     }
   }
 }
@@ -374,3 +371,5 @@ prepare не выполняется при установке из реестр�
 Исключение rope-sequence@1.3.4 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
 
 Исключение w3c-keyname@2.2.8 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Unlicense разрешена постоянно (решение CEO 22.11.2026 19:24): отказ от прав в пользу общественного достояния, условий меньше, чем у MIT. Первый пакет — isbot@5.2.3 (зависимость @tanstack/react-router, HOH-40).
