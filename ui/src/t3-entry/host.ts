@@ -1,11 +1,17 @@
-// Шов входа T3 с хостом HoH (ui/src/hoh-host, u3). Хост экспортирует из ui/src/hoh-host/index.ts:
-//   export const installHohHost: InstallHohHost
-// Вход вызывает его один раз, до загрузки кода T3 (src/t3-entry/main.ts): хост ставит свой протокол
-// (in-memory WebSocket в globalThis, см. hoh-host/socket.ts) и сообщает в конфиге сервера только видимые области.
-import type { HiddenArea } from './features';
+// Шов входа T3 с хостом HoH (ui/src/hoh-host, u3; его README — «Как подставить»). Хост экспортирует
+//   index.ts: installHohHost({ engine })  — ставит in-memory WebSocket и fetch для http://hoh.local до запуска T3;
+//   tauri.ts: tauriEngine()                — движок через мост Tauri (engine_request, события, approval_decide).
+// Сборка входа (vite.ts) подставляет их как `virtual:hoh-host`; пока хоста нет — host-stub.ts.
 
-export interface HohHostOptions {
-  /** Скрытые области (features.ts): хост не сообщает их в конфиге/возможностях сервера. */
-  readonly hidden: readonly HiddenArea[];
+/** Движок HoH для хоста: ui/src/hoh-host/engine.ts (HohEngine). Здесь — только то, что нужно входу. */
+export interface HohEngineLike {
+  request(method: string, params: unknown): Promise<unknown>;
 }
-export type InstallHohHost = (options: HohHostOptions) => void;
+export interface HohHostOptions {
+  readonly engine: HohEngineLike;
+}
+export type InstallHohHost = (options: HohHostOptions) => unknown;
+export type TauriEngine = () => HohEngineLike;
+
+/** Адрес, на который собран T3 (VITE_HTTP_URL): его никто не слушает, отвечает хост в странице. */
+export const HOH_HTTP_URL = 'http://hoh.local';

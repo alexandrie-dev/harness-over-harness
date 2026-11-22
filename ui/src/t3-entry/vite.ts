@@ -9,12 +9,14 @@ import type { Plugin, UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { HIDDEN_ROUTES, VISIBLE_SETTINGS } from './features';
+import { HOH_HTTP_URL } from './host';
 
 const UI = resolve(import.meta.dirname, '../..');
 export const T3_BASE = resolve(UI, 'src/t3/base');
 const T3_WEB = resolve(T3_BASE, 'web');
-const HOST = resolve(UI, 'src/hoh-host/index.ts');
+const HOST = resolve(UI, 'src/hoh-host');
 const HOST_STUB = resolve(import.meta.dirname, 'host-stub.ts');
+const HOST_MODULE = '\0hoh-host';
 export const T3_PAGE = 't3.html';
 export const T3_ASSETS = 't3-assets';
 
@@ -60,8 +62,8 @@ function hohT3(): Plugin {
     name: 'hoh-t3-entry',
     enforce: 'pre',
     resolveId(source, importer) {
-      // Хост HoH (u3): ui/src/hoh-host/index.ts; пока его нет — заглушка с тем же именем.
-      if (source === VIRTUAL_HOST) return existsSync(HOST) ? HOST : HOST_STUB;
+      // Хост HoH (u3): ui/src/hoh-host/{index,tauri}.ts; пока его нет — заглушка с теми же именами.
+      if (source === VIRTUAL_HOST) return existsSync(resolve(HOST, 'index.ts')) ? HOST_MODULE : HOST_STUB;
       // Загрузчик T3 как есть: apps/web/src/bootstrap.ts (импортирует их main.tsx и показывает ошибку запуска).
       if (source === VIRTUAL_BOOTSTRAP) return resolve(T3_WEB, 'bootstrap.ts');
       if (!importer?.startsWith(T3_WEB)) return null;
@@ -69,6 +71,10 @@ function hohT3(): Plugin {
       return route && route in HIDDEN_ROUTES ? ROUTE_PREFIX + route : null;
     },
     load(id) {
+      if (id === HOST_MODULE) {
+        return `export { installHohHost } from ${JSON.stringify(resolve(HOST, 'index.ts'))};\n`
+          + `export { tauriEngine } from ${JSON.stringify(resolve(HOST, 'tauri.ts'))};\n`;
+      }
       if (!id.startsWith(ROUTE_PREFIX)) return null;
       const file = id.slice(ROUTE_PREFIX.length);
       return hiddenRouteModule(file, HIDDEN_ROUTES[file]!);
@@ -76,7 +82,14 @@ function hohT3(): Plugin {
     transform(code, id) {
       return id === resolve(T3_WEB, 'components/settings/settingsSearch.ts') ? { code: settingsNavFilter(code), map: null } : null;
     },
-    // Страница T3 — вход окна: dist/t3.html → dist/index.html (та же папка, относительные адреса не меняются).
+  };
+}
+
+/** Страница T3 — вход окна: dist/t3.html → dist/index.html (та же папка, относительные адреса не меняются). */
+function t3Page(): Plugin {
+  return {
+    name: 'hoh-t3-page',
+    enforce: 'post',
     generateBundle(_options, bundle) {
       const page = bundle[T3_PAGE];
       if (!page || page.type !== 'asset') return this.error(`нет ${T3_PAGE} в сборке`);
@@ -100,7 +113,7 @@ export function legacyCopy(): Plugin {
 
 // Переменные сборки T3 (их vite.config.ts): облако, ретрансляция, телеметрия и обновления выключены пустыми значениями.
 const T3_ENV = [
-  'VITE_WS_URL', 'VITE_HTTP_URL', 'VITE_T3CODE_RELAY_URL', 'VITE_CLERK_PUBLISHABLE_KEY', 'VITE_CLERK_JWT_TEMPLATE',
+  'VITE_WS_URL', 'VITE_T3CODE_RELAY_URL', 'VITE_CLERK_PUBLISHABLE_KEY', 'VITE_CLERK_JWT_TEMPLATE',
   'VITE_CLERK_CLI_OAUTH_CLIENT_ID', 'VITE_RELAY_OTLP_TRACES_URL', 'VITE_RELAY_OTLP_TRACES_DATASET',
   'VITE_RELAY_OTLP_TRACES_TOKEN', 'VITE_HOSTED_APP_URL', 'VITE_HOSTED_APP_CHANNEL', 'VITE_RELEASE_CHANNEL',
   'VITE_DEV_SERVER_URL', 'T3CODE_DESKTOP_UPDATE_REPOSITORY', 'T3CODE_FEATURE_SECRETS',
@@ -132,11 +145,13 @@ export function t3Config(): UserConfig {
     root: UI,
     // boot-theme.js — их встроенный сценарий темы до запуска, вынесенный в файл (CSP окна: script-src 'self').
     publicDir: resolve(import.meta.dirname, 'public'),
-    plugins: [hohT3(), react(), tailwindcss()],
+    plugins: [hohT3(), react(), tailwindcss(), t3Page()],
     clearScreen: false,
     resolve: { alias: t3Aliases() },
     define: {
       ...Object.fromEntries(T3_ENV.map((name) => [`import.meta.env.${name}`, '""'])),
+      // T3 ходит на этот адрес (hoh-host/README.md): сокет и fetch отвечает хост в странице, сети нет.
+      'import.meta.env.VITE_HTTP_URL': JSON.stringify(HOH_HTTP_URL),
       'import.meta.env.APP_VERSION': JSON.stringify(APP_VERSION),
     },
     assetsInclude: ['**/*.wasm'],
