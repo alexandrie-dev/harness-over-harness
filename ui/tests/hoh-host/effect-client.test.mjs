@@ -245,6 +245,24 @@ test('T3 first run: an engine without chats is a fresh workspace (T3\'s welcome 
   await shell.stop();
 }));
 
+test('mode chip: T3 shows it under the composer of a started thread whose mode is not the default setting, so it can be switched back', () => withClient(new FakeEngine(), async client => {
+  const { resolveComposerControlsOwnership } = await contracts.loadWeb('web/composerControlsOwnership');
+  const settings = await run(client['server.getSettings']({}));
+  // ComposerControlsBar.tsx: `matchesDefault` = the thread's mode equals `defaultRuntimeMode` (permissionsShownInStrip is false in a started thread).
+  const chip = mode => resolveComposerControlsOwnership({ matchesDefault: mode === settings.defaultRuntimeMode, collapsed: false, measuredHiddenBlockCount: 0 }).showModeBlock;
+  const launched = await run(client['orchestration.launchThread']({
+    commandId: 'cmd-c', threadId: 'thread-c', projectId: 'hoh-project', title: 'Chip', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
+    runtimeMode: 'full-access', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'm-c', text: 'go', attachments: [] },
+  }));
+  assert.equal(launched.projection.thread.runtimeMode, 'full-access');
+  assert.equal(chip(launched.projection.thread.runtimeMode), true, 'Full access is shown, and Supervised is one click away');
+  await run(client['orchestration.dispatchCommand']({ type: 'thread.runtime-mode.set', commandId: 'c-m', threadId: 'thread-c', runtimeMode: 'approval-required' }));
+  const back = await run(client['orchestration.getThreadProjection']({ threadId: 'thread-c' }));
+  // The default mode: as in T3, the chip steps aside and Permissions stays in the model menu's footer (ComposerPickerFooter).
+  assert.deepEqual([back.thread.runtimeMode, chip(back.thread.runtimeMode)], ['approval-required', false]);
+}));
+
 test('T3 first run: an engine with a chat opens the app; Claude not found, or not checked, is said so and Start waits for an agent', async () => {
   const { isFreshFirstRunWorkspace } = await contracts.loadWeb('web/firstRun.logic');
   const { welcomeAgentState } = await contracts.loadWeb('web/welcomePage.logic');
@@ -268,7 +286,7 @@ test('T3 first run: an engine with a chat opens the app; Claude not found, or no
   await withClient(unchecked, async client => {
     const { config, shell } = await firstRunInput(client);
     const agents = await welcomeAgents(config);
-    assert.deepEqual([agents.readyCount, agents.checking, config.providers[0].installed, config.providers[0].message], [0, false, false, 'HoH could not check Claude.']);
+    assert.deepEqual([agents.readyCount, agents.checking, config.providers[0].installed, config.providers[0].message], [0, false, false, 'Failed to execute Claude Agent CLI health check.']);
     await shell.stop();
   });
 });

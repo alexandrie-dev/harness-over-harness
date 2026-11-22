@@ -102,10 +102,11 @@ export class FakeEngine {
         if (!this.store.has(params.sessionId)) throw new Error('unknown SDK session');
         const text = params.contentBlocks.map(block => block.text ?? '').join('');
         const messageId = `engine-m-${++this.counter}`;
-        // The engine records the message and starts the turn after answering.
+        // After answering, the engine starts the turn and then records its message (session.v4 order).
         setTimeout(() => {
-          this.emitEvent(params.sessionId, 'user/message', { id: messageId, source: { kind: 'user' }, content: [{ type: 'text', text }] });
           this.emitEvent(params.sessionId, 'turn/start', { turn: 1 });
+          this.emitEvent(params.sessionId, 'step/start', { turn: 1, step: 1 });
+          this.emitEvent(params.sessionId, 'user/message', { id: messageId, source: { kind: 'user' }, content: [{ type: 'text', text }] });
         }, 0);
         return { messageId };
       }

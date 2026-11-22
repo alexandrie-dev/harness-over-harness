@@ -5,6 +5,8 @@
 // `scratchWorkspaceRoot`): T3 offers no git, branch or worktree there. What has no capability flag is
 // limited by the server's managed policy, which T3 reads the same way (`managedPolicy`).
 
+import { englishError } from './errors.ts';
+
 export const HOH_ENVIRONMENT_ID = 'hoh-local';
 export const HOH_LABEL = 'HoH';
 export const CLAUDE_INSTANCE_ID = 'claudeAgent';
@@ -31,23 +33,79 @@ export interface ClaudeDiscovery {
   readonly detail?: string | null;
 }
 
-export const DEFAULT_CLAUDE_MODEL = 'default';
+/** Claude Code's pointer at its own default model: not a model, and T3 does not list it. */
+const CLAUDE_CODE_DEFAULT = 'default';
 
-export function claudeModels(discovery: ClaudeDiscovery | null) {
-  const models = (discovery?.models ?? []).filter(model => typeof model.id === 'string' && model.id.trim());
-  const list = models.length ? models : [{ id: DEFAULT_CLAUDE_MODEL, displayName: 'Claude', isDefault: true }];
-  return list.map(model => ({
-    slug: model.id,
-    name: (model.displayName ?? '').trim() || model.id,
-    isCustom: false,
-    ...(model.isDefault ? { isDefault: true } : {}),
-    capabilities: null,
-  }));
+/**
+ * T3's Claude catalog, in its order: slug, name and aliases of apps/server/src/provider/model-manifest.json
+ * (`providers.claudeAgent.models`). T3 names Claude's models by it (ClaudeModelCatalog.ts
+ * `resolveClaudeCatalogModel`, `claudeReportedModels`); a model it does not know keeps Claude's own name.
+ */
+const T3_CLAUDE_CATALOG: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
+  ['claude-opus-5-5', 'Claude Opus 5.5', ['opus', 'opus-5.5', 'claude-opus-5.5']],
+  ['claude-sonnet-5-5', 'Claude Sonnet 5.5', ['sonnet', 'sonnet-5.5', 'claude-sonnet-5.5']],
+  ['claude-fable-5-2', 'Claude Fable 5.2', ['fable', 'fable-5.2', 'claude-fable-5.2']],
+  ['claude-fable-5-1', 'Claude Fable 5.1', ['fable-5.1', 'claude-fable-5.1']],
+  ['claude-fable-5', 'Claude Fable 5', []],
+  ['claude-opus-5', 'Claude Opus 5', ['opus-5', 'claude-opus-5.0', 'claude-opus-5-0']],
+  ['claude-opus-4-8', 'Claude Opus 4.8', ['opus-4.8', 'claude-opus-4.8']],
+  ['claude-opus-4-7', 'Claude Opus 4.7', ['opus-4.7', 'claude-opus-4.7']],
+  ['claude-opus-4-6', 'Claude Opus 4.6', ['opus-4.6', 'claude-opus-4.6', 'claude-opus-4-6-20251117']],
+  ['claude-opus-4-5', 'Claude Opus 4.5', []],
+  ['claude-sonnet-5', 'Claude Sonnet 5', ['sonnet-5', 'claude-sonnet-5.0', 'claude-sonnet-5-0']],
+  ['claude-sonnet-4-6', 'Claude Sonnet 4.6', ['sonnet-4.6', 'claude-sonnet-4.6', 'claude-sonnet-4-6-20251117']],
+  ['claude-haiku-5-5', 'Claude Haiku 5.5', ['haiku', 'haiku-5.5', 'claude-haiku-5.5']],
+  ['claude-haiku-4-5', 'Claude Haiku 4.5', ['haiku-4.5', 'claude-haiku-4.5', 'claude-haiku-4-5-20251001']],
+];
+/** T3's model for a new Claude chat (model-manifest.json `providers.claudeAgent.defaults.chat`). */
+const T3_DEFAULT_CLAUDE = 'claude-opus-5-5';
+
+/** The catalog entry of a model id as Claude reports it: by slug or alias, without a `[1m]` or date suffix. */
+function catalogIndex(id: string): number {
+  const bare = id.trim().toLowerCase().replace(/\[[^\]]*\]$/, '').trim();
+  const ids = [bare, bare.replace(/-\d{8}$/, '')];
+  return T3_CLAUDE_CATALOG.findIndex(([slug, , aliases]) => ids.some(value => value === slug || aliases.includes(value)));
 }
 
+/**
+ * The engine's Claude models as T3 lists Claude's: catalog names in catalog order, then models the catalog
+ * does not know under Claude's own name; `default` and second ids of one catalog model are left out.
+ * The slug stays the engine's id: it is what the engine selects.
+ */
+export function claudeModels(discovery: ClaudeDiscovery | null) {
+  const reported = (discovery?.models ?? []).filter(model => typeof model.id === 'string' && model.id.trim() && model.id.trim() !== CLAUDE_CODE_DEFAULT);
+  const known = new Map<number, { slug: string; name: string }>();
+  const other: { slug: string; name: string }[] = [];
+  // A plain id wins over its `[1m]` variant.
+  for (const model of [...reported].sort((a, b) => Number(a.id.includes('[')) - Number(b.id.includes('[')))) {
+    const index = catalogIndex(model.id);
+    if (index < 0) other.push({ slug: model.id, name: (model.displayName ?? '').trim() || model.id });
+    else if (!known.has(index)) known.set(index, { slug: model.id, name: T3_CLAUDE_CATALOG[index][1] });
+  }
+  const list = [...[...known.entries()].sort(([a], [b]) => a - b).map(([, model]) => model), ...other];
+  // Nothing to choose from (the engine could not ask Claude): Claude Code picks.
+  if (!list.length) list.push({ slug: CLAUDE_CODE_DEFAULT, name: 'Claude' });
+  return list.map(model => ({ ...model, isCustom: false, capabilities: null }));
+}
+
+/** T3's model for a new chat when the engine offers it, else the first one. */
 export function defaultClaudeModel(discovery: ClaudeDiscovery | null): string {
   const models = claudeModels(discovery);
-  return (models.find(model => model.isDefault) ?? models[0]).slug;
+  return (models.find(model => T3_CLAUDE_CATALOG[catalogIndex(model.slug)]?.[0] === T3_DEFAULT_CLAUDE) ?? models[0]).slug;
+}
+
+/** The id when T3 lists it; Claude Code's `default` and ids the engine no longer offers are not. */
+export function listedClaudeModel(discovery: ClaudeDiscovery | null, id: unknown): string | null {
+  return typeof id === 'string' && claudeModels(discovery).some(model => model.slug === id) ? id : null;
+}
+
+/** T3's own words for Claude's state (apps/server/src/provider/ClaudeProvider.ts); the engine's are not English. */
+function claudeMessage(discovery: ClaudeDiscovery | null): string | undefined {
+  if (discovery === null) return 'Failed to execute Claude Agent CLI health check.';
+  if (!discovery.installed) return 'Claude Agent CLI (`claude`) was not found on PATH.';
+  if (discovery.auth === 'unauthenticated') return 'Claude Code is not authenticated. Run `claude auth login` and try again.';
+  const detail = discovery.detail?.trim();
+  return detail ? englishError(detail, 'Claude Agent CLI is installed but failed to run.') : undefined;
 }
 
 /** What T3's welcome page and provider settings show: found or not, signed in or not, as the engine says. */
@@ -68,7 +126,7 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
     status: ready ? 'ready' : 'error',
     auth: { status: discovery?.auth ?? 'unknown' },
     checkedAt: now,
-    ...(discovery === null ? { message: 'HoH could not check Claude.' } : discovery.detail?.trim() ? { message: discovery.detail.trim() } : {}),
+    ...(claudeMessage(discovery) === undefined ? {} : { message: claudeMessage(discovery) }),
     models: claudeModels(discovery),
     slashCommands: [],
     skills: [],
@@ -76,21 +134,23 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
 }
 
 /** Every `ServerSettings` field has a decoding default; only what HoH decides is sent. */
-export function serverSettings(model: string, mode: HohAccessMode, overrides: Record<string, unknown> = {}) {
+export function serverSettings(model: string, defaultMode: HohAccessMode, overrides: Record<string, unknown> = {}) {
   return {
     ...overrides,
     // "Add project" offers no repository host to clone from (T3 turns its default host off by this setting:
     // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
     offeredSourceControlProviders: { github: false },
     defaultModelSelection: { instanceId: CLAUDE_INSTANCE_ID, model },
-    defaultRuntimeMode: runtimeModeOf(mode),
+    // The mode a new thread starts in (T3's setting), not the mode in effect: T3 shows the mode chip under
+    // the composer only while a thread's mode differs from it (chat/composerControlsOwnership.ts).
+    defaultRuntimeMode: runtimeModeOf(defaultMode),
   };
 }
 
 export interface ConfigInput {
   readonly cwd: string;
   readonly discovery: ClaudeDiscovery | null;
-  readonly mode: HohAccessMode;
+  readonly defaultMode: HohAccessMode;
   readonly settingsOverrides?: Record<string, unknown>;
   readonly now: string;
 }
@@ -143,7 +203,7 @@ export function serverConfig(input: ConfigInput) {
       otlpMetricsEnabled: false,
       otlpLogsEnabled: false,
     },
-    settings: serverSettings(model, input.mode, input.settingsOverrides),
+    settings: serverSettings(model, input.defaultMode, input.settingsOverrides),
     serverTime: input.now,
   };
 }
