@@ -15,5 +15,8 @@ installHohHost({ engine });
 // Элементы, которые T3 рисует без условия (features.ts, HIDDEN_SELECTORS), скрываются стилем входа.
 const hidden = document.createElement('style');
 hidden.textContent = HIDDEN_SELECTORS.map((selector) => `${selector} { display: none !important; }`).join('\n');
+// Шапка 40 px, как у настольного T3 на Linux/Windows: их окно задаёт полосе заголовка высоту 40 (TITLEBAR_HEIGHT), и класс
+// `.wco` берёт её через env(titlebar-area-height); у веб-клиента без этого класса — 52 px (index.css, :root).
+hidden.textContent += '\nhtml:root { --workspace-topbar-height: 40px; }';
 document.head.append(hidden);
 void import('virtual:t3-bootstrap');

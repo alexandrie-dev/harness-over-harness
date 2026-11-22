@@ -22,11 +22,11 @@ const inertNames = new Set([
       'theme-changed', 'window-created', 'suspended', 'resumed', 'webview-created',
       'drag-enter', 'drag-over', 'drag-drop', 'drag-leave'].map(name => 'tauri://' + name),
 ]);
-// Вход окна на веб-клиенте T3 (HOH-40, `vite build --mode t3`): dist/index.html, dist/boot-theme.js, dist/t3-assets/**.
+// Вход окна на веб-клиенте T3 (HOH-40, `vite build --mode t3`): dist/index.html, dist/boot-theme.js, dist/hoh-defaults.js, dist/t3-assets/**.
 // Для него те же правила (ни одного внешнего адреса, кроме перечисленных; без eval/new Function), адреса из текста T3 —
 // только из проверенного списка src/t3-entry/dist-urls.txt; пределы размера прежней оболочки к нему не относятся.
 const t3Build = existsSync('dist/t3-assets');
-const isT3 = path => t3Build && (path === join('dist', 'index.html') || path === join('dist', 'boot-theme.js') || path.startsWith(join('dist', 't3-assets') + '/'));
+const isT3 = path => t3Build && (path === join('dist', 'index.html') || path === join('dist', 'boot-theme.js') || path === join('dist', 'hoh-defaults.js') || path.startsWith(join('dist', 't3-assets') + '/'));
 // Подстановка `${…}` в адресе — имя, которое минификатор даёт заново при каждой сборке; сверяется адрес без неё.
 const urlShape = value => value.replace(/\$\{[^}]*\}?/g, '${}');
 const t3Urls = new Set(existsSync('src/t3-entry/dist-urls.txt')

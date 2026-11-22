@@ -81,6 +81,31 @@ async function open(browser, engine, size, path = '/') {
   return { context, page, problems, off };
 }
 
+// Размеры ключевых элементов (те же признаки, что в образце T3: qa/t3-reference-20261122-1905/styles.js).
+function metrics() {
+  const box = (el) => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect(); const c = getComputedStyle(el);
+    return { rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], centerY: Math.round(r.y + r.height / 2),
+      fontSize: c.fontSize, color: c.color, background: c.backgroundColor };
+  };
+  const q = (s) => document.querySelector(s);
+  const byText = (sel, t) => [...document.querySelectorAll(sel)].find((x) => x.innerText && x.innerText.trim() === t);
+  const root = getComputedStyle(document.documentElement);
+  return {
+    root: { fontSize: root.fontSize, className: document.documentElement.className, topbar: root.getPropertyValue('--workspace-topbar-height').trim() },
+    sidebar: box(q('[data-slot=sidebar-inner]') || q('[data-sidebar=sidebar]')),
+    sidebarToggle: box(q('[data-sidebar=trigger]') || q('button[aria-label="Toggle Sidebar"]')),
+    newThread: box(q('button[aria-label="New thread"]')),
+    search: box(byText('button', 'Search') || q('[aria-label="Search threads"]')),
+    headerTitle: box(byText('span,div,p,h1,h2', 'New thread')),
+    heading: box(q('h1')),
+    composer: box(q('[role=textbox],textarea,[contenteditable=true]')),
+    send: box(q('button[aria-label*="Send"],button[aria-label*="send"]')),
+    permissions: box(q('button[aria-label^="Permissions"]') || byText('button', 'Supervised')),
+  };
+}
+
 async function settle(page) {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(600);
@@ -157,7 +182,7 @@ try {
       await settle(page);
       await page.screenshot({ path: join(OUT, file), animations: 'disabled' });
       const text = (await page.evaluate(() => document.body.innerText)).slice(0, 400);
-      report.push({ screen: screen.name, size: `${size.width}x${size.height}`, file, status, error, problems, text });
+      report.push({ screen: screen.name, size: `${size.width}x${size.height}`, file, status, error, problems, text, metrics: await page.evaluate(metrics) });
       console.log(`${status === 'passed' ? 'PASS' : 'FAIL'} ${file}${error ? ' — ' + error : ''}${problems.length ? ` (${problems.length} problems)` : ''}`);
       off(); await context.close();
     }

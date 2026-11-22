@@ -74,12 +74,16 @@ export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
   'components/chat/ComposerSpeechButton.tsx': ['ComposerSpeechButton', 'ComposerSpeechRecordingPill'],
 };
 
-/** Элементы, которые T3 рисует без условия (components/sidebar/SidebarChrome.tsx, SidebarUtilityMenu): значки внизу боковой
- * панели. «Pull requests» и «Issues» T3 показывает по данным среды — их выключает хост; правило здесь — запас. */
+/** Элементы, которые T3 рисует без условия: значки внизу боковой панели (components/sidebar/SidebarChrome.tsx,
+ * SidebarUtilityMenu) и строка на Welcome. «Issues» T3 показывает по данным среды — его выключает хост; правило здесь — запас. */
 export const HIDDEN_SELECTORS: readonly string[] = [
   '[data-sidebar="menu-item"]:has(> [aria-label="Usage"])',
   '[data-sidebar="menu-item"]:has(> [aria-label="Pull requests"])',
   '[data-sidebar="menu-item"]:has(> [aria-label="Issues"])',
+  // «Add more agents» на Welcome (components/onboarding/WelcomePage.tsx, раздел Agents): когда агент найден, подпись строки
+  // приглушена (text-muted-foreground); добавить некого — в выборе только Claude. Строка «Set up an agent» (агент не найден,
+  // кнопка Install) — с text-foreground и остаётся.
+  'section > div.min-w-0 > [data-slot="collapsible"]:has(> [data-slot="collapsible-trigger"] > span.text-sm.text-muted-foreground)',
 ];
 
 export const HIDDEN_AREAS: readonly HiddenArea[] = [
@@ -105,5 +109,6 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'voice', title: 'голосовой ввод', how: ['host', 'route', 'nav', 'component'] },
   { id: 'editor', title: 'открыть в редакторе («Open in VS Code»)', how: ['host', 'component'] },
   { id: 'project-scripts', title: 'скрипты проекта («Add project script»)', how: ['component'] },
+  { id: 'more-agents', title: '«Add more agents» на Welcome', how: ['css'] },
   { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Access', how: ['route', 'nav'] },
 ];

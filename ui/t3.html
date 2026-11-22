@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Вход окна HoH на веб-клиенте T3 (HOH-40): apps/web/index.html T3 Code (MIT, коммит 803f21f6). Отличия: имя и значок —
-     HoH; встроенные сценарий темы и стили вынесены в файлы (CSP окна); без manifest/apple-touch-icon и desktopBridge;
+     HoH; встроенные сценарий темы и стили вынесены в файлы (CSP окна); до темы — умолчания HoH (hoh-defaults.js: тёмная, панель 208 px); без manifest/apple-touch-icon и desktopBridge;
      запуск — src/t3-entry/main.ts (хост HoH, затем их bootstrap.ts). Сборка: vite build --mode t3 → dist/index.html. -->
 <html lang="en">
   <head>
@@ -11,6 +11,7 @@
     />
     <meta name="theme-color" content="#000000" />
     <link rel="icon" href="/src/assets/emblem-48.png" sizes="48x48" />
+    <script src="/hoh-defaults.js"></script>
     <script src="/boot-theme.js"></script>
     <link rel="stylesheet" href="/src/t3-entry/boot.css" />
     <title>HoH</title>
