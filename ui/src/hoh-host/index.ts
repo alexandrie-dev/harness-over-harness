@@ -1,0 +1,43 @@
+// The HoH host for T3's web client: one call before the T3 bundle starts.
+//
+//   import { installHohHost } from '../hoh-host';
+//   installHohHost();             // Tauri engine, address http://hoh.local
+//   await import('./t3-main');    // T3's own entry, unchanged, built with VITE_HTTP_URL=http://hoh.local
+//
+// T3 then opens `ws://hoh.local/ws?...` through `globalThis.WebSocket` and reads `/api/auth/session`
+// and `/.well-known/t3/environment` through `globalThis.fetch`; both are answered here, in memory.
+import type { HohEngine } from './engine.ts';
+import { HohHost } from './host.ts';
+import { installHohFetch } from './http.ts';
+import { installHohWebSocket, socketMatcher } from './socket.ts';
+import { WireServer, type WireServerOptions } from './wire.ts';
+
+export { HohHost } from './host.ts';
+export { WireServer, RpcFailure } from './wire.ts';
+export { HohWebSocket, installHohWebSocket, socketMatcher } from './socket.ts';
+export { installHohFetch, hohHttpResponse } from './http.ts';
+export type { HohEngine } from './engine.ts';
+
+/** The address T3 is built to reach (`VITE_HTTP_URL`); nothing listens there, the page answers it. */
+export const HOH_HOSTNAME = 'hoh.local';
+
+export interface InstallOptions extends WireServerOptions {
+  readonly engine: HohEngine;
+  readonly hostname?: string;
+  readonly target?: any;
+}
+
+/** Start the host and put its socket and fetch in place. Returns the host and a function that undoes it. */
+export function installHohHost(options: InstallOptions) {
+  const host = new HohHost({ engine: options.engine });
+  const server = new WireServer(host.handlers(), options);
+  const matches = socketMatcher(options.hostname ?? HOH_HOSTNAME);
+  const restoreSocket = installHohWebSocket(server, matches, options.target);
+  const restoreFetch = installHohFetch(matches, options.target);
+  void host.start();
+  return {
+    host,
+    server,
+    uninstall: () => { restoreSocket(); restoreFetch(); host.stop(); },
+  };
+}
