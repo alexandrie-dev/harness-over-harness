@@ -141,7 +141,9 @@ export function t3Config(): UserConfig {
   }
   checkHiddenRoutes(T3_WEB);
   return {
-    base: './',
+    // От корня приложения (tauri://localhost/), а не от страницы: роутер T3 меняет путь (/settings/general),
+    // и после перезагрузки на таком пути относительные адреса ресурсов не нашлись бы.
+    base: '/',
     root: UI,
     // boot-theme.js — их встроенный сценарий темы до запуска, вынесенный в файл (CSP окна: script-src 'self').
     publicDir: resolve(import.meta.dirname, 'public'),
