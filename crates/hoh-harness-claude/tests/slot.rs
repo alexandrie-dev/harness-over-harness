@@ -155,6 +155,7 @@ impl Slot {
             session_id: "hoh-1".into(),
             cwd: self.dir.path().to_string_lossy().into_owned(),
             model: None,
+            effort: None,
             policy,
             resume: None,
         }
@@ -239,7 +240,7 @@ async fn the_slot_mode_decides_even_when_the_configuration_says_full() {
     );
     assert_eq!(
         flag_value(&args, "--setting-sources"),
-        Some("user"),
+        Some("user,project,local"),
         "{args:?}"
     );
     assert!(
@@ -366,18 +367,18 @@ async fn the_launch_flags_are_the_flags_the_process_gets() {
     let words = |flags: Vec<String>| flags.join(" ");
     assert_eq!(
         words(confirm(CONFIRM_POLICY)),
-        "--permission-mode default --setting-sources user \
+        "--permission-mode default --setting-sources user,project,local \
          --permission-prompt-tool stdio --disallowedTools WebFetch,WebSearch"
     );
     assert_eq!(
         words(full(FULL_POLICY)),
-        "--permission-mode bypassPermissions --setting-sources user \
+        "--permission-mode bypassPermissions --setting-sources user,project,local \
          --permission-prompt-tool stdio --allow-dangerously-skip-permissions"
     );
     // Full does not widen a read-only session.
     assert_eq!(
         words(full(READ_ONLY_POLICY)),
-        "--permission-mode dontAsk --setting-sources user --tools \
+        "--permission-mode dontAsk --setting-sources user,project,local --tools \
          Read,Glob,Grep,LS,NotebookRead,TodoWrite"
     );
     slot.close().await;
@@ -599,9 +600,10 @@ impl Window {
     }
 }
 
-/// The human's user settings by default; none of them when the profile says `isolated`.
+/// The human's settings and the working folder's by default (as T3, HOH-40); none of them when
+/// the profile says `isolated`.
 const SOURCES: [(&str, &[&str]); 2] = [
-    ("{}", &["--setting-sources", "user"]),
+    ("{}", &["--setting-sources", "user,project,local"]),
     (
         r#"{"settingSources":"isolated"}"#,
         &["--setting-sources", "", "--strict-mcp-config"],

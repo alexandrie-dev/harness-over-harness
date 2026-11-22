@@ -57,7 +57,7 @@ pub(crate) struct Shared {
     pub questions: Service<UserQuestions>,
     pub classifier: Service<DestructiveClassifier>,
     pub config: Arc<Config>,
-    /// The user's choices in the window (the access mode).
+    /// The user's choices in the window (the access mode, the effort of each conversation).
     pub choices: Arc<Choices>,
     /// How each conversation's native session was started, while it runs; the one started last
     /// is the last entry. One entry per conversation: another chat's start does not replace it.

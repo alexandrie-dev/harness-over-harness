@@ -94,6 +94,7 @@ fn params(dir: &Path, resume: Option<&str>, policy: HarnessPolicy) -> StartParam
         session_id: "hoh-1".into(),
         cwd: dir.to_string_lossy().into_owned(),
         model: None,
+        effort: None,
         policy,
         resume: resume.map(Into::into),
     }
@@ -745,9 +746,9 @@ async fn approval_never_is_refused_and_no_mode_gets_a_way_around_the_questions()
             .iter()
             .any(|a| a.contains("bypass") || a.contains("dangerously"))
     );
-    // The human's user settings by default; not those of the working folder.
+    // By default the human's settings and the working folder's, as T3 (HOH-40).
     let at = args.iter().position(|a| a == "--setting-sources").unwrap();
-    assert_eq!(args[at + 1], "user");
+    assert_eq!(args[at + 1], "user,project,local");
     started.session.terminate(Duration::from_millis(500)).await;
 
     // Read-only: `default` (a read outside the folder is a question), only the read tools, and no
@@ -1497,7 +1498,7 @@ async fn a_command_is_shown_with_the_folder_the_session_runs_in() {
 #[tokio::test]
 async fn the_setting_sources_are_the_same_for_every_policy() {
     for (setting_sources, value, strict) in [
-        (SettingSources::Personal, "user", false),
+        (SettingSources::Personal, "user,project,local", false),
         (SettingSources::Isolated, "", true),
     ] {
         let mut env = Env::new();
@@ -1513,14 +1514,6 @@ async fn the_setting_sources_are_the_same_for_every_policy() {
             let args = env.args();
             let at = args.iter().position(|a| a == "--setting-sources").unwrap();
             assert_eq!(args[at + 1], value, "{setting_sources:?} {policy:?}");
-            // The working folder's settings are never a source: a file someone put there does not
-            // turn the questions off.
-            assert!(
-                !args[at + 1]
-                    .split(',')
-                    .any(|source| source == "project" || source == "local"),
-                "{args:?}"
-            );
             assert_eq!(
                 args.iter().filter(|a| *a == "--setting-sources").count(),
                 1,
@@ -1866,7 +1859,9 @@ async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
         let args = env.args();
         let at = args.iter().position(|a| a == "--session-id").unwrap();
         let native = args[at + 1].clone();
-        let argv = env.harness().argv(&policy, access, None, None, &native);
+        let argv = env
+            .harness()
+            .argv(&policy, access, None, None, None, &native);
         assert_eq!(argv[0], STUB);
         assert_eq!(argv[1..], args[..], "{access:?}");
         let has = |flag: &str| args.iter().any(|a| a == flag);

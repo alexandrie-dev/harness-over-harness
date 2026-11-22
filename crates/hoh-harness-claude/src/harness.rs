@@ -29,9 +29,10 @@ use crate::version;
 )]
 #[serde(rename_all = "lowercase")]
 pub enum SettingSources {
-    /// The human's own settings: those of [`PERSONAL_SETTING_SOURCES`] (their permission rules,
-    /// hooks, plugins, `CLAUDE.md`); their MCP servers are not turned off. The settings of the
-    /// working folder (`.claude/settings.json`, `.claude/settings.local.json`) are not among them.
+    /// The settings Claude Code reads in the human's terminal, those of
+    /// [`PERSONAL_SETTING_SOURCES`]: their own (permission rules, hooks, plugins, `CLAUDE.md`) and
+    /// the working folder's (`CLAUDE.md`, `.claude/settings.json`, `.claude/settings.local.json`,
+    /// `.mcp.json`); no MCP server is turned off.
     Personal,
     /// Nothing of the human's: no settings file (`--setting-sources ""`) and no MCP server
     /// (`--strict-mcp-config`, none given). What the organization manages still applies.
@@ -42,12 +43,18 @@ pub enum SettingSources {
 /// the CEO, 21.11). [`SettingSources::Isolated`] stays available in the profile.
 pub const DEFAULT_SETTING_SOURCES: SettingSources = SettingSources::Personal;
 
-/// The setting sources of [`SettingSources::Personal`], the only place they are named: the
-/// human's user settings only (the CEO, 21.11 ~02:00). The project and local settings live in the
-/// working folder, where anyone who wrote to it (another person, the model itself) could put an
-/// `allow` rule or a hook that answers in place of the window's question. The other choice (as T3
-/// reads them, `ClaudeAdapterV2.ts:5595`) is this constant set to `"user,project,local"`.
-const PERSONAL_SETTING_SOURCES: &str = "user";
+/// The setting sources of [`SettingSources::Personal`], the only place they are named: all three,
+/// as T3 runs Claude ("так же, как в T3", the founder, HOH-40, 22.11; it replaces the CEO's
+/// "user only" of 21.11). T3 gives its SDK no `settingSources`, and reads the same three itself
+/// when it needs to know what the session obeys (`ClaudeAdapterV2.ts:5595`, `:5628`,
+/// `ClaudeDriver.ts:164`; with a home of its own, `CLAUDE_CONFIG_DIR`, only the folder's two: we
+/// have none). The folder's `allow` rules and hooks then answer before the window's question, as
+/// they do in the human's terminal; the mode is still only the window's (`--permission-mode`).
+const PERSONAL_SETTING_SOURCES: &str = "user,project,local";
+
+/// The effort levels of Claude Code, lowest first: `claude --help` (`--effort <level>`) and T3
+/// (`CLAUDE_EFFORT_LEVELS`, `ClaudeModelCatalog.ts:366`).
+pub const EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
 impl SettingSources {
     /// The switches of this choice, in the order they are passed.
@@ -124,14 +131,15 @@ impl Default for ClaudeConfig {
 impl ClaudeConfig {
     /// The command line a session is started with under `access`, program first: exactly what is
     /// run for these arguments. `native_id` is the id of a new session (`--session-id`), unless
-    /// `resume` names one to continue (`--resume`). The part that decides what the session may do
-    /// without asking is [`launch_flags`](Self::launch_flags) of the same policy and mode, in the
-    /// same place.
+    /// `resume` names one to continue (`--resume`); `effort` is one of [`EFFORT_LEVELS`]
+    /// (`--effort`). The part that decides what the session may do without asking is
+    /// [`launch_flags`](Self::launch_flags) of the same policy and mode, in the same place.
     pub fn argv(
         &self,
         policy: &HarnessPolicy,
         access: AccessMode,
         model: Option<&str>,
+        effort: Option<&str>,
         resume: Option<&str>,
         native_id: &str,
     ) -> Vec<String> {
@@ -141,6 +149,7 @@ impl ClaudeConfig {
             &launch,
             self.setting_sources,
             model,
+            effort,
             resume,
             native_id,
         ));
@@ -171,10 +180,12 @@ impl ClaudeHarness {
         policy: &HarnessPolicy,
         access: AccessMode,
         model: Option<&str>,
+        effort: Option<&str>,
         resume: Option<&str>,
         native_id: &str,
     ) -> Vec<String> {
-        self.config.argv(policy, access, model, resume, native_id)
+        self.config
+            .argv(policy, access, model, effort, resume, native_id)
     }
 }
 
@@ -265,6 +276,7 @@ pub(crate) fn session_args(
     launch: &Launch,
     sources: SettingSources,
     model: Option<&str>,
+    effort: Option<&str>,
     resume: Option<&str>,
     new_id: &str,
 ) -> Vec<String> {
@@ -272,6 +284,11 @@ pub(crate) fn session_args(
     args.extend(permission_args(launch, sources));
     if let Some(model) = model.filter(|model| *model != "default") {
         args.extend(["--model".into(), model.into()]);
+    }
+    // T3 hands the chosen level to its SDK (`effort`, `ClaudeAdapterV2.ts:2296`), which passes it
+    // to the CLI as this switch.
+    if let Some(effort) = effort {
+        args.extend(["--effort".into(), effort.into()]);
     }
     match resume {
         Some(id) => args.extend(["--resume".into(), id.into()]),
@@ -663,6 +680,10 @@ impl ExternalHarness for ClaudeHarness {
         true
     }
 
+    fn effort_levels(&self) -> &'static [&'static str] {
+        EFFORT_LEVELS
+    }
+
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).
     fn start_or_resume(&self, params: StartParams) -> BoxFuture<'static, HarnessResult<Started>> {
         self.start_with_access(params, DEFAULT_ACCESS)
@@ -681,6 +702,17 @@ impl ExternalHarness for ClaudeHarness {
             // In full access nothing is asked by definition, so `never` changes nothing there.
             if params.policy.approval == ApprovalMode::Never && access == AccessMode::Confirm {
                 return Err(HarnessFailure::new(code::ESCALATION_DENIED, NEVER_REFUSED));
+            }
+            // Only a level of the list follows `--effort` (the slot passes no other).
+            if let Some(effort) = params
+                .effort
+                .as_deref()
+                .filter(|e| !EFFORT_LEVELS.contains(e))
+            {
+                return Err(HarnessFailure::new(
+                    code::PROTOCOL,
+                    format!("Claude Code has no effort level {effort:?}"),
+                ));
             }
             // No chat with a version outside the range (the CEO's condition).
             let version = match check_version(&config).await {
@@ -711,6 +743,7 @@ impl ExternalHarness for ClaudeHarness {
                 &launch,
                 config.setting_sources,
                 params.model.as_deref(),
+                params.effort.as_deref(),
                 resume.as_deref(),
                 &native,
             );
@@ -817,7 +850,8 @@ mod tests {
                         AccessMode::Confirm,
                     );
                     assert_eq!(launch.permission_mode, "default");
-                    let args = session_args(&launch, DEFAULT_SETTING_SOURCES, None, None, "id");
+                    let args =
+                        session_args(&launch, DEFAULT_SETTING_SOURCES, None, None, None, "id");
                     let at = args
                         .iter()
                         .position(|a| a == "--permission-prompt-tool")
@@ -839,6 +873,7 @@ mod tests {
         let argv = config.argv(
             &HarnessPolicy::default(),
             AccessMode::Full,
+            None,
             None,
             None,
             "id",
@@ -870,11 +905,12 @@ mod tests {
             for policy in [HarnessPolicy::default(), read_only, full_sandbox] {
                 for access in [AccessMode::Confirm, AccessMode::Full] {
                     for resume in [None, Some("old")] {
-                        let argv = config.argv(&policy, access, Some("opus"), resume, "new");
+                        let argv =
+                            config.argv(&policy, access, Some("opus"), Some("high"), resume, "new");
                         let mut expected = vec!["claude".to_owned()];
                         expected.extend(base_args());
                         expected.extend(config.launch_flags(&policy, access));
-                        expected.extend(["--model".to_owned(), "opus".to_owned()]);
+                        expected.extend(["--model", "opus", "--effort", "high"].map(str::to_owned));
                         match resume {
                             Some(id) => expected.extend(["--resume".to_owned(), id.to_owned()]),
                             None => expected.extend(["--session-id".to_owned(), "new".to_owned()]),
@@ -884,7 +920,8 @@ mod tests {
                 }
             }
         }
-        // What the window shows for each mode, with the default sources (the human's settings).
+        // What the window shows for each mode, with the default sources (the human's and the
+        // folder's settings).
         let config = ClaudeConfig::default();
         assert_eq!(config.setting_sources, SettingSources::Personal);
         assert_eq!(
@@ -893,7 +930,7 @@ mod tests {
                 "--permission-mode",
                 "default",
                 "--setting-sources",
-                "user",
+                "user,project,local",
                 "--permission-prompt-tool",
                 "stdio",
                 "--disallowedTools",
@@ -906,7 +943,7 @@ mod tests {
                 "--permission-mode",
                 "bypassPermissions",
                 "--setting-sources",
-                "user",
+                "user,project,local",
                 "--permission-prompt-tool",
                 "stdio",
                 "--allow-dangerously-skip-permissions"
@@ -918,7 +955,7 @@ mod tests {
                 "--permission-mode",
                 "dontAsk",
                 "--setting-sources",
-                "user",
+                "user,project,local",
                 "--tools",
                 "Read,Glob,Grep,LS,NotebookRead,TodoWrite"
             ]
@@ -956,11 +993,51 @@ mod tests {
         let launch = launch_for(&HarnessPolicy::default(), AccessMode::Confirm);
         let sources = DEFAULT_SETTING_SOURCES;
         assert!(
-            !session_args(&launch, sources, Some("default"), None, "id")
+            !session_args(&launch, sources, Some("default"), None, None, "id")
                 .contains(&"--model".into())
         );
         assert!(
-            session_args(&launch, sources, Some("opus"), None, "id").contains(&"--model".into())
+            session_args(&launch, sources, Some("opus"), None, None, "id")
+                .contains(&"--model".into())
         );
+    }
+    /// HOH-40: the level the window chose follows `--effort`; none, no switch (the CLI's own).
+    #[test]
+    fn the_effort_follows_its_switch() {
+        let launch = launch_for(&HarnessPolicy::default(), AccessMode::Confirm);
+        let sources = DEFAULT_SETTING_SOURCES;
+        for level in EFFORT_LEVELS {
+            let args = session_args(&launch, sources, None, Some(level), None, "id");
+            let at = args.iter().position(|a| a == "--effort").unwrap();
+            assert_eq!(args[at + 1], *level);
+        }
+        let args = session_args(&launch, sources, None, None, None, "id");
+        assert!(!args.contains(&"--effort".into()), "{args:?}");
+        assert_eq!(
+            ClaudeHarness::new(ClaudeConfig::default()).effort_levels(),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
+    }
+
+    /// HOH-40: a level that is not Claude's is refused before anything starts.
+    #[tokio::test]
+    async fn a_level_claude_does_not_have_starts_nothing() {
+        let harness = ClaudeHarness::new(ClaudeConfig {
+            executable: PathBuf::from("/nonexistent/claude"),
+            ..ClaudeConfig::default()
+        });
+        let params = StartParams {
+            session_id: "s".into(),
+            cwd: "/".into(),
+            model: None,
+            effort: Some("--dangerously-skip-permissions".into()),
+            policy: HarnessPolicy::default(),
+            resume: None,
+        };
+        let failure = match harness.start_with_access(params, AccessMode::Confirm).await {
+            Err(failure) => failure,
+            Ok(_) => panic!("started"),
+        };
+        assert_eq!(failure.code, code::PROTOCOL, "{failure}");
     }
 }

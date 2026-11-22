@@ -56,6 +56,13 @@ pub trait ExternalHarness: Send + Sync + 'static {
         false
     }
 
+    /// The effort levels the harness takes in [`StartParams::effort`], lowest first: the window
+    /// names one in `session/prompt` (`effort`, HOH-40), and another level than the running
+    /// process has starts the session anew. Default: none, so a level is not passed.
+    fn effort_levels(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// [`discover`](Self::discover), and where the found version stands against the range the
     /// harness was checked with. Default: the range is not known.
     fn discover_with_status(

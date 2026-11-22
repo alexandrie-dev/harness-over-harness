@@ -620,6 +620,7 @@ impl ExternalAgent {
         live: &mut Option<LiveSession>,
         signal: &AbortSignal,
     ) -> Result<(), HarnessFailure> {
+        let effort = self.prompt_effort();
         if let Some(session) = live.as_mut() {
             while let Ok(event) = session.events.try_recv() {
                 match event {
@@ -648,7 +649,13 @@ impl ExternalAgent {
             // launch (`Shared::retire_idle`); a terminate may say nothing on the events, so the
             // mode being back to this session's does not make the process alive again.
             let retired = self.shared.running_launch_of(self.id.as_ref()).is_none();
-            if session.dead || chosen || retired || self.model.restart.swap(false, Ordering::SeqCst)
+            // Another effort level is another process on the same native session, as in T3.
+            let other_effort = session.effort != effort;
+            if session.dead
+                || chosen
+                || retired
+                || other_effort
+                || self.model.restart.swap(false, Ordering::SeqCst)
             {
                 if let Some(old) = live.take() {
                     old.control.terminate(self.terminate_grace()).await;
@@ -677,6 +684,7 @@ impl ExternalAgent {
             session_id: self.id.to_string(),
             cwd: self.cwd(),
             model: lock(&self.model.model).clone(),
+            effort: effort.clone(),
             policy,
             resume: resume.clone(),
         };
@@ -719,8 +727,30 @@ impl ExternalAgent {
             escalated,
             dead: false,
             access,
+            effort,
         });
         Ok(())
+    }
+
+    /// The effort level the conversation's last `session/prompt` named (HOH-40), when the harness
+    /// has it. Another value is not passed on, and said in the log: the turn runs at the
+    /// harness's own level.
+    fn prompt_effort(&self) -> Option<String> {
+        let effort = self.shared.choices.effort(self.id.as_ref())?;
+        if self
+            .shared
+            .harness
+            .effort_levels()
+            .contains(&effort.as_str())
+        {
+            return Some(effort);
+        }
+        self.ctx.logger().warn(format_args!(
+            "harness \"{}\" has no effort level {}: the turn runs without one",
+            self.shared.name,
+            js_json_stringify(&json!(effort))
+        ));
+        None
     }
 
     /// [`launch_policy`], said in the log when it caps the configuration; `never` without its
@@ -1124,6 +1154,8 @@ pub(crate) struct LiveSession {
     dead: bool,
     /// The access mode it was started under: another choice in the window restarts it.
     access: AccessMode,
+    /// The effort level it was started with: another one in a prompt restarts it.
+    effort: Option<String>,
 }
 
 enum TurnOutcome {

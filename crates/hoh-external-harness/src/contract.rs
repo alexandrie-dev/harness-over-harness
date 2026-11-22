@@ -270,6 +270,10 @@ pub struct StartParams {
     pub cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The effort level of the session, one of the harness's
+    /// [`effort_levels`](crate::ExternalHarness::effort_levels); none: the harness's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub policy: HarnessPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<NativeSessionId>,

@@ -443,6 +443,49 @@ async fn registry_refuses_undeclared_and_duplicate_methods_and_unregisters_on_di
     env.close().await;
 }
 
+/// HOH-40: the one `session/prompt` listener hears each prompt's session and whole params (the
+/// window's `effort`, which the server itself does not read), until it is disposed.
+#[tokio::test]
+async fn a_prompt_listener_hears_the_params_of_every_prompt() {
+    let env = Env::new().await;
+    let registry = registry(&env).await;
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let guard = registry
+        .on_prompt(&env.ctx, move |session, params| {
+            log.lock()
+                .unwrap()
+                .push((session.to_owned(), params["effort"].clone()));
+        })
+        .unwrap();
+    assert!(registry.on_prompt(&env.ctx, |_, _| {}).is_err());
+    env.initialize().await;
+    let prompt = |effort: &str| {
+        json!({
+            "sessionId": "s1",
+            "contentBlocks": [{"type": "text", "text": "hi"}],
+            "effort": effort,
+        })
+    };
+    env.server
+        .handle_request("session/prompt", prompt("high"))
+        .await
+        .unwrap();
+    env.wait("s1").await;
+    assert_eq!(
+        *heard.lock().unwrap(),
+        vec![("s1".to_owned(), json!("high"))]
+    );
+    guard.dispose().await;
+    env.server
+        .handle_request("session/prompt", prompt("max"))
+        .await
+        .unwrap();
+    env.wait("s1").await;
+    assert_eq!(heard.lock().unwrap().len(), 1);
+    env.close().await;
+}
+
 struct Approver(Mutex<Vec<String>>, bool);
 impl PrivilegedApprover for Approver {
     fn approve(&self, method: &str, _: &Value) -> BoxFuture<'static, Result<(), BoxError>> {
