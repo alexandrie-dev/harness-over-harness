@@ -436,3 +436,47 @@ test('Claude\'s models with T3\'s names, Claude Code\'s "default" left out, T3\'
   const other = connect(missing).client;
   assert.equal((await other.call('server.getConfig', {})).providers[0].message, 'Claude Agent CLI (`claude`) was not found on PATH.');
 });
+
+test('reasoning levels: T3\'s levels and default for the model, the chosen one goes to the engine as `effort` of session/prompt', async () => {
+  const engine = new FakeEngine({
+    access: { mode: 'confirm', selected: { executor: 'claude', model: 'opus' } },
+    discovery: { executor: 'claude', installed: true, version: '2.1.329', versionStatus: 'supported', auth: 'authenticated', detail: null, models: [
+      { id: 'opus', displayName: 'Opus 5.5' }, { id: 'sonnet', displayName: 'Sonnet 5.5' }, { id: 'claude-haiku-4-5', displayName: 'Haiku 4.5' }] },
+  });
+  const { client } = connect(engine);
+  const config = await client.call('server.getConfig', {});
+  const levels = slug => config.providers[0].models.find(model => model.slug === slug).capabilities?.optionDescriptors?.[0];
+  assert.deepEqual(levels('opus').options.map(option => option.id), ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(levels('opus').options.find(option => option.isDefault).id, 'medium');
+  assert.equal(levels('sonnet').options.find(option => option.isDefault).id, 'high');
+  assert.equal(levels('claude-haiku-4-5'), undefined, 'T3 offers none for Haiku 4.5');
+  const selection = options => ({ instanceId: 'claudeAgent', model: 'opus', options });
+  await client.call('orchestration.launchThread', {
+    commandId: 'c1', threadId: 't-e', projectId: 'hoh-project', title: 'E', modelSelection: selection([{ id: 'effort', value: 'xhigh' }]),
+    runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'm1', text: 'one', attachments: [] },
+  });
+  const message = (id, text, options) => client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c-' + id, threadId: 't-e', messageId: id, text, attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' }, modelSelection: selection(options) });
+  await message('m2', 'two', [{ id: 'effort', value: 'low' }]);
+  await message('m3', 'three', []);
+  await message('m4', 'four', [{ id: 'effort', value: 'ultrathink' }]);
+  assert.deepEqual(engine.requests.filter(r => r.method === 'session/prompt').map(r => r.params.effort), ['xhigh', 'low', undefined, undefined]);
+});
+
+test('the end of a turn reaches the thread list at once, and the engine going idle closes any open run', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-w', 'W', []);
+  const { client } = connect(engine, { throttleMs: 600000 });
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await shell.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-w', 'turn/start', { turn: 1 });
+  engine.emitEvent('chat-w', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'go' }] });
+  engine.emitEvent('chat-w', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  // No timer, no later change: the row says "completed".
+  const row = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-w' && value.thread.status === 'completed');
+  assert.equal(row.thread.activeRunId, null);
+  // A run left open (the turn's end never came) is closed by `idle`.
+  engine.emitEvent('chat-w', 'turn/start', { turn: 2 });
+  engine.emitEvent('chat-w', 'user/message', { id: 'u2', source: { kind: 'user' }, content: [{ type: 'text', text: 'again' }] });
+  engine.emitStatus('chat-w', 'idle');
+  await shell.until(value => value.kind === 'thread.updated' && value.thread.latestRunId === 'run-msg-u2' && value.thread.status === 'completed');
+});

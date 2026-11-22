@@ -12,7 +12,7 @@
 // which project each chat is in are kept in the window's storage, so they survive a restart; a chat whose
 // history names a project's folder (`working-directory/change`) is put in that project.
 import {
-  accessModeOf, claudeProvider, defaultClaudeModel, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
+  accessModeOf, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
 import { englishError } from './errors.ts';
@@ -34,6 +34,9 @@ export interface HohStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
+
+/** The reasoning level goes to the engine as `effort` of `session/prompt` (agreed with the engine's writer). */
+const effortParam = (effort: string | null) => effort ? { effort } : {};
 
 export const STORAGE_KEY = 'hoh-host.projects.v1';
 const PLACEHOLDER_ROOT = '~/Documents/HoH';
@@ -286,6 +289,8 @@ export class HohHost {
       case 'session.event': {
         const thread = this.threadFor(params.sessionId);
         if (thread?.applyEvent(params.event)) this.changed(thread.id);
+        // The end of a turn reaches the thread list at once: the sidebar's "Working" must not wait for the next change.
+        if (thread && params.event?.type === 'turn/end') this.flush();
         if (thread && params.event?.type === 'working-directory/change') this.placeByFolder(thread);
         return;
       }
@@ -296,7 +301,7 @@ export class HohHost {
       }
       case 'session.status': {
         const thread = this.threadFor(params.sessionId);
-        if (thread?.setRunning(params.status === 'running', this.now())) this.changed(thread.id);
+        if (thread?.setRunning(params.status === 'running', this.now())) { this.changed(thread.id); if (params.status !== 'running') this.flush(); }
         return;
       }
       case 'approval.pending': {
@@ -548,11 +553,11 @@ export class HohHost {
     this.selectedModel = model;
   }
 
-  private async send(thread: ThreadModel, messageId: string, text: string) {
+  private async send(thread: ThreadModel, messageId: string, text: string, selection?: any) {
     thread.sendLocal(messageId, text, this.now());
     this.changed(thread.id);
     try {
-      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }] });
+      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }], ...effortParam(effortOf(selection?.model ?? thread.model, selection?.options)) });
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
     } catch (error) {
       thread.sendFailed(messageId, this.now(), error);
@@ -601,7 +606,7 @@ export class HohHost {
         case 'message.dispatch': {
           const target = needThread();
           if (command.modelSelection?.model) { await this.applyModel(command.modelSelection.model); target.model = command.modelSelection.model; }
-          await this.send(target, String(command.messageId), String(command.text ?? ''));
+          await this.send(target, String(command.messageId), String(command.text ?? ''), command.modelSelection);
           break;
         }
         case 'thread.stop': case 'run.interrupt': await this.cancel(needThread()); break;
@@ -656,7 +661,7 @@ export class HohHost {
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
-        await this.send(thread, messageId, message.text);
+        await this.send(thread, messageId, message.text, input.modelSelection);
       }
       this.flush();
       return { threadId, projection: thread.projection(), resumed: !!existing, sequence: this.sequence };

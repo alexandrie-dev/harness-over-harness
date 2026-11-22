@@ -294,6 +294,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/components/chat/turnDetailAnnouncement.ts` | правка (`ui/src/t3/base-patches/web/components/chat/turnDetailAnnouncement.ts.patch`) | имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code» |
 
 Providers: строку Codex и «Add provider»/«+» T3 рисует по своим умолчаниям на клиенте (`ProviderSettingsPanel.tsx`: `PROVIDER_SETTINGS`, `canAddProvider`) — хост их не отдаёт; при сборке `vite.ts` (`providerSettingsPanel`) сужает список до `VISIBLE_PROVIDER_DRIVERS` (`features.ts`) и гасит `canAddProvider`; файл T3 не правится.
+Карточка Claude в Providers: остаются название и состояние; Runtime, Environment, Models, Usage providers, Advanced (движок их не исполняет) не рисуются — `vite.ts` (`providerInstanceCard`, `providerSettingsPanel`), якоря в `ProviderInstanceCard.tsx`/`ProviderSettingsPanel.tsx`. Имена тем «T3 Code»/«T3 Chat» → «Default»/«Chat»: `vite.ts` (`themeCards`, `themePalettes`).
 
 Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
 `desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 136 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).

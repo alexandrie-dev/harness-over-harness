@@ -57,6 +57,19 @@ const T3_CLAUDE_CATALOG: ReadonlyArray<readonly [string, string, ReadonlyArray<s
   ['claude-haiku-5-5', 'Claude Haiku 5.5', ['haiku', 'haiku-5.5', 'claude-haiku-5.5']],
   ['claude-haiku-4-5', 'Claude Haiku 4.5', ['haiku-4.5', 'claude-haiku-4.5', 'claude-haiku-4-5-20251001']],
 ];
+/**
+ * Reasoning levels per catalog model (model-manifest.json `profiles.<profile>.capabilities` "effort", `adapter.claudeCode.effortMap`):
+ * the same levels and default as T3. "ultracode", "ultrathink" (T3's own multi-agent and prompt tricks) and "Fast Mode" are
+ * left out: the engine runs Claude Code only. `def` is the default level, `drop` a level the model lacks, `map` T3's remap.
+ */
+const EFFORT_LABELS: Readonly<Record<string, string>> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max' };
+const EFFORT_BY_SLUG: Readonly<Record<string, { def: string; drop?: string; map?: Record<string, string> } | null>> = {
+  'claude-opus-5-5': { def: 'medium' }, 'claude-sonnet-5-5': { def: 'high' }, 'claude-fable-5-2': { def: 'medium' }, 'claude-fable-5-1': { def: 'medium' },
+  'claude-fable-5': { def: 'medium' }, 'claude-opus-5': { def: 'high' }, 'claude-opus-4-8': { def: 'high' }, 'claude-opus-4-7': { def: 'xhigh', map: { xhigh: 'max' } },
+  'claude-opus-4-6': { def: 'high', drop: 'xhigh' }, 'claude-opus-4-5': { def: 'high', drop: 'xhigh' }, 'claude-sonnet-5': { def: 'high' },
+  'claude-sonnet-4-6': { def: 'high', drop: 'xhigh', map: { max: 'high' } }, 'claude-haiku-5-5': { def: 'medium' }, 'claude-haiku-4-5': null,
+};
+
 /** T3's model for a new Claude chat (model-manifest.json `providers.claudeAgent.defaults.chat`). */
 const T3_DEFAULT_CLAUDE = 'claude-opus-5-5';
 
@@ -74,18 +87,32 @@ function catalogIndex(id: string): number {
  */
 export function claudeModels(discovery: ClaudeDiscovery | null) {
   const reported = (discovery?.models ?? []).filter(model => typeof model.id === 'string' && model.id.trim() && model.id.trim() !== CLAUDE_CODE_DEFAULT);
-  const known = new Map<number, { slug: string; name: string }>();
-  const other: { slug: string; name: string }[] = [];
+  const known = new Map<number, { slug: string; name: string; effort?: string }>();
+  const other: { slug: string; name: string; effort?: string }[] = [];
   // A plain id wins over its `[1m]` variant.
   for (const model of [...reported].sort((a, b) => Number(a.id.includes('[')) - Number(b.id.includes('[')))) {
     const index = catalogIndex(model.id);
     if (index < 0) other.push({ slug: model.id, name: (model.displayName ?? '').trim() || model.id });
-    else if (!known.has(index)) known.set(index, { slug: model.id, name: T3_CLAUDE_CATALOG[index][1] });
+    else if (!known.has(index)) known.set(index, { slug: model.id, name: T3_CLAUDE_CATALOG[index][1], effort: T3_CLAUDE_CATALOG[index][0] });
   }
   const list = [...[...known.entries()].sort(([a], [b]) => a - b).map(([, model]) => model), ...other];
   // Nothing to choose from (the engine could not ask Claude): Claude Code picks.
   if (!list.length) list.push({ slug: CLAUDE_CODE_DEFAULT, name: 'Claude' });
-  return list.map(model => ({ ...model, isCustom: false, capabilities: null }));
+  return list.map(({ effort, ...model }) => {
+    const levels = effort ? EFFORT_BY_SLUG[effort] : null;
+    const options = levels ? Object.keys(EFFORT_LABELS).filter(id => id !== levels.drop).map(id => ({ id, label: EFFORT_LABELS[id], ...(id === levels.def ? { isDefault: true } : {}) })) : [];
+    return { ...model, isCustom: false, capabilities: options.length ? { optionDescriptors: [{ id: 'effort', label: 'Reasoning', type: 'select', options }] } : null };
+  });
+}
+
+/** The level for the engine: the person's choice in T3's model menu, as T3 maps it for that model (`effortMap`); null when none or unknown. */
+export function effortOf(model: string | undefined, selection: unknown): string | null {
+  const chosen = Array.isArray(selection) ? selection.find((entry: any) => entry?.id === 'effort')?.value : undefined;
+  if (typeof chosen !== 'string' || !(chosen in EFFORT_LABELS)) return null;
+  const index = model ? catalogIndex(model) : -1;
+  const levels = index < 0 ? null : EFFORT_BY_SLUG[T3_CLAUDE_CATALOG[index][0]];
+  if (!levels || levels.drop === chosen) return null;
+  return levels.map?.[chosen] ?? chosen;
 }
 
 /** T3's model for a new chat when the engine offers it, else the first one. */

@@ -123,7 +123,8 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'voice', title: 'голосовой ввод', how: ['host', 'route', 'nav', 'component'] },
   { id: 'editor', title: 'открыть в редакторе («Open in VS Code»)', how: ['host', 'component'] },
   { id: 'project-scripts', title: 'скрипты проекта («Add project script»)', how: ['component'] },
-  { id: 'other-providers', title: 'Codex и другие поставщики в Providers, «Add provider» и «+»', how: ['component'] },
+  { id: 'other-providers', title: 'Codex и другие поставщики в Providers, «Add provider» и «+»; в карточке Claude остаются название и состояние (без Runtime, Environment, Models, Usage providers, Advanced)', how: ['component'] },
+  { id: 'theme-names', title: 'имена тем «T3 Code» и «T3 Chat» в Appearance → Themes → «Default» и «Chat»', how: ['component'] },
   { id: 'more-agents', title: '«Add more agents» на Welcome', how: ['css'] },
   { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Access', how: ['route', 'nav'] },
 ];
