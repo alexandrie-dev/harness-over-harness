@@ -17,6 +17,7 @@
 //localhost:${i}
 //localhost:${t.port}${s}
 grokbot://app/v1/prompt?text=${NJ(e
+http://127.0.0.1:4096
 http://example.com
 http://hoh.local
 http://localhost
