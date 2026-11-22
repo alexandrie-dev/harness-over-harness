@@ -37,8 +37,6 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
-// HoH (ui/T3-MAP.md): временный выбор варианта главной и корешка (раунд дизайна).
-import { HomeVariantSection } from "../../hoh-design/HomeVariantSection";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: msg("Artwork"),
@@ -496,8 +494,6 @@ export function AppearanceSettingsPanel() {
           />
         </AdvancedSettings>
       </SettingsSection>
-
-      <HomeVariantSection />
 
       <TypographySection />
     </SettingsPageContainer>

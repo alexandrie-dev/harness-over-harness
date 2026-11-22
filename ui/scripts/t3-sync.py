@@ -153,8 +153,7 @@ def sync_base(base):
         for dp, _, names in os.walk(os.path.join(out, root)):
             for n in names:
                 x = os.path.relpath(os.path.join(dp, n), out)
-                # web/hoh-design — наш код раунда дизайна главной (HOH-41): не из T3, не удаляется.
-                if x not in keep and not x.startswith('web/hoh-design/'): os.remove(os.path.join(dp, n))
+                if x not in keep: os.remove(os.path.join(dp, n))
     for f in r['transfer']:
         x = rel(f)
         if x in replaced: continue

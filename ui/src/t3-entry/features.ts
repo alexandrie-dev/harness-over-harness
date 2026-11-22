@@ -78,10 +78,6 @@ export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
   'components/sidebar/SidebarThreadHeader.tsx': ['SidebarThreadHeader'],
 };
 
-/** Раунд дизайна главной (HOH-41): корешок с «Alexandrie», переключатель варианта A/B/C (Ctrl+Alt+1/2/3, Settings → Appearance).
- *  Временный, в релиз не идёт: `false` убирает корешок, его полосу и строку настроек одним местом. */
-export const HOH_DESIGN_ROUND = true;
-
 /** Поставщики моделей, которые показывает Providers (HoH исполняет только Claude). T3 рисует строку Codex и «Add provider»
  * по своим умолчаниям на клиенте (ProviderSettingsPanel.tsx: PROVIDER_SETTINGS, canAddProvider), хост их не отдаёт;
  * при сборке (vite.ts, providerSettingsPanel) список сужается до этих драйверов, «Add provider» и «+» не рисуются. */

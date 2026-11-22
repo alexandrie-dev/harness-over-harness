@@ -1,5 +1,5 @@
 // Главная окна HoH (HOH-41 В2б, раунд дизайна): приветствие с датой, запущенные агенты и их субагенты, «Done», «Needs your answer» над полем ввода T3.
-// Три варианта подачи (выбор основателя): A — карточки, B — дерево строками, C — колонки по состоянию. Выбор — переключатель корешка (notch/variant.ts).
+// Подача — карточки (вариант A, выбор основателя): агент — карточка, субагенты — строки внутри неё, запросы ждут справа.
 // Это не отдельный экран: vite.ts подставляет <HomeBody/> в пустой разговор T3 (ChatView, DraftHeroHeadline), так что поле ввода,
 // чип модели с уровнями, Permissions, выбор проекта и отправка — настоящие, их. Здесь только содержимое над ними.
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
@@ -9,7 +9,6 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { ClaudeAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
-import { readHomeVariant, subscribeHomeVariant } from '../notch/variant';
 import './home.css';
 
 interface Entry {
@@ -19,16 +18,11 @@ interface Entry {
   agents: Agent[];
 }
 interface Agent { id: string; name: string; kind: string; state: 'working' | 'done' | 'failed'; startedAt: number; doneAt: number | null }
-type Variant = 'a' | 'b' | 'c';
 interface Home {
   version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectTitle(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
 }
 const ENVIRONMENT_ID = 'hoh-local';
-// The variant is the notch's (../notch/variant.ts): Settings → Appearance, Ctrl+Alt+1/2/3, localStorage `hoh.homeVariant`.
-function useVariant(): Variant {
-  return useSyncExternalStore((listener) => subscribeHomeVariant(listener), () => readHomeVariant(), () => 'a');
-}
 const home = (): Home | undefined => (globalThis as { __HOH_HOME__?: Home }).__HOH_HOME__;
 
 export function greeting(hour: number): string {
@@ -117,8 +111,8 @@ const DoneRows = ({ done, view }: { done: Entry[]; view: View }) => done.length 
 );
 const Count = ({ list }: { list: Entry[] }) => { const subs = list.reduce((sum, entry) => sum + entry.agents.length, 0); return <span className="hoh-home__count">{list.length}{subs > 0 ? ` · ${subs} subagent${subs === 1 ? '' : 's'}` : ''}</span>; };
 
-/** A — cards: an agent is a card, its subagents are lines inside it; the requests wait on the right. */
-function VariantA({ working, done, asking, view }: Lists) {
+/** Cards: an agent is a card, its subagents are lines inside it; the requests wait on the right. */
+function Cards({ working, done, asking, view }: Lists) {
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">
@@ -158,77 +152,6 @@ function VariantA({ working, done, asking, view }: Lists) {
   );
 }
 
-/** B — a tree in rows: an agent, under it its subagents indented; a request opens inside the agent's row. Dense. */
-function VariantB({ working, done, view }: Lists) {
-  return (
-    <div className="hoh-home__inner hoh-home__inner--tree">
-      <Head now={view.now} />
-      {working.length > 0 ? (
-        <section>
-          <h2 className="hoh-home__label">Agents <Count list={working} /></h2>
-          <div className="hoh-tree">
-            {[...working].sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting')).map((entry) => (
-              <div key={entry.id} className="hoh-tree__node" data-state={entry.state}>
-                <div className="hoh-trow" {...press(() => view.open(entry.id))}>
-                  <Mark />
-                  <span className="hoh-trow__title">{entry.title}<small>{view.where(entry)}</small></span>
-                  <Steps entry={entry} />
-                  <span className="hoh-trow__state">{stateLabel(entry)}</span>
-                  <time>{elapsed(entry.startedAt, view.now)}</time>
-                </div>
-                {entry.agents.map((agent, index) => (
-                  <div key={agent.id} className="hoh-tree__leaf" data-last={index === entry.agents.length - 1 || undefined}><Sub agent={agent} now={view.now} /></div>
-                ))}
-                {entry.request ? <div className="hoh-tree__ask"><Ask entry={entry} view={view} /></div> : null}
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-      <DoneRows done={done} view={view} />
-    </div>
-  );
-}
-
-/** C — columns by state: working / waits for you / done. A card is an agent; its subagents are chips. */
-function VariantC({ working, done, asking, view }: Lists) {
-  const running = working.filter((entry) => entry.state === 'working');
-  const card = (entry: Entry, body: React.ReactNode) => (
-    <div key={entry.id} className="hoh-card hoh-card--c" data-state={entry.state} {...press(() => view.open(entry.id))}>
-      <span className="hoh-card__top"><Mark /><span className="hoh-card__title">{entry.title}</span></span>
-      <span className="hoh-card__where">{view.where(entry)}</span>
-      {entry.agents.length > 0 ? <span className="hoh-chips">{entry.agents.map((agent) => <span key={agent.id} className="hoh-chip" data-state={agent.state} title={`${agent.kind}: ${agent.name}`}><StateDot state={agent.state} />{agent.name}</span>)}</span> : null}
-      {body}
-    </div>
-  );
-  return (
-    <div className="hoh-home__inner hoh-home__inner--tree">
-      <Head now={view.now} />
-      <div className="hoh-cols">
-        <section>
-          <h2 className="hoh-home__label">Working <Count list={running} /></h2>
-          {running.map((entry) => card(entry, <><span className="hoh-card__state"><b>{stateLabel(entry)}</b><span>{elapsed(entry.startedAt, view.now)}</span></span><Steps entry={entry} /></>))}
-        </section>
-        <section data-ask="">
-          <h2 className="hoh-home__label">Needs your answer <span className="hoh-ask__count">{asking.length}</span></h2>
-          {asking.map((entry) => (
-            <div key={entry.id} className="hoh-card hoh-card--c" data-state="waiting">
-              <span className="hoh-card__top" {...press(() => view.open(entry.id))}><Mark /><span className="hoh-card__title">{entry.title}</span></span>
-              <span className="hoh-card__where">{view.where(entry)} · {elapsed(entry.startedAt, view.now)}</span>
-              {entry.agents.length > 0 ? <span className="hoh-chips">{entry.agents.map((agent) => <span key={agent.id} className="hoh-chip" data-state={agent.state}><StateDot state={agent.state} />{agent.name}</span>)}</span> : null}
-              <Ask entry={entry} view={view} />
-            </div>
-          ))}
-        </section>
-        <section>
-          <h2 className="hoh-home__label">Done <span className="hoh-home__count">{done.length}</span></h2>
-          {done.map((entry) => card(entry, <span className="hoh-card__state"><b>{clock(entry.doneAt ?? 0)}</b><button type="button" className="hoh-link" onClick={(event) => { event.stopPropagation(); view.open(entry.id); }}>Open</button></span>))}
-        </section>
-      </div>
-    </div>
-  );
-}
-
 interface Lists { working: Entry[]; done: Entry[]; asking: Entry[]; view: View }
 function Head({ now }: { now: number }) {
   const date = new Date(now);
@@ -244,7 +167,6 @@ export function HomeBody() {
   const host = home();
   // One snapshot per change of any chat; entries are read after it.
   useSyncExternalStore(host?.subscribe ?? (() => () => {}), host?.version ?? (() => 0));
-  const variant = useVariant();
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(timer); }, []);
   const navigate = useNavigate();
@@ -260,8 +182,8 @@ export function HomeBody() {
   };
   const lists = { working, done, asking, view };
   return (
-    <div className="hoh-home" data-hoh-home-body="" data-variant={variant}>
-      {variant === 'b' ? <VariantB {...lists} /> : variant === 'c' ? <VariantC {...lists} /> : <VariantA {...lists} />}
+    <div className="hoh-home" data-hoh-home-body="">
+      <Cards {...lists} />
     </div>
   );
 }

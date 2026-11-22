@@ -1,19 +1,12 @@
-// Puts the notch on the window and switches its variant with Ctrl+Alt+1/2/3 (temporary, features.ts: HOH_DESIGN_ROUND).
+// Puts the notch on the window (HOH-41): the band above the app and the outline a, a flare grown out of the top edge.
 import { createRoot } from 'react-dom/client';
 import './notch.css';
 import { HohNotch } from './HohNotch';
-import { readHomeVariant, variantOfKey, writeHomeVariant } from './variant';
 
 export function mountNotch(): void {
-  document.documentElement.dataset.hohNotch = readHomeVariant();
+  document.documentElement.dataset.hohNotch = '';
   const host = document.createElement('div');
   host.id = 'hoh-notch';
   document.body.prepend(host);
   createRoot(host).render(<HohNotch />);
-  window.addEventListener('keydown', (event) => {
-    const variant = variantOfKey(event);
-    if (!variant) return;
-    event.preventDefault();
-    writeHomeVariant(variant);
-  }, true);
 }

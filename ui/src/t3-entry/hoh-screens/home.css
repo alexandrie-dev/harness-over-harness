@@ -67,35 +67,6 @@
 .hoh-sub small, .hoh-sub time { color: var(--muted-foreground); white-space: nowrap; font-size: 0.6875rem; }
 .hoh-sub[data-state="done"] .hoh-sub__name { color: var(--muted-foreground); }
 .hoh-orbit { flex-shrink: 0; }
-/* B: дерево строками */
-.hoh-home__inner--tree { flex-direction: column; gap: 22px; max-width: 920px; }
-.hoh-tree { display: flex; flex-direction: column; gap: 6px; }
-.hoh-tree__node { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); padding: 4px 6px; }
-.hoh-tree__node[data-state="waiting"] { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); }
-.hoh-trow { display: grid; grid-template-columns: 14px minmax(0, 1fr) 84px auto auto; align-items: center; gap: 10px; padding: 6px; border-radius: var(--radius-md); cursor: pointer; font-size: 0.875rem; }
-.hoh-trow:hover { background: var(--accent); }
-.hoh-trow:focus-visible { outline: 2px solid var(--ring); }
-.hoh-trow__title { display: flex; flex-direction: column; min-width: 0; font-weight: 600; }
-.hoh-trow__title small { color: var(--muted-foreground); font-weight: 400; font-size: 0.75rem; }
-.hoh-trow__state { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; white-space: nowrap; }
-.hoh-tree__node[data-state="working"] .hoh-trow__state { color: var(--primary); }
-.hoh-tree__node[data-state="waiting"] .hoh-trow__state { color: var(--warning-foreground); }
-.hoh-trow time { font-size: 0.75rem; color: var(--muted-foreground); white-space: nowrap; }
-.hoh-tree__leaf { position: relative; margin-left: 13px; padding: 3px 6px 3px 22px; border-left: 1px solid var(--border); }
-.hoh-tree__leaf::before { content: ""; position: absolute; left: 0; top: 50%; width: 14px; border-top: 1px solid var(--border); }
-.hoh-tree__leaf[data-last] { border-left-color: transparent; }
-.hoh-tree__leaf[data-last]::after { content: ""; position: absolute; left: 0; top: 0; height: 50%; border-left: 1px solid var(--border); }
-.hoh-tree__ask { margin: 6px 6px 6px 27px; padding-top: 8px; border-top: 1px solid var(--border); }
-/* C: колонки по состоянию */
-.hoh-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
-.hoh-cols > section { display: flex; flex-direction: column; gap: 10px; }
-.hoh-cols .hoh-home__label { margin: 0; }
-.hoh-card--c { min-height: 0; gap: 8px; }
-.hoh-cols [data-ask] .hoh-card { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); cursor: default; }
-.hoh-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.hoh-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 0.6875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hoh-chip[data-state="done"] { color: var(--muted-foreground); }
-@media (max-width: 920px) { .hoh-cols { grid-template-columns: minmax(0, 1fr); } .hoh-cols > section[data-ask] { order: -1; } .hoh-trow { grid-template-columns: 14px minmax(0, 1fr) auto; } .hoh-trow .hoh-steps { display: none; } .hoh-trow time { display: none; } }
 .hoh-card .hoh-sub small { display: none; }
 /* Узкое окно: карточки идут первыми, запрос под ними, «Done» последним (один столбец). */
 @media (max-width: 920px) {
@@ -110,7 +81,6 @@
   .hoh-ask { gap: 8px; padding: 10px; }
   .hoh-ask__where { display: none; }
   .hoh-ask__text { max-height: 3.75rem; }
-  .hoh-cols [data-ask] .hoh-card .hoh-card__where, .hoh-cols [data-ask] .hoh-chips { display: none; }
   .hoh-head, .hoh-home__head { display: none; }
   .hoh-home__inner { padding-top: 12px; gap: 16px; }
 }
