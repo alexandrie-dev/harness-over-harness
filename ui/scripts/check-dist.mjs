@@ -52,7 +52,7 @@ for (const path of await files('dist')) {
     const value = scheme + match[0];
     // Without a scheme only a real host counts (host.tld, localhost, IPv4, [IPv6]); a regex tail such as //g,r=/ is code, not an address.
     if (!scheme && !/^\/\/(?:(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[/:?#]|$)|localhost\b|\d{1,3}(?:\.\d{1,3}){3}\b|\[)/i.test(match[0])) continue;
-    if (t3 && !inertNames.has(value) && !t3Urls.has(value)) { t3Unknown.add(value); continue; }
+    if (t3) { if (!inertNames.has(value) && !t3Urls.has(value)) t3Unknown.add(value); continue; }
     assert(inertNames.has(value), `external URL ${value} in ${path}`);
   }
   assert(!/\beval\s*\(|\bnew\s+Function\s*\(/.test(source), `dynamic code in ${path}`);
