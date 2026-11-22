@@ -23,12 +23,19 @@
 }
 .hoh-home__label { display: flex; align-items: baseline; gap: 8px; font-size: 0.875rem; font-weight: 600; margin: 0 0 10px; }
 .hoh-home__count { color: var(--muted-foreground); font-weight: 400; }
-.hoh-home__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.hoh-home__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
 @media (min-width: 1100px) { .hoh-home__cards { grid-template-columns: minmax(0, 1fr); } }
-.hoh-card { text-align: left; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 14px; display: flex; flex-direction: column; gap: 10px; min-height: 124px; cursor: pointer; color: inherit; font: inherit; }
-.hoh-card:hover { background: var(--accent); }
-.hoh-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.hoh-card__title { font-size: 0.9375rem; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Карточка агента: тёмная, скруглённая, граница-градиент и мягкое свечение цвета состояния (палитра окна: синий — работает,
+   красный — ждёт ответа, нейтральный — готово). Свечение — статичная тень вне карточки (текст не размывает), без анимации. */
+.hoh-card { --glow: var(--muted-foreground); text-align: left; position: relative; border: 1px solid transparent; border-radius: calc(var(--radius-xl) + 4px); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 124px; cursor: pointer; color: inherit; font: inherit;
+  background: linear-gradient(var(--background), var(--background)) padding-box, linear-gradient(135deg, var(--glow), color-mix(in srgb, var(--glow) 18%, transparent) 48%, color-mix(in srgb, var(--glow) 70%, transparent)) border-box;
+  box-shadow: 0 0 20px color-mix(in srgb, var(--glow) 36%, transparent), 0 0 56px color-mix(in srgb, var(--glow) 16%, transparent); }
+.hoh-card[data-state="working"] { --glow: var(--primary); }
+.hoh-card[data-state="waiting"] { --glow: var(--warning); }
+.hoh-card:hover { box-shadow: 0 0 24px color-mix(in srgb, var(--glow) 48%, transparent), 0 0 64px color-mix(in srgb, var(--glow) 22%, transparent); }
+.hoh-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.hoh-card .hoh-mark { width: 22px; height: 22px; margin-bottom: 6px; }
+.hoh-card__title { font-size: 1rem; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .hoh-card__where { color: var(--muted-foreground); font-size: 0.75rem; }
 .hoh-card__state { margin-top: auto; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--muted-foreground); }
 .hoh-card__state b { font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
@@ -36,16 +43,12 @@
 .hoh-card[data-state="waiting"] .hoh-card__state b { color: var(--warning-foreground); }
 .hoh-orbit { width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); border-top-color: var(--primary); animation: hoh-spin 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .hoh-orbit { animation: none; } }
+.hoh-card .hoh-orbit { animation: none; } /* в карточке состояние — цвет свечения и точка, ничто не крутится */
 @keyframes hoh-spin { to { transform: rotate(360deg); } }
 .hoh-steps { display: flex; gap: 3px; }
 .hoh-steps i { flex: 1; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--foreground) 14%, transparent); }
 .hoh-steps i[data-done] { background: var(--primary); }
 .hoh-steps[data-waiting] i[data-open] { background: var(--warning); }
-.hoh-row { display: grid; grid-template-columns: 78px 1fr auto auto; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--radius-lg); font-size: 0.875rem; }
-.hoh-row:hover { background: var(--accent); }
-.hoh-row time { white-space: nowrap; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
-.hoh-row span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hoh-row small { color: var(--muted-foreground); font-size: 0.75rem; }
 .hoh-link { background: none; border: 0; padding: 0; color: var(--primary); font: inherit; cursor: pointer; }
 .hoh-ask { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .hoh-ask__head { display: flex; justify-content: space-between; align-items: center; font-size: 0.8125rem; color: var(--muted-foreground); }
@@ -62,10 +65,7 @@
 
 /* Значок исполнителя (Claude из набора T3) и субагенты — раунд дизайна главной. */
 .hoh-mark { width: 14px; height: 14px; flex-shrink: 0; }
-.hoh-card__top { display: flex; align-items: flex-start; gap: 8px; }
-.hoh-card__top .hoh-mark { margin-top: 3px; }
-.hoh-ask__where > span:first-child, .hoh-row > span:nth-child(2) { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.hoh-row > span:nth-child(2) { display: flex; }
+.hoh-ask__where > span:first-child { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .hoh-tick { width: 12px; height: 12px; flex-shrink: 0; color: var(--success-foreground, var(--primary)); }
 .hoh-tick[data-failed] { color: var(--destructive-foreground, var(--warning)); }
 .hoh-subs { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--border); padding-top: 8px; }

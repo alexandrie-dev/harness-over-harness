@@ -96,22 +96,30 @@ function Ask({ entry, view }: { entry: Entry; view: View }) {
 }
 const press = (open: () => void) => ({ role: 'button' as const, tabIndex: 0, onClick: open, onKeyDown: (event: React.KeyboardEvent) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } } });
 const stateLabel = (entry: Entry) => entry.state === 'working' ? <><span className="hoh-orbit" aria-hidden />Working</> : 'Waiting for your answer';
-const DoneRows = ({ done, view }: { done: Entry[]; view: View }) => done.length === 0 ? null : (
+/** An agent as a card (HOH-41): the executor's mark top-left, the title, where it works, its subagents inside, the state at the bottom.
+ *  The glow of the border follows the state (home.css: blue — working, red — waits for the person, neutral — done). */
+function Card({ entry, view, children }: { entry: Entry; view: View; children: React.ReactNode }) {
+  return (
+    <div className="hoh-card" data-state={entry.state} {...press(() => view.open(entry.id))}>
+      <Mark />
+      <span className="hoh-card__title">{entry.title}</span>
+      <span className="hoh-card__where">{view.where(entry)}</span>
+      {entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
+      {children}
+    </div>
+  );
+}
+const DoneCards = ({ done, view }: { done: Entry[]; view: View }) => done.length === 0 ? null : (
   <section>
     <h2 className="hoh-home__label">Done <span className="hoh-home__count">{done.length}</span></h2>
-    {done.map((entry) => (
-      <div key={entry.id} className="hoh-row">
-        <time>{clock(entry.doneAt ?? 0)}</time>
-        <span><Mark />{entry.title}</span>
-        <small>{view.where(entry)}</small>
-        <button type="button" className="hoh-link" onClick={() => view.open(entry.id)}>Open</button>
-      </div>
-    ))}
+    <div className="hoh-home__cards">
+      {done.map((entry) => <Card key={entry.id} entry={entry} view={view}><span className="hoh-card__state"><b>Done</b><span>{clock(entry.doneAt ?? 0)}</span></span></Card>)}
+    </div>
   </section>
 );
 const Count = ({ list }: { list: Entry[] }) => { const subs = list.reduce((sum, entry) => sum + entry.agents.length, 0); return <span className="hoh-home__count">{list.length}{subs > 0 ? ` · ${subs} subagent${subs === 1 ? '' : 's'}` : ''}</span>; };
 
-/** Cards: an agent is a card, its subagents are lines inside it; the requests wait on the right. */
+/** Cards: an agent is a card, its subagents are lines inside it; the request that waits for the person stands above them. */
 function Cards({ working, done, asking, view }: Lists) {
   return (
     <div className="hoh-home__inner">
@@ -122,18 +130,15 @@ function Cards({ working, done, asking, view }: Lists) {
             <h2 className="hoh-home__label">Now <Count list={working} /></h2>
             <div className="hoh-home__cards">
               {working.slice(0, 6).map((entry) => (
-                <div key={entry.id} className="hoh-card" data-state={entry.state} {...press(() => view.open(entry.id))}>
-                  <span className="hoh-card__top"><Mark /><span className="hoh-card__title">{entry.title}</span></span>
-                  <span className="hoh-card__where">{view.where(entry)}</span>
-                  {entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
+                <Card key={entry.id} entry={entry} view={view}>
                   <span className="hoh-card__state"><b>{stateLabel(entry)}</b><span>{elapsed(entry.startedAt, view.now)}</span></span>
                   <Steps entry={entry} />
-                </div>
+                </Card>
               ))}
             </div>
           </section>
         ) : null}
-        <DoneRows done={done} view={view} />
+        <DoneCards done={done} view={view} />
       </div>
       {asking.length > 0 ? (
         <aside className="hoh-home__side">
