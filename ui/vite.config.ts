@@ -30,9 +30,11 @@ export default defineConfig(({ mode }) => mode === 't3' ? t3Config() : ({
     rolldownOptions: {
       input: {
         main: resolve(import.meta.dirname, 'index.html'),
-        ...(mode === 'probe' ? { probe: resolve(import.meta.dirname, 'probe.html') } : {}),
+        // Страницы проверок (probe — WebKitGTK, firstrun — tests/screens-a) — только в `--mode probe`; окну они не нужны,
+        // в поставку не идут (check-dist.mjs, ревью 222000).
+        ...(mode === 'probe' ? { probe: resolve(import.meta.dirname, 'probe.html'), firstrun: resolve(import.meta.dirname, 'firstrun.html') } : {}),
+        // Окно подтверждения: своё окно `approval-*` (apps/hoh-desktop, approval_navigation_allowed).
         approval: resolve(import.meta.dirname, 'approval.html'),
-        firstrun: resolve(import.meta.dirname, 'firstrun.html'),
       },
     },
   },

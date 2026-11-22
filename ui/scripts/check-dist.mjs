@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
 
@@ -33,6 +33,14 @@ const t3Urls = new Set(existsSync('src/t3-entry/dist-urls.txt')
   ? (await readFile('src/t3-entry/dist-urls.txt', 'utf8')).split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#')).map(urlShape)
   : []);
 const t3Unknown = new Set();
+// Страницы поставки (ревью 222000, решение CEO 22.11 22:40): клиент T3 (index.html), прежняя оболочка (legacy.html, только
+// при HOH_WINDOW_SHELL=legacy) и окно подтверждения (approval.html, только своё окно). Страницы проверок — firstrun.html,
+// probe.html (`vite build --mode probe`) — в поставку не идут: такая dist сюда не проходит.
+const WINDOW_PAGES = new Set(['index.html', 'legacy.html', 'approval.html']);
+for (const path of await files('dist')) {
+  const page = relative('dist', path);
+  if (page.endsWith('.html')) assert(WINDOW_PAGES.has(page), `страница не окна в dist: ${page}`);
+}
 let t3Total = 0;
 let t3Compressed = 0;
 let total = 0;

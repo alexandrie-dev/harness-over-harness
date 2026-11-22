@@ -92,18 +92,41 @@ fn approval_probe_marks_the_stub_as_a_test_engine() {
     assert!(!script.contains("HOH_ENGINE_PATH="));
 }
 
+/// The files a build of the window may hold, as Tauri keys them (a `--mode probe` build adds
+/// firstrun.html and probe.html; the shipped one has neither).
+fn app_file(path: &str) -> bool {
+    [
+        "/index.html",
+        "/legacy.html",
+        "/approval.html",
+        "/firstrun.html",
+        "/probe.html",
+        "/boot-theme.js",
+        "/assets/main.js",
+        "/t3-assets/index-x.js",
+    ]
+    .contains(&path)
+}
+
+/// The main window of the T3 shell (not HOH_WINDOW_SHELL=legacy).
+fn main_allowed(url: &str) -> bool {
+    main_navigation_allowed(&url.parse().unwrap(), false, app_file)
+}
+
 #[test]
 fn navigation_is_exact_origin_and_path_and_new_windows_are_denied() {
     for url in [
         "tauri://localhost/index.html",
         "tauri://localhost/",
-        "tauri://localhost/legacy.html",
         // routes of the T3 client's router after a reload
         "tauri://localhost/settings/general",
         "tauri://localhost/env-1/thread-2",
+        "tauri://localhost/hoh-local/thread-3f1c2a9e-6f7b-4c1d-9a8e-2b5d7c0e4f11",
+        "tauri://localhost/threads/hoh-local/thread-2",
         "tauri://localhost/draft/$draftId",
+        "tauri://localhost/welcome",
     ] {
-        assert!(main_navigation_allowed(&url.parse().unwrap()), "{url}");
+        assert!(main_allowed(url), "{url}");
     }
     for url in [
         "https://example.test/index.html",
@@ -119,7 +142,7 @@ fn navigation_is_exact_origin_and_path_and_new_windows_are_denied() {
         "http://tauri.localhost:4173/index.html",
         "tauri://localhost:4173/index.html",
     ] {
-        assert!(!main_navigation_allowed(&url.parse().unwrap()), "{url}");
+        assert!(!main_allowed(url), "{url}");
     }
     let approval_url = "tauri://localhost/approval.html";
     assert!(
@@ -136,9 +159,7 @@ fn navigation_is_exact_origin_and_path_and_new_windows_are_denied() {
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_rejects_http_tauri_localhost_for_every_window() {
-    assert!(!main_navigation_allowed(
-        &"http://tauri.localhost/index.html".parse().unwrap()
-    ));
+    assert!(!main_allowed("http://tauri.localhost/index.html"));
     assert!(!approval_navigation_allowed(
         &"http://tauri.localhost/approval.html".parse().unwrap()
     ));
@@ -147,9 +168,7 @@ fn linux_rejects_http_tauri_localhost_for_every_window() {
 #[cfg(any(windows, target_os = "android"))]
 #[test]
 fn platform_http_tauri_origin_remains_available_where_tauri_uses_it() {
-    assert!(main_navigation_allowed(
-        &"http://tauri.localhost/index.html".parse().unwrap()
-    ));
+    assert!(main_allowed("http://tauri.localhost/index.html"));
     assert!(approval_navigation_allowed(
         &"http://tauri.localhost/approval.html".parse().unwrap()
     ));
@@ -161,7 +180,54 @@ fn tauri_base_origin_is_valid_main_entrypoint() {
     // invokes plugin navigation hooks. Rejecting its empty path blanks main.
     let initial_url: tauri::Url = "tauri://localhost".parse().unwrap();
     assert_eq!(initial_url.path(), "");
-    assert!(main_navigation_allowed(&initial_url));
+    assert!(main_navigation_allowed(&initial_url, false, app_file));
+}
+
+/// Review 222000: Tauri decodes `%XX` and serves `{p}`, `{p}.html`, `{p}/index.html` before it
+/// falls back to index.html, so a path that is not a file by its name could still open one. None
+/// of these may load in the main window; the routes of T3 still do (above).
+#[test]
+fn no_path_opens_another_page_of_the_app_in_the_main_window() {
+    for path in [
+        "/approval",
+        "/approval/",
+        "/firstrun",
+        "/firstrun/",
+        "/probe",
+        "/legacy",
+        "/index",
+        "/approval%2Ehtml",
+        "/approval%2ehtml",
+        "/firstrun%2Ehtml",
+        "/firstrun%2ehtml",
+        "/legacy%2Ehtml",
+        "/assets%2Fx",
+        "/assets%2Fmain.js",
+        "/assets%2fmain%2ejs",
+        "/%61pproval",
+        "/approva%6C",
+        "/approval%2F",
+        "/approval%00",
+        "/approval%252Ehtml",
+        "/settings%2Fgeneral",
+        "/settings/..%2Fapproval",
+        "/settings/../approval",
+        "/settings/%2E%2E/approval",
+    ] {
+        let url = format!("tauri://localhost{path}");
+        assert!(!main_allowed(&url), "{url}");
+        assert!(
+            !main_navigation_allowed(&url.parse().unwrap(), true, app_file),
+            "legacy shell: {url}"
+        );
+    }
+    // The previous shell is the main window's page only when it was asked for.
+    assert!(!main_allowed("tauri://localhost/legacy.html"));
+    assert!(main_navigation_allowed(
+        &"tauri://localhost/legacy.html".parse().unwrap(),
+        true,
+        app_file
+    ));
 }
 
 #[test]

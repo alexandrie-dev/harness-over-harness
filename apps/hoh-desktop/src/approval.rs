@@ -263,6 +263,8 @@ struct Confirmed {
     action: Value,
     session: String,
     expires_at: u64,
+    /// Where the person confirmed it (`settings-window`, `main-window`): the journal names it.
+    via: &'static str,
 }
 
 /// The confirmation, bound to the one outgoing JSON-RPC request the window action became. It
@@ -274,6 +276,7 @@ struct InFlight {
     action: Value,
     session: String,
     expires_at: u64,
+    via: &'static str,
 }
 
 /// The session the engine puts into the approval request of a method call.
@@ -547,7 +550,7 @@ impl Broker {
 
     /// The person allowed a window action. The confirmation waits for the outgoing request that
     /// carries exactly this action; it is not usable by anything yet.
-    fn confirm(&self, request: &HostApprovalRequest, now: u64) {
+    fn confirm(&self, request: &HostApprovalRequest, via: &'static str, now: u64) {
         if let Ok(mut confirmed) = self.confirmed.lock() {
             confirmed.retain(|c| c.expires_at > now);
             confirmed.push(Confirmed {
@@ -555,6 +558,7 @@ impl Broker {
                 session: session_of(&request.action),
                 action: request.action.clone(),
                 expires_at: now.saturating_add(GRANT_TTL_MS),
+                via,
             });
         }
     }
@@ -588,6 +592,7 @@ impl Broker {
                 action: c.action,
                 session: c.session,
                 expires_at: c.expires_at,
+                via: c.via,
             });
         }
     }
@@ -601,9 +606,15 @@ impl Broker {
 
     /// Consumes the confirmation of the outgoing request this approval request belongs to: the same
     /// engine run, the same method, the same action and the same session, while that request is in flight.
-    fn take_grant(&self, generation: u64, request: &HostApprovalRequest, now: u64) -> bool {
+    /// Gives where the person confirmed it.
+    fn take_grant(
+        &self,
+        generation: u64,
+        request: &HostApprovalRequest,
+        now: u64,
+    ) -> Option<&'static str> {
         let Ok(mut in_flight) = self.in_flight.lock() else {
-            return false;
+            return None;
         };
         in_flight.retain(|g| g.expires_at > now);
         let found = in_flight.iter().position(|g| {
@@ -613,7 +624,7 @@ impl Broker {
                 && g.session == request.session_id
                 && request.call_id.is_none()
         });
-        found.map(|index| in_flight.remove(index)).is_some()
+        found.map(|index| in_flight.remove(index).via)
     }
 
     pub fn begin_preflight(
@@ -687,7 +698,7 @@ impl Broker {
         };
         hoh_protocol::approval::validate_host_request(&request)
             .map_err(|_| "Некорректное подтверждение".to_owned())?;
-        self.confirm(&request, now);
+        self.confirm(&request, "main-window", now);
         self.log(
             now,
             "human",
@@ -729,8 +740,9 @@ impl Broker {
     }
 
     /// The engine's request gets a window, except the one the person has just confirmed in the
-    /// settings window (same method and same canonical action, once, within `GRANT_TTL_MS`):
-    /// that one is signed here. Requests of the model's tools never match a grant.
+    /// settings window or with their own action in the main window (same method and same canonical
+    /// action, once, within `GRANT_TTL_MS`): that one is signed here, and the journal names the
+    /// channel the person used. Requests of the model's tools never match a grant.
     pub fn begin_engine_or_grant(
         &self,
         generation: u64,
@@ -742,11 +754,11 @@ impl Broker {
         let request = Self::parse_engine_request(method, params, now)?;
         hoh_protocol::approval::validate_host_request(&request)
             .map_err(|_| "Некорректное подтверждение".to_owned())?;
-        if !self.take_grant(generation, &request, now) {
+        let Some(via) = self.take_grant(generation, &request, now) else {
             return self
                 .insert(request, Destination::Engine { generation, id }, false)
                 .map(Begun::Window);
-        }
+        };
         let decision = HostApprovalDecision {
             approval_id: request.approval_id.clone(),
             outcome: ApprovalOutcome::AllowedOnce,
@@ -754,13 +766,18 @@ impl Broker {
         };
         hoh_protocol::approval::verify_decision(&self.key, &request, &decision, now)
             .map_err(|_| "Подтверждение недействительно".to_owned())?;
+        // The note starts the same for every channel: `history` leaves these lines out by it.
         self.log(
             now,
             "core",
-            "settings-window",
+            via,
             &request,
             "allowed-once",
-            "подписано ядром без второго окна: то же действие подтверждено человеком в окне настройки",
+            if via == "main-window" {
+                "подписано ядром без второго окна: то же действие подтверждено человеком действием в главном окне"
+            } else {
+                "подписано ядром без второго окна: то же действие подтверждено человеком в окне настройки"
+            },
         );
         Ok(Begun::Signed(Resolution::Engine {
             generation,
@@ -964,7 +981,7 @@ impl Broker {
         match (&verified, &decision.outcome) {
             (Ok(()), ApprovalOutcome::AllowedOnce) => {
                 if settings_window {
-                    self.confirm(&pending.request, now);
+                    self.confirm(&pending.request, via, now);
                 }
                 self.log(
                     now,

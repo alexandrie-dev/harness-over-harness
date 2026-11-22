@@ -1,5 +1,6 @@
 // Проверки первого запуска и окна подтверждения (вариант A) в headless Chromium.
-// Страницы — из ui/dist (firstrun.html, approval.html) или из HOH_FIRSTRUN_PAGE / HOH_APPROVAL_PAGE.
+// Страницы — из ui/dist (firstrun.html, approval.html) или из HOH_FIRSTRUN_PAGE / HOH_APPROVAL_PAGE. firstrun.html окну не
+// нужна и собирается только для проверок: `vite build --mode probe` (ревью 222000).
 // Движок: если задан HOH_WINDOW_STUB — настоящая заглушка hoh-window-stub по stdio, иначе подмена в этом файле.
 // Снимки 1440×900 — в ui/test-results/screens-a/ (design/ окно не меняет). Ничего не ходит в сеть: всё кроме file:// блокируется.
 import { chromium } from 'playwright-core';
