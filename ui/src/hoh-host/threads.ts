@@ -67,6 +67,17 @@ function toolRequest(name: string, args: Record<string, any>): { requestKind: st
   return { requestKind, prompt: `${tool}: ${input.length <= 400 ? input : input.slice(0, 397) + '...'}` };
 }
 
+const STEP_TYPES = new Set(['command_execution', 'file_change', 'file_search', 'web_search', 'dynamic_tool']);
+
+/** One chat on the home screen. `state`: working, waiting (for the person's answer), done, ended (stopped or failed). */
+export interface HomeEntry {
+  id: string; title: string; projectId: string;
+  state: 'working' | 'waiting' | 'done' | 'ended';
+  startedAt: number; doneAt: number | null;
+  steps: { done: number; total: number };
+  request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
+}
+
 export interface ThreadSeed {
   readonly id: string;
   readonly title?: string;
@@ -520,6 +531,27 @@ export class ThreadModel {
       checkpointScopes: [], checkpoints: [], contextHandoffs: [], contextTransfers: [],
       visibleTurnItems: this.items.map((item, position) => ({ position, visibility: 'local', sourceThreadId: this.id, sourceItemId: item.id, item: { ...item } })),
       updatedAt,
+    };
+  }
+
+  /**
+   * What the home screen shows of this chat (HOH-41 В2), from what the host already knows: the state of the last run,
+   * its real steps (tool calls), and the request that waits for the person. Nothing is estimated.
+   */
+  home(): HomeEntry | null {
+    const run = this.currentRun();
+    if (!run) return null;
+    const steps = this.items.filter(item => item.runId === run.id && STEP_TYPES.has(item.type));
+    const pending = this.requests.find(request => request.status === 'pending');
+    const waitingItem = pending && this.items.find(item => item.requestId === pending.id);
+    const open = run.status === 'running' || run.status === 'waiting';
+    const question = waitingItem?.type === 'user_input_request' ? text(waitingItem.questions?.[0]?.question) : '';
+    return {
+      id: this.id, title: this.titleText(), projectId: this.projectId,
+      state: open ? (pending ? 'waiting' : 'working') : run.status === 'completed' ? 'done' : 'ended',
+      startedAt: run.startedAt ?? run.requestedAt, doneAt: run.completedAt,
+      steps: { done: steps.filter(item => item.status !== 'running' && item.status !== 'waiting').length, total: steps.length },
+      ...(pending && waitingItem ? { request: { id: pending.id, kind: waitingItem.type === 'user_input_request' ? 'question' : 'approval', requestKind: waitingItem.requestKind ?? null, text: waitingItem.type === 'user_input_request' ? question : text(waitingItem.prompt) } } : {}),
     };
   }
 

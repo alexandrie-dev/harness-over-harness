@@ -16,7 +16,7 @@ import {
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
 import { englishError } from './errors.ts';
-import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject } from './threads.ts';
+import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 
 export interface HohHostOptions {
@@ -99,6 +99,9 @@ export class HohHost {
   private readonly dirty = new Set<string>();
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private sequence = 0;
+  private homeDirty = false;
+  private homeVersion = 0;
+  private readonly homeListeners = new Set<() => void>();
   private discovery: ClaudeDiscovery | null = null;
   private mode: HohAccessMode = 'confirm';
   /** T3's "default permissions" setting: the mode a new thread starts in. Claude asks first until the person changes it. */
@@ -196,6 +199,31 @@ export class HohHost {
     }
   }
 
+  /**
+   * The home screen's window into the host (HOH-41 В2; not T3's wire): what the chats are doing, who waits for the person,
+   * and the two actions of that card. Read with `useSyncExternalStore`: `version` changes with every change of any chat.
+   */
+  readonly home = {
+    version: () => this.homeVersion,
+    subscribe: (listener: () => void) => { this.homeListeners.add(listener); return () => { this.homeListeners.delete(listener); }; },
+    entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => thread.home()).filter((entry): entry is HomeEntry => entry !== null),
+    projectTitle: (projectId: string) => projectId === HOH_PROJECT_ID ? 'No project' : this.folders.get(projectId)?.title ?? 'No project',
+    /** Approve or decline a waiting permission request, as the chat's buttons do. */
+    answer: async (threadId: string, requestId: string, decision: 'accept' | 'decline') => {
+      const thread = await this.loaded(threadId);
+      if (!thread) return;
+      await this.respond(thread, { requestId, decision });
+      this.flush();
+    },
+    /** A new chat with this first message, in the project (or "No project"); returns its id. */
+    start: async (message: string, projectId?: string) => {
+      await this.start();
+      const threadId = 'thread-' + (globalThis.crypto?.randomUUID?.() ?? this.now().toString(36));
+      await this.launch({ threadId, commandId: 'home-' + threadId, projectId: projectId ?? HOH_PROJECT_ID, initialMessage: { messageId: 'msg-' + threadId, text: message, attachments: [] } });
+      return threadId;
+    },
+  };
+
   private iso() { return new Date(this.now()).toISOString(); }
   /** The engine's choice for new chats when T3 lists it; otherwise (Claude Code's `default`) T3's default model. */
   private model() { return listedClaudeModel(this.discovery, this.selectedModel) ?? defaultClaudeModel(this.discovery); }
@@ -242,6 +270,34 @@ export class HohHost {
       this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
+    await this.peekToday();
+  }
+
+  /**
+   * The home screen lists today's chats, so their history is read at start: events only, the chat is not opened (no
+   * `session/resume`) and not marked loaded. A turn the history leaves open ends as stopped until the engine says otherwise.
+   */
+  private async peekToday() {
+    const today = new Date(this.now()).toDateString();
+    const recent = [...this.threads.values()].filter(thread => !thread.loaded && new Date(thread.updatedAt).toDateString() === today)
+      .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
+    await Promise.all(recent.map(async thread => {
+      try {
+        let afterSeq: number | undefined;
+        for (;;) {
+          const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
+          const events: any[] = Array.isArray(page?.events) ? page.events : [];
+          for (const event of events) thread.applyEvent(event);
+          if (events.length < PAGE || (afterSeq !== undefined && page.nextSeq <= afterSeq)) break;
+          afterSeq = page.nextSeq;
+        }
+        // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
+        try { if ((await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
+        thread.settleUnfinished(this.now());
+        this.homeDirty = true;
+      } catch { /* the chat is not on the home screen */ }
+    }));
+    this.homeVersion++;
   }
 
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
@@ -351,6 +407,7 @@ export class HohHost {
 
   private changed(threadId: string) {
     this.dirty.add(threadId);
+    this.homeDirty = true;
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => this.flush(), this.throttleMs);
   }
@@ -360,6 +417,7 @@ export class HohHost {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
     const ids = [...this.dirty]; this.dirty.clear();
+    if (this.homeDirty) { this.homeDirty = false; this.homeVersion++; for (const listener of this.homeListeners) listener(); }
     for (const id of ids) {
       const thread = this.threads.get(id);
       if (!thread) continue;

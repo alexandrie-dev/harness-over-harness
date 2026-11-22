@@ -34,6 +34,8 @@ export function installHohHost(options: InstallOptions) {
   const matches = socketMatcher(options.hostname ?? HOH_HOSTNAME);
   const restoreSocket = installHohWebSocket(server, matches, options.target);
   const restoreFetch = installHohFetch(matches, options.target);
+  // The home screen (src/t3-entry/hoh-screens) reads the host through this handle.
+  (options.target ?? globalThis).__HOH_HOME__ = host.home;
   void host.start();
   return {
     host,

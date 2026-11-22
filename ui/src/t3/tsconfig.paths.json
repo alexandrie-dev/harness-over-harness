@@ -133,6 +133,7 @@
     }
   },
   "exclude": [
+    "../t3-entry/hoh-screens",
     "shared/markdownMath.ts",
     "client-runtime/assemblyHighlighting.ts",
     "web/components/ChatMarkdown.tsx",

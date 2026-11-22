@@ -148,6 +148,8 @@ function hohT3(): Plugin {
       if (!importer?.startsWith(T3_BASE)) return null;
       const route = /(?:^|\/)routes\/([^/]+?)(?:\.tsx)?$/.exec(source)?.[1];
       if (route && route in HIDDEN_ROUTES) return ROUTE_PREFIX + route;
+      // Главная `/` — наш экран (HOH-41 В2), тот же id маршрута.
+      if (route === '_chat.index') return resolve(UI, 'src/t3-entry/hoh-screens/homeRoute.tsx');
       // Логика палитры: импорт из кода T3 ведёт на обёртку (из самой обёртки — на настоящий файл).
       if (basename(source, '.ts') === 'CommandPalette.logic') {
         const resolved = await this.resolve(source, importer, { skipSelf: true });

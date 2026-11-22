@@ -532,3 +532,38 @@ test('the reasoning level of a chat survives Stop, reopening and a restart of th
   const efforts = (e, text) => e.requests.filter(r => r.method === 'session/prompt' && r.params.contentBlocks[0].text === text).map(r => r.params.effort);
   assert.deepEqual([efforts(engine, 'm2'), efforts(second, 'm3')], [['max'], ['max']]);
 });
+
+test('home screen data: working chats with real steps, a chat waiting for the person, finished ones; nothing when there is nothing', async () => {
+  const engine = new FakeEngine();
+  const { host } = connect(engine);
+  await host.start();
+  assert.deepEqual(host.home.entries(), []);
+  const user = (id, text) => ({ id, source: { kind: 'user' }, content: [{ type: 'text', text }] });
+  const turn = (session, n, text) => { engine.emitEvent(session, 'turn/start', { turn: n }); engine.emitEvent(session, 'user/message', user(session + n, text)); };
+  for (const id of ['w1', 'w2', 'p1', 'd1', 'd2']) engine.seed(id, id, []);
+  engine.emitStatus('w1', 'running');
+  turn('w1', 1, 'Build report');
+  engine.emitEvent('w1', 'tool/call', { turn: 1, callId: 'a', name: 'bash', arguments: { command: 'ls' } });
+  engine.emitEvent('w1', 'tool/result', { turn: 1, message: { toolCallId: 'a', content: [{ type: 'text', text: 'x' }] } });
+  engine.emitEvent('w1', 'tool/call', { turn: 1, callId: 'b', name: 'read', arguments: { file_path: '/a' } });
+  turn('w2', 1, 'Second');
+  turn('p1', 1, 'Delete tmp');
+  engine.emitEvent('p1', 'tool/call', { turn: 1, callId: 'c', name: 'bash', arguments: { command: 'rm -rf tmp' } });
+  engine.askApproval('p1', 'appr-h', 'ignored');
+  for (const id of ['d1', 'd2']) { turn(id, 1, 'Done ' + id); engine.emitEvent(id, 'assistant/message', { turn: 1, step: 1, message: { id: 'a' + id, content: [{ type: 'text', text: 'ok' }] } }); engine.emitEvent(id, 'turn/end', { turn: 1, reason: { kind: 'completed' } }); }
+  host.flush();
+  const by = Object.fromEntries(host.home.entries().map(entry => [entry.id, entry]));
+  assert.deepEqual([by.w1.state, by.w1.steps, by.w2.state, by.p1.state, by.d1.state, by.d2.state], ['working', { done: 1, total: 2 }, 'working', 'waiting', 'done', 'done']);
+  assert.deepEqual(by.p1.request, { id: 'appr-h', kind: 'approval', requestKind: 'command', text: 'rm -rf tmp' });
+  assert(by.d1.doneAt > 0 && by.w1.doneAt === null);
+  // The card's buttons are the chat's own answer.
+  let changes = 0; host.home.subscribe(() => { changes++; });
+  await host.home.answer('p1', 'appr-h', 'accept');
+  assert.deepEqual(engine.decisions, [{ approvalId: 'appr-h', outcome: 'allowed-once' }]);
+  assert(changes > 0);
+  assert.equal(host.home.entries().find(entry => entry.id === 'p1').request, undefined);
+  // A new chat from the home screen's input.
+  const id = await host.home.start('Plan the week');
+  assert.equal(host.home.entries().find(entry => entry.id === id).state, 'working');
+  assert.equal(host.home.projectTitle('hoh-project'), 'No project');
+});

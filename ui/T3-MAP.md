@@ -375,3 +375,5 @@ Tailwind прежней оболочки её не сканирует (`@source 
 - Значки — `lucide-react` (ISC) и встроенные SVG компонентов T3; логотипы MCP-приложений (`web/components/mcp/logos/*.png`) перенесены
   с MCP Apps (скрыты). Значки приложения T3 (`apps/web/public/*`, `assets/prod/*`) не берутся: знак — эмблема HoH (`src/assets/emblem-*.png`).
 - Объём перенесённого: 38.7 МБ; крупнее всего — .glb — 12.1 МБ, .ts — 9.3 МБ, .tsx — 7.8 МБ, .json — 7.5 МБ, .woff2 — 1.2 МБ, .wasm — 0.7 МБ. Переводы T3 (`web/i18n/translations/*.json`) — все 10 языков, как у T3.
+
+Главная `/` (HOH-41 В2): `routes/_chat.index.tsx` подменён при сборке (`vite.ts`, `resolveId`) на `src/t3-entry/hoh-screens/homeRoute.tsx` (тот же id маршрута) → `HomeScreen.tsx`: приветствие, «Now», «Done», «Needs your answer», поле ввода. Данные — `window.__HOH_HOME__` (хост, `host.home`), не контракты T3. Компоненты T3: Button, Textarea, SidebarInset, WorkspacePageHeader; раскладка — `home.css` (токены темы). Поле ввода — Textarea T3 с отправкой через хост (без чипов модели и режима композера T3); начатый разговор открывается обычным маршрутом T3.
