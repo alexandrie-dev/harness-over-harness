@@ -1,8 +1,7 @@
 /* The notch's band (HOH-41). The band is a strip
    above the app: the app (#root) starts under it, so nothing of T3 is covered. The viewport units of T3's layout
    (h-dvh, h-svh) lose the band's height. --hoh-notch-height is the contract with the screens. */
-:root[data-hoh-notch] { --hoh-notch-height: 36px; }
-@media (max-height: 639px) { :root[data-hoh-notch] { --hoh-notch-height: 30px; } }
+:root[data-hoh-notch] { --hoh-notch-height: var(--gc-y4); } /* полоса — первые четыре дорожки сетки сверху (grid/tokens.css) */
 :root[data-hoh-notch] #root {
   position: fixed;
   inset: var(--hoh-notch-height) 0 0 0;

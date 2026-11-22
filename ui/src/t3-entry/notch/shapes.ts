@@ -2,17 +2,16 @@
 // the tests check them. A corner is a cubic with the control points pulled out (`SMOOTH`), not a circle's
 // arc: the curve leaves the straight side gently, as the corner of a phone does.
 export interface NotchSize {
-  /** Height of the band the notch sits in (--hoh-notch-height), px. */
+  /** Height of the band the notch sits in (--hoh-notch-height = grid line g4), px. */
   readonly band: number;
   readonly emblem: number;
   readonly font: number;
 }
-export const NOTCH_SIZES = {
-  regular: { band: 36, emblem: 20, font: 13 },
-  compact: { band: 30, emblem: 16, font: 12 },
-} as const satisfies Record<string, NotchSize>;
-/** Below this window height (CSS px) the notch is compact: its band must not eat the conversation. */
-export const COMPACT_BELOW_HEIGHT = 640;
+/** Below this band height (CSS px) the notch is compact: a smaller emblem and name. */
+export const COMPACT_BELOW_BAND = 36;
+export function notchSize(band: number): NotchSize {
+  return band < COMPACT_BELOW_BAND ? { band, emblem: 16, font: 12 } : { band, emblem: 20, font: 13 };
+}
 
 const SMOOTH = 0.66;
 const f = (value: number) => Number(value.toFixed(2));
@@ -34,14 +33,16 @@ export interface Outline {
 
 /**
  * A notch grown out of the window's top edge: the sides flare into the edge with inverse corners (radius `flare`),
- * the bottom is rounded. `content` is the width of what stands inside (emblem + name), `size` the band.
+ * the bottom is rounded. `content` is the width of what stands inside (emblem + name), `size` the band. `width` is the
+ * width set by grid lines (g9–g13): the padding takes up what the content leaves; without it (narrow window) the notch is as wide as its content.
  */
-export function notchOutline(content: number, size: NotchSize): Outline {
+export function notchOutline(content: number, size: NotchSize, width?: number): Outline {
   const band = size.band;
   const h = band - 1; // the hairline of the notch does not touch the first row of the window
-  const flare = Math.round(band * 0.5);
-  const radius = Math.round(h * 0.5);
-  const pad = Math.round(band * 0.5);
+  const flare = Math.round(band * 0.45);
+  const radius = Math.round(h * 0.45);
+  const natural = Math.round(band * 0.5);
+  const pad = width !== undefined && width >= content + flare * 2 + 2 * 8 ? (width - flare * 2 - content) / 2 : natural;
   const body = content + pad * 2;
   const w = body + flare * 2;
   const x0 = flare; const x1 = flare + body;

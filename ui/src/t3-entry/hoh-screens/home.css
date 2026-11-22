@@ -1,9 +1,15 @@
 /* Главная HoH (HOH-41 В2): только раскладка; цвета — токены темы T3/HoH, шрифт и радиусы — T3 (var(--radius-*)). */
 .hoh-home { display: flex; flex: 1 1 0; min-height: 0; overflow-y: auto; pointer-events: auto; margin-bottom: 6.25rem; } /* конец тела — над заголовком черновика T3 («What should we work on?»), содержимое под него не заходит */
-.hoh-home__inner { display: flex; gap: 28px; width: 100%; max-width: 1120px; margin: 0 auto; padding: 28px 28px 24px; align-items: flex-start; }
-.hoh-home__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 28px; }
-.hoh-home__side { width: 300px; flex-shrink: 0; }
-@media (max-width: 920px) { .hoh-home__inner { flex-direction: column; } .hoh-home__side { width: 100%; } }
+.hoh-home__inner { display: flex; flex-direction: column; gap: 28px; width: 100%; max-width: 1120px; margin: 0 auto; padding: 28px 28px 24px; }
+/* Один столбец: приветствие, затем «Needs your answer», карточки, «Done» (запрос, который ждёт человека, выше карточек). */
+.hoh-home__main { display: contents; }
+.hoh-home__main > section:last-child { order: 3; }
+.hoh-home__head { order: -2; }
+.hoh-home__side { order: -1; width: 100%; }
+/* С ширины 1100 px столбец — колонка сетки (g8–g16 / g7–g15, grid/frame.css): края без боковых отступов, карточки по одной в ряд. */
+@media (min-width: 1100px) {
+  .hoh-home__inner { max-width: 50vw; padding-inline: 0; }
+}
 .hoh-home h1 { font-size: 1.75rem; line-height: 2.25rem; font-weight: 600; margin: 0; }
 .hoh-home__date { color: var(--muted-foreground); font-size: 0.875rem; margin-top: 4px; }
 .hoh-home__head { position: relative; width: fit-content; margin-top: 8px; }
@@ -18,6 +24,7 @@
 .hoh-home__label { display: flex; align-items: baseline; gap: 8px; font-size: 0.875rem; font-weight: 600; margin: 0 0 10px; }
 .hoh-home__count { color: var(--muted-foreground); font-weight: 400; }
 .hoh-home__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+@media (min-width: 1100px) { .hoh-home__cards { grid-template-columns: minmax(0, 1fr); } }
 .hoh-card { text-align: left; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 14px; display: flex; flex-direction: column; gap: 10px; min-height: 124px; cursor: pointer; color: inherit; font: inherit; }
 .hoh-card:hover { background: var(--accent); }
 .hoh-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
@@ -68,12 +75,6 @@
 .hoh-sub[data-state="done"] .hoh-sub__name { color: var(--muted-foreground); }
 .hoh-orbit { flex-shrink: 0; }
 .hoh-card .hoh-sub small { display: none; }
-/* Узкое окно: карточки идут первыми, запрос под ними, «Done» последним (один столбец). */
-@media (max-width: 920px) {
-  .hoh-home__main { display: contents; }
-  .hoh-home__main > section:last-child { order: 3; }
-  .hoh-home__side { order: -1; }
-}
 /* Низкое окно: у поля ввода T3 остаётся мало места над заголовком черновика — приветствие уступает его содержимому. */
 @media (max-height: 640px) {
   [data-chat-composer-stack] > .absolute.inset-x-0.bottom-full { display: none; } /* «What should we work on?» и проект: места нет */

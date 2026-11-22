@@ -5,6 +5,9 @@ import { installHohHost, tauriEngine } from 'virtual:hoh-host';
 import type { HohEngineLike } from './host';
 import { HIDDEN_SELECTORS } from './features';
 import './brand.css';
+import './grid/tokens.css';
+import './grid/frame.css';
+import { installGridCheck } from './grid/check';
 import { startEmblemFit } from './emblem-fit';
 
 declare global {
@@ -22,5 +25,7 @@ hidden.textContent = HIDDEN_SELECTORS.map((selector) => `${selector} { display: 
 hidden.textContent += '\nhtml:root { --workspace-topbar-height: 40px; }';
 document.head.append(hidden);
 startEmblemFit();
+installGridCheck();
+if (import.meta.env.VITE_HOH_GRID_OVERLAY === '1') void import('./grid/overlay').then(({ installGridOverlay }) => installGridOverlay());
 void import('./notch/mount').then(({ mountNotch }) => mountNotch());
 void import('virtual:t3-bootstrap');

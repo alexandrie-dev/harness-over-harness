@@ -17,7 +17,7 @@ const HOME_EXTRA = 126;
 
 // Корешок (u4, --hoh-notch-height) несёт эмблему сверху по центру: большая у заголовка не повторяется.
 function notchShown(): boolean {
-  return (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--hoh-notch-height')) || 0) > 0;
+  return document.documentElement.hasAttribute('data-hoh-notch');
 }
 
 function fit(): void {
