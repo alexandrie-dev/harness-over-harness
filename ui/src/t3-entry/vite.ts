@@ -111,11 +111,27 @@ export function themePalettes(code: string): string {
  * ChatView.tsx — колонка вместо центрирования в «пустом» состоянии и тело главной над заголовком черновика.
  */
 const HOME_BODY = resolve(UI, 'src/t3-entry/hoh-screens/HomeBody.tsx');
+const SIDEBAR_TOP = resolve(UI, 'src/t3-entry/hoh-screens/SidebarTop.tsx');
 export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [
     ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
     ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
   ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
+}
+/** Боковая панель (HOH-41, состав раунда 12): верх — SidebarTop (New chat, Team с «+», Recent chats) вместо шапки T3 с поиском и значками;
+ *  все разговоры — строки в один ряд без строки проекта («slim»), без полки Working. Полки Snoozed/Settled и кнопки Settle/Snooze скрыты (features.ts). */
+export function sidebarList(code: string): string {
+  return anchorPatch('Sidebar.tsx', code, [
+    ['import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";', 'import { SidebarHeaderIconButton } from "./sidebar/SidebarThreadHeader";\nimport { SidebarTop as SidebarThreadHeader } from ' + JSON.stringify(SIDEBAR_TOP) + ';'],
+    ['useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null', '(useClientSettings((s) => s.sidebarWorkingShelfEnabled), false)'],
+    ['section === "active" || section === "pinned" || section === "working";', 'false;'],
+  ]);
+}
+/** «Settings» внизу панели — со значком и подписью (как в раунде 12), а не только значком. */
+export function sidebarChrome(code: string): string {
+  return anchorPatch('SidebarChrome.tsx', code, [
+    ['<SidebarMenuButton aria-label={label} onClick={onClick} size="icon">\n              {icon}\n            </SidebarMenuButton>', '<SidebarMenuButton aria-label={label} onClick={onClick}>\n              {icon}\n              <span>{label}</span>\n            </SidebarMenuButton>'],
+  ]);
 }
 /** Главная без проектов — «What should we work on?» T3 (эмблема, «Add project», «Start without a project»), заголовок — приветствие с датой. */
 export function noProjectsHero(code: string): string {
@@ -199,6 +215,8 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };
       if (id === resolve(T3_BASE, 'shared/themePalettes.ts')) return { code: themePalettes(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
+      if (id === resolve(T3_WEB, 'components/Sidebar.tsx')) return { code: sidebarList(code), map: null };
+      if (id === resolve(T3_WEB, 'components/sidebar/SidebarChrome.tsx')) return { code: sidebarChrome(code), map: null };
       if (id === resolve(T3_WEB, 'components/NoProjectsHero.tsx')) return { code: noProjectsHero(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderInstanceCard.tsx')) return { code: providerInstanceCard(code), map: null };
       return null;

@@ -1,0 +1,7 @@
+/* Верх боковой панели (SidebarTop.tsx, HOH-41): раскладка; цвета и шрифт — токены T3 боковой панели. */
+.hoh-side { display: flex; flex-direction: column; gap: 2px; }
+.hoh-side__new { gap: 10px; }
+.hoh-side__kbd { margin-left: auto; font: inherit; font-size: 0.6875rem; color: var(--sidebar-muted-foreground, var(--muted-foreground)); background: color-mix(in srgb, var(--sidebar-foreground, var(--foreground)) 8%, transparent); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+.hoh-side__group { display: flex; align-items: center; justify-content: space-between; min-height: 28px; padding: 0 8px; margin-top: 10px; font-size: 0.75rem; font-weight: 500; color: var(--sidebar-muted-foreground, var(--muted-foreground)); }
+.hoh-side__group--list { min-height: 24px; margin-top: 12px; }
+.hoh-side__group button:disabled { opacity: 0.5; cursor: default; }

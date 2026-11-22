@@ -73,9 +73,6 @@ export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
   'components/GitActionsControl.tsx': ['default'],
   // Микрофон в поле ввода (голосовой ввод) и полоска записи.
   'components/chat/ComposerSpeechButton.tsx': ['ComposerSpeechButton', 'ComposerSpeechRecordingPill'],
-  // Шапка списка разговоров: строка Search, фильтр по проекту, «Add project», «New thread» (основатель, раунд дизайна главной).
-  // Поиск и новый разговор остаются по клавишам и палитре команд T3.
-  'components/sidebar/SidebarThreadHeader.tsx': ['SidebarThreadHeader'],
 };
 
 /** Поставщики моделей, которые показывает Providers (HoH исполняет только Claude). T3 рисует строку Codex и «Add provider»
@@ -93,6 +90,12 @@ export const HIDDEN_SELECTORS: readonly string[] = [
   // приглушена (text-muted-foreground); добавить некого — в выборе только Claude. Строка «Set up an agent» (агент не найден,
   // кнопка Install) — с text-foreground и остаётся.
   'section > div.min-w-0 > [data-slot="collapsible"]:has(> [data-slot="collapsible-trigger"] > span.text-sm.text-muted-foreground)',
+  // Боковая панель раунда 12 (HOH-41): один список «Recent chats» без полок Working / Snoozed / Settled и без «Settle» / «Snooze» в строке.
+  '[data-testid="sidebar-working-header"]',
+  '[data-testid="sidebar-snoozed-header"]',
+  '[data-testid="sidebar-settled-header"]',
+  '[data-thread-item] button[aria-label="Settle thread"]',
+  '[data-thread-item] button[aria-label="Snooze thread"]',
 ];
 
 /** Пункты палитры команд T3 (components/CommandPalette.tsx), которые не показываются: образец значения пункта. Все
