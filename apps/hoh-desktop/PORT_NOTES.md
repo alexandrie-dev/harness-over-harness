@@ -149,6 +149,11 @@ stub использует свою process-local credential implementation.
   `firstrun.html`, `assets/*`) и чужие адреса — как раньше, нельзя.
 - **CSP:** `style-src 'unsafe-inline'`, `img-src blob:`, `font-src data:` — стили, картинки и шрифты T3. Скрипты — по-прежнему
   только `'self'`; встроенный сценарий темы T3 вынесен в файл.
+- **CSP проверяется сборкой** (fix2, решение CEO 22.11 20:00): `ui/scripts/check-dist.mjs` читает CSP из `tauri.conf.json`;
+  у каждой директивы — только перечисленные источники, наружу ничего; тесты — `ui/tests/chat/dist-check.test.mjs`.
+- **Ссылки** (fix2): запрос нового окна из главного (T3: `target=_blank`, `window.open`) окно не создаёт никогда; http(s)-ссылку
+  получает `xdg-open` (`opener::clicked_link`), только если WebKit отметил нажатие человека (`is_user_gesture`). Тесты —
+  `tests/opener.rs`, `tests/security.rs`.
 - **Режим доступа Claude** (`hoh/executor/access/set`) — без окна подтверждения: действие человека в главном
   окне и есть подтверждение (`approval::MAIN_WINDOW_CONFIRMED`, `Broker::confirm_from_main_window`). Принимается
   только от окна `main` (`bridge::check_main`); журнал — `who: human, via: main-window`; запрос движка на то же
