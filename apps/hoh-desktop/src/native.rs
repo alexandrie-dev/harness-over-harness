@@ -514,7 +514,9 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
     #[cfg(target_os = "linux")]
     let builder = builder.on_webview_ready(|webview| {
         if webview.label() == "main" {
-            let _ = webview.with_webview(|platform| {
+            let dir = webview.app_handle().path().app_data_dir().ok();
+            let _ = webview.with_webview(move |platform| {
+                install_zoom(&platform.inner(), dir);
                 // No second page ever opens in the window; a link the person clicked goes to the system browser.
                 platform.inner().connect_create(|_, action| {
                     let url = action.request().and_then(|request| request.uri());
@@ -529,6 +531,69 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
         }
     });
     builder.build()
+}
+
+/// Ctrl+`+`/`=`, Ctrl+`-`, Ctrl+0 and Ctrl+wheel zoom the page as in desktop T3 (`zoom.rs`); the level is
+/// restored at start and saved on every change.
+#[cfg(target_os = "linux")]
+fn install_zoom(view: &webkit2gtk::WebView, dir: Option<PathBuf>) {
+    use gtk::gdk::{self, keys::constants as key};
+    use gtk::glib::Propagation;
+    use gtk::prelude::*;
+    use std::{cell::Cell, rc::Rc};
+    let level = Rc::new(Cell::new(dir.as_deref().map_or(0.0, crate::zoom::load)));
+    view.set_zoom_level(crate::zoom::factor(level.get()));
+    let apply = {
+        let (view, level) = (view.clone(), level.clone());
+        move |direction: crate::zoom::Zoom| {
+            level.set(crate::zoom::next_level(level.get(), direction));
+            view.set_zoom_level(crate::zoom::factor(level.get()));
+            if let Some(dir) = &dir {
+                crate::zoom::save(dir, level.get());
+            }
+        }
+    };
+    let on_key = apply.clone();
+    view.connect_key_press_event(move |_, event| {
+        if !event.state().contains(gdk::ModifierType::CONTROL_MASK) {
+            return Propagation::Proceed;
+        }
+        let pressed = event.keyval();
+        let direction = if pressed == key::plus || pressed == key::equal || pressed == key::KP_Add {
+            crate::zoom::Zoom::In
+        } else if pressed == key::minus || pressed == key::KP_Subtract || pressed == key::underscore
+        {
+            crate::zoom::Zoom::Out
+        } else if pressed == key::_0 || pressed == key::KP_0 {
+            crate::zoom::Zoom::Reset
+        } else {
+            return Propagation::Proceed;
+        };
+        on_key(direction);
+        Propagation::Stop
+    });
+    view.connect_scroll_event(move |_, event| {
+        if !event.state().contains(gdk::ModifierType::CONTROL_MASK) {
+            return Propagation::Proceed;
+        }
+        let direction = match event.direction() {
+            gdk::ScrollDirection::Up => crate::zoom::Zoom::In,
+            gdk::ScrollDirection::Down => crate::zoom::Zoom::Out,
+            gdk::ScrollDirection::Smooth => {
+                let dy = event.delta().1;
+                if dy < 0.0 {
+                    crate::zoom::Zoom::In
+                } else if dy > 0.0 {
+                    crate::zoom::Zoom::Out
+                } else {
+                    return Propagation::Stop;
+                }
+            }
+            _ => return Propagation::Proceed,
+        };
+        apply(direction);
+        Propagation::Stop
+    });
 }
 
 #[cfg(feature = "probe")]

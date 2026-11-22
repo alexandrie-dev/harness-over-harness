@@ -1,0 +1,31 @@
+/* Эмблема HoH в экранах T3 (HOH-41 А) без правки файлов T3: рисуется стилем над заголовками.
+   Утверждённая эмблема — design/round2/shared/emblem.png (ui/src/assets/emblem-250.png, emblem-96.png). */
+
+/* Welcome: над заголовком «Welcome to …». */
+div.max-w-3xl > h1.text-2xl.font-semibold::before {
+  content: "";
+  display: block;
+  width: 108px;
+  height: 116px;
+  margin: 0 0 18px -6px;
+  background: url("../assets/emblem-250.png") center / contain no-repeat;
+}
+
+/* Пустой разговор («What should we build in …?» / «What should we work on?»): над заголовком. */
+div.mx-auto.max-w-5xl.flex-col.items-center:has(> h1, > div[data-inline]) {
+  position: relative;
+}
+div.mx-auto.max-w-5xl.flex-col.items-center:has(> h1, > div[data-inline])::before {
+  content: "";
+  display: block;
+  width: 96px;
+  height: 104px;
+  margin-bottom: 22px;
+  background: url("../assets/emblem-250.png") center / contain no-repeat;
+}
+
+/* Шапка боковой панели: знак крупнее, чем у T3 (там высота в одну заглавную букву). */
+a[href="/"] svg[aria-label="HoH"] {
+  height: 22px !important;
+  width: 22px !important;
+}

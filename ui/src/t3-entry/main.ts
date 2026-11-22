@@ -4,6 +4,7 @@
 import { installHohHost, tauriEngine } from 'virtual:hoh-host';
 import type { HohEngineLike } from './host';
 import { HIDDEN_SELECTORS } from './features';
+import './brand.css';
 
 declare global {
   // Только снимки и проверки в браузере без Tauri (scripts/snapshot-t3.mjs): подделка движка.

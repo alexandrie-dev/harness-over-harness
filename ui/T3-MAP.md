@@ -281,7 +281,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 
 | Файл (в `ui/src/t3/base`) | Как | Зачем |
 |---|---|---|
-| `web/components/T3Wordmark.tsx` | замена (наш файл) | знак T3 не берём: на его месте эмблема HoH (src/assets/emblem-48.png) |
+| `web/components/T3Wordmark.tsx` | замена (наш файл) | знак T3 не берём: на его месте эмблема HoH (src/assets/emblem-96.png); размер в шапке панели — src/t3-entry/brand.css (HOH-41 А) |
 | `web/components/T3AppIcon.tsx` | замена (наш файл) | значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src |
 | `web/routeTree.gen.ts` | правка (`ui/src/t3/base-patches/web/routeTree.gen.ts.patch`) | выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются |
 | `web/components/settings/settingsSearch.ts` | правка (`ui/src/t3/base-patches/web/components/settings/settingsSearch.ts.patch`) | выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS) |

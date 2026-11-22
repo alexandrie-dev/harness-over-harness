@@ -10,6 +10,7 @@ pub mod opener;
 pub mod probe;
 pub mod questions;
 pub mod workspace;
+pub mod zoom;
 
 pub fn probe_compiled() -> bool {
     cfg!(feature = "probe")
