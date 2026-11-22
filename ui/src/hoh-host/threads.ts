@@ -330,7 +330,9 @@ export class ThreadModel {
       ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at),
       requestId: params.approvalId, requestKind: 'permission',
       prompt: nonBlank(text(params.humanText), 'Claude asks for permission.'),
-      options: [{ decision: 'accept', label: 'Allow once' }, { decision: 'decline', label: 'Deny' }],
+      // T3's own buttons and order (ComposerPendingApprovalActions.tsx), without "Always allow this
+      // session": HoH allows one action at a time, so that button would promise what does not happen.
+      options: [{ decision: 'cancel', label: 'Cancel' }, { decision: 'decline', label: 'Decline' }, { decision: 'accept', label: 'Approve' }],
     });
     if (run && run.status === 'running') run.status = 'waiting';
     this.touch(at);
