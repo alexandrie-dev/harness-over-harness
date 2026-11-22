@@ -106,7 +106,8 @@ const CSP_ALLOWED = {
   'form-action': ["'none'"],
 };
 const CSP_REQUIRED = ['default-src', 'script-src', 'connect-src', 'img-src', 'font-src', 'object-src', 'frame-src', 'base-uri', 'form-action'];
-const tauriConf = JSON.parse(await readFile('../apps/hoh-desktop/tauri.conf.json', 'utf8'));
+// Конфиг окна — рядом с ui/ (путь от этого файла); HOH_TAURI_CONF — только для проверки самой проверки (tests/chat/dist-check.test.mjs).
+const tauriConf = JSON.parse(await readFile(process.env.HOH_TAURI_CONF ?? new URL('../../apps/hoh-desktop/tauri.conf.json', import.meta.url), 'utf8'));
 const security = tauriConf.app?.security ?? {};
 assert(typeof security.csp === 'string', 'окно без CSP');
 assert(!('dangerousDisableAssetCspModification' in security), 'CSP окна ослаблен настройкой tauri.conf.json');
