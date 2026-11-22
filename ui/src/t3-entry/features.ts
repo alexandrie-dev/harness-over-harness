@@ -96,6 +96,10 @@ export const HIDDEN_SELECTORS: readonly string[] = [
   '[data-testid="sidebar-settled-header"]',
   '[data-thread-item] button[aria-label="Settle thread"]',
   '[data-thread-item] button[aria-label="Snooze thread"]',
+  // Две кнопки справа в шапке разговора (HOH-41, основатель: «это нам не нужно»); на главной (пустой черновик) шапки с «No project / New thread» нет.
+  '[aria-label="Toggle thread details panel"]',
+  '[aria-label="Toggle right panel"]',
+  'body:has([data-hoh-home-body]) header:has(nav[aria-label="Thread breadcrumb"])',
 ];
 
 /** Пункты палитры команд T3 (components/CommandPalette.tsx), которые не показываются: образец значения пункта. Все

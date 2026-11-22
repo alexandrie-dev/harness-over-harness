@@ -645,3 +645,24 @@ test('restart persistence: an engine still starting answers nothing at first —
   assert.equal(ready.config.providers[0].status, 'ready');
   host.stop();
 });
+
+test('an empty draft has no «first message» stamp (the window keeps it out of Recent chats until the first message); chats of the history do, read or not', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-old', 'Old chat', []);
+  engine.seed('chat-today', 'Today', [['turn/start', { turn: 1 }], ['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }]]);
+  const { client } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  const stamp = id => snapshot.snapshot.threads.find(thread => thread.id === id).latestUserMessageAt;
+  assert.notEqual(stamp('chat-old'), null, 'a chat of the history not read yet is a real chat');
+  assert.notEqual(stamp('chat-today'), null);
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'c-d', threadId: 'draft-1', projectId: 'hoh-project', title: 'New thread', createdBy: 'user', creationSource: 'web',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
+  });
+  const created = await shell.until(value => (value.kind === 'thread.updated' || value.kind === 'thread.created') && value.thread?.id === 'draft-1');
+  assert.equal(created.thread.latestUserMessageAt, null, 'no message yet');
+  await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c-m', threadId: 'draft-1', messageId: 'm-1', text: 'first', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
+  const started = await shell.until(value => value.thread?.id === 'draft-1' && value.thread.latestUserMessageAt !== null);
+  assert.notEqual(started.thread.latestUserMessageAt, null);
+});

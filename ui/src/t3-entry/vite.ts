@@ -125,7 +125,9 @@ export function sidebarList(code: string): string {
     ['import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";', 'import { SidebarHeaderIconButton } from "./sidebar/SidebarThreadHeader";\nimport { SidebarTop as SidebarThreadHeader } from ' + JSON.stringify(SIDEBAR_TOP) + ';'],
     ['useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null', '(useClientSettings((s) => s.sidebarWorkingShelfEnabled), false)'],
     ['section === "active" || section === "pinned" || section === "working";', 'false;'],
-  ]);
+    // Пустой черновик (разговор без первого сообщения: хост даёт ему latestUserMessageAt = null) в «Recent chats» не показывается.
+    ['  const threads = useQuietThreadShells();', '  const allThreads = useQuietThreadShells();\n  const threads = useHohMemo(() => allThreads.filter((thread) => thread.latestUserMessageAt != null), [allThreads]);'],
+  ], 'import { useMemo as useHohMemo } from "react";\n');
 }
 /** «Settings» внизу панели — со значком и подписью (как в раунде 12), а не только значком. */
 export function sidebarChrome(code: string): string {

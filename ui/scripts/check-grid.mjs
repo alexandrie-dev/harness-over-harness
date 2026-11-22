@@ -138,6 +138,12 @@ try {
         await page.evaluate(() => document.fonts.ready);
         await page.waitForTimeout(800);
         if (process.env.VITE_HOH_GRID_OVERLAY !== '1' && await page.locator('#hoh-grid-overlay').count() > 0) fail(`${label}: в окне наложение сетки — оно только для снимков (VITE_HOH_GRID_OVERLAY=1)`);
+        const overlap = await page.evaluate(() => {
+          const body = document.querySelector('[data-hoh-home-body]')?.getBoundingClientRect();
+          const stack = document.querySelector('[data-chat-composer-stack]')?.getBoundingClientRect();
+          return body && stack && body.bottom > stack.top + 0.5 ? Math.round((body.bottom - stack.top) * 10) / 10 : 0;
+        });
+        if (overlap > 0) fail(`${label}: тело главной заходит на поле ввода на ${overlap} px`);
         const found = await page.evaluate(() => (window.hohGridCheck ? window.hohGridCheck() : null));
         if (found === null) fail(`${label}: в окне нет window.hohGridCheck`);
         else for (const miss of found) fail(`${label}: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected} (ближайшая ${miss.nearest || '—'})`);

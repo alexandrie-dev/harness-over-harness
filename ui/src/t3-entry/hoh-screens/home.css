@@ -1,5 +1,8 @@
 /* Главная HoH (HOH-41 В2): только раскладка; цвета — токены темы T3/HoH, шрифт и радиусы — T3 (var(--radius-*)). */
-.hoh-home { display: flex; flex: 1 1 0; min-height: 0; overflow-y: auto; pointer-events: auto; margin-bottom: 6.25rem; } /* конец тела — над заголовком черновика T3 («What should we work on?»), содержимое под него не заходит */
+.hoh-home { display: flex; flex: 1 1 0; min-height: 0; overflow-y: auto; pointer-events: auto; }
+/* Заголовок черновика T3 («What should we work on?») T3 кладёт над полем ввода вне потока (absolute, bottom-full): тело главной уходило под него.
+   Он становится строкой потока в колонке поля ввода — тело (flex: 1, прокручивается внутри себя) занимает то, что осталось над ним, и не может его перекрыть. */
+[data-chat-composer-stack] > .absolute.inset-x-0.bottom-full { position: static; }
 .hoh-home__inner { display: flex; flex-direction: column; gap: 28px; width: 100%; max-width: 1120px; margin: 0 auto; padding: 28px 28px 24px; }
 /* Один столбец: приветствие, затем «Needs your answer», карточки, «Done» (запрос, который ждёт человека, выше карточек). */
 .hoh-home__main { display: contents; }
@@ -78,7 +81,6 @@
 /* Низкое окно: у поля ввода T3 остаётся мало места над заголовком черновика — приветствие уступает его содержимому. */
 @media (max-height: 640px) {
   [data-chat-composer-stack] > .absolute.inset-x-0.bottom-full { display: none; } /* «What should we work on?» и проект: места нет */
-  .hoh-home { margin-bottom: 0.75rem; }
   .hoh-ask { gap: 8px; padding: 10px; }
   .hoh-ask__where { display: none; }
   .hoh-ask__text { max-height: 3.75rem; }

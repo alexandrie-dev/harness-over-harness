@@ -589,7 +589,9 @@ export class ThreadModel {
       status: run ? (active ? (run.status === 'waiting' ? 'waiting' : 'running') : run.status) : 'idle',
       pendingRuntimeRequest: pending ? { id: pending.id, kind: pending.kind, createdAt: iso(pending.createdAt), blocking: true } : null,
       latestVisibleMessage: visible ? { id: visible.id, role: visible.role, text: visible.text.slice(0, 400), updatedAt: iso(visible.updatedAt) } : null,
-      latestUserMessageAt: lastUser ? iso(lastUser.createdAt) : null,
+      // Null only for a chat made here that has no message yet (an empty draft): the window keeps it out of «Recent chats»
+      // until the first message. A chat of the engine's history not read yet (older than today) is stamped by its last activity.
+      latestUserMessageAt: lastUser ? iso(lastUser.createdAt) : this.loaded ? null : iso(this.updatedAt),
       hasActionableProposedPlan: false,
       itemCount: this.items.length, visibleItemCount: this.items.length,
       createdAt: iso(this.createdAt), updatedAt: iso(this.updatedAt),
