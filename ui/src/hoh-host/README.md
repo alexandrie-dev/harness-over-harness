@@ -40,7 +40,7 @@ await import('../t3/web/main.tsx');           // их main.tsx как есть
 
 ## Методы
 
-Реализованы (16): `server.probe`, `server.getConfig`, `subscribeServerConfig`, `server.getSettings`, `server.updateSettings`, `server.refreshProviders`, `orchestration.subscribeShell`, `orchestration.subscribeThread`, `orchestration.getThreadProjection`, `orchestration.launchThread`, `orchestration.dispatchCommand`, `orchestration.forceStopThread`, `orchestration.getThreadTitles` + Ping.
+Реализованы (13): `server.probe`, `server.getConfig`, `subscribeServerConfig`, `server.getSettings`, `server.updateSettings`, `server.refreshProviders`, `orchestration.subscribeShell`, `orchestration.subscribeThread`, `orchestration.getThreadProjection`, `orchestration.launchThread`, `orchestration.dispatchCommand`, `orchestration.forceStopThread`, `orchestration.getThreadTitles`; плюс Ping→Pong.
 
 `dispatchCommand`: `thread.create`, `message.dispatch` (→ `session/prompt`), `thread.stop` / `run.interrupt` (→ `session/cancel`, тот же «Стоп»), `runtime-request.respond` (разрешение → `approval_decide`, вопрос → `question_answer`), `thread.user-input.dismiss`, `thread.runtime-mode.set` (→ `hoh/executor/access/set`, сразу, без окна защиты — решение основателя 19:16), `thread.model-selection.set` (→ `hoh/executor/select`), `thread.metadata.update` (название), `thread.archive`/`unarchive`; отметки чтения/закрепления — приняты без действия. Остальные команды — `OrchestrationV2DispatchCommandError` «Not available in HoH.».
 
