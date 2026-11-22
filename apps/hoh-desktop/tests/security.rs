@@ -24,7 +24,9 @@ fn capabilities_keep_main_and_approval_authority_disjoint() {
     let main_permissions = strings(&main, "permissions");
     let approval_permissions = strings(&approval, "permissions");
     assert!(!main_permissions.contains("allow-approval-current"));
-    assert!(!main_permissions.contains("allow-approval-decide"));
+    // The T3 client answers the permission request shown in its conversation (founder 22.11 19:16);
+    // the host accepts from the main window only that request (`Broker::decide_in_chat`).
+    assert!(main_permissions.contains("allow-approval-decide"));
     assert!(main_permissions.contains("allow-question-answer"));
     assert!(main_permissions.contains("allow-open-link"));
     assert!(!approval_permissions.contains("allow-open-link"));

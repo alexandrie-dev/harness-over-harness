@@ -899,3 +899,128 @@ fn only_the_access_mode_is_confirmed_by_the_main_window_itself() {
     );
     assert!(broker.audit_log().is_empty());
 }
+
+/// A permission request of the engine as the T3 client shows it in its conversation.
+fn tool_request(id: &str, now: u64) -> Value {
+    let action = json!({"method":"bash","params":{"command":"rm -rf ./build"}});
+    json!({"sessionId":"s-claude","toolName":"bash","approvalId":id,"risk":"high",
+        "humanText":"Run rm -rf ./build?","expiresAt":now+300_000,
+        "actionHash":hoh_protocol::approval::action_hash(&action),"action":action})
+}
+
+/// Founder 22.11 19:16: in the T3 client the permission request is answered in the conversation,
+/// with no window of its own; the same checks and signature, journaled as the person's via `chat`.
+#[test]
+fn a_permission_request_shown_in_the_conversation_is_answered_from_the_main_window() {
+    let broker = broker();
+    let Begun::Window(open) = begin(&broker, tool_request("p1", NOW), NOW) else {
+        panic!("an engine request needs the person")
+    };
+    let shown = Instant::now();
+    assert!(broker.show_in_chat(&open.label, shown));
+    // Not before it could be read.
+    assert!(
+        broker
+            .decide_in_chat("p1", ApprovalOutcome::AllowedOnce, NOW, shown)
+            .is_err()
+    );
+    // Only the request shown there, by its id.
+    assert!(
+        broker
+            .decide_in_chat(
+                "other",
+                ApprovalOutcome::AllowedOnce,
+                NOW,
+                shown + Duration::from_secs(2)
+            )
+            .is_err()
+    );
+    let decided = broker
+        .decide_in_chat(
+            "p1",
+            ApprovalOutcome::AllowedOnce,
+            NOW + 2_000,
+            shown + Duration::from_secs(2),
+        )
+        .unwrap();
+    assert!(decided.command_result.is_ok());
+    let Resolution::Engine {
+        decision: Ok(decision),
+        ..
+    } = decided.resolution
+    else {
+        panic!("the engine gets the decision")
+    };
+    let request: HostApprovalRequest = serde_json::from_value(tool_request("p1", NOW)).unwrap();
+    hoh_protocol::approval::verify_decision(&KEY, &request, &decision, NOW + 2_000).unwrap();
+    let log = broker.audit_log();
+    assert_eq!(
+        (log[0].who, log[0].via, log[0].outcome.as_str()),
+        ("human", "chat", "allowed-once")
+    );
+    assert_eq!(
+        log[0].note,
+        "подтверждено человеком в разговоре главного окна"
+    );
+    assert_eq!(broker.history(5)[0]["asker"], "assistant");
+    // Answered once.
+    assert!(
+        broker
+            .decide_in_chat(
+                "p1",
+                ApprovalOutcome::Rejected,
+                NOW + 3_000,
+                shown + Duration::from_secs(3)
+            )
+            .is_err()
+    );
+}
+
+/// The previous shell keeps its approval window: a request not shown in the conversation, and the
+/// shell's own settings question, cannot be answered from the main window.
+#[test]
+fn only_a_request_shown_in_the_conversation_is_answered_there() {
+    let broker = broker();
+    let Begun::Window(open) = begin(&broker, tool_request("p2", NOW), NOW) else {
+        panic!("an engine request needs the person")
+    };
+    let later = Instant::now() + Duration::from_secs(5);
+    assert!(
+        broker
+            .decide_in_chat("p2", ApprovalOutcome::AllowedOnce, NOW, later)
+            .is_err()
+    );
+    drop(broker.reject(&open.label, NOW));
+    let (settings, _receiver) = broker
+        .begin_preflight(
+            KEY_SET,
+            &key_params("sk-z", "http://127.0.0.1:8080/v1"),
+            NOW,
+        )
+        .unwrap();
+    assert!(!broker.show_in_chat(&settings.label, Instant::now()));
+    assert!(
+        broker
+            .decide_in_chat(
+                &settings.view.approval_id,
+                ApprovalOutcome::AllowedOnce,
+                NOW,
+                later
+            )
+            .is_err()
+    );
+    // A rejection in the conversation is journaled as the person's too.
+    drop(broker.reject(&settings.label, NOW));
+    let Begun::Window(open) = begin(&broker, tool_request("p3", NOW), NOW) else {
+        panic!("an engine request needs the person")
+    };
+    assert!(broker.show_in_chat(&open.label, Instant::now()));
+    broker
+        .decide_in_chat("p3", ApprovalOutcome::Rejected, NOW, Instant::now())
+        .unwrap();
+    let last = broker.audit_log().pop().unwrap();
+    assert_eq!(
+        (last.who, last.via, last.outcome.as_str()),
+        ("human", "chat", "rejected")
+    );
+}

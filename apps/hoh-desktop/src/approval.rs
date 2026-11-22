@@ -370,6 +370,19 @@ struct Pending {
     destination: Destination,
     /// The mask hid a nested command in the text the shell composed: no "allow once".
     blocks_allow: bool,
+    /// Shown in the conversation of the main window (the T3 client), not in a window of its own.
+    in_chat: bool,
+}
+
+impl Pending {
+    /// The channel the person answers through, as the journal names it.
+    fn via(&self) -> &'static str {
+        match (&self.destination, self.in_chat) {
+            (Destination::Preflight(_), _) => "settings-window",
+            (Destination::Engine { .. }, true) => "chat",
+            (Destination::Engine { .. }, false) => "approval-window",
+        }
+    }
 }
 
 pub struct Broker {
@@ -430,7 +443,7 @@ impl Broker {
                 let closed = |key: &str| entry[key].as_str().map(redact_text);
                 let mut record = json!({
                     "at": entry["at"].as_u64()?,
-                    "asker": if entry["via"] == "approval-window" { "assistant" } else { "you" },
+                    "asker": if entry["via"] == "approval-window" || entry["via"] == "chat" { "assistant" } else { "you" },
                     "method": entry["method"].as_str()?,
                     "humanText": closed("humanText")?,
                     "outcome": entry["outcome"].as_str()?,
@@ -773,8 +786,54 @@ impl Broker {
             shown_at: None,
             destination,
             blocks_allow,
+            in_chat: false,
         });
         Ok(OpenApproval { label, view })
+    }
+
+    /// The T3 client shows the engine's permission request in its own conversation (founder 22.11 19:16):
+    /// no window of its own; the person reads it from now on and answers from the main window
+    /// (`decide_in_chat`). Only an engine request: the shell's own settings questions keep their window.
+    pub fn show_in_chat(&self, label: &str, instant: Instant) -> bool {
+        let Ok(mut slot) = self.pending.lock() else {
+            return false;
+        };
+        match slot.as_mut() {
+            Some(pending)
+                if pending.label == label
+                    && matches!(pending.destination, Destination::Engine { .. }) =>
+            {
+                pending.in_chat = true;
+                pending.shown_at = Some(instant);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The person's answer in the conversation of the main window to the request shown there: the
+    /// same checks and signature as in the approval window (allow only after it could be read, not
+    /// with a hidden nested command), journaled as the person's through `chat`.
+    pub fn decide_in_chat(
+        &self,
+        approval_id: &str,
+        outcome: ApprovalOutcome,
+        now: u64,
+        instant: Instant,
+    ) -> Result<DecisionOutcome, String> {
+        let label = {
+            let slot = self
+                .pending
+                .lock()
+                .map_err(|_| "Подтверждение недоступно")?;
+            match slot.as_ref() {
+                Some(pending) if pending.in_chat && pending.request.approval_id == approval_id => {
+                    pending.label.clone()
+                }
+                _ => return Err("Нет такого запроса разрешения в разговоре".into()),
+            }
+        };
+        self.decide(&label, approval_id, outcome, now, instant)
     }
 
     pub fn current(&self, label: &str, now: u64, instant: Instant) -> Result<ApprovalView, String> {
@@ -884,6 +943,7 @@ impl Broker {
         }
         let pending = self.take_exact(label, approval_id)?;
         let settings_window = matches!(pending.destination, Destination::Preflight(_));
+        let via = pending.via();
         let verified =
             hoh_protocol::approval::verify_decision(&self.key, &pending.request, &decision, now);
         match (&verified, &decision.outcome) {
@@ -894,28 +954,20 @@ impl Broker {
                 self.log(
                     now,
                     "human",
-                    if settings_window {
-                        "settings-window"
-                    } else {
-                        "approval-window"
-                    },
+                    via,
                     &pending.request,
                     "allowed-once",
-                    if settings_window {
-                        "подтверждено человеком в окне настройки"
-                    } else {
-                        "подтверждено человеком в окне подтверждения"
+                    match via {
+                        "settings-window" => "подтверждено человеком в окне настройки",
+                        "chat" => "подтверждено человеком в разговоре главного окна",
+                        _ => "подтверждено человеком в окне подтверждения",
                     },
                 );
             }
             (Ok(()), _) => self.log(
                 now,
                 "human",
-                if settings_window {
-                    "settings-window"
-                } else {
-                    "approval-window"
-                },
+                via,
                 &pending.request,
                 "rejected",
                 "отклонено человеком",
@@ -923,11 +975,7 @@ impl Broker {
             (Err(_), _) => self.log(
                 now,
                 "core",
-                if settings_window {
-                    "settings-window"
-                } else {
-                    "approval-window"
-                },
+                via,
                 &pending.request,
                 "invalid",
                 "подтверждение недействительно",
@@ -958,12 +1006,7 @@ impl Broker {
     /// question simply fails.
     pub fn expire(&self, label: &str, now: u64) -> Option<Resolution> {
         let pending = self.take_label(label)?;
-        let settings_window = matches!(pending.destination, Destination::Preflight(_));
-        let via = if settings_window {
-            "settings-window"
-        } else {
-            "approval-window"
-        };
+        let via = pending.via();
         let decision = HostApprovalDecision {
             approval_id: pending.request.approval_id.clone(),
             outcome: ApprovalOutcome::Cancelled,
@@ -1001,11 +1044,7 @@ impl Broker {
         self.log(
             now,
             "human",
-            if matches!(pending.destination, Destination::Preflight(_)) {
-                "settings-window"
-            } else {
-                "approval-window"
-            },
+            pending.via(),
             &pending.request,
             "rejected",
             "окно закрыто или срок вышел: отклонено",

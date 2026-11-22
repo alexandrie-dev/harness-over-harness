@@ -106,12 +106,14 @@ fn engine_launch(engine_home: &std::path::Path) -> Result<EngineLaunch, String> 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "probe")]
     crate::probe::trace("native:setup:start");
-    if legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref())
-        && let Some(window) = app.get_webview_window("main")
-    {
-        let legacy = window.url()?.join("legacy.html")?;
-        window.navigate(legacy)?;
+    let legacy = legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref());
+    if legacy && let Some(window) = app.get_webview_window("main") {
+        let page = window.url()?.join("legacy.html")?;
+        window.navigate(page)?;
     }
+    // The T3 client answers the engine's permission requests in its conversation; the previous
+    // shell keeps the separate approval window.
+    let in_chat = !legacy;
     let mut key = [0_u8; 32];
     use std::io::Read;
     std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
@@ -173,6 +175,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 &event_approvals,
                 &event_questions,
                 &event_ready,
+                in_chat,
                 event,
             )
         }),
@@ -205,6 +208,7 @@ fn handle_event(
     approvals: &Arc<Broker>,
     questions: &Arc<QuestionBroker>,
     ready: &Arc<AtomicBool>,
+    in_chat: bool,
     event: HostEvent,
 ) {
     match event {
@@ -268,6 +272,12 @@ fn handle_event(
         } => {
             match approvals.begin_engine_or_grant(generation, id.clone(), &method, params, now_ms())
             {
+                // The main window shows it in the conversation (its `approval.pending` notification).
+                Ok(Begun::Window(open)) if in_chat => {
+                    if approvals.show_in_chat(&open.label, Instant::now()) {
+                        schedule_expiry(handle, approvals, open.label, open.view.expires_at);
+                    }
+                }
                 Ok(Begun::Window(open)) => schedule_window(handle, approvals, open),
                 // Confirmed by the person a moment ago in the settings window: no second window.
                 Ok(Begun::Signed(resolution)) => dispatch_resolution(handle, resolution),
@@ -400,9 +410,19 @@ fn open_window(
         }
     });
 
+    schedule_expiry(handle, approvals, label, open.view.expires_at);
+    Ok(())
+}
+
+/// The request not answered in time is cancelled with a valid signature just before its deadline.
+fn schedule_expiry(
+    handle: &tauri::AppHandle,
+    approvals: &Arc<Broker>,
+    label: String,
+    expires_at: u64,
+) {
     let expiry_app = handle.clone();
     let expiry_broker = approvals.clone();
-    let expires_at = open.view.expires_at;
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(
             expires_at
@@ -415,7 +435,6 @@ fn open_window(
             destroy_window(&expiry_app, &label);
         }
     });
-    Ok(())
 }
 
 fn trusted_app_origin(url: &tauri::Url) -> bool {
@@ -755,6 +774,15 @@ pub fn approval_decide(
     outcome: ApprovalOutcome,
 ) -> Result<(), String> {
     let label = window.label().to_owned();
+    // The main window answers only the request shown in its conversation (`Broker::show_in_chat`).
+    if label == "main" {
+        let decision =
+            state
+                .approvals
+                .decide_in_chat(&approval_id, outcome, now_ms(), Instant::now())?;
+        dispatch_resolution(window.app_handle(), decision.resolution);
+        return decision.command_result;
+    }
     let decision =
         state
             .approvals
