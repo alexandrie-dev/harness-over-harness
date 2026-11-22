@@ -1,5 +1,5 @@
 /* Главная HoH (HOH-41 В2): только раскладка; цвета — токены темы T3/HoH, шрифт и радиусы — T3 (var(--radius-*)). */
-.hoh-home { display: flex; flex: 1 1 0; min-height: 0; overflow-y: auto; pointer-events: auto; margin-bottom: 6.25rem; } /* конец тела — над заголовком черновика T3 («What should we work on?»), содержимое под него не заходит */
+.hoh-home { display: flex; flex: 1 1 0; min-height: 0; overflow-y: auto; pointer-events: auto; margin-bottom: 6.25rem; padding-top: var(--hoh-notch-height, 0px); } /* конец тела — над заголовком черновика T3 («What should we work on?»), содержимое под него не заходит */
 .hoh-home__inner { display: flex; gap: 28px; width: 100%; max-width: 1120px; margin: 0 auto; padding: 28px 28px 24px; align-items: flex-start; }
 .hoh-home__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 28px; }
 .hoh-home__side { width: 300px; flex-shrink: 0; margin-top: 60px; } /* под панелью рабочей среды T3 в правом верхнем углу пустого разговора */
@@ -44,10 +44,55 @@
 .hoh-ask__head { display: flex; justify-content: space-between; align-items: center; font-size: 0.8125rem; color: var(--muted-foreground); }
 .hoh-ask__count { color: var(--warning-foreground); font-weight: 600; }
 .hoh-ask__item { display: flex; flex-direction: column; gap: 8px; }
-.hoh-ask__item + .hoh-ask__item { border-top: 1px solid var(--border); padding-top: 14px; }
+.hoh-ask__block { display: flex; flex-direction: column; gap: 8px; }
+.hoh-ask__block + .hoh-ask__block { border-top: 1px solid var(--border); padding-top: 14px; }
 .hoh-ask__where { display: flex; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 0.75rem; }
 .hoh-ask__kind { font-size: 0.75rem; font-weight: 600; }
 .hoh-ask__text { display: block; font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.75rem; line-height: 1.25rem; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 10rem; overflow: auto; user-select: text; }
 .hoh-ask__actions { display: flex; gap: 8px; }
 .hoh-ask__actions > * { flex: 1; }
 .hoh-ask__where span:last-child { white-space: nowrap; }
+
+/* Значок исполнителя (Claude из набора T3) и субагенты — раунд дизайна главной. */
+.hoh-mark { width: 14px; height: 14px; flex-shrink: 0; }
+.hoh-card__top { display: flex; align-items: flex-start; gap: 8px; }
+.hoh-card__top .hoh-mark { margin-top: 3px; }
+.hoh-ask__where > span:first-child, .hoh-row > span:nth-child(2) { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.hoh-row > span:nth-child(2) { display: flex; }
+.hoh-tick { width: 12px; height: 12px; flex-shrink: 0; color: var(--success-foreground, var(--primary)); }
+.hoh-tick[data-failed] { color: var(--destructive-foreground, var(--warning)); }
+.hoh-subs { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--border); padding-top: 8px; }
+.hoh-sub { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; min-width: 0; }
+.hoh-sub__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.hoh-sub small, .hoh-sub time { color: var(--muted-foreground); white-space: nowrap; font-size: 0.6875rem; }
+.hoh-sub[data-state="done"] .hoh-sub__name { color: var(--muted-foreground); }
+.hoh-orbit { flex-shrink: 0; }
+/* B: дерево строками */
+.hoh-home__inner--tree { flex-direction: column; gap: 22px; max-width: 920px; }
+.hoh-tree { display: flex; flex-direction: column; gap: 6px; }
+.hoh-tree__node { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); padding: 4px 6px; }
+.hoh-tree__node[data-state="waiting"] { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); }
+.hoh-trow { display: grid; grid-template-columns: 14px minmax(0, 1fr) 84px auto auto; align-items: center; gap: 10px; padding: 6px; border-radius: var(--radius-md); cursor: pointer; font-size: 0.875rem; }
+.hoh-trow:hover { background: var(--accent); }
+.hoh-trow:focus-visible { outline: 2px solid var(--ring); }
+.hoh-trow__title { display: flex; flex-direction: column; min-width: 0; font-weight: 600; }
+.hoh-trow__title small { color: var(--muted-foreground); font-weight: 400; font-size: 0.75rem; }
+.hoh-trow__state { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; white-space: nowrap; }
+.hoh-tree__node[data-state="working"] .hoh-trow__state { color: var(--primary); }
+.hoh-tree__node[data-state="waiting"] .hoh-trow__state { color: var(--warning-foreground); }
+.hoh-trow time { font-size: 0.75rem; color: var(--muted-foreground); white-space: nowrap; }
+.hoh-tree__leaf { position: relative; margin-left: 13px; padding: 3px 6px 3px 22px; border-left: 1px solid var(--border); }
+.hoh-tree__leaf::before { content: ""; position: absolute; left: 0; top: 50%; width: 14px; border-top: 1px solid var(--border); }
+.hoh-tree__leaf[data-last] { border-left-color: transparent; }
+.hoh-tree__leaf[data-last]::after { content: ""; position: absolute; left: 0; top: 0; height: 50%; border-left: 1px solid var(--border); }
+.hoh-tree__ask { margin: 6px 6px 6px 27px; padding-top: 8px; border-top: 1px solid var(--border); }
+/* C: колонки по состоянию */
+.hoh-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+.hoh-cols > section { display: flex; flex-direction: column; gap: 10px; }
+.hoh-cols .hoh-home__label { margin: 0; }
+.hoh-card--c { min-height: 0; gap: 8px; }
+.hoh-cols [data-ask] .hoh-card { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); cursor: default; }
+.hoh-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.hoh-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 0.6875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hoh-chip[data-state="done"] { color: var(--muted-foreground); }
+@media (max-width: 920px) { .hoh-cols { grid-template-columns: minmax(0, 1fr); } .hoh-trow { grid-template-columns: 14px minmax(0, 1fr) auto; } .hoh-trow .hoh-steps { display: none; } .hoh-trow time { display: none; } }

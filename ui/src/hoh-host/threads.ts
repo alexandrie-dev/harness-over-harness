@@ -76,7 +76,13 @@ export interface HomeEntry {
   startedAt: number; doneAt: number | null;
   steps: { done: number; total: number };
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
+  /** Subagents of the run: Claude's Task (Agent) calls — name and kind from the call, state from its result. */
+  agents: HomeAgent[];
 }
+export interface HomeAgent { id: string; name: string; kind: string; state: 'working' | 'done' | 'failed'; startedAt: number; doneAt: number | null }
+
+/** Claude starts a subagent with its Task tool (named Agent in newer versions): the call is the subagent. */
+const isSubagentCall = (item: Item) => item.type === 'dynamic_tool' && ['task', 'agent'].includes(String(item.toolName ?? '').toLowerCase());
 
 export interface ThreadSeed {
   readonly id: string;
@@ -541,7 +547,17 @@ export class ThreadModel {
   home(): HomeEntry | null {
     const run = this.currentRun();
     if (!run) return null;
-    const steps = this.items.filter(item => item.runId === run.id && STEP_TYPES.has(item.type));
+    const calls = this.items.filter(item => item.runId === run.id && STEP_TYPES.has(item.type));
+    const steps = calls.filter(item => !isSubagentCall(item));
+    const agents: HomeAgent[] = calls.filter(isSubagentCall).map(item => {
+      const input = record(item.input);
+      const kind = text(input.subagent_type) || 'general-purpose';
+      return {
+        id: item.id, kind, name: text(input.description) || text(input.prompt).slice(0, 80) || kind,
+        state: item.status === 'failed' ? 'failed' : item.status === 'running' || item.status === 'waiting' ? 'working' : 'done',
+        startedAt: Date.parse(item.startedAt), doneAt: item.completedAt ? Date.parse(item.completedAt) : null,
+      };
+    });
     const pending = this.requests.find(request => request.status === 'pending');
     const waitingItem = pending && this.items.find(item => item.requestId === pending.id);
     const open = run.status === 'running' || run.status === 'waiting';
@@ -550,7 +566,7 @@ export class ThreadModel {
       id: this.id, title: this.titleText(), projectId: this.projectId,
       state: open ? (pending ? 'waiting' : 'working') : run.status === 'completed' ? 'done' : 'ended',
       startedAt: run.startedAt ?? run.requestedAt, doneAt: run.completedAt,
-      steps: { done: steps.filter(item => item.status !== 'running' && item.status !== 'waiting').length, total: steps.length },
+      steps: { done: steps.filter(item => item.status !== 'running' && item.status !== 'waiting').length, total: steps.length }, agents,
       ...(pending && waitingItem ? { request: { id: pending.id, kind: waitingItem.type === 'user_input_request' ? 'question' : 'approval', requestKind: waitingItem.requestKind ?? null, text: waitingItem.type === 'user_input_request' ? question : text(waitingItem.prompt) } } : {}),
     };
   }

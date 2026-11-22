@@ -15,7 +15,16 @@ function headerBottom(): number {
 // Она показывается, только если с отступом всё тело помещается без прокрутки; иначе скрыта (не накладывается на карточки).
 const HOME_EXTRA = 126;
 
+// Корешок (u4, --hoh-notch-height) несёт эмблему сверху по центру: большая у заголовка не повторяется.
+function notchShown(): boolean {
+  return (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--hoh-notch-height')) || 0) > 0;
+}
+
 function fit(): void {
+  if (notchShown()) {
+    for (const mark of document.querySelectorAll('[data-hoh-emblem]')) mark.removeAttribute('data-hoh-emblem');
+    return;
+  }
   const top = headerBottom();
   const home = document.querySelector('[data-hoh-home-body]');
   for (const heading of document.querySelectorAll<HTMLElement>(HEADINGS)) {

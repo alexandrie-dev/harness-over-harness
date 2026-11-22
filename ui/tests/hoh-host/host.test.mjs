@@ -601,3 +601,24 @@ test('home screen = the chat\'s own data: the request text and kind are the chat
   const answered = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests[0]?.status === 'resolved');
   assert.equal(answered.projection.runtimeRequests[0].decision, 'accept');
 });
+
+test('home screen subagents: Claude\'s Task (Agent) calls are the chat\'s subagents — name, kind, state from the call and its result; not counted as steps', async () => {
+  const engine = new FakeEngine();
+  const { host } = connect(engine);
+  await host.start();
+  engine.seed('chat-s', 'S', []);
+  engine.emitEvent('chat-s', 'turn/start', { turn: 1 });
+  engine.emitEvent('chat-s', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'Review the repo' }] });
+  engine.emitStatus('chat-s', 'running');
+  const call = (id, name, args) => engine.emitEvent('chat-s', 'tool/call', { turn: 1, callId: id, name, arguments: JSON.stringify(args) });
+  call('t1', 'Task', { description: 'Survey the docs', subagent_type: 'Explore', prompt: 'look' });
+  call('t2', 'Agent', { prompt: 'Check the tests thoroughly and report' });
+  call('b1', 'Bash', { command: 'ls' });
+  engine.emitEvent('chat-s', 'tool/result', { turn: 1, message: { toolCallId: 't1', content: [{ type: 'text', text: 'done' }] } });
+  engine.emitEvent('chat-s', 'tool/result', { turn: 1, message: { toolCallId: 'b1', content: [{ type: 'text', text: 'x' }] } });
+  host.flush();
+  const entry = host.home.entries().find(candidate => candidate.id === 'chat-s');
+  assert.deepEqual(entry.agents.map(agent => [agent.name, agent.kind, agent.state]), [['Survey the docs', 'Explore', 'done'], ['Check the tests thoroughly and report', 'general-purpose', 'working']]);
+  assert(entry.agents[0].doneAt >= entry.agents[0].startedAt && entry.agents[1].doneAt === null);
+  assert.deepEqual(entry.steps, { done: 1, total: 1 });
+});
