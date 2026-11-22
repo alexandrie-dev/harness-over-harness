@@ -190,7 +190,8 @@
       "web/components/chat/PanelLayoutControls.tsx": "выключатель: терминал — кнопки ящика терминала нет (showTerminalControl по умолчанию false)",
       "web/components/settings/ThemeSettings.tsx": "выключатель: импорт тем VS Code / Open VSX — кнопки «Add theme» нет, диалог импорта не открывается",
       "gt.config.json": "языки интерфейса: английский и русский (остальные переводы не переносятся); gt.config.json T3 читает web/i18n/locales.ts",
-      "web/branding.ts": "имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет"
+      "web/branding.ts": "имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет",
+      "web/components/chat/turnDetailAnnouncement.ts": "имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code»"
     },
     "switches": [
       [

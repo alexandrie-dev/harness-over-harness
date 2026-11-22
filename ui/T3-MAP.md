@@ -238,7 +238,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `^apps/web/src/components/device/models/.*\.glb$` | 3D-модели устройств скрытой части «устройства и пары» (~12 МБ): не переносятся (решение ведущего); импорты `?url` — адрес-заглушка stubs/absent-url.ts |
 | `^apps/web/src/i18n/translations/(?!(en\|ru)\.json$)[^/]+$` | переводы, кроме en и ru, не переносятся (решение ведущего); список языков сужен правкой gt.config.json |
 
-Файлов перенесено: **1974**, из них без изменений: **1965**, правок файлов T3: **10** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
+Файлов перенесено: **1974**, из них без изменений: **1964**, правок файлов T3: **11** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
 Отложено (не проверяет tsc: в замыкании импортов есть пакет, которого нет в `ui/package.json` и `ui/node_modules` в версии, совместимой с lock T3: тот же major, для 0.x — тот же minor): **0** из 1949 файлов кода;
 не хватает пакетов (сколько файлов T3 их импортирует): нет. Когда пакеты из `ui/T3-DEPS.md` (раздел HOH-40) стоят, отложенных нет —
 `t3-sync.py` пересчитывает список сам. tsc основы — с настройками T3 (`strict`, `noImplicitAny`, `noUncheckedIndexedAccess`,
@@ -250,7 +250,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 
 | Папка T3 | Папка у нас | Файлов | Из них кода | Без изменений | Правок | Отложено | На заглушках |
 |---|---|---|---|---|---|---|---|
-| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1451 | 9 | 0 | 70 |
+| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1450 | 10 | 0 | 70 |
 | `packages/contracts/src` | `ui/src/t3/base/contracts` | 79 | 79 | 79 | 0 | 0 | 0 |
 | `packages/shared/src` | `ui/src/t3/base/shared` | 126 | 125 | 126 | 0 | 0 | 1 |
 | `packages/client-runtime/src` | `ui/src/t3/base/client-runtime` | 267 | 267 | 267 | 0 | 0 | 10 |
@@ -291,9 +291,10 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/components/settings/ThemeSettings.tsx` | правка (`ui/src/t3/base-patches/web/components/settings/ThemeSettings.tsx.patch`) | выключатель: импорт тем VS Code / Open VSX — кнопки «Add theme» нет, диалог импорта не открывается |
 | `gt.config.json` | правка (`ui/src/t3/base-patches/gt.config.json.patch`) | языки интерфейса: английский и русский (остальные переводы не переносятся); gt.config.json T3 читает web/i18n/locales.ts |
 | `web/branding.ts` | правка (`ui/src/t3/base-patches/web/branding.ts.patch`) | имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет |
+| `web/components/chat/turnDetailAnnouncement.ts` | правка (`ui/src/t3/base-patches/web/components/chat/turnDetailAnnouncement.ts.patch`) | имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code» |
 
 Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
-`desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 137 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в текстах — без правки файлов T3, в прослойке перевода (HOH-40 fix2): `shims/gt-i18n.ts` `branded()` ставит `APP_BASE_NAME` вместо «T3 Code» в каждом тексте, что идёт через `gt()`/`m()`/`msg()` (`formatMessage`), а `shims/gt-react.tsx` `<T>` — в своих текстовых детях («Welcome to T3 Code» → «Welcome to HoH»). Строки вне i18n T3 (без `gt`/`<T>`) не меняются.
+`desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 136 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).
 
 ### Скрытые части: чем выключены
 

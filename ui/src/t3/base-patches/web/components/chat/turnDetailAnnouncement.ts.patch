@@ -1,0 +1,20 @@
+--- a/web/components/chat/turnDetailAnnouncement.ts
++++ b/web/components/chat/turnDetailAnnouncement.ts
+@@ -3,6 +3,7 @@
+ import { searchToolLabelParts } from "@t3tools/shared/toolActivity";
+ import { msg } from "gt-react";
+ 
++import { APP_BASE_NAME } from "../../branding";
+ import { m } from "../../i18n/messages";
+ import type { TimelineEntry, WorkLogEntry } from "../../session-logic";
+ import {
+@@ -186,7 +187,8 @@
+ }
+ 
+ /** The heading every agent message has in the timeline. */
+-const MESSAGE_AUTHOR = "T3 Code";
++// HoH (ui/T3-MAP.md): подпись автора для экранного чтеца — имя продукта окна.
++const MESSAGE_AUTHOR = APP_BASE_NAME;
+ 
+ /**
+  * Decides which of the turn's messages and steps a screen reader hears next.
