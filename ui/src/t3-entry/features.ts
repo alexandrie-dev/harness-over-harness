@@ -75,6 +75,11 @@ export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
   'components/chat/ComposerSpeechButton.tsx': ['ComposerSpeechButton', 'ComposerSpeechRecordingPill'],
 };
 
+/** Поставщики моделей, которые показывает Providers (HoH исполняет только Claude). T3 рисует строку Codex и «Add provider»
+ * по своим умолчаниям на клиенте (ProviderSettingsPanel.tsx: PROVIDER_SETTINGS, canAddProvider), хост их не отдаёт;
+ * при сборке (vite.ts, providerSettingsPanel) список сужается до этих драйверов, «Add provider» и «+» не рисуются. */
+export const VISIBLE_PROVIDER_DRIVERS: readonly string[] = ['claudeAgent'];
+
 /** Элементы, которые T3 рисует без условия: значки внизу боковой панели (components/sidebar/SidebarChrome.tsx,
  * SidebarUtilityMenu) и строка на Welcome. «Issues» T3 показывает по данным среды — его выключает хост; правило здесь — запас. */
 export const HIDDEN_SELECTORS: readonly string[] = [
@@ -118,6 +123,7 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'voice', title: 'голосовой ввод', how: ['host', 'route', 'nav', 'component'] },
   { id: 'editor', title: 'открыть в редакторе («Open in VS Code»)', how: ['host', 'component'] },
   { id: 'project-scripts', title: 'скрипты проекта («Add project script»)', how: ['component'] },
+  { id: 'other-providers', title: 'Codex и другие поставщики в Providers, «Add provider» и «+»', how: ['component'] },
   { id: 'more-agents', title: '«Add more agents» на Welcome', how: ['css'] },
   { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Access', how: ['route', 'nav'] },
 ];

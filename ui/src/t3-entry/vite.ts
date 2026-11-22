@@ -8,7 +8,7 @@ import { basename, resolve } from 'node:path';
 import type { Plugin, UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { HIDDEN_COMPONENTS, HIDDEN_PALETTE_ITEMS, HIDDEN_ROUTES, VISIBLE_SETTINGS } from './features';
+import { HIDDEN_COMPONENTS, HIDDEN_PALETTE_ITEMS, HIDDEN_ROUTES, VISIBLE_PROVIDER_DRIVERS, VISIBLE_SETTINGS } from './features';
 import { HOH_HTTP_URL } from './host';
 
 const UI = resolve(import.meta.dirname, '../..');
@@ -51,6 +51,20 @@ export function settingsNavFilter(code: string): string {
     + `    groups[i].paths = groups[i].paths.filter((path) => visible.has(path));\n`
     + `    if (groups[i].paths.length === 0) groups.splice(i, 1);\n`
     + `  }\n}\n`;
+}
+
+const PROVIDER_ANCHORS = [
+  ['const visibleProviderSettings = PROVIDER_SETTINGS.filter(', 'const visibleProviderSettings = PROVIDER_SETTINGS.filter((entry) => HOH_PROVIDER_DRIVERS.includes(entry.provider)).filter('],
+  ['const canAddProvider =\n', 'const canAddProvider = false &&\n'],
+] as const;
+/** Providers (ProviderSettingsPanel.tsx): только поставщики VISIBLE_PROVIDER_DRIVERS, без «Add provider» и «+». */
+export function providerSettingsPanel(code: string): string {
+  let out = code;
+  for (const [from, to] of PROVIDER_ANCHORS) {
+    if (!out.includes(from)) throw new Error(`ProviderSettingsPanel.tsx: нет «${from.trim()}» — T3 изменился, проверьте features.ts`);
+    out = out.replace(from, to);
+  }
+  return `const HOH_PROVIDER_DRIVERS: readonly string[] = ${JSON.stringify(VISIBLE_PROVIDER_DRIVERS)}; // HoH (vite.ts, features.ts)\n` + out;
 }
 
 /** Модуль вместо модуля компонента T3: всё как у него, кроме названных компонентов — они ничего не рисуют. */
@@ -122,7 +136,9 @@ function hohT3(): Plugin {
       return hiddenRouteModule(file, HIDDEN_ROUTES[file]!);
     },
     transform(code, id) {
-      return id === resolve(T3_WEB, 'components/settings/settingsSearch.ts') ? { code: settingsNavFilter(code), map: null } : null;
+      if (id === resolve(T3_WEB, 'components/settings/settingsSearch.ts')) return { code: settingsNavFilter(code), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/ProviderSettingsPanel.tsx')) return { code: providerSettingsPanel(code), map: null };
+      return null;
     },
   };
 }
