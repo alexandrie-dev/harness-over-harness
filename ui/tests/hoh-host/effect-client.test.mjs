@@ -178,3 +178,17 @@ test('T3 schemas: the HTTP answers before the socket decode (session state, envi
   const descriptor = Schema.decodeUnknownSync(index.ExecutionEnvironmentDescriptor)(await http.hohHttpResponse('GET', '/.well-known/t3/environment').json());
   assert.equal(descriptor.environmentId, 'hoh-local');
 });
+
+test('T3 client: the welcome that opens the app, and a folder that is not a git repository — decode', () => withClient(new FakeEngine(), async client => {
+  const lifecycle = await collect(client['subscribeServerLifecycle']({}));
+  const welcome = await lifecycle.until(event => event.type === 'welcome');
+  assert.equal(welcome.payload.environment.environmentId, 'hoh-local');
+  assert.equal(welcome.payload.bootstrapThreadId, undefined);
+  await lifecycle.stop();
+  const vcs = await collect(client['subscribeVcsStatus']({ cwd: '/home/person/Documents/HoH' }));
+  const status = await vcs.until(event => event._tag === 'snapshot');
+  assert.equal(status.local.isRepo, false);
+  await vcs.stop();
+  assert.equal((await run(client['vcs.refreshStatus']({ cwd: '/x' }))).isRepo, false);
+  assert.equal((await run(client['vcs.listRefs']({ cwd: '/x' }))).isRepo, false);
+}));

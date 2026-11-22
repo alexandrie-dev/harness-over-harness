@@ -56,9 +56,9 @@ test('methods HoH does not have: typed "not supported", defect without the typed
   assert.deepEqual(terminal.cause[0], { _tag: 'Fail', error: { _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:operate' } });
   const issues = await client.request('issues.list', {});
   assert.equal(issues.cause[0]._tag, 'Die');
-  const vcs = await client.stream('subscribeVcsStatus', { cwd: '/x' });
+  const device = await client.stream('subscribeDeviceState', {});
   await tick(20);
-  assert.equal(vcs.values.length, 0); assert.equal(vcs.exit, undefined);
+  assert.equal(device.values.length, 0); assert.equal(device.exit, undefined);
 });
 
 test('HTTP before the socket: session is signed in, the descriptor names the same environment', async () => {

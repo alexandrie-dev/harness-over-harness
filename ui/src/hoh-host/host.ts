@@ -27,6 +27,12 @@ const NO_OP_COMMANDS = new Set([
   'thread.interaction-mode.set',
 ]);
 
+/** The chat folder is not a git repository for T3: no branch, no worktree, nothing to commit. */
+const NOT_A_REPO_LOCAL = {
+  isRepo: false, hasPrimaryRemote: false, isDefaultRef: false, refName: null, hasWorkingTreeChanges: false,
+  workingTree: { files: [], insertions: 0, deletions: 0 },
+};
+
 function dispatchError(command: Record<string, any>, message: string) {
   return new RpcFailure({
     _tag: 'OrchestrationV2DispatchCommandError', commandId: String(command.commandId ?? 'unknown'), commandType: String(command.type ?? 'unknown'), message,
@@ -478,6 +484,9 @@ export class HohHost {
           await this.cancel(thread);
           return { outcome: 'killed', sharedWithThreadIds: [] };
         },
+        // Git is hidden; T3 still asks about the folder when a thread opens. It is not a repository.
+        'vcs.refreshStatus': () => ({ ...NOT_A_REPO_LOCAL, hasUpstream: false, aheadCount: 0, behindCount: 0, pr: null }),
+        'vcs.listRefs': () => ({ refs: [], isRepo: false, hasPrimaryRemote: false, nextCursor: null, totalCount: 0 }),
         'orchestration.getThreadTitles': async (payload: any) => {
           await this.start();
           const titles: Record<string, string> = {};
@@ -494,6 +503,19 @@ export class HohHost {
           void this.start().then(() => { if (this.configSinks.has(sink)) sink.emit({ version: 1, type: 'snapshot', config: this.config() }); });
           return () => { this.configSinks.delete(sink); };
         },
+        // T3 shows nothing until the server welcomes it (apps/web/src/components/onboarding/FirstRunGate.tsx).
+        // No bootstrap project or thread: the workspace is not "fresh", so no first-run wizard either.
+        subscribeServerLifecycle: (_payload, sink) => {
+          let open = true;
+          void this.start().then(() => {
+            if (!open) return;
+            const config = this.config();
+            sink.emit({ version: 1, sequence: 0, type: 'welcome', payload: { environment: config.environment, cwd: this.workspaceRoot, projectName: 'HoH', bootstrapStatus: 'complete' } });
+          });
+          return () => { open = false; };
+        },
+        // Without an answer T3 assumes a repository and asks for a base branch before sending.
+        subscribeVcsStatus: (_payload, sink) => { sink.emit({ _tag: 'snapshot', local: NOT_A_REPO_LOCAL, remote: null }); },
         'orchestration.subscribeShell': (payload: any, sink) => {
           let open = true;
           void this.start().then(() => {
