@@ -216,3 +216,15 @@ fn the_main_window_may_shrink_as_far_as_in_t3() {
         (Some(400), Some(360))
     );
 }
+
+/// The window icon is offered in sizes from 32 to 512 (`_NET_WM_ICON`), square and RGBA.
+#[test]
+fn the_window_icon_has_several_sizes() {
+    for size in [32u32, 48, 64, 128, 256, 512] {
+        let bytes = std::fs::read(format!("icons/{size}x{size}.png")).unwrap();
+        assert_eq!(&bytes[1..4], b"PNG");
+        assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), size);
+        assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), size);
+        assert_eq!(bytes[25], 6, "RGBA");
+    }
+}

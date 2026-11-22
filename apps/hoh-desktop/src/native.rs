@@ -103,9 +103,40 @@ fn engine_launch(engine_home: &std::path::Path) -> Result<EngineLaunch, String> 
     select_engine_launch(std::env::var_os("HOH_TEST_ENGINE"), configured, engine_home)
 }
 
+/// The window icon in several sizes (`_NET_WM_ICON`): the task bar and the window switcher pick the one that fits.
+#[cfg(target_os = "linux")]
+fn set_window_icons(window: &tauri::WebviewWindow) {
+    use gtk::gdk_pixbuf::PixbufLoader;
+    use gtk::prelude::*;
+    const ICONS: [&[u8]; 6] = [
+        include_bytes!("../icons/32x32.png"),
+        include_bytes!("../icons/48x48.png"),
+        include_bytes!("../icons/64x64.png"),
+        include_bytes!("../icons/128x128.png"),
+        include_bytes!("../icons/256x256.png"),
+        include_bytes!("../icons/512x512.png"),
+    ];
+    let pixbufs: Vec<_> = ICONS
+        .iter()
+        .filter_map(|bytes| {
+            let loader = PixbufLoader::new();
+            loader.write(bytes).ok()?;
+            loader.close().ok()?;
+            loader.pixbuf()
+        })
+        .collect();
+    if let Ok(gtk_window) = window.gtk_window() {
+        gtk_window.set_icon_list(&pixbufs);
+    }
+}
+
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "probe")]
     crate::probe::trace("native:setup:start");
+    #[cfg(target_os = "linux")]
+    if let Some(window) = app.get_webview_window("main") {
+        set_window_icons(&window);
+    }
     let legacy = legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref());
     if legacy && let Some(window) = app.get_webview_window("main") {
         let page = window.url()?.join("legacy.html")?;
