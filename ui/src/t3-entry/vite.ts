@@ -4,11 +4,11 @@
 // (её копию пишет `legacyCopy` в основной сборке; окно открывает её при HOH_WINDOW_SHELL=legacy).
 // Файлы T3 не правятся: скрытые страницы и пункты настроек выключаются здесь, при сборке (features.ts).
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import type { Plugin, UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { HIDDEN_ROUTES, VISIBLE_SETTINGS } from './features';
+import { HIDDEN_COMPONENTS, HIDDEN_ROUTES, VISIBLE_SETTINGS } from './features';
 import { HOH_HTTP_URL } from './host';
 
 const UI = resolve(import.meta.dirname, '../..');
@@ -53,7 +53,19 @@ export function settingsNavFilter(code: string): string {
     + `  }\n}\n`;
 }
 
+/** Модуль вместо модуля компонента T3: всё как у него, кроме названных компонентов — они ничего не рисуют. */
+export function hiddenComponentModule(original: string, names: readonly string[]): string {
+  return `export * from ${JSON.stringify(original)};\n`
+    + names.map((name) => name === 'default'
+      ? 'export default function HohHiddenComponent() { return null; }\n'
+      : `export function ${name}() { return null; }\n`).join('');
+}
+
+/** Имена файлов скрытых компонентов: по ним импорт сверяется, прежде чем его разрешать полностью. */
+const HIDDEN_COMPONENT_NAMES = new Set(Object.keys(HIDDEN_COMPONENTS).map((file) => basename(file, '.tsx')));
+
 const ROUTE_PREFIX = '\0hoh-hidden-route:';
+const COMPONENT_PREFIX = '\0hoh-hidden-component:';
 const VIRTUAL_HOST = 'virtual:hoh-host';
 const VIRTUAL_BOOTSTRAP = 'virtual:t3-bootstrap';
 
@@ -61,16 +73,25 @@ function hohT3(): Plugin {
   return {
     name: 'hoh-t3-entry',
     enforce: 'pre',
-    resolveId(source, importer) {
+    async resolveId(source, importer) {
       // Хост HoH (u3): ui/src/hoh-host/{index,tauri}.ts; пока его нет — заглушка с теми же именами.
       if (source === VIRTUAL_HOST) return existsSync(resolve(HOST, 'index.ts')) ? HOST_MODULE : HOST_STUB;
       // Загрузчик T3 как есть: apps/web/src/bootstrap.ts (импортирует их main.tsx и показывает ошибку запуска).
       if (source === VIRTUAL_BOOTSTRAP) return resolve(T3_WEB, 'bootstrap.ts');
-      if (!importer?.startsWith(T3_WEB)) return null;
+      if (!importer?.startsWith(T3_BASE)) return null;
       const route = /(?:^|\/)routes\/([^/]+?)(?:\.tsx)?$/.exec(source)?.[1];
-      return route && route in HIDDEN_ROUTES ? ROUTE_PREFIX + route : null;
+      if (route && route in HIDDEN_ROUTES) return ROUTE_PREFIX + route;
+      // Скрытый компонент: импорт из кода T3 ведёт на модуль-замену (из самой замены — на настоящий файл).
+      if (!HIDDEN_COMPONENT_NAMES.has(basename(source, '.tsx'))) return null;
+      const resolved = await this.resolve(source, importer, { skipSelf: true });
+      const file = resolved?.id.startsWith(T3_WEB + '/') ? resolved.id.slice(T3_WEB.length + 1) : null;
+      return file && file in HIDDEN_COMPONENTS ? COMPONENT_PREFIX + file : null;
     },
     load(id) {
+      if (id.startsWith(COMPONENT_PREFIX)) {
+        const file = id.slice(COMPONENT_PREFIX.length);
+        return hiddenComponentModule(resolve(T3_WEB, file), HIDDEN_COMPONENTS[file]!);
+      }
       if (id === HOST_MODULE) {
         return `export { installHohHost } from ${JSON.stringify(resolve(HOST, 'index.ts'))};\n`
           + `export { tauriEngine } from ${JSON.stringify(resolve(HOST, 'tauri.ts'))};\n`;
@@ -135,11 +156,27 @@ export function checkHiddenRoutes(web: string): void {
   }
 }
 
+/** Скрытые компоненты сверяются с файлами T3: файл есть, названный экспорт в нём есть, иначе сборка останавливается. */
+export function checkHiddenComponents(web: string): void {
+  for (const [file, names] of Object.entries(HIDDEN_COMPONENTS)) {
+    const path = resolve(web, file);
+    if (!existsSync(path)) throw new Error(`features.ts: нет компонента T3 ${file}`);
+    const code = readFileSync(path, 'utf8');
+    for (const name of names) {
+      const exported = name === 'default'
+        ? /export default /.test(code)
+        : new RegExp(`export (?:const|function) ${name}\\b`).test(code);
+      if (!exported) throw new Error(`features.ts: ${file} не экспортирует ${name}`);
+    }
+  }
+}
+
 export function t3Config(): UserConfig {
   if (!existsSync(resolve(T3_WEB, 'bootstrap.ts'))) {
     throw new Error('нет основы T3 (src/t3/base/web/bootstrap.ts): сначала перенос u2 (scripts/t3-sync.py)');
   }
   checkHiddenRoutes(T3_WEB);
+  checkHiddenComponents(T3_WEB);
   return {
     // От корня приложения (tauri://localhost/), а не от страницы: роутер T3 меняет путь (/settings/general),
     // и после перезагрузки на таком пути относительные адреса ресурсов не нашлись бы.
