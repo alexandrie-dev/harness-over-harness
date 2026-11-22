@@ -145,7 +145,9 @@ export function t3Config(): UserConfig {
     root: UI,
     // boot-theme.js — их встроенный сценарий темы до запуска, вынесенный в файл (CSP окна: script-src 'self').
     publicDir: resolve(import.meta.dirname, 'public'),
-    plugins: [hohT3(), react(), tailwindcss(), t3Page()],
+    // React Compiler, как в их vite.config.ts (`react({ compiler: true })`): код T3 рассчитывает на его мемоизацию
+    // (синхронизация состояния во время отрисовки, напр. useWorktreeSetup в ChatView), без него — бесконечная отрисовка.
+    plugins: [hohT3(), react({ compiler: true }), tailwindcss(), t3Page()],
     clearScreen: false,
     resolve: { alias: t3Aliases() },
     define: {
