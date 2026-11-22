@@ -384,6 +384,16 @@ export class ThreadModel {
     return true;
   }
 
+  /** «Стоп» went through: an open run ends as stopped. Returns whether anything changed. */
+  interrupt(at: number): boolean {
+    const run = this.currentRun();
+    if (!run || (run.status !== 'running' && run.status !== 'waiting')) return false;
+    this.stopRequested = true;
+    this.endTurn('aborted', at);
+    this.settledByGuess = false;
+    return true;
+  }
+
   /** History ended without the closing event of its last turn and the engine is not working on it. */
   settleUnfinished(at = Date.now()) {
     if (this.engineRunning) return;

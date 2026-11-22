@@ -115,6 +115,8 @@ export class HohHost {
   private readonly folders = new Map<string, FolderProject>();
   /** The project of each chat the host placed (thread id → project id). */
   private readonly homes = new Map<string, string>();
+  /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
+  private readonly levels = new Map<string, { id: string; value: unknown }[]>();
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
@@ -145,6 +147,7 @@ export class HohHost {
     }
     const threads = saved?.threads && typeof saved.threads === 'object' ? saved.threads : {};
     for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
+    for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
   }
@@ -154,9 +157,18 @@ export class HohHost {
     const value = {
       version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
-      defaultMode: this.defaultMode,
+      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels),
     };
     try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
+  }
+
+  /** The chat's level: set by the person's pick; an empty list from T3 never wipes it (only an explicit pick does). */
+  private setLevel(thread: ThreadModel, options: unknown, explicit = false) {
+    const list = Array.isArray(options) ? options.filter((entry: any) => entry && typeof entry.id === 'string') : [];
+    if (!list.length && !explicit) return;
+    thread.options = list.length ? list as any : undefined;
+    if (list.length) this.levels.set(thread.id, list as any); else this.levels.delete(thread.id);
+    this.save();
   }
 
   private homeOf(threadId: string) {
@@ -235,6 +247,7 @@ export class HohHost {
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
   private async loaded(threadId: string): Promise<ThreadModel | undefined> {
     const thread = this.threads.get(threadId);
+    if (thread && !thread.options && this.levels.has(threadId)) thread.options = this.levels.get(threadId);
     if (!thread || thread.loaded) return thread;
     let pending = this.loading.get(threadId);
     if (!pending) {
@@ -570,6 +583,8 @@ export class HohHost {
   private async cancel(thread: ThreadModel) {
     if (thread.activeRunId()) thread.stopRequested = true;
     await this.engine.request('session/cancel', { sessionId: thread.id });
+    // The turn is stopped now: its run closes and the thread list stops saying "Working" without waiting for the engine's closing event.
+    if (thread.interrupt(this.now())) { this.changed(thread.id); this.flush(); }
   }
 
   private async respond(thread: ThreadModel, command: Record<string, any>) {
@@ -606,7 +621,7 @@ export class HohHost {
         case 'message.dispatch': {
           const target = needThread();
           if (command.modelSelection?.model) { await this.applyModel(command.modelSelection.model); target.model = command.modelSelection.model; }
-          if (Array.isArray(command.modelSelection?.options)) target.options = command.modelSelection.options;
+          this.setLevel(target, command.modelSelection?.options);
           await this.send(target, String(command.messageId), String(command.text ?? ''));
           break;
         }
@@ -628,7 +643,7 @@ export class HohHost {
           await this.applyModel(command.modelSelection?.model);
           if (command.modelSelection?.model) target.model = command.modelSelection.model;
           // The reasoning level of T3's model menu: kept for the chat, shown by the chip, sent with each message.
-          if (command.modelSelection) target.options = Array.isArray(command.modelSelection.options) ? command.modelSelection.options : undefined;
+          if (command.modelSelection) this.setLevel(target, command.modelSelection.options, true);
           this.changed(target.id);
           break;
         }
@@ -664,7 +679,7 @@ export class HohHost {
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
-        if (Array.isArray(input.modelSelection?.options)) thread.options = input.modelSelection.options;
+        this.setLevel(thread, input.modelSelection?.options);
         await this.send(thread, messageId, message.text);
       }
       this.flush();

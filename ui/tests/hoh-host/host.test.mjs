@@ -459,7 +459,7 @@ test('reasoning levels: T3\'s levels and default for the model, the chosen one g
   await message('m2', 'two', [{ id: 'effort', value: 'low' }]);
   await message('m3', 'three', []);
   await message('m4', 'four', [{ id: 'effort', value: 'ultrathink' }]);
-  assert.deepEqual(engine.requests.filter(r => r.method === 'session/prompt').map(r => r.params.effort), ['xhigh', 'low', undefined, undefined]);
+  assert.deepEqual(engine.requests.filter(r => r.method === 'session/prompt').map(r => r.params.effort), ['xhigh', 'low', 'low', undefined]);
 });
 
 test('the end of a turn reaches the thread list at once, and the engine going idle closes any open run', async () => {
@@ -501,4 +501,34 @@ test('reasoning level in a started chat: the switch is kept (chip), and every se
   const message = (id, selection) => client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c-' + id, threadId: 't-s', messageId: id, text: id, attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' }, ...(selection ? { modelSelection: selection } : {}) });
   await message('m2'); await message('m3', sel());
   assert.deepEqual(engine.requests.filter(r => r.method === 'session/prompt').map(r => r.params.effort), ['high', 'max', 'max']);
+});
+
+test('the reasoning level of a chat survives Stop, reopening and a restart of the window; Stop closes the run for the thread list', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const store = new Map();
+  const discovery = { executor: 'claude', installed: true, version: '2.1.329', versionStatus: 'supported', auth: 'authenticated', detail: null, models: [{ id: 'opus', displayName: 'Opus 5.5' }] };
+  const access = { mode: 'confirm', selected: { executor: 'claude', model: 'opus' } };
+  const engine = new FakeEngine({ store, access, discovery });
+  const { client } = connect(engine, { storage });
+  const sel = options => ({ instanceId: 'claudeAgent', model: 'opus', ...(options ? { options } : {}) });
+  const launch = id => client.call('orchestration.launchThread', { commandId: 'c-' + id, threadId: id, projectId: 'hoh-project', title: id, modelSelection: sel(), runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'm-' + id, text: id, attachments: [] } });
+  const send = (c, threadId, id, selection) => c.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c-' + id, threadId, messageId: id, text: id, attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' }, ...(selection ? { modelSelection: selection } : {}) });
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await launch('t-a'); await launch('t-b');
+  await client.call('orchestration.dispatchCommand', { type: 'thread.model-selection.set', commandId: 'c1', threadId: 't-a', modelSelection: sel([{ id: 'effort', value: 'max' }]) });
+  // Stop: the run closes at once, the list row stops saying "running".
+  await client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'c2', threadId: 't-a' });
+  await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 't-a' && value.thread.status === 'interrupted' && value.thread.activeRunId === null);
+  // Another chat and back; T3 sends an empty option list with the next message: the level stays.
+  await client.call('orchestration.getThreadProjection', { threadId: 't-b' });
+  await send(client, 't-a', 'm2', sel([]));
+  // A restart of the window: a new host over the same history and storage.
+  const second = new FakeEngine({ store, access: engine.access, discovery });
+  const again = connect(second, { storage });
+  const projection = await again.client.call('orchestration.getThreadProjection', { threadId: 't-a' });
+  assert.deepEqual(projection.thread.modelSelection.options, [{ id: 'effort', value: 'max' }]);
+  await send(again.client, 't-a', 'm3');
+  const efforts = (e, text) => e.requests.filter(r => r.method === 'session/prompt' && r.params.contentBlocks[0].text === text).map(r => r.params.effort);
+  assert.deepEqual([efforts(engine, 'm2'), efforts(second, 'm3')], [['max'], ['max']]);
 });
