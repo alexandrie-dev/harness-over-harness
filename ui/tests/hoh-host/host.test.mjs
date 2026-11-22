@@ -480,3 +480,25 @@ test('the end of a turn reaches the thread list at once, and the engine going id
   engine.emitStatus('chat-w', 'idle');
   await shell.until(value => value.kind === 'thread.updated' && value.thread.latestRunId === 'run-msg-u2' && value.thread.status === 'completed');
 });
+
+test('reasoning level in a started chat: the switch is kept (chip), and every session/prompt carries the chat\'s level', async () => {
+  const engine = new FakeEngine({
+    access: { mode: 'confirm', selected: { executor: 'claude', model: 'opus' } },
+    discovery: { executor: 'claude', installed: true, version: '2.1.329', versionStatus: 'supported', auth: 'authenticated', detail: null, models: [{ id: 'opus', displayName: 'Opus 5.5' }] },
+  });
+  const { client } = connect(engine);
+  const sel = options => ({ instanceId: 'claudeAgent', model: 'opus', ...(options ? { options } : {}) });
+  await client.call('orchestration.launchThread', {
+    commandId: 'c1', threadId: 't-s', projectId: 'hoh-project', title: 'S', modelSelection: sel([{ id: 'effort', value: 'high' }]),
+    runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'm1', text: 'one', attachments: [] },
+  });
+  const chip = async () => (await client.call('orchestration.getThreadProjection', { threadId: 't-s' })).thread.modelSelection.options;
+  assert.deepEqual(await chip(), [{ id: 'effort', value: 'high' }], 'the first message keeps its level in the chat');
+  // T3 changes level of a started chat with thread.model-selection.set (ChatView applyThreadModelPick).
+  await client.call('orchestration.dispatchCommand', { type: 'thread.model-selection.set', commandId: 'c2', threadId: 't-s', modelSelection: sel([{ id: 'effort', value: 'max' }]) });
+  assert.deepEqual(await chip(), [{ id: 'effort', value: 'max' }]);
+  // The next messages carry no options of their own (or the same): the chat's level goes along.
+  const message = (id, selection) => client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c-' + id, threadId: 't-s', messageId: id, text: id, attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' }, ...(selection ? { modelSelection: selection } : {}) });
+  await message('m2'); await message('m3', sel());
+  assert.deepEqual(engine.requests.filter(r => r.method === 'session/prompt').map(r => r.params.effort), ['high', 'max', 'max']);
+});
