@@ -90,6 +90,8 @@ export class ThreadModel {
   cwd: string | null = null;
   /** History was read from the engine (or the chat is new); until then only the shell row is known. */
   loaded = false;
+  /** The model options the person chose for this chat (T3's reasoning level): shown in the chip and sent with every message. */
+  options: { id: string; value: unknown }[] | undefined;
   running = false;
   /** The engine itself said the chat is working (`session.status`), not just its history. */
   engineRunning = false;
@@ -468,7 +470,7 @@ export class ThreadModel {
   pendingRequest(id: string) { return this.requests.find(request => request.id === id && request.status === 'pending'); }
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
 
-  private modelSelection() { return { instanceId: CLAUDE_INSTANCE_ID, model: this.model }; }
+  private modelSelection() { return { instanceId: CLAUDE_INSTANCE_ID, model: this.model, ...(this.options?.length ? { options: this.options } : {}) }; }
   private titleText() { return nonBlank(this.title, 'New thread'); }
 
   /** `OrchestrationV2ThreadProjection`, encoded. */

@@ -553,11 +553,11 @@ export class HohHost {
     this.selectedModel = model;
   }
 
-  private async send(thread: ThreadModel, messageId: string, text: string, selection?: any) {
+  private async send(thread: ThreadModel, messageId: string, text: string) {
     thread.sendLocal(messageId, text, this.now());
     this.changed(thread.id);
     try {
-      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }], ...effortParam(effortOf(selection?.model ?? thread.model, selection?.options)) });
+      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }], ...effortParam(effortOf(thread.model, thread.options)) });
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
     } catch (error) {
       thread.sendFailed(messageId, this.now(), error);
@@ -606,7 +606,8 @@ export class HohHost {
         case 'message.dispatch': {
           const target = needThread();
           if (command.modelSelection?.model) { await this.applyModel(command.modelSelection.model); target.model = command.modelSelection.model; }
-          await this.send(target, String(command.messageId), String(command.text ?? ''), command.modelSelection);
+          if (Array.isArray(command.modelSelection?.options)) target.options = command.modelSelection.options;
+          await this.send(target, String(command.messageId), String(command.text ?? ''));
           break;
         }
         case 'thread.stop': case 'run.interrupt': await this.cancel(needThread()); break;
@@ -626,6 +627,8 @@ export class HohHost {
           const target = needThread();
           await this.applyModel(command.modelSelection?.model);
           if (command.modelSelection?.model) target.model = command.modelSelection.model;
+          // The reasoning level of T3's model menu: kept for the chat, shown by the chip, sent with each message.
+          if (command.modelSelection) target.options = Array.isArray(command.modelSelection.options) ? command.modelSelection.options : undefined;
           this.changed(target.id);
           break;
         }
@@ -661,7 +664,8 @@ export class HohHost {
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
-        await this.send(thread, messageId, message.text, input.modelSelection);
+        if (Array.isArray(input.modelSelection?.options)) thread.options = input.modelSelection.options;
+        await this.send(thread, messageId, message.text);
       }
       this.flush();
       return { threadId, projection: thread.projection(), resumed: !!existing, sequence: this.sequence };
