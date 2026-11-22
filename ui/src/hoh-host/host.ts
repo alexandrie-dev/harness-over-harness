@@ -12,7 +12,7 @@
 // which project each chat is in are kept in the window's storage, so they survive a restart; a chat whose
 // history names a project's folder (`working-directory/change`) is put in that project.
 import {
-  accessModeOf, claudeProvider, defaultClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
+  accessModeOf, claudeProvider, defaultClaudeModel, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
 import { englishError } from './errors.ts';
@@ -98,6 +98,8 @@ export class HohHost {
   private sequence = 0;
   private discovery: ClaudeDiscovery | null = null;
   private mode: HohAccessMode = 'confirm';
+  /** T3's "default permissions" setting: the mode a new thread starts in. Claude asks first until the person changes it. */
+  private defaultMode: HohAccessMode = 'confirm';
   /** The model the engine runs new chats with (`hoh/executor/select`), once known. */
   private selectedModel: string | null = null;
   private settingsOverrides: Record<string, unknown> = {};
@@ -141,6 +143,7 @@ export class HohHost {
     const threads = saved?.threads && typeof saved.threads === 'object' ? saved.threads : {};
     for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
+    if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
   }
 
   private save() {
@@ -148,6 +151,7 @@ export class HohHost {
     const value = {
       version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
+      defaultMode: this.defaultMode,
     };
     try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
   }
@@ -178,7 +182,8 @@ export class HohHost {
   }
 
   private iso() { return new Date(this.now()).toISOString(); }
-  private model() { return this.selectedModel ?? defaultClaudeModel(this.discovery); }
+  /** The engine's choice for new chats when T3 lists it; otherwise (Claude Code's `default`) T3's default model. */
+  private model() { return listedClaudeModel(this.discovery, this.selectedModel) ?? defaultClaudeModel(this.discovery); }
 
   /** Listen to the engine and read what it already has. Safe to call more than once. */
   start(): Promise<void> {
@@ -351,10 +356,10 @@ export class HohHost {
   }
 
   private config() {
-    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, mode: this.mode, settingsOverrides: this.settingsOverrides, now: this.iso() });
+    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, defaultMode: this.defaultMode, settingsOverrides: this.settingsOverrides, now: this.iso() });
   }
 
-  private settings() { return serverSettings(this.model(), this.mode, this.settingsOverrides); }
+  private settings() { return serverSettings(this.model(), this.defaultMode, this.settingsOverrides); }
 
   private configChanged() {
     for (const sink of this.configSinks) sink.emit({ version: 1, type: 'snapshot', config: this.config() });
@@ -385,7 +390,7 @@ export class HohHost {
   private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown) {
     const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
     if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
-    await this.applyMode(mode, false);
+    await this.applyMode(mode);
     await this.applyModel(model);
     const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
     this.setWorkspaceRoot(directory?.cwd);
@@ -521,14 +526,16 @@ export class HohHost {
 
   /**
    * The access mode is the person's choice in T3's composer; the engine applies it (and alone decides
-   * what a model may do). Only the switch itself (`thread.runtime-mode.set`) or the setting may raise
-   * it to full access: a new thread or draft carries a mode T3 may have filled from its own default
-   * ("full-access", apps/web/src/types.ts), which must never widen access on its own.
+   * what a model may do) before the turn it was chosen for starts. T3 sends the choice with the send:
+   * `thread.runtime-mode.set` before the message of a started thread (ChatView.tsx
+   * `persistThreadSettingsForNextTurn`), the launch's `runtimeMode` for a new one (the composer's choice,
+   * else the default setting this host reports; useComposerSend.ts). The engine's mode is one for all
+   * chats, so every thread shows the mode in effect.
    */
-  private async applyMode(mode: T3RuntimeMode | undefined, chosen: boolean) {
+  private async applyMode(mode: T3RuntimeMode | undefined) {
     if (!mode) return;
     const wanted = accessModeOf(mode);
-    if (wanted === this.mode || (wanted === 'full' && !chosen)) return;
+    if (wanted === this.mode) return;
     await this.engine.request('hoh/executor/access/set', { executor: 'claude', mode: wanted });
     this.mode = wanted;
     for (const thread of this.threads.values()) { thread.mode = wanted; this.changed(thread.id); }
@@ -609,7 +616,7 @@ export class HohHost {
           }
           break;
         }
-        case 'thread.runtime-mode.set': needThread(); await this.applyMode(command.runtimeMode, true); break;
+        case 'thread.runtime-mode.set': needThread(); await this.applyMode(command.runtimeMode); break;
         case 'thread.model-selection.set': {
           const target = needThread();
           await this.applyModel(command.modelSelection?.model);
@@ -645,7 +652,7 @@ export class HohHost {
     const existing = await this.loaded(threadId);
     try {
       const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId);
-      if (existing) await this.applyMode(input.runtimeMode, false);
+      if (existing) await this.applyMode(input.runtimeMode);
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
@@ -671,8 +678,8 @@ export class HohHost {
         'server.updateSettings': async (payload: any) => {
           await this.start();
           const patch = payload?.patch && typeof payload.patch === 'object' ? { ...payload.patch } : {};
-          // The mode is HoH's access mode; the model is the engine's choice for new chats.
-          if (typeof patch.defaultRuntimeMode === 'string') await this.applyMode(patch.defaultRuntimeMode, true);
+          // The default mode is where new threads start; the model is the engine's choice for new chats.
+          if (typeof patch.defaultRuntimeMode === 'string') { this.defaultMode = accessModeOf(patch.defaultRuntimeMode); this.save(); }
           if (patch.defaultModelSelection?.model) await this.applyModel(patch.defaultModelSelection.model);
           delete patch.defaultRuntimeMode; delete patch.defaultModelSelection;
           // Only whole values are kept: a nested patch is partial and would not decode as a setting.

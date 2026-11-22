@@ -168,19 +168,25 @@ test('a follow-up message goes to the same chat; Stop is the engine\'s cancel an
   assert.equal(engine.cancelled, 2);
 });
 
-test('permission request of Claude: shown in the chat, the answer goes to the engine', async () => {
+test('permission request of Claude: shown in the chat as T3 shows Claude\'s (kind and text from the tool call), the answer goes to the engine', async () => {
   const engine = new FakeEngine();
-  engine.seed('chat-p', 'P', [['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'удали tmp' }] }], ['turn/start', {}]]);
+  engine.seed('chat-p', 'P', [
+    ['turn/start', { turn: 1 }], ['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'удали tmp' }] }],
+  ]);
   const { client } = connect(engine);
   const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-p' });
   await thread.until(value => value.kind === 'snapshot');
   engine.emitStatus('chat-p', 'running');
+  engine.emitEvent('chat-p', 'tool/call', { turn: 1, step: 1, callId: 'call-1', name: 'bash', arguments: JSON.stringify({ command: 'rm -rf tmp', workdir: '/home/person' }) });
   engine.askApproval('chat-p', 'appr-1', 'Claude хочет выполнить: rm -rf tmp');
   const asked = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.length === 1);
   const request = asked.projection.runtimeRequests[0];
-  assert.deepEqual([request.id, request.kind, request.status, request.responseCapability.type], ['appr-1', 'permission', 'pending', 'live']);
+  // T3: a Bash request is a "command" request whose text is the command itself (ClaudeAdapterV2 canUseTool).
+  assert.deepEqual([request.id, request.kind, request.status, request.responseCapability.type], ['appr-1', 'command', 'pending', 'live']);
   const item = itemsOf(asked).find(entry => entry.type === 'approval_request');
-  assert.equal(item.requestId, 'appr-1'); assert.equal(item.prompt, 'Claude хочет выполнить: rm -rf tmp');
+  assert.deepEqual([item.requestId, item.requestKind, item.prompt], ['appr-1', 'command', 'rm -rf tmp']);
+  assert.deepEqual(item.options.map(option => option.label), ['Decline', 'Approve']);
+  assert.doesNotMatch(JSON.stringify(item), /[Ѐ-ӿ]/, 'the engine\'s own (Russian) words are not shown in T3');
   assert.equal(asked.projection.runs[0].status, 'waiting');
   await client.call('orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: 'c1', threadId: 'chat-p', requestId: 'appr-1', decision: 'accept' });
   assert.deepEqual(engine.decisions, [{ approvalId: 'appr-1', outcome: 'allowed-once' }]);
@@ -188,9 +194,14 @@ test('permission request of Claude: shown in the chat, the answer goes to the en
   assert.equal(answered.projection.runtimeRequests[0].decision, 'accept');
   // The engine's own resolution afterwards changes nothing.
   engine.notify('approval.resolved', { approvalId: 'appr-1', outcome: 'allowed-once' });
-  // A refusal maps to rejected.
+  // A file write: the engine names the call (`approval/asked`), T3 asks for a file change "Write: <file>".
+  engine.emitEvent('chat-p', 'tool/call', { turn: 1, step: 2, callId: 'call-2', name: 'write', arguments: JSON.stringify({ file_path: '/home/person/notes.txt', content: 'x' }) });
   engine.askApproval('chat-p', 'appr-2', 'Ещё раз');
-  await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.length === 2);
+  engine.emitEvent('chat-p', 'approval/asked', { id: 'appr-2', toolName: 'write', callId: 'call-2' });
+  const write = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.length === 2);
+  assert.equal(write.projection.runtimeRequests[1].kind, 'file-change');
+  assert.equal(itemsOf(write).find(entry => entry.requestId === 'appr-2').prompt, 'Write: /home/person/notes.txt');
+  // A refusal maps to rejected.
   await client.call('orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: 'c2', threadId: 'chat-p', requestId: 'appr-2', decision: 'decline' });
   assert.deepEqual(engine.decisions.at(-1), { approvalId: 'appr-2', outcome: 'rejected' });
 });
@@ -213,7 +224,7 @@ test('question of Claude: T3 question card, answers in the engine\'s form', asyn
   assert.deepEqual(engine.answers.at(-1).answer, { answers: [{ id: 'name', selected: [], custom: 'Вася' }] });
 });
 
-test('access mode: T3\'s switch goes to the engine at once, every thread and the config follow', async () => {
+test('access mode: T3\'s switch goes to the engine at once and every thread shows it; the default setting stays where new threads start', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-m', 'M', []);
   const { client } = connect(engine);
@@ -221,9 +232,9 @@ test('access mode: T3\'s switch goes to the engine at once, every thread and the
   await config.until(value => value.type === 'snapshot');
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'chat-m', runtimeMode: 'full-access' });
   assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', mode: 'full' }]);
-  const next = await config.until(value => value.type === 'snapshot' && value.config.settings.defaultRuntimeMode === 'full-access');
-  assert(next);
   assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-m' })).thread.runtimeMode, 'full-access');
+  // T3 shows the mode chip under the composer of a started thread while its mode differs from this setting.
+  assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'approval-required');
   // T3's in-between modes ask first.
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c2', threadId: 'chat-m', runtimeMode: 'auto-accept-edits' });
   assert.equal(engine.access.mode, 'confirm');
@@ -323,14 +334,16 @@ test('settings: whole values are kept, partial nested patches are not; the folde
   const settings = await client.call('server.updateSettings', { patch: { responseStreamingMode: 'turn', storageCleanup: { enabled: true }, defaultRuntimeMode: 'full-access' } });
   assert.equal(settings.responseStreamingMode, 'turn');
   assert.equal('storageCleanup' in settings, false);
+  // The default is where new threads start: the engine's mode changes with the thread that starts in it.
   assert.equal(settings.defaultRuntimeMode, 'full-access');
-  assert.equal(engine.access.mode, 'full');
+  assert.equal(engine.access.mode, 'confirm');
   await client.call('orchestration.launchThread', {
     commandId: 'cmd-f', threadId: 'thread-f', projectId: 'hoh-project', title: 'F', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
     runtimeMode: 'full-access', interactionMode: 'default', workspaceStrategy: { type: 'root' },
   });
   const project = await shell.until(value => value.kind === 'project.updated');
   assert.equal(project.project.workspaceRoot, '/home/person/Documents/HoH');
+  assert.equal(engine.access.mode, 'full');
 });
 
 test('Stop answered only by the engine going idle still ends the turn as stopped', async () => {
@@ -346,23 +359,80 @@ test('Stop answered only by the engine going idle still ends the turn as stopped
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
 });
 
-test('a new thread never widens access by itself: T3\'s own default "full-access" is not applied, a narrower mode is', async () => {
+test('the mode chosen for a new thread is in effect for its first message: access/set before session/prompt', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);
+  // T3 sends the composer's choice with the launch of a new thread (useComposerSend.ts `createThread.runtimeMode`).
   const launched = await client.call('orchestration.launchThread', {
     commandId: 'cmd-w', threadId: 'thread-w', projectId: 'hoh-project', title: 'W', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
     runtimeMode: 'full-access', interactionMode: 'default', workspaceStrategy: { type: 'root' },
     initialMessage: { messageId: 'm-w', text: 'hi', attachments: [] },
   });
-  assert.equal(engine.requests.some(r => r.method === 'hoh/executor/access/set'), false);
-  assert.equal(launched.projection.thread.runtimeMode, 'approval-required', 'the thread shows the mode actually in effect');
-  // The switch is explicit: it widens.
-  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'thread-w', runtimeMode: 'full-access' });
-  assert.equal(engine.access.mode, 'full');
-  // A thread created with a narrower mode narrows (safe direction).
+  const order = engine.requests.map(r => r.method);
+  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', mode: 'full' }]);
+  assert(order.indexOf('hoh/executor/access/set') < order.indexOf('session/prompt'), 'the engine has the mode before Claude starts');
+  assert.equal(launched.projection.thread.runtimeMode, 'full-access');
+  // A started thread: T3 sends the switch right before the next message (ChatView `persistThreadSettingsForNextTurn`).
+  engine.requests.length = 0;
+  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'thread-w', runtimeMode: 'approval-required' });
+  await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c2', threadId: 'thread-w', messageId: 'm-2', text: 'again', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
+  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set' || r.method === 'session/prompt').map(r => [r.method, r.params.mode ?? r.params.contentBlocks?.[0]?.text]),
+    [['hoh/executor/access/set', 'confirm'], ['session/prompt', 'again']]);
+  assert.equal(engine.access.mode, 'confirm');
+  // A thread created with the default mode starts in it.
+  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c3', threadId: 'thread-w', runtimeMode: 'full-access' });
   await client.call('orchestration.dispatchCommand', {
-    type: 'thread.create', commandId: 'c2', threadId: 'thread-n', projectId: 'hoh-project', title: 'N', createdBy: 'user', creationSource: 'web',
+    type: 'thread.create', commandId: 'c4', threadId: 'thread-n', projectId: 'hoh-project', title: 'N', createdBy: 'user', creationSource: 'web',
     modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
   });
   assert.equal(engine.access.mode, 'confirm');
+});
+
+test('after a restart a finished history has no open turn, and the next answer closes its turn (the engine starts a turn before its message)', async () => {
+  const store = new Map();
+  const before = new FakeEngine({ store });
+  const turn = (n, ask, answer) => [
+    ['turn/start', { turn: n }], ['step/start', { turn: n, step: 1 }],
+    ['user/message', { id: 'u' + n, source: { kind: 'user' }, content: [{ type: 'text', text: ask }] }],
+    ['assistant/message', { turn: n, step: 1, message: { id: 'a' + n, content: [{ type: 'text', text: answer }] } }],
+    ['step/end', { turn: n, step: 1 }], ['turn/end', { turn: n, reason: { kind: 'completed' } }],
+  ];
+  before.seed('chat-z', 'Z', [...turn(1, 'Запомни ZEBRA', 'Запомнил'), ...turn(2, 'Ещё', 'Готово'), ...turn(3, 'И ещё', 'Ок'), ['session/end-seed', {}]]);
+  const engine = new FakeEngine({ store });
+  const { client } = connect(engine);
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-z' });
+  const loaded = await thread.until(value => value.kind === 'snapshot' && value.projection.runs.length === 3);
+  assert.deepEqual(loaded.projection.runs.map(run => run.status), ['completed', 'completed', 'completed']);
+  await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c1', threadId: 'chat-z', messageId: 'm-4', text: 'Какое слово?', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
+  await thread.until(value => value.kind === 'snapshot' && value.projection.messages.filter(m => m.role === 'user').length === 4);
+  engine.emitEvent('chat-z', 'assistant/message', { turn: 4, step: 1, message: { id: 'a4', content: [{ type: 'text', text: 'ZEBRA' }] } });
+  engine.emitEvent('chat-z', 'turn/end', { turn: 4, reason: { kind: 'completed' } });
+  const done = await thread.until(value => value.kind === 'snapshot' && value.projection.runs.length === 4 && value.projection.runs[3].status === 'completed');
+  // T3 shows the thread working while ANY run is running or waiting (client-runtime threadExecution.ts `latestMatchingRun`).
+  assert.deepEqual(done.projection.runs.map(run => run.status), ['completed', 'completed', 'completed', 'completed']);
+  const shell = await (await client.stream('orchestration.subscribeShell', {})).until(value => value.kind === 'snapshot');
+  assert.equal(shell.snapshot.threads.find(row => row.id === 'chat-z').activeRunId, null);
+  assert.equal(done.projection.messages.filter(m => m.role === 'user').length, 4, 'the message is shown once');
+});
+
+test('Claude\'s models with T3\'s names, Claude Code\'s "default" left out, T3\'s default model for new chats; no Russian in what T3 shows', async () => {
+  const engine = new FakeEngine({
+    access: { mode: 'confirm', selected: { executor: 'claude', model: 'default' } },
+    discovery: { executor: 'claude', installed: true, version: '2.1.329', versionStatus: 'supported', auth: 'authenticated', detail: null, models: [
+      { id: 'default', displayName: 'По умолчанию (модель Claude Code)', isDefault: true },
+      { id: 'sonnet', displayName: 'Sonnet 5.5' }, { id: 'sonnet[1m]', displayName: 'Sonnet 5.5 (1M context)' }, { id: 'opus', displayName: 'Opus 5.5' },
+      { id: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5' }, { id: 'experimental-x', displayName: 'Experimental X' },
+    ] },
+  });
+  const { client } = connect(engine);
+  const config = await client.call('server.getConfig', {});
+  assert.deepEqual(config.providers[0].models.map(model => [model.slug, model.name]), [
+    ['opus', 'Claude Opus 5.5'], ['sonnet', 'Claude Sonnet 5.5'], ['claude-haiku-4-5-20251001', 'Claude Haiku 4.5'], ['experimental-x', 'Experimental X'],
+  ]);
+  assert.deepEqual({ ...(await client.call('server.getSettings', {})).defaultModelSelection }, { instanceId: 'claudeAgent', model: 'opus' });
+  assert.doesNotMatch(JSON.stringify(config), /[Ѐ-ӿ]/);
+  // An engine that cannot run Claude: T3's own words, not the engine's.
+  const missing = new FakeEngine({ discovery: { executor: 'claude', installed: false, version: null, auth: 'unknown', models: [], detail: 'Claude Code не установлен.' } });
+  const other = connect(missing).client;
+  assert.equal((await other.call('server.getConfig', {})).providers[0].message, 'Claude Agent CLI (`claude`) was not found on PATH.');
 });

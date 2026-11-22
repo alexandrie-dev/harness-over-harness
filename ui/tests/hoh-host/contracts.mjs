@@ -17,6 +17,8 @@ const WEB_LOGIC = [
   ['web/providerReadiness.logic', 'apps/web/src/onboarding/providerReadiness.logic.ts'],
   ['web/welcomePage.logic', 'apps/web/src/onboarding/welcomePage.logic.ts'],
   ['web/firstRun.logic', 'apps/web/src/onboarding/firstRun.logic.ts'],
+  // Where the composer shows the permissions chip (no imports).
+  ['web/composerControlsOwnership', 'apps/web/src/components/chat/composerControlsOwnership.ts'],
 ];
 const WEB_IMPORTS = { '@t3tools/contracts': '../contracts/index.js', '@t3tools/shared/path': '../shared/path.js', './providerReadiness.logic': './providerReadiness.logic.js' };
 
@@ -46,7 +48,7 @@ export async function buildContracts() {
   return {
     dir: out,
     load: name => import(pathToFileURL(join(out, 'contracts', name + '.js')).href),
-    /** `web/firstRun.logic`, `web/welcomePage.logic`, `web/providerReadiness.logic`. */
+    /** `web/firstRun.logic`, `web/welcomePage.logic`, `web/providerReadiness.logic`, `web/composerControlsOwnership`. */
     loadWeb: name => import(pathToFileURL(join(out, name + '.js')).href),
   };
 }

@@ -42,6 +42,31 @@ function toolKind(name: string): 'command' | 'write' | 'read' | 'search' | 'web'
   return 'other';
 }
 
+/** Claude's own names of its tools, which T3 writes in a request (the engine reports them in lower case). */
+const CLAUDE_TOOL_NAMES: Readonly<Record<string, string>> = {
+  bash: 'Bash', read: 'Read', write: 'Write', edit: 'Edit', multiedit: 'MultiEdit', notebookedit: 'NotebookEdit',
+  grep: 'Grep', glob: 'Glob', ls: 'LS', webfetch: 'WebFetch', websearch: 'WebSearch', todowrite: 'TodoWrite', task: 'Task',
+};
+
+/**
+ * A permission request as T3 makes one for Claude (apps/server ClaudeAdapterV2.ts `canUseTool`): its kind by
+ * the tool (`providerRequestKindFromClaudeTool`) and its text the command itself, else "Tool: file" or
+ * "Tool: input" (`summarizeClaudeToolRequest`). T3 titles the card by the kind ("Command approval").
+ */
+function toolRequest(name: string, args: Record<string, any>): { requestKind: string; prompt?: string } {
+  const kind = toolKind(name);
+  const requestKind = kind === 'write' ? 'file-change' : kind === 'read' || kind === 'search' ? 'file-read' : 'command';
+  const first = (keys: string[]) => keys.map(key => args[key]).find((value): value is string => typeof value === 'string' && value.trim() !== '');
+  const command = first(['command']);
+  if (command) return { requestKind, prompt: command };
+  const tool = CLAUDE_TOOL_NAMES[name.toLowerCase()] ?? name;
+  if (!tool.trim()) return { requestKind };
+  const subject = first(['cmd', 'script']) ?? first(['file_path', 'path', 'filename', 'fileName']);
+  if (subject) return { requestKind, prompt: `${tool}: ${subject.slice(0, 400)}` };
+  const input = JSON.stringify(args);
+  return { requestKind, prompt: `${tool}: ${input.length <= 400 ? input : input.slice(0, 397) + '...'}` };
+}
+
 export interface ThreadSeed {
   readonly id: string;
   readonly title?: string;
@@ -81,6 +106,10 @@ export class ThreadModel {
   private readonly live = new Map<string, Live>();
   private readonly retired = new Set<string>();
   private readonly calls = new Map<string, string>();
+  /** Name and input of each tool call by the engine's call id: a permission request names its call. */
+  private readonly toolInputs = new Map<string, { name: string; args: Record<string, any>; itemId: string }>();
+  /** A run `turn/start` reopened: the engine starts a turn before it records the turn's message. */
+  private reopened: { run: Run; status: RunStatus; completedAt: number | null } | null = null;
   /** Messages T3 sent that the engine has not echoed yet: T3's id is kept for the echo. */
   private readonly outgoing: { text: string; messageId: string; at: number }[] = [];
   private readonly echoed = new Map<string, string>();
@@ -152,6 +181,10 @@ export class ThreadModel {
 
   private addUserMessage(messageId: string, value: string, at: number) {
     this.settledByGuess = false; this.stopRequested = false;
+    // One run works at a time: the run this turn's start reopened was closed, and a run the engine never
+    // closed ends where the next message begins (T3 shows any open run as working).
+    if (this.reopened) { this.reopened.run.status = this.reopened.status; this.reopened.run.completedAt = this.reopened.completedAt; this.reopened = null; }
+    for (const run of this.runs) if (run.status === 'running' || run.status === 'waiting') { run.status = 'completed'; run.completedAt = at; }
     if (!this.title) this.title = value.split('\n')[0].trim().slice(0, 80);
     const run: Run = { id: 'run-' + messageId, ordinal: this.runs.length + 1, model: this.model, userMessageId: messageId, status: 'running', requestedAt: at, startedAt: at, completedAt: null };
     this.runs.push(run);
@@ -203,6 +236,7 @@ export class ThreadModel {
       item = { ...this.base(id, 'web_search', 'running', at), ...(pattern ? { patterns: [pattern] } : {}) };
     } else item = { ...this.base(id, 'dynamic_tool', 'running', at), toolName: name.trim() || null, input: args };
     this.calls.set(callId, id);
+    this.toolInputs.set(rawId, { name, args, itemId: id });
     this.items.push(item);
   }
 
@@ -221,6 +255,7 @@ export class ThreadModel {
   }
 
   private endTurn(reason: string, at: number, error?: unknown) {
+    this.reopened = null;
     const run = this.currentRun();
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
     this.stopRequested = false;
@@ -259,8 +294,12 @@ export class ThreadModel {
         this.userMessage(text(data.id), contentText(data.content), at);
         break;
       case 'turn/start': {
+        // A turn without a message of its own continues the last run; a message, when it follows, starts its own.
         const run = this.currentRun();
-        if (run && run.status !== 'running') { run.status = 'running'; run.completedAt = null; }
+        if (run && run.status !== 'running' && run.status !== 'waiting') {
+          this.reopened = { run, status: run.status, completedAt: run.completedAt };
+          run.status = 'running'; run.completedAt = null;
+        }
         this.running = true; this.settledByGuess = false;
         break;
       }
@@ -272,6 +311,18 @@ export class ThreadModel {
         break;
       }
       case 'tool/call': this.toolCall(data, at); break;
+      // The permission request of a tool call: the card shows that call as T3 shows a Claude request.
+      case 'approval/asked': {
+        const item = this.item('item-approval-' + text(data.id));
+        const tool = this.toolInputs.get(text(data.callId));
+        if (!item || !tool) return false;
+        const request = toolRequest(tool.name, tool.args);
+        item.requestKind = request.requestKind; delete item.prompt;
+        if (request.prompt) item.prompt = request.prompt;
+        const entry = this.requests.find(candidate => candidate.id === text(data.id));
+        if (entry) entry.kind = request.requestKind;
+        break;
+      }
       case 'tool/result': this.toolResult(record(data.message), data.turn, at); break;
       default: return false;
     }
@@ -336,15 +387,21 @@ export class ThreadModel {
     if (run && (run.status === 'running' || run.status === 'waiting')) { this.endTurn('aborted', at); this.settledByGuess = true; }
   }
 
-  /** A permission request of the assistant (`approval.pending`), answered in the chat. */
+  /**
+   * A permission request of the assistant (`approval.pending`), answered in the chat. The engine's own text
+   * (`humanText`) is not English; the request is the tool call waiting for it, which `approval/asked` names.
+   */
   approvalPending(params: { approvalId: string; humanText?: string; risk?: string }, at = Date.now()) {
     if (!text(params.approvalId) || this.requests.some(request => request.id === params.approvalId)) return false;
     const run = this.currentRun();
-    this.requests.push({ id: params.approvalId, kind: 'permission', status: 'pending', createdAt: at, resolvedAt: null });
+    // Until `approval/asked` names it: the latest call still running is the one that waits.
+    const waiting = [...this.toolInputs.values()].reverse().find(tool => this.item(tool.itemId)?.status === 'running');
+    const request = waiting ? toolRequest(waiting.name, waiting.args) : { requestKind: 'command' };
+    this.requests.push({ id: params.approvalId, kind: request.requestKind, status: 'pending', createdAt: at, resolvedAt: null });
     this.items.push({
       ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at),
-      requestId: params.approvalId, requestKind: 'permission',
-      prompt: nonBlank(text(params.humanText), 'Claude asks for permission.'),
+      requestId: params.approvalId, requestKind: request.requestKind,
+      ...(request.prompt ? { prompt: request.prompt } : {}),
       // T3's own set for a Claude request without a standing grant (apps/server ClaudeAdapterV2.ts
       // `CLAUDE_NO_STANDING_GRANT_OPTIONS`): HoH allows one action at a time.
       options: [{ decision: 'decline', label: 'Decline' }, { decision: 'accept', label: 'Approve' }],
