@@ -62,6 +62,8 @@ export class ThreadModel {
   running = false;
   /** The engine itself said the chat is working (`session.status`), not just its history. */
   engineRunning = false;
+  /** The person pressed Stop for the current turn: however it ends, it ends stopped. */
+  stopRequested = false;
   /** The last turn was closed by `settleUnfinished`, a guess the engine may still correct. */
   private settledByGuess = false;
   archivedAt: number | null = null;
@@ -139,7 +141,7 @@ export class ThreadModel {
   }
 
   private addUserMessage(messageId: string, value: string, at: number) {
-    this.settledByGuess = false;
+    this.settledByGuess = false; this.stopRequested = false;
     if (!this.title) this.title = value.split('\n')[0].trim().slice(0, 80);
     const run: Run = { id: 'run-' + messageId, ordinal: this.runs.length + 1, model: this.model, userMessageId: messageId, status: 'running', requestedAt: at, startedAt: at, completedAt: null };
     this.runs.push(run);
@@ -210,7 +212,8 @@ export class ThreadModel {
 
   private endTurn(reason: string, at: number) {
     const run = this.currentRun();
-    const status: RunStatus = reason === 'aborted' ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
+    const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
+    this.stopRequested = false;
     if (run && (run.status === 'running' || run.status === 'waiting')) { run.status = status; run.completedAt = at; }
     for (const item of this.items) {
       if (item.status === 'running' || item.status === 'waiting' || item.status === 'pending')

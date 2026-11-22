@@ -329,3 +329,16 @@ test('settings: whole values are kept, partial nested patches are not; the folde
   const project = await shell.until(value => value.kind === 'project.updated');
   assert.equal(project.project.workspaceRoot, '/home/person/Documents/HoH');
 });
+
+test('Stop answered only by the engine going idle still ends the turn as stopped', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-i', 'I', []);
+  const { client } = connect(engine);
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-i' });
+  await thread.until(value => value.kind === 'snapshot');
+  await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c1', threadId: 'chat-i', messageId: 'm-i', text: 'долго', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
+  await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'running');
+  await client.call('orchestration.dispatchCommand', { type: 'run.interrupt', commandId: 'c2', threadId: 'chat-i', runId: 'run-m-i' });
+  engine.emitStatus('chat-i', 'idle');
+  await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
+});

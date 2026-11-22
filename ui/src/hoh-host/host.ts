@@ -327,6 +327,7 @@ export class HohHost {
 
   /** «Стоп»: the same cancel as the current window; the engine ends Claude and its commands. */
   private async cancel(thread: ThreadModel) {
+    if (thread.activeRunId()) thread.stopRequested = true;
     await this.engine.request('session/cancel', { sessionId: thread.id });
   }
 
