@@ -1,5 +1,6 @@
 /* Главная HoH (HOH-41 В2): только раскладка; цвета — токены темы T3/HoH, шрифт и радиусы — T3 (var(--radius-*)). */
-.hoh-home { display: flex; flex: 1 1 0; min-height: 0; overflow-y: auto; pointer-events: auto; }
+.hoh-home { display: flex; flex: 1 1 0; min-height: 0; overflow-y: auto; pointer-events: auto; scrollbar-width: none; } /* без полосы прокрутки: она сдвигала колонку с линий сетки на 3 px; прокрутка колесом и клавишами работает */
+.hoh-home::-webkit-scrollbar { display: none; }
 /* Заголовок черновика T3 («What should we work on?») T3 кладёт над полем ввода вне потока (absolute, bottom-full): тело главной уходило под него.
    Он становится строкой потока в колонке поля ввода — тело (flex: 1, прокручивается внутри себя) занимает то, что осталось над ним, и не может его перекрыть. */
 [data-chat-composer-stack] > .absolute.inset-x-0.bottom-full { position: static; }
