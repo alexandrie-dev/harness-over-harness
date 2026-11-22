@@ -22,7 +22,7 @@ mod stdio;
 pub mod supervisor;
 mod window;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use hoh_agent::{Agents, SessionExecutor};
@@ -92,10 +92,14 @@ struct Inner {
 #[derive(Default)]
 pub(crate) struct Choices {
     access: Mutex<HashMap<String, AccessMode>>,
-    /// The `effort` of the last `session/prompt` of each conversation (by HoH session id); none
-    /// when that prompt named none.
-    efforts: Mutex<HashMap<String, Option<String>>>,
+    /// For each conversation an external agent serves (by HoH session id), the levels its
+    /// prompts named, until their turns take them (HOH-40).
+    efforts: Mutex<HashMap<String, PromptEfforts>>,
 }
+
+/// The `effort` each `session/prompt` of a conversation named (none: it named none), by the id
+/// of its message, oldest first.
+type PromptEfforts = VecDeque<(String, Option<String>)>;
 
 impl Choices {
     pub(crate) fn access(&self, executor: &str) -> AccessMode {
@@ -113,12 +117,26 @@ impl Choices {
         lock(&self.access).clone()
     }
 
-    pub(crate) fn set_effort(&self, session: &str, effort: Option<String>) {
-        lock(&self.efforts).insert(session.to_owned(), effort);
+    /// An external agent serves `session`: the levels its prompts name are kept from now on.
+    /// Conversations of the engine's own model keep nothing.
+    pub(crate) fn serve_efforts(&self, session: &str) {
+        lock(&self.efforts).entry(session.to_owned()).or_default();
     }
 
-    pub(crate) fn effort(&self, session: &str) -> Option<String> {
-        lock(&self.efforts).get(session).cloned().flatten()
+    /// The level the prompt `message` of `session` named, kept for that message's turn.
+    pub(crate) fn note_effort(&self, session: &str, message: &str, effort: Option<String>) {
+        if let Some(pending) = lock(&self.efforts).get_mut(session) {
+            pending.push_back((message.to_owned(), effort));
+        }
+    }
+
+    /// The level the prompt `message` of `session` named (`Some(None)`: it named none), with the
+    /// older ones dropped; `None`: no level was kept for that message.
+    pub(crate) fn take_effort(&self, session: &str, message: &str) -> Option<Option<String>> {
+        let mut efforts = lock(&self.efforts);
+        let pending = efforts.get_mut(session)?;
+        let at = pending.iter().position(|(id, _)| id == message)?;
+        pending.drain(..=at).next_back().map(|(_, effort)| effort)
     }
 }
 

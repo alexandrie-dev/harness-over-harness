@@ -167,6 +167,9 @@ struct State {
     held: bool,
     /// The session is being unloaded: no turn starts any more.
     closed: bool,
+    /// The effort level of the turns (HOH-40): the one the last prompt named, when the harness
+    /// has it; a turn without a prompt of its own keeps it.
+    effort: Option<String>,
 }
 
 pub(crate) struct NewAgent {
@@ -183,6 +186,9 @@ pub(crate) struct NewAgent {
 
 impl ExternalAgent {
     pub(crate) fn new(init: NewAgent) -> Arc<ExternalAgent> {
+        init.shared
+            .choices
+            .serve_efforts(init.session.id().as_ref());
         let model = ExternalModel {
             provider: init.shared.name.clone(),
             model: Mutex::new(init.model.clone()),
@@ -465,6 +471,7 @@ impl ExternalAgent {
             self.emit_error(turn, step, error);
             return;
         }
+        self.take_prompt_effort(&input);
         let messages = input.messages;
         let mut log = TurnLog::new(self.clone(), turn, step, signal.clone());
         let outcome = self.native_turn(live, &mut log, &messages, &signal).await;
@@ -620,7 +627,7 @@ impl ExternalAgent {
         live: &mut Option<LiveSession>,
         signal: &AbortSignal,
     ) -> Result<(), HarnessFailure> {
-        let effort = self.prompt_effort();
+        let effort = lock(&self.state).effort.clone();
         if let Some(session) = live.as_mut() {
             while let Ok(event) = session.events.try_recv() {
                 match event {
@@ -732,25 +739,37 @@ impl ExternalAgent {
         Ok(())
     }
 
-    /// The effort level the conversation's last `session/prompt` named (HOH-40), when the harness
-    /// has it. Another value is not passed on, and said in the log: the turn runs at the
-    /// harness's own level.
-    fn prompt_effort(&self) -> Option<String> {
-        let effort = self.shared.choices.effort(self.id.as_ref())?;
-        if self
+    /// The effort level of this turn (HOH-40): the one its own prompt named in `session/prompt`
+    /// (none: the harness's own), so a prompt queued behind it does not decide it. A level the
+    /// harness does not have is not passed on, and said in the log. A turn whose prompt named
+    /// nothing through `session/prompt` (a wake, another method) keeps the last level.
+    fn take_prompt_effort(&self, input: &TurnInput) {
+        let Some(prompt) = input.messages.last().filter(|_| input.last_from_next_turn) else {
+            return;
+        };
+        let Some(named) = self
             .shared
-            .harness
-            .effort_levels()
-            .contains(&effort.as_str())
-        {
-            return Some(effort);
-        }
-        self.ctx.logger().warn(format_args!(
-            "harness \"{}\" has no effort level {}: the turn runs without one",
-            self.shared.name,
-            js_json_stringify(&json!(effort))
-        ));
-        None
+            .choices
+            .take_effort(self.id.as_ref(), prompt.id.as_ref())
+        else {
+            return;
+        };
+        let effort = named.filter(|effort| {
+            let known = self
+                .shared
+                .harness
+                .effort_levels()
+                .contains(&effort.as_str());
+            if !known {
+                self.ctx.logger().warn(format_args!(
+                    "harness \"{}\" has no effort level {}: the turn runs without one",
+                    self.shared.name,
+                    js_json_stringify(&json!(effort))
+                ));
+            }
+            known
+        });
+        lock(&self.state).effort = effort;
     }
 
     /// [`launch_policy`], said in the log when it caps the configuration; `never` without its

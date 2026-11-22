@@ -277,7 +277,7 @@ impl<W: Write> Engine<W> {
                             "--permission-mode",
                             "bypassPermissions",
                             "--setting-sources",
-                            "user",
+                            "user,project,local",
                             "--permission-prompt-tool",
                             "stdio",
                             "--allow-dangerously-skip-permissions"
@@ -291,7 +291,7 @@ impl<W: Write> Engine<W> {
                             "--permission-mode",
                             "default",
                             "--setting-sources",
-                            "user",
+                            "user,project,local",
                             "--permission-prompt-tool",
                             "stdio",
                             "--disallowedTools",

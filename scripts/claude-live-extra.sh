@@ -22,7 +22,7 @@
 #   live.v2.lost-form             the same restart: what the CLI says when a conversation is lost
 #   live.v3.lost-resume           a missing id in --resume, form of the message
 #   live.v5.kill-full, live.v5.shutdown500-full   engine killed mid-turn: claude alive after 5 and 30 s?
-#   live.v6.mcp-project[-enabled] .mcp.json in the folder with --setting-sources user: mcp_servers
+#   live.v6.mcp-project[-enabled] .mcp.json in the folder with --setting-sources user,project,local: mcp_servers
 #   live.v7.protected-write, live.v7.settings  asked to write into the engine's data / isolated settings: host's text
 #   live.v8.read-outside          file outside the folder: does the CLI ask, what the host sees
 #   live.v9.secret-url            command with a secret-named URL parameter: window's text vs the command
