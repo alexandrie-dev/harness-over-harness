@@ -35,22 +35,6 @@
     "pdfjs-dist": "6.5.438",
     "uplot": "1.6.32",
     "@tauri-apps/api": "2.12.4",
-    "vite": "8.3.7",
-    "@vitejs/plugin-react": "6.3.0",
-    "tailwindcss": "4.3.5",
-    "@tailwindcss/vite": "4.3.5",
-    "typescript": "6.0.3",
-    "playwright-core": "1.65.0",
-    "@tauri-apps/cli": "2.12.4",
-    "@types/react": "19.3.0",
-    "@types/react-dom": "19.3.0",
-    "@types/node": "24.19.2",
-    "@rolldown/binding-linux-x64-gnu": "1.2.19",
-    "@tailwindcss/oxide-linux-x64-gnu": "4.3.5",
-    "lightningcss-linux-x64-gnu": "1.33.0",
-    "@tauri-apps/cli-linux-x64-gnu": "2.12.4",
-    "oxc-transform-react": "0.156.0",
-    "@oxc-transform-react/binding-linux-x64-gnu": "0.156.0",
     "react-markdown": "10.1.0",
     "unified": "11.0.5",
     "remark-parse": "11.0.0",
@@ -77,7 +61,55 @@
     "@types/mdast": "4.0.4",
     "katex": "0.18.10",
     "dompurify": "3.4.17",
-    "pele": "1.8.0"
+    "pele": "1.8.0",
+    "effect": "4.1.3",
+    "@effect/atom-react": "4.1.2",
+    "@tanstack/react-router": "1.170.10",
+    "@tanstack/react-pacer": "0.19.4",
+    "@dnd-kit/core": "6.3.1",
+    "@dnd-kit/sortable": "10.0.0",
+    "@dnd-kit/modifiers": "9.0.0",
+    "@dnd-kit/utilities": "3.2.2",
+    "culori": "4.0.2",
+    "use-sync-external-store": "1.6.0",
+    "jsonc-parser": "2.3.1",
+    "entities": "4.5.0",
+    "@noble/hashes": "1.8.0",
+    "@noble/curves": "1.9.1",
+    "get-east-asian-width": "1.6.0",
+    "yaml": "2.9.0",
+    "@daypicker/react": "10.0.1",
+    "@tiptap/core": "3.31.3",
+    "@tiptap/react": "3.31.3",
+    "@tiptap/pm": "3.31.3",
+    "@tiptap/starter-kit": "3.31.3",
+    "@tiptap/extension-blockquote": "3.31.3",
+    "@tiptap/extension-bold": "3.31.3",
+    "@tiptap/extension-code": "3.31.3",
+    "@tiptap/extension-code-block": "3.31.3",
+    "@tiptap/extension-heading": "3.31.3",
+    "@tiptap/extension-horizontal-rule": "3.31.3",
+    "@tiptap/extension-italic": "3.31.3",
+    "@tiptap/extension-list": "3.31.3",
+    "@tiptap/extension-strike": "3.31.3",
+    "@tiptap/extension-task-item": "3.31.3",
+    "@tiptap/extension-task-list": "3.31.3",
+    "vite": "8.3.7",
+    "@vitejs/plugin-react": "6.3.0",
+    "tailwindcss": "4.3.5",
+    "@tailwindcss/vite": "4.3.5",
+    "typescript": "6.0.3",
+    "playwright-core": "1.65.0",
+    "@tauri-apps/cli": "2.12.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/node": "24.19.2",
+    "@rolldown/binding-linux-x64-gnu": "1.2.19",
+    "@tailwindcss/oxide-linux-x64-gnu": "4.3.5",
+    "lightningcss-linux-x64-gnu": "1.33.0",
+    "@tauri-apps/cli-linux-x64-gnu": "2.12.4",
+    "oxc-transform-react": "0.156.0",
+    "@oxc-transform-react/binding-linux-x64-gnu": "0.156.0"
   },
   "scriptExceptions": {
     "lightningcss@1.33.0": [
@@ -100,12 +132,70 @@
     ],
     "style-to-object@1.0.14": [
       "prepare"
+    ],
+    "culori@4.0.2": [
+      "prepare"
+    ],
+    "entities@4.5.0": [
+      "prepare"
+    ],
+    "isbot@5.2.3": [
+      "prepare"
+    ],
+    "orderedmap@2.1.1": [
+      "prepare"
+    ],
+    "prosemirror-changeset@2.4.6": [
+      "prepare"
+    ],
+    "prosemirror-commands@1.7.2": [
+      "prepare"
+    ],
+    "prosemirror-dropcursor@1.8.4": [
+      "prepare"
+    ],
+    "prosemirror-gapcursor@1.4.1": [
+      "prepare"
+    ],
+    "prosemirror-history@1.5.1": [
+      "prepare"
+    ],
+    "prosemirror-inputrules@1.6.0": [
+      "prepare"
+    ],
+    "prosemirror-keymap@1.2.3": [
+      "prepare"
+    ],
+    "prosemirror-model@1.25.13": [
+      "prepare"
+    ],
+    "prosemirror-schema-list@1.6.0": [
+      "prepare"
+    ],
+    "prosemirror-state@1.4.4": [
+      "prepare"
+    ],
+    "prosemirror-transform@1.12.5": [
+      "prepare"
+    ],
+    "prosemirror-view@1.42.9": [
+      "prepare"
+    ],
+    "rope-sequence@1.3.4": [
+      "prepare"
+    ],
+    "w3c-keyname@2.2.8": [
+      "prepare"
     ]
   },
   "licenseExceptions": {
     "dompurify@3.4.17": {
       "license": "(MPL-2.0 OR Apache-2.0)",
       "reason": "двойная лицензия, используется ветка Apache-2.0; решение CEO 20.11.2026"
+    },
+    "isbot@5.2.3": {
+      "license": "Unlicense",
+      "reason": "ВРЕМЕННО: ждёт решения CEO (HOH-40, 22.11)"
     }
   }
 }
@@ -148,6 +238,38 @@
 | `oxc-transform-react` | 0.156.0 | 2026-10-27 | MIT | Обязательный peer plugin-react 6.3; TSX-преобразование |
 | `@oxc-transform-react/binding-linux-x64-gnu` | 0.156.0 | 2026-10-27 | MIT | Backend обязательного TSX peer, явный Linux x64 glibc пакет при optional=false |
 | `react-markdown` | 10.1.0 | 2025-03-07 | MIT | Отображение чата как в T3, установка разрешена основателем 20.11.2026 |
+| `effect` | 4.1.3 | 2026-11-10 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@effect/atom-react` | 4.1.2 | 2026-11-02 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tanstack/react-router` | 1.170.10 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tanstack/react-pacer` | 0.19.4 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@dnd-kit/core` | 6.3.1 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@dnd-kit/sortable` | 10.0.0 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@dnd-kit/modifiers` | 9.0.0 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@dnd-kit/utilities` | 3.2.2 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `culori` | 4.0.2 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `use-sync-external-store` | 1.6.0 | 2025-10-01 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `jsonc-parser` | 2.3.1 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `entities` | 4.5.0 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@noble/hashes` | 1.8.0 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@noble/curves` | 1.9.1 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `get-east-asian-width` | 1.6.0 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `yaml` | 2.9.0 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@daypicker/react` | 10.0.1 | по реестру (supply-check) | по реестру (supply-check) | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/core` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/react` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/pm` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/starter-kit` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-blockquote` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-bold` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-code` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-code-block` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-heading` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-horizontal-rule` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-italic` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-list` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-strike` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-task-item` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
+| `@tiptap/extension-task-list` | 3.31.3 | 2026-09-04 | MIT | Интерфейс T3 Code 1 в 1 (HOH-40), версия из lock T3; основатель 22.11 19:03/19:13/19:16 |
 | `unified` | 11.0.5 | 2024-06-19 | MIT | Отображение чата как в T3, установка разрешена основателем 20.11.2026 |
 | `remark-parse` | 11.0.0 | 2023-09-18 | MIT | Отображение чата как в T3, установка разрешена основателем 20.11.2026 |
 | `remark-gfm` | 4.0.1 | 2025-02-10 | MIT | Отображение чата как в T3, установка разрешена основателем 20.11.2026 |
@@ -214,3 +336,41 @@ prepare не выполняется при установке из реестр�
 На этой машине Cargo распаковал 272 Linux-crates, остальные архивы остались только в кэше. Для независимой пробы используются те же Tauri capabilities/CSP и те же исходники probe, что в будущей производственной сборке, но frontendDist временно заменён на authored probe-dist, без React/Vite. Это не заменяет заблокированные npm build/snapshot.
 
 Разрешённые лицензии Rust в deny.toml — подмножество общей licenses-политики выше: `MIT`, `Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Unicode-3.0`, `Zlib`, `MPL-2.0`, `CC0-1.0`, `OFL-1.1`. Supply gate проверяет это соответствие даже без cargo-deny; проверка лицензий самих Rust-crates пропущена до установки cargo-deny. Unicode-3.0, Zlib и Apache-2.0 WITH LLVM-exception добавлены для Rust-дерева.
+
+Исключение culori@4.0.2 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение entities@4.5.0 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение isbot@5.2.3 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение orderedmap@2.1.1 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-changeset@2.4.6 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-commands@1.7.2 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-dropcursor@1.8.4 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-gapcursor@1.4.1 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-history@1.5.1 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-inputrules@1.6.0 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-keymap@1.2.3 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-model@1.25.13 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-schema-list@1.6.0 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-state@1.4.4 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-transform@1.12.5 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение prosemirror-view@1.42.9 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение rope-sequence@1.3.4 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение rope-sequence@1.3.4 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
+
+Исключение w3c-keyname@2.2.8 (HOH-40, 22.11): поле prepare в опубликованных метаданных — подготовка релиза; при установке tarball из npm с --ignore-scripts не запускается. preinstall/install/postinstall по-прежнему запрещены.
