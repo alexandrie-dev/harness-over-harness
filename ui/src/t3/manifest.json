@@ -186,6 +186,7 @@
       "web/routeTree.gen.ts": "выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются",
       "web/components/settings/settingsSearch.ts": "выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS)",
       "web/components/sidebar/SidebarChrome.tsx": "имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3",
+      "web/components/settings/AppearanceSettingsPanel.tsx": "временный выключатель раунда дизайна (HOH-41): строка «Home variant A/B/C» в Appearance — одна строка вставки и импорт (src/t3/base/web/hoh-design/HomeVariantSection.tsx); флаг HOH_DESIGN_ROUND в features.ts убирает её",
       "web/terminalUiStateStore.ts": "выключатель: терминал — ящик терминала не открывается (normalizeThreadTerminalUiState держит terminalOpen: false), клавиши и действия ничего не открывают",
       "web/components/chat/PanelLayoutControls.tsx": "выключатель: терминал — кнопки ящика терминала нет (showTerminalControl по умолчанию false)",
       "web/components/settings/ThemeSettings.tsx": "выключатель: импорт тем VS Code / Open VSX — кнопки «Add theme» нет, диалог импорта не открывается",

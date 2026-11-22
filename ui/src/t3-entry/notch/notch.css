@@ -1,0 +1,43 @@
+/* The notch's band (HOH-41 design round; loaded only while HOH_DESIGN_ROUND is on, features.ts). The band is a strip
+   above the app: the app (#root) starts under it, so nothing of T3 is covered. The viewport units of T3's layout
+   (h-dvh, h-svh) lose the band's height. --hoh-notch-height is the contract with the screens of the round. */
+:root[data-hoh-notch] { --hoh-notch-height: 36px; }
+@media (max-height: 639px) { :root[data-hoh-notch] { --hoh-notch-height: 30px; } }
+:root[data-hoh-notch] #root {
+  position: fixed;
+  inset: var(--hoh-notch-height) 0 0 0;
+  contain: layout;
+  overflow: hidden;
+}
+:root[data-hoh-notch] [class*="h-dvh"],
+:root[data-hoh-notch] [class*="h-svh"] { height: calc(100dvh - var(--hoh-notch-height)) !important; }
+:root[data-hoh-notch] [class*="min-h-svh"] { min-height: calc(100svh - var(--hoh-notch-height)) !important; }
+
+.hoh-notch-band {
+  position: fixed;
+  z-index: 60;
+  inset: 0 0 auto 0;
+  height: var(--hoh-notch-height);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.hoh-notch { position: relative; flex: none; }
+.hoh-notch-outline { position: absolute; inset: 0; overflow: visible; }
+.hoh-notch-fill { fill: var(--card); stroke: none; }
+.hoh-notch-line { fill: none; stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.hoh-notch-content {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--foreground);
+}
+.hoh-notch-content img { flex: none; display: block; }
+.hoh-notch-name { font-weight: 500; letter-spacing: -0.01em; line-height: 1; white-space: nowrap; }
+
+/* Эмблема и имя уходят из шапки боковой панели (основатель): они стоят в корешке. Ссылка-марка — «HoH home» (в словаре окна; у T3 «T3 Code home») (SidebarChrome.tsx). */
+:root[data-hoh-notch] a[aria-label="HoH home"],
+:root[data-hoh-notch] a[aria-label="T3 Code home"] { display: none; }

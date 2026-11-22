@@ -238,7 +238,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `^apps/web/src/components/device/models/.*\.glb$` | 3D-модели устройств скрытой части «устройства и пары» (~12 МБ): не переносятся (решение ведущего); импорты `?url` — адрес-заглушка stubs/absent-url.ts |
 | `^apps/web/src/i18n/translations/(?!(en\|ru)\.json$)[^/]+$` | переводы, кроме en и ru, не переносятся (решение ведущего); список языков сужен правкой gt.config.json |
 
-Файлов перенесено: **1974**, из них без изменений: **1964**, правок файлов T3: **11** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
+Файлов перенесено: **1974**, из них без изменений: **1963**, правок файлов T3: **12** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
 Отложено (не проверяет tsc: в замыкании импортов есть пакет, которого нет в `ui/package.json` и `ui/node_modules` в версии, совместимой с lock T3: тот же major, для 0.x — тот же minor): **0** из 1949 файлов кода;
 не хватает пакетов (сколько файлов T3 их импортирует): нет. Когда пакеты из `ui/T3-DEPS.md` (раздел HOH-40) стоят, отложенных нет —
 `t3-sync.py` пересчитывает список сам. tsc основы — с настройками T3 (`strict`, `noImplicitAny`, `noUncheckedIndexedAccess`,
@@ -250,7 +250,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 
 | Папка T3 | Папка у нас | Файлов | Из них кода | Без изменений | Правок | Отложено | На заглушках |
 |---|---|---|---|---|---|---|---|
-| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1450 | 10 | 0 | 70 |
+| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1449 | 11 | 0 | 70 |
 | `packages/contracts/src` | `ui/src/t3/base/contracts` | 79 | 79 | 79 | 0 | 0 | 0 |
 | `packages/shared/src` | `ui/src/t3/base/shared` | 126 | 125 | 126 | 0 | 0 | 1 |
 | `packages/client-runtime/src` | `ui/src/t3/base/client-runtime` | 267 | 267 | 267 | 0 | 0 | 10 |
@@ -286,6 +286,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/routeTree.gen.ts` | правка (`ui/src/t3/base-patches/web/routeTree.gen.ts.patch`) | выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются |
 | `web/components/settings/settingsSearch.ts` | правка (`ui/src/t3/base-patches/web/components/settings/settingsSearch.ts.patch`) | выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS) |
 | `web/components/sidebar/SidebarChrome.tsx` | правка (`ui/src/t3/base-patches/web/components/sidebar/SidebarChrome.tsx.patch`) | имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3 |
+| `web/components/settings/AppearanceSettingsPanel.tsx` | правка (`ui/src/t3/base-patches/web/components/settings/AppearanceSettingsPanel.tsx.patch`) | временный выключатель раунда дизайна (HOH-41): строка «Home variant A/B/C» в Appearance — одна строка вставки и импорт (src/t3/base/web/hoh-design/HomeVariantSection.tsx); флаг HOH_DESIGN_ROUND в features.ts убирает её |
 | `web/terminalUiStateStore.ts` | правка (`ui/src/t3/base-patches/web/terminalUiStateStore.ts.patch`) | выключатель: терминал — ящик терминала не открывается (normalizeThreadTerminalUiState держит terminalOpen: false), клавиши и действия ничего не открывают |
 | `web/components/chat/PanelLayoutControls.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/PanelLayoutControls.tsx.patch`) | выключатель: терминал — кнопки ящика терминала нет (showTerminalControl по умолчанию false) |
 | `web/components/settings/ThemeSettings.tsx` | правка (`ui/src/t3/base-patches/web/components/settings/ThemeSettings.tsx.patch`) | выключатель: импорт тем VS Code / Open VSX — кнопки «Add theme» нет, диалог импорта не открывается |
