@@ -2,12 +2,16 @@
 // «New chat» с сочетанием клавиш T3, группа «Team» с «+» (строк нет: движка сотрудников нет), заголовок «Recent chats» над настоящим
 // списком разговоров T3. «Обучение» и «Виджеты» не рисуются. Подставляется вместо SidebarThreadHeader при сборке (vite.ts, sidebarList);
 // получает те же свойства, что получал T3 (SidebarThreadHeaderProps).
-import { PlusIcon, SquarePenIcon } from 'lucide-react';
+import { GraduationCapIcon, LayoutGridIcon, PlusIcon, SquarePenIcon } from 'lucide-react';
 import type { MouseEvent } from 'react';
 
 import { SidebarHeaderIconButton } from '~/components/sidebar/SidebarThreadHeader';
 import { SidebarMenuButton } from '~/components/ui/sidebar';
+import { PAGE_TITLES, pages, type PageKey } from './pages';
+import { PageLayer, usePage } from './SidebarPages';
 import './sidebar.css';
+
+const PAGE_ICONS = { learning: GraduationCapIcon, widgets: LayoutGridIcon } as const;
 
 interface Props {
   onNewThread: (event: MouseEvent) => void;
@@ -16,13 +20,24 @@ interface Props {
 }
 
 export function SidebarTop({ onNewThread, newThreadDisabled, newThreadShortcutLabel }: Props) {
+  const page = usePage();
   return (
     <div className="hoh-side" data-hoh-sidebar-top="">
-      <SidebarMenuButton type="button" className="hoh-side__new" disabled={newThreadDisabled} onClick={onNewThread}>
+      <PageLayer />
+      <SidebarMenuButton type="button" className="hoh-side__new" disabled={newThreadDisabled} onClick={(event) => { pages.close(); onNewThread(event); }}>
         <SquarePenIcon aria-hidden />
         <span>New chat</span>
         {newThreadShortcutLabel ? <kbd className="hoh-side__kbd">{newThreadShortcutLabel}</kbd> : null}
       </SidebarMenuButton>
+      {(['learning', 'widgets'] as PageKey[]).map((key) => {
+        const Icon = PAGE_ICONS[key];
+        return (
+          <SidebarMenuButton key={key} type="button" className="hoh-side__new" isActive={page === key} aria-current={page === key ? 'page' : undefined} data-hoh-page-item={key} onClick={() => pages.open(key)}>
+            <Icon aria-hidden />
+            <span>{PAGE_TITLES[key]}</span>
+          </SidebarMenuButton>
+        );
+      })}
       <div className="hoh-side__group">
         <span>Team</span>
         {/* Движка сотрудников у HoH нет: «+» ничего не создаёт и выключена, пока он не появится. */}

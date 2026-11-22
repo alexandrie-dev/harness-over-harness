@@ -31,5 +31,6 @@ export const BLOCKS: readonly Block[] = [
   { name: 'composer', sel: '[data-chat-composer-stack]', x: COLUMN, y: [null, 20] },
   { name: 'home-column', sel: '.hoh-home__inner', x: COLUMN },
   { name: 'home-card', sel: '.hoh-card', x: COLUMN },
+  { name: 'page-column', sel: '.hoh-page__column', x: COLUMN },
   { name: 'home-ask', sel: '.hoh-ask', x: COLUMN },
 ];

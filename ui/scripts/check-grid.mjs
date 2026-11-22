@@ -147,6 +147,19 @@ try {
         const found = await page.evaluate(() => (window.hohGridCheck ? window.hohGridCheck() : null));
         if (found === null) fail(`${label}: в окне нет window.hohGridCheck`);
         else for (const miss of found) fail(`${label}: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected} (ближайшая ${miss.nearest || '—'})`);
+        if (busy) { // Learning / Widgets: пустая страница с заголовком и «Coming soon», пункт подсвечен, блок на линиях; «New chat» её закрывает
+          for (const title of ['Learning', 'Widgets']) {
+            await page.locator(`[data-hoh-page-item="${title.toLowerCase()}"]`).click();
+            await page.locator('.hoh-page').waitFor({ state: 'visible' });
+            const text = await page.locator('.hoh-page').innerText();
+            if (text.replace(/\s+/g, ' ').trim() !== `${title} Coming soon`) fail(`${label}: страница ${title}: «${text.trim()}»`);
+            if (await page.locator(`[data-hoh-page-item="${title.toLowerCase()}"][aria-current="page"]`).count() !== 1) fail(`${label}: пункт ${title} не подсвечен`);
+            const pageMiss = await page.evaluate(() => window.hohGridCheck());
+            for (const miss of pageMiss) fail(`${label}: страница ${title}: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
+          }
+          await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();
+          if (await page.locator('.hoh-page').count() !== 0) fail(`${label}: «New chat» не закрыл страницу`);
+        }
       } catch (error) {
         fail(`${label}: ${String(error.message).split('\n')[0]}`);
         if (process.env.HOH_GRID_DEBUG) { await page.screenshot({ path: join(process.env.HOH_GRID_DEBUG, `${width}x${height}-${busy}.png`) }); console.error((await page.evaluate(() => document.body.innerText)).slice(0, 400)); }
