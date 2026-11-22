@@ -85,10 +85,12 @@ export class FakeEngine {
       case 'session/working-directory/set': {
         if (this.refuseFolder) throw { code: 'rejected', message: 'Действие отклонено' };
         if (!this.store.has(params.sessionId)) this.store.set(params.sessionId, { title: '', events: [], updatedAt: this.tick() });
-        if (!this.folders.has(params.path)) throw { code: 'refused', message: 'Помощник отклонил запрос' };
-        this.store.get(params.sessionId).cwd = params.path;
-        this.emitEvent(params.sessionId, 'working-directory/change', { cwd: params.path });
-        return { cwd: params.path };
+        // The engine's file system resolves `~` (crates/hoh-fs-local) and answers the folder it set.
+        const path = params.path === '~' || params.path.startsWith('~/') ? HOME + params.path.slice(1) : params.path;
+        if (!this.folders.has(path)) throw { code: 'refused', message: 'Помощник отклонил запрос' };
+        this.store.get(params.sessionId).cwd = path;
+        this.emitEvent(params.sessionId, 'working-directory/change', { cwd: path });
+        return { cwd: path };
       }
       case 'session/events': {
         const session = this.store.get(params.sessionId); if (!session) throw new Error('unknown SDK session');

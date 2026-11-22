@@ -293,7 +293,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/branding.ts` | правка (`ui/src/t3/base-patches/web/branding.ts.patch`) | имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет |
 
 Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
-`desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 137 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).
+`desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 137 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в текстах — без правки файлов T3, в прослойке перевода (HOH-40 fix2): `shims/gt-i18n.ts` `branded()` ставит `APP_BASE_NAME` вместо «T3 Code» в каждом тексте, что идёт через `gt()`/`m()`/`msg()` (`formatMessage`), а `shims/gt-react.tsx` `<T>` — в своих текстовых детях («Welcome to T3 Code» → «Welcome to HoH»). Строки вне i18n T3 (без `gt`/`<T>`) не меняются.
 
 ### Скрытые части: чем выключены
 

@@ -249,6 +249,8 @@ export class HohHost {
           if (own?.executor === 'claude' && typeof own.model === 'string' && own.model) thread.model = own.model;
         } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
+        // The list row learns what the history knows (a title from the first message, the last answer).
+        this.changed(threadId);
         if (thread.cwd) this.placeByFolder(thread);
         else if (!this.workspaceKnown && thread.projectId === HOH_PROJECT_ID) {
           try { this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }
@@ -387,7 +389,16 @@ export class HohHost {
     await this.applyModel(model);
     const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
     this.setWorkspaceRoot(directory?.cwd);
-    if (folder) await this.engine.request('session/working-directory/set', { sessionId: threadId, path: folder.workspaceRoot });
+    if (folder) {
+      const set = await this.engine.request('session/working-directory/set', { sessionId: threadId, path: folder.workspaceRoot });
+      // A typed `~/…` root becomes the folder the engine resolved, so chats' recorded folders match it.
+      const resolved = folderPath(set?.cwd);
+      if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
+        folder.workspaceRoot = resolved;
+        folder.updatedAt = this.now();
+        this.emitProject(folderProject(folder));
+      }
+    }
     const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode, projectId: folder?.id ?? HOH_PROJECT_ID });
     thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
     thread.loaded = true;

@@ -498,7 +498,7 @@ export function hohProject(workspaceRoot: string, at: number) {
 export interface FolderProject {
   readonly id: string;
   title: string;
-  readonly workspaceRoot: string;
+  workspaceRoot: string;
   readonly createdAt: number;
   updatedAt: number;
   pinnedAt: number | null;

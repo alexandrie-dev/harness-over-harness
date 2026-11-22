@@ -79,6 +79,9 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
 export function serverSettings(model: string, mode: HohAccessMode, overrides: Record<string, unknown> = {}) {
   return {
     ...overrides,
+    // "Add project" offers no repository host to clone from (T3 turns its default host off by this setting:
+    // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
+    offeredSourceControlProviders: { github: false },
     defaultModelSelection: { instanceId: CLAUDE_INSTANCE_ID, model },
     defaultRuntimeMode: runtimeModeOf(mode),
   };

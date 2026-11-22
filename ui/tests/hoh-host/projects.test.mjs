@@ -91,10 +91,14 @@ test('a folder becomes a T3 project; a chat in it runs in that folder; the list 
 
   // Restart: a new engine process over the same sessions, a new page over the same storage.
   const { client: again } = connect(new FakeEngine({ store }), storage);
-  const restored = await (await again.stream('orchestration.subscribeShell', {})).until(value => value.kind === 'snapshot');
+  const againShell = await again.stream('orchestration.subscribeShell', {});
+  const restored = await againShell.until(value => value.kind === 'snapshot');
   assert.deepEqual(restored.snapshot.projects.map(p => [p.id, p.title, p.workspaceRoot]).sort(), [['hoh-project', 'No project', '/home/person/Documents/HoH'], ['p-site', 'site', '/home/person/Projects/site']]);
   assert.deepEqual(Object.fromEntries(restored.snapshot.threads.map(t => [t.id, t.projectId])), { 'thread-site': 'p-site', 'thread-plain': 'hoh-project' });
   assert.equal((await again.call('server.getConfig', {})).scratchWorkspaceRoot, '/home/person/Documents/HoH');
+  // Opened again, the chat's row takes its title from the history (the engine kept no title here).
+  await again.call('orchestration.getThreadProjection', { threadId: 'thread-site' });
+  assert.equal((await againShell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-site')).thread.title, 'Build it');
 });
 
 test('a chat whose history names a project folder joins that project; refusing the folder fails the start in English', async () => {
@@ -115,6 +119,14 @@ test('a chat whose history names a project folder joins that project; refusing t
     runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' },
   });
   assert.deepEqual([failureOf(refused)._tag, failureOf(refused).message], ['OrchestrationV2ThreadLaunchError', 'You declined this in the HoH confirmation window.']);
+  // A typed `~/…` folder (no folder list) becomes the folder the engine resolved once a chat starts in it.
+  engine.refuseFolder = false;
+  await client.call('projects.mutate', create('p-home', '~/Documents'));
+  await client.call('orchestration.launchThread', {
+    commandId: 'cmd-h', threadId: 'thread-h', projectId: 'p-home', title: 'H', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
+    runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+  });
+  assert.equal((await shell.until(value => value.kind === 'project.updated' && value.project.id === 'p-home' && value.project.workspaceRoot.startsWith('/'))).project.workspaceRoot, '/home/person/Documents');
   // Projects: renamed, pinned; one with chats is kept, an empty one is removed.
   assert.equal((await client.call('projects.mutate', { type: 'project.update', commandId: 'u', projectId: 'p-tools', title: 'Tools', pinned: true })).title, 'Tools');
   assert.match(failureOf(await client.request('projects.mutate', { type: 'project.delete', commandId: 'd', projectId: 'p-tools' })).message, /still has threads/);

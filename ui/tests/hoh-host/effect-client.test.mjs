@@ -77,6 +77,8 @@ test('T3 client: handshake decodes (config stream, getConfig, probe, settings, u
   assert.equal(snapshot.config.providers[0].instanceId, 'claudeAgent');
   assert.equal(snapshot.config.settings.defaultRuntimeMode, 'approval-required');
   assert.equal(snapshot.config.settings.responseStreamingMode, 'paragraph', 'defaults filled in by T3\'s schema');
+  // "Add project" offers no repository host to clone from.
+  assert.deepEqual({ ...snapshot.config.settings.offeredSourceControlProviders }, { github: false });
   await config.stop();
   assert.deepEqual(await run(client['server.probe']({})), {});
   await run(client['server.reportClientActivity']({ clientId: 'window-1', clientKind: 'web', visible: true, focused: true, recentlyInteracted: true, scopes: [], observedAt: DateTime.makeUnsafe('2026-11-22T19:00:00.000Z') }));
