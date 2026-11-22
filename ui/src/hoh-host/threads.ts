@@ -66,7 +66,7 @@ function toolRequest(name: string, args: Record<string, any>, cwd: string | null
     const type = first(['subagent_type']);
     if (type) lines[0] += ` (${type})`;
     const task = first(['prompt'])?.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2).join('\n');
-    if (task) lines.push(task.length > 240 ? task.slice(0, 237) + '...' : task);
+    if (task) lines.push(task.length > 160 ? task.slice(0, 157) + '...' : task);
     return { requestKind, prompt: lines.join('\n') };
   }
   const command = first(['command']);
