@@ -48,9 +48,9 @@ export function HohNotch() {
     measure();
     void document.fonts?.ready.then(measure);
   }, [size.font]);
-  const content = size.emblem * (19 / 20) + GAP + Math.ceil(text);
+  const content = size.emblem * (28 / 30) + GAP + Math.ceil(text);
   const outline = notchOutline(content, size, lineWidth);
-  const small = size.emblem < 20;
+  const small = size.emblem < 30;
   const [one, onefive, two, three] = small ? [s1, s15, s2, s3] : [e1, e15, e2, e3];
   return (
     <div className="hoh-notch-band" ref={bandRef}>
@@ -62,7 +62,7 @@ export function HohNotch() {
         <div className="hoh-notch-content" style={{ left: outline.inner.left, top: outline.inner.top, width: outline.inner.width, height: outline.inner.height, gap: GAP }}>
           <img
             src={one} srcSet={`${one} 1x, ${onefive} 1.5x, ${two} 2x, ${three} 3x`}
-            width={Math.round(size.emblem * 0.95)} height={size.emblem} alt="" draggable={false}
+            width={Math.round(size.emblem * (28 / 30))} height={size.emblem} alt="" draggable={false}
           />
           <span ref={label} className="hoh-notch-name" style={{ fontSize: size.font }}>{NOTCH_NAME}</span>
         </div>

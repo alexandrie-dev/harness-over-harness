@@ -26,7 +26,7 @@
 .hoh-notch { position: relative; flex: none; }
 .hoh-notch-outline { position: absolute; inset: 0; overflow: visible; }
 .hoh-notch-fill { fill: var(--card); stroke: none; }
-.hoh-notch-line { fill: none; stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.hoh-notch-line { fill: none; stroke: color-mix(in srgb, var(--foreground) 15%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .hoh-notch-content {
   position: absolute;
   display: flex;

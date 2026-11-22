@@ -7,10 +7,10 @@ export interface NotchSize {
   readonly emblem: number;
   readonly font: number;
 }
-/** Below this band height (CSS px) the notch is compact: a smaller emblem and name. */
-export const COMPACT_BELOW_BAND = 36;
+/** Below this band height (CSS px, window height under ~700) the notch is compact: a smaller emblem and name. */
+export const COMPACT_BELOW_BAND = 44;
 export function notchSize(band: number): NotchSize {
-  return band < COMPACT_BELOW_BAND ? { band, emblem: 16, font: 12 } : { band, emblem: 20, font: 13 };
+  return band < COMPACT_BELOW_BAND ? { band, emblem: 22, font: 14 } : { band, emblem: 30, font: 17 };
 }
 
 const SMOOTH = 0.66;

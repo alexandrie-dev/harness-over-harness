@@ -13,8 +13,8 @@ hero 108 116 0
 chat 96 104 0
 brand 32 34 0.5
 fav 32 34 0
-notch 19 20 0.4
-notchs 15 16 0.4
+notch 28 30 0.4
+notchs 20 22 0.4
 LIST
 }
 sets | while read -r name w h sharp; do
