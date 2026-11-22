@@ -29,6 +29,8 @@ fn capabilities_keep_main_and_approval_authority_disjoint() {
     assert!(main_permissions.contains("allow-approval-decide"));
     assert!(main_permissions.contains("allow-question-answer"));
     assert!(main_permissions.contains("allow-open-link"));
+    assert!(main_permissions.contains("allow-browse-folders"));
+    assert!(!approval_permissions.contains("allow-browse-folders"));
     assert!(!approval_permissions.contains("allow-open-link"));
     assert!(!approval_permissions.contains("allow-question-answer"));
     assert!(main_permissions.contains("allow-approval-history"));

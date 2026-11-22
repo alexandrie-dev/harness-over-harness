@@ -154,11 +154,18 @@ stub использует свою process-local credential implementation.
 - **Ссылки** (fix2): запрос нового окна из главного (T3: `target=_blank`, `window.open`) окно не создаёт никогда; http(s)-ссылку
   получает `xdg-open` (`opener::clicked_link`), только если WebKit отметил нажатие человека (`is_user_gesture`). Тесты —
   `tests/opener.rs`, `tests/security.rs`.
-- **Режим доступа Claude** (`hoh/executor/access/set`) — без окна подтверждения: действие человека в главном
-  окне и есть подтверждение (`approval::MAIN_WINDOW_CONFIRMED`, `Broker::confirm_from_main_window`). Принимается
-  только от окна `main` (`bridge::check_main`); журнал — `who: human, via: main-window`; запрос движка на то же
-  действие подписывает ядро по разрешению «в полёте», как после окна настройки. Без этого действия (исполнитель,
-  модель, SDK-сервер) запрос движка получает окно. Ключ, правила, `select` — с окном, как были.
+- **Режим доступа Claude** (`hoh/executor/access/set`), **выбор Claude** (`hoh/executor/select` с `executor:
+  "claude"`, fix3) и **папка разговора Claude** (`session/working-directory/set`, если движок по
+  `hoh/executor/access/get` называет исполнителем разговора Claude, fix3) — без окна подтверждения: действие
+  человека в главном окне и есть подтверждение (`approval::main_window_confirms`, `Broker::confirm_from_main_window`).
+  Принимается только от окна `main` (`bridge::check_main`); журнал — `who: human, via: main-window`; запрос движка
+  на то же действие подписывает ядро по разрешению «в полёте», как после окна настройки. Без этого действия
+  (исполнитель, модель, SDK-сервер) запрос движка получает окно. Встроенный помощник (`select` без исполнителя,
+  папка его разговора, движок не ответил), ключ, правила — с окном, как были.
+- **Папки для «Add project»** (`browse_folders`, fix3, разрешено ведущим 22.11 20:43): порт `browse` из
+  `apps/server/src/workspace/WorkspaceEntries.ts` T3 (`src/folders.rs`) — только имена подпапок (тип записи без
+  перехода по ссылкам, файлов нет), только окну `main` (право `allow-browse-folders`). Отличие: путь без `/`, `~`,
+  `./` T3 берёт от рабочей папки своего сервера, окно — от домашней (своей рабочей папки у окна нет).
 - **Запрос разрешения в разговоре.** В окне T3 запрос разрешения движка не открывает `approval.html`: окно T3
   показывает его по уведомлению `approval.pending`, ответ — `approval_decide` из главного окна, только на этот
   запрос по `approvalId` (`Broker::show_in_chat`/`decide_in_chat`; права `main` — `allow-approval-decide`). Проверки

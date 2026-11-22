@@ -6,6 +6,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "engine_request",
             "pick_folder",
+            "browse_folders",
             "open_link",
             "question_answer",
             "approval_history",

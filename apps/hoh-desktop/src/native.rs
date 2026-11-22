@@ -865,6 +865,36 @@ pub async fn open_link(
     .map_err(|_| "Запрос прерван".to_owned())?
 }
 
+/// Subfolders for the T3 client's «Add project → Local folder» (lead 22.11 20:43): names of folders
+/// only, never files, and only to the main window (`folders::list_folders`).
+#[tauri::command]
+pub async fn browse_folders(
+    window: tauri::WebviewWindow,
+    partial_path: String,
+    cwd: Option<String>,
+) -> Result<crate::folders::FolderListing, String> {
+    browse_folders_for(window.label(), partial_path, cwd).await
+}
+
+/// The window check of `browse_folders`, apart from Tauri's window type so it is tested.
+pub async fn browse_folders_for(
+    label: &str,
+    partial_path: String,
+    cwd: Option<String>,
+) -> Result<crate::folders::FolderListing, String> {
+    if label != "main" {
+        return Err("Folder browsing is available to the main window only.".into());
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or("The home folder is unknown.")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::folders::list_folders(&partial_path, cwd.as_deref(), &home)
+    })
+    .await
+    .map_err(|_| "Request interrupted.".to_owned())?
+}
+
 #[tauri::command]
 pub async fn pick_folder(window: tauri::WebviewWindow) -> Result<Option<String>, String> {
     if window.label() != "main" {

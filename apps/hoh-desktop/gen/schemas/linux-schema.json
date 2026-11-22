@@ -195,6 +195,12 @@
           "markdownDescription": "Enables the approval_history command without any pre-configured scope."
         },
         {
+          "description": "Enables the browse_folders command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browse-folders",
+          "markdownDescription": "Enables the browse_folders command without any pre-configured scope."
+        },
+        {
           "description": "Enables the engine_request command without any pre-configured scope.",
           "type": "string",
           "const": "allow-engine-request",
@@ -235,6 +241,12 @@
           "type": "string",
           "const": "deny-approval-history",
           "markdownDescription": "Denies the approval_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browse_folders command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browse-folders",
+          "markdownDescription": "Denies the browse_folders command without any pre-configured scope."
         },
         {
           "description": "Denies the engine_request command without any pre-configured scope.",
