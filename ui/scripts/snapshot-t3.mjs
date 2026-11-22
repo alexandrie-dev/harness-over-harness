@@ -4,7 +4,7 @@
 // за хостом HoH (ui/src/hoh-host): вход берёт её из window.__HOH_T3_TEST_ENGINE__ только вне Tauri (src/t3-entry/main.ts).
 //   node scripts/snapshot-t3.mjs [папка-снимков]      (по умолчанию test-results/t3-entry)
 // Экраны: первый запуск, пустой разговор, разговор с ответом и шагом, запрос разрешения, меню модели, меню режима,
-// «Add project», настройки.
+// режим в начатом разговоре, «Add project», настройки.
 import { chromium } from 'playwright-core';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -154,6 +154,18 @@ const screens = [
       await page.getByRole('textbox').first().waitFor();
       await page.getByRole('button', { name: /access|permission|разрешени|доступ/i }).last().click();
       await page.getByRole('menu').or(page.getByRole('listbox')).or(page.getByRole('dialog')).first().waitFor();
+    },
+  },
+  {
+    // Режим в начатом разговоре: строки с чипом под полем ввода у T3 нет (она остаётся только у git-проектов,
+    // BranchToolbar.logic.ts shouldShowComposerContextStrip) — режим в меню модели, «Permissions: …» внизу.
+    name: 'conversation-mode', engine: () => engineWith([CHAT]),
+    run: async page => {
+      await page.getByText(CHAT.title).first().click();
+      await page.getByText('The folder has three files').first().waitFor();
+      await page.getByRole('button', { name: /Claude|Opus/ }).last().click();
+      await page.locator('button[aria-label^="Permissions"]').first().click();
+      await page.getByText('Permissions', { exact: true }).first().waitFor();
     },
   },
   {
