@@ -41,6 +41,15 @@
   // Keep this small boot-time copy in sync with the built-in palettes so
   // the selected theme is visible before the app has mounted.
   const BUILT_IN_THEME_PALETTES = {
+    // HoH (HOH-41): тема только тёмная, см. src/t3-entry/hoh-theme.ts.
+    hoh: {
+      dark: {
+        background: "#080809",
+        foreground: "#f2f3f5",
+        accent: "#4dacf6",
+        chrome: "#080809",
+      },
+    },
     "t3-chat": {
       light: {
         background: "oklch(0.982446 0.010114 325.653)",
@@ -122,6 +131,7 @@
     "system",
     "light",
     "dark",
+    "hoh",
     "t3-chat",
     "grove",
     "ocean",

@@ -5,7 +5,8 @@
     const storage = window.localStorage;
     // Тёмная тема: те же ключи, что T3 пишет при выборе Dark в Appearance (web/hooks/useTheme.ts, setTheme).
     if (storage.getItem('t3code:theme') === null && storage.getItem('t3code:theme-appearance-mode') === null) {
-      storage.setItem('t3code:theme', 'dark');
+      // Тема «HoH» (палитра «Эмблема», src/t3-entry/hoh-theme.ts; HOH-41): тёмная, их механизм тем.
+      storage.setItem('t3code:theme', 'hoh');
       storage.setItem('t3code:theme-appearance-mode', 'dark');
     }
     // Боковая панель 208 px, как в образце T3 0.1.10: у них начальная ширина — min(256, max(208, ширина окна − 640))

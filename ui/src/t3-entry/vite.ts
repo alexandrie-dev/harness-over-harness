@@ -8,6 +8,7 @@ import { basename, resolve } from 'node:path';
 import type { Plugin, UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { HOH_THEME_COLORS } from './hoh-theme';
 import { HIDDEN_COMPONENTS, HIDDEN_PALETTE_ITEMS, HIDDEN_ROUTES, VISIBLE_PROVIDER_DRIVERS, VISIBLE_SETTINGS } from './features';
 import { HOH_HTTP_URL } from './host';
 
@@ -89,8 +90,28 @@ export function providerInstanceCard(code: string): string {
 export function themeCards(code: string): string {
   return anchorPatch('ThemePreviewCircles.tsx', code, [['label: "T3 Code",', 'label: "Default",']]);
 }
+/** «Stop» в поле ввода — кнопка идущей работы (синий HoH), не «ждёт вас»: красная `bg-destructive` T3 здесь заменена акцентом. */
+export function composerPrimaryActions(code: string): string {
+  return anchorPatch('ComposerPrimaryActions.tsx', code, [
+    ['bg-destructive/90 text-white shadow-xs shadow-destructive/24', 'bg-primary/90 text-primary-foreground shadow-xs'],
+    ['hover:bg-destructive active:', 'hover:bg-primary active:'],
+    ['disabled:hover:bg-destructive/90', 'disabled:hover:bg-primary/90'],
+  ]);
+}
+
+/** Карточка «HoH» первой среди тем в Appearance → Themes. */
+export function themeSettings(code: string): string {
+  return anchorPatch('ThemeSettings.tsx', code, [
+    ['const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n', 'const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n'],
+  ], 'import { HOH_THEME } from "@t3tools/shared/themePalettes";\n');
+}
 export function themePalettes(code: string): string {
-  return anchorPatch('themePalettes.ts', code, [['label: "T3 Chat",', 'label: "Chat",']]);
+  const theme = `export const HOH_THEME: ThemeDefinition = { id: "hoh", label: "HoH", appearance: "dark", colors: ${JSON.stringify(HOH_THEME_COLORS)} };\n`;
+  return anchorPatch('themePalettes.ts', code, [
+    ['label: "T3 Chat",', 'label: "Chat",'],
+    ['export const BUILT_IN_THEME_IDS = ["t3-chat",', 'export const BUILT_IN_THEME_IDS = ["hoh", "t3-chat",'],
+    ['export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [\n', theme + 'export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n'],
+  ]);
 }
 
 /** Модуль вместо модуля компонента T3: всё как у него, кроме названных компонентов — они ничего не рисуют. */
@@ -165,6 +186,8 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/settingsSearch.ts')) return { code: settingsNavFilter(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderSettingsPanel.tsx')) return { code: providerSettingsPanel(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
+      if (id === resolve(T3_WEB, 'components/chat/ComposerPrimaryActions.tsx')) return { code: composerPrimaryActions(code), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };
       if (id === resolve(T3_BASE, 'shared/themePalettes.ts')) return { code: themePalettes(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderInstanceCard.tsx')) return { code: providerInstanceCard(code), map: null };
       return null;
