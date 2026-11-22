@@ -170,5 +170,114 @@
     "effect/reactivity": "src/t3/shims/effect/reactivity.ts",
     "@effect/atom-react": "src/t3/shims/atom-react.ts",
     "@t3tools/client-runtime/contract-labels": "src/t3/shims/contract-labels.ts"
+  },
+  "base": {
+    "out": "src/t3/base",
+    "patches": "src/t3/base-patches",
+    "deferredEnabled": false,
+    "extra": {
+      "gt.config.json": "apps/web/gt.config.json"
+    },
+    "replaced": {
+      "web/components/T3Wordmark.tsx": "знак T3 не берём: на его месте эмблема HoH (src/assets/emblem-48.png)",
+      "web/components/T3AppIcon.tsx": "значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src"
+    },
+    "patched": {
+      "web/routeTree.gen.ts": "выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются",
+      "web/components/settings/settingsSearch.ts": "выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS)",
+      "web/components/sidebar/SidebarChrome.tsx": "имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3"
+    },
+    "switches": [
+      [
+        "git и source control, запросы на слияние, задачи и трекеры, review, worktree, клон проекта",
+        "маршруты /pull-requests и /issues и разделы настроек не регистрируются (правка routeTree.gen.ts, settingsSearch.ts); кнопки в боковой колонке и палитре — по возможностям окружения (usePullRequestsSupported, useIssuesSupported, capabilities.pullRequests/issues/vcsBranchStatus): хост их не объявляет",
+        "правка + хост (э3)"
+      ],
+      [
+        "терминал",
+        "возможности окружения для терминала у T3 нет: ящик открывают клавиши (keybindings.ts), useChatTerminalActions.ts и вкладка RightPanelTabs.tsx; хост отвечает на terminal.* «не поддерживается»",
+        "не выключено: место — названные файлы (э3/э4)"
+      ],
+      [
+        "превью и встроенный браузер",
+        "capabilities.serverBrowser и находимые порты — от хоста; раздел настроек «Браузер» не регистрируется",
+        "правка + хост (э3)"
+      ],
+      [
+        "облачный вход Clerk, устройства и пары, peer links, guest share, tailscale/ssh",
+        "оболочка входа грузится только при VITE_CLERK_PUBLISHABLE_KEY (main.tsx) — в окне пусто; маршруты /connect, /connect-agent, /approve-agent, /pair, /guest не регистрируются; capabilities.peerLinks — от хоста; @clerk/* — заглушки",
+        "правка + переменная сборки + хост (э3)"
+      ],
+      [
+        "запланированные задачи и отложенные разговоры (snooze)",
+        "раздел настроек не регистрируется; capabilities.threadSnooze, oneTimeSchedules — от хоста",
+        "правка + хост (э3)"
+      ],
+      [
+        "MCP Apps",
+        "появляются только в ответах сервера с MCP-приложением: хост таких не шлёт",
+        "хост (э3)"
+      ],
+      [
+        "панель изменений (diff)",
+        "вкладка правой панели RightPanelTabs.tsx и раздел настроек «Diffs»; раздел не регистрируется, вкладка — по данным хоста (изменений нет)",
+        "правка + хост (э3)"
+      ],
+      [
+        "офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic)",
+        "просмотр включается по типу файла в панели файлов; пакеты — заглушки (jszip — прослойка с типами), файлы таких типов не открываются",
+        "заглушки; отказ — э3"
+      ],
+      [
+        "вложения (загрузка) и снимки экрана (snap-shot)",
+        "capabilities.fileAttachments, attachmentUploads, questionAttachments — от хоста; раздел «SnapShots» не регистрируется",
+        "правка + хост (э3)"
+      ],
+      [
+        "использование, телеметрия, диагностика, ресурсы",
+        "маршрут /usage и разделы «Диагностика», «Хранилище» не регистрируются; capabilities.usageLimitSources — от хоста; трассы уходят только при VITE_RELAY_OTLP_TRACES_URL — в окне пусто",
+        "правка + переменная сборки + хост (э3)"
+      ],
+      [
+        "импорт и экспорт тем VS Code / Open VSX",
+        "поиск и импорт тем в настройках вида (ThemeSearchSection.tsx, ThemeImportDialog.tsx) остаются, пакеты — заглушки, импорт отказывает",
+        "не выключено: место — названные файлы (э4)"
+      ],
+      [
+        "секреты и 1Password",
+        "раздел есть в навигации только при T3CODE_FEATURE_SECRETS (в окне пусто) и не регистрируется; capabilities.secretSourceCheck — от хоста",
+        "правка + переменная сборки"
+      ],
+      [
+        "GitHub-звезда и конфетти",
+        "GitHubStarPrompt.tsx никто не импортирует (у T3 тоже); звезда — через source control, которого нет",
+        "не подключено у T3"
+      ],
+      [
+        "голосовой ввод",
+        "capabilities.voiceTranscription, cloudVoiceTranscription — от хоста; раздел «Голос» не регистрируется",
+        "правка + хост (э3)"
+      ],
+      [
+        "разделы настроек, кроме общих, вида, чата, провайдеров и доступа",
+        "не регистрируются (routeTree.gen.ts), не показываются и не ищутся (settingsSearch.ts, HOH_SETTINGS_PATHS)",
+        "правка"
+      ],
+      [
+        "обновления приложения",
+        "capabilities.desktopAppUpdate, serverSelfUpdate, npmReleaseLookup — от хоста",
+        "хост (э3)"
+      ],
+      [
+        "ACP-реестр, установка и вход провайдеров T3",
+        "@t3tools/provider-* — заглушки; список провайдеров даёт providerClients.ts из client-runtime — в э3 рабочая прослойка с исполнителями HoH",
+        "заглушки; прослойка — э3"
+      ],
+      [
+        "импорт сессий агентов",
+        "раздел «Интеграции» не регистрируется; импорт сессий остаётся в карточке провайдера (AcpSessionManagementSection.tsx из ProviderInstanceCard.tsx) и на странице приветствия (WelcomePage.tsx) — выключит хост, не объявив сессий агентов",
+        "правка; остаток — э3/э4"
+      ]
+    ]
   }
 }

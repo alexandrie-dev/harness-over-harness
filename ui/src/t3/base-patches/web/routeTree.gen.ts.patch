@@ -1,0 +1,78 @@
+--- a/web/routeTree.gen.ts
++++ b/web/routeTree.gen.ts
+@@ -911,35 +911,14 @@
+   ChatSettingsWorktreesRoute: typeof ChatSettingsWorktreesRoute
+ }
+ 
+-const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
+-  ChatSettingsAboutRoute: ChatSettingsAboutRoute,
++// HoH (ui/T3-MAP.md): маршруты скрытых частей не регистрируются; их типы остаются, переход по ним — «не найдено».
++const ChatSettingsRouteChildren = {
+   ChatSettingsAccessRoute: ChatSettingsAccessRoute,
+   ChatSettingsAppearanceRoute: ChatSettingsAppearanceRoute,
+-  ChatSettingsArchivedRoute: ChatSettingsArchivedRoute,
+-  ChatSettingsBetaRoute: ChatSettingsBetaRoute,
+-  ChatSettingsBrowserRoute: ChatSettingsBrowserRoute,
+   ChatSettingsChatRoute: ChatSettingsChatRoute,
+-  ChatSettingsConnectionsRoute: ChatSettingsConnectionsRoute,
+-  ChatSettingsDevicesRoute: ChatSettingsDevicesRoute,
+-  ChatSettingsDiagnosticsRoute: ChatSettingsDiagnosticsRoute,
+-  ChatSettingsDiffsRoute: ChatSettingsDiffsRoute,
+   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
+-  ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
+-  ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
+-  ChatSettingsLabsRoute: ChatSettingsLabsRoute,
+-  ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
+-  ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
+-  ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
+   ChatSettingsProvidersRoute: ChatSettingsProvidersRoute,
+-  ChatSettingsScheduledTasksRoute: ChatSettingsScheduledTasksRoute,
+-  ChatSettingsSecretsRoute: ChatSettingsSecretsRoute,
+-  ChatSettingsSnapShotRoute: ChatSettingsSnapShotRoute,
+-  ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,
+-  ChatSettingsStorageRoute: ChatSettingsStorageRoute,
+-  ChatSettingsThreadsRoute: ChatSettingsThreadsRoute,
+-  ChatSettingsVoiceRoute: ChatSettingsVoiceRoute,
+-  ChatSettingsWorktreesRoute: ChatSettingsWorktreesRoute,
+-}
++} as ChatSettingsRouteChildren
+ 
+ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
+   ChatSettingsRouteChildren,
+@@ -956,30 +935,24 @@
+   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+ }
+ 
+-const ChatRouteChildren: ChatRouteChildren = {
+-  ChatIssuesRoute: ChatIssuesRoute,
++// HoH (ui/T3-MAP.md): маршруты скрытых частей не регистрируются; их типы остаются, переход по ним — «не найдено».
++const ChatRouteChildren = {
+   ChatNewRoute: ChatNewRoute,
+-  ChatPullRequestsRoute: ChatPullRequestsRoute,
+   ChatSettingsRoute: ChatSettingsRouteWithChildren,
+-  ChatUsageRoute: ChatUsageRoute,
+   ChatIndexRoute: ChatIndexRoute,
+   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
+   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+-}
++} as ChatRouteChildren
+ 
+ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
+ 
+-const rootRouteChildren: RootRouteChildren = {
++// HoH (ui/T3-MAP.md): маршруты скрытых частей не регистрируются; их типы остаются, переход по ним — «не найдено».
++const rootRouteChildren = {
+   ChatRoute: ChatRouteWithChildren,
+-  ApproveAgentRoute: ApproveAgentRoute,
+-  ConnectRoute: ConnectRoute,
+-  ConnectAgentRoute: ConnectAgentRoute,
+-  GuestRoute: GuestRoute,
+-  PairRoute: PairRoute,
+   WelcomeRoute: WelcomeRoute,
+   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
+   ThreadsEnvironmentIdThreadIdRoute: ThreadsEnvironmentIdThreadIdRoute,
+-}
++} as RootRouteChildren
+ export const routeTree = rootRouteImport
+   ._addFileChildren(rootRouteChildren)
+   ._addFileTypes<FileRouteTypes>()

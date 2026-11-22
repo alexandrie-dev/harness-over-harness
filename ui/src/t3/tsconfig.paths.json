@@ -154,6 +154,7 @@
     "web/lib/diffRendering.ts",
     "web/lib/readableSyntaxTheme.ts",
     "web/lib/contextChipAccents.ts",
-    "web/components/ui/menu.tsx"
+    "web/components/ui/menu.tsx",
+    "base"
   ]
 }
