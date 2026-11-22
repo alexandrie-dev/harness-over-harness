@@ -53,18 +53,35 @@ const CLAUDE_TOOL_NAMES: Readonly<Record<string, string>> = {
  * the tool (`providerRequestKindFromClaudeTool`) and its text the command itself, else "Tool: file" or
  * "Tool: input" (`summarizeClaudeToolRequest`). T3 titles the card by the kind ("Command approval").
  */
-function toolRequest(name: string, args: Record<string, any>): { requestKind: string; prompt?: string } {
+function toolRequest(name: string, args: Record<string, any>, cwd: string | null = null): { requestKind: string; prompt?: string } {
   const kind = toolKind(name);
   const requestKind = kind === 'write' ? 'file-change' : kind === 'read' || kind === 'search' ? 'file-read' : 'command';
-  const first = (keys: string[]) => keys.map(key => args[key]).find((value): value is string => typeof value === 'string' && value.trim() !== '');
+  const str = (value: unknown) => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+  const first = (keys: string[]) => keys.map(key => str(args[key])).find((value): value is string => value !== undefined);
+  const inFolder = (path: string) => cwd && path.startsWith(cwd.replace(/\/+$/, '') + '/') ? path.slice(cwd.replace(/\/+$/, '').length + 1) : path;
+  const lower = name.toLowerCase();
+  // A subagent: what it is for, its kind small, the start of its task (two lines at most). Never the call's JSON.
+  if (lower === 'task' || lower === 'agent') {
+    const lines = [`Subagent: ${first(['description']) ?? 'task'}`];
+    const type = first(['subagent_type']);
+    if (type) lines[0] += ` (${type})`;
+    const task = first(['prompt'])?.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 2).join('\n');
+    if (task) lines.push(task.length > 240 ? task.slice(0, 237) + '...' : task);
+    return { requestKind, prompt: lines.join('\n') };
+  }
   const command = first(['command']);
   if (command) return { requestKind, prompt: command };
-  const tool = CLAUDE_TOOL_NAMES[name.toLowerCase()] ?? name;
+  const tool = CLAUDE_TOOL_NAMES[lower] ?? name;
   if (!tool.trim()) return { requestKind };
-  const subject = first(['cmd', 'script']) ?? first(['file_path', 'path', 'filename', 'fileName']);
-  if (subject) return { requestKind, prompt: `${tool}: ${subject.slice(0, 400)}` };
-  const input = JSON.stringify(args);
-  return { requestKind, prompt: `${tool}: ${input.length <= 400 ? input : input.slice(0, 397) + '...'}` };
+  const subject = first(['cmd', 'script']) ?? first(['file_path', 'path', 'filename', 'fileName', 'notebook_path']);
+  if (subject) return { requestKind, prompt: kind === 'write' || kind === 'read' ? inFolder(subject).slice(0, 400) : `${tool}: ${inFolder(subject).slice(0, 400)}` };
+  // An unknown tool: its name and the key fields as lines, no JSON.
+  const lines = Object.entries(args).slice(0, 4).map(([key, value]) => {
+    const shown = typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : Array.isArray(value) ? `${value.length} items` : value && typeof value === 'object' ? '{…}' : '';
+    const one = shown.replace(/\s+/g, ' ').trim();
+    return `${key}: ${one.length > 120 ? one.slice(0, 117) + '...' : one}`;
+  });
+  return { requestKind, prompt: [tool, ...lines].join('\n') };
 }
 
 const STEP_TYPES = new Set(['command_execution', 'file_change', 'file_search', 'web_search', 'dynamic_tool']);
@@ -335,7 +352,7 @@ export class ThreadModel {
         const item = this.item('item-approval-' + text(data.id));
         const tool = this.toolInputs.get(text(data.callId));
         if (!item || !tool) return false;
-        const request = toolRequest(tool.name, tool.args);
+        const request = toolRequest(tool.name, tool.args, this.cwd);
         item.requestKind = request.requestKind; delete item.prompt;
         if (request.prompt) item.prompt = request.prompt;
         const entry = this.requests.find(candidate => candidate.id === text(data.id));
@@ -427,7 +444,7 @@ export class ThreadModel {
     const run = this.currentRun();
     // Until `approval/asked` names it: the latest call still running is the one that waits.
     const waiting = [...this.toolInputs.values()].reverse().find(tool => this.item(tool.itemId)?.status === 'running');
-    const request = waiting ? toolRequest(waiting.name, waiting.args) : { requestKind: 'command' };
+    const request = waiting ? toolRequest(waiting.name, waiting.args, this.cwd) : { requestKind: 'command' };
     this.requests.push({ id: params.approvalId, kind: request.requestKind, status: 'pending', createdAt: at, resolvedAt: null });
     this.items.push({
       ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at),

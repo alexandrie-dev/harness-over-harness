@@ -90,3 +90,9 @@
 }
 /* Карточка деталей разговора T3 (рабочая среда, папка) в правом верхнем углу на главной не нужна. */
 body:has([data-hoh-home-body]) [data-thread-details-card] { display: none; }
+
+/* Занятая главная (есть агенты, запросы или готовое): приветствие сверху уже есть, заголовок черновика T3 («What should we work on?» / «No project») не показывается — место отдано списку.
+   На пустой главной он остаётся. Список прокручивается внутри себя; его нижний край — поле ввода, отступ 24 px — у .hoh-home__inner. */
+body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute.inset-x-0.bottom-full { display: none; }
+/* Край прокрутки у поля ввода: зазор 12 px и затухание последних 36 px — карточка уходит под край плавно, а не срезается. */
+.hoh-home { margin-bottom: 12px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent); }

@@ -200,7 +200,7 @@ test('permission request of Claude: shown in the chat as T3 shows Claude\'s (kin
   engine.emitEvent('chat-p', 'approval/asked', { id: 'appr-2', toolName: 'write', callId: 'call-2' });
   const write = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.length === 2);
   assert.equal(write.projection.runtimeRequests[1].kind, 'file-change');
-  assert.equal(itemsOf(write).find(entry => entry.requestId === 'appr-2').prompt, 'Write: /home/person/notes.txt');
+  assert.equal(itemsOf(write).find(entry => entry.requestId === 'appr-2').prompt, '/home/person/notes.txt');
   // A refusal maps to rejected.
   await client.call('orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: 'c2', threadId: 'chat-p', requestId: 'appr-2', decision: 'decline' });
   assert.deepEqual(engine.decisions.at(-1), { approvalId: 'appr-2', outcome: 'rejected' });
@@ -589,7 +589,7 @@ test('home screen = the chat\'s own data: the request text and kind are the chat
   const item = itemsOf(snap).find(candidate => candidate.type === 'approval_request');
   // What the person is asked is what the chat shows: the same kind and text (no "step 1").
   assert.deepEqual(entry.request, { id: item.requestId, kind: 'approval', requestKind: item.requestKind, text: item.prompt });
-  assert.deepEqual([entry.request.requestKind, entry.request.text], ['file-change', 'Write: /home/person/notes.txt']);
+  assert.deepEqual([entry.request.requestKind, entry.request.text], ['file-change', '/home/person/notes.txt']);
   // The strip counts the chat's tool items: three calls, two finished.
   const tools = itemsOf(snap).filter(candidate => ['command_execution', 'file_change', 'file_search', 'web_search', 'dynamic_tool'].includes(candidate.type));
   assert.equal(entry.steps.total, tools.length);
@@ -665,4 +665,32 @@ test('an empty draft has no «first message» stamp (the window keeps it out of 
   await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c-m', threadId: 'draft-1', messageId: 'm-1', text: 'first', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
   const started = await shell.until(value => value.thread?.id === 'draft-1' && value.thread.latestUserMessageAt !== null);
   assert.notEqual(started.thread.latestUserMessageAt, null);
+});
+
+test('permission request text for the person: the point of a subagent, the command, the file path (relative inside the folder), an unknown tool as lines — never JSON', async () => {
+  const engine = new FakeEngine();
+  const { host } = connect(engine);
+  await host.start();
+  engine.seed('chat-q', 'Q', []);
+  engine.emitEvent('chat-q', 'turn/start', { turn: 1 });
+  engine.emitEvent('chat-q', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'go' }] });
+  engine.emitEvent('chat-q', 'session/cwd', { cwd: '/work/proj' });
+  engine.emitStatus('chat-q', 'running');
+  const ask = (n, name, args) => {
+    engine.emitEvent('chat-q', 'tool/call', { turn: 1, callId: 'c' + n, name, arguments: JSON.stringify(args) });
+    engine.askApproval('chat-q', 'a' + n, 'x');
+    engine.emitEvent('chat-q', 'approval/asked', { id: 'a' + n, toolName: name, callId: 'c' + n });
+    host.flush();
+    const request = host.home.entries().find(entry => entry.id === 'chat-q').request;
+    engine.notify('approval.resolved', { approvalId: 'a' + n, outcome: 'allowed-once' });
+    host.flush();
+    return request;
+  };
+  const agent = ask(1, 'Agent', { description: 'Count files', subagent_type: 'Explore', prompt: 'line one\n\nline two\nline three' });
+  assert.equal(agent.text, 'Subagent: Count files (Explore)\nline one\nline two');
+  const bash = ask(2, 'Bash', { command: 'ls -la' });
+  const edit = ask(3, 'Edit', { file_path: '/work/proj/src/a.ts', old_string: 'x', new_string: 'y' });
+  const unknown = ask(4, 'Frobnicate', { target: 'db', retries: 3, nested: { a: 1 }, items: [1, 2] });
+  for (const request of [agent, bash, edit, unknown]) assert(!/[{}]"|":/.test(request.text), 'no raw JSON: ' + request.text);
+  assert.equal(unknown.text, 'Frobnicate\ntarget: db\nretries: 3\nnested: {…}\nitems: 2 items');
 });

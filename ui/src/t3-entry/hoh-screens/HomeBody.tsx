@@ -187,7 +187,7 @@ export function HomeBody() {
   };
   const lists = { working, done, asking, view };
   return (
-    <div className="hoh-home" data-hoh-home-body="">
+    <div className="hoh-home" data-hoh-home-body="" data-busy={working.length + done.length + asking.length > 0 || undefined}>
       <Cards {...lists} />
     </div>
   );
