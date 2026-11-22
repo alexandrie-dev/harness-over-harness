@@ -167,7 +167,7 @@ function VariantB({ working, done, view }: Lists) {
         <section>
           <h2 className="hoh-home__label">Agents <Count list={working} /></h2>
           <div className="hoh-tree">
-            {working.map((entry) => (
+            {[...working].sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting')).map((entry) => (
               <div key={entry.id} className="hoh-tree__node" data-state={entry.state}>
                 <div className="hoh-trow" {...press(() => view.open(entry.id))}>
                   <Mark />
