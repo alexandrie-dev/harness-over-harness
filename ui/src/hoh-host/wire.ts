@@ -70,7 +70,8 @@ export class WireServer {
         }
         try {
           const value = await handler(payload);
-          return { _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value } };
+          // effect's JSON codec writes a void result as null; a missing key fails to decode.
+          return { _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value: value === undefined ? null : value } };
         } catch (error) {
           this.options.onError?.(method, error);
           return { _tag: 'Exit', requestId: id, exit: exitFailure(error instanceof RpcFailure ? error.error : error, error instanceof RpcFailure) };
@@ -91,7 +92,7 @@ export class WireServer {
       };
       const sink: StreamSink = {
         emit: (...values) => { if (!done && values.length) write({ _tag: 'Chunk', requestId: id, values }); },
-        end: () => finish({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success' } }),
+        end: () => finish({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value: null } }),
         fail: error => {
           this.options.onError?.(method, error);
           finish({ _tag: 'Exit', requestId: id, exit: exitFailure(error instanceof RpcFailure ? error.error : error, error instanceof RpcFailure) });

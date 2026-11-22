@@ -42,6 +42,7 @@ test('handshake: config snapshot, probe, settings, ping; only Claude is offered'
   // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
   assert.deepEqual(Object.keys(first.config.environment.capabilities).sort(), ['connectionProbe', 'inlineMessageContext', 'repositoryIdentity', 'threadForceStop']);
   assert.deepEqual(await client.call('server.probe', {}), {});
+  assert.deepEqual(await client.request('server.reportClientActivity', {}), { _tag: 'Success', value: null });
   assert.equal((await client.call('server.getConfig', {})).environment.label, 'HoH');
   assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'approval-required');
   client.send({ _tag: 'Ping' });

@@ -79,6 +79,7 @@ test('T3 client: handshake decodes (config stream, getConfig, probe, settings, u
   assert.equal(snapshot.config.settings.responseStreamingMode, 'paragraph', 'defaults filled in by T3\'s schema');
   await config.stop();
   assert.deepEqual(await run(client['server.probe']({})), {});
+  await run(client['server.reportClientActivity']({ clientId: 'window-1', clientKind: 'web', visible: true, focused: true, recentlyInteracted: true, scopes: [], observedAt: DateTime.makeUnsafe('2026-11-22T19:00:00.000Z') }));
   const direct = await run(client['server.getConfig']({}));
   assert.equal(direct.environment.orchestrationProtocolVersion, 2);
   const settings = await run(client['server.getSettings']({}));

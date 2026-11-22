@@ -446,6 +446,8 @@ export class HohHost {
     return {
       unary: {
         'server.probe': () => ({}),
+        // Focus and typing reports of the window: nothing to schedule here, accepted and dropped.
+        'server.reportClientActivity': () => undefined,
         'server.getConfig': async () => { await this.start(); return this.config(); },
         'server.getSettings': async () => { await this.start(); return this.settings(); },
         'server.updateSettings': async (payload: any) => {

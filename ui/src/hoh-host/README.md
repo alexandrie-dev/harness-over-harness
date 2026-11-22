@@ -40,7 +40,7 @@ await import('../t3/web/main.tsx');           // их main.tsx как есть
 
 ## Методы
 
-Реализованы (17): `server.probe`, `server.getConfig`, `subscribeServerConfig`, `server.getSettings`, `server.updateSettings`, `server.refreshProviders`, `subscribeServerLifecycle`, `orchestration.subscribeShell`, `orchestration.subscribeThread`, `orchestration.getThreadProjection`, `orchestration.launchThread`, `orchestration.dispatchCommand`, `orchestration.forceStopThread`, `orchestration.getThreadTitles`, `subscribeVcsStatus`, `vcs.refreshStatus`, `vcs.listRefs`; плюс Ping→Pong.
+Реализованы (18): `server.probe`, `server.reportClientActivity`, `server.getConfig`, `subscribeServerConfig`, `server.getSettings`, `server.updateSettings`, `server.refreshProviders`, `subscribeServerLifecycle`, `orchestration.subscribeShell`, `orchestration.subscribeThread`, `orchestration.getThreadProjection`, `orchestration.launchThread`, `orchestration.dispatchCommand`, `orchestration.forceStopThread`, `orchestration.getThreadTitles`, `subscribeVcsStatus`, `vcs.refreshStatus`, `vcs.listRefs`; плюс Ping→Pong.
 
 - `subscribeServerLifecycle` → одно событие `welcome` без `bootstrap*`: без него T3 не показывает ничего (`apps/web/src/components/onboarding/FirstRunGate.tsx:113-135`), а без `bootstrapProjectId`/`bootstrapThreadId` не запускает мастер первого запуска.
 - `subscribeVcsStatus` / `vcs.*` → «папка не git-репозиторий»: иначе T3 считает её репозиторием (`ChatView.tsx:1777`) и может потребовать базовую ветку перед отправкой.
