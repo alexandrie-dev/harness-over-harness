@@ -1,7 +1,7 @@
 //! One confirmation by the person per settings action (CEO 19.11): the engine's own approval
 //! request for exactly that action is signed by the core without a second window; everything
 //! else still gets a window.
-use hoh_desktop::approval::{Begun, Broker, GRANT_TTL_MS, Resolution};
+use hoh_desktop::approval::{AuditEntry, Begun, Broker, GRANT_TTL_MS, Resolution};
 use hoh_protocol::{ApprovalOutcome, HostApprovalRequest};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -440,7 +440,14 @@ fn the_journal_names_who_confirmed_what_and_when_without_the_key() {
     assert_eq!(human.note, "подтверждено человеком в окне настройки");
     assert_eq!((human.at, human.method.as_str()), (NOW, KEY_SET));
     let core = &log[1];
-    assert_eq!((core.who, core.at), ("core", NOW + 5));
+    assert_eq!(
+        (core.who, core.via, core.at),
+        ("core", "settings-window", NOW + 5)
+    );
+    assert_eq!(
+        core.note,
+        "подписано ядром без второго окна: то же действие подтверждено человеком в окне настройки"
+    );
     assert_eq!(core.action_hash.len(), 64);
     assert!(
         !serde_json::to_string(&log)
@@ -781,6 +788,20 @@ fn a_hidden_nested_command_in_the_settings_text_blocks_allow_once() {
 
 const ACCESS_SET: &str = "hoh/executor/access/set";
 
+/// The core's line for a request the person confirmed in the main window names that channel, not
+/// the settings window there was none of (review 222000); its note starts as every core signature
+/// does, so the history leaves it out.
+fn assert_main_window_signature(core: &AuditEntry) {
+    assert_eq!(
+        (core.who, core.via, core.outcome.as_str()),
+        ("core", "main-window", "allowed-once")
+    );
+    assert_eq!(
+        core.note,
+        "подписано ядром без второго окна: то же действие подтверждено человеком действием в главном окне"
+    );
+}
+
 /// Founder 22.11 19:16: the access mode of the executor changes from the main window itself, as in
 /// T3. The person's action there is the confirmation: no window, one `human` line in the journal
 /// (channel `main-window`), and the engine's own request for exactly that action is signed once.
@@ -812,7 +833,7 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
             human.note,
             "подтверждено человеком действием в главном окне"
         );
-        assert_eq!((core.who, core.outcome.as_str()), ("core", "allowed-once"));
+        assert_main_window_signature(core);
     }
     assert!(
         log[0]
@@ -956,7 +977,7 @@ fn choosing_claude_and_its_folder_in_the_main_window_needs_no_window() {
             (human.who, human.via, human.outcome.as_str()),
             ("human", "main-window", "allowed-once")
         );
-        assert_eq!((core.who, core.outcome.as_str()), ("core", "allowed-once"));
+        assert_main_window_signature(core);
     }
     assert_eq!(
         (log[0].method.as_str(), log[2].method.as_str()),

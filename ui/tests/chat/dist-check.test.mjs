@@ -26,6 +26,10 @@ async function check(files, error, csp) {
 }
 
 test('dist gate accepts local assets without network addresses', () => check({ 'index.html': '<script src="./app.js"></script>', 'app.js': 'console.log("hello")' }));
+test('dist gate takes only the pages of the window', async () => {
+  await check({ 'index.html': '<p></p>', 'legacy.html': '<p></p>', 'approval.html': '<p></p>' });
+  for (const page of ['firstrun.html', 'probe.html', 'other.html']) await check({ 'index.html': '<p></p>', [page]: '<p></p>' }, 'страница не окна в dist: ' + page);
+});
 test('dist gate accepts exact inert namespaces, local events and loopback configuration', () => check({ 'app.js': 'const names=["http://www.w3.org/2000/svg","tauri://resize","http://localhost:8000/v1"]' }));
 test('dist gate rejects remote URLs, including diagnostic links', () => check({ 'app.js': 'const x="https://outside.invalid/x"' }, 'external URL'));
 test('dist gate rejects real external addresses of every shape', async () => {

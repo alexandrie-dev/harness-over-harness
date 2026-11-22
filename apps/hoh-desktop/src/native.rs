@@ -479,7 +479,14 @@ pub fn approval_navigation_allowed(url: &tauri::Url) -> bool {
     trusted_app_origin(url) && url.path() == "/approval.html"
 }
 
-pub fn main_navigation_allowed(url: &tauri::Url) -> bool {
+/// What the main window may load: the T3 client and nothing else of the app (review 222000, CEO
+/// 22.11 22:40). `legacy_shell`: the previous shell was asked for (HOH_WINDOW_SHELL=legacy), only
+/// then `/legacy.html`. `is_app_file`: the app has this file (`/approval.html`).
+pub fn main_navigation_allowed(
+    url: &tauri::Url,
+    legacy_shell: bool,
+    is_app_file: impl Fn(&str) -> bool,
+) -> bool {
     if !trusted_app_origin(url) {
         return false;
     }
@@ -487,26 +494,37 @@ pub fn main_navigation_allowed(url: &tauri::Url) -> bool {
         // Tauri canonicalizes `WebviewUrl::App("index.html")` to its bare
         // application origin before invoking navigation hooks.
         "" | "/" | "/index.html" => true,
-        // The previous window shell, kept until it is removed (HOH_WINDOW_SHELL=legacy).
-        "/legacy.html" => true,
+        "/legacy.html" => legacy_shell,
         #[cfg(feature = "probe")]
         "/probe.html" => true,
-        // A page of the T3 client's own router (/settings/general, /<env>/<thread>) when the window reloads
-        // there: the app's index.html is served for it. Never a file: no extension anywhere in the path.
-        path => is_app_route(path),
+        // A page of the T3 client's own router (/settings/general, /<env>/<thread>) when the window
+        // reloads there. Tauri (`manager::get_asset`) decodes `%XX`, then serves the first file of
+        // `{p}`, `{p}.html`, `{p}/index.html`, and only then index.html: the route is allowed only
+        // when none of the three is a file, so `/approval` never opens approval.html.
+        path => {
+            is_app_route(path)
+                && [
+                    path.to_owned(),
+                    format!("{path}.html"),
+                    format!("{path}/index.html"),
+                ]
+                .iter()
+                .all(|file| !is_app_file(file))
+        }
     }
 }
 
-/// A route path of the window's router, not a file of the app: `/a/b-c/$d`, no dots, no empty segments.
+/// A route path of the window's router, not a file of the app: `/a/b-c/$d`, no dots, no empty
+/// segments, no `%` (Tauri would decode it; no route of T3 needs it, so nothing is left to decode).
 fn is_app_route(path: &str) -> bool {
     path.len() <= 512
         && path.strip_prefix('/').is_some_and(|rest| {
             !rest.is_empty()
                 && rest.split('/').all(|segment| {
                     !segment.is_empty()
-                        && segment.bytes().all(|b| {
-                            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'$' | b'%')
-                        })
+                        && segment
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'$'))
                 })
         })
 }
@@ -518,14 +536,22 @@ pub fn legacy_shell_requested(value: Option<&std::ffi::OsStr>) -> bool {
 }
 
 pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    let builder = tauri::plugin::Builder::new("main-security").on_navigation(|webview, url| {
-        let allowed = webview.label() != "main" || main_navigation_allowed(url);
-        #[cfg(feature = "probe")]
-        if webview.label() == "main" {
-            trace_navigation("main", url, allowed);
-        }
-        allowed
-    });
+    let legacy = legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref());
+    let builder =
+        tauri::plugin::Builder::new("main-security").on_navigation(move |webview, url| {
+            let allowed = webview.label() != "main" || {
+                // The files built into the app, as Tauri looks them up (key `/approval.html`).
+                let assets = webview.app_handle().asset_resolver();
+                main_navigation_allowed(url, legacy, |file| {
+                    assets.iter().any(|(key, _)| key == file)
+                })
+            };
+            #[cfg(feature = "probe")]
+            if webview.label() == "main" {
+                trace_navigation("main", url, allowed);
+            }
+            allowed
+        });
     #[cfg(feature = "probe")]
     let builder = builder
         .on_page_load(|webview, payload| {
