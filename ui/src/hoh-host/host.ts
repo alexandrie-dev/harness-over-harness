@@ -4,13 +4,19 @@
 // launchThread and dispatchCommand (new chat, send, Stop, permission and question answers, mode, model),
 // forceStopThread. A thread change is sent as a fresh snapshot of that thread, which T3's client applies
 // whole (client-runtime/src/state/threads.ts `applyItemLocked`), plus `thread.updated` for the list.
-// The one project is T3's "No project", listed once there is a chat or once T3 asks for it
-// (`projects.ensureScratch`): an engine without chats is a fresh workspace, and T3 opens its welcome page.
+// Projects: T3's "No project" (the engine's default folder), listed once a chat is in it or once T3 asks for it
+// (`projects.ensureScratch`), so an engine without chats is a fresh workspace and T3 opens its welcome page;
+// and folders the person adds ("Add project", `projects.mutate`), listed through `filesystem.browse`. A chat
+// in a folder project works in that folder: the host sets it with the same engine request as the current
+// window's folder choice (`session/working-directory/set`), before the first message. Folder projects and
+// which project each chat is in are kept in the window's storage, so they survive a restart; a chat whose
+// history names a project's folder (`working-directory/change`) is put in that project.
 import {
   accessModeOf, claudeProvider, defaultClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
-import { HOH_PROJECT_ID, hohProject, ThreadModel } from './threads.ts';
+import { englishError } from './errors.ts';
+import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 
 export interface HohHostOptions {
@@ -20,7 +26,29 @@ export interface HohHostOptions {
   readonly workspaceRoot?: string;
   /** Delay that groups a burst of changes (stream chunks) into one snapshot. */
   readonly throttleMs?: number;
+  /** Where folder projects are kept between runs (the window's localStorage by default; null: not kept). */
+  readonly storage?: HohStorage | null;
 }
+
+export interface HohStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+export const STORAGE_KEY = 'hoh-host.projects.v1';
+const PLACEHOLDER_ROOT = '~/Documents/HoH';
+
+function windowStorage(): HohStorage | null {
+  try { return (globalThis as { localStorage?: HohStorage }).localStorage ?? null; } catch { return null; }
+}
+/** A folder path as T3 compares them: no trailing separator. */
+function folderPath(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return trimmed.length > 1 ? trimmed.replace(/\/+$/, '') || '/' : trimmed;
+}
+const titleOf = (root: string) => root.split('/').filter(Boolean).at(-1) ?? root;
+const timeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 
 const PAGE = 1000;
 const NO_OP_COMMANDS = new Set([
@@ -40,7 +68,7 @@ function dispatchError(command: Record<string, any>, message: string) {
     _tag: 'OrchestrationV2DispatchCommandError', commandId: String(command.commandId ?? 'unknown'), commandType: String(command.type ?? 'unknown'), message,
   });
 }
-const errorText = (error: unknown) => error instanceof Error ? error.message : typeof error === 'object' && error && 'message' in error ? String((error as any).message) : String(error);
+const errorText = (error: unknown) => englishError(error);
 
 /** T3's answers (`{ [questionId]: value | values }`, values are option labels or typed text) in the engine's form. */
 export function questionAnswer(question: EngineQuestion | undefined, answers: Record<string, unknown>): EngineQuestionAnswer {
@@ -77,6 +105,11 @@ export class HohHost {
   private workspaceKnown = false;
   /** Whether the "No project" project is in the list (see the head of this file). */
   private projectShown = false;
+  private readonly storage: HohStorage | null;
+  /** Folders the person added as projects, by project id. */
+  private readonly folders = new Map<string, FolderProject>();
+  /** The project of each chat the host placed (thread id → project id). */
+  private readonly homes = new Map<string, string>();
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
@@ -85,8 +118,63 @@ export class HohHost {
     this.engine = options.engine;
     this.now = options.now ?? Date.now;
     this.throttleMs = options.throttleMs ?? 40;
-    this.workspaceRoot = options.workspaceRoot ?? '~/Documents/HoH';
+    this.workspaceRoot = options.workspaceRoot ?? PLACEHOLDER_ROOT;
     this.startedAt = this.now();
+    this.storage = options.storage === undefined ? windowStorage() : options.storage;
+    this.restore();
+  }
+
+  // ---- projects kept between runs ----
+
+  private restore() {
+    let saved: any = null;
+    try { saved = JSON.parse(this.storage?.getItem(STORAGE_KEY) ?? 'null'); } catch { saved = null; }
+    for (const entry of Array.isArray(saved?.projects) ? saved.projects : []) {
+      const root = folderPath(entry?.workspaceRoot);
+      if (typeof entry?.id !== 'string' || !entry.id || entry.id === HOH_PROJECT_ID || !root) continue;
+      const createdAt = timeOf(entry.createdAt) ?? this.startedAt;
+      this.folders.set(entry.id, {
+        id: entry.id, title: typeof entry.title === 'string' && entry.title.trim() ? entry.title.trim() : titleOf(root), workspaceRoot: root,
+        createdAt, updatedAt: timeOf(entry.updatedAt) ?? createdAt, pinnedAt: timeOf(entry.pinnedAt), archivedAt: timeOf(entry.archivedAt),
+      });
+    }
+    const threads = saved?.threads && typeof saved.threads === 'object' ? saved.threads : {};
+    for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
+    if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
+  }
+
+  private save() {
+    if (!this.storage) return;
+    const value = {
+      version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
+      ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
+    };
+    try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
+  }
+
+  private homeOf(threadId: string) {
+    const projectId = this.homes.get(threadId);
+    return projectId && this.folders.has(projectId) ? projectId : HOH_PROJECT_ID;
+  }
+
+  private folderAt(path: string): FolderProject | undefined {
+    const root = folderPath(path);
+    for (const folder of this.folders.values()) if (folder.workspaceRoot === root) return folder;
+    return undefined;
+  }
+
+  /** A chat whose history names a project's folder belongs to that project. */
+  private placeByFolder(thread: ThreadModel) {
+    if (!thread.cwd) return;
+    const folder = this.folderAt(thread.cwd);
+    if (folder && thread.projectId !== folder.id) {
+      thread.projectId = folder.id;
+      this.homes.set(thread.id, folder.id);
+      this.save();
+      this.changed(thread.id);
+    } else if (!folder && thread.projectId === HOH_PROJECT_ID && !this.workspaceKnown) {
+      this.setWorkspaceRoot(thread.cwd);
+    }
   }
 
   private iso() { return new Date(this.now()).toISOString(); }
@@ -131,9 +219,9 @@ export class HohHost {
     for (const session of sessions) {
       if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
       const at = Number(session.updatedAt) || this.startedAt;
-      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode }));
+      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
     }
-    if (this.threads.size) this.showProject();
+    if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
   }
 
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
@@ -161,7 +249,10 @@ export class HohHost {
           if (own?.executor === 'claude' && typeof own.model === 'string' && own.model) thread.model = own.model;
         } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
-        if (!this.workspaceKnown) {
+        // The list row learns what the history knows (a title from the first message, the last answer).
+        this.changed(threadId);
+        if (thread.cwd) this.placeByFolder(thread);
+        else if (!this.workspaceKnown && thread.projectId === HOH_PROJECT_ID) {
           try { this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }
         }
         return thread;
@@ -190,6 +281,7 @@ export class HohHost {
       case 'session.event': {
         const thread = this.threadFor(params.sessionId);
         if (thread?.applyEvent(params.event)) this.changed(thread.id);
+        if (thread && params.event?.type === 'working-directory/change') this.placeByFolder(thread);
         return;
       }
       case 'session.assistant-stream': {
@@ -275,7 +367,7 @@ export class HohHost {
       snapshot: {
         schemaVersion: 1,
         snapshotSequence: this.sequence,
-        projects: this.projectShown ? [hohProject(this.workspaceRoot, this.startedAt)] : [],
+        projects: [...(this.projectShown ? [hohProject(this.workspaceRoot, this.startedAt)] : []), ...[...this.folders.values()].map(folderProject)],
         threads: threads.filter(thread => thread.archivedAt === null).map(thread => thread.shell()),
         archivedThreads: threads.filter(thread => thread.archivedAt !== null).map(thread => thread.shell()),
       },
@@ -284,18 +376,122 @@ export class HohHost {
 
   // ---- engine actions ----
 
-  /** A new chat in the engine: a session id it has not seen is created by asking for its folder. */
-  private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined) {
+  /**
+   * A new chat in the engine: a session id it has not seen is created by asking for its folder (the
+   * engine's default one, "No project"). A chat in a folder project is moved to that folder before its
+   * first message, by the request the current window uses for the person's folder choice; the Tauri host
+   * may ask the person to allow it. Claude then runs in that folder.
+   */
+  private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown) {
+    const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
+    if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
     await this.applyMode(mode, false);
     await this.applyModel(model);
     const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
     this.setWorkspaceRoot(directory?.cwd);
-    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode });
+    if (folder) {
+      const set = await this.engine.request('session/working-directory/set', { sessionId: threadId, path: folder.workspaceRoot });
+      // A typed `~/…` root becomes the folder the engine resolved, so chats' recorded folders match it.
+      const resolved = folderPath(set?.cwd);
+      if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
+        folder.workspaceRoot = resolved;
+        folder.updatedAt = this.now();
+        this.emitProject(folderProject(folder));
+      }
+    }
+    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode, projectId: folder?.id ?? HOH_PROJECT_ID });
+    thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
     thread.loaded = true;
     this.threads.set(threadId, thread);
-    this.showProject();
+    this.homes.set(threadId, thread.projectId);
+    this.save();
+    if (!folder) this.showProject();
     this.changed(threadId);
     return thread;
+  }
+
+  // ---- folder projects ("Add project") ----
+
+  private emitProject(project: Record<string, unknown>) {
+    this.sequence++;
+    for (const sink of this.shellSinks) sink.emit({ kind: 'project.updated', sequence: this.sequence, project });
+  }
+
+  /** The folder exists and can be read, when the Tauri host can list folders; otherwise the first chat in it tells. */
+  private async checkFolder(root: string, fail: (message: string) => RpcFailure) {
+    if (!this.engine.browseFolders) return;
+    try { await this.engine.browseFolders({ partialPath: root === '/' ? '/' : root + '/' }); }
+    catch (error) { throw fail(`The folder ${root} cannot be opened: ${englishError(error, 'it does not exist or cannot be read.')}`); }
+  }
+
+  /** T3's `projects.mutate` (packages/contracts/src/project.ts `ProjectMutation`); answers T3's `Project`. */
+  private async mutateProject(mutation: Record<string, any>) {
+    await this.start();
+    const fail = (message: string) => new RpcFailure({ _tag: 'ProjectMutationError', commandId: String(mutation.commandId ?? 'unknown'), message });
+    const projectId = String(mutation.projectId ?? '');
+    const answer = (project: FolderProject, deletedAt: string | null = null) => ({ ...folderProject(project), deletedAt });
+    switch (mutation.type) {
+      case 'project.create': {
+        const root = folderPath(mutation.workspaceRoot);
+        if (!root.startsWith('/') && root !== '~' && !root.startsWith('~/')) throw fail('Use the full path of the folder (starting with / or ~).');
+        if (this.folderAt(root)) throw fail(`${root} is already a project.`);
+        if (root === this.workspaceRoot) throw fail(`${root} is the folder of "No project". Use "Start without a project".`);
+        if (!projectId || projectId === HOH_PROJECT_ID || this.folders.has(projectId)) throw fail('This project id is taken.');
+        await this.checkFolder(root, fail);
+        const at = this.now();
+        const title = typeof mutation.title === 'string' && mutation.title.trim() ? mutation.title.trim() : titleOf(root);
+        const project: FolderProject = { id: projectId, title, workspaceRoot: root, createdAt: at, updatedAt: at, pinnedAt: null, archivedAt: null };
+        this.folders.set(projectId, project);
+        this.save();
+        this.emitProject(folderProject(project));
+        return answer(project);
+      }
+      case 'project.update': {
+        if (projectId === HOH_PROJECT_ID) return { ...hohProject(this.workspaceRoot, this.startedAt), deletedAt: null };
+        const project = this.folders.get(projectId);
+        if (!project) throw fail('This project does not exist.');
+        if (mutation.workspaceRoot !== undefined && folderPath(mutation.workspaceRoot) !== project.workspaceRoot) throw fail('A project keeps its folder in HoH. Add the other folder as a new project.');
+        if (typeof mutation.title === 'string' && mutation.title.trim()) project.title = mutation.title.trim();
+        if (typeof mutation.pinned === 'boolean') project.pinnedAt = mutation.pinned ? project.pinnedAt ?? this.now() : null;
+        if (typeof mutation.archived === 'boolean') project.archivedAt = mutation.archived ? project.archivedAt ?? this.now() : null;
+        project.updatedAt = this.now();
+        this.save();
+        this.emitProject(folderProject(project));
+        return answer(project);
+      }
+      case 'project.delete': {
+        if (projectId === HOH_PROJECT_ID) throw fail('"No project" cannot be removed.');
+        const project = this.folders.get(projectId);
+        if (!project) throw fail('This project does not exist.');
+        // HoH keeps every chat; a project with chats stays (T3 removes its threads only on a forced delete).
+        if ([...this.threads.values()].some(thread => thread.projectId === projectId)) throw fail('This project still has threads.');
+        this.folders.delete(projectId);
+        for (const [threadId, home] of this.homes) if (home === projectId) this.homes.delete(threadId);
+        this.save();
+        this.sequence++;
+        for (const sink of this.shellSinks) sink.emit({ kind: 'project.removed', sequence: this.sequence, projectId });
+        return answer(project, new Date(this.now()).toISOString());
+      }
+      default:
+        throw fail('Not available in HoH.');
+    }
+  }
+
+  /** T3's folder list for "Add project" (apps/server WorkspaceEntries.browse), from the Tauri host. */
+  private async browse(payload: Record<string, any>) {
+    const partialPath = typeof payload.partialPath === 'string' ? payload.partialPath : '';
+    const cwd = typeof payload.cwd === 'string' && payload.cwd.trim() ? payload.cwd : undefined;
+    const fail = (message: string) => new RpcFailure({
+      _tag: 'FilesystemBrowseError', ...(partialPath.trim() ? { partialPath } : {}), ...(cwd ? { cwd } : {}), failure: 'read_directory_failed', message,
+    });
+    if (!this.engine.browseFolders) throw fail('This HoH window cannot list folders. Type the full path of the folder.');
+    let listing;
+    try { listing = await this.engine.browseFolders({ partialPath, ...(cwd ? { cwd } : {}) }); }
+    catch (error) { throw fail(englishError(error, `Failed to browse '${partialPath}'.`)); }
+    const entries = (Array.isArray(listing?.entries) ? listing.entries : [])
+      .filter(entry => typeof entry?.name === 'string' && entry.name.trim() && typeof entry.fullPath === 'string' && entry.fullPath.trim())
+      .map(entry => ({ name: entry.name, fullPath: entry.fullPath }));
+    return { parentPath: folderPath(listing?.parentPath) || '/', entries };
   }
 
   /** Lists the "No project" project; its threads may follow it in the list. */
@@ -313,9 +509,12 @@ export class HohHost {
 
   /** The folder chats work in, as the engine names it: the project's root in T3. */
   private setWorkspaceRoot(cwd: unknown) {
-    if (typeof cwd !== 'string' || !cwd.trim() || cwd === this.workspaceRoot) return;
-    this.workspaceRoot = cwd;
+    const root = folderPath(cwd);
+    if (!root) return;
     this.workspaceKnown = true;
+    if (root === this.workspaceRoot) return;
+    this.workspaceRoot = root;
+    this.save();
     this.projectChanged();
     this.configChanged();
   }
@@ -349,7 +548,7 @@ export class HohHost {
       const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }] });
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
     } catch (error) {
-      thread.sendFailed(messageId, this.now());
+      thread.sendFailed(messageId, this.now(), error);
       this.changed(thread.id);
       throw error;
     }
@@ -390,7 +589,7 @@ export class HohHost {
     try {
       switch (type) {
         case 'thread.create':
-          if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode);
+          if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId);
           break;
         case 'message.dispatch': {
           const target = needThread();
@@ -445,7 +644,7 @@ export class HohHost {
     const threadId = typeof input.threadId === 'string' && input.threadId ? input.threadId : 'thread-' + (globalThis.crypto?.randomUUID?.() ?? this.now().toString(36));
     const existing = await this.loaded(threadId);
     try {
-      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode);
+      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId);
       if (existing) await this.applyMode(input.runtimeMode, false);
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
@@ -490,6 +689,8 @@ export class HohHost {
           this.showProject();
           return { projectId: HOH_PROJECT_ID };
         },
+        'projects.mutate': (mutation: any) => this.mutateProject(mutation ?? {}),
+        'filesystem.browse': (payload: any) => this.browse(payload ?? {}),
         // The welcome page looks for other agents' history to import; HoH imports none, and T3 then
         // leaves its Projects section out.
         'agentSessions.scan': () => ({ candidates: [], scannedAt: this.iso() }),

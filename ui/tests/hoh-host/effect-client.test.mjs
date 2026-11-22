@@ -77,6 +77,8 @@ test('T3 client: handshake decodes (config stream, getConfig, probe, settings, u
   assert.equal(snapshot.config.providers[0].instanceId, 'claudeAgent');
   assert.equal(snapshot.config.settings.defaultRuntimeMode, 'approval-required');
   assert.equal(snapshot.config.settings.responseStreamingMode, 'paragraph', 'defaults filled in by T3\'s schema');
+  // "Add project" offers no repository host to clone from.
+  assert.deepEqual({ ...snapshot.config.settings.offeredSourceControlProviders }, { github: false });
   await config.stop();
   assert.deepEqual(await run(client['server.probe']({})), {});
   await run(client['server.reportClientActivity']({ clientId: 'window-1', clientKind: 'web', visible: true, focused: true, recentlyInteracted: true, scopes: [], observedAt: DateTime.makeUnsafe('2026-11-22T19:00:00.000Z') }));
@@ -267,6 +269,41 @@ test('T3 first run: an engine with a chat opens the app; Claude not found, or no
     const { config, shell } = await firstRunInput(client);
     const agents = await welcomeAgents(config);
     assert.deepEqual([agents.readyCount, agents.checking, config.providers[0].installed, config.providers[0].message], [0, false, false, 'HoH could not check Claude.']);
+    await shell.stop();
+  });
+});
+
+test('T3 client: Add project — folder list, its error, the project, the chat in it, a failed turn, a removed project — all decode', () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-e', 'E', [
+    ['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'go' }] }], ['turn/start', { turn: 1 }],
+    ['turn/end', { turn: 1, reason: { kind: 'error', error: { message: 'Claude exited with code 1', code: 'UNKNOWN' } } }],
+  ]);
+  return withClient(engine, async client => {
+    const listing = await run(client['filesystem.browse']({ partialPath: '~/' }));
+    assert.deepEqual(listing.entries.map(entry => entry.name), ['.config', 'Documents', 'Projects']);
+    const missing = Cause.squash((await runExit(client['filesystem.browse']({ partialPath: '/nowhere/' }))).cause);
+    assert.deepEqual([missing._tag, missing.failure], ['FilesystemBrowseError', 'read_directory_failed']);
+    const shell = await collect(client['orchestration.subscribeShell']({}));
+    await shell.until(item => item.kind === 'snapshot');
+    const project = await run(client['projects.mutate']({ type: 'project.create', commandId: 'c-p', projectId: 'p-site', title: 'site', workspaceRoot: '/home/person/Projects/site', createWorkspaceRootIfMissing: true, defaultModelSelection: null }));
+    assert.deepEqual([project.id, project.workspaceRoot, project.deletedAt], ['p-site', '/home/person/Projects/site', null]);
+    assert.equal((await shell.until(item => item.kind === 'project.updated' && item.project.id === 'p-site')).project.title, 'site');
+    const taken = Cause.squash((await runExit(client['projects.mutate']({ type: 'project.create', commandId: 'c-q', projectId: 'p-q', title: 'q', workspaceRoot: '/home/person/Projects/site' }))).cause);
+    assert.equal(taken._tag, 'ProjectMutationError');
+    const launched = await run(client['orchestration.launchThread']({
+      commandId: 'c-l', threadId: 'thread-site', projectId: 'p-site', title: 'Build', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
+      runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+      initialMessage: { messageId: 'm-1', text: 'Build it', attachments: [] },
+    }));
+    assert.equal(launched.projection.thread.projectId, 'p-site');
+    const failed = await run(client['orchestration.getThreadProjection']({ threadId: 'chat-e' }));
+    const error = failed.turnItems.find(item => item.type === 'error');
+    assert.deepEqual([error.title, error.failure.class, error.failure.message], ['Provider error', 'provider_error', 'Claude exited with code 1']);
+    await run(client['projects.mutate']({ type: 'project.create', commandId: 'c-t', projectId: 'p-tools', title: 'tools', workspaceRoot: '/home/person/Projects/tools' }));
+    const removed = await run(client['projects.mutate']({ type: 'project.delete', commandId: 'c-d', projectId: 'p-tools' }));
+    assert.notEqual(removed.deletedAt, null);
+    assert.equal((await shell.until(item => item.kind === 'project.removed')).projectId, 'p-tools');
     await shell.stop();
   });
 });

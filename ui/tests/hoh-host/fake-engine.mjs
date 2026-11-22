@@ -2,8 +2,14 @@
 // (ui/src/screens/chat/transport.ts), with per-session history that survives a "restart"
 // (a new FakeEngine over the same `store`). Tests drive the turn themselves: `emitEvent`,
 // `emitFrame`, `askApproval`, `askQuestion`.
+export const HOME = '/home/person';
+export const DEFAULT_FOLDER = '/home/person/Documents/HoH';
+const FOLDERS = [HOME, '/home/person/Documents', DEFAULT_FOLDER, '/home/person/Projects', '/home/person/Projects/site', '/home/person/Projects/tools', '/home/person/.config'];
+
 export class FakeEngine {
-  constructor({ store = new Map(), discovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } } } = {}) {
+  constructor({ store = new Map(), discovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } }, folders = FOLDERS } = {}) {
+    /** Folders on the fake disk; `refuseFolder` makes the person press «Отклонить» in the protection window. */
+    this.folders = new Set(folders); this.refuseFolder = false;
     this.store = store; // sessionId -> { title, events: [], updatedAt }
     this.listeners = new Set(); this.questionListeners = new Set(); this.statusListeners = new Set();
     this.requests = []; this.decisions = []; this.answers = []; this.counter = 0; this.clock = 1_700_000_000_000;
@@ -44,6 +50,20 @@ export class FakeEngine {
   async decideApproval(approvalId, outcome) {
     this.decisions.push({ approvalId, outcome });
   }
+  /** The Tauri host's `browse_folders`, as T3's server browses (apps/server WorkspaceEntries.browse). */
+  async browseFolders({ partialPath, cwd }) {
+    this.requests.push({ method: 'browse_folders', params: { partialPath, cwd } });
+    const path = partialPath === '~' ? HOME : partialPath.startsWith('~/') ? HOME + partialPath.slice(1) : partialPath.startsWith('/') ? partialPath : (cwd ?? '') + '/' + partialPath;
+    const ends = partialPath.endsWith('/') || partialPath === '~';
+    const parent = ends ? path.replace(/\/+$/, '') || '/' : path.slice(0, path.lastIndexOf('/')) || '/';
+    const prefix = ends ? '' : path.slice(path.lastIndexOf('/') + 1);
+    if (!this.folders.has(parent)) throw new Error(`No such folder: ${parent}`);
+    const entries = [...this.folders].filter(folder => folder.startsWith(parent === '/' ? '/' : parent + '/') && !folder.slice(parent.length + 1).includes('/'))
+      .map(folder => ({ name: folder.slice(folder.lastIndexOf('/') + 1), fullPath: folder }))
+      .filter(entry => entry.name.toLowerCase().startsWith(prefix.toLowerCase()) && (ends || prefix.startsWith('.') || !entry.name.startsWith('.')))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { parentPath: parent, entries };
+  }
   async request(method, params) {
     this.requests.push({ method, params });
     switch (method) {
@@ -60,7 +80,18 @@ export class FakeEngine {
       case 'session/working-directory/get':
         if (!this.store.has(params.sessionId)) this.store.set(params.sessionId, { title: '', events: [], updatedAt: this.tick() });
         this.open.add(params.sessionId);
-        return { cwd: '/home/person/Documents/HoH' };
+        return { cwd: this.store.get(params.sessionId).cwd ?? DEFAULT_FOLDER };
+      // As the Tauri host and the engine answer it: the person allows the folder, the engine records it.
+      case 'session/working-directory/set': {
+        if (this.refuseFolder) throw { code: 'rejected', message: 'Действие отклонено' };
+        if (!this.store.has(params.sessionId)) this.store.set(params.sessionId, { title: '', events: [], updatedAt: this.tick() });
+        // The engine's file system resolves `~` (crates/hoh-fs-local) and answers the folder it set.
+        const path = params.path === '~' || params.path.startsWith('~/') ? HOME + params.path.slice(1) : params.path;
+        if (!this.folders.has(path)) throw { code: 'refused', message: 'Помощник отклонил запрос' };
+        this.store.get(params.sessionId).cwd = path;
+        this.emitEvent(params.sessionId, 'working-directory/change', { cwd: path });
+        return { cwd: path };
+      }
       case 'session/events': {
         const session = this.store.get(params.sessionId); if (!session) throw new Error('unknown SDK session');
         const after = params.afterSeq ?? -1;

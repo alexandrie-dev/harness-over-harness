@@ -1,10 +1,10 @@
 // Прослойка окна HoH вместо gt-react (General Translation, i18n T3 Code). Настоящий пакет не ставим (решение CEO):
 // без сети. Язык приходит от GTProvider (T3 держит его в web/i18n/runtime.ts); текст — английский исходник T3
 // или строка словаря языка (shims/gt-i18n.ts, registerDictionary). <T> показывает свои дети как есть.
-import { createContext, useCallback, useContext, type ReactNode } from 'react';
+import { Children, cloneElement, createContext, isValidElement, useCallback, useContext, type ReactNode } from 'react';
 
 import {
-  DEFAULT_LOCALE, decodeMsg, decodeOptions, formatMessage, gtFallback, lookup, msg, resolveMessage,
+  DEFAULT_LOCALE, branded, decodeMsg, decodeOptions, formatMessage, gtFallback, lookup, msg, resolveMessage,
   type MFunctionType, type Variables,
 } from './gt-i18n';
 
@@ -67,8 +67,24 @@ export function useMessages(): MFunctionType {
   );
 }
 
+/** Есть ли в дереве текст с «T3 Code». */
+function mentionsProduct(node: ReactNode): boolean {
+  if (typeof node === 'string') return node.includes('T3 Code');
+  if (Array.isArray(node)) return node.some(mentionsProduct);
+  return isValidElement<{ children?: ReactNode }>(node) && mentionsProduct(node.props.children);
+}
+
+/** Дерево <T> с именем продукта окна (gt-i18n.ts `branded`); дерево без «T3 Code» возвращается как есть. */
+function brandedNode(node: ReactNode): ReactNode {
+  if (typeof node === 'string') return branded(node);
+  if (!mentionsProduct(node)) return node;
+  if (Array.isArray(node)) return Children.map(node, brandedNode);
+  if (isValidElement<{ children?: ReactNode }>(node)) return cloneElement(node, undefined, brandedNode(node.props.children));
+  return node;
+}
+
 export function T({ children }: { readonly children?: ReactNode; readonly context?: string; readonly $context?: string; readonly id?: string }): ReactNode {
-  return children;
+  return brandedNode(children);
 }
 
 export function Var({ children }: { readonly children?: ReactNode; readonly name?: string }): ReactNode {

@@ -4,6 +4,8 @@
 // по умолчанию словарей нет, и окно показывает строки T3 как есть. Пути подключения: src/t3/base/aliases.json и
 // tsconfig.json (scripts/t3-sync.py, FORCE_STUB в scripts/t3graph.py).
 
+import { APP_BASE_NAME } from '../web/branding';
+
 export type Variables = Record<string, unknown>;
 /** Сообщение после msg(): английская строка (с подставленными переменными, если они были). */
 export type MFunctionType = <M extends string | null | undefined>(message: M, variables?: Variables) => M extends string ? string : M;
@@ -117,8 +119,23 @@ function formatArgument(text: string, start: number, values: Variables, locale: 
   return [String(value), end + 1];
 }
 
-/** Подставляет переменные в ICU-строку. Нераспознанная разметка — строка как есть. */
+// ───── Имя продукта ─────
+// T3 пишет своё имя в тексты буквально («Welcome to T3 Code»). Окно показывает своё — то, что даёт механизм бренда
+// T3 (`APP_BASE_NAME`, web/branding.ts: desktopBridge, иначе правка HoH). Подмена здесь, в одном месте: так её получают
+// все тексты, что идут через gt()/m()/<T>, без правки файлов T3 (HOH-40 fix2, ui/T3-MAP.md «Имя продукта»).
+const T3_PRODUCT_NAME = /T3 Code/g;
+
+/** Текст с именем продукта окна вместо «T3 Code». */
+export function branded(text: string): string {
+  return text.includes('T3 Code') ? text.replace(T3_PRODUCT_NAME, APP_BASE_NAME) : text;
+}
+
+/** Подставляет переменные в ICU-строку и имя продукта. Нераспознанная разметка — строка как есть. */
 export function formatMessage(text: string, values: Variables = {}, locale: string = DEFAULT_LOCALE): string {
+  return branded(formatIcu(text, values, locale));
+}
+
+function formatIcu(text: string, values: Variables, locale: string): string {
   if (!text.includes('{') && !text.includes("'")) return text;
   try {
     let out = '';

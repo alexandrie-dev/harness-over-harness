@@ -4,6 +4,7 @@
 // One user message is one run; answers, tool steps, permission requests and questions are turn items.
 import { CLAUDE_INSTANCE_ID, runtimeModeOf, type HohAccessMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
+import { providerFailure } from './errors.ts';
 
 export const HOH_PROJECT_ID = 'hoh-project';
 const NODE_ID = 'hoh-node';
@@ -48,6 +49,8 @@ export interface ThreadSeed {
   readonly updatedAt?: number;
   readonly model: string;
   readonly mode: HohAccessMode;
+  /** The T3 project the chat belongs to: "No project" unless it was started in a folder project. */
+  readonly projectId?: string;
 }
 
 export class ThreadModel {
@@ -57,6 +60,9 @@ export class ThreadModel {
   updatedAt: number;
   model: string;
   mode: HohAccessMode;
+  projectId: string;
+  /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
+  cwd: string | null = null;
   /** History was read from the engine (or the chat is new); until then only the shell row is known. */
   loaded = false;
   running = false;
@@ -87,6 +93,7 @@ export class ThreadModel {
     this.updatedAt = seed.updatedAt ?? seed.createdAt;
     this.model = seed.model;
     this.mode = seed.mode;
+    this.projectId = seed.projectId ?? HOH_PROJECT_ID;
   }
 
   private touch(at: number) { if (at > this.updatedAt) this.updatedAt = at; }
@@ -119,13 +126,16 @@ export class ThreadModel {
     if (index >= 0) this.outgoing.splice(index, 1);
   }
 
-  /** `session/prompt` failed: the run never started. */
-  sendFailed(messageId: string, at: number) {
+  /** `session/prompt` failed: the run never started. Shown as T3 shows a provider failure (an `error` item). */
+  sendFailed(messageId: string, at: number, error?: unknown) {
     const index = this.outgoing.findIndex(entry => entry.messageId === messageId);
     if (index >= 0) this.outgoing.splice(index, 1);
     const run = this.runs.find(entry => entry.userMessageId === messageId);
     if (run && run.status === 'running') { run.status = 'failed'; run.completedAt = at; }
-    this.items.push({ ...this.base('item-error-' + messageId, 'system_notice', 'completed', at, run?.id ?? null), message: 'The message was not sent. Try again.', level: 'error' });
+    this.items.push({
+      ...this.base('item-error-' + messageId, 'error', 'failed', at, run?.id ?? null), title: 'Message not sent',
+      failure: providerFailure(error, 'transport_error', 'The message was not sent. Try again.'),
+    });
     this.running = false;
     this.touch(at);
   }
@@ -210,7 +220,7 @@ export class ThreadModel {
     this.settleItem(item, failed ? 'failed' : 'completed', at);
   }
 
-  private endTurn(reason: string, at: number) {
+  private endTurn(reason: string, at: number, error?: unknown) {
     const run = this.currentRun();
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
     this.stopRequested = false;
@@ -222,7 +232,8 @@ export class ThreadModel {
     for (const live of this.live.values()) this.retired.add(live.attemptId);
     this.live.clear();
     for (const request of this.requests) if (request.status === 'pending') { request.status = 'cancelled'; request.resolvedAt = at; }
-    if (reason === 'error') this.items.push({ ...this.base('item-error-' + this.ordinal, 'system_notice', 'completed', at), message: 'The answer stopped because of an error. Try again.', level: 'error' });
+    // T3's own form and words for a failed turn (packages/provider-core/src/server/failure.ts `makeProviderFailureTurnItem`).
+    if (reason === 'error') this.items.push({ ...this.base('item-error-' + this.ordinal, 'error', 'failed', at), title: 'Provider error', failure: providerFailure(error, 'provider_error', 'Provider turn failed.') });
     this.running = false;
   }
 
@@ -233,6 +244,10 @@ export class ThreadModel {
     const at = typeof event.time === 'number' && event.time > 0 ? event.time : Date.now();
     const data = record(event.data);
     switch (event.type) {
+      // Not shown in the chat: the folder decides which T3 project the chat belongs to.
+      case 'working-directory/change':
+        if (text(data.cwd)) this.cwd = text(data.cwd);
+        return false;
       case 'agent/inbox/spliced':
         for (const message of Array.isArray(data.inserted) ? data.inserted : []) {
           const inserted = record(message);
@@ -249,7 +264,7 @@ export class ThreadModel {
         this.running = true; this.settledByGuess = false;
         break;
       }
-      case 'turn/end': this.endTurn(text(record(data.reason).kind), at); this.engineRunning = false; this.settledByGuess = false; break;
+      case 'turn/end': this.endTurn(text(record(data.reason).kind), at, record(data.reason).error); this.engineRunning = false; this.settledByGuess = false; break;
       case 'assistant/message': {
         const message = record(data.message);
         if (!text(message.id)) return false;
@@ -403,7 +418,7 @@ export class ThreadModel {
     return {
       thread: {
         createdBy: 'user', creationSource: 'web',
-        id: this.id, projectId: HOH_PROJECT_ID, title: this.titleText(), providerInstanceId: CLAUDE_INSTANCE_ID,
+        id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: CLAUDE_INSTANCE_ID,
         modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: 'default',
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
@@ -446,7 +461,7 @@ export class ThreadModel {
     const lastUser = [...this.messages].reverse().find(message => message.role === 'user');
     return {
       createdBy: 'user', creationSource: 'web',
-      id: this.id, projectId: HOH_PROJECT_ID, title: this.titleText(), providerInstanceId: CLAUDE_INSTANCE_ID,
+      id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: CLAUDE_INSTANCE_ID,
       modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: 'default',
       branch: null, worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
@@ -464,7 +479,6 @@ export class ThreadModel {
   }
 }
 
-/** The one project of the HoH window: the folder chats work in. `OrchestrationProjectShell`, encoded. */
 /** HoH's chats folder as T3's own "No project" (apps/server ManagedProjectFolders.ts `ensureScratchProject`). */
 export function hohProject(workspaceRoot: string, at: number) {
   return {
@@ -477,5 +491,32 @@ export function hohProject(workspaceRoot: string, at: number) {
     scripts: [],
     createdAt: iso(at),
     updatedAt: iso(at),
+  };
+}
+
+/** A folder the person added as a T3 project ("Add project"), as the host keeps it. */
+export interface FolderProject {
+  readonly id: string;
+  title: string;
+  workspaceRoot: string;
+  readonly createdAt: number;
+  updatedAt: number;
+  pinnedAt: number | null;
+  archivedAt: number | null;
+}
+
+/** A folder project as T3's `OrchestrationProjectShell`, encoded (no git identity: HoH reads no repository). */
+export function folderProject(project: FolderProject) {
+  return {
+    id: project.id,
+    title: project.title,
+    workspaceRoot: project.workspaceRoot,
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    pinnedAt: project.pinnedAt === null ? null : iso(project.pinnedAt),
+    archivedAt: project.archivedAt === null ? null : iso(project.archivedAt),
+    createdAt: iso(project.createdAt),
+    updatedAt: iso(project.updatedAt),
   };
 }
