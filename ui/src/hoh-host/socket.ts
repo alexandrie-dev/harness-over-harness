@@ -26,6 +26,7 @@ export class HohWebSocket {
   onclose: Listener | null = null;
   onerror: Listener | null = null;
   private readonly listeners = new Map<string, Set<Listener>>();
+  private readonly onceOf = new Map<Listener, Listener>();
   private connection: WireConnection | undefined;
 
   constructor(readonly url: string, server: WireServer) {
@@ -41,13 +42,22 @@ export class HohWebSocket {
     }, 0);
   }
 
-  addEventListener(type: string, listener: Listener) {
+  addEventListener(type: string, listener: Listener, options?: boolean | { readonly once?: boolean }) {
     let set = this.listeners.get(type);
     if (!set) this.listeners.set(type, set = new Set());
-    set.add(listener);
+    if (typeof options === 'object' && options?.once) {
+      const once: Listener = event => { set!.delete(once); this.onceOf.delete(listener); listener(event); };
+      this.onceOf.set(listener, once);
+      set.add(once);
+    } else set.add(listener);
   }
 
-  removeEventListener(type: string, listener: Listener) { this.listeners.get(type)?.delete(listener); }
+  removeEventListener(type: string, listener: Listener) {
+    const set = this.listeners.get(type);
+    set?.delete(listener);
+    const once = this.onceOf.get(listener);
+    if (once) { set?.delete(once); this.onceOf.delete(listener); }
+  }
 
   send(data: string | ArrayBufferLike | ArrayBufferView) {
     if (this.readyState !== HohWebSocket.OPEN) throw new Error('WebSocket is not open');
