@@ -2945,8 +2945,8 @@ async fn p15_a_picture_reaches_claude_as_a_base64_block_before_the_text() {
     host.shutdown().await;
 }
 
-/// 15 (refusals). A picture over T3's 10 MiB, of a type the store does not take, or whose bytes are
-/// not the type it names is refused with the store's reason; Claude is not started for it.
+/// 15 (refusals). A picture over T3's 10 MiB or whose bytes do not match its type is refused by the
+/// store; an unsupported SVG is rejected earlier by the strict SDK wire. Claude is never started.
 #[tokio::test]
 async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing() {
     let workspace = Workspace::new();
@@ -2956,7 +2956,11 @@ async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing
     for (data, mime, reason) in [
         (big.as_str(), "image/png", "byte limit"),
         (RED_PNG, "image/jpeg", "does not match"),
-        (RED_PNG, "image/svg+xml", "image/svg+xml"),
+        (
+            RED_PNG,
+            "image/svg+xml",
+            "data did not match any variant of untagged enum SdkPromptContentBlock",
+        ),
     ] {
         let blocks = json!([
             {"type": "image", "data": data, "mimeType": mime, "name": "x"},
