@@ -74,6 +74,7 @@ export type AssetUrlState =
   | {
       readonly _tag: "Failure";
       readonly reason?: "missing-file-access";
+      readonly detail?: string;
     }
   | {
       readonly _tag: "Success";
@@ -115,7 +116,18 @@ export function assetUrlStateFromResult(
   result: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
   httpBaseUrl: string | null,
 ): AssetUrlState {
-  if (result._tag === "Failure") return { _tag: "Failure" };
+  if (result._tag === "Failure") {
+    const error = Option.getOrNull(Cause.findErrorOption(result.cause));
+    const detail =
+      error !== null &&
+      typeof error === "object" &&
+      "detail" in error &&
+      typeof error.detail === "string" &&
+      error.detail.trim()
+        ? error.detail.trim()
+        : undefined;
+    return { _tag: "Failure", ...(detail ? { detail } : {}) };
+  }
   if (httpBaseUrl === null || result._tag !== "Success") return { _tag: "Loading" };
   const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
   if (url === null) return { _tag: "Failure" };

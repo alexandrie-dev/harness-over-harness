@@ -183,7 +183,10 @@
       "web/components/T3AppIcon.tsx": "значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src"
     },
     "patched": {
-      "contracts/assets.ts": "превью отправленных изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP",
+      "contracts/assets.ts": "превью изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP; отказ нативной политики несёт ограниченную безопасную причину",
+      "client-runtime/state/assets.ts": "превью изображений: ограниченная причина отказа assets.createUrl сохраняется в состоянии ресурса для видимой заглушки",
+      "web/components/ChatMarkdown.tsx": "превью изображений: обычная markdown-ссылка на локальный растровый файл использует штатные T3 ChatMarkdownAssetImage и крупный просмотр",
+      "web/components/chat/ChatMarkdownMedia.tsx": "превью изображений: заглушка Image unavailable показывает ограниченную безопасную причину отказа нативной политики",
       "web/components/chat/ChatComposer.tsx": "скрепка в поле ввода доступна для поддерживаемых Claude изображений без объявления generic file attachments",
       "web/components/chat/ComposerAttachmentStrip.tsx": "диалог скрепки принимает только GIF, JPEG, PNG и WebP, показывает лимит 10 МиБ и использует общий путь addComposerAttachments",
       "web/components/chat/SkillInlineText.tsx": "скрывает View instructions у навыка Claude: движок даёт имя, но не безопасный путь к файлу",

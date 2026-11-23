@@ -57,6 +57,24 @@ const effortParam = (effort: string | null) => effort ? { effort } : {};
 
 export const STORAGE_KEY = 'hoh-host.projects.v1';
 const PLACEHOLDER_ROOT = '~/Documents/HoH';
+const LOCAL_IMAGE_BYTES = 20 * 1024 * 1024;
+const LOCAL_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
+const LOCAL_IMAGE_MAX_RETAINED_BYTES = 128 * 1024 * 1024;
+const LOCAL_IMAGE_MAX_RETAINED_ENTRIES = 64;
+const LOCAL_IMAGE_THREAD_MAX_RETAINED_BYTES = 64 * 1024 * 1024;
+const LOCAL_IMAGE_THREAD_MAX_RETAINED_ENTRIES = 32;
+
+export function localImageRetentionFits(input: {
+  readonly globalBytes: number; readonly globalEntries: number;
+  readonly threadBytes: number; readonly threadEntries: number;
+  readonly replacedBytes: number; readonly replacing: boolean; readonly sizeBytes: number;
+}) {
+  const addedEntries = input.replacing ? 0 : 1;
+  return input.globalEntries + addedEntries <= LOCAL_IMAGE_MAX_RETAINED_ENTRIES
+    && input.globalBytes - input.replacedBytes + input.sizeBytes <= LOCAL_IMAGE_MAX_RETAINED_BYTES
+    && input.threadEntries + addedEntries <= LOCAL_IMAGE_THREAD_MAX_RETAINED_ENTRIES
+    && input.threadBytes - input.replacedBytes + input.sizeBytes <= LOCAL_IMAGE_THREAD_MAX_RETAINED_BYTES;
+}
 
 function windowStorage(): HohStorage | null {
   try { return (globalThis as { localStorage?: HohStorage }).localStorage ?? null; } catch { return null; }
@@ -157,6 +175,9 @@ export class HohHost {
   private readonly previewUrls = new Map<string, string>();
   /** Upload ids already adopted by a local message: their preview is kept until this window closes. */
   private readonly sentPreviewIds = new Set<string>();
+  /** One process-local URL per conversation/canonical path, bounded globally and per conversation. */
+  private readonly localImageUrls = new Map<string, { url: string; revision: string; sourcePath: string; sizeBytes: number; threadId: string }>();
+  private localImageBytes = 0;
   /** The skills Claude declared for each folder (its last workspace snapshot): `$name` in a message goes as `/name`. */
   private readonly skillsByFolder = new Map<string, Set<string>>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
@@ -406,6 +427,9 @@ export class HohHost {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     for (const url of this.previewUrls.values()) URL.revokeObjectURL(url);
     this.previewUrls.clear();
+    for (const image of this.localImageUrls.values()) URL.revokeObjectURL(image.url);
+    this.localImageUrls.clear();
+    this.localImageBytes = 0;
     this.sentPreviewIds.clear();
   }
 
@@ -419,6 +443,48 @@ export class HohHost {
     const url = URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));
     this.previewUrls.set(image.id, url);
     return url;
+  }
+
+  /** A conversation-bound Blob URL for a native image that passed the single Rust file policy. */
+  private async localImageUrl(threadId: string, path: string) {
+    if (!this.engine.readImageAsset) throw new Error('Image unavailable: this window cannot read project images.');
+    const image = await this.engine.readImageAsset({ sessionId: threadId, path });
+    if (this.stopped) throw new Error('Image unavailable: this window has closed.');
+    if (!LOCAL_IMAGE_TYPES.has(image?.mimeType) || !Number.isSafeInteger(image?.sizeBytes) || image.sizeBytes < 1 || image.sizeBytes > LOCAL_IMAGE_BYTES)
+      throw new Error('Image unavailable: the native image response is invalid.');
+    if (typeof image.sourcePath !== 'string' || !image.sourcePath || typeof image.fileRevision !== 'string' || !image.fileRevision)
+      throw new Error('Image unavailable: the native image identity is invalid.');
+    const key = `${threadId}\0${image.sourcePath}`;
+    const existing = this.localImageUrls.get(key);
+    if (existing?.revision === image.fileRevision && existing.sizeBytes === image.sizeBytes) return existing;
+    let threadBytes = 0;
+    let threadEntries = 0;
+    for (const retained of this.localImageUrls.values()) {
+      if (retained.threadId !== threadId) continue;
+      threadBytes += retained.sizeBytes;
+      threadEntries++;
+    }
+    const replacedBytes = existing?.sizeBytes ?? 0;
+    if (!localImageRetentionFits({
+      globalBytes: this.localImageBytes, globalEntries: this.localImageUrls.size,
+      threadBytes, threadEntries, replacedBytes, replacing: !!existing, sizeBytes: image.sizeBytes,
+    }))
+      throw new Error('Image unavailable: too many project images are already open in this window.');
+    let binary: string;
+    try { binary = atob(image.dataBase64); }
+    catch { throw new Error('Image unavailable: the native image payload is invalid.'); }
+    if (binary.length !== image.sizeBytes) throw new Error('Image unavailable: the native image size is invalid.');
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    const url = URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));
+    if (existing) {
+      URL.revokeObjectURL(existing.url);
+      this.localImageBytes -= existing.sizeBytes;
+    }
+    const minted = { url, revision: image.fileRevision, sourcePath: image.sourcePath, sizeBytes: image.sizeBytes, threadId };
+    this.localImageUrls.set(key, minted);
+    this.localImageBytes += image.sizeBytes;
+    return minted;
   }
 
   private async load() {
@@ -1218,14 +1284,33 @@ export class HohHost {
         'assets.persistChatAttachments': (payload: any) => this.persistAttachments(payload ?? {}),
         'attachments.createUploadUrl': (payload: any) => this.createUploadUrl(payload ?? {}),
         // T3 checks a picture it uploaded before it sends it: held here — an address; gone — T3 uploads it again.
-        'assets.createUrl': (payload: any) => {
+        'assets.createUrl': async (payload: any) => {
           const resource = payload?.resource;
-          if (resource?._tag !== 'attachment') throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:read' });
-          const id = String(resource.attachmentId ?? '');
-          const image = this.uploads.get(id);
-          const relativeUrl = this.previewUrls.get(id) ?? (image ? this.previewUrl(image) : undefined);
-          if (!relativeUrl || !UPLOAD_PATH.test(`/api/attachments/upload/${id}`)) throw new RpcFailure({ _tag: 'AssetAttachmentNotFoundError', resource });
-          return { relativeUrl, expiresAt: this.now() + UPLOAD_TTL_MS };
+          if (resource?._tag === 'attachment') {
+            const id = String(resource.attachmentId ?? '');
+            const image = this.uploads.get(id);
+            const relativeUrl = this.previewUrls.get(id) ?? (image ? this.previewUrl(image) : undefined);
+            if (!relativeUrl || !UPLOAD_PATH.test(`/api/attachments/upload/${id}`)) throw new RpcFailure({ _tag: 'AssetAttachmentNotFoundError', resource });
+            return { relativeUrl, expiresAt: this.now() + UPLOAD_TTL_MS };
+          }
+          if (resource?._tag !== 'media-file') throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:read' });
+          const threadId = typeof resource.threadId === 'string' ? resource.threadId : '';
+          const path = typeof resource.path === 'string' ? resource.path : '';
+          if (!threadId || !path || !this.threads.has(threadId)) throw new RpcFailure({ _tag: 'AssetWorkspaceContextNotFoundError', resource });
+          try {
+            const image = await this.localImageUrl(threadId, path);
+            return {
+              relativeUrl: image.url,
+              expiresAt: this.now() + UPLOAD_TTL_MS,
+              ...(image.sourcePath.length <= 1024 ? { sourcePath: image.sourcePath } : {}),
+              fileRevision: image.revision,
+            };
+          } catch (error) {
+            throw new RpcFailure({
+              _tag: 'AssetWorkspaceAssetNotFoundError', resource,
+              detail: englishError(error, 'Image unavailable: the file could not be read safely.').slice(0, 512),
+            });
+          }
         },
         'attachments.delete': (payload: any) => {
           const id = String(payload?.attachmentId ?? '');

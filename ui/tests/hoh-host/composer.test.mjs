@@ -280,6 +280,115 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
   await assert.rejects(fetch(reminted.relativeUrl));
 });
 
+test('a local reply image is minted only for its conversation and native failures keep a visible reason', async () => {
+  const engine = new FakeEngine();
+  const reads = [];
+  engine.readImageAsset = async input => {
+    reads.push(input);
+    if (input.path.endsWith('missing.png')) throw new Error('Image unavailable: the file was not found.');
+    return {
+      dataBase64: PNG,
+      mimeType: 'image/png',
+      sizeBytes: PNG_BYTES,
+      sourcePath: `${DEFAULT_FOLDER}/shots/red.png`,
+      fileRevision: 'dev:ino:size:time',
+    };
+  };
+  const { host, client } = connect(engine);
+  await newThread(client, 'chat-local');
+  const resource = { _tag: 'media-file', threadId: 'chat-local', path: 'shots/red.png', hostOnly: true };
+  const first = await client.call('assets.createUrl', { resource });
+  assert.match(first.relativeUrl, /^blob:/);
+  assert.equal(first.sourcePath, `${DEFAULT_FOLDER}/shots/red.png`);
+  assert.equal(first.fileRevision, 'dev:ino:size:time');
+  assert.equal(Buffer.from(await (await fetch(first.relativeUrl)).arrayBuffer()).toString('base64'), PNG);
+  // A remint revalidates through native code but preserves the live URL while the file revision is unchanged.
+  const second = await client.call('assets.createUrl', { resource });
+  assert.equal(second.relativeUrl, first.relativeUrl);
+  const alias = await client.call('assets.createUrl', { resource: { ...resource, path: 'shots/alias.png' } });
+  assert.equal(alias.relativeUrl, first.relativeUrl, 'canonical source path deduplicates aliases');
+  assert.deepEqual(reads, [
+    { sessionId: 'chat-local', path: 'shots/red.png' },
+    { sessionId: 'chat-local', path: 'shots/red.png' },
+    { sessionId: 'chat-local', path: 'shots/alias.png' },
+  ]);
+
+  const other = await client.request('assets.createUrl', { resource: { ...resource, threadId: 'another-project' } });
+  assert.equal(failureOf(other)._tag, 'AssetWorkspaceContextNotFoundError');
+  assert.equal(reads.length, 3);
+  const missing = await client.request('assets.createUrl', { resource: { ...resource, path: 'missing.png' } });
+  assert.equal(failureOf(missing)._tag, 'AssetWorkspaceAssetNotFoundError');
+  assert.match(failureOf(missing).detail, /file was not found/);
+  host.stop();
+  await assert.rejects(fetch(first.relativeUrl));
+});
+
+test('local reply image retention is bounded per conversation with a visible failure', async () => {
+  const budget = overrides => mod.host.localImageRetentionFits({
+    globalBytes: 0, globalEntries: 0, threadBytes: 0, threadEntries: 0,
+    replacedBytes: 0, replacing: false, sizeBytes: 1, ...overrides,
+  });
+  assert.equal(budget({ globalEntries: 64 }), false, 'global entry limit');
+  assert.equal(budget({ threadEntries: 32 }), false, 'conversation entry limit');
+  assert.equal(budget({ globalBytes: 128 * 1024 * 1024 }), false, 'global byte limit');
+  assert.equal(budget({ threadBytes: 64 * 1024 * 1024 }), false, 'conversation byte limit');
+  assert.equal(budget({
+    globalBytes: 128 * 1024 * 1024, globalEntries: 64,
+    threadBytes: 64 * 1024 * 1024, threadEntries: 32,
+    replacedBytes: 20 * 1024 * 1024, replacing: true, sizeBytes: 20 * 1024 * 1024,
+  }), true, 'same-size replacement does not grow either budget');
+  const engine = new FakeEngine();
+  engine.readImageAsset = async ({ path }) => ({
+    dataBase64: PNG,
+    mimeType: 'image/png',
+    sizeBytes: PNG_BYTES,
+    sourcePath: `${DEFAULT_FOLDER}/${path}`,
+    fileRevision: `revision:${path}`,
+  });
+  const { host, client } = connect(engine);
+  await newThread(client, 'chat-image-budget');
+  for (let index = 0; index < 32; index++) {
+    const result = await client.call('assets.createUrl', { resource: {
+      _tag: 'media-file', threadId: 'chat-image-budget', path: `shots/${index}.png`, hostOnly: true,
+    } });
+    assert.match(result.relativeUrl, /^blob:/);
+  }
+  const overflow = await client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-image-budget', path: 'shots/overflow.png', hostOnly: true,
+  } });
+  assert.equal(failureOf(overflow)._tag, 'AssetWorkspaceAssetNotFoundError');
+  assert.match(failureOf(overflow).detail, /too many project images/i);
+  host.stop();
+});
+
+test('stopping the host while a native image read is pending does not mint a late Blob URL', async () => {
+  const engine = new FakeEngine();
+  let release;
+  engine.readImageAsset = () => new Promise(resolve => { release = resolve; });
+  const { host, client } = connect(engine);
+  await newThread(client, 'chat-image-stop');
+  const pending = client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-image-stop', path: 'shots/late.png', hostOnly: true,
+  } });
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const createObjectURL = URL.createObjectURL;
+  let minted = 0;
+  URL.createObjectURL = value => { minted++; return createObjectURL(value); };
+  try {
+    host.stop();
+    release({
+      dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+      sourcePath: `${DEFAULT_FOLDER}/shots/late.png`, fileRevision: 'late',
+    });
+    const result = await pending;
+    assert.equal(failureOf(result)._tag, 'AssetWorkspaceAssetNotFoundError');
+    assert.match(failureOf(result).detail, /window has closed/i);
+    assert.equal(minted, 0);
+  } finally {
+    URL.createObjectURL = createObjectURL;
+  }
+});
+
 test('T3\'s XMLHttpRequest to the HoH address is answered in the window; any other goes to the platform', async () => {
   const http = await built.load('http');
   const calls = [];

@@ -1017,6 +1017,40 @@ pub async fn browse_folders_for(
     .map_err(|_| "Request interrupted.".to_owned())?
 }
 
+/// Read one raster referenced by a conversation. The page supplies only the session id and path;
+/// the engine supplies that session's authoritative project root, and `image_asset` owns every
+/// filesystem/type/size decision.
+#[tauri::command]
+pub async fn read_image_asset(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    session_id: String,
+    path: String,
+) -> Result<crate::image_asset::ImageAsset, String> {
+    if window.label() != "main" {
+        return Err("Image unavailable: images are available to the main window only.".into());
+    }
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let answer = engine.request(
+            "session/working-directory/get",
+            json!({ "sessionId": session_id }),
+        )?;
+        let root = answer["cwd"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                "Image unavailable: the conversation project folder is unknown.".to_owned()
+            })?;
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| "Image unavailable: the home folder is unknown.".to_owned())?;
+        crate::image_asset::read_project_image(std::path::Path::new(root), &path, &home)
+    })
+    .await
+    .map_err(|_| "Image unavailable: the read was interrupted.".to_owned())?
+}
+
 #[tauri::command]
 pub async fn pick_folder(window: tauri::WebviewWindow) -> Result<Option<String>, String> {
     if window.label() != "main" {

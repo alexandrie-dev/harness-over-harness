@@ -1,0 +1,33 @@
+--- a/web/components/ChatMarkdown.tsx
++++ b/web/components/ChatMarkdown.tsx
+@@ -1205,6 +1205,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
+       canOperateHost,
+       canOperatePreview,
+       cwd,
++      expandMedia,
+       environmentId,
+       imageBaseDir,
+       markdownFileLinkMetaByHref,
+@@ -1515,6 +1516,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
+       source.startsWith("[") && source.includes("](")
+         ? source
+         : `[${(label || fileLinkMeta.basename).replace(/[\\[\]]/g, "\\$&")}](${normalizedHref})`;
++    if (mediaKindFromPath(fileLinkMeta.filePath) === "image" && threadRef) {
++      return (
++        <ChatMarkdownAssetImage
++          environmentId={threadRef.environmentId}
++          resource={{
++            _tag: "media-file",
++            threadId: threadRef.threadId,
++            path: fileLinkMeta.filePath,
++          }}
++          alt={label || fileLinkMeta.basename}
++          copyMarkdown={copyMarkdown}
++          workspaceRoot={cwd}
++          onImageExpand={expandMedia}
++        />
++      );
++    }
+     const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref);
+     return isMarkdownFileLinkLabel(label, normalizedHref) ? (
+       chip
