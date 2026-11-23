@@ -300,7 +300,8 @@ def control(message):
     request = message.get("request") or {}
     response = {}
     if request.get("subtype") == "initialize" and os.path.exists(SLOW_START):
-        return
+        while os.path.exists(SLOW_START):
+            time.sleep(0.01)
     if request.get("subtype") == "initialize":
         response = {"models": [{"value": "default", "displayName": "Default"},
                                {"value": "sonnet", "displayName": "Sonnet"}],
@@ -3104,6 +3105,12 @@ async fn p17_a_project_folder_the_person_adds_is_known_before_its_first_conversa
     std::fs::create_dir_all(project.join("src")).expect("project folder");
     std::fs::write(project.join("src").join("main.rs"), "").expect("a file");
     let project = project.canonicalize().expect("canonical");
+    let hidden = workspace.root.path().join(".ssh");
+    std::fs::create_dir(&hidden).expect("hidden home folder");
+    let hidden_link = workspace.root.path().join("hidden-link");
+    std::os::unix::fs::symlink(&hidden, &hidden_link).expect("hidden link");
+    let system_link = workspace.root.path().join("system-link");
+    std::os::unix::fs::symlink("/etc", &system_link).expect("system link");
     let entries = json!({"cwd": project, "query": "main", "limit": 80});
     let mut host = Host::start(&workspace);
     host.initialize(&workspace).await;
@@ -3160,6 +3167,8 @@ async fn p17_a_project_folder_the_person_adds_is_known_before_its_first_conversa
         home.display().to_string(),
         home.join("profiles").display().to_string(),
         workspace.root.path().display().to_string(),
+        hidden_link.display().to_string(),
+        system_link.display().to_string(),
     ] {
         let frame = host
             .privileged("hoh/workspace/add", json!({"cwd": cwd}), "allowed-once")
@@ -3177,6 +3186,29 @@ async fn p17_a_project_folder_the_person_adds_is_known_before_its_first_conversa
         found["entries"],
         json!([{"path": "src/main.rs", "kind": "file"}])
     );
+    host.shutdown().await;
+
+    // A saved path is checked again on every use. Replacing it with a link to a protected folder
+    // does not turn that protected folder into a known workspace after an engine restart.
+    std::fs::remove_dir_all(&project).expect("remove old project");
+    std::os::unix::fs::symlink("/etc", &project).expect("replace project with a system link");
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    for method in ["hoh/workspace/entries", "hoh/executor/commands"] {
+        let params = if method == "hoh/workspace/entries" {
+            json!({"cwd": project, "query": "", "limit": 80})
+        } else {
+            json!({"executor": "claude", "cwd": project})
+        };
+        let id = host.send(method, params).await;
+        let (frame, _) = host.response(&id, None).await;
+        assert!(
+            frame["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("protected")),
+            "{method}: {frame}"
+        );
+    }
     host.shutdown().await;
 }
 
@@ -3216,5 +3248,80 @@ async fn p18_the_engines_own_data_is_not_a_folder_of_the_composer() {
             .all(|start| start.has("--version") || !start.cwd.starts_with(&workspace.folder)),
         "claude was asked in the engine's data"
     );
+    host.shutdown().await;
+}
+
+/// 19. Expensive composer lookups have one in-flight call per canonical folder and keep successful
+/// identical answers for 30 seconds. While one Claude probe is held at its initialization barrier,
+/// a second probe and `@` wait without starting another process or answering; a cached `@` answer
+/// does not rescan a file added immediately afterwards.
+#[tokio::test]
+async fn p19_composer_folder_calls_share_the_inflight_result_and_thirty_second_cache() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+
+    let slow = workspace.root.path().join("slow-initialize");
+    std::fs::write(&slow, "").expect("hold the first probe");
+    let command_params = json!({"executor": "claude", "cwd": workspace.folder});
+    let first_command = host
+        .send("hoh/executor/commands", command_params.clone())
+        .await;
+    let deadline = std::time::Instant::now() + FRAME_TIMEOUT;
+    let probe_count = || {
+        workspace
+            .starts()
+            .into_iter()
+            .filter(|start| start.has("--no-session-persistence") && !start.has("--version"))
+            .count()
+    };
+    while probe_count() == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the held probe did not start"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let second_command = host.send("hoh/executor/commands", command_params).await;
+    let entry_params = json!({"cwd": workspace.folder, "query": "fresh", "limit": 80});
+    let first_entry = host
+        .send("hoh/workspace/entries", entry_params.clone())
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(probe_count(), 1, "a waiter started a second Claude probe");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), host.next())
+            .await
+            .is_err(),
+        "a same-folder request answered while the first probe held its gate"
+    );
+    std::fs::remove_file(&slow).expect("release the first probe");
+
+    let command_ids = [first_command, second_command];
+    let mut command_answers = Vec::new();
+    let mut first_entry_answer = None;
+    while command_answers.len() < command_ids.len() || first_entry_answer.is_none() {
+        let frame = host.next().await;
+        if command_ids
+            .iter()
+            .any(|id| frame["id"].as_str() == Some(id))
+        {
+            assert!(frame.get("error").is_none(), "{frame}");
+            command_answers.push(frame["result"].clone());
+        }
+        if frame["id"].as_str() == Some(&first_entry) {
+            assert!(frame.get("error").is_none(), "{frame}");
+            first_entry_answer = Some(frame["result"].clone());
+        }
+    }
+    assert_eq!(command_answers[0], command_answers[1]);
+    assert_eq!(probe_count(), 1, "two requests must share one Claude probe");
+
+    let first = first_entry_answer.expect("the first @ answer");
+    assert!(first["entries"].as_array().is_some_and(Vec::is_empty));
+    std::fs::write(workspace.folder.join("fresh.txt"), "new").expect("new file");
+    let cached = host.ok("hoh/workspace/entries", entry_params).await;
+    assert_eq!(cached, first, "the answer is cached for thirty seconds");
+
     host.shutdown().await;
 }
