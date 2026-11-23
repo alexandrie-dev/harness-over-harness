@@ -40,8 +40,11 @@ fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
 }
 
 fn lines(path: &Path) -> Vec<Value> {
-    fs::read_to_string(path)
-        .unwrap_or_default()
+    let contents = fs::read_to_string(path).unwrap_or_default();
+    let complete = contents
+        .strip_suffix('\n')
+        .unwrap_or_else(|| contents.rsplit_once('\n').map_or("", |(prefix, _)| prefix));
+    complete
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
