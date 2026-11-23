@@ -1360,6 +1360,122 @@ test('a delayed ready-time access refresh still applies the field the person did
   });
 });
 
+test('a delayed access success from the lost engine cannot restore modes or permit a prompt', async () => {
+  const engine = new FakeEngine({ access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } } });
+  const { client, host } = connect(engine);
+  const config = await client.stream('subscribeServerConfig', {});
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4);
+
+  let releaseAccess;
+  const accessGate = new Promise(resolve => { releaseAccess = resolve; });
+  let accessStarted;
+  const started = new Promise(resolve => { accessStarted = resolve; });
+  const request = engine.request.bind(engine);
+  let delayNext = true;
+  let unavailable = false;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && !params.sessionId && delayNext) {
+      delayNext = false;
+      const stale = await request(method, params);
+      accessStarted();
+      await accessGate;
+      return stale;
+    }
+    if (method === 'hoh/executor/access/get' && !params.sessionId && unavailable) throw new Error('engine unavailable');
+    return request(method, params);
+  };
+
+  engine.setStatus('ready');
+  await started;
+  unavailable = true;
+  const beforeLost = config.values.length;
+  engine.setStatus('unavailable');
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 0, beforeLost);
+  releaseAccess();
+  await tick(5);
+  assert.deepEqual((await client.call('server.getConfig', {})).providers[0].supportedRuntimeModes, []);
+  const failed = await client.request('orchestration.launchThread', {
+    commandId: 'lost-stale', threadId: 'lost-stale', projectId: 'hoh-project', title: 'Blocked',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'full-access', interactionMode: 'default',
+    initialMessage: { messageId: 'lost-stale-message', text: 'must stay blocked', attachments: [] },
+  });
+  assert.equal(failed._tag, 'Failure');
+  assert.equal(engine.requests.some(entry => entry.method === 'session/prompt'), false);
+  host.stop();
+});
+
+test('a delayed access error cannot erase a successful user access/set', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-access-set', 'Access set', []);
+  const { client, host } = connect(engine);
+  const config = await client.stream('subscribeServerConfig', {});
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4);
+
+  let releaseAccess;
+  const accessGate = new Promise(resolve => { releaseAccess = resolve; });
+  let accessStarted;
+  const started = new Promise(resolve => { accessStarted = resolve; });
+  const request = engine.request.bind(engine);
+  let delayNext = true;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && !params.sessionId && delayNext) {
+      delayNext = false;
+      accessStarted();
+      await accessGate;
+      throw new Error('stale access failure');
+    }
+    return request(method, params);
+  };
+
+  engine.setStatus('ready');
+  await started;
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.runtime-mode.set', commandId: 'access-set-wins', threadId: 'chat-access-set', runtimeMode: 'full-access',
+  });
+  releaseAccess();
+  await tick(5);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-access-set' })).thread.runtimeMode, 'full-access');
+  assert.equal((await client.call('server.getConfig', {})).providers[0].supportedRuntimeModes.length, 4);
+  host.stop();
+});
+
+test('a newer successful access read cannot be erased by an older read failing later', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-new-access', 'New access', []);
+  const { client, host } = connect(engine);
+  const config = await client.stream('subscribeServerConfig', {});
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4);
+
+  let releaseAccess;
+  const accessGate = new Promise(resolve => { releaseAccess = resolve; });
+  let accessStarted;
+  const started = new Promise(resolve => { accessStarted = resolve; });
+  const request = engine.request.bind(engine);
+  let delayNext = true;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && !params.sessionId && delayNext) {
+      delayNext = false;
+      accessStarted();
+      await accessGate;
+      throw new Error('older access failure');
+    }
+    return request(method, params);
+  };
+
+  engine.setStatus('ready');
+  await started;
+  engine.access = { ...engine.access, mode: 'auto' };
+  const beforeNewRead = config.values.length;
+  engine.setStatus('ready');
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4, beforeNewRead);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-new-access' })).thread.runtimeMode, 'auto');
+  releaseAccess();
+  await tick(5);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-new-access' })).thread.runtimeMode, 'auto');
+  assert.equal((await client.call('server.getConfig', {})).providers[0].supportedRuntimeModes.length, 4);
+  host.stop();
+});
+
 test('Add project immediately rehomes a conversation already classified in the background', async () => {
   const engine = new FakeEngine();
   engine.seed('background-folder', 'Background folder', [

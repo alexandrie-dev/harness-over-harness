@@ -116,9 +116,6 @@
   .hoh-home[data-busy] .hoh-home__head { display: none; }
   .hoh-home[data-busy] .hoh-home__inner { padding-top: 12px; gap: 16px; }
 }
-/* Карточка деталей разговора T3 (рабочая среда, папка) в правом верхнем углу на главной не нужна. */
-body:has([data-hoh-home-body]) [data-thread-details-card] { display: none; }
-
 /* Занятая главная (есть агенты, запросы или готовое): приветствие сверху уже есть, заголовок черновика T3 («What should we work on?» / «No project») не показывается — место отдано списку.
    На пустой главной он остаётся. Список прокручивается внутри себя; его нижний край — поле ввода, отступ 24 px — у .hoh-home__inner. */
 body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute.inset-x-0.bottom-full { display: none; }

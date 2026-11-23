@@ -81,6 +81,17 @@ test('a folder becomes a T3 project; a chat in it runs in that folder; the list 
   assert.deepEqual(order, ['session/working-directory/get', 'session/working-directory/set', 'session/prompt']);
   assert.deepEqual(engine.requests.find(request => request.method === 'session/working-directory/set').params, { sessionId: 'thread-site', path: '/home/person/Projects/site' });
   assert.equal((await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-site')).thread.projectId, 'p-site');
+  // A rejected project transition is validated before the launch can widen Claude's global mode.
+  const accessSetsBeforeRejectedLaunch = engine.requests.filter(request => request.method === 'hoh/executor/access/set').length;
+  for (const projectId of ['p-missing', 'hoh-project']) {
+    await assert.rejects(() => client.call('orchestration.launchThread', {
+      commandId: `rejected-${projectId}`, threadId: 'thread-site', projectId, title: 'Must stay put',
+      modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'full-access', interactionMode: 'default',
+      initialMessage: { messageId: `rejected-message-${projectId}`, text: 'must not run', attachments: [] },
+    }), /project/i);
+  }
+  assert.equal(engine.requests.filter(request => request.method === 'hoh/executor/access/set').length, accessSetsBeforeRejectedLaunch);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'thread-site' })).thread.runtimeMode, 'approval-required');
   // T3 may create a scratch draft before its project picker settles. The explicit launch project
   // wins before the first prompt, and that association is durable across a window restart.
   await client.call('orchestration.dispatchCommand', {

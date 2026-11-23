@@ -147,6 +147,9 @@ export class HohHost {
   /** A startup access/get captured before a person's later choice must not overwrite that particular field. */
   private modeRevision = 0;
   private modelRevision = 0;
+  /** Only the newest global access/get may publish either success or failure. Lost engines and
+   * an explicit access/set invalidate every read begun against the older state. */
+  private accessGeneration = 0;
   private settingsOverrides: Record<string, unknown> = {};
   private workspaceRoot: string;
   private workspaceKnown = false;
@@ -517,11 +520,13 @@ export class HohHost {
   }
 
   private async readAccess(): Promise<boolean> {
+    const accessGeneration = ++this.accessGeneration;
     const modeRevision = this.modeRevision;
     const modelRevision = this.modelRevision;
     try {
       const access = await this.engine.request('hoh/executor/access/get', { executor: 'claude' });
       if (!isAccessMode(access?.mode)) throw new Error('The engine returned an unknown Claude access mode.');
+      if (accessGeneration !== this.accessGeneration) return this.mode !== null;
       if (modeRevision === this.modeRevision) {
         const changed = this.mode !== access.mode;
         this.mode = access.mode;
@@ -533,6 +538,7 @@ export class HohHost {
         this.selectedModel = access.selected.model;
       return true;
     } catch (error) {
+      if (accessGeneration !== this.accessGeneration || modeRevision !== this.modeRevision) return this.mode !== null;
       this.mode = null;
       this.accessError = errorText(error) || 'Claude access mode is unavailable.';
       return false;
@@ -766,6 +772,7 @@ export class HohHost {
 
   /** The engine process ended: no turn of it is still running. History is read again when shown. */
   private onEngineLost() {
+    this.accessGeneration++;
     this.mode = null;
     this.accessError = 'Claude access mode is unknown while the engine is unavailable.';
     // Fail closed immediately: T3 must stop showing or sending a stale mode while the
@@ -883,16 +890,21 @@ export class HohHost {
 
   /** A draft can be created before T3's project picker settles. Honour the explicit project on
    * launch as the authoritative choice, before the first prompt reaches Claude. */
-  private async selectLaunchProject(thread: ThreadModel, projectId: unknown) {
-    if (typeof projectId !== 'string' || projectId === thread.projectId) return;
+  private validateLaunchProject(thread: ThreadModel, projectId: unknown): FolderProject | null {
+    if (typeof projectId !== 'string' || projectId === thread.projectId) return null;
     if (projectId === HOH_PROJECT_ID) {
       // Moving an existing engine session back to its implicit startup folder has no safe typed
       // operation. T3 creates scratch drafts in scratch already, so never guess a broader path.
       if (thread.projectId !== HOH_PROJECT_ID) throw new Error('An existing project chat cannot be moved to No project.');
-      return;
+      return null;
     }
     const folder = this.folders.get(projectId);
     if (!folder) throw new Error('This project does not exist.');
+    return folder;
+  }
+
+  private async selectLaunchProject(thread: ThreadModel, folder: FolderProject | null) {
+    if (!folder) return;
     const set = await this.engine.request('session/working-directory/set', { sessionId: thread.id, path: folder.workspaceRoot });
     const resolved = folderPath(set?.cwd);
     if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
@@ -1037,6 +1049,7 @@ export class HohHost {
     const wanted = accessModeOf(mode);
     this.modeRevision++;
     if (wanted === current) return;
+    this.accessGeneration++;
     await this.engine.request('hoh/executor/access/set', { executor: 'claude', mode: wanted });
     this.mode = wanted; this.accessError = null;
     for (const thread of this.threads.values()) { thread.mode = wanted; this.changed(thread.id); }
@@ -1335,9 +1348,12 @@ ${message.slice(0, 8000)}`;
     const threadId = typeof input.threadId === 'string' && input.threadId ? input.threadId : 'thread-' + (globalThis.crypto?.randomUUID?.() ?? this.now().toString(36));
     const existing = await this.loaded(threadId);
     try {
+      // Validate the complete project transition before access/set: a rejected launch must not
+      // mutate Claude's global permissions even when the request also asks for a wider mode.
+      const launchProject = existing ? this.validateLaunchProject(existing, input.projectId) : null;
       const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, interactionMode);
       if (existing) await this.applyMode(input.runtimeMode);
-      if (existing) await this.selectLaunchProject(thread, input.projectId);
+      if (existing) await this.selectLaunchProject(thread, launchProject);
       if (existing && interactionMode !== undefined) {
         thread.setInteractionMode(interactionMode);
         this.interactions.set(thread.id, thread.interactionMode); this.save();

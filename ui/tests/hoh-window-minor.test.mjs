@@ -22,8 +22,15 @@ test('T3 asset contract admits only its server paths and process-local blob prev
 });
 
 test('thread details card stays visible (CEO: it becomes the HOH-43 stats panel)', async () => {
-  const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
+  const [features, homeCss, quickView] = await Promise.all([
+    readFile(new URL('src/t3-entry/features.ts', root), 'utf8'),
+    readFile(new URL('src/t3-entry/hoh-screens/home.css', root), 'utf8'),
+    readFile(new URL('src/t3-entry/hoh-screens/QuickViewDialog.tsx', root), 'utf8'),
+  ]);
   assert.doesNotMatch(features, /\[data-thread-details-card\]/);
+  assert.doesNotMatch(homeCss, /\[data-thread-details-card\][^{]*\{[^}]*display:\s*none/s);
+  assert.match(quickView, /data-side-chat-pane/);
+  assert.match(quickView, /<ChatView/);
 });
 
 test('wide conversations reserve the ThreadDetails column and narrow ones release it', async () => {
