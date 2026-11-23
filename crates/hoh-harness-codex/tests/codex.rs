@@ -301,9 +301,8 @@ async fn stream_steps_and_exact_approval_ids_round_trip() {
             HarnessEvent::ReasoningFinal { text, .. } => reasoning_final = Some(text),
             HarnessEvent::ItemStarted {
                 item_id, action, ..
-            }
-                if item_id == "tool-1"
-                    && matches!(action, hoh_external_harness::HarnessAction::Tool { .. }) =>
+            } if item_id == "tool-1"
+                && matches!(action, hoh_external_harness::HarnessAction::Tool { .. }) =>
             {
                 tool_started = true;
             }
@@ -408,27 +407,19 @@ async fn nested_codex_events_keep_their_parent_through_the_item_lifecycle() {
                 assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
                 command_completed = true;
             }
-            HarnessEvent::TextDelta {
-                parent_item_id, ..
-            } => {
+            HarnessEvent::TextDelta { parent_item_id, .. } => {
                 assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
                 text_delta = true;
             }
-            HarnessEvent::TextFinal {
-                parent_item_id, ..
-            } => {
+            HarnessEvent::TextFinal { parent_item_id, .. } => {
                 assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
                 text_final = true;
             }
-            HarnessEvent::ReasoningDelta {
-                parent_item_id, ..
-            } => {
+            HarnessEvent::ReasoningDelta { parent_item_id, .. } => {
                 assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
                 reasoning_delta = true;
             }
-            HarnessEvent::ReasoningFinal {
-                parent_item_id, ..
-            } => {
+            HarnessEvent::ReasoningFinal { parent_item_id, .. } => {
                 assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
                 reasoning_final = true;
             }
