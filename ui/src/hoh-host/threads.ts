@@ -99,6 +99,15 @@ function toolRequest(name: string, args: Record<string, any>, cwd: string | null
 
 const STEP_TYPES = new Set(['command_execution', 'file_change', 'file_search', 'web_search', 'dynamic_tool']);
 
+/** Remove harness-only hand-back control text while preserving the subagent's actual report. */
+export function visibleSubagentResult(value: unknown): string {
+  let result = text(value).trim().replace(/<tools-used-before-summary>[\s\S]*?<\/tools-used-before-summary>\s*/gi, '').trim();
+  if (result.startsWith('[Subagent hand-back]')) {
+    result = result.replace(/^\[Subagent hand-back\][\s\S]*?\bThe report follows:\s*/i, '').trim();
+  }
+  return result;
+}
+
 /** One chat on the home screen. `state`: working, waiting (for the person's answer), done, ended (stopped or failed). */
 export interface HomeEntry {
   id: string; title: string; projectId: string;
@@ -112,6 +121,8 @@ export interface HomeEntry {
   canComplete?: boolean;
   /** The last turn has no durable ending because the window or engine disappeared, rather than the person pressing Stop. */
   interrupted?: boolean;
+  /** The person explicitly stopped this turn; Home keeps it visible without presenting it as a crash. */
+  stopped?: boolean;
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
   /** Subagents of the run: Claude's Task (Agent) calls — name and kind from the call, state from its result. */
   agents: HomeAgent[];
@@ -341,7 +352,7 @@ export class ThreadModel {
         return [`[${state}] ${label}`.trim(), result].filter(Boolean).join('\n');
       })
       .filter(Boolean);
-    const result = text(parent.subagentResult).trim();
+    const result = visibleSubagentResult(parent.subagentResult);
     if (result) sections.push(`Result\n${result}`);
     const transcript = sections.join('\n\n');
     if (transcript.length <= 20_000) parent.output = transcript;

@@ -240,9 +240,9 @@ test('a follow-up message goes to the same chat; Stop is the engine\'s cancel an
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
   const stopped = host.home.entries().find(entry => entry.id === 'thread-2');
   assert.deepEqual(
-    [stopped.state, stopped.interrupted, stopped.canComplete],
-    ['ended', undefined, undefined],
-    'the person\'s explicit Stop is not a crash-only waiting card',
+    [stopped.state, stopped.interrupted, stopped.stopped, stopped.canComplete],
+    ['waiting', undefined, true, true],
+    'the person\'s explicit Stop stays visible without becoming a crash card',
   );
   assert.deepEqual(await client.call('orchestration.forceStopThread', { threadId: 'thread-2' }), { outcome: 'killed', sharedWithThreadIds: [] });
   assert.equal(engine.cancelled, 2);
@@ -609,7 +609,7 @@ test('a late completed event directly reconciles an inferred engine loss', async
   assert.deepEqual([restored.state, restored.interrupted, restored.canComplete], ['waiting', undefined, true]);
 });
 
-test('an explicit Stop after recovery cannot be reclassified as a crash interruption', async () => {
+test('an explicit Stop after recovery remains a stopped waiting card across immediate restart', async () => {
   const items = new Map();
   const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
   const engine = new FakeEngine();
@@ -623,14 +623,55 @@ test('an explicit Stop after recovery cannot be reclassified as a crash interrup
   host.flush();
   assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-recovered'].interrupted, true);
 
+  let releaseCancel;
+  const cancelGate = new Promise(resolve => { releaseCancel = resolve; });
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'session/cancel') await cancelGate;
+    return request(method, params);
+  };
+
   // Do not flush the recovery before Stop: cancel itself must clear even a not-yet-reconciled crash disposition.
+  // Restart before the cancel RPC answers, which is the window-close race that used to resurrect Interrupted.
   engine.emitStatus('chat-stop-recovered', 'running');
-  await client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stop-recovered', threadId: 'chat-stop-recovered' });
-  engine.emitEvent('chat-stop-recovered', 'turn/end', { turn: 1, reason: { kind: 'aborted' } });
+  const stopping = client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stop-recovered', threadId: 'chat-stop-recovered' });
+  await tick(5);
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-recovered'], { turnOrdinal: 1, state: 'waiting', stopped: true });
+
+  host.stop();
+  const restarted = connect(new FakeEngine({ store: engine.store }), { storage });
+  await restarted.host.start();
+  const restored = restarted.host.home.entries().find(entry => entry.id === 'chat-stop-recovered');
+  assert.deepEqual([restored.state, restored.interrupted, restored.stopped, restored.canComplete], ['waiting', undefined, true, true]);
+  releaseCancel();
+  await stopping;
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-recovered'], { turnOrdinal: 1, state: 'waiting', stopped: true });
+  restarted.host.stop();
+});
+
+test('a rejected Stop rolls back the durable stopped intent while the original run stays live', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('chat-stop-refused', 'Stop refused', []);
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'session/cancel'
+    ? Promise.reject(new Error('cancel refused'))
+    : request(method, params);
+  const { client, host } = connect(engine, { storage, throttleMs: 600000 });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-stop-refused' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-stop-refused', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'keep running' }] });
+  engine.emitEvent('chat-stop-refused', 'turn/start', { turn: 1 });
   host.flush();
-  const stopped = host.home.entries().find(entry => entry.id === 'chat-stop-recovered');
-  assert.deepEqual([stopped.state, stopped.interrupted, stopped.canComplete], ['ended', undefined, undefined]);
-  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-recovered'], undefined);
+
+  await assert.rejects(
+    client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stop-refused', threadId: 'chat-stop-refused' }),
+    /cancel refused/,
+  );
+  assert.equal(host.home.entries().find(entry => entry.id === 'chat-stop-refused').state, 'working');
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-refused'], undefined);
+  host.stop();
 });
 
 test('socket: interrupt and close end the subscriptions; other addresses are refused', async () => {
@@ -1195,7 +1236,10 @@ test('parallel subagent text and tools stay nested under their Task, drive each 
   // A native child can arrive after its Task result and after HoH has moved to another turn. Its native
   // parent id remains stable, and an unfinished late child keeps the home row working.
   engine.emitEvent('chat-nested', 'tool/result', {
-    turn: 1, message: { toolCallId: 'task-alpha', content: [{ type: 'text', text: 'alpha final' }] },
+    turn: 1, message: { toolCallId: 'task-alpha', content: [{
+      type: 'text',
+      text: '<tools-used-before-summary>Bash</tools-used-before-summary>\n[Subagent hand-back] The text below is a control envelope. The report follows:\nalpha final',
+    }] },
   });
   engine.emitEvent('chat-nested', 'tool/call', {
     turn: 2, callId: 'late-alpha', parentCallId: 'task-alpha', name: 'Grep', arguments: JSON.stringify({ pattern: 'late' }),
@@ -1211,7 +1255,9 @@ test('parallel subagent text and tools stay nested under their Task, drive each 
   host.flush();
   const lateAlpha = itemsOf(lateSnapshot).find(item => item.parentItemId === alpha.id && item.pattern === 'late');
   assert(lateAlpha);
-  assert.match(itemsOf(lateSnapshot).find(item => item.id === alpha.id).output, /late match[\s\S]*Result\nalpha final/);
+  const sanitizedOutput = itemsOf(lateSnapshot).find(item => item.id === alpha.id).output;
+  assert.match(sanitizedOutput, /late match[\s\S]*Result\nalpha final/);
+  assert.doesNotMatch(sanitizedOutput, /tools-used-before-summary|Subagent hand-back|The report follows/);
   lateEntry = host.home.entries().find(candidate => candidate.id === 'chat-nested').agents.find(agent => agent.name === 'Alpha');
   assert.deepEqual([lateEntry.state, lateEntry.currentStep], ['done', 'Search: late']);
 

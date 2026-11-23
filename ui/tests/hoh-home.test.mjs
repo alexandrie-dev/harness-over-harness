@@ -168,9 +168,13 @@ test('agent cards have a separate accessible open target and an explicit human c
   assert.match(homeSource, /className="hoh-card__open" aria-label=\{`Open \$\{entry\.title\}`\}/);
   assert.match(homeSource, /className="hoh-card__complete"[^>]*onClick=\{\(\) => void view\.host\?\.complete\(entry\.id\)\}/);
   assert.match(homeSource, />Mark done<\/Button>/);
-  assert.match(homeSource, /entry\.interrupted \? 'Interrupted' : 'Waiting for your answer'/);
+  assert.match(homeSource, /entry\.stopped \? 'Stopped' : entry\.interrupted \? 'Interrupted' : 'Waiting for your answer'/);
   assert.match(css, /--hoh-card-width:\s*min\(360px, calc\(\(50vw - 14px\) \/ 2\)\)/);
   assert.match(css, /grid-template-columns:\s*repeat\(auto-fill, var\(--hoh-card-width\)\)/);
+  assert.match(css, /\.hoh-home__cards\s*\{[^}]*justify-content:\s*start/);
+  assert.match(css, /\.hoh-projects\s*\{[^}]*justify-content:\s*start/);
+  assert.match(css, /scroll-padding-bottom:\s*var\(--hoh-home-scroll-clearance\)/);
+  assert.match(css, /padding:\s*28px 0 var\(--hoh-home-scroll-clearance\)/);
   assert.match(css, /\.hoh-card__complete\s*\{[^}]*pointer-events:\s*auto/);
 });
 
@@ -189,6 +193,7 @@ test('empty Home joins the greeting and native T3 draft composer into one centre
   ]);
   assert.match(vite, /hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end/);
   assert.match(css, /\.hoh-draft-hero:has\(> \.hoh-home:not\(\[data-busy\]\)\)\s*\{\s*justify-content:\s*center/);
+  assert.match(css, /inset-block-start:\s*calc\(-1 \* var\(--hoh-notch-height, 0px\)\)/);
   assert.match(css, /\.hoh-home:not\(\[data-busy\]\)\s*\{[^}]*flex:\s*0 0 auto[^}]*margin-bottom:\s*28px/);
   assert.match(css, /@media \(max-height: 34rem\)[\s\S]*justify-content:\s*flex-end/);
 });

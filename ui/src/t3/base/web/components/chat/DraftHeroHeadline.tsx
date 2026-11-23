@@ -137,6 +137,7 @@ export function DraftHeroHeadline({
         ) ?? null);
   const scratchTargetEnvironmentId = scratchEnvironmentId(activeProjectRef?.environmentId ?? null);
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
+  const isHohHomeDraft = activeProject?.id === "hoh-project";
   const isScratchDraft =
     activeProject !== null &&
     isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
@@ -365,7 +366,9 @@ export function DraftHeroHeadline({
         </DraftHeroProjectHeading>
       ) : (
         <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-          {isScratchDraft ? (
+          {isHohHomeDraft ? (
+            <>What should we build in HoH?</>
+          ) : isScratchDraft ? (
             <T>What should we work on?</T>
           ) : canChooseProject ? (
             <T>
@@ -376,7 +379,7 @@ export function DraftHeroHeadline({
           )}
         </h1>
       )}
-      {scratchWorkspaceRoot === null ? null : (
+      {scratchWorkspaceRoot === null || isHohHomeDraft ? null : (
         <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}
         </p>

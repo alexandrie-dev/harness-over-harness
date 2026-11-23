@@ -66,8 +66,13 @@ for (const file of await cssFiles(ENTRY)) {
 // ---- 2. Собранное окно ----
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json', '.wasm': 'application/wasm' };
 const ORIGIN = 'http://hoh-window.test';
+const SIZES = [[2560, 1440], [2000, 1137], [1920, 1080], [1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]
+  .filter(([width, height]) => !process.env.HOH_GRID_SIZE || process.env.HOH_GRID_SIZE === `${width}x${height}`);
 function engineWith(busy) {
   const engine = new FakeEngine();
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  engine.clock = today.getTime();
   engine.access = 'confirm';
   engine.claude = { installed: true, version: '2.1.0', auth: 'authenticated', models: [{ id: 'opus', displayName: 'Claude Opus', isDefault: true }] };
   if (!busy) return engine;
@@ -127,11 +132,12 @@ try {
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache') },
     args: ['--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--no-first-run'],
   });
-  for (const [width, height] of [[2560, 1440], [2000, 1137], [1920, 1080], [1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]) {
+  for (const [width, height] of SIZES) {
     for (const busy of [false, true]) {
       const label = `${width}×${height} ${busy ? 'с агентами' : 'пустая главная'}`;
       const engine = engineWith(busy);
       const { context, page, off } = await open(browser, engine, { width, height });
+      let step = 'open Home';
       try {
         if (!busy) {
           await page.getByRole('button', { name: 'Start', exact: true }).click();
@@ -139,13 +145,16 @@ try {
         }
         await page.getByText(/Good (night|morning|afternoon|evening)/).first().waitFor({ state: 'attached' });
         if (busy) {
+          step = 'attach busy Home cards';
           for (const sessionId of ['w1', 'w2', 'w3']) engine.emit('session.status', { sessionId, status: 'running' });
           const waitingSession = engine.sessions.get('w2');
           engine.emit('session.event', { sessionId: 'w2', event: engine.append(waitingSession, 'turn/start', { turn: 2 }) });
           engine.emit('session.event', { sessionId: 'w2', event: engine.append(waitingSession, 'tool/call', { callId: 'w2-live-c', turn: 2, name: 'Bash', arguments: { command: 'printf "prepare the weekly report, verify every source twice, compare the totals with the previous period, explain every discrepancy, and save the complete reviewed result to the requested destination"' } }) });
           engine.emit('approval.pending', { approvalId: 'appr-1', sessionId: 'w2', risk: 'unassessed', humanText: 'Claude asks to run a deliberately long command that wraps over several lines: printf "prepare report, verify every source, and save the complete result"', expiresAt: Date.now() + 600_000 });
           await page.locator('.hoh-card').first().waitFor({ state: 'attached' });
+          step = 'attach approval card';
           await page.locator('.hoh-ask').first().waitFor({ state: 'attached' });
+          step = 'mark a completed card Done';
           await page.evaluate(() => window.__HOH_HOME__.complete('d1'));
           await page.locator('.hoh-card[data-state="done"]').waitFor({ state: 'attached' });
         }
@@ -209,6 +218,7 @@ try {
           }
         }
         if (busy) { // Learning и живая страница Plugins; «New chat» закрывает обе.
+          step = 'open Learning';
           await page.locator('[data-hoh-page-item="learning"]').click();
           await page.locator('.hoh-page').waitFor({ state: 'visible' });
           const learningText = await page.locator('.hoh-page').innerText();
@@ -217,51 +227,26 @@ try {
           const pageMiss = await page.evaluate(() => window.hohGridCheck());
           for (const miss of pageMiss) fail(`${label}: страница Learning: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
 
+          step = 'open Plugins';
           await page.locator('[data-hoh-page-item="plugins"]').click();
           await page.locator('.hoh-plugins').waitFor({ state: 'visible' });
           if (await page.locator('[data-hoh-page-item="plugins"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Plugins не подсвечен`);
-          if (await page.locator('[data-plugin-list] [data-plugin-id]').count() !== 7) fail(`${label}: страница Plugins показывает не 7 образцов`);
-          if (!/Sample data\s*— not connected to the engine yet\./.test((await page.locator('.hoh-plugins__sample').innerText()).replace(/\s+/g, ' '))) fail(`${label}: нет заметной пометки об образцовых данных`);
-          if (await page.getByRole('heading', { name: 'Built-in plugins' }).count() !== 1) fail(`${label}: нет отдельного раздела встроенных плагинов`);
+          if (await page.locator('[data-plugin-list] [data-plugin-id]').count() !== 0) fail(`${label}: страница Plugins выдумывает установленные плагины`);
+          if (await page.locator('[data-plugin-empty]').count() !== 1) fail(`${label}: нет честного пустого состояния Plugins`);
+          if (await page.getByRole('heading', { name: 'No plugins installed' }).count() !== 1) fail(`${label}: нет заголовка No plugins installed`);
+          const pluginText = (await page.locator('.hoh-plugins').innerText()).replace(/\s+/g, ' ');
+          if (/Sample data|Variant [ABC]/.test(pluginText)) fail(`${label}: на Plugins остались заглушка или переключатель варианта`);
           const overflow = await page.locator('.hoh-plugins').evaluate((node) => node.scrollWidth > node.clientWidth + 1);
           if (overflow) fail(`${label}: страница Plugins имеет горизонтальное переполнение`);
 
           if (width === 1440 && height === 900) {
+            step = 'open plugin installation help';
             await page.locator('[data-add-plugin-folder]').click();
             await page.getByRole('heading', { name: 'Add plugin from folder' }).waitFor();
+            if (await page.getByText('Plugin installation is not connected to the HoH engine yet.').count() !== 1) fail(`${label}: диалог установки скрывает отсутствие engine API`);
             await page.locator('[data-slot="dialog-footer"]').getByRole('button', { name: 'Close' }).click();
-
-            await page.getByRole('button', { name: 'Orbit Tools' }).click();
-            await page.locator('[data-plugin-detail="alexandrie-orbit-tools"]').waitFor();
-            await page.getByRole('button', { name: 'Disable' }).click();
-            if (await page.locator('[data-plugin-status="approval-pending"]').count() < 1) fail(`${label}: Disable не переводит образец в Approval pending`);
-            await page.getByRole('button', { name: 'More plugin actions' }).click();
-            await page.getByRole('menuitem', { name: 'Copy plugin ID' }).click();
-            await page.getByText('Plugin ID copied').waitFor();
-            if (await page.evaluate(() => navigator.clipboard.readText()) !== 'alexandrie-orbit-tools') fail(`${label}: меню не скопировало настоящий plugin ID`);
-            await page.getByRole('button', { name: 'Copy SHA-256 fingerprint' }).click();
-            await page.getByText('Fingerprint copied').waitFor();
-            if (await page.evaluate(() => navigator.clipboard.readText()) !== 'sha256:3d7f6bf47d824da418d43fbba0628dce3f7825688b364a9a292485cab13ed02b') fail(`${label}: кнопка не скопировала полный SHA-256`);
-            await page.getByRole('button', { name: 'All plugins' }).click();
-
-            await page.getByRole('button', { name: 'Variant B' }).click();
-            const firstRow = page.locator('.hoh-plugin-row__trigger').first();
-            await firstRow.focus(); await page.keyboard.press('Enter');
-            if (await firstRow.getAttribute('aria-expanded') !== 'true') fail(`${label}: строка варианта B не раскрывается клавиатурой`);
-            await page.getByRole('button', { name: 'Open plugin page' }).first().click();
-            await page.locator('[data-plugin-detail]').waitFor();
-            await page.getByRole('button', { name: 'All plugins' }).click();
-
-            await page.getByRole('button', { name: 'Variant C' }).click();
-            if (await page.locator('.hoh-plugin-split').count() !== 1) fail(`${label}: вариант C не показывает две колонки`);
-            await page.getByRole('button', { name: 'Open full page' }).click();
-            await page.locator('[data-plugin-detail]').waitFor();
-            if (await page.evaluate(() => localStorage.getItem('hoh:plugins-design-variant')) !== 'C') fail(`${label}: выбранный вариант C не запомнен`);
-            await page.getByRole('button', { name: 'All plugins' }).click();
-            await page.reload();
-            await page.locator('[data-hoh-page-item="plugins"]').click();
-            await page.locator('.hoh-plugins[data-plugin-variant="C"]').waitFor();
           }
+          step = 'return to New chat';
           await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();
           if (await page.locator('.hoh-page').count() !== 0) fail(`${label}: «New chat» не закрыл страницу`);
           if (width === 1440 && height === 900) {
@@ -275,7 +260,7 @@ try {
           }
         }
       } catch (error) {
-        fail(`${label}: ${String(error.message).split('\n')[0]}`);
+        fail(`${label}: ${step}: ${String(error.message).split('\n')[0]}`);
         if (process.env.HOH_GRID_DEBUG) { await page.screenshot({ path: join(process.env.HOH_GRID_DEBUG, `${width}x${height}-${busy}.png`) }); console.error((await page.evaluate(() => document.body.innerText)).slice(0, 400)); }
       }
       off(); await context.close();

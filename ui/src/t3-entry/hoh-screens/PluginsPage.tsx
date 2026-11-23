@@ -1,5 +1,5 @@
 import {
-  ArrowLeftIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, CopyIcon, FolderPlusIcon,
+  ArrowLeftIcon, CheckIcon, ChevronDownIcon, CopyIcon, FolderPlusIcon,
   LockKeyholeIcon, MoreHorizontalIcon, PackageOpenIcon, PuzzleIcon, Trash2Icon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -12,25 +12,43 @@ import {
 } from '~/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '~/components/ui/menu';
 import { writeTextToClipboard } from '~/hooks/useCopyToClipboard';
-import {
-  PLUGIN_STATE_LABELS, SAMPLE_PLUGINS, pluginTone,
-  type PluginState, type SamplePlugin,
-} from './plugins-sample';
 import './plugins.css';
 
-export type PluginVariant = 'A' | 'B' | 'C';
-const VARIANT_KEY = 'hoh:plugins-design-variant';
+type PluginLanguage = 'MD' | 'TS' | 'Rust' | 'Go';
+type PluginState = 'enabled' | 'quarantined' | 'update-pending' | 'blocked' | 'disabled' | 'approval-pending';
 
-export function parsePluginVariant(value: string | null): PluginVariant {
-  return value === 'B' || value === 'C' ? value : 'A';
+interface Plugin {
+  id: string;
+  name: string;
+  publisher: string;
+  version: string;
+  previousVersion?: string;
+  languages: readonly PluginLanguage[];
+  state: PluginState;
+  builtIn: boolean;
+  summary: string;
+  contributions: readonly string[];
+  replacements: readonly string[];
+  permissions: readonly string[];
+  fingerprint: string;
 }
 
-function storedVariant(): PluginVariant {
-  try { return parsePluginVariant(window.localStorage.getItem(VARIANT_KEY)); }
-  catch { return 'A'; }
+const PLUGIN_STATE_LABELS: Readonly<Record<PluginState, string>> = {
+  enabled: 'Enabled', quarantined: 'Quarantined · approval needed',
+  'update-pending': 'Update approval needed', blocked: 'Blocked', disabled: 'Disabled',
+  'approval-pending': 'Approval pending',
+};
+
+// The engine does not expose plugin inventory yet. Keep this honest and empty until it does.
+export const INSTALLED_PLUGINS: readonly Plugin[] = [];
+
+function pluginTone(id: string): number {
+  let hash = 0;
+  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return hash % 6;
 }
 
-function FolderTile({ plugin }: { plugin: SamplePlugin }) {
+function FolderTile({ plugin }: { plugin: Plugin }) {
   return (
     <span className="hoh-plugin-folder" data-tone={pluginTone(plugin.id)} aria-hidden="true">
       <span className="hoh-plugin-folder__back" />
@@ -49,13 +67,13 @@ function StatusBadge({ state }: { state: PluginState }) {
   );
 }
 
-function LanguageBadges({ plugin }: { plugin: SamplePlugin }) {
+function LanguageBadges({ plugin }: { plugin: Plugin }) {
   return <span className="hoh-plugin-languages">{plugin.languages.map((language) => <Badge key={language} variant="outline">{language}</Badge>)}</span>;
 }
 
-function PluginIdentity({ plugin, compact = false }: { plugin: SamplePlugin; compact?: boolean }) {
+function PluginIdentity({ plugin }: { plugin: Plugin }) {
   return (
-    <div className="hoh-plugin-identity" data-compact={compact || undefined}>
+    <div className="hoh-plugin-identity">
       <FolderTile plugin={plugin} />
       <div className="hoh-plugin-identity__copy">
         <span className="hoh-plugin-eyebrow">{plugin.publisher} · {plugin.version}</span>
@@ -75,25 +93,24 @@ function FactList({ title, values, empty = 'None' }: { title: string; values: re
 }
 
 interface DetailProps {
-  plugin: SamplePlugin;
-  embedded?: boolean;
+  plugin: Plugin;
   copied: string | null;
   copyError: string | null;
-  onBack?: () => void;
-  onOpenFull?: () => void;
-  onCopy: (label: string, value: string) => void;
-  onRequestState: (id: string) => void;
-  onRequestRemove: (plugin: SamplePlugin) => void;
+  onBack(): void;
+  onCopy(label: string, value: string): void;
+  onRequestState(id: string): void;
+  onRequestRemove(plugin: Plugin): void;
 }
 
-function PluginDetail({ plugin, embedded, copied, copyError, onBack, onOpenFull, onCopy, onRequestState, onRequestRemove }: DetailProps) {
+/** The retained variant-C detail presentation, opened from the variant-A card list. */
+function PluginDetail({ plugin, copied, copyError, onBack, onCopy, onRequestState, onRequestRemove }: DetailProps) {
   const shortFingerprint = `${plugin.fingerprint.slice(0, 19)}…${plugin.fingerprint.slice(-8)}`;
   const action = plugin.state === 'enabled' ? 'Disable' : 'Enable';
   const blocked = plugin.state === 'blocked';
   return (
-    <article className="hoh-plugin-detail" data-plugin-detail={plugin.id} data-embedded={embedded || undefined}>
+    <article className="hoh-plugin-detail" data-plugin-detail={plugin.id}>
       <header className="hoh-plugin-detail__header">
-        {!embedded && onBack ? <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeftIcon />All plugins</Button> : null}
+        <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeftIcon />All plugins</Button>
         <div className="hoh-plugin-detail__hero">
           <PluginIdentity plugin={plugin} />
           <div className="hoh-plugin-detail__state"><StatusBadge state={plugin.state} /><LanguageBadges plugin={plugin} /></div>
@@ -115,7 +132,6 @@ function PluginDetail({ plugin, embedded, copied, copyError, onBack, onOpenFull,
           </DropdownMenu>
           {copied ? <span className="hoh-plugin-copied" role="status"><CheckIcon />{copied} copied</span> : null}
           {copyError ? <span className="hoh-plugin-copy-error" role="status">{copyError}</span> : null}
-          {embedded && onOpenFull ? <Button className="hoh-plugin-detail__full" size="sm" variant="ghost" onClick={onOpenFull}>Open full page<ChevronRightIcon /></Button> : null}
         </div>
       </header>
       <div className="hoh-plugin-detail__grid">
@@ -135,7 +151,7 @@ function PluginDetail({ plugin, embedded, copied, copyError, onBack, onOpenFull,
   );
 }
 
-function CardGrid({ plugins, onOpen }: { plugins: readonly SamplePlugin[]; onOpen: (plugin: SamplePlugin) => void }) {
+function CardGrid({ plugins, onOpen }: { plugins: readonly Plugin[]; onOpen(plugin: Plugin): void }) {
   return (
     <div className="hoh-plugin-grid">
       {plugins.map((plugin) => (
@@ -151,72 +167,30 @@ function CardGrid({ plugins, onOpen }: { plugins: readonly SamplePlugin[]; onOpe
   );
 }
 
-function ExpandableList({ plugins, expanded, onExpand, onOpen }: { plugins: readonly SamplePlugin[]; expanded: string | null; onExpand: (id: string) => void; onOpen: (plugin: SamplePlugin) => void }) {
+function EmptyPlugins({ onAdd }: { onAdd(): void }) {
   return (
-    <div className="hoh-plugin-rows">
-      {plugins.map((plugin) => {
-        const open = expanded === plugin.id;
-        const panelId = `plugin-row-${plugin.id}`;
-        return (
-          <article key={plugin.id} className="hoh-plugin-row" data-state={plugin.state} data-plugin-id={plugin.id}>
-            <button type="button" className="hoh-plugin-row__trigger" aria-expanded={open} aria-controls={panelId} onClick={() => onExpand(plugin.id)}>
-              <PluginIdentity plugin={plugin} compact />
-              <span className="hoh-plugin-row__meta"><StatusBadge state={plugin.state} /><LanguageBadges plugin={plugin} />{open ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
-            </button>
-            {open ? (
-              <div className="hoh-plugin-row__panel" id={panelId}>
-                <p>{plugin.summary}</p>
-                <FactList title="Adds" values={plugin.contributions} />
-                <FactList title="Permissions and data" values={plugin.permissions} />
-                <Button size="sm" variant="outline" onClick={() => onOpen(plugin)}>Open plugin page<ChevronRightIcon /></Button>
-              </div>
-            ) : null}
-          </article>
-        );
-      })}
-    </div>
+    <section className="hoh-plugins-empty" data-plugin-empty>
+      <span className="hoh-plugins-empty__icon"><PackageOpenIcon aria-hidden /></span>
+      <h2>No plugins installed</h2>
+      <p>Plugins can be added from a local folder once plugin installation is available in HoH.</p>
+      <Button variant="outline" onClick={onAdd}><FolderPlusIcon />How to install a plugin</Button>
+    </section>
   );
-}
-
-function MasterList({ plugins, selectedId, onSelect }: { plugins: readonly SamplePlugin[]; selectedId: string; onSelect: (plugin: SamplePlugin) => void }) {
-  return (
-    <div className="hoh-plugin-master">
-      {plugins.map((plugin) => (
-        <button key={plugin.id} type="button" className="hoh-plugin-master__item" data-state={plugin.state} data-selected={plugin.id === selectedId || undefined} aria-pressed={plugin.id === selectedId} onClick={() => onSelect(plugin)}>
-          <PluginIdentity plugin={plugin} compact />
-          <StatusBadge state={plugin.state} />
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function GroupHeading({ builtIn }: { builtIn: boolean }) {
-  return <div className="hoh-plugin-group-title"><h2>{builtIn ? 'Built-in plugins' : 'Installed plugins'}</h2><span>{builtIn ? 'Shipped with HoH' : 'Added to this installation'}</span></div>;
 }
 
 export function PluginsPage() {
-  const [variant, setVariant] = useState<PluginVariant>(storedVariant);
   const [statuses, setStatuses] = useState<Partial<Record<string, PluginState>>>({});
-  const [selectedId, setSelectedId] = useState(SAMPLE_PLUGINS.find((plugin) => !plugin.builtIn)?.id ?? SAMPLE_PLUGINS[0].id);
-  const [detailMode, setDetailMode] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [folderDialog, setFolderDialog] = useState(false);
-  const [removePlugin, setRemovePlugin] = useState<SamplePlugin | null>(null);
+  const [removePlugin, setRemovePlugin] = useState<Plugin | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
-  const plugins = SAMPLE_PLUGINS.map((plugin) => ({ ...plugin, state: statuses[plugin.id] ?? plugin.state }));
-  const installed = plugins.filter((plugin) => !plugin.builtIn);
-  const builtIn = plugins.filter((plugin) => plugin.builtIn);
-  const selected = plugins.find((plugin) => plugin.id === selectedId) ?? plugins[0];
+  const plugins = INSTALLED_PLUGINS.map((plugin) => ({ ...plugin, state: statuses[plugin.id] ?? plugin.state }));
+  const selected = plugins.find((plugin) => plugin.id === selectedId) ?? null;
 
-  const chooseVariant = (next: PluginVariant) => {
-    setVariant(next); setDetailMode(false); setExpanded(null);
-    try { window.localStorage.setItem(VARIANT_KEY, next); } catch { /* blocked storage must not break the page */ }
-  };
-  const openPlugin = (plugin: SamplePlugin) => {
+  const openPlugin = (plugin: Plugin) => {
     document.querySelector('.hoh-page')?.scrollTo({ top: 0 });
-    setSelectedId(plugin.id); setDetailMode(true); setCopied(null); setCopyError(null);
+    setSelectedId(plugin.id); setCopied(null); setCopyError(null);
   };
   const copy = (label: string, value: string) => {
     setCopied(null); setCopyError(null);
@@ -230,50 +204,31 @@ export function PluginsPage() {
   const detailProps = { copied, copyError, onCopy: copy, onRequestState: requestState, onRequestRemove: setRemovePlugin };
 
   return (
-    <main className="hoh-plugins" data-plugin-variant={variant}>
+    <main className="hoh-plugins">
       <header className="hoh-plugins__top">
         <div><span className="hoh-plugins__kicker">Extensions</span><h1>Plugins</h1><p>Tools, skills, pages, and controls that extend HoH.</p></div>
         <Button variant="outline" onClick={() => setFolderDialog(true)} data-add-plugin-folder><FolderPlusIcon />Add from folder</Button>
       </header>
-      <div className="hoh-plugins__sample" role="note"><PackageOpenIcon /><strong>Sample data</strong><span>— not connected to the engine yet.</span></div>
-      <div className="hoh-plugins__round">
-        <span>Temporary · design round</span>
-        <div role="group" aria-label="Plugin page design variant">
-          {(['A', 'B', 'C'] as const).map((item) => <Button key={item} size="xs" variant={variant === item ? 'secondary' : 'ghost'} aria-pressed={variant === item} onClick={() => chooseVariant(item)}>Variant {item}</Button>)}
-        </div>
-      </div>
 
-      {detailMode ? <PluginDetail plugin={selected} onBack={() => setDetailMode(false)} {...detailProps} /> : variant === 'A' ? (
+      {selected ? <PluginDetail plugin={selected} onBack={() => setSelectedId(null)} {...detailProps} /> : plugins.length > 0 ? (
         <div className="hoh-plugins__groups" data-plugin-list>
-          <section><GroupHeading builtIn={false} /><CardGrid plugins={installed} onOpen={openPlugin} /></section>
-          <section><GroupHeading builtIn /><CardGrid plugins={builtIn} onOpen={openPlugin} /></section>
+          <section>
+            <div className="hoh-plugin-group-title"><h2>Installed plugins</h2><span>Added to this installation</span></div>
+            <CardGrid plugins={plugins} onOpen={openPlugin} />
+          </section>
         </div>
-      ) : variant === 'B' ? (
-        <div className="hoh-plugins__groups" data-plugin-list>
-          <section><GroupHeading builtIn={false} /><ExpandableList plugins={installed} expanded={expanded} onExpand={(id) => setExpanded(expanded === id ? null : id)} onOpen={openPlugin} /></section>
-          <section><GroupHeading builtIn /><ExpandableList plugins={builtIn} expanded={expanded} onExpand={(id) => setExpanded(expanded === id ? null : id)} onOpen={openPlugin} /></section>
-        </div>
-      ) : (
-        <div className="hoh-plugin-split" data-plugin-list>
-          <aside>
-            <GroupHeading builtIn={false} /><MasterList plugins={installed} selectedId={selected.id} onSelect={(plugin) => setSelectedId(plugin.id)} />
-            <GroupHeading builtIn /><MasterList plugins={builtIn} selectedId={selected.id} onSelect={(plugin) => setSelectedId(plugin.id)} />
-          </aside>
-          <PluginDetail plugin={selected} embedded onOpenFull={() => openPlugin(selected)} {...detailProps} />
-        </div>
-      )}
+      ) : <EmptyPlugins onAdd={() => setFolderDialog(true)} />}
 
       <Dialog open={folderDialog} onOpenChange={setFolderDialog}>
         <DialogPopup>
-          <DialogHeader><DialogTitle>Add plugin from folder</DialogTitle><DialogDescription>This design-round control is not connected to the system folder picker yet.</DialogDescription></DialogHeader>
-          <DialogPanel><p className="hoh-plugin-dialog-note">A real folder will be inspected, quarantined, and shown for approval before any plugin can run.</p></DialogPanel>
+          <DialogHeader><DialogTitle>Add plugin from folder</DialogTitle><DialogDescription>Plugin installation is not connected to the HoH engine yet.</DialogDescription></DialogHeader>
+          <DialogPanel><p className="hoh-plugin-dialog-note">When installation is available, choose a local plugin folder here. HoH will inspect it and ask for approval before anything can run.</p></DialogPanel>
           <DialogFooter><DialogClose render={<Button variant="outline" />}>Close</DialogClose><DialogAction disabled>Choose folder</DialogAction></DialogFooter>
         </DialogPopup>
       </Dialog>
       <Dialog open={removePlugin !== null} onOpenChange={(open) => { if (!open) setRemovePlugin(null); }}>
         <DialogPopup>
-          <DialogHeader><DialogTitle>Remove {removePlugin?.name}?</DialogTitle><DialogDescription>The real action will open a system confirmation window.</DialogDescription></DialogHeader>
-          <DialogPanel><p className="hoh-plugin-dialog-note">For this sample, requesting removal only moves the plugin to “Approval pending”. No files are changed.</p></DialogPanel>
+          <DialogHeader><DialogTitle>Remove {removePlugin?.name}?</DialogTitle><DialogDescription>HoH will ask for confirmation before changing installed plugins.</DialogDescription></DialogHeader>
           <DialogFooter>
             <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
             <DialogAction onClick={() => { if (removePlugin) requestState(removePlugin.id); setRemovePlugin(null); }}>Request removal</DialogAction>

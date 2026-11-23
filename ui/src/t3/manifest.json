@@ -202,6 +202,7 @@
       "web/branding.ts": "имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет",
       "web/components/chat/turnDetailAnnouncement.ts": "имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code»",
       "web/components/ChatView.logic.ts": "термин нового разговора: видимый заголовок черновика — New chat вместо New thread",
+      "web/components/chat/DraftHeroHeadline.tsx": "стабильная пустая главная: проект HoH с постоянным id всегда показывает продуктовый вопрос без подписи scratch-проекта",
       "web/components/CommandPalette.tsx": "термин нового разговора: видимые действия палитры — New chat вместо New thread"
     },
     "switches": [
