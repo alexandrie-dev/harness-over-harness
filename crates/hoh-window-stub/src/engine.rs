@@ -1008,6 +1008,14 @@ impl<W: Write> Engine<W> {
                     quoted(&request.path)
                 ))
             }
+            "hoh/workspace/add" => {
+                let request: hoh_protocol::WorkspaceAddParams =
+                    serde_json::from_value(params.clone()).map_err(|_| "invalid project folder")?;
+                Ok(format!(
+                    "Добавить папку {} как проект?",
+                    quoted(&request.cwd)
+                ))
+            }
             "hoh/executor/select" => Ok(
                 match (params["executor"].as_str(), params["model"].as_str()) {
                     (Some(executor), Some(model)) => {

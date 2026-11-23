@@ -99,6 +99,7 @@ privileged_test!(
 privileged_test!(probe_requires_mac, "hoh/model/probe");
 privileged_test!(model_key_requires_mac, "hoh/model/key/set");
 privileged_test!(setup_rules_requires_mac, "hoh/settings/rules/set");
+privileged_test!(project_folder_requires_mac, "hoh/workspace/add");
 
 /// After the host's approval the stub answers `hoh/executor/access/set` as the engine does: the
 /// protocol's result `{executor, mode}`, the fixture's answer (the host refuses any other form).

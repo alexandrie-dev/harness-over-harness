@@ -101,10 +101,14 @@ test('@ lists a folder project\'s files by relative path from the engine; "No pr
   // No project: nothing is asked of the engine.
   assert.deepEqual(await client.call('projects.searchEntries', { cwd: DEFAULT_FOLDER, query: '', limit: 80 }), { entries: [], truncated: false });
   assert.equal(sent(engine, 'hoh/workspace/entries').length, 0);
+  // A folder the engine does not know (a project added before it learned project folders): the menu is empty, not an error.
+  engine.folders.add('/home/person/Projects/old');
+  await client.call('projects.mutate', { type: 'project.create', commandId: 'co', projectId: 'p-old', title: 'old', workspaceRoot: '/home/person/Projects/old', createWorkspaceRootIfMissing: false, defaultModelSelection: null });
+  engine.projectFolders.delete('/home/person/Projects/old');
+  assert.deepEqual(await client.call('projects.searchEntries', { cwd: '/home/person/Projects/old', query: 'src', limit: 80 }), { entries: [], truncated: false });
+  // "Add project" tells the engine the folder: `@` answers before the project's first chat.
   await siteProject(client);
-  // A project with no conversation yet: the engine does not know the folder; the menu is empty, not an error.
-  assert.deepEqual(await client.call('projects.searchEntries', { cwd: SITE, query: 'src', limit: 80 }), { entries: [], truncated: false });
-  await newThread(client, 'chat-site', 'p-site');
+  assert.deepEqual(sent(engine, 'hoh/workspace/add').at(-1).params, { cwd: SITE });
   const found = await client.call('projects.searchEntries', { cwd: SITE + '/', query: 'src', limit: 80 });
   assert.deepEqual(found, { entries: [{ path: 'src', kind: 'directory' }, { path: 'src/main.ts', kind: 'file' }], truncated: false });
   assert.deepEqual(sent(engine, 'hoh/workspace/entries').at(-1).params, { cwd: SITE, query: 'src', limit: 80 });
@@ -149,4 +153,44 @@ test('/ and $ before the first turn: the folder\'s snapshot is what Claude decla
   assert.deepEqual(pending.providers[0].workspaceSnapshots[0].slashCommands, []);
   // Without a folder the answer is the machine's provider, as before.
   assert.equal((await client.call('server.refreshProviders', {})).providers[0].workspaceSnapshots, undefined);
+});
+
+test('/ and $ in a fresh window: "No project" asks for the engine\'s own folder and learns it; a new project is asked by its folder', async () => {
+  const engine = new FakeEngine();
+  engine.commands = [{ name: 'review' }];
+  engine.skills = [{ name: 'release-notes' }];
+  const { client } = connect(engine);
+  const config = await client.call('server.getConfig', {});
+  // Before any chat the host does not know the engine's folder: T3's "No project" shows a placeholder.
+  assert.equal(config.scratchWorkspaceRoot, '~/Documents/HoH');
+  const first = (await client.call('server.refreshProviders', { instanceId: 'claudeAgent', cwd: '~/Documents/HoH', workspaceSnapshotsOnDemand: true })).providers[0].workspaceSnapshots[0];
+  assert.deepEqual([first.cwd, first.slashCommands.map(command => command.name), first.skills.map(skill => skill.name)], ['~/Documents/HoH', ['review'], ['release-notes']]);
+  assert.deepEqual(sent(engine, 'hoh/executor/commands').at(-1).params, { executor: 'claude' });
+  assert.equal((await client.call('server.getConfig', {})).scratchWorkspaceRoot, DEFAULT_FOLDER);
+  // A $skill in "No project" goes as /skill.
+  await newThread(client, 'chat-plain');
+  await client.call('orchestration.dispatchCommand', dispatch('chat-plain', 'm-p', '$release-notes now'));
+  assert.deepEqual(sent(engine, 'session/prompt').at(-1).params.contentBlocks, [{ type: 'text', text: '/release-notes now' }]);
+  // A project just added: its folder, before its first chat.
+  await siteProject(client);
+  const site = (await client.call('server.refreshProviders', { instanceId: 'claudeAgent', cwd: SITE, workspaceSnapshotsOnDemand: true })).providers[0].workspaceSnapshots[0];
+  assert.equal(site.slashCommandsPending, undefined);
+  assert.deepEqual(sent(engine, 'hoh/executor/commands').at(-1).params, { executor: 'claude', cwd: SITE });
+});
+
+test('Add project: the engine is told the folder and names it as it resolved it; its refusal fails the add in English', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  const project = await client.call('projects.mutate', { type: 'project.create', commandId: 'ch', projectId: 'p-docs', title: 'Docs', workspaceRoot: '~/Documents', createWorkspaceRootIfMissing: false, defaultModelSelection: null });
+  assert.equal(project.workspaceRoot, '/home/person/Documents');
+  assert.deepEqual(sent(engine, 'hoh/workspace/add').at(-1).params, { cwd: '~/Documents' });
+  // The same folder typed another way is already a project.
+  const twice = await client.request('projects.mutate', { type: 'project.create', commandId: 'c2', projectId: 'p-docs-2', title: 'Docs', workspaceRoot: '/home/person/Documents', createWorkspaceRootIfMissing: false, defaultModelSelection: null });
+  assert.match(failureOf(twice).message, /already a project/);
+  engine.refuseFolder = true;
+  const refused = await client.request('projects.mutate', { type: 'project.create', commandId: 'c3', projectId: 'p-site', title: 'site', workspaceRoot: SITE, createWorkspaceRootIfMissing: false, defaultModelSelection: null });
+  assert.equal(failureOf(refused)._tag, 'ProjectMutationError');
+  assert.match(failureOf(refused).message, /cannot be a project: You declined this in the HoH confirmation window\./);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  assert.deepEqual((await shell.until(value => value.kind === 'snapshot')).snapshot.projects.map(p => p.id), ['p-docs']);
 });

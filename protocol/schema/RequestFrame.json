@@ -896,6 +896,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/workspace/add"
+        },
+        "params": {
+          "$ref": "#/$defs/WorkspaceAddParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "approval/request"
         },
         "params": {
@@ -2395,12 +2411,14 @@
           "type": "string"
         },
         "cwd": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "executor",
-        "cwd"
+        "executor"
       ]
     },
     "WorkspaceEntriesParams": {
@@ -2422,6 +2440,17 @@
         "cwd",
         "query",
         "limit"
+      ]
+    },
+    "WorkspaceAddParams": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd"
       ]
     },
     "ApprovalRequestParams": {

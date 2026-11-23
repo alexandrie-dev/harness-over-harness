@@ -580,9 +580,9 @@ fn window_may_call_exactly_the_five_executor_methods_and_no_new_ones() {
             "hoh/executor/select"
         ]
     );
-    // 47 methods before the executor ones, the five executor ones and `hoh/workspace/entries`
-    // (HOH-41); a new window method must be a deliberate change of this number.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 5 + 1);
+    // 47 methods before the executor ones, the five executor ones, `hoh/workspace/entries` and
+    // `hoh/workspace/add` (HOH-41); a new window method must be a deliberate change of this number.
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 5 + 2);
     for method in ["hoh/executor/access/get", "hoh/executor/discover"] {
         assert!(!bridge::needs_approval(
             method,
@@ -667,6 +667,7 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
             "session/working-directory/set",
             json!({"sessionId":"s-claude","path":"/home/u/work"}),
         ),
+        ("hoh/workspace/add", json!({"cwd":"/home/u/work"})),
     ] {
         for label in ["approval-1", "executor", "claude"] {
             let sent = bridge::request_with_approval_armed(
@@ -688,6 +689,32 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
         );
     }
     assert_eq!(broker.audit_log().len(), 1);
+    // HOH-41: "Add project" in the main window is the person's confirmation of that folder.
+    let add = json!({"cwd":"/home/u/work"});
+    assert!(bridge::needs_approval("hoh/workspace/add", &add));
+    assert!(bridge::request(&engine, "main", "hoh/workspace/add", add.clone()).is_err());
+    let _ = bridge::request_with_approval_armed(
+        &engine,
+        "main",
+        "hoh/workspace/add",
+        add.clone(),
+        |params| broker.confirm_from_main_window("hoh/workspace/add", params, None, now_ms()),
+        None,
+    );
+    assert!(
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame["method"] == "hoh/workspace/add")
+    );
+    let log = broker.audit_log();
+    assert_eq!(log.len(), 2);
+    assert_eq!((log[1].who, log[1].via), ("human", "main-window"));
+    assert_eq!(
+        log[1].human_text,
+        "Добавить папку «/home/u/work» как проект?"
+    );
     engine.stop();
 }
 

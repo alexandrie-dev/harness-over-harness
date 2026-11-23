@@ -59,6 +59,8 @@ pub const WINDOW_METHODS: &[&str] = &[
     // knows (the engine checks it); like every method here, only from the main window.
     "hoh/executor/commands",
     "hoh/workspace/entries",
+    // The person's "Add project": privileged, confirmed by that action in the main window.
+    "hoh/workspace/add",
 ];
 pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), String> {
     if label != "main" {

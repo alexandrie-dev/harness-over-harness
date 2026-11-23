@@ -3,7 +3,9 @@
 //! mode of an executor (`hoh/executor/access/get`, `hoh/executor/access/set`). HOH-41 adds what
 //! the window's `/`, `$` and `@` offer for a folder: the executor's own commands and skills
 //! (`hoh/executor/commands`) and the folder's files (`hoh/workspace/entries`). Both answer only for
-//! a folder the engine knows ([`Window::known_folder`]), never for any path the page names.
+//! a folder the engine knows ([`Window::known_folder`]), never for any path the page names; a
+//! project folder becomes known when the person adds it (`hoh/workspace/add`, privileged, kept in
+//! [`FOLDERS_FILE`]).
 //!
 //! `select` and `access/set` are privileged (`hoh_protocol::PRIVILEGED_METHODS`): the SDK server
 //! has the user allow the exact call before it reaches a handler here, and refuses it without a
@@ -23,7 +25,7 @@ use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
     ExecutorEffectiveAccess, ExecutorParams, ExecutorSelectParams, ExecutorSessionAccess,
-    WorkspaceEntriesParams, WorkspaceEntriesResult,
+    WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -39,6 +41,8 @@ use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
 
 /// The file in the engine's profile folder that keeps the window's choices.
 pub const CHOICES_FILE: &str = "external-harness.json";
+/// The file in the engine's profile folder that keeps the project folders the person added.
+pub const FOLDERS_FILE: &str = "workspace-folders.json";
 
 const DISCOVER: &str = "hoh/executor/discover";
 const SELECT: &str = "hoh/executor/select";
@@ -46,7 +50,10 @@ const ACCESS_GET: &str = "hoh/executor/access/get";
 const ACCESS_SET: &str = "hoh/executor/access/set";
 const COMMANDS: &str = "hoh/executor/commands";
 const ENTRIES: &str = "hoh/workspace/entries";
-const METHODS: [&str; 6] = [DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, COMMANDS, ENTRIES];
+const ADD: &str = "hoh/workspace/add";
+const METHODS: [&str; 7] = [
+    DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, COMMANDS, ENTRIES, ADD,
+];
 
 /// The saved choices.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -82,11 +89,25 @@ impl Plugin for ExternalHarnessWindowPlugin {
     type Deps = WindowDeps;
 
     async fn apply(ctx: Context, deps: WindowDeps, _config: Cfg<NoConfig>) -> Result<(), BoxError> {
+        let folders_path = deps.profile.dir.join(FOLDERS_FILE);
+        let folders = match tokio::fs::read(&folders_path).await {
+            Ok(bytes) => serde_json::from_slice::<Vec<PathBuf>>(&bytes).unwrap_or_else(|error| {
+                ctx.logger().warn(format_args!(
+                    "project folders {} are unusable: {error}",
+                    folders_path.display()
+                ));
+                Vec::new()
+            }),
+            Err(_) => Vec::new(),
+        };
         let window = Arc::new(Window {
             ctx: ctx.clone(),
             harnesses: deps.harnesses,
             agents: deps.agents,
             path: deps.profile.dir.join(CHOICES_FILE),
+            folders_path,
+            folders: std::sync::Mutex::new(folders.into_iter().collect()),
+            engine_home: deps.profile.home.clone(),
             saving: tokio::sync::Mutex::new(()),
         });
         for method in METHODS {
@@ -129,6 +150,11 @@ struct Window {
     harnesses: Service<ExternalHarnesses>,
     agents: Service<Agents>,
     path: PathBuf,
+    folders_path: PathBuf,
+    /// The project folders the person added, resolved (HOH-41).
+    folders: std::sync::Mutex<std::collections::BTreeSet<PathBuf>>,
+    /// The engine's own data (keys, sessions): never a project folder.
+    engine_home: PathBuf,
     /// One save at a time, so the file holds the last choice.
     saving: tokio::sync::Mutex<()>,
 }
@@ -157,13 +183,17 @@ impl Window {
             ENTRIES => Ok(serde_json::to_value(
                 self.entries(parse(method, params)?).await?,
             )?),
+            ADD => Ok(serde_json::to_value(
+                self.add_folder(parse(method, params)?).await?,
+            )?),
             _ => Err(format!("external harness window does not serve {method}").into()),
         }
     }
 
     /// The folder `cwd` names, when the engine knows it (HOH-41): the default folder of new chats,
-    /// or the folder of a conversation open in the engine — a folder the person chose in the main
-    /// window (`session/working-directory/set`, confirmed and journalled there). Both sides are
+    /// a project folder the person added ([`Window::add_folder`]), or the folder of a conversation
+    /// open in the engine — a folder the person chose in the main window
+    /// (`session/working-directory/set`); both are confirmed and journalled there. Both sides are
     /// resolved (links, `..`) before they are compared, so another spelling of a known folder
     /// passes and nothing else does. The answer is the resolved folder.
     async fn known_folder(&self, cwd: &str) -> Result<PathBuf, BoxError> {
@@ -182,6 +212,11 @@ impl Window {
                 .list()
                 .iter()
                 .map(|agent| directories.get(agent.session())),
+        );
+        known.extend(
+            lock_folders(&self.folders)
+                .iter()
+                .map(|folder| folder.to_string_lossy().into_owned()),
         );
         for folder in known {
             if tokio::fs::canonicalize(&folder)
@@ -204,7 +239,17 @@ impl Window {
             .service()
             .get(&params.executor)
             .ok_or_else(|| format!("no external harness named \"{}\"", params.executor))?;
-        let folder = self.known_folder(&params.cwd).await?;
+        // Without a folder: the engine's default one ("No project" of the window).
+        let cwd = match params.cwd {
+            Some(cwd) => cwd,
+            None => self
+                .ctx
+                .get::<WorkingDirectoryKey>()
+                .ok_or("the engine has no default folder")?
+                .default_directory()
+                .to_owned(),
+        };
+        let folder = self.known_folder(&cwd).await?;
         let found = harness.commands(folder).await?;
         let wire = |list: Vec<HarnessCommand>| {
             list.into_iter()
@@ -217,7 +262,7 @@ impl Window {
         };
         Ok(ExecutorCommandsResult {
             executor: params.executor,
-            cwd: params.cwd,
+            cwd,
             commands: wire(found.commands),
             skills: wire(found.skills),
         })
@@ -244,6 +289,54 @@ impl Window {
         })
         .await?;
         Ok(WorkspaceEntriesResult { entries, truncated })
+    }
+
+    /// A folder the person added as a project in the main window (`hoh/workspace/add`, privileged:
+    /// the SDK server has the host confirm the exact call first). It must be an existing folder;
+    /// `~` is the engine's home folder; the engine's own data is refused, as the sandbox refuses it
+    /// for a conversation. Kept on disk before it counts, so a refused write changes nothing.
+    async fn add_folder(&self, params: WorkspaceAddParams) -> Result<WorkspaceAddResult, BoxError> {
+        let typed = params.cwd.trim();
+        let path = match typed.strip_prefix('~') {
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+                let home = std::env::var_os("HOME").ok_or("the home folder is unknown")?;
+                PathBuf::from(home).join(rest.trim_start_matches('/'))
+            }
+            _ => PathBuf::from(typed),
+        };
+        if !path.is_absolute() {
+            return Err(format!("{typed:?} is not a full path of a folder").into());
+        }
+        let folder = tokio::fs::canonicalize(&path)
+            .await
+            .map_err(|error| format!("the folder {typed:?} cannot be opened: {error}"))?;
+        if !tokio::fs::metadata(&folder).await?.is_dir() {
+            return Err(format!("{typed:?} is not a folder").into());
+        }
+        let home = tokio::fs::canonicalize(&self.engine_home)
+            .await
+            .unwrap_or_else(|_| self.engine_home.clone());
+        if folder.starts_with(&home) || home.starts_with(&folder) {
+            return Err(format!("{typed:?} holds the data of HoH and cannot be a project").into());
+        }
+        let _one = self.saving.lock().await;
+        let mut folders = lock_folders(&self.folders).clone();
+        if folders.insert(folder.clone()) {
+            let list: Vec<&PathBuf> = folders.iter().collect();
+            write(&self.folders_path, &serde_json::to_vec_pretty(&list)?)
+                .await
+                .map_err(|error| -> BoxError {
+                    format!(
+                        "the project folder could not be saved to {}: {error}",
+                        self.folders_path.display()
+                    )
+                    .into()
+                })?;
+            *lock_folders(&self.folders) = folders;
+        }
+        Ok(WorkspaceAddResult {
+            cwd: folder.to_string_lossy().into_owned(),
+        })
     }
 
     fn service(&self) -> &ExternalHarnessesService {
@@ -522,6 +615,14 @@ pub(crate) async fn restore_choices(ctx: &Context, choices: &Choices, agents: &A
         executor: chosen.executor,
         model: chosen.model,
     }));
+}
+
+fn lock_folders(
+    folders: &std::sync::Mutex<std::collections::BTreeSet<PathBuf>>,
+) -> std::sync::MutexGuard<'_, std::collections::BTreeSet<PathBuf>> {
+    folders
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn wire(mode: AccessMode) -> ExecutorAccessMode {

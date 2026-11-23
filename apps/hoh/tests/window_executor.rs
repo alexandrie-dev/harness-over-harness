@@ -2901,7 +2901,7 @@ async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing
     let workspace = Workspace::new();
     let mut host = engine_with_claude(&workspace, "confirm").await;
     // 10 MiB and 2 bytes of zeros: the size is checked before the bytes are looked at.
-    let big = "AAAA".repeat((10 * 1024 * 1024 + 2) / 3);
+    let big = "AAAA".repeat((10 * 1024 * 1024_usize).div_ceil(3));
     for (data, mime, reason) in [
         (big.as_str(), "image/png", "byte limit"),
         (RED_PNG, "image/jpeg", "does not match"),
@@ -3088,5 +3088,92 @@ async fn p16_the_search_keeps_t3s_limits() {
     assert_eq!(found["entries"].as_array().map(Vec::len), Some(10));
     assert_eq!(found["truncated"], true);
     assert_eq!(found["entries"][0]["path"], "file-00.txt");
+    host.shutdown().await;
+}
+
+/// 17. A folder the person adds as a project (`hoh/workspace/add`, privileged: the host confirms
+/// the exact call) is known before its first conversation, and after a restart of the engine; a
+/// folder that does not exist, a relative path, the engine's own data, or an add the host refuses
+/// is not.
+#[tokio::test]
+async fn p17_a_project_folder_the_person_adds_is_known_before_its_first_conversation() {
+    let workspace = Workspace::new();
+    let project = workspace.root.path().join("project");
+    std::fs::create_dir_all(project.join("src")).expect("project folder");
+    std::fs::write(project.join("src").join("main.rs"), "").expect("a file");
+    let project = project.canonicalize().expect("canonical");
+    let entries = json!({"cwd": project, "query": "main", "limit": 80});
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let id = host.send("hoh/workspace/entries", entries.clone()).await;
+    let (frame, _) = host.response(&id, None).await;
+    assert!(
+        frame.get("error").is_some(),
+        "known before it was added: {frame}"
+    );
+
+    // Refused by the host: nothing changes.
+    let refused = host
+        .privileged("hoh/workspace/add", json!({"cwd": project}), "rejected")
+        .await;
+    assert!(refused.get("error").is_some(), "{refused}");
+    let id = host.send("hoh/workspace/entries", entries.clone()).await;
+    assert!(host.response(&id, None).await.0.get("error").is_some());
+
+    let added = host
+        .privileged("hoh/workspace/add", json!({"cwd": project}), "allowed-once")
+        .await;
+    assert_eq!(added["result"]["cwd"], json!(project), "{added}");
+    let found = host.ok("hoh/workspace/entries", entries.clone()).await;
+    assert_eq!(
+        found["entries"],
+        json!([{"path": "src/main.rs", "kind": "file"}])
+    );
+    let commands = host
+        .ok(
+            "hoh/executor/commands",
+            json!({"executor": "claude", "cwd": project}),
+        )
+        .await;
+    assert_eq!(commands["cwd"], json!(project.display().to_string()));
+    assert_eq!(
+        commands["commands"][0]["description"],
+        "Review the folder project"
+    );
+    // Without a folder: the engine's default one.
+    let default = host
+        .ok("hoh/executor/commands", json!({"executor": "claude"}))
+        .await;
+    assert_eq!(
+        PathBuf::from(default["cwd"].as_str().expect("cwd"))
+            .canonicalize()
+            .expect("canonical"),
+        workspace.folder
+    );
+
+    let home = workspace.root.path().join("home");
+    for cwd in [
+        workspace.root.path().join("missing").display().to_string(),
+        "project".to_owned(),
+        home.display().to_string(),
+        home.join("profiles").display().to_string(),
+        workspace.root.path().display().to_string(),
+    ] {
+        let frame = host
+            .privileged("hoh/workspace/add", json!({"cwd": cwd}), "allowed-once")
+            .await;
+        assert!(frame.get("error").is_some(), "{cwd}: {frame}");
+    }
+    host.shutdown().await;
+    assert!(workspace.sessions().is_empty());
+
+    // The next engine on this profile knows the folder.
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let found = host.ok("hoh/workspace/entries", entries).await;
+    assert_eq!(
+        found["entries"],
+        json!([{"path": "src/main.rs", "kind": "file"}])
+    );
     host.shutdown().await;
 }

@@ -10,6 +10,8 @@ export class FakeEngine {
   constructor({ store = new Map(), discovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } }, folders = FOLDERS } = {}) {
     /** Folders on the fake disk; `refuseFolder` makes the person press «Отклонить» in the protection window. */
     this.folders = new Set(folders); this.refuseFolder = false;
+    /** Folders added as projects (`hoh/workspace/add`). */
+    this.projectFolders = new Set();
     this.store = store; // sessionId -> { title, events: [], updatedAt }
     this.listeners = new Set(); this.questionListeners = new Set(); this.statusListeners = new Set();
     this.requests = []; this.decisions = []; this.answers = []; this.counter = 0; this.clock = 1_700_000_000_000;
@@ -111,13 +113,23 @@ export class FakeEngine {
         return { messageId };
       }
       case 'session/cancel': this.cancelled = (this.cancelled ?? 0) + 1; return {};
-      // HOH-41: as the engine answers them, only for a folder it knows (its default one or a conversation's).
+      // HOH-41: the person's "Add project" (confirmed by that action in the main window): the engine resolves `~`
+      // and keeps the folder as a project folder.
+      case 'hoh/workspace/add': {
+        if (this.refuseFolder) throw { code: 'rejected', message: 'Действие отклонено' };
+        const path = params.cwd === '~' || params.cwd.startsWith('~/') ? HOME + params.cwd.slice(1) : params.cwd;
+        if (!this.folders.has(path)) throw new Error(`the folder "${params.cwd}" cannot be opened: No such file or directory`);
+        this.projectFolders.add(path);
+        return { cwd: path };
+      }
+      // HOH-41: as the engine answers them, only for a folder it knows (its default one, a project's or a conversation's).
       case 'hoh/workspace/entries': case 'hoh/executor/commands': {
-        const known = new Set([DEFAULT_FOLDER, ...[...this.store.values()].map(session => session.cwd).filter(Boolean)]);
-        if (!known.has(params.cwd)) throw new Error(`"${params.cwd}" is not the folder of a conversation of this window`);
+        const known = new Set([DEFAULT_FOLDER, ...this.projectFolders, ...[...this.store.values()].map(session => session.cwd).filter(Boolean)]);
+        const cwd = params.cwd ?? DEFAULT_FOLDER;
+        if (!known.has(cwd)) throw new Error(`"${cwd}" is not a folder this engine knows`);
         if (method === 'hoh/executor/commands') {
           if (this.commandsFail) throw new Error('Claude Code is not installed');
-          return { executor: 'claude', cwd: params.cwd, commands: this.commands ?? [], skills: this.skills ?? [] };
+          return { executor: 'claude', cwd, commands: this.commands ?? [], skills: this.skills ?? [] };
         }
         const entries = (this.files ?? []).filter(entry => entry.path.includes(params.query));
         return { entries: entries.slice(0, params.limit), truncated: entries.length > params.limit };

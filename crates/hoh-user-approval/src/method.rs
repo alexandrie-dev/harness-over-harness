@@ -144,6 +144,15 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
                 None => "Отвечать будет модель на этом компьютере?".to_owned(),
             })
         }
+        // HOH-41: the person adds a folder as a project; `/`, `$` and `@` then answer for it.
+        "hoh/workspace/add" => {
+            let request: hoh_protocol::WorkspaceAddParams =
+                serde_json::from_value(params.clone()).map_err(|_| "invalid project folder")?;
+            Ok(format!(
+                "Добавить папку {} как проект?",
+                quoted(&request.cwd)
+            ))
+        }
         _ => Ok(format!("Разрешить действие {method}?")),
     }
 }

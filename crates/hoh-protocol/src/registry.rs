@@ -116,6 +116,8 @@ pub enum Request {
     ExecutorCommands(ExecutorCommandsParams),
     #[serde(rename = "hoh/workspace/entries")]
     WorkspaceEntries(WorkspaceEntriesParams),
+    #[serde(rename = "hoh/workspace/add")]
+    WorkspaceAdd(WorkspaceAddParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]
@@ -179,6 +181,7 @@ impl Request {
             Self::ExecutorAccessSet(_) => "hoh/executor/access/set",
             Self::ExecutorCommands(_) => "hoh/executor/commands",
             Self::WorkspaceEntries(_) => "hoh/workspace/entries",
+            Self::WorkspaceAdd(_) => "hoh/workspace/add",
             Self::ApprovalRequest(_) => "approval/request",
             Self::UserQuestionAsk(_) => "user-question/ask",
         }
@@ -278,6 +281,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/executor/access/set",
     "hoh/executor/commands",
     "hoh/workspace/entries",
+    "hoh/workspace/add",
     "approval/request",
     "user-question/ask",
 ];
@@ -362,6 +366,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/executor/access/set" => admit::<ExecutorAccessSetParams>(value),
         "hoh/executor/commands" => admit::<ExecutorCommandsParams>(value),
         "hoh/workspace/entries" => admit::<WorkspaceEntriesParams>(value),
+        "hoh/workspace/add" => admit::<WorkspaceAddParams>(value),
         "approval/request" => admit::<ApprovalRequestParams>(value),
         "user-question/ask" => admit::<SdkUserQuestionRequest>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -430,6 +435,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/executor/access/set" => admit::<ExecutorAccessSetResult>(value),
         "hoh/executor/commands" => admit::<ExecutorCommandsResult>(value),
         "hoh/workspace/entries" => admit::<WorkspaceEntriesResult>(value),
+        "hoh/workspace/add" => admit::<WorkspaceAddResult>(value),
         "approval/request" => admit::<ApprovalRequestResult>(value),
         "user-question/ask" => admit::<SdkUserQuestionResult>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -1133,6 +1139,12 @@ pub fn schemas() -> Vec<(String, Value)> {
             schema_for!(WorkspaceEntriesParams),
             schema_for!(WorkspaceEntriesResult),
         ),
+        (
+            "WorkspaceAdd",
+            "hoh/workspace/add",
+            schema_for!(WorkspaceAddParams),
+            schema_for!(WorkspaceAddResult),
+        ),
     ] {
         schemas.push((
             format!("{name}Params"),
@@ -1262,6 +1274,8 @@ enum RequestDecode {
     ExecutorCommands(ExecutorCommandsParams),
     #[serde(rename = "hoh/workspace/entries")]
     WorkspaceEntries(WorkspaceEntriesParams),
+    #[serde(rename = "hoh/workspace/add")]
+    WorkspaceAdd(WorkspaceAddParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]
@@ -1317,6 +1331,7 @@ privileged_methods! {
     "hoh/settings/rules/set" => |_:&Value| true,
     "hoh/executor/access/set" => |_:&Value| true,
     "hoh/executor/select" => |_:&Value| true,
+    "hoh/workspace/add" => |_:&Value| true,
 }
 pub fn validate_params_host(method: &str, value: &Value) -> Result<(), String> {
     if method == "approval/request" {

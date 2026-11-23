@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkspaceAddParams",
+  "type": "object",
+  "properties": {
+    "cwd": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cwd"
+  ]
+}

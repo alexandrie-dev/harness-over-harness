@@ -305,6 +305,8 @@ pub fn main_window_confirms(method: &str, params: &Value, session_executor: Opti
         "hoh/executor/access/set" => true,
         "hoh/executor/select" => params["executor"].as_str() == Some(MAIN_WINDOW_EXECUTOR),
         "session/working-directory/set" => session_executor == Some(MAIN_WINDOW_EXECUTOR),
+        // The person picks the folder in the main window's "Add project" (HOH-41 package 1).
+        "hoh/workspace/add" => true,
         _ => false,
     }
 }
@@ -1185,6 +1187,14 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 quoted(&request.path)
             ))
         }
+        "hoh/workspace/add" => {
+            let request: hoh_protocol::WorkspaceAddParams =
+                serde_json::from_value(params.clone()).map_err(|_| "Некорректная папка проекта")?;
+            Ok(format!(
+                "Добавить папку {} как проект?",
+                quoted(&request.cwd)
+            ))
+        }
         "hoh/settings/set" => {
             let request: hoh_protocol::SettingsSetParams =
                 serde_json::from_value(params.clone()).map_err(|_| "Некорректные настройки")?;
@@ -1649,6 +1659,11 @@ mod tests {
                 "hoh/executor/select",
                 json!({"executor":"claude","model":"opus-sample"}),
                 "Claude (модель opus-sample)",
+            ),
+            (
+                "hoh/workspace/add",
+                json!({"cwd":"/home/user/project"}),
+                "Добавить папку «/home/user/project» как проект?",
             ),
         ];
         assert_eq!(samples.len(), hoh_protocol::PRIVILEGED_METHODS.len());

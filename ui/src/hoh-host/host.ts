@@ -12,7 +12,8 @@
 // which project each chat is in are kept in the window's storage, so they survive a restart; a chat whose
 // history names a project's folder (`working-directory/change`) is put in that project.
 // The composer (HOH-41): `/` and `$` are what Claude declares for the composer's folder (`server.refreshProviders`
-// with a cwd answers T3's workspace snapshot from `hoh/executor/commands`); `@` lists a folder project's files
+// with a cwd answers T3's workspace snapshot from `hoh/executor/commands`; "Add project" tells the engine the folder,
+// `hoh/workspace/add`, so both answer before the project's first chat); `@` lists a folder project's files
 // (`projects.searchEntries` → `hoh/workspace/entries`, nothing for "No project"); pictures are checked and kept
 // (`assets.persistChatAttachments`) until their message goes to the engine with them (`session/prompt`).
 import {
@@ -550,9 +551,15 @@ export class HohHost {
         if (root === this.workspaceRoot) throw fail(`${root} is the folder of "No project". Use "Start without a project".`);
         if (!projectId || projectId === HOH_PROJECT_ID || this.folders.has(projectId)) throw fail('This project id is taken.');
         await this.checkFolder(root, fail);
+        // The engine learns the folder (the person's "Add project" in the main window confirms it), so `@`, `/` and `$`
+        // answer for it before its first chat; the engine names the folder as it resolved it.
+        let added: string;
+        try { added = folderPath((await this.engine.request('hoh/workspace/add', { cwd: root }))?.cwd) || root; }
+        catch (error) { throw fail(`The folder ${root} cannot be a project: ${englishError(error, 'HoH refused it.')}`); }
+        if (added !== root && (this.folderAt(added) || added === this.workspaceRoot)) throw fail(`${added} is already a project or the folder of "No project".`);
         const at = this.now();
         const title = typeof mutation.title === 'string' && mutation.title.trim() ? mutation.title.trim() : titleOf(root);
-        const project: FolderProject = { id: projectId, title, workspaceRoot: root, createdAt: at, updatedAt: at, pinnedAt: null, archivedAt: null };
+        const project: FolderProject = { id: projectId, title, workspaceRoot: added, createdAt: at, updatedAt: at, pinnedAt: null, archivedAt: null };
         this.folders.set(projectId, project);
         this.save();
         this.emitProject(folderProject(project));
@@ -712,11 +719,18 @@ export class HohHost {
     catch { return empty; }
   }
 
-  /** T3's workspace snapshot of the composer's folder: the commands and skills Claude declares there, asked without a turn. */
+  /**
+   * T3's workspace snapshot of the composer's folder: the commands and skills Claude declares there, asked without a turn.
+   * "No project" is asked without a folder (the engine's default one, which may not be known here yet).
+   */
   private async workspaceSnapshot(cwd: string) {
     try {
-      const snapshot = workspaceSnapshot(cwd, this.iso(), await this.engine.request('hoh/executor/commands', { executor: 'claude', cwd }));
-      this.skillsByFolder.set(folderPath(cwd), new Set(snapshot.skills.map(skill => skill.name)));
+      const noProject = !this.folderAt(cwd) && folderPath(cwd) === this.workspaceRoot;
+      const found = await this.engine.request('hoh/executor/commands', noProject ? { executor: 'claude' } : { executor: 'claude', cwd });
+      const snapshot = workspaceSnapshot(cwd, this.iso(), found);
+      const skills = new Set(snapshot.skills.map(skill => skill.name));
+      for (const folder of [folderPath(cwd), folderPath(found?.cwd)]) if (folder) this.skillsByFolder.set(folder, skills);
+      if (noProject && !this.workspaceKnown) this.setWorkspaceRoot(found?.cwd);
       return snapshot;
     } catch {
       // Claude could not be asked here (not installed, signed out, a folder with no conversation yet): T3 asks again later.
