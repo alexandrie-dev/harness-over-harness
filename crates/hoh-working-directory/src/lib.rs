@@ -612,14 +612,13 @@ impl Inner {
             let recorded_identity = self.recorded_root_identity(session, &current);
             if let (Some(recorded), Some(observed)) =
                 (recorded_identity.as_ref(), identity.as_ref())
+                && recorded != observed
             {
-                if recorded != observed {
-                    return Err(WorkingDirectoryError::new(
-                        "working-directory: the selected directory was replaced",
-                        WorkingDirectoryErrorCode::Unavailable,
-                    )
-                    .into());
-                }
+                return Err(WorkingDirectoryError::new(
+                    "working-directory: the selected directory was replaced",
+                    WorkingDirectoryErrorCode::Unavailable,
+                )
+                .into());
             }
             if recorded_identity.is_none() {
                 session.append(
