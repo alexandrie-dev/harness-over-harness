@@ -52,9 +52,9 @@ test('thread details card stays visible (CEO: it becomes the HOH-43 stats panel)
   assert.match(quickView, /<ChatView/);
 });
 
-test('wide conversations reserve the ThreadDetails column and narrow ones release it', async () => {
+test('ThreadDetails does not add a second inset to the T3 conversation axis', async () => {
   const css = await readFile(new URL('src/t3-entry/brand.css', root), 'utf8');
-  assert.match(css, /@media \(min-width: 1100px\)[\s\S]*\[data-chat-canvas\]:has\(\[data-thread-details-panel="inline"\]\)[\s\S]*--chat-lane-inset-end:\s*20rem/);
+  assert.doesNotMatch(css, /\[data-thread-details-panel="inline"\][^{]*\{[^}]*--chat-lane-inset-(?:start|end)/s);
 });
 
 test('Agent and Task inspector output uses T3 Markdown without an inner raw-output scroller', async () => {
