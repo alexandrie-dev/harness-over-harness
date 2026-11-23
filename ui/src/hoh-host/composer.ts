@@ -150,6 +150,7 @@ export function searchAnswer(found: any, kind: unknown, imageOnly: unknown) {
   const entries = (Array.isArray(found?.entries) ? found.entries : [])
     .filter((entry: any) => typeof entry?.path === 'string'
       && entry.path.trim()
+      && entry.path === entry.path.trim()
       && !entry.path.startsWith('/')
       && !entry.path.includes('\\')
       && !entry.path.split('/').includes('..')

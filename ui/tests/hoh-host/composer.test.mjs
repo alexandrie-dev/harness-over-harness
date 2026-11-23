@@ -118,6 +118,8 @@ test('@ lists a folder project\'s files by relative path from the engine; "No pr
     { path: '../.env', kind: 'file' },
     { path: 'src/../.env', kind: 'file' },
     { path: '/etc/passwd', kind: 'file' },
+    { path: ' /etc/passwd', kind: 'file' },
+    { path: 'src/main.ts ', kind: 'file' },
     { path: '\\etc\\passwd', kind: 'file' },
   ];
   const { client } = connect(engine);

@@ -3060,6 +3060,47 @@ async fn p16_only_a_folder_the_engine_knows_is_searched_or_probed() {
         found["entries"],
         json!([{"path": "secret.txt", "kind": "file"}])
     );
+
+    // An active-only session path is a canonical identity accepted by working-directory/set.
+    // Replacing that spelling with a link must not authorize the link's new target.
+    let active_moved = workspace.root.path().join("elsewhere-moved");
+    let active_swapped = workspace.root.path().join("active-swapped");
+    std::fs::create_dir(&active_swapped).expect("replacement active target");
+    std::fs::write(active_swapped.join("must-not-leak.txt"), "x").expect("secret");
+    std::fs::rename(&other, &active_moved).expect("move active folder");
+    std::os::unix::fs::symlink(&active_swapped, &other).expect("replace active folder");
+    let id = host
+        .send(
+            "hoh/workspace/entries",
+            json!({"cwd": other, "query": "leak", "limit": 80}),
+        )
+        .await;
+    let (frame, _) = host.response(&id, None).await;
+    assert!(
+        frame.get("error").is_some(),
+        "active symlink swap passed: {frame}"
+    );
+
+    // The default identity is frozen when the window plugin starts. A later replacement of the
+    // configured spelling likewise cannot silently register a different target.
+    let default_moved = workspace.root.path().join("work-moved");
+    let default_swapped = workspace.root.path().join("default-swapped");
+    std::fs::create_dir(&default_swapped).expect("replacement default target");
+    std::fs::write(default_swapped.join("must-not-leak.txt"), "x").expect("secret");
+    std::fs::rename(&workspace.folder, &default_moved).expect("move default folder");
+    std::os::unix::fs::symlink(&default_swapped, &workspace.folder)
+        .expect("replace default folder");
+    let id = host
+        .send(
+            "hoh/workspace/entries",
+            json!({"cwd": workspace.folder, "query": "leak", "limit": 80}),
+        )
+        .await;
+    let (frame, _) = host.response(&id, None).await;
+    assert!(
+        frame.get("error").is_some(),
+        "default symlink swap passed: {frame}"
+    );
     host.shutdown().await;
 }
 
@@ -3209,6 +3250,26 @@ async fn p17_a_project_folder_the_person_adds_is_known_before_its_first_conversa
             "{method}: {frame}"
         );
     }
+    host.shutdown().await;
+}
+
+/// 17 (HOME). A configured but unusable HOME is unknown, not a trusted protection root. The
+/// conventional home tree remains fail-closed exactly as when HOME is absent.
+#[tokio::test]
+async fn p17_an_unusable_home_still_protects_the_conventional_home_tree() {
+    let workspace = Workspace::new();
+    let missing = workspace.root.path().join("missing-home");
+    let mut host = Host::start_with_env(&workspace, &[("HOME", missing.to_str().unwrap())]);
+    host.initialize(&workspace).await;
+    let frame = host
+        .privileged("hoh/workspace/add", json!({"cwd": "/home"}), "allowed-once")
+        .await;
+    assert!(
+        frame["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("protected")),
+        "an unusable HOME allowed /home: {frame}"
+    );
     host.shutdown().await;
 }
 

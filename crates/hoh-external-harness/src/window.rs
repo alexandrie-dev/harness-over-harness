@@ -102,6 +102,14 @@ impl Plugin for ExternalHarnessWindowPlugin {
             }),
             Err(_) => Vec::new(),
         };
+        // The default spelling may itself be a symlink. Remember the target accepted at plugin
+        // start; resolving the spelling again on every request would authorize a later swap.
+        let default_folder = match ctx.get::<WorkingDirectoryKey>() {
+            Some(directories) => tokio::fs::canonicalize(directories.default_directory())
+                .await
+                .ok(),
+            None => None,
+        };
         let window = Arc::new(Window {
             ctx: ctx.clone(),
             harnesses: deps.harnesses,
@@ -110,6 +118,7 @@ impl Plugin for ExternalHarnessWindowPlugin {
             folders_path,
             folders: std::sync::Mutex::new(folders.into_iter().collect()),
             engine_home: deps.profile.home.clone(),
+            default_folder,
             saving: tokio::sync::Mutex::new(()),
             folder_calls: std::sync::Mutex::new(BTreeMap::new()),
         });
@@ -158,6 +167,8 @@ struct Window {
     folders: std::sync::Mutex<std::collections::BTreeSet<PathBuf>>,
     /// The engine's own data (keys, sessions): never a project folder.
     engine_home: PathBuf,
+    /// Canonical identity of the deployment default accepted when this plugin started.
+    default_folder: Option<PathBuf>,
     /// One save at a time, so the file holds the last choice.
     saving: tokio::sync::Mutex<()>,
     /// Expensive composer calls, serialized and briefly cached by canonical folder.
@@ -260,19 +271,26 @@ impl Window {
                 None => {}
             }
         }
-        let mut active = vec![directories.default_directory().to_owned()];
-        active.extend(
-            self.agents
-                .list()
-                .iter()
-                .map(|agent| directories.get(agent.session())),
-        );
-        for folder in active {
-            if tokio::fs::canonicalize(&folder)
-                .await
-                .is_ok_and(|folder| folder == wanted)
-            {
-                return Ok(wanted);
+        // Unlike the request spelling, accepted identities never follow a newly introduced link.
+        // The default target was frozen at startup; WorkingDirectoryService stores canonical paths
+        // for session changes, so the same saved-identity check covers active-only conversations.
+        if let Some(default) = &self.default_folder {
+            match saved_folder_match(default, &wanted).await {
+                Some(true) => return Ok(wanted),
+                Some(false) => return Err(unknown()),
+                None => {}
+            }
+        }
+        for folder in self
+            .agents
+            .list()
+            .iter()
+            .map(|agent| directories.get(agent.session()))
+        {
+            match saved_folder_match(Path::new(&folder), &wanted).await {
+                Some(true) => return Ok(wanted),
+                Some(false) => return Err(unknown()),
+                None => {}
             }
         }
         Err(unknown())
@@ -452,8 +470,10 @@ impl Window {
             return Some("holds the data of HoH");
         }
         let user_home = std::env::var_os("HOME").map(PathBuf::from);
+        // An unusable HOME is not a trusted path. Treat it like a missing HOME so the policy
+        // fails closed for the conventional /home tree instead of protecting a fictitious path.
         let user_home = match user_home {
-            Some(home) => Some(tokio::fs::canonicalize(&home).await.unwrap_or(home)),
+            Some(home) => tokio::fs::canonicalize(home).await.ok(),
             None => None,
         };
         protected_folder(folder, user_home.as_deref())
