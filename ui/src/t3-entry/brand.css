@@ -53,3 +53,9 @@ div.mx-auto.max-w-5xl.flex-col.items-center:has(> h1, > div[data-inline])::befor
 a[href="/"] > span.inline-flex {
   align-items: center !important;
 }
+
+/* Меню команд прикреплено к полю ввода, но в отличие от самого glass-поля должно закрывать
+   заголовок и сообщения под ним, как в T3 без пользовательской прозрачности стекла. */
+[data-composer-command-drawer="true"] {
+  --glass-opacity: 100%;
+}
