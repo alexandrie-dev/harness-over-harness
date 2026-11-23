@@ -151,7 +151,11 @@ export type ExecutorCommandsResult = { "executor": string; "cwd": string; "comma
 
 export type ExecutorDiscoverParams = { "executor": string; };
 
-export type ExecutorDiscoverResult = { "executor": string; "installed": boolean; "version"?: (string | null); "versionStatus": ExecutorVersionStatus; "auth": ExecutorAuth; "models": Array<ExecutorModel>; "detail"?: (string | null); };
+export type ExecutorDiscoverResult = { "executor": string; "installed": boolean; "version"?: (string | null); "versionStatus": ExecutorVersionStatus; "auth": ExecutorAuth; "models": Array<ExecutorModel>; "detail"?: (string | null); "failure"?: (ExecutorDiscoveryFailure | null); };
+
+export type ExecutorDiscoveryFailure = ({ "kind": "timeout"; "operation": ExecutorDiscoveryOperation; "timeoutSeconds": number; } | { "kind": "exit"; "operation": ExecutorDiscoveryOperation; "exitCode"?: (number | null); });
+
+export type ExecutorDiscoveryOperation = "version" | "initialize";
 
 export type ExecutorEffectiveAccess = { "mode": ExecutorAccessMode; "flags": Array<string>; "text": string; };
 

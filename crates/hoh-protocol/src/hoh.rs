@@ -564,14 +564,32 @@ optional!(ExecutorModel {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     is_default: Option<bool>,
 });
-object!(ExecutorDiscoverResult {
+choices!(ExecutorDiscoveryOperation { Version => "version", Initialize => "initialize" });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ExecutorDiscoveryFailure {
+    Timeout {
+        operation: ExecutorDiscoveryOperation,
+        #[serde(rename = "timeoutSeconds")]
+        timeout_seconds: u64,
+    },
+    Exit {
+        operation: ExecutorDiscoveryOperation,
+        #[serde(rename = "exitCode")]
+        exit_code: Option<i32>,
+    },
+}
+optional!(ExecutorDiscoverResult {
     executor: String,
     installed: bool,
     version: Option<String>,
     version_status: ExecutorVersionStatus,
     auth: ExecutorAuth,
     models: Vec<ExecutorModel>,
-    detail: Option<String>
+    detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    #[schemars(required)]
+    failure: Option<ExecutorDiscoveryFailure>,
 });
 // `hoh/executor/commands` (HOH-41): the slash commands and skills the executor itself declares
 // for a folder the engine knows (its default one when `cwd` is absent, a project added with

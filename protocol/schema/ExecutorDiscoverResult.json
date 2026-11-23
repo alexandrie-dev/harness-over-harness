@@ -32,6 +32,16 @@
         "string",
         "null"
       ]
+    },
+    "failure": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutorDiscoveryFailure"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -79,6 +89,62 @@
       },
       "required": [
         "id"
+      ]
+    },
+    "ExecutorDiscoveryFailure": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "timeout"
+            },
+            "operation": {
+              "$ref": "#/$defs/ExecutorDiscoveryOperation"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "operation",
+            "timeoutSeconds"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "exit"
+            },
+            "operation": {
+              "$ref": "#/$defs/ExecutorDiscoveryOperation"
+            },
+            "exitCode": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          "required": [
+            "kind",
+            "operation"
+          ]
+        }
+      ]
+    },
+    "ExecutorDiscoveryOperation": {
+      "type": "string",
+      "enum": [
+        "version",
+        "initialize"
       ]
     }
   },
