@@ -190,7 +190,8 @@ impl Window {
         }
     }
 
-    /// The folder `cwd` names, when the engine knows it (HOH-41): the default folder of new chats,
+    /// The folder `cwd` names, when the engine knows it (HOH-41) and it is not the engine's own
+    /// data: the default folder of new chats,
     /// a project folder the person added ([`Window::add_folder`]), or the folder of a conversation
     /// open in the engine — a folder the person chose in the main window
     /// (`session/working-directory/set`); both are confirmed and journalled there. Both sides are
@@ -204,6 +205,11 @@ impl Window {
             return Err(unknown());
         }
         let wanted = tokio::fs::canonicalize(cwd).await.map_err(|_| unknown())?;
+        // The engine's own data is never a folder of `@`, `/` or `$`, even as the default folder
+        // (the desktop runs the engine there; its conversations work in the session folder).
+        if self.holds_engine_data(&wanted).await {
+            return Err(format!("{cwd:?} holds the data of HoH").into());
+        }
         // A composition without working directories knows no folder.
         let directories = self.ctx.get::<WorkingDirectoryKey>().ok_or_else(unknown)?;
         let mut known = vec![directories.default_directory().to_owned()];
@@ -313,10 +319,7 @@ impl Window {
         if !tokio::fs::metadata(&folder).await?.is_dir() {
             return Err(format!("{typed:?} is not a folder").into());
         }
-        let home = tokio::fs::canonicalize(&self.engine_home)
-            .await
-            .unwrap_or_else(|_| self.engine_home.clone());
-        if folder.starts_with(&home) || home.starts_with(&folder) {
+        if self.holds_engine_data(&folder).await {
             return Err(format!("{typed:?} holds the data of HoH and cannot be a project").into());
         }
         let _one = self.saving.lock().await;
@@ -337,6 +340,14 @@ impl Window {
         Ok(WorkspaceAddResult {
             cwd: folder.to_string_lossy().into_owned(),
         })
+    }
+
+    /// `folder` (resolved) is the engine's home, inside it or around it.
+    async fn holds_engine_data(&self, folder: &Path) -> bool {
+        let home = tokio::fs::canonicalize(&self.engine_home)
+            .await
+            .unwrap_or_else(|_| self.engine_home.clone());
+        folder.starts_with(&home) || home.starts_with(folder)
     }
 
     fn service(&self) -> &ExternalHarnessesService {

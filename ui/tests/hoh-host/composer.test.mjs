@@ -178,6 +178,23 @@ test('/ and $ in a fresh window: "No project" asks for the engine\'s own folder 
   assert.deepEqual(sent(engine, 'hoh/executor/commands').at(-1).params, { executor: 'claude', cwd: SITE });
 });
 
+test('/ and $ in "No project" of the desktop (the engine runs in its own data): pending until a chat names the folder, then asked by it', async () => {
+  const engine = new FakeEngine();
+  engine.defaultIsData = true;
+  engine.commands = [{ name: 'review' }];
+  const { client } = connect(engine);
+  const ask = cwd => client.call('server.refreshProviders', { instanceId: 'claudeAgent', cwd, workspaceSnapshotsOnDemand: true }).then(answer => answer.providers[0].workspaceSnapshots[0]);
+  const before = await ask('~/Documents/HoH');
+  assert.deepEqual([before.slashCommandsPending, before.slashCommands], [true, []]);
+  assert.equal((await client.call('server.getConfig', {})).scratchWorkspaceRoot, '~/Documents/HoH');
+  await newThread(client, 'chat-plain');
+  await client.call('orchestration.dispatchCommand', dispatch('chat-plain', 'm-p', 'hello'));
+  assert.equal((await client.call('server.getConfig', {})).scratchWorkspaceRoot, DEFAULT_FOLDER);
+  const after = await ask(DEFAULT_FOLDER);
+  assert.deepEqual(after.slashCommands.map(command => command.name), ['review']);
+  assert.deepEqual(sent(engine, 'hoh/executor/commands').at(-1).params, { executor: 'claude', cwd: DEFAULT_FOLDER });
+});
+
 test('Add project: the engine is told the folder and names it as it resolved it; its refusal fails the add in English', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);

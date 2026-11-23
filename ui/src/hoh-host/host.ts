@@ -721,16 +721,17 @@ export class HohHost {
 
   /**
    * T3's workspace snapshot of the composer's folder: the commands and skills Claude declares there, asked without a turn.
-   * "No project" is asked without a folder (the engine's default one, which may not be known here yet).
+   * "No project" whose folder is not known here yet is asked without a folder: the engine answers for its default one,
+   * unless that is its own data (the desktop) — then Claude is asked once a chat names the folder.
    */
   private async workspaceSnapshot(cwd: string) {
     try {
-      const noProject = !this.folderAt(cwd) && folderPath(cwd) === this.workspaceRoot;
+      const noProject = !this.folderAt(cwd) && folderPath(cwd) === this.workspaceRoot && !this.workspaceKnown;
       const found = await this.engine.request('hoh/executor/commands', noProject ? { executor: 'claude' } : { executor: 'claude', cwd });
       const snapshot = workspaceSnapshot(cwd, this.iso(), found);
       const skills = new Set(snapshot.skills.map(skill => skill.name));
       for (const folder of [folderPath(cwd), folderPath(found?.cwd)]) if (folder) this.skillsByFolder.set(folder, skills);
-      if (noProject && !this.workspaceKnown) this.setWorkspaceRoot(found?.cwd);
+      if (noProject) this.setWorkspaceRoot(found?.cwd);
       return snapshot;
     } catch {
       // Claude could not be asked here (not installed, signed out, a folder with no conversation yet): T3 asks again later.

@@ -125,6 +125,8 @@ export class FakeEngine {
       // HOH-41: as the engine answers them, only for a folder it knows (its default one, a project's or a conversation's).
       case 'hoh/workspace/entries': case 'hoh/executor/commands': {
         const known = new Set([DEFAULT_FOLDER, ...this.projectFolders, ...[...this.store.values()].map(session => session.cwd).filter(Boolean)]);
+        // `defaultIsData`: the engine runs in its own data folder (the desktop) and names no default folder.
+        if (params.cwd === undefined && this.defaultIsData) throw new Error('"/home/person/.local/share/hoh/engine" holds the data of HoH');
         const cwd = params.cwd ?? DEFAULT_FOLDER;
         if (!known.has(cwd)) throw new Error(`"${cwd}" is not a folder this engine knows`);
         if (method === 'hoh/executor/commands') {

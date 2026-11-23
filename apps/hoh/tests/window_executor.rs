@@ -3006,8 +3006,10 @@ async fn p16_only_a_folder_the_engine_knows_is_searched_or_probed() {
             let id = host.send(method, params).await;
             let (frame, _) = host.response(&id, None).await;
             let message = frame["error"]["message"].as_str().unwrap_or_default();
+            // A folder around the engine's data (`/`, the parent) is refused for that.
             assert!(
-                message.contains("is not the folder of a conversation"),
+                message.contains("is not the folder of a conversation")
+                    || message.contains("holds the data of HoH"),
                 "{method} {cwd}: {frame}"
             );
         }
@@ -3174,6 +3176,45 @@ async fn p17_a_project_folder_the_person_adds_is_known_before_its_first_conversa
     assert_eq!(
         found["entries"],
         json!([{"path": "src/main.rs", "kind": "file"}])
+    );
+    host.shutdown().await;
+}
+
+/// 18. The engine's own data is never a folder of `@`, `/` or `$`: an engine that runs in its data
+/// folder (as the desktop runs it) answers neither for that folder nor for its default one.
+#[tokio::test]
+async fn p18_the_engines_own_data_is_not_a_folder_of_the_composer() {
+    let workspace = Workspace::new();
+    std::fs::write(workspace.folder.join("secret-name.json"), "{}").expect("a file");
+    let home = workspace.folder.display().to_string();
+    let mut host = Host::start_with_env(&workspace, &[("DSH_HOME", home.as_str())]);
+    host.initialize(&workspace).await;
+    for (method, params) in [
+        ("hoh/executor/commands", json!({"executor": "claude"})),
+        (
+            "hoh/executor/commands",
+            json!({"executor": "claude", "cwd": workspace.folder}),
+        ),
+        (
+            "hoh/workspace/entries",
+            json!({"cwd": workspace.folder, "query": "", "limit": 80}),
+        ),
+    ] {
+        let id = host.send(method, params.clone()).await;
+        let (frame, _) = host.response(&id, None).await;
+        let error = frame["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            error.contains("holds the data of HoH"),
+            "{method} {params}: {frame}"
+        );
+        assert!(!frame.to_string().contains("secret-name"), "{frame}");
+    }
+    assert!(
+        workspace
+            .starts()
+            .iter()
+            .all(|start| start.has("--version") || !start.cwd.starts_with(&workspace.folder)),
+        "claude was asked in the engine's data"
     );
     host.shutdown().await;
 }
