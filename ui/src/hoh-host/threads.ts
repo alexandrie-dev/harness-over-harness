@@ -2,7 +2,7 @@
 // ui/src/screens/chat/projection.mjs) are folded into T3's `OrchestrationV2ThreadProjection` and
 // `OrchestrationV2ThreadShell` (packages/contracts/src/orchestrationV2.ts), in their encoded JSON form.
 // One user message is one run; answers, tool steps, permission requests and questions are turn items.
-import { CLAUDE_INSTANCE_ID, runtimeModeOf, type HohAccessMode } from './config.ts';
+import { CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, runtimeModeOf, type HohAccessMode, type HohExecutor } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
 
@@ -91,6 +91,7 @@ const STEP_TYPES = new Set(['command_execution', 'file_change', 'file_search', '
 /** One chat on the home screen. `state`: working, waiting (for the person's answer), done, ended (stopped or failed). */
 export interface HomeEntry {
   id: string; title: string; projectId: string;
+  providerInstanceId: string;
   state: 'working' | 'waiting' | 'done' | 'ended';
   startedAt: number; doneAt: number | null;
   steps: { done: number; total: number };
@@ -113,6 +114,7 @@ export interface ThreadSeed {
   readonly updatedAt?: number;
   readonly model: string;
   readonly mode: HohAccessMode;
+  readonly executor?: HohExecutor;
   /** The T3 project the chat belongs to: "No project" unless it was started in a folder project. */
   readonly projectId?: string;
 }
@@ -124,6 +126,7 @@ export class ThreadModel {
   updatedAt: number;
   model: string;
   mode: HohAccessMode;
+  executor: HohExecutor;
   projectId: string;
   /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
   cwd: string | null = null;
@@ -163,6 +166,7 @@ export class ThreadModel {
     this.updatedAt = seed.updatedAt ?? seed.createdAt;
     this.model = seed.model;
     this.mode = seed.mode;
+    this.executor = seed.executor ?? 'claude';
     this.projectId = seed.projectId ?? HOH_PROJECT_ID;
   }
 
@@ -583,7 +587,8 @@ export class ThreadModel {
   pendingRequest(id: string) { return this.requests.find(request => request.id === id && request.status === 'pending'); }
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
 
-  private modelSelection() { return { instanceId: CLAUDE_INSTANCE_ID, model: this.model, ...(this.options?.length ? { options: this.options } : {}) }; }
+  private instanceId() { return this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
+  private modelSelection() { return { instanceId: this.instanceId(), model: this.model, ...(this.options?.length ? { options: this.options } : {}) }; }
   private titleText() { return nonBlank(this.title, 'New thread'); }
 
   /** `OrchestrationV2ThreadProjection`, encoded. */
@@ -593,7 +598,7 @@ export class ThreadModel {
     return {
       thread: {
         createdBy: 'user', creationSource: 'web',
-        id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: CLAUDE_INSTANCE_ID,
+        id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
         modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: 'default',
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
@@ -601,8 +606,8 @@ export class ThreadModel {
         archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, lastVisitedAt: null, deletedAt: null,
       },
       runs: this.runs.map(run => ({
-        id: run.id, threadId: this.id, ordinal: run.ordinal, providerInstanceId: CLAUDE_INSTANCE_ID,
-        modelSelection: { instanceId: CLAUDE_INSTANCE_ID, model: run.model }, providerThreadId: null, userMessageId: run.userMessageId,
+        id: run.id, threadId: this.id, ordinal: run.ordinal, providerInstanceId: this.instanceId(),
+        modelSelection: { instanceId: this.instanceId(), model: run.model }, providerThreadId: null, userMessageId: run.userMessageId,
         rootNodeId: null, activeAttemptId: null, status: run.status, requestedAt: iso(run.requestedAt),
         startedAt: run.startedAt === null ? null : iso(run.startedAt), completedAt: run.completedAt === null ? null : iso(run.completedAt),
         checkpointId: null, contextHandoffId: null,
@@ -669,7 +674,7 @@ export class ThreadModel {
     const open = run.status === 'running' || run.status === 'waiting';
     const question = waitingItem?.type === 'user_input_request' ? text(waitingItem.questions?.[0]?.question) : '';
     return {
-      id: this.id, title: this.titleText(), projectId: this.projectId,
+      id: this.id, title: this.titleText(), projectId: this.projectId, providerInstanceId: this.instanceId(),
       state: open ? (pending ? 'waiting' : 'working') : run.status === 'completed' ? 'done' : 'ended',
       startedAt: run.startedAt ?? run.requestedAt, doneAt: run.completedAt,
       steps: { done: steps.filter(item => item.status !== 'running' && item.status !== 'waiting').length, total: steps.length }, agents,
@@ -686,7 +691,7 @@ export class ThreadModel {
     const lastUser = [...this.messages].reverse().find(message => message.role === 'user');
     return {
       createdBy: 'user', creationSource: 'web',
-      id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: CLAUDE_INSTANCE_ID,
+      id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
       modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: 'default',
       branch: null, worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },

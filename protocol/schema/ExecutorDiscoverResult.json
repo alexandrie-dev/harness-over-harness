@@ -75,6 +75,38 @@
             "boolean",
             "null"
           ]
+        },
+        "effortLevels": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ExecutorEffort"
+          }
+        },
+        "defaultEffort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "ExecutorEffort": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

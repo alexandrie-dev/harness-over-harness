@@ -2051,7 +2051,7 @@ async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
         assert_eq!(argv[1..], args[..], "{access:?}");
         let has = |flag: &str| args.iter().any(|a| a == flag);
         match access {
-            AccessMode::Confirm => {
+            AccessMode::Confirm | AccessMode::AutoAcceptEdits | AccessMode::Auto => {
                 assert!(has("--permission-prompt-tool"));
                 assert!(!has("--allow-dangerously-skip-permissions"));
                 let at = args.iter().position(|a| a == "--permission-mode").unwrap();
