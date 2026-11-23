@@ -193,6 +193,39 @@ impl Choices {
     }
 }
 
+#[cfg(test)]
+mod access_snapshot_tests {
+    use super::{AccessMode, Choices};
+
+    #[test]
+    fn parallel_sessions_keep_the_mode_bound_to_each_accepted_message() {
+        let choices = Choices::default();
+        choices.set_session_access("chat-a", "codex", AccessMode::AutoAcceptEdits);
+        choices.set_session_access("chat-b", "codex", AccessMode::Auto);
+        choices.serve_prompts("chat-a", "codex");
+        choices.serve_prompts("chat-b", "codex");
+
+        choices.note_prompt("chat-a", "message-a1", Some("high".into()));
+        choices.note_prompt("chat-b", "message-b1", Some("low".into()));
+        choices.set_session_access("chat-a", "codex", AccessMode::Full);
+
+        assert_eq!(
+            choices.take_prompt("chat-b", "message-b1"),
+            Some((Some("low".into()), Some(AccessMode::Auto)))
+        );
+        assert_eq!(
+            choices.take_prompt("chat-a", "message-a1"),
+            Some((Some("high".into()), Some(AccessMode::AutoAcceptEdits)))
+        );
+
+        choices.note_prompt("chat-a", "message-a2", None);
+        assert_eq!(
+            choices.take_prompt("chat-a", "message-a2"),
+            Some((None, Some(AccessMode::Full)))
+        );
+    }
+}
+
 hoh_kernel::service!(pub ExternalHarnesses: ExternalHarnessesService = "externalHarnesses");
 
 impl ExternalHarnessesService {

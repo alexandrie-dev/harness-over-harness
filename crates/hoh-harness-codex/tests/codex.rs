@@ -268,14 +268,38 @@ async fn stream_steps_and_exact_approval_ids_round_trip() {
         .await
         .unwrap();
     let mut deltas = String::new();
+    let mut reasoning = String::new();
+    let mut reasoning_final = None;
+    let mut tool_started = false;
+    let mut tool_output = None;
+    let mut tool_completed = false;
     loop {
         match event(&mut started.events).await {
             HarnessEvent::TextDelta { text, .. } => deltas.push_str(&text),
+            HarnessEvent::ReasoningDelta { text, .. } => reasoning.push_str(&text),
+            HarnessEvent::ReasoningFinal { text, .. } => reasoning_final = Some(text),
+            HarnessEvent::ItemStarted { item_id, action }
+                if item_id == "tool-1"
+                    && matches!(action, hoh_external_harness::HarnessAction::Tool { .. }) =>
+            {
+                tool_started = true;
+            }
+            HarnessEvent::ItemOutput { item_id, text } if item_id == "tool-1" => {
+                tool_output = Some(text);
+            }
+            HarnessEvent::ItemCompleted { item_id, .. } if item_id == "tool-1" => {
+                tool_completed = true;
+            }
             HarnessEvent::TurnCompleted { .. } => break,
             _ => {}
         }
     }
     assert_eq!(deltas, "part done");
+    assert_eq!(reasoning, "checking the result");
+    assert_eq!(reasoning_final.as_deref(), Some("checking the result"));
+    assert!(tool_started);
+    assert_eq!(tool_output.as_deref(), Some("inspected src/lib.rs"));
+    assert!(tool_completed);
     started.session.terminate(Duration::from_millis(100)).await;
     let wire = lines(&log);
     assert!(wire.iter().any(|line| line.get("id")
@@ -293,15 +317,15 @@ async fn resume_uses_the_same_native_thread() {
     let temp = TempDir::new().unwrap();
     let (harness, log) = harness(&temp, "resume");
     let first = harness
-        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .start_with_access(start_params(&temp, None), AccessMode::AutoAcceptEdits)
         .await
         .unwrap();
     let native = String::from(first.result.native_session_id.clone());
     first.session.terminate(Duration::from_millis(100)).await;
-    let second = harness
+    let mut second = harness
         .start_with_access(
             start_params(&temp, Some(native.clone())),
-            AccessMode::Confirm,
+            AccessMode::AutoAcceptEdits,
         )
         .await
         .unwrap();
@@ -310,10 +334,157 @@ async fn resume_uses_the_same_native_thread() {
         String::from(second.result.native_session_id.clone()),
         native
     );
+    second
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-after-restart".into(),
+            text: "continue".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let request_id = loop {
+        if let HarnessEvent::ApprovalRequested { request_id, .. } = event(&mut second.events).await
+        {
+            break request_id;
+        }
+    };
+    second
+        .session
+        .respond(RespondParams {
+            session_id: "hoh-session".into(),
+            request_id,
+            response: HarnessResponse::Approval {
+                decision: ApprovalDecision::Allow,
+            },
+        })
+        .await
+        .unwrap();
+    loop {
+        if matches!(
+            event(&mut second.events).await,
+            HarnessEvent::TurnCompleted { .. }
+        ) {
+            break;
+        }
+    }
     second.session.terminate(Duration::from_millis(100)).await;
     assert!(lines(&log).iter().any(|line| line.get("method")
         == Some(&Value::String("thread/resume".into()))
         && line.pointer("/params/threadId").and_then(Value::as_str) == Some("thread-stub")));
+    let wire = lines(&log);
+    let resumed_turn = wire
+        .iter()
+        .rev()
+        .find(|line| line.get("method") == Some(&Value::String("turn/start".into())))
+        .unwrap();
+    assert_eq!(
+        resumed_turn
+            .pointer("/params/approvalPolicy")
+            .and_then(Value::as_str),
+        Some("on-request")
+    );
+    assert_eq!(
+        resumed_turn
+            .pointer("/params/sandboxPolicy/type")
+            .and_then(Value::as_str),
+        Some("workspaceWrite")
+    );
+}
+
+#[tokio::test]
+async fn parallel_sessions_keep_their_first_turn_access_isolated() {
+    let temp = TempDir::new().unwrap();
+    let (harness_a, log_a) = harness(&temp, "parallel-auto-accept");
+    let (harness_b, log_b) = harness(&temp, "parallel-auto");
+    let mut a = harness_a
+        .start_with_access(start_params(&temp, None), AccessMode::AutoAcceptEdits)
+        .await
+        .unwrap();
+    let mut b = harness_b
+        .start_with_access(start_params(&temp, None), AccessMode::Auto)
+        .await
+        .unwrap();
+
+    let prompt_a = a.session.prompt(PromptParams {
+        session_id: "chat-a".into(),
+        turn_id: "turn-a".into(),
+        text: "a".into(),
+        images: Vec::new(),
+    });
+    let prompt_b = b.session.prompt(PromptParams {
+        session_id: "chat-b".into(),
+        turn_id: "turn-b".into(),
+        text: "b".into(),
+        images: Vec::new(),
+    });
+    let (result_a, result_b) = tokio::join!(prompt_a, prompt_b);
+    result_a.unwrap();
+    result_b.unwrap();
+
+    for (started, session_id) in [(&mut a, "chat-a"), (&mut b, "chat-b")] {
+        let request_id = loop {
+            if let HarnessEvent::ApprovalRequested { request_id, .. } =
+                event(&mut started.events).await
+            {
+                break request_id;
+            }
+        };
+        started
+            .session
+            .respond(RespondParams {
+                session_id: session_id.into(),
+                request_id,
+                response: HarnessResponse::Approval {
+                    decision: ApprovalDecision::Allow,
+                },
+            })
+            .await
+            .unwrap();
+        loop {
+            if matches!(
+                event(&mut started.events).await,
+                HarnessEvent::TurnCompleted { .. }
+            ) {
+                break;
+            }
+        }
+        started.session.terminate(Duration::from_millis(100)).await;
+    }
+
+    let a_turn = lines(&log_a)
+        .into_iter()
+        .find(|line| line.get("method") == Some(&Value::String("turn/start".into())))
+        .unwrap();
+    let b_turn = lines(&log_b)
+        .into_iter()
+        .find(|line| line.get("method") == Some(&Value::String("turn/start".into())))
+        .unwrap();
+    assert_eq!(
+        a_turn
+            .pointer("/params/approvalsReviewer")
+            .and_then(Value::as_str),
+        Some("user")
+    );
+    assert_eq!(
+        b_turn
+            .pointer("/params/approvalsReviewer")
+            .and_then(Value::as_str),
+        Some("auto_review")
+    );
+    assert_eq!(
+        a_turn
+            .pointer("/params/sandboxPolicy/type")
+            .and_then(Value::as_str),
+        Some("workspaceWrite")
+    );
+    assert_eq!(
+        b_turn
+            .pointer("/params/sandboxPolicy/type")
+            .and_then(Value::as_str),
+        Some("workspaceWrite")
+    );
 }
 
 #[tokio::test]

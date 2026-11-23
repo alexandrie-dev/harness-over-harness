@@ -25,6 +25,24 @@ fn log(value: &Value) {
 fn finish_turn(status: &str) {
     if status == "completed" {
         send(
+            json!({"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"reasoning-1","delta":"checking "}}),
+        );
+        send(
+            json!({"method":"item/reasoning/textDelta","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"reasoning-1","delta":"the result"}}),
+        );
+        send(
+            json!({"method":"item/completed","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"reasoning","id":"reasoning-1","summary":[{"text":"checking the result"}],"content":[]}}}),
+        );
+        send(
+            json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"mcpToolCall","id":"tool-1","server":"stub","tool":"inspect","arguments":{"path":"src/lib.rs"},"status":"inProgress"}}}),
+        );
+        send(
+            json!({"method":"item/mcpToolCall/outputDelta","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"tool-1","delta":"inspected src/lib.rs"}}),
+        );
+        send(
+            json!({"method":"item/completed","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"mcpToolCall","id":"tool-1","server":"stub","tool":"inspect","arguments":{"path":"src/lib.rs"},"status":"completed","output":"inspected src/lib.rs"}}}),
+        );
+        send(
             json!({"method":"item/commandExecution/outputDelta","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","delta":"hello\n"}}),
         );
         send(

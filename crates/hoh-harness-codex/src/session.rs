@@ -782,7 +782,10 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                 emit_event(inner, HarnessEvent::ReasoningDelta { message_id, text }).await;
             }
         }
-        "item/commandExecution/outputDelta" | "item/fileChange/outputDelta" => {
+        "item/commandExecution/outputDelta"
+        | "item/fileChange/outputDelta"
+        | "item/mcpToolCall/outputDelta"
+        | "item/dynamicToolCall/outputDelta" => {
             if let (Some(item_id), Some(text)) =
                 (string(&params, "itemId"), string(&params, "delta"))
             {
