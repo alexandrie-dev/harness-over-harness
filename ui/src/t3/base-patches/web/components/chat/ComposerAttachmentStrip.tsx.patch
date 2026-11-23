@@ -1,0 +1,27 @@
+--- a/web/components/chat/ComposerAttachmentStrip.tsx
++++ b/web/components/chat/ComposerAttachmentStrip.tsx
+@@ -746,6 +746,8 @@
+         ref={inputRef}
+         type="file"
+         multiple
++        // HoH (ui/T3-MAP.md): the host and Claude accept pictures, not generic file attachments.
++        accept="image/gif,image/jpeg,image/png,image/webp"
+         className="hidden"
+         onChange={(event) => {
+           const files = Array.from(event.currentTarget.files ?? []);
+@@ -768,6 +770,6 @@
+               onPointerDown={(event) => event.preventDefault()}
+               onClick={() => inputRef.current?.click()}
+-              aria-label={gt("Attach files")}
++              aria-label={gt("Attach images")}
+             />
+           }
+         >
+@@ -777,6 +779,6 @@
+         </TooltipTrigger>
+         <TooltipPopup>
+-          <T>Attach files</T>
++          <T>Attach images</T>
+         </TooltipPopup>
+       </Tooltip>
+     </>

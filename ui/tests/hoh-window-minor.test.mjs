@@ -31,3 +31,21 @@ test('Recent chats omits T3 draft rows until a sent thread exists', async () => 
   const vite = await readFile(new URL('src/t3-entry/vite.ts', root), 'utf8');
   assert.match(vite, /latestUserMessageAt != null/);
 });
+
+test('paperclip uses T3 attachment intake with an image-only human picker', async () => {
+  const [composerPatch, stripPatch, stripSource, manifestText, map] = await Promise.all([
+    readFile(new URL('src/t3/base-patches/web/components/chat/ChatComposer.tsx.patch', root), 'utf8'),
+    readFile(new URL('src/t3/base-patches/web/components/chat/ComposerAttachmentStrip.tsx.patch', root), 'utf8'),
+    readFile(new URL('src/t3/base/web/components/chat/ComposerAttachmentStrip.tsx', root), 'utf8'),
+    readFile(new URL('src/t3/manifest.json', root), 'utf8'),
+    readFile(new URL('T3-MAP.md', root), 'utf8'),
+  ]);
+  assert.match(composerPatch, /supportsAttachmentUploads/);
+  assert.match(stripPatch, /accept="image\/gif,image\/jpeg,image\/png,image\/webp"/);
+  assert.match(stripSource, /addComposerAttachments\(files\)/);
+  assert.doesNotMatch(stripPatch, /accept="\*\/\*"/);
+  const patched = JSON.parse(manifestText).base.patched;
+  assert(patched['web/components/chat/ChatComposer.tsx']);
+  assert(patched['web/components/chat/ComposerAttachmentStrip.tsx']);
+  assert.match(map, /ComposerAttachmentStrip\.tsx\.patch[^\n]*GIF, JPEG, PNG/);
+});

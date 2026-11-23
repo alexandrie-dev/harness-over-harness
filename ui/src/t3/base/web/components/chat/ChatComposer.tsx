@@ -1202,7 +1202,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showComposerTopDrawer = pendingUserInputs.length > 0;
   const showCollapsedMobilePromptRow = isComposerCollapsedMobile;
   const showComposerAttachAction =
-    fileStagingLimit !== null &&
+    // HoH (ui/T3-MAP.md): Claude accepts image uploads even though generic file staging is absent.
+    supportsAttachmentUploads &&
     (!activePendingProgress ||
       (supportsQuestionAttachments &&
         activePendingProgress.activeQuestion?.allowCustomAnswer !== false));
