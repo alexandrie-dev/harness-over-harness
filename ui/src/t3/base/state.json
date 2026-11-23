@@ -20,6 +20,7 @@
     "web/components/chat/ChatComposer.tsx",
     "web/components/chat/ChatMarkdownMedia.tsx",
     "web/components/chat/ComposerAttachmentStrip.tsx",
+    "web/components/chat/DraftHeroHeadline.tsx",
     "web/components/chat/PanelLayoutControls.tsx",
     "web/components/chat/SkillInlineText.tsx",
     "web/components/chat/turnDetailAnnouncement.ts",

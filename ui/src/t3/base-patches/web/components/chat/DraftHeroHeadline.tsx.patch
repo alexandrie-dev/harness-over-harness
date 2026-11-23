@@ -1,0 +1,30 @@
+--- a/web/components/chat/DraftHeroHeadline.tsx
++++ b/web/components/chat/DraftHeroHeadline.tsx
+@@ -137,6 +137,7 @@
+         ) ?? null);
+   const scratchTargetEnvironmentId = scratchEnvironmentId(activeProjectRef?.environmentId ?? null);
+   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
++  const isHohHomeDraft = activeProject?.id === "hoh-project";
+   const isScratchDraft =
+     activeProject !== null &&
+     isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
+@@ -367,7 +368,9 @@
+         </DraftHeroProjectHeading>
+       ) : (
+         <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+-          {isScratchDraft ? (
++          {isHohHomeDraft ? (
++            <>What should we build in HoH?</>
++          ) : isScratchDraft ? (
+             <T>What should we work on?</T>
+           ) : canChooseProject ? (
+             <T>
+@@ -379,7 +382,7 @@
+           )}
+         </h1>
+       )}
+-      {scratchWorkspaceRoot === null ? null : (
++      {scratchWorkspaceRoot === null || isHohHomeDraft ? null : (
+         <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
+           {isScratchDraft ? projectSelector : orStartWithoutProject}
+         </p>

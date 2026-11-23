@@ -50,6 +50,8 @@ interface HomeDisposition {
   state: 'waiting' | 'done';
   /** This exact turn entered Home because its durable history ended mid-run, not because the person pressed Stop. */
   interrupted?: boolean;
+  /** This exact turn was deliberately stopped by the person; it is not a crash-recovery placeholder. */
+  stopped?: boolean;
 }
 
 /** The reasoning level goes to the engine as `effort` of `session/prompt` (agreed with the engine's writer). */
@@ -274,7 +276,11 @@ export class HohHost {
       const entry = value as Record<string, unknown> | null;
       const turnOrdinal = Number(entry?.turnOrdinal);
       if (Number.isInteger(turnOrdinal) && turnOrdinal > 0 && (entry?.state === 'waiting' || entry?.state === 'done'))
-        this.homeDispositions.set(threadId, { turnOrdinal, state: entry.state, ...(entry.interrupted === true ? { interrupted: true } : {}) });
+        this.homeDispositions.set(threadId, {
+          turnOrdinal, state: entry.state,
+          ...(entry.interrupted === true ? { interrupted: true } : {}),
+          ...(entry.stopped === true ? { stopped: true } : {}),
+        });
     }
     for (const [threadId, value] of Object.entries(saved?.homeObservedAt && typeof saved.homeObservedAt === 'object' ? saved.homeObservedAt : {})) {
       const observedAt = Number(value);
@@ -377,14 +383,16 @@ export class HohHost {
         steps: { done: 0, total: 0 }, agents: [],
         ...(disposition.state === 'waiting' ? { canComplete: true } : {}),
         ...(disposition.interrupted === true ? { interrupted: true } : {}),
+        ...(disposition.stopped === true ? { stopped: true } : {}),
       };
     }
     const interrupted = entry?.interrupted === true || (disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.interrupted === true);
-    const completable = entry?.state === 'done' || (entry?.state === 'ended' && interrupted);
+    const stopped = disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.stopped === true;
+    const completable = entry?.state === 'done' || (entry?.state === 'ended' && (interrupted || stopped));
     if (!entry || !completable) return entry;
     return disposition?.turnOrdinal === entry.turnOrdinal && disposition.state === 'done'
-      ? { ...entry, state: 'done', ...(interrupted ? { interrupted: true } : {}) }
-      : { ...entry, state: 'waiting', canComplete: true, ...(interrupted ? { interrupted: true } : {}) };
+      ? { ...entry, state: 'done', ...(interrupted ? { interrupted: true } : {}), ...(stopped ? { stopped: true } : {}) }
+      : { ...entry, state: 'waiting', canComplete: true, ...(interrupted ? { interrupted: true } : {}), ...(stopped ? { stopped: true } : {}) };
   }
 
   /** Follow the latest turn without changing T3's completed run: only Home waits for human sign-off. */
@@ -393,7 +401,8 @@ export class HohHost {
     if (!entry) return false;
     const current = this.homeDispositions.get(thread.id);
     const interrupted = entry.interrupted === true || (current?.turnOrdinal === entry.turnOrdinal && current.interrupted === true);
-    const completable = entry.state === 'done' || (entry.state === 'ended' && interrupted);
+    const stopped = current?.turnOrdinal === entry.turnOrdinal && current.stopped === true;
+    const completable = entry.state === 'done' || (entry.state === 'ended' && (interrupted || stopped));
     if (current?.turnOrdinal === entry.turnOrdinal && current.interrupted === true) {
       // The same turn really resumed: it is no longer a crash placeholder. If it already completed before
       // this flush, keep the person's waiting/done choice but drop the stale interruption label.
@@ -414,7 +423,10 @@ export class HohHost {
     }
     const matched = this.homeDispositions.get(thread.id);
     if (completable && (!matched || matched.turnOrdinal !== entry.turnOrdinal)) {
-      this.homeDispositions.set(thread.id, { turnOrdinal: entry.turnOrdinal, state: 'waiting', ...(interrupted ? { interrupted: true } : {}) });
+      this.homeDispositions.set(thread.id, {
+        turnOrdinal: entry.turnOrdinal, state: 'waiting',
+        ...(interrupted ? { interrupted: true } : {}), ...(stopped ? { stopped: true } : {}),
+      });
       return true;
     }
     return false;
@@ -443,8 +455,12 @@ export class HohHost {
         ? thread?.home(disposition.turnOrdinal)
         : latest;
       const interrupted = entry?.interrupted === true || (disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.interrupted === true);
-      if (!thread || !entry || (entry.state !== 'done' && !(entry.state === 'ended' && interrupted))) return;
-      this.homeDispositions.set(threadId, { turnOrdinal: entry.turnOrdinal, state: 'done', ...(interrupted ? { interrupted: true } : {}) });
+      const stopped = disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.stopped === true;
+      if (!thread || !entry || (entry.state !== 'done' && !(entry.state === 'ended' && (interrupted || stopped)))) return;
+      this.homeDispositions.set(threadId, {
+        turnOrdinal: entry.turnOrdinal, state: 'done',
+        ...(interrupted ? { interrupted: true } : {}), ...(stopped ? { stopped: true } : {}),
+      });
       this.save();
       this.changed(threadId);
       this.flush();
@@ -1334,16 +1350,33 @@ export class HohHost {
   /** «Стоп»: the same cancel as the current window; the engine ends Claude and its commands. */
   private async cancel(thread: ThreadModel) {
     const stoppedOrdinal = thread.activeRunId() ? thread.home()?.turnOrdinal : undefined;
-    if (stoppedOrdinal !== undefined) thread.stopRequested = true;
-    await this.engine.request('session/cancel', { sessionId: thread.id });
     const disposition = this.homeDispositions.get(thread.id);
-    const clearedCrashDisposition = stoppedOrdinal !== undefined && disposition?.turnOrdinal === stoppedOrdinal && disposition.interrupted === true;
-    if (clearedCrashDisposition) {
-      this.homeDispositions.delete(thread.id);
+    const replacedCrashDisposition = stoppedOrdinal !== undefined && disposition?.turnOrdinal === stoppedOrdinal && disposition.interrupted === true;
+    if (stoppedOrdinal !== undefined) {
+      thread.stopRequested = true;
+      // Persist the person's intent before crossing the engine boundary. Closing the window while cancel is
+      // still in flight must not turn an explicit Stop back into crash recovery on the next launch.
+      this.homeDispositions.set(thread.id, { turnOrdinal: stoppedOrdinal, state: 'waiting', stopped: true });
       this.save();
     }
+    try {
+      await this.engine.request('session/cancel', { sessionId: thread.id });
+    } catch (error) {
+      // A live window can report an actual refusal and continue the run. Once the host is closing, preserve the
+      // already-durable user intent: the new window is authoritative and will reconcile the engine history.
+      const current = this.homeDispositions.get(thread.id);
+      if (!this.stopped && stoppedOrdinal !== undefined && thread.activeRunId()
+        && current?.turnOrdinal === stoppedOrdinal && current.state === 'waiting' && current.stopped === true) {
+        thread.stopRequested = false;
+        if (disposition) this.homeDispositions.set(thread.id, disposition); else this.homeDispositions.delete(thread.id);
+        this.save();
+        this.changed(thread.id);
+        this.flush();
+      }
+      throw error;
+    }
     // The turn is stopped now: its run closes and the thread list stops saying "Working" without waiting for the engine's closing event.
-    if (thread.interrupt(this.now()) || clearedCrashDisposition) { this.changed(thread.id); this.flush(); }
+    if (thread.interrupt(this.now()) || replacedCrashDisposition || stoppedOrdinal !== undefined) { this.changed(thread.id); this.flush(); }
   }
 
   private async respond(thread: ThreadModel, command: Record<string, any>) {

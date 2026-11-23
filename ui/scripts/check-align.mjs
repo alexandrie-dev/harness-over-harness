@@ -30,6 +30,7 @@ function box(rect) {
 
 function completedEngine() {
   const engine = new FakeEngine();
+  const today = new Date(); today.setHours(12, 0, 0, 0); engine.clock = today.getTime();
   engine.access = 'confirm'; engine.claude = CLAUDE;
   const session = engine.open(CHAT.id, CHAT.title);
   engine.append(session, 'user/message', { id: 'chat-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Check every alignment edge.' }] });
@@ -41,6 +42,7 @@ function completedEngine() {
 
 function busyEngine() {
   const engine = new FakeEngine();
+  const today = new Date(); today.setHours(12, 0, 0, 0); engine.clock = today.getTime();
   engine.access = 'confirm'; engine.claude = CLAUDE;
   const start = (id, title, done = false) => {
     const session = engine.open(id, title);
@@ -71,9 +73,17 @@ function storage(grouped) {
         { id: 'project-gamma', title: 'Archive', workspaceRoot: '/work/archive', createdAt: at, updatedAt: at, pinnedAt: null, archivedAt: null },
       ],
       threads: { 'alpha-1': 'project-alpha', 'alpha-2': 'project-alpha', 'alpha-done': 'project-alpha', 'beta-1': 'project-beta', 'scratch-1': 'hoh-project', 'gamma-done': 'project-gamma' },
-      homeDispositions: { 'alpha-done': { turnOrdinal: 1, state: 'done' }, 'gamma-done': { turnOrdinal: 1, state: 'done' } },
+      homeDispositions: { 'alpha-done': { turnOrdinal: 1, state: 'done' }, 'gamma-done': { turnOrdinal: 1, state: 'waiting', stopped: true } },
     }),
   };
+}
+
+function conversationStorage() {
+  const stored = storage(false);
+  const projects = JSON.parse(stored['hoh-host.projects.v1']);
+  projects.threads[CHAT.id] = 'project-alpha';
+  stored['hoh-host.projects.v1'] = JSON.stringify(projects);
+  return stored;
 }
 
 async function open(browser, engine, width, height, path = '/', stored = {}) {
@@ -136,11 +146,21 @@ const scenarios = [
       await page.getByRole('button', { name: 'Start', exact: true }).click();
       await page.getByRole('button', { name: 'Start without a project', exact: true }).click();
       await page.getByText(/Good (night|morning|afternoon|evening)/).first().waitFor(); await setSidebar(page, sidebar);
+      const headline = page.locator('[data-chat-composer-stack] h1').first();
+      const before = await headline.innerText();
+      const viewport = page.viewportSize();
+      await page.setViewportSize({ width: viewport.width + 7, height: viewport.height }); await page.waitForTimeout(50);
+      await page.setViewportSize(viewport); await page.waitForTimeout(50);
+      const after = await headline.innerText();
+      if (before !== after || before !== 'What should we build in HoH?') throw new Error(`empty-home copy changed across resize: ${JSON.stringify({ before, after })}`);
     }, blocks: ['home'],
   },
   {
     name: 'home-flat', engine: busyEngine, stored: () => storage(false),
-    prepare: async (page, engine, sidebar) => { await readyBusy(page, engine, false); await setSidebar(page, sidebar); }, blocks: ['home', 'cards'],
+    prepare: async (page, engine, sidebar) => {
+      await readyBusy(page, engine, false); await setSidebar(page, sidebar);
+      await page.getByText('Stopped', { exact: true }).waitFor();
+    }, blocks: ['home', 'cards'],
   },
   {
     name: 'home-projects', engine: busyEngine, stored: () => storage(true),
@@ -151,8 +171,13 @@ const scenarios = [
     prepare: async (page, engine, sidebar) => { await readyBusy(page, engine, true); await setSidebar(page, sidebar); const folder = page.locator('.hoh-project').filter({ hasText: 'Alexandrie' }).first(); await folder.focus(); await page.keyboard.press('Enter'); await page.locator('.hoh-project-popover').waitFor(); }, blocks: ['home', 'projects', 'disclosure'],
   },
   {
-    name: 'conversation', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: () => ({}),
-    prepare: async (page, _engine, sidebar) => { await page.getByText('The measured conversation lane is ready.').waitFor(); await setSidebar(page, sidebar); }, blocks: ['conversation'],
+    name: 'conversation', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor(); await setSidebar(page, sidebar);
+      const breadcrumb = page.getByRole('navigation', { name: 'Thread breadcrumb' });
+      if (await breadcrumb.getByText('Alexandrie', { exact: true }).count() !== 1 || await breadcrumb.getByText('No project', { exact: true }).count() !== 0)
+        throw new Error(`project conversation breadcrumb is wrong: ${JSON.stringify(await breadcrumb.innerText())}`);
+    }, blocks: ['conversation'],
   },
   {
     name: 'quick-view', engine: completedEngine, stored: () => ({}),
@@ -162,14 +187,13 @@ const scenarios = [
     name: 'settings', engine: completedEngine, path: () => '/settings/general', stored: () => ({}),
     prepare: async (page, _engine, sidebar) => { await page.locator('[data-settings-page-scroll]').waitFor(); await setSidebar(page, sidebar); }, blocks: ['settings'],
   },
-  ...['A', 'B', 'C'].map(variant => ({
-    name: `plugins-${variant.toLowerCase()}`, engine: busyEngine, stored: () => storage(true),
+  {
+    name: 'plugins', engine: busyEngine, stored: () => storage(true),
     prepare: async (page, engine, sidebar) => {
       await readyBusy(page, engine, true); await page.locator('[data-hoh-page-item="plugins"]').click(); await page.locator('.hoh-plugins').waitFor();
-      if (variant !== 'A') await page.getByRole('button', { name: `Variant ${variant}` }).click();
-      await page.locator(`.hoh-plugins[data-plugin-variant="${variant}"]`).waitFor(); await setSidebar(page, sidebar);
+      await page.locator('[data-plugin-empty]').waitFor(); await setSidebar(page, sidebar);
     }, blocks: ['plugins'],
-  })),
+  },
 ].filter(scenario => !process.env.ALIGN_SCREEN || process.env.ALIGN_SCREEN === scenario.name);
 
 async function rectangles(page) {
@@ -211,14 +235,24 @@ async function rectangles(page) {
       content: firstVisible('[data-slot="sidebar-inset"]'), notch: firstVisible('.hoh-notch'),
       homeViewport, home: firstVisible('.hoh-home__inner'), greeting: firstVisible('.hoh-home__head'), composer,
       draftHero: firstVisible('.hoh-draft-hero'), emptyGroup: union(homeViewport, composer),
-      headline: firstVisible('[data-chat-composer-stack] > .absolute.inset-x-0.bottom-full'), cards: firstVisible('.hoh-home__cards'), projects: firstVisible('.hoh-projects'), disclosure: firstVisible('.hoh-project-popover'),
+      headline: firstVisible('[data-chat-composer-stack] > .absolute.inset-x-0.bottom-full'), homeLabel: firstVisible('.hoh-home__label'), cards: firstVisible('.hoh-home__cards'), projects: firstVisible('.hoh-projects'), disclosure: firstVisible('.hoh-project-popover'),
       cardItems: allVisible('.hoh-home__cards > .hoh-card'), projectItems: allVisible('.hoh-projects > .hoh-project'),
-      canvas: firstVisible('[data-chat-canvas]'), chatLane, feed: firstVisible('[data-chat-canvas] .chat-content-lane'),
+      homeBottomClearance: (() => {
+        const scroller = document.querySelector('.hoh-home');
+        const targets = [...document.querySelectorAll('.hoh-home__cards > .hoh-card')];
+        if (!scroller || !targets.length) return null;
+        const previous = scroller.scrollTop; scroller.scrollTop = scroller.scrollHeight;
+        const last = targets.map(element => element.getBoundingClientRect()).sort((a, b) => b.bottom - a.bottom)[0];
+        const scrollerRect = scroller.getBoundingClientRect(); const composerRect = document.querySelector('[data-chat-composer-stack]')?.getBoundingClientRect();
+        const clearance = Math.min(scrollerRect.bottom, composerRect?.top ?? scrollerRect.bottom) - last.bottom;
+        scroller.scrollTop = previous; return clearance;
+      })(),
+      canvas: firstVisible('[data-chat-canvas]'), chatLane, feed: firstVisible('[data-chat-canvas] .chat-content-lane'), detailsCard: firstVisible('[data-thread-details-card]'),
       dialog: firstVisible('[data-slot="dialog-popup"].hoh-quick-view'), quickChat: firstVisible('.hoh-quick-view__chat'), quickComposer: firstVisible('.hoh-quick-view [data-chat-composer-stack]'), quickFeed: firstVisible('.hoh-quick-view [data-chat-canvas] .chat-content-lane'),
       underlayComposerPaint: paint('[data-hoh-home-body] + .chat-composer-lane'), quickComposerPaint: paint('.hoh-quick-view [data-chat-composer-stack]'),
       settingsScroll: firstVisible('[data-settings-page-scroll]'), settings: firstVisible('[data-settings-page-scroll] > div'),
       pluginPage: firstVisible('.hoh-page'), plugins: contentBox('.hoh-plugins'),
-      pluginItems: allVisible('.hoh-plugin-card, .hoh-plugin-row, .hoh-plugin-split, .hoh-plugin-detail, .hoh-plugins__top, .hoh-plugins__sample, .hoh-plugins__round'),
+      pluginItems: allVisible('.hoh-plugin-card, .hoh-plugin-detail, .hoh-plugins__top, .hoh-plugins-empty'),
       pluginOverflow: (() => { const element = document.querySelector('.hoh-plugins'); return element ? element.scrollWidth - element.clientWidth : null; })(),
     };
   });
@@ -277,10 +311,16 @@ function measure(label, scenario, size, sidebar, r) {
   if (scenario.blocks.includes('cards')) {
     add(label, scenario.name, size, sidebar, 'cards', r.cards, r.home);
     r.cardItems.forEach((rect, index) => withinHorizontal(label, `card ${index + 1}`, rect, r.home));
+    if (r.homeLabel && r.cardItems[0] && Math.abs(r.homeLabel.left - r.cardItems[0].left) > TOL)
+      fail(label, `first card starts ${round(r.cardItems[0].left - r.homeLabel.left)}px from the Now/Done heading`);
+    if (r.homeBottomClearance === null) fail(label, 'last Home card scroll clearance was not measurable');
+    else if (r.homeBottomClearance < 8 - TOL) fail(label, `last Home card cannot scroll clear of the composer (${round(r.homeBottomClearance)}px)`);
   }
   if (scenario.blocks.includes('projects')) {
     add(label, scenario.name, size, sidebar, 'projects', r.projects, r.home);
     r.projectItems.forEach((rect, index) => withinHorizontal(label, `project ${index + 1}`, rect, r.home));
+    if (r.homeLabel && r.projectItems[0] && Math.abs(r.homeLabel.left - r.projectItems[0].left) > TOL)
+      fail(label, `first project starts ${round(r.projectItems[0].left - r.homeLabel.left)}px from the Projects heading`);
   }
   if (scenario.blocks.includes('disclosure')) {
     add(label, scenario.name, size, sidebar, 'project-disclosure', r.disclosure, r.home);
@@ -292,6 +332,8 @@ function measure(label, scenario, size, sidebar, r) {
     add(label, scenario.name, size, sidebar, 'feed', r.feed, r.chatLane);
     add(label, scenario.name, size, sidebar, 'notch-composer', r.notch, r.chatLane, { equalMargins: false, tolerance: 2 });
     if (r.feed && r.composer && Math.abs(r.feed.width - r.composer.width) > TOL) fail(label, `feed/composer widths differ by ${round(r.feed.width - r.composer.width)}px`);
+    if (r.detailsCard && r.feed && r.feed.right > r.detailsCard.left - 8 + TOL)
+      fail(label, `thread details overlap the message lane by ${round(r.feed.right - r.detailsCard.left)}px`);
   }
   if (scenario.blocks.includes('quick')) {
     add(label, scenario.name, size, sidebar, 'quick-dialog', r.dialog, r.viewport);
@@ -326,7 +368,7 @@ try {
   for (const scenario of scenarios) for (const [width, height] of SIZES) for (const sidebar of SIDEBARS) {
     const size = `${width}x${height}`; const label = `${scenario.name} ${size} ${sidebar}`; const engine = scenario.engine();
     console.log(`align: measure ${label}`);
-    const initialSidebar = scenario.name.startsWith('plugins-') ? 'expanded' : sidebar;
+    const initialSidebar = scenario.name === 'plugins' ? 'expanded' : sidebar;
     const initialStorage = { ...scenario.stored(), chat_thread_sidebar_open: initialSidebar === 'expanded' ? 'true' : 'false' };
     const { context, page, problems, off } = await open(browser, engine, width, height, scenario.path?.() ?? '/', initialStorage);
     try {
@@ -354,18 +396,25 @@ try {
           fail(label, `0-waiting project has wrong state/border: ${JSON.stringify(item)}`);
       }
       for (const problem of problems) fail(label, problem);
-      if (QA) await page.screenshot({ path: join(QA, `${scenario.name}-${size}-${sidebar}.png`), animations: 'disabled' });
+      if (QA) {
+        await page.screenshot({ path: join(QA, `${scenario.name}-${size}-${sidebar}.png`), animations: 'disabled' });
+        if (scenario.name === 'home-flat') {
+          await page.locator('.hoh-home').evaluate(node => { node.scrollTop = node.scrollHeight; });
+          await page.waitForTimeout(50);
+          await page.screenshot({ path: join(QA, `${scenario.name}-${size}-${sidebar}-scrolled.png`), animations: 'disabled' });
+        }
+      }
     } catch (error) { const message = String(error?.message ?? error).split('\n')[0]; fail(label, message); console.error(`align: setup ${label}: ${message}`); }
     finally { off(); await context.close(); }
   }
 } finally { await browser?.close(); await rm(chromeHome, { recursive: true, force: true }); }
 
 const centerIn = (rect, reference) => (rect.left + rect.width / 2) - (reference.left + reference.width / 2);
-const compareToConversation = (observation, name, rect, reference, { width = true } = {}) => {
+const compareToConversation = (observation, name, rect, reference, { width = true, widthTolerance = TOL } = {}) => {
   const canonical = observations.find(item => item.screen === 'conversation' && item.size === observation.size && item.sidebar === observation.sidebar);
   if (!canonical?.rects.composer || !canonical.rects.chatLane || !rect || !reference) return;
   const label = `${observation.screen} ${observation.size} ${observation.sidebar}`;
-  if (width && Math.abs(rect.width - canonical.rects.composer.width) > TOL)
+  if (width && Math.abs(rect.width - canonical.rects.composer.width) > widthTolerance)
     fail(label, `${name} width ${round(rect.width)}px differs from T3 conversation ${round(canonical.rects.composer.width)}px`);
   const axisDifference = centerIn(rect, reference) - centerIn(canonical.rects.composer, canonical.rects.chatLane);
   if (Math.abs(axisDifference) > TOL) fail(label, `${name} relative axis differs from T3 conversation by ${round(axisDifference)}px`);
@@ -374,12 +423,13 @@ const compareToConversation = (observation, name, rect, reference, { width = tru
 for (const observation of observations) {
   const { screen, size, sidebar, rects } = observation;
   if (screen.startsWith('home-')) compareToConversation(observation, 'home column', rects.home, rects.content);
-  if (screen.startsWith('plugins-')) compareToConversation(observation, 'plugins column', rects.plugins, rects.content);
+  if (screen === 'plugins') compareToConversation(observation, 'plugins column', rects.plugins, rects.content);
   if (screen === 'quick-view') {
     const canonical = observations.find(item => item.screen === 'conversation' && item.size === size && item.sidebar === sidebar);
     // The T3 dialog owns a wider local viewport than a constrained expanded thread. Compare the exact 46rem lane
     // whenever the thread can reach it; otherwise both lanes are checked against their own native container axis.
-    compareToConversation(observation, 'quick-view chat column', rects.quickComposer, rects.quickChat, { width: (canonical?.rects.composer?.width ?? 0) >= 735 });
+    // The dialog's two one-pixel borders reduce its measured inner lane by 2px.
+    compareToConversation(observation, 'quick-view chat column', rects.quickComposer, rects.quickChat, { width: (canonical?.rects.composer?.width ?? 0) >= 735, widthTolerance: 2 });
     if (rects.quickComposer && rects.quickComposer.width > 736 + TOL) fail(`${screen} ${size} ${sidebar}`, `quick-view composer exceeds T3 46rem maximum: ${round(rects.quickComposer.width)}px`);
   }
 }
