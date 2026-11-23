@@ -9,7 +9,7 @@ fn validates(value: Value) -> SessionAssistantStreamNotification {
 }
 
 #[test]
-fn validates_start_text_delta_and_terminal_frames() {
+fn validates_start_visible_deltas_and_terminal_frames() {
     let start = validates(json!({
         "sessionId":"s", "frame":{
             "type":"start", "attemptId":"s:1", "revision":1, "turn":2, "step":3
@@ -36,6 +36,22 @@ fn validates_start_text_delta_and_terminal_frames() {
         })
     );
 
+    let reasoning = validates(json!({
+        "sessionId":"s", "frame":{
+            "type":"chunk", "attemptId":"s:thinking", "revision":2, "index":0,
+            "time":1700000000001_i64, "chunk":{"type":"reasoning-delta", "text":"думаю"}
+        }
+    }));
+    assert_eq!(
+        serde_json::to_value(reasoning).unwrap(),
+        json!({
+            "sessionId":"s", "frame":{
+                "type":"chunk", "attemptId":"s:thinking", "revision":2, "index":0,
+                "time":1700000000001_i64, "chunk":{"type":"reasoning-delta", "text":"думаю"}
+            }
+        })
+    );
+
     let gap = validates(json!({
         "sessionId":"s", "frame":{
             "type":"gap", "attemptId":"s:1", "revision":2, "index":1
@@ -57,10 +73,10 @@ fn validates_start_text_delta_and_terminal_frames() {
 }
 
 #[test]
-fn rejects_incomplete_or_non_text_frames() {
+fn rejects_incomplete_or_non_visible_frames() {
     for invalid in [
         json!({"sessionId":"s", "frame":{"type":"start", "attemptId":"s:1", "revision":1, "turn":1}}),
-        json!({"sessionId":"s", "frame":{"type":"chunk", "attemptId":"s:1", "revision":2, "index":0, "time":1, "chunk":{"type":"reasoning-delta", "text":"secret"}}}),
+        json!({"sessionId":"s", "frame":{"type":"chunk", "attemptId":"s:1", "revision":2, "index":0, "time":1, "chunk":{"type":"tool-call-delta", "text":"hidden"}}}),
         json!({"sessionId":"s", "frame":{"type":"gap", "attemptId":"s:1", "revision":2}}),
         json!({"sessionId":"s", "frame":{"type":"end", "attemptId":"s:1", "revision":3, "index":1, "outcome":"cancelled"}}),
     ] {

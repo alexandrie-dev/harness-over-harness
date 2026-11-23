@@ -115,14 +115,27 @@ test('new chat with a first message, streamed answer, tool step, end of turn', a
   await tick(5); // the engine's echo of the message and turn/start
   assert.equal(itemsOf(lastSnapshot(thread)).filter(item => item.type === 'user_message').length, 1, 'the echo is not shown twice');
 
+  engine.emitFrame('thread-1', { type: 'start', attemptId: 'reason-1', revision: 1, turn: 1, step: 1 });
+  engine.emitFrame('thread-1', { type: 'chunk', attemptId: 'reason-1', revision: 1, index: 0, time: 1, chunk: { type: 'reasoning-delta', text: '' } });
+  const thinkingStarted = await thread.until(value => value.kind === 'snapshot' && itemsOf(value).some(item => item.type === 'reasoning' && item.text === ''));
+  const emptyReasoning = itemsOf(thinkingStarted).find(item => item.type === 'reasoning');
+  assert.equal(emptyReasoning.streaming, true); assert.equal(emptyReasoning.status, 'running');
+  engine.emitFrame('thread-1', { type: 'chunk', attemptId: 'reason-1', revision: 1, index: 1, time: 2, chunk: { type: 'reasoning-delta', text: 'Обдумываю ' } });
+  const thinking = await thread.until(value => value.kind === 'snapshot' && itemsOf(value).some(item => item.type === 'reasoning' && item.text === 'Обдумываю '));
+  const liveReasoning = itemsOf(thinking).find(item => item.type === 'reasoning');
+  assert.equal(liveReasoning.streaming, true); assert.equal(liveReasoning.status, 'running');
+
+  // A text attempt may overlap the reasoning attempt; neither start retires the other.
   engine.emitFrame('thread-1', { type: 'start', attemptId: 'att-1', revision: 1, turn: 1, step: 1 });
   engine.emitFrame('thread-1', { type: 'chunk', attemptId: 'att-1', revision: 1, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Сейчас ' } });
   engine.emitFrame('thread-1', { type: 'chunk', attemptId: 'att-1', revision: 1, index: 1, time: 2, chunk: { type: 'text-delta', text: 'посмотрю.' } });
   const streaming = await thread.until(value => value.kind === 'snapshot' && itemsOf(value).some(item => item.type === 'assistant_message' && item.text === 'Сейчас посмотрю.'));
   const live = itemsOf(streaming).find(item => item.type === 'assistant_message');
   assert.equal(live.streaming, true); assert.equal(live.status, 'running');
+  assert.equal(itemsOf(streaming).find(item => item.type === 'reasoning').text, 'Обдумываю ');
+  engine.emitFrame('thread-1', { type: 'end', attemptId: 'reason-1', revision: 1, index: 2, outcome: 'committed' });
   engine.emitFrame('thread-1', { type: 'end', attemptId: 'att-1', revision: 1, index: 2, outcome: 'completed' });
-  engine.emitEvent('thread-1', 'assistant/message', { turn: 1, step: 1, message: { id: 'a1', content: [{ type: 'text', text: 'Сейчас посмотрю.' }] } });
+  engine.emitEvent('thread-1', 'assistant/message', { turn: 1, step: 1, message: { id: 'a1', content: [{ type: 'reasoning', text: 'Проверил.' }, { type: 'text', text: 'Сейчас посмотрю.' }] } });
 
   engine.emitEvent('thread-1', 'tool/call', { turn: 1, callId: 'c1', name: 'Bash', arguments: JSON.stringify({ command: 'ls | wc -l' }) });
   const running = await thread.until(value => value.kind === 'snapshot' && itemsOf(value).some(item => item.type === 'command_execution'));
@@ -132,12 +145,24 @@ test('new chat with a first message, streamed answer, tool step, end of turn', a
   const done = await thread.until(value => value.kind === 'snapshot' && itemsOf(value).some(item => item.type === 'command_execution' && item.status === 'completed'));
   assert.equal(itemsOf(done).find(item => item.type === 'command_execution').output, '7\n');
 
-  engine.emitEvent('thread-1', 'assistant/message', { turn: 1, step: 2, message: { id: 'a2', content: [{ type: 'text', text: 'Файлов: 7.' }] } });
+  // The reverse start order is also independent: a later reasoning start cannot reset text.
+  engine.emitFrame('thread-1', { type: 'start', attemptId: 'att-2', revision: 1, turn: 1, step: 2 });
+  engine.emitFrame('thread-1', { type: 'chunk', attemptId: 'att-2', revision: 1, index: 0, time: 3, chunk: { type: 'text-delta', text: 'Файлов: ' } });
+  engine.emitFrame('thread-1', { type: 'start', attemptId: 'reason-2', revision: 1, turn: 1, step: 2 });
+  engine.emitFrame('thread-1', { type: 'chunk', attemptId: 'reason-2', revision: 1, index: 0, time: 4, chunk: { type: 'reasoning-delta', text: 'Сверяю.' } });
+  engine.emitFrame('thread-1', { type: 'chunk', attemptId: 'att-2', revision: 1, index: 1, time: 5, chunk: { type: 'text-delta', text: '7.' } });
+  const reverse = await thread.until(value => value.kind === 'snapshot'
+    && itemsOf(value).some(item => item.type === 'reasoning' && item.text === 'Сверяю.')
+    && itemsOf(value).some(item => item.type === 'assistant_message' && item.text === 'Файлов: 7.'));
+  assert.equal(itemsOf(reverse).find(item => item.type === 'assistant_message' && item.text === 'Файлов: 7.').streaming, true);
+  engine.emitEvent('thread-1', 'assistant/message', { turn: 1, step: 2, message: { id: 'a2', content: [{ type: 'reasoning', text: 'Сверено.' }, { type: 'text', text: 'Файлов: 7.' }] } });
   engine.emitEvent('thread-1', 'turn/end', { reason: { kind: 'completed' } });
   const ended = await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'completed');
   const answers = itemsOf(ended).filter(item => item.type === 'assistant_message');
   assert.deepEqual(answers.map(item => [item.text, item.streaming, item.status]), [['Сейчас посмотрю.', false, 'completed'], ['Файлов: 7.', false, 'completed']]);
-  assert.deepEqual(ended.projection.visibleTurnItems.map(row => row.item.type), ['user_message', 'assistant_message', 'command_execution', 'assistant_message']);
+  const reasoning = itemsOf(ended).filter(item => item.type === 'reasoning');
+  assert.deepEqual(reasoning.map(item => [item.text, item.streaming, item.status]), [['Проверил.', false, 'completed'], ['Сверено.', false, 'completed']]);
+  assert.deepEqual(ended.projection.visibleTurnItems.map(row => row.item.type), ['user_message', 'reasoning', 'assistant_message', 'command_execution', 'assistant_message', 'reasoning']);
   assert(ended.snapshotSequence > 0);
 
   const row = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-1' && value.thread.status === 'completed');

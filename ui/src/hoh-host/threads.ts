@@ -16,6 +16,9 @@ const nonBlank = (value: string, fallback: string) => value.trim() ? value.trim(
 export function contentText(blocks: unknown): string {
   return Array.isArray(blocks) ? blocks.filter(block => block?.type === 'text').map(block => text(block.text)).join('') : '';
 }
+function contentReasoning(blocks: unknown): string {
+  return Array.isArray(blocks) ? blocks.filter(block => block?.type === 'reasoning').map(block => text(block.text)).filter(Boolean).join('\n\n') : '';
+}
 function argumentsOf(value: unknown): Record<string, any> {
   try { return record(typeof value === 'string' ? JSON.parse(value) : value); } catch { return {}; }
 }
@@ -31,7 +34,15 @@ interface Request {
   id: string; kind: string; status: 'pending' | 'resolved' | 'expired' | 'cancelled';
   createdAt: number; resolvedAt: number | null; decision?: string; answers?: Record<string, unknown>;
 }
-interface Live { itemId: string; attemptId: string; raw: string; last: number; gapped: boolean }
+interface Live {
+  itemId: string;
+  attemptId: string;
+  key: string;
+  kind: 'text' | 'reasoning' | null;
+  raw: string;
+  last: number;
+  gapped: boolean;
+}
 
 /** What a tool call is, by the name the engine reports (Claude's tools and the engine's own). */
 function toolKind(name: string): 'command' | 'write' | 'read' | 'search' | 'web' | 'other' {
@@ -247,8 +258,9 @@ export class ThreadModel {
   }
 
   private assistantText(key: string, messageId: string, value: string, at: number, parentItemId: string | null) {
-    const live = this.live.get(key);
-    if (live) { this.live.delete(key); this.retired.add(live.attemptId); }
+    const found = [...this.live.entries()].find(([, live]) => live.key === key && live.kind === 'text');
+    const live = found?.[1];
+    if (found) { this.live.delete(found[0]); this.retired.add(live!.attemptId); }
     const id = live?.itemId ?? 'item-a-' + messageId;
     const existing = this.item(id);
     if (!value) {
@@ -271,6 +283,30 @@ export class ThreadModel {
       else this.messages.push({ id: msgId, runId: this.currentRun()?.id ?? null, role: 'assistant', text: value, streaming: false, createdAt: at, updatedAt: at });
     }
     if (parentItemId) this.refreshSubagent(parentItemId);
+  }
+
+  private assistantReasoning(key: string, messageId: string, value: string, at: number, parentItemId: string | null) {
+    const found = [...this.live.entries()].filter(([, live]) => live.key === key && live.kind === 'reasoning');
+    const live = found[0]?.[1];
+    for (const [attempt, entry] of found) {
+      this.live.delete(attempt); this.retired.add(entry.attemptId);
+      if (entry !== live) {
+        const duplicate = this.item(entry.itemId);
+        if (duplicate) this.items.splice(this.items.indexOf(duplicate), 1);
+      }
+    }
+    const id = live?.itemId ?? 'item-r-' + messageId;
+    const existing = this.item(id);
+    if (!value) {
+      if (existing) this.items.splice(this.items.indexOf(existing), 1);
+      return;
+    }
+    if (existing) {
+      Object.assign(existing, { text: value });
+      this.settleItem(existing, 'completed', at);
+    } else if (!this.item('item-r-' + messageId)) {
+      this.items.push({ ...this.base(id, 'reasoning', 'completed', at, undefined, parentItemId), text: value, streaming: false });
+    }
   }
 
   /** A provider-native child names the native Task/Agent call; T3 items name their projected parent. */
@@ -420,6 +456,7 @@ export class ThreadModel {
         if (!text(message.id)) return false;
         const parentItemId = this.parentItem(data);
         const key = String(data.turn ?? '') + ':' + String(data.step ?? '') + (text(data.parentCallId) ? ':' + text(data.parentCallId) : '');
+        this.assistantReasoning(key, text(message.id), contentReasoning(message.content), at, parentItemId);
         this.assistantText(key, text(message.id), contentText(message.content), at, parentItemId);
         break;
       }
@@ -443,24 +480,18 @@ export class ThreadModel {
     return true;
   }
 
-  /** Live text of the answer (`session.assistant-stream`), replaced by the durable `assistant/message`. */
+  /** Live reasoning/text (`session.assistant-stream`), replaced by durable `assistant/message`. */
   applyStreamFrame(frame: Record<string, any>, at = Date.now()): boolean {
     const attempt = text(frame.attemptId);
     if (!attempt || this.retired.has(attempt)) return false;
     if (frame.type === 'start') {
       const key = String(frame.turn ?? '') + ':' + String(frame.step ?? '');
-      if ([...this.live.values()].some(live => live.attemptId === attempt)) return false;
-      const previous = this.live.get(key);
-      if (previous) this.retired.add(previous.attemptId);
-      const itemId = previous?.itemId ?? 'item-live-' + attempt;
-      this.live.set(key, { itemId, attemptId: attempt, raw: '', last: -1, gapped: false });
-      const existing = this.item(itemId);
-      if (existing) Object.assign(existing, { text: '', streaming: true });
-      return !!existing;
+      if (this.live.has(attempt)) return false;
+      this.live.set(attempt, { itemId: 'item-live-' + attempt, attemptId: attempt, key, kind: null, raw: '', last: -1, gapped: false });
+      return false;
     }
-    const found = [...this.live.entries()].find(([, live]) => live.attemptId === attempt);
-    if (!found) return false;
-    const [, live] = found;
+    const live = this.live.get(attempt);
+    if (!live) return false;
     if (frame.type === 'gap') { live.gapped = true; return false; }
     if (frame.type === 'end') {
       this.retired.add(attempt);
@@ -469,12 +500,15 @@ export class ThreadModel {
       return false;
     }
     const chunk = record(frame.chunk);
-    if (live.gapped || frame.type !== 'chunk' || chunk.type !== 'text-delta' || typeof chunk.text !== 'string') return false;
+    const kind = chunk.type === 'text-delta' ? 'text' : chunk.type === 'reasoning-delta' ? 'reasoning' : null;
+    if (live.gapped || frame.type !== 'chunk' || !kind || typeof chunk.text !== 'string') return false;
+    if (live.kind !== null && live.kind !== kind) return false;
     if (!Number.isSafeInteger(frame.index) || frame.index <= live.last) return false;
-    live.last = frame.index; live.raw += chunk.text;
+    live.kind = kind; live.last = frame.index; live.raw += chunk.text;
     const item = this.item(live.itemId);
     if (item) Object.assign(item, { text: live.raw, updatedAt: iso(at) });
-    else this.items.push({ ...this.base(live.itemId, 'assistant_message', 'running', at), messageId: 'msg-live-' + attempt, text: live.raw, streaming: true });
+    else if (kind === 'text') this.items.push({ ...this.base(live.itemId, 'assistant_message', 'running', at), messageId: 'msg-live-' + attempt, text: live.raw, streaming: true });
+    else this.items.push({ ...this.base(live.itemId, 'reasoning', 'running', at), text: live.raw, streaming: true });
     this.touch(at);
     return true;
   }

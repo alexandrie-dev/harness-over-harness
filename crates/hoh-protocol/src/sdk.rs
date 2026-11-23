@@ -377,8 +377,8 @@ object!(SessionEventNotification {
     session_id: String,
     event: SessionEvent
 });
-/// Window-only projection of one process-local assistant attempt. Only visible text deltas cross
-/// the JSON-RPC boundary; reasoning, tool-call, usage, and structural model chunks stay internal.
+/// Window-only projection of one process-local assistant attempt. Visible text and reasoning
+/// deltas cross the JSON-RPC boundary; tool-call, usage, and structural model chunks stay internal.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
@@ -417,6 +417,7 @@ pub enum SessionAssistantStreamFrame {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum SessionAssistantStreamChunk {
     TextDelta { text: String },
+    ReasoningDelta { text: String },
 }
 choices!(SessionAssistantStreamOutcome {
     Committed => "committed",
