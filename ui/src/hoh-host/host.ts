@@ -44,6 +44,14 @@ export interface HohStorage {
   setItem(key: string, value: string): void;
 }
 
+interface HomeDisposition {
+  /** Run ordinal is stable when the engine history is replayed after a restart. */
+  turnOrdinal: number;
+  state: 'waiting' | 'done';
+  /** This exact turn entered Home because its durable history ended mid-run, not because the person pressed Stop. */
+  interrupted?: boolean;
+}
+
 /** The reasoning level goes to the engine as `effort` of `session/prompt` (agreed with the engine's writer). */
 const effortParam = (effort: string | null) => effort ? { effort } : {};
 const isInteractionMode = (value: unknown): value is T3InteractionMode => value === 'default' || value === 'plan';
@@ -117,6 +125,8 @@ export class HohHost {
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
   private readonly questions = new Map<string, EngineQuestion>();
   private readonly shellSinks = new Set<StreamSink>();
+  private readonly shellCompletionSinks = new Set<StreamSink>();
+  private readonly lifecycleSinks = new Set<StreamSink>();
   private readonly threadSinks = new Map<string, Set<StreamSink>>();
   private readonly configSinks = new Set<StreamSink>();
   private readonly dirty = new Set<string>();
@@ -124,6 +134,7 @@ export class HohHost {
   private sequence = 0;
   private homeDirty = false;
   private homeVersion = 0;
+  private sessionsKnown = false;
   private readonly homeListeners = new Set<() => void>();
   private discovery: ClaudeDiscovery | null = null;
   /** Null until the engine has answered `access/get`; never aliases the fail-closed state to confirm. */
@@ -133,6 +144,9 @@ export class HohHost {
   private defaultMode: HohAccessMode = 'confirm';
   /** The model the engine runs new chats with (`hoh/executor/select`), once known. */
   private selectedModel: string | null = null;
+  /** A startup access/get captured before a person's later choice must not overwrite that particular field. */
+  private modeRevision = 0;
+  private modelRevision = 0;
   private settingsOverrides: Record<string, unknown> = {};
   private workspaceRoot: string;
   private workspaceKnown = false;
@@ -160,6 +174,13 @@ export class HohHost {
   /** Generated or manually edited titles that supersede the engine's first-message fallback. */
   private readonly titles = new Map<string, string>();
   private readonly titleRequests = new Map<string, string>();
+  /** A completed Claude turn waits for the person until they explicitly mark that exact turn done. */
+  private readonly homeDispositions = new Map<string, HomeDisposition>();
+  /** Last engine-history timestamp classified for Home; a session changed while the window was away is read next start. */
+  private readonly homeObservedAt = new Map<string, number>();
+  /** Local prompt attempts must not erase the preceding wait before the engine accepts the person's answer. */
+  private readonly homePrompts = new Set<string>();
+  private readonly failedHomePrompts = new Set<string>();
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
@@ -195,6 +216,16 @@ export class HohHost {
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
     for (const [threadId, mode] of Object.entries(saved?.interactions && typeof saved.interactions === 'object' ? saved.interactions : {})) if (isInteractionMode(mode)) this.interactions.set(threadId, mode);
     for (const [threadId, title] of Object.entries(saved?.titles && typeof saved.titles === 'object' ? saved.titles : {})) if (typeof title === 'string' && title.trim()) this.titles.set(threadId, title.trim());
+    for (const [threadId, value] of Object.entries(saved?.homeDispositions && typeof saved.homeDispositions === 'object' ? saved.homeDispositions : {})) {
+      const entry = value as Record<string, unknown> | null;
+      const turnOrdinal = Number(entry?.turnOrdinal);
+      if (Number.isInteger(turnOrdinal) && turnOrdinal > 0 && (entry?.state === 'waiting' || entry?.state === 'done'))
+        this.homeDispositions.set(threadId, { turnOrdinal, state: entry.state, ...(entry.interrupted === true ? { interrupted: true } : {}) });
+    }
+    for (const [threadId, value] of Object.entries(saved?.homeObservedAt && typeof saved.homeObservedAt === 'object' ? saved.homeObservedAt : {})) {
+      const observedAt = Number(value);
+      if (Number.isFinite(observedAt) && observedAt > 0) this.homeObservedAt.set(threadId, observedAt);
+    }
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (isAccessMode(saved?.defaultMode)) this.defaultMode = saved.defaultMode;
     this.savedSessions.push(...(Array.isArray(saved?.sessions) ? saved.sessions : []));
@@ -204,6 +235,8 @@ export class HohHost {
   private materializeSavedSessions() {
     const mode = this.mode;
     if (mode === null) return;
+    // Last-known-good list metadata makes the first post-restart snapshot lossless even when the
+    // engine's first disk scan is temporarily incomplete. History still comes only from the engine.
     for (const entry of this.savedSessions.splice(0)) {
       const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
       const title = typeof entry?.title === 'string' ? entry.title.trim() : '';
@@ -247,6 +280,7 @@ export class HohHost {
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
       defaultMode: this.defaultMode, options: Object.fromEntries(this.levels), sessions,
       interactions: Object.fromEntries(this.interactions), titles: Object.fromEntries(this.titles),
+      homeDispositions: Object.fromEntries(this.homeDispositions), homeObservedAt: Object.fromEntries(this.homeObservedAt),
     };
     try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
   }
@@ -272,7 +306,7 @@ export class HohHost {
   }
 
   /** A chat whose history names a project's folder belongs to that project. */
-  private placeByFolder(thread: ThreadModel) {
+  private placeByFolder(thread: ThreadModel, inferWorkspace = true) {
     if (!thread.cwd) return;
     const folder = this.folderAt(thread.cwd);
     if (folder && thread.projectId !== folder.id) {
@@ -280,25 +314,102 @@ export class HohHost {
       this.homes.set(thread.id, folder.id);
       this.save();
       this.changed(thread.id);
-    } else if (!folder && thread.projectId === HOH_PROJECT_ID && !this.workspaceKnown) {
+    } else if (inferWorkspace && !folder && thread.projectId === HOH_PROJECT_ID && !this.workspaceKnown) {
       this.setWorkspaceRoot(thread.cwd);
     }
   }
 
   /**
    * The home screen's window into the host (HOH-41 В2; not T3's wire): what the chats are doing, who waits for the person,
-   * and the two actions of that card. Read with `useSyncExternalStore`: `version` changes with every change of any chat.
+   * and the actions of that card. Read with `useSyncExternalStore`: `version` changes with every change of any chat.
    */
+  private homeEntry(thread: ThreadModel): HomeEntry | null {
+    const disposition = this.homeDispositions.get(thread.id);
+    const latest = thread.home();
+    const entry = latest && disposition && latest.turnOrdinal !== disposition.turnOrdinal && this.failedHomePrompts.has(thread.id)
+      ? thread.home(disposition.turnOrdinal)
+      : latest;
+    // Cold start must not wait for history, but a persisted human decision must remain actionable
+    // while that authoritative history is still being replayed. The stable turn ordinal lets replay
+    // replace this metadata-only card without caching a second copy of the conversation projection.
+    if (!entry && disposition && !thread.loaded) {
+      return {
+        id: thread.id, title: thread.shell().title, projectId: thread.projectId,
+        state: disposition.state, turnOrdinal: disposition.turnOrdinal,
+        startedAt: thread.updatedAt, doneAt: thread.updatedAt,
+        steps: { done: 0, total: 0 }, agents: [],
+        ...(disposition.state === 'waiting' ? { canComplete: true } : {}),
+        ...(disposition.interrupted === true ? { interrupted: true } : {}),
+      };
+    }
+    const interrupted = entry?.interrupted === true || (disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.interrupted === true);
+    const completable = entry?.state === 'done' || (entry?.state === 'ended' && interrupted);
+    if (!entry || !completable) return entry;
+    return disposition?.turnOrdinal === entry.turnOrdinal && disposition.state === 'done'
+      ? { ...entry, state: 'done', ...(interrupted ? { interrupted: true } : {}) }
+      : { ...entry, state: 'waiting', canComplete: true, ...(interrupted ? { interrupted: true } : {}) };
+  }
+
+  /** Follow the latest turn without changing T3's completed run: only Home waits for human sign-off. */
+  private syncHomeDisposition(thread: ThreadModel): boolean {
+    const entry = thread.home();
+    if (!entry) return false;
+    const current = this.homeDispositions.get(thread.id);
+    const interrupted = entry.interrupted === true || (current?.turnOrdinal === entry.turnOrdinal && current.interrupted === true);
+    const completable = entry.state === 'done' || (entry.state === 'ended' && interrupted);
+    if (current?.turnOrdinal === entry.turnOrdinal && current.interrupted === true) {
+      // The same turn really resumed: it is no longer a crash placeholder. If it already completed before
+      // this flush, keep the person's waiting/done choice but drop the stale interruption label.
+      if (entry.state === 'working' || entry.state === 'waiting') {
+        this.homeDispositions.delete(thread.id);
+        return true;
+      }
+      if (entry.state === 'done') {
+        this.homeDispositions.set(thread.id, { turnOrdinal: entry.turnOrdinal, state: current.state });
+        return true;
+      }
+    }
+    if (current && current.turnOrdinal !== entry.turnOrdinal) {
+      if (this.homePrompts.has(thread.id) || (this.failedHomePrompts.has(thread.id) && entry.state === 'ended')) return false;
+      this.homeDispositions.delete(thread.id);
+      this.failedHomePrompts.delete(thread.id);
+      if (!completable) return true;
+    }
+    const matched = this.homeDispositions.get(thread.id);
+    if (completable && (!matched || matched.turnOrdinal !== entry.turnOrdinal)) {
+      this.homeDispositions.set(thread.id, { turnOrdinal: entry.turnOrdinal, state: 'waiting', ...(interrupted ? { interrupted: true } : {}) });
+      return true;
+    }
+    return false;
+  }
+
   readonly home = {
     version: () => this.homeVersion,
     subscribe: (listener: () => void) => { this.homeListeners.add(listener); return () => { this.homeListeners.delete(listener); }; },
-    entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => thread.home()).filter((entry): entry is HomeEntry => entry !== null),
+    entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => this.homeEntry(thread)).filter((entry): entry is HomeEntry => entry !== null),
     projectTitle: (projectId: string) => projectId === HOH_PROJECT_ID ? 'No project' : this.folders.get(projectId)?.title ?? 'No project',
+    /** Stable private color key for Home folders: a title can change, the workspace path does not. */
+    projectKey: (projectId: string) => projectId === HOH_PROJECT_ID ? this.workspaceRoot : this.folders.get(projectId)?.workspaceRoot ?? projectId,
     /** Approve or decline a waiting permission request, as the chat's buttons do. */
     answer: async (threadId: string, requestId: string, decision: 'accept' | 'decline') => {
       const thread = await this.loaded(threadId);
       if (!thread) return;
       await this.respond(thread, { requestId, decision });
+      this.flush();
+    },
+    /** A completed answer becomes Done only by the person's explicit action on that exact turn. */
+    complete: async (threadId: string) => {
+      const thread = await this.loaded(threadId);
+      const disposition = this.homeDispositions.get(threadId);
+      const latest = thread?.home();
+      const entry = latest && disposition && latest.turnOrdinal !== disposition.turnOrdinal && this.failedHomePrompts.has(threadId)
+        ? thread?.home(disposition.turnOrdinal)
+        : latest;
+      const interrupted = entry?.interrupted === true || (disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.interrupted === true);
+      if (!thread || !entry || (entry.state !== 'done' && !(entry.state === 'ended' && interrupted))) return;
+      this.homeDispositions.set(threadId, { turnOrdinal: entry.turnOrdinal, state: 'done', ...(interrupted ? { interrupted: true } : {}) });
+      this.save();
+      this.changed(threadId);
       this.flush();
     },
     /** A new chat with this first message, in the project (or "No project"); returns its id. */
@@ -349,29 +460,55 @@ export class HohHost {
       if (status.state === 'ready') void this.onEngineReady();
       else if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
     }));
-    const [, accessRead] = await Promise.all([this.readDiscovery(), this.readAccess()]);
-    // Initial sessions are part of the first shell snapshot. Do not queue synthetic updates
-    // before the shell sink exists: their timer could fire just after the snapshot and expose
-    // stale placement metadata. Late retry/ready reads below still announce additions.
-    if (accessRead) await this.readSessions();
-    // The engine that was still starting answers nothing at first (and the window never asks again): go on asking in the background.
-    // Even a successful first disk scan is reconciled during this bounded window: the previous
-    // engine process may still be releasing its last stopped session.
-    void this.retryLoad(this.discovery !== null, accessRead);
+    // Claude discovery is independent of the shell. Access is not: fail closed until the engine supplies the
+    // real mode, but keep the immediate access + session/list fast path in the first authoritative snapshot.
+    void this.readDiscovery().then(() => {
+      this.configChanged();
+      if (this.discovery === null) void this.retryConfiguration();
+    });
+    const sessions = this.readAccess().then(async accessRead => {
+      this.configChanged();
+      if (!accessRead) { void this.retryConfiguration(); return; }
+      await this.loadSessions();
+    });
+    // Preserve the single-snapshot fast path when session/list answers immediately, without letting a slow or
+    // wedged bridge own startup: after one event-loop turn T3 receives the explicit pending placeholder instead.
+    await Promise.race([sessions, new Promise<void>(resolve => setTimeout(resolve, 0))]);
+    // The first config, lifecycle and empty shell snapshots are usable immediately. Both engine reads reconcile
+    // them in the background, so even a stuck session/list cannot hold the T3 window behind a bridge timeout.
   }
 
-  /** The reads of `load` that failed, repeated until the engine answers; what arrives late is announced to the window. */
-  private async retryLoad(discovered: boolean, accessRead: boolean) {
+  /** Claude's probe and access settings, announced whenever that independent startup lane completes. */
+  private async loadConfiguration(): Promise<boolean> {
+    await Promise.all([this.readDiscovery(), this.readAccess()]);
+    this.configChanged();
+    return this.discovery !== null && this.mode !== null;
+  }
+
+  private async retryConfiguration() {
+    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && (this.discovery === null || this.mode === null); attempt++) {
+      await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
+      if (this.stopped) return;
+      if (await this.loadConfiguration()) {
+        await this.readSessions();
+        return;
+      }
+    }
+  }
+
+  /** Session metadata retries do not sit behind Claude discovery. */
+  private async loadSessions() {
+    await this.readSessions();
+    // A successful first disk scan can still be incomplete while the previous process releases
+    // resources. Keep reconciling for the same bounded window used while the engine is starting.
+    if (!this.stopped) void this.retrySessions();
+  }
+
+  private async retrySessions() {
     for (let attempt = 0; attempt < this.loadRetries && !this.stopped; attempt++) {
       await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
       if (this.stopped) return;
-      if (!discovered) { await this.readDiscovery(); discovered = this.discovery !== null; }
-      if (!accessRead) accessRead = await this.readAccess();
-      if (accessRead) {
-        const added = await this.readSessions();
-        if (added !== null) for (const id of added) this.changed(id);
-      }
-      if (discovered || accessRead) this.configChanged();
+      await this.readSessions();
     }
   }
 
@@ -380,15 +517,20 @@ export class HohHost {
   }
 
   private async readAccess(): Promise<boolean> {
+    const modeRevision = this.modeRevision;
+    const modelRevision = this.modelRevision;
     try {
       const access = await this.engine.request('hoh/executor/access/get', { executor: 'claude' });
       if (!isAccessMode(access?.mode)) throw new Error('The engine returned an unknown Claude access mode.');
-      const changed = this.mode !== access.mode;
-      this.mode = access.mode;
-      this.accessError = null;
-      this.materializeSavedSessions();
-      if (typeof access?.selected?.model === 'string' && access.selected.model) this.selectedModel = access.selected.model;
-      if (changed) for (const thread of this.threads.values()) { thread.mode = access.mode; this.changed(thread.id); }
+      if (modeRevision === this.modeRevision) {
+        const changed = this.mode !== access.mode;
+        this.mode = access.mode;
+        this.accessError = null;
+        this.materializeSavedSessions();
+        if (changed) for (const thread of this.threads.values()) { thread.mode = access.mode; this.changed(thread.id); }
+      }
+      if (modelRevision === this.modelRevision && typeof access?.selected?.model === 'string' && access.selected.model)
+        this.selectedModel = access.selected.model;
       return true;
     } catch (error) {
       this.mode = null;
@@ -405,20 +547,17 @@ export class HohHost {
   private async onEngineReady() {
     await this.readDiscovery();
     const accessRead = await this.readAccess();
-    if (accessRead) {
-      const added = await this.readSessions();
-      if (added !== null) for (const id of added) this.changed(id);
-    }
+    if (accessRead) await this.readSessions();
     this.configChanged();
     if (accessRead) this.flush();
   }
 
-  private async readSessions(): Promise<string[] | null> {
+  private async readSessions(): Promise<boolean> {
     const mode = this.mode;
-    if (mode === null) return null;
+    if (mode === null) return false;
     let sessions: any[] = [];
-    try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return null; }
-    const added: string[] = [];
+    try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return false; }
+    let inventoryChanged = false;
     for (const session of sessions) {
       if (typeof session?.id !== 'string' || !session.id) continue;
       const at = Number(session.updatedAt) || this.startedAt;
@@ -429,7 +568,8 @@ export class HohHost {
           // disk, let its current list entry and history replace stale presentation metadata.
           existing.title = this.titles.get(session.id) ?? (typeof session.title === 'string' ? session.title : '');
           existing.updatedAt = Math.max(existing.updatedAt, at);
-          added.push(session.id);
+          inventoryChanged = true;
+          if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
         }
         continue;
       }
@@ -443,28 +583,57 @@ export class HohHost {
         interactionMode: this.interactions.get(session.id),
         projectId: this.homeOf(session.id),
       }));
-      added.push(session.id);
+      inventoryChanged = true;
+      // During the first load the metadata is already in the forthcoming snapshot. A retry happens after that
+      // snapshot, so it needs an update for each conversation that arrived late.
+      if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
     }
+    // Reconciliation is deliberately merge-only: an immediately restarted engine may return a
+    // temporarily incomplete list, so neither cached rows nor their Waiting/Done state is pruned.
+    if (inventoryChanged) this.save();
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
-    const peeked = await this.peekToday();
-    if (added.length || peeked) this.save();
-    return added;
+    this.sessionsReady();
+    // History enriches Home and list rows, but metadata is enough to render and select a conversation. Start it
+    // only after the authoritative bootstrap frames have been queued: this keeps first paint ahead of disk I/O
+    // and lets an immediate Add project win over stale folder inference from an old history.
+    const timer: any = setTimeout(() => { if (!this.stopped) void this.peekToday(); }, 0);
+    timer?.unref?.();
+    return true;
+  }
+
+  /** Finish T3's bootstrap only when the first authoritative session list (including an empty one) is known. */
+  private sessionsReady() {
+    if (this.sessionsKnown) return;
+    this.sessionsKnown = true;
+    for (const sink of this.lifecycleSinks) sink.emit(this.lifecycleWelcome('complete'));
+    for (const sink of this.shellSinks) sink.emit(this.shellSnapshot());
+    for (const sink of this.shellCompletionSinks) sink.emit({ kind: 'synchronized' });
+    this.shellCompletionSinks.clear();
   }
 
   /**
-   * The home screen lists today's chats, so their history is read at start: events only, the chat is not opened (no
-   * `session/resume`) and not marked loaded. A turn the history leaves open ends as stopped until the engine says otherwise.
+   * The home screen lists today's chats, persisted human waits, and every session whose engine timestamp changed since its
+   * last classification. Thus both old histories at upgrade and replies completed while the window was away are recovered.
+   * Histories are read as events only: the chat is not opened (`session/resume`) or marked loaded.
    */
   private async peekToday() {
     const today = new Date(this.now()).toDateString();
-    let changed = false;
-    const recent = [...this.threads.values()].filter(thread => !thread.loaded && !this.peeked.has(thread.id) && new Date(thread.updatedAt).toDateString() === today)
+    const waiting = new Set([...this.homeDispositions].filter(([, value]) => value.state === 'waiting').map(([threadId]) => threadId));
+    const candidates = [...this.threads.values()].filter(thread => !thread.loaded && !this.peeked.has(thread.id));
+    const todayThreads = candidates.filter(thread => new Date(thread.updatedAt).toDateString() === today)
       .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
-    await Promise.all(recent.map(async thread => {
+    const changedWhileAway = candidates.filter(thread => (this.homeObservedAt.get(thread.id) ?? 0) < thread.updatedAt);
+    const recent = [...new Map([...changedWhileAway, ...candidates.filter(thread => waiting.has(thread.id)), ...todayThreads].map(thread => [thread.id, thread])).values()]
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    let dispositionChanged = false;
+    let cursor = 0;
+    const inspect = async (thread: ThreadModel) => {
+      if (this.stopped) return;
       try {
         let afterSeq: number | undefined;
         for (;;) {
           const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
+          if (this.stopped) return;
           const events: any[] = Array.isArray(page?.events) ? page.events : [];
           for (const event of events) thread.applyEvent(event);
           if (events.length < PAGE || (afterSeq !== undefined && page.nextSeq <= afterSeq)) break;
@@ -472,14 +641,28 @@ export class HohHost {
         }
         // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
         try { if ((await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
+        if (this.stopped) return;
         thread.settleUnfinished(this.now());
         this.peeked.add(thread.id);
-        changed = true;
-        this.homeDirty = true;
-      } catch { /* the chat is not on the home screen */ }
+        if (this.syncHomeDisposition(thread)) dispositionChanged = true;
+        if (this.homeObservedAt.get(thread.id) !== thread.updatedAt) { this.homeObservedAt.set(thread.id, thread.updatedAt); dispositionChanged = true; }
+        // Startup classification may discover an old arbitrary folder, but it must not race a person's Add project
+        // by adopting that folder as the scratch workspace. It can still attach to an already known project. A bare
+        // pre-turn history in an unknown folder has no Home state to announce; opening it performs the authoritative
+        // load and emits its row after any project the person just added has been reconciled.
+        const knownFolder = thread.cwd ? this.folderAt(thread.cwd) : undefined;
+        if (thread.cwd) this.placeByFolder(thread, false);
+        if (!thread.cwd || knownFolder) this.changed(thread.id);
+        else this.homeChanged();
+      } catch { /* no observed timestamp is recorded: a deleted/unavailable chat is retried on the next start */ }
+    };
+    // Keep history classification off startup's critical path and cap shared-disk pressure while still allowing
+    // a slow session to overlap with the remaining Home recovery work.
+    await Promise.all(Array.from({ length: Math.min(3, recent.length) }, async () => {
+      while (!this.stopped && cursor < recent.length) await inspect(recent[cursor++]);
     }));
-    if (changed) this.homeVersion++;
-    return changed;
+    if (this.stopped) return;
+    if (dispositionChanged) this.save();
   }
 
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
@@ -595,11 +778,17 @@ export class HohHost {
 
   // ---- change delivery ----
 
-  private changed(threadId: string) {
-    this.dirty.add(threadId);
+  private homeChanged() {
+    if (this.stopped) return;
     this.homeDirty = true;
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => this.flush(), this.throttleMs);
+  }
+
+  private changed(threadId: string) {
+    if (this.stopped) return;
+    this.dirty.add(threadId);
+    this.homeChanged();
   }
 
   /** Send every pending change now (tests call it; the timer calls it otherwise). */
@@ -607,7 +796,9 @@ export class HohHost {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
     const ids = [...this.dirty]; this.dirty.clear();
-    if (ids.length) this.save();
+    let dispositionChanged = false;
+    for (const id of ids) { const thread = this.threads.get(id); if (thread && this.syncHomeDisposition(thread)) dispositionChanged = true; }
+    if (ids.length || dispositionChanged) this.save();
     if (this.homeDirty) { this.homeDirty = false; this.homeVersion++; for (const listener of this.homeListeners) listener(); }
     for (const id of ids) {
       const thread = this.threads.get(id);
@@ -630,6 +821,11 @@ export class HohHost {
 
   private configChanged() {
     for (const sink of this.configSinks) sink.emit({ version: 1, type: 'snapshot', config: this.config() });
+  }
+
+  private lifecycleWelcome(bootstrapStatus: 'pending' | 'complete') {
+    const config = this.config();
+    return { version: 1, sequence: 0, type: 'welcome', payload: { environment: config.environment, cwd: this.workspaceRoot, projectName: 'HoH', bootstrapStatus } };
   }
 
   private shellSnapshot() {
@@ -723,6 +919,7 @@ export class HohHost {
         const title = typeof mutation.title === 'string' && mutation.title.trim() ? mutation.title.trim() : titleOf(root);
         const project: FolderProject = { id: projectId, title, workspaceRoot: added, createdAt: at, updatedAt: at, pinnedAt: null, archivedAt: null };
         this.folders.set(projectId, project);
+        for (const thread of this.threads.values()) if (folderPath(thread.cwd) === added) this.placeByFolder(thread, false);
         this.save();
         this.emitProject(folderProject(project));
         return answer(project);
@@ -812,9 +1009,10 @@ export class HohHost {
     const current = await this.requireAccess();
     if (!mode) return;
     const wanted = accessModeOf(mode);
+    this.modeRevision++;
     if (wanted === current) return;
     await this.engine.request('hoh/executor/access/set', { executor: 'claude', mode: wanted });
-    this.mode = wanted;
+    this.mode = wanted; this.accessError = null;
     for (const thread of this.threads.values()) { thread.mode = wanted; this.changed(thread.id); }
     this.configChanged();
   }
@@ -830,7 +1028,9 @@ export class HohHost {
   }
 
   private async applyModel(model: string | undefined) {
-    if (!model || model === this.selectedModel) return;
+    if (!model) return;
+    this.modelRevision++;
+    if (model === this.selectedModel) return;
     await this.engine.request('hoh/executor/select', { executor: 'claude', model });
     this.selectedModel = model;
   }
@@ -851,6 +1051,7 @@ export class HohHost {
       this.sentPreviewIds.add(image.id);
     }
     const prompt = skillsAsCommands(stripAttachedImageReferences(text, images.map(image => image.id)), this.skillsByFolder.get(folderPath(thread.cwd)) ?? new Set());
+    this.homePrompts.add(thread.id);
     thread.sendLocal(messageId, text, this.now(), images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
     this.changed(thread.id);
     const contentBlocks = [
@@ -864,10 +1065,15 @@ export class HohHost {
         interactionMode: thread.interactionMode,
         ...effortParam(effortOf(thread.model, thread.options)),
       });
+      this.homePrompts.delete(thread.id);
+      this.failedHomePrompts.delete(thread.id);
+      if (this.homeDispositions.delete(thread.id)) this.save();
       for (const image of images) this.uploads.delete(image.id);
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
       if (firstMessage) void this.generateTitle(thread, text);
     } catch (error) {
+      this.homePrompts.delete(thread.id);
+      if (this.homeDispositions.has(thread.id)) this.failedHomePrompts.add(thread.id);
       thread.sendFailed(messageId, this.now(), error);
       this.changed(thread.id);
       throw error;
@@ -991,10 +1197,17 @@ ${message.slice(0, 8000)}`;
 
   /** «Стоп»: the same cancel as the current window; the engine ends Claude and its commands. */
   private async cancel(thread: ThreadModel) {
-    if (thread.activeRunId()) thread.stopRequested = true;
+    const stoppedOrdinal = thread.activeRunId() ? thread.home()?.turnOrdinal : undefined;
+    if (stoppedOrdinal !== undefined) thread.stopRequested = true;
     await this.engine.request('session/cancel', { sessionId: thread.id });
+    const disposition = this.homeDispositions.get(thread.id);
+    const clearedCrashDisposition = stoppedOrdinal !== undefined && disposition?.turnOrdinal === stoppedOrdinal && disposition.interrupted === true;
+    if (clearedCrashDisposition) {
+      this.homeDispositions.delete(thread.id);
+      this.save();
+    }
     // The turn is stopped now: its run closes and the thread list stops saying "Working" without waiting for the engine's closing event.
-    if (thread.interrupt(this.now())) { this.changed(thread.id); this.flush(); }
+    if (thread.interrupt(this.now()) || clearedCrashDisposition) { this.changed(thread.id); this.flush(); }
   }
 
   private async respond(thread: ThreadModel, command: Record<string, any>) {
@@ -1232,10 +1445,10 @@ ${message.slice(0, 8000)}`;
           let open = true;
           void this.start().then(() => {
             if (!open) return;
-            const config = this.config();
-            sink.emit({ version: 1, sequence: 0, type: 'welcome', payload: { environment: config.environment, cwd: this.workspaceRoot, projectName: 'HoH', bootstrapStatus: 'complete' } });
+            sink.emit(this.lifecycleWelcome(this.sessionsKnown ? 'complete' : 'pending'));
+            this.lifecycleSinks.add(sink);
           });
-          return () => { open = false; };
+          return () => { open = false; this.lifecycleSinks.delete(sink); };
         },
         // Without an answer T3 assumes a repository and asks for a base branch before sending.
         subscribeVcsStatus: (_payload, sink) => { sink.emit({ _tag: 'snapshot', local: NOT_A_REPO_LOCAL, remote: null }); },
@@ -1244,10 +1457,13 @@ ${message.slice(0, 8000)}`;
           void this.start().then(() => {
             if (!open) return;
             sink.emit(this.shellSnapshot());
-            if (payload?.requestCompletionMarker) sink.emit({ kind: 'synchronized' });
             this.shellSinks.add(sink);
+            if (payload?.requestCompletionMarker) {
+              if (this.sessionsKnown) sink.emit({ kind: 'synchronized' });
+              else this.shellCompletionSinks.add(sink);
+            }
           });
-          return () => { open = false; this.shellSinks.delete(sink); };
+          return () => { open = false; this.shellSinks.delete(sink); this.shellCompletionSinks.delete(sink); };
         },
         'orchestration.subscribeThread': (payload: any, sink) => {
           const threadId = String(payload?.threadId ?? '');

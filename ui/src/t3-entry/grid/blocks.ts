@@ -22,15 +22,16 @@ export interface Block {
   readonly y?: Rows;
 }
 const same = (x: Cols) => ({ open: x, collapsed: x });
-/** Колонка разговора и главной: ширина 50vw по центру области справа от боковой панели (g8–g16 при открытой панели
- *  g1–g6, g7–g15 при свёрнутой): края поля ввода, карточек и «Done» общие. */
+/** Колонка разговора: ширина 50vw по центру области справа от боковой панели (g8–g16 при открытой панели
+ *  g1–g6, g7–g15 при свёрнутой). */
 const COLUMN = { open: [8, 16], collapsed: [7, 15] } as const;
+/** Главная начинается на линии разговора, но использует свободное место справа для новых карточек в том же ряду. */
+const HOME = { open: [8, 20], collapsed: [7, 20] } as const;
 export const BLOCKS: readonly Block[] = [
   { name: 'notch', sel: '.hoh-notch', x: same([9, 13]), y: [1, 4] },
   { name: 'sidebar', sel: '[data-slot="sidebar-container"]', x: { open: [1, 6], collapsed: null }, y: [4, 21] },
   { name: 'composer', sel: '[data-chat-composer-stack]', x: COLUMN, y: [null, 20] },
-  { name: 'home-column', sel: '.hoh-home__inner', x: COLUMN },
-  { name: 'home-card', sel: '.hoh-card', x: COLUMN },
+  { name: 'home-column', sel: '.hoh-home__inner', x: HOME },
   { name: 'page-column', sel: '.hoh-page__column', x: COLUMN },
   { name: 'home-ask', sel: '.hoh-ask', x: COLUMN },
 ];

@@ -272,7 +272,7 @@ test('the first message gets a Claude title; failure keeps its beginning and a l
 
 test('a follow-up message goes to the same chat; Stop is the engine\'s cancel and the run ends interrupted', async () => {
   const engine = new FakeEngine();
-  const { client } = connect(engine);
+  const { client, host } = connect(engine);
   await client.call('orchestration.dispatchCommand', {
     type: 'thread.create', commandId: 'c0', threadId: 'thread-2', projectId: 'hoh-project', title: 'Second', createdBy: 'user', creationSource: 'web',
     modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
@@ -289,6 +289,12 @@ test('a follow-up message goes to the same chat; Stop is the engine\'s cancel an
   assert.equal(engine.cancelled, 1);
   engine.emitEvent('thread-2', 'turn/end', { reason: { kind: 'aborted' } });
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
+  const stopped = host.home.entries().find(entry => entry.id === 'thread-2');
+  assert.deepEqual(
+    [stopped.state, stopped.interrupted, stopped.canComplete],
+    ['ended', undefined, undefined],
+    'the person\'s explicit Stop is not a crash-only waiting card',
+  );
   assert.deepEqual(await client.call('orchestration.forceStopThread', { threadId: 'thread-2' }), { outcome: 'killed', sharedWithThreadIds: [] });
   assert.equal(engine.cancelled, 2);
 });
@@ -427,7 +433,7 @@ test('engine loss immediately hides modes from config and refreshProviders until
     ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
 });
 
-test('after a restart the chat comes back from the engine\'s history; an unfinished turn ends as stopped', async () => {
+test('after a restart the chat comes back from the engine\'s history; an unfinished turn waits on Home as interrupted', async () => {
   const store = new Map();
   const before = new FakeEngine({ store });
   before.seed('chat-r', 'Restart me', [
@@ -441,15 +447,23 @@ test('after a restart the chat comes back from the engine\'s history; an unfinis
   ]);
   store.get('chat-r').model = 'claude-opus';
   const engine = new FakeEngine({ store });
-  const { client } = connect(engine);
+  const { client, host } = connect(engine);
   const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-r' });
   assert.equal(projection.thread.modelSelection.model, 'claude-opus', 'the chat keeps the model it was bound to');
-  assert.equal(engine.requests.findIndex(r => r.method === 'session/resume') < engine.requests.findIndex(r => r.method === 'session/events'), true, 'resumed before reading');
+  const resumeAt = engine.requests.findIndex(r => r.method === 'session/resume');
+  assert(resumeAt >= 0 && engine.requests.findIndex((r, index) => index > resumeAt && r.method === 'session/events') > resumeAt, 'opened chat is resumed before its full read');
   assert.deepEqual(projection.runs.map(run => run.status), ['completed', 'interrupted']);
   assert.deepEqual(projection.turnItems.map(item => [item.type, item.status]), [
     ['user_message', 'completed'], ['assistant_message', 'completed'], ['user_message', 'completed'], ['dynamic_tool', 'interrupted'],
   ]);
   assert.equal(projection.thread.title, 'Restart me');
+  const interrupted = host.home.entries().find(entry => entry.id === 'chat-r');
+  assert.deepEqual(
+    [interrupted.state, interrupted.interrupted, interrupted.canComplete, interrupted.turnOrdinal],
+    ['waiting', true, true, 2],
+  );
+  await host.home.complete('chat-r');
+  assert.equal(host.home.entries().find(entry => entry.id === 'chat-r').state, 'done');
   const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-r' });
   const snapshot = await thread.until(value => value.kind === 'snapshot');
   assert.equal(snapshot.projection.messages.length, 3);
@@ -459,9 +473,12 @@ test('after a restart the chat comes back from the engine\'s history; an unfinis
 });
 
 test('engine lost mid-turn: the running turn ends as stopped', async () => {
-  const engine = new FakeEngine();
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const store = new Map();
+  const engine = new FakeEngine({ store });
   engine.seed('chat-l', 'L', []);
-  const { client } = connect(engine);
+  const { client, host } = connect(engine, { storage });
   const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-l' });
   await thread.until(value => value.kind === 'snapshot');
   engine.emitEvent('chat-l', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] });
@@ -469,6 +486,105 @@ test('engine lost mid-turn: the running turn ends as stopped', async () => {
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'running');
   engine.setStatus('restarting');
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
+  host.flush();
+  let interrupted = host.home.entries().find(entry => entry.id === 'chat-l');
+  assert.deepEqual([interrupted.state, interrupted.interrupted, interrupted.canComplete], ['waiting', true, true]);
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-l'], { turnOrdinal: 1, state: 'waiting', interrupted: true });
+
+  // A late terminal event from the dying engine cannot erase the exact turn already placed in the person's queue.
+  engine.emitEvent('chat-l', 'turn/end', { turn: 1, reason: { kind: 'aborted' } });
+  host.flush();
+  interrupted = host.home.entries().find(entry => entry.id === 'chat-l');
+  assert.deepEqual([interrupted.state, interrupted.interrupted, interrupted.canComplete], ['waiting', true, true]);
+  await host.home.complete('chat-l');
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-l'], { turnOrdinal: 1, state: 'done', interrupted: true });
+
+  // Replay now contains durable `aborted`, so only the persisted Home cause can keep the human decision visible.
+  const afterRestart = connect(new FakeEngine({ store }), { storage });
+  await afterRestart.host.start();
+  const done = afterRestart.host.home.entries().find(entry => entry.id === 'chat-l');
+  assert.deepEqual([done.state, done.interrupted, done.canComplete], ['done', true, undefined]);
+});
+
+test('a crash placeholder is reconciled when the same turn resumes and completes', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('chat-recovered', 'Recovered', []);
+  const { client, host } = connect(engine, { storage, throttleMs: 600000 });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-recovered' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-recovered', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'recover' }] });
+  engine.emitEvent('chat-recovered', 'turn/start', { turn: 1 });
+  engine.setStatus('restarting');
+  host.flush();
+  assert.deepEqual(
+    [host.home.entries().find(entry => entry.id === 'chat-recovered').state, JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-recovered'].interrupted],
+    ['waiting', true],
+  );
+
+  engine.emitStatus('chat-recovered', 'running');
+  host.flush();
+  assert.equal(host.home.entries().find(entry => entry.id === 'chat-recovered').state, 'working');
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-recovered'], undefined);
+  engine.emitEvent('chat-recovered', 'assistant/message', { turn: 1, message: { id: 'a1', content: [{ type: 'text', text: 'finished after recovery' }] } });
+  engine.emitEvent('chat-recovered', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  host.flush();
+  const completed = host.home.entries().find(entry => entry.id === 'chat-recovered');
+  assert.deepEqual([completed.state, completed.interrupted, completed.canComplete], ['waiting', undefined, true]);
+});
+
+test('a late completed event directly reconciles an inferred engine loss', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const store = new Map();
+  const engine = new FakeEngine({ store });
+  engine.seed('chat-late-completed', 'Late completed', []);
+  const { client, host } = connect(engine, { storage, throttleMs: 600000 });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-late-completed' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-late-completed', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'finish late' }] });
+  engine.emitEvent('chat-late-completed', 'turn/start', { turn: 1 });
+  engine.setStatus('restarting');
+  host.flush();
+  assert.equal(host.home.entries().find(entry => entry.id === 'chat-late-completed').interrupted, true);
+
+  // Some engines deliver the durable terminal event without first reporting that the same turn resumed.
+  engine.emitEvent('chat-late-completed', 'assistant/message', { turn: 1, message: { id: 'a1', content: [{ type: 'text', text: 'finished after all' }] } });
+  engine.emitEvent('chat-late-completed', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  host.flush();
+  const completed = host.home.entries().find(entry => entry.id === 'chat-late-completed');
+  assert.deepEqual([completed.state, completed.interrupted, completed.canComplete], ['waiting', undefined, true]);
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-late-completed'], { turnOrdinal: 1, state: 'waiting' });
+
+  const afterRestart = connect(new FakeEngine({ store }), { storage });
+  await afterRestart.host.start();
+  const restored = afterRestart.host.home.entries().find(entry => entry.id === 'chat-late-completed');
+  assert.deepEqual([restored.state, restored.interrupted, restored.canComplete], ['waiting', undefined, true]);
+});
+
+test('an explicit Stop after recovery cannot be reclassified as a crash interruption', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('chat-stop-recovered', 'Stop recovered', []);
+  const { client, host } = connect(engine, { storage, throttleMs: 600000 });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-stop-recovered' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-stop-recovered', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'recover then stop' }] });
+  engine.emitEvent('chat-stop-recovered', 'turn/start', { turn: 1 });
+  engine.setStatus('restarting');
+  host.flush();
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-recovered'].interrupted, true);
+
+  // Do not flush the recovery before Stop: cancel itself must clear even a not-yet-reconciled crash disposition.
+  engine.emitStatus('chat-stop-recovered', 'running');
+  await client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stop-recovered', threadId: 'chat-stop-recovered' });
+  engine.emitEvent('chat-stop-recovered', 'turn/end', { turn: 1, reason: { kind: 'aborted' } });
+  host.flush();
+  const stopped = host.home.entries().find(entry => entry.id === 'chat-stop-recovered');
+  assert.deepEqual([stopped.state, stopped.interrupted, stopped.canComplete], ['ended', undefined, undefined]);
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-recovered'], undefined);
 });
 
 test('socket: interrupt and close end the subscriptions; other addresses are refused', async () => {
@@ -740,9 +856,12 @@ test('home screen data: working chats with real steps, a chat waiting for the pe
   for (const id of ['d1', 'd2']) { turn(id, 1, 'Done ' + id); engine.emitEvent(id, 'assistant/message', { turn: 1, step: 1, message: { id: 'a' + id, content: [{ type: 'text', text: 'ok' }] } }); engine.emitEvent(id, 'turn/end', { turn: 1, reason: { kind: 'completed' } }); }
   host.flush();
   const by = Object.fromEntries(host.home.entries().map(entry => [entry.id, entry]));
-  assert.deepEqual([by.w1.state, by.w1.steps, by.w2.state, by.p1.state, by.d1.state, by.d2.state], ['working', { done: 1, total: 2 }, 'working', 'waiting', 'done', 'done']);
+  assert.deepEqual([by.w1.state, by.w1.steps, by.w2.state, by.p1.state, by.d1.state, by.d2.state], ['working', { done: 1, total: 2 }, 'working', 'waiting', 'waiting', 'waiting']);
+  assert.deepEqual([by.d1.canComplete, by.d2.canComplete], [true, true]);
   assert.deepEqual(by.p1.request, { id: 'appr-h', kind: 'approval', requestKind: 'command', text: 'ignored' });
   assert(by.d1.doneAt > 0 && by.w1.doneAt === null);
+  await host.home.complete('d1');
+  assert.deepEqual([host.home.entries().find(entry => entry.id === 'd1').state, host.home.entries().find(entry => entry.id === 'd2').state], ['done', 'waiting']);
   // The card's buttons are the chat's own answer.
   let changes = 0; host.home.subscribe(() => { changes++; });
   await host.home.answer('p1', 'appr-h', 'accept');
@@ -753,6 +872,151 @@ test('home screen data: working chats with real steps, a chat waiting for the pe
   const id = await host.home.start('Plan the week');
   assert.equal(host.home.entries().find(entry => entry.id === id).state, 'working');
   assert.equal(host.home.projectTitle('hoh-project'), 'No project');
+});
+
+test('home turn lifecycle: Claude reply waits for the person, Mark done survives replay, the next human turn waits again, and old waiting turns are restored', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const store = new Map();
+  const engine = new FakeEngine({ store });
+  const first = connect(engine, { storage, now: () => engine.clock });
+  await first.client.call('orchestration.launchThread', {
+    commandId: 'c-live', threadId: 'live-home', projectId: 'hoh-project', title: 'Live home',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'local-message-1', text: 'first', attachments: [] },
+  });
+  await tick(5);
+  engine.emitEvent('live-home', 'assistant/message', { turn: 1, step: 1, message: { id: 'answer-1', content: [{ type: 'text', text: 'ready' }] } });
+  engine.emitEvent('live-home', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  first.host.flush();
+  const waiting = first.host.home.entries().find(entry => entry.id === 'live-home');
+  assert.deepEqual([waiting.state, waiting.turnOrdinal, waiting.canComplete], ['waiting', 1, true]);
+
+  // Answering directly from Waiting starts a new turn and removes the old human disposition without Mark done.
+  engine.counter = 1;
+  await first.client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'c-next', threadId: 'live-home', messageId: 'local-message-2', text: 'next', attachments: [],
+    createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(first.host.home.entries().find(entry => entry.id === 'live-home').state, 'working');
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['live-home'], undefined);
+  await tick(5);
+  engine.emitEvent('live-home', 'assistant/message', { turn: 2, step: 1, message: { id: 'answer-2', content: [{ type: 'text', text: 'ready again' }] } });
+  engine.emitEvent('live-home', 'turn/end', { turn: 2, reason: { kind: 'completed' } });
+  first.host.flush();
+  assert.deepEqual(
+    [first.host.home.entries().find(entry => entry.id === 'live-home').state, JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['live-home']],
+    ['waiting', { turnOrdinal: 2, state: 'waiting' }],
+  );
+
+  await first.host.home.complete('live-home');
+  assert.equal(first.host.home.entries().find(entry => entry.id === 'live-home').state, 'done');
+  const saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
+  assert.deepEqual(saved.homeDispositions['live-home'], { turnOrdinal: 2, state: 'done' });
+
+  // Replay uses the engine's message id instead of T3's local id, but ordinal 1 still identifies this exact turn.
+  const second = new FakeEngine({ store });
+  second.clock = engine.clock;
+  const again = connect(second, { storage, now: () => second.clock });
+  await again.host.start();
+  const projection = await again.client.call('orchestration.getThreadProjection', { threadId: 'live-home' });
+  const replayed = again.host.home.entries().find(entry => entry.id === 'live-home');
+  assert.notEqual(projection.runs[0].id, 'run-local-message-1');
+  assert.deepEqual([replayed.state, replayed.turnOrdinal], ['done', 2]);
+
+  second.counter = 2;
+  await again.client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'c-third', threadId: 'live-home', messageId: 'local-message-3', text: 'one more', attachments: [],
+    createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(again.host.home.entries().find(entry => entry.id === 'live-home').state, 'working');
+  await tick(5);
+  second.emitEvent('live-home', 'assistant/message', { turn: 3, step: 1, message: { id: 'answer-3', content: [{ type: 'text', text: 'ready once more' }] } });
+  second.emitEvent('live-home', 'turn/end', { turn: 3, reason: { kind: 'completed' } });
+  again.host.flush();
+  assert.deepEqual(
+    [again.host.home.entries().find(entry => entry.id === 'live-home').state, JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['live-home']],
+    ['waiting', { turnOrdinal: 3, state: 'waiting' }],
+  );
+
+  // The ordinary "today" peek no longer includes this chat, but a persisted human wait must still load it.
+  const later = new FakeEngine({ store });
+  later.clock = second.clock + 2 * 24 * 60 * 60 * 1000;
+  const restored = connect(later, { storage, now: () => later.clock });
+  await restored.host.start();
+  await tick(5);
+  restored.host.flush();
+  const oldWaiting = restored.host.home.entries().find(entry => entry.id === 'live-home');
+  assert.deepEqual([oldWaiting.state, oldWaiting.turnOrdinal, oldWaiting.canComplete], ['waiting', 3, true]);
+});
+
+test('home disposition migration classifies a completed reply older than today even without prior metadata', async () => {
+  const items = new Map([[mod.host.STORAGE_KEY, JSON.stringify({ version: 1 })]]);
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('before-upgrade', 'Before upgrade', [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'old-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'old request' }] }],
+    ['assistant/message', { turn: 1, message: { id: 'old-a', content: [{ type: 'text', text: 'old answer' }] } }],
+    ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+  ]);
+  engine.clock += 2 * 24 * 60 * 60 * 1000;
+  const { host } = connect(engine, { storage, now: () => engine.clock });
+  await host.start();
+  await tick(5); // Home history classification is intentionally outside the T3 startup barrier.
+  host.flush();
+  const migrated = host.home.entries().find(entry => entry.id === 'before-upgrade');
+  assert.deepEqual([migrated.state, migrated.turnOrdinal, migrated.canComplete], ['waiting', 1, true]);
+  let saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
+  assert.equal(saved.homeObservedAt['before-upgrade'] > 0, true);
+  assert.deepEqual(saved.homeDispositions['before-upgrade'], { turnOrdinal: 1, state: 'waiting' });
+
+  // Once classified and marked Done, a newer completion written while this window is away is still discovered by timestamp.
+  await host.home.complete('before-upgrade');
+  const away = new FakeEngine({ store: engine.store });
+  away.clock = engine.clock + 2 * 24 * 60 * 60 * 1000;
+  away.emitEvent('before-upgrade', 'user/message', { id: 'new-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'new request' }] });
+  away.emitEvent('before-upgrade', 'turn/start', { turn: 2 });
+  away.emitEvent('before-upgrade', 'assistant/message', { turn: 2, message: { id: 'new-a', content: [{ type: 'text', text: 'new answer' }] } });
+  away.emitEvent('before-upgrade', 'turn/end', { turn: 2, reason: { kind: 'completed' } });
+  const reopened = connect(away, { storage, now: () => away.clock });
+  await reopened.host.start();
+  await tick(5);
+  reopened.host.flush();
+  const changedWhileAway = reopened.host.home.entries().find(entry => entry.id === 'before-upgrade');
+  assert.deepEqual([changedWhileAway.state, changedWhileAway.turnOrdinal, changedWhileAway.canComplete], ['waiting', 2, true]);
+  saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
+  assert.deepEqual(saved.homeDispositions['before-upgrade'], { turnOrdinal: 2, state: 'waiting' });
+});
+
+test('a rejected human send does not clear the completed answer that still waits for the person', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine, { storage, now: () => engine.clock });
+  await client.call('orchestration.launchThread', {
+    commandId: 'c-fail-live', threadId: 'failed-human-reply', projectId: 'hoh-project', title: 'Failed human reply',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'first-local', text: 'first', attachments: [] },
+  });
+  await tick(5);
+  engine.emitEvent('failed-human-reply', 'assistant/message', { turn: 1, message: { id: 'first-answer', content: [{ type: 'text', text: 'ready' }] } });
+  engine.emitEvent('failed-human-reply', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  host.flush();
+  assert.equal(host.home.entries().find(entry => entry.id === 'failed-human-reply').state, 'waiting');
+
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'session/prompt' ? Promise.reject(new Error('transport down')) : request(method, params);
+  await assert.rejects(client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'c-failed-answer', threadId: 'failed-human-reply', messageId: 'failed-local', text: 'my answer', attachments: [],
+    createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  }));
+  host.flush();
+  const stillWaiting = host.home.entries().find(entry => entry.id === 'failed-human-reply');
+  assert.deepEqual([stillWaiting.state, stillWaiting.turnOrdinal, stillWaiting.canComplete], ['waiting', 1, true]);
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['failed-human-reply'], { turnOrdinal: 1, state: 'waiting' });
+  await host.home.complete('failed-human-reply');
+  assert.equal(host.home.entries().find(entry => entry.id === 'failed-human-reply').state, 'done');
 });
 
 test('home screen = the chat\'s own data: the request text and kind are the chat\'s approval item, the steps are the chat\'s tool items, the answer is the chat\'s answer', async () => {
@@ -947,11 +1211,220 @@ test('restart persistence: an engine still starting answers nothing at first —
   assert.deepEqual(host.home.entries(), []);
   starting = false;
   // The chats come to the window as the engine answers; Claude's check is announced on the config stream.
-  const threads = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-r2');
-  assert.equal(threads.thread.id, 'chat-r2');
+  const threads = await shell.until(value => (value.kind === 'thread.updated' && value.thread.id === 'chat-r2')
+    || (value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-r2')));
+  assert.equal(threads.kind === 'snapshot' ? threads.snapshot.threads.find(thread => thread.id === 'chat-r2').id : threads.thread.id, 'chat-r2');
   const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].message !== 'Failed to execute Claude Agent CLI health check.');
   assert.equal(ready.config.providers[0].status, 'ready');
   host.stop();
+});
+
+test('cold start: lifecycle and empty shell do not wait for session list, Claude discovery, or conversation history', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-slow', 'Already saved', [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'u-slow', source: { kind: 'user' }, content: [{ type: 'text', text: 'persisted hello' }] }],
+  ]);
+  let releaseSessions; let releaseDiscovery; let releaseHistory;
+  const sessionsGate = new Promise(resolve => { releaseSessions = resolve; });
+  const discoveryGate = new Promise(resolve => { releaseDiscovery = resolve; });
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'session/list') await sessionsGate;
+    if (method === 'hoh/executor/discover') await discoveryGate;
+    if (method === 'session/events') await historyGate;
+    return request(method, params);
+  };
+
+  const { client, host } = connect(engine, { now: () => engine.clock });
+  const config = await client.stream('subscribeServerConfig', {});
+  const lifecycle = await client.stream('subscribeServerLifecycle', {});
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const firstConfig = await config.until(value => value.type === 'snapshot');
+  const welcome = await lifecycle.until(value => value.type === 'welcome');
+  const firstShell = await shell.until(value => value.kind === 'snapshot');
+  assert.equal(firstConfig.config.providers[0].status, 'error', 'the usable shell has an honest placeholder while discovery is pending');
+  assert.equal(welcome.payload.bootstrapStatus, 'pending');
+  assert.deepEqual(firstShell.snapshot.threads, [], 'the placeholder shell is not held by session/list');
+
+  releaseSessions();
+  const complete = await lifecycle.until(value => value.type === 'welcome' && value.payload.bootstrapStatus === 'complete');
+  assert.equal(complete.payload.bootstrapStatus, 'complete');
+  const metadata = await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-slow'), 1);
+  assert.equal(metadata.snapshot.threads[0].title, 'Already saved');
+  assert.deepEqual(host.home.entries(), [], 'history enrichment is still pending');
+
+  releaseDiscovery();
+  const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].status === 'ready');
+  assert.equal(ready.config.providers[0].status, 'ready');
+  const beforeHistory = shell.values.length;
+  releaseHistory();
+  const enriched = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-slow', beforeHistory);
+  assert.equal(enriched.thread.id, 'chat-slow');
+  await tick(5);
+  assert.equal(host.home.entries()[0].title, 'Already saved');
+  host.stop();
+});
+
+test('a delayed ready-time access refresh cannot overwrite model and mode chosen meanwhile', async () => {
+  const engine = new FakeEngine({ access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } } });
+  engine.seed('chat-choice', 'Choice', []);
+  const { client, host } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-choice'));
+
+  let releaseAccess;
+  const accessGate = new Promise(resolve => { releaseAccess = resolve; });
+  let accessStarted;
+  const started = new Promise(resolve => { accessStarted = resolve; });
+  const request = engine.request.bind(engine);
+  let delayed = true;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && !params.sessionId && delayed) {
+      delayed = false;
+      const stale = await request(method, params);
+      accessStarted();
+      await accessGate;
+      return stale;
+    }
+    return request(method, params);
+  };
+
+  engine.setStatus('ready');
+  await started;
+  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'mode-choice', threadId: 'chat-choice', runtimeMode: 'approval-required' });
+  await client.call('orchestration.dispatchCommand', { type: 'thread.model-selection.set', commandId: 'model-choice', threadId: 'chat-choice', modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' } });
+  releaseAccess();
+  await tick(5);
+  const settings = await client.call('server.getSettings', {});
+  const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-choice' });
+  assert.deepEqual(engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').map(entry => entry.params), [{ executor: 'claude', mode: 'confirm' }]);
+  assert.equal(settings.defaultModelSelection.model, 'claude-opus');
+  assert.equal(projection.thread.runtimeMode, 'approval-required');
+  assert.equal(projection.thread.modelSelection.model, 'claude-opus');
+  host.stop();
+});
+
+test('a delayed ready-time access refresh still applies the field the person did not change', async () => {
+  const run = async ({ access, change, expectedModel, expectedMode }) => {
+    const engine = new FakeEngine({ access });
+    engine.seed('chat-one-choice', 'One choice', []);
+    const { client, host } = connect(engine);
+    const shell = await client.stream('orchestration.subscribeShell', {});
+    await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-one-choice'));
+
+    let releaseAccess;
+    const accessGate = new Promise(resolve => { releaseAccess = resolve; });
+    let accessStarted;
+    const started = new Promise(resolve => { accessStarted = resolve; });
+    const request = engine.request.bind(engine);
+    let delayed = true;
+    engine.request = async (method, params) => {
+      if (method === 'hoh/executor/access/get' && !params.sessionId && delayed) {
+        delayed = false;
+        const stale = await request(method, params);
+        accessStarted();
+        await accessGate;
+        return stale;
+      }
+      return request(method, params);
+    };
+
+    engine.setStatus('ready');
+    await started;
+    await change(client);
+    releaseAccess();
+    await tick(5);
+    const settings = await client.call('server.getSettings', {});
+    const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-one-choice' });
+    assert.equal(settings.defaultModelSelection.model, expectedModel);
+    assert.equal(projection.thread.runtimeMode, expectedMode);
+    host.stop();
+  };
+
+  await run({
+    access: { mode: 'full', selected: { executor: 'claude', model: 'claude-opus' } },
+    change: client => client.call('orchestration.dispatchCommand', {
+      type: 'thread.runtime-mode.set', commandId: 'mode-only', threadId: 'chat-one-choice', runtimeMode: 'approval-required',
+    }),
+    expectedModel: 'claude-opus', expectedMode: 'approval-required',
+  });
+  await run({
+    access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } },
+    change: client => client.call('orchestration.dispatchCommand', {
+      type: 'thread.model-selection.set', commandId: 'model-only', threadId: 'chat-one-choice',
+      modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' },
+    }),
+    expectedModel: 'claude-opus', expectedMode: 'full-access',
+  });
+});
+
+test('Add project immediately rehomes a conversation already classified in the background', async () => {
+  const engine = new FakeEngine();
+  engine.seed('background-folder', 'Background folder', [
+    ['working-directory/change', { cwd: '/home/person/Projects/tools' }],
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'background-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'plan' }] }],
+  ]);
+  const { client, host } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'background-folder'));
+  await tick(5);
+  host.flush();
+  assert.equal(host.home.entries().find(entry => entry.id === 'background-folder').projectId, 'hoh-project');
+
+  const beforeCreate = shell.values.length;
+  await client.call('projects.mutate', {
+    type: 'project.create', commandId: 'background-project', projectId: 'p-background', title: 'Tools',
+    workspaceRoot: '/home/person/Projects/tools', createWorkspaceRootIfMissing: true, defaultModelSelection: null,
+  });
+  const moved = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'background-folder' && value.thread.projectId === 'p-background', beforeCreate);
+  assert.equal(moved.thread.projectId, 'p-background');
+  assert.equal(host.home.entries().find(entry => entry.id === 'background-folder').projectId, 'p-background');
+  assert.equal(host.home.projectKey('p-background'), '/home/person/Projects/tools');
+  await client.call('projects.mutate', {
+    type: 'project.update', commandId: 'rename-background-project', projectId: 'p-background', title: 'Renamed tools',
+  });
+  assert.equal(host.home.projectTitle('p-background'), 'Renamed tools');
+  assert.equal(host.home.projectKey('p-background'), '/home/person/Projects/tools', 'renaming keeps the path-derived color key');
+  host.stop();
+});
+
+test('stopping the host prevents an in-flight background history from writing stale Home state', async () => {
+  const initial = JSON.stringify({ version: 1 });
+  const items = new Map([[mod.host.STORAGE_KEY, initial]]);
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('stopped-background', 'Stopped background', [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'stopped-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'old work' }] }],
+    ['assistant/message', { turn: 1, step: 1, message: { id: 'stopped-a', content: [{ type: 'text', text: 'done' }] } }],
+    ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+  ]);
+  let releaseHistory; let historyStarted;
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  const started = new Promise(resolve => { historyStarted = resolve; });
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'session/events') { historyStarted(); await historyGate; }
+    return request(method, params);
+  };
+
+  const { host } = connect(engine, { storage });
+  let homeChanges = 0;
+  host.home.subscribe(() => { homeChanges++; });
+  await host.start();
+  await started;
+  const beforeStop = items.get(mod.host.STORAGE_KEY);
+  assert.deepEqual(JSON.parse(beforeStop).sessions.map(session => session.id), ['stopped-background']);
+  host.stop();
+  releaseHistory();
+  await tick(10);
+  host.flush();
+  assert.equal(items.get(mod.host.STORAGE_KEY), beforeStop);
+  assert.equal(homeChanges, 0);
+  assert.deepEqual(host.home.entries(), []);
 });
 
 test('restart after Stop: the first shell snapshot keeps all cached chats when the engine first returns 3, then reconciles an uncached fifth chat', async () => {

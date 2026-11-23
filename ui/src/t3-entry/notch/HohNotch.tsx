@@ -49,22 +49,24 @@ export function HohNotch() {
     void document.fonts?.ready.then(measure);
   }, [size.font]);
   const content = size.emblem * (28 / 30) + GAP + Math.ceil(text);
-  const outline = notchOutline(content, size, lineWidth);
+  const outline = notchOutline(content, size);
   const small = size.emblem < 30;
   const [one, onefive, two, three] = small ? [s1, s15, s2, s3] : [e1, e15, e2, e3];
   return (
     <div className="hoh-notch-band" ref={bandRef}>
-      <div className="hoh-notch" style={{ width: outline.width, height: outline.height }}>
-        <svg className="hoh-notch-outline" width={outline.width} height={outline.height} viewBox={`0 0 ${outline.width} ${outline.height}`} aria-hidden="true">
-          <path className="hoh-notch-fill" d={outline.fill} />
-          <path className="hoh-notch-line" d={outline.line} />
-        </svg>
-        <div className="hoh-notch-content" style={{ left: outline.inner.left, top: outline.inner.top, width: outline.inner.width, height: outline.inner.height, gap: GAP }}>
-          <img
-            src={one} srcSet={`${one} 1x, ${onefive} 1.5x, ${two} 2x, ${three} 3x`}
-            width={Math.round(size.emblem * (28 / 30))} height={size.emblem} alt="" draggable={false}
-          />
-          <span ref={label} className="hoh-notch-name" style={{ fontSize: size.font }}>{NOTCH_NAME}</span>
+      <div className="hoh-notch" style={{ width: lineWidth ?? outline.width, height: frame.band }}>
+        <div className="hoh-notch-shape" style={{ width: outline.width, height: outline.height }}>
+          <svg className="hoh-notch-outline" width={outline.width} height={outline.height} viewBox={`0 0 ${outline.width} ${outline.height}`} aria-hidden="true">
+            <path className="hoh-notch-fill" d={outline.fill} />
+            <path className="hoh-notch-line" d={outline.line} />
+          </svg>
+          <div className="hoh-notch-content" style={{ left: outline.inner.left, top: outline.inner.top, width: outline.inner.width, height: outline.inner.height, gap: GAP }}>
+            <img
+              src={one} srcSet={`${one} 1x, ${onefive} 1.5x, ${two} 2x, ${three} 3x`}
+              width={Math.round(size.emblem * (28 / 30))} height={size.emblem} alt="" draggable={false}
+            />
+            <span ref={label} className="hoh-notch-name" style={{ fontSize: size.font }}>{NOTCH_NAME}</span>
+          </div>
         </div>
       </div>
     </div>
