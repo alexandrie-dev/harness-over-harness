@@ -197,7 +197,7 @@ impl ExternalAgent {
     pub(crate) fn new(init: NewAgent) -> Arc<ExternalAgent> {
         init.shared
             .choices
-            .serve_prompts(init.session.id().as_ref());
+            .serve_prompts(init.session.id().as_ref(), &init.shared.name);
         let access = init.shared.access_for(init.session.id().as_ref());
         let model = ExternalModel {
             provider: init.shared.name.clone(),
@@ -763,13 +763,16 @@ impl ExternalAgent {
         let Some(prompt) = input.messages.last().filter(|_| input.last_from_next_turn) else {
             return;
         };
-        let Some((named, access)) = self
+        let (named, access) = self
             .shared
             .choices
             .take_prompt(self.id.as_ref(), prompt.id.as_ref())
-        else {
-            return;
-        };
+            .unwrap_or_else(|| {
+                // Internal/test inbox input has no session/prompt hook to snapshot it. Preserve
+                // the legacy global choice for that path; window prompts always take the exact
+                // per-message snapshot above.
+                (None, Some(self.shared.access_for(self.id.as_ref())))
+            });
         let effort = named.filter(|effort| {
             let known = self.shared.harness.accepts_effort(effort);
             if !known {

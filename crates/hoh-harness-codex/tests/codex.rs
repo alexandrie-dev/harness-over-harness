@@ -16,13 +16,15 @@ fn stub() -> PathBuf {
 
 fn harness(temp: &TempDir, scenario: &str) -> (CodexHarness, PathBuf) {
     let log = temp.path().join(format!("{scenario}.jsonl"));
-    let mut config = CodexConfig::default();
-    config.executable = stub();
-    config.request_timeout = Duration::from_secs(3);
-    config.extra_env = vec![
-        ("CODEX_STUB_SCENARIO".into(), scenario.into()),
-        ("CODEX_STUB_LOG".into(), log.to_string_lossy().into_owned()),
-    ];
+    let config = CodexConfig {
+        executable: stub(),
+        request_timeout: Duration::from_secs(3),
+        extra_env: vec![
+            ("CODEX_STUB_SCENARIO".into(), scenario.into()),
+            ("CODEX_STUB_LOG".into(), log.to_string_lossy().into_owned()),
+        ],
+        ..CodexConfig::default()
+    };
     (CodexHarness::new(config), log)
 }
 
@@ -361,9 +363,11 @@ async fn interrupt_then_terminate_removes_the_process_tree() {
 async fn unsupported_and_unrecognized_versions_never_start_a_session() {
     for banner in ["codex-cli 0.167.0", "not a version"] {
         let temp = TempDir::new().unwrap();
-        let mut config = CodexConfig::default();
-        config.executable = stub();
-        config.extra_env = vec![("CODEX_STUB_VERSION".into(), banner.into())];
+        let config = CodexConfig {
+            executable: stub(),
+            extra_env: vec![("CODEX_STUB_VERSION".into(), banner.into())],
+            ..CodexConfig::default()
+        };
         let harness = CodexHarness::new(config);
         let (_, status) = harness.discover_with_status().await.unwrap();
         assert_ne!(status, VersionStatus::Supported);

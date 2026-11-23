@@ -98,7 +98,7 @@ pub(crate) struct Choices {
     session_access: Mutex<HashMap<String, SessionAccessChoice>>,
     /// For each conversation an external agent serves (by HoH session id), the levels its
     /// prompts named, until their turns take them (HOH-40).
-    prompts: Mutex<HashMap<String, PromptSettings>>,
+    prompts: Mutex<HashMap<String, ServedPrompts>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +111,12 @@ pub(crate) struct SessionAccessChoice {
 /// Settings snapshotted when `session/prompt` accepts a message. A later access change cannot
 /// alter a queued turn, and another conversation never shares this queue.
 type PromptSettings = VecDeque<(String, Option<String>, Option<AccessMode>)>;
+
+#[derive(Default)]
+struct ServedPrompts {
+    executor: String,
+    pending: PromptSettings,
+}
 
 impl Choices {
     pub(crate) fn access(&self, executor: &str) -> AccessMode {
@@ -151,17 +157,23 @@ impl Choices {
 
     /// An external agent serves `session`: the levels its prompts name are kept from now on.
     /// Conversations of the engine's own model keep nothing.
-    pub(crate) fn serve_prompts(&self, session: &str) {
-        lock(&self.prompts).entry(session.to_owned()).or_default();
+    pub(crate) fn serve_prompts(&self, session: &str, executor: &str) {
+        lock(&self.prompts).insert(
+            session.to_owned(),
+            ServedPrompts {
+                executor: executor.to_owned(),
+                pending: VecDeque::new(),
+            },
+        );
     }
 
     /// The level and privileged per-session access in force when this prompt was accepted.
     pub(crate) fn note_prompt(&self, session: &str, message: &str, effort: Option<String>) {
-        let access = lock(&self.session_access)
-            .get(session)
-            .map(|choice| choice.mode);
-        if let Some(pending) = lock(&self.prompts).get_mut(session) {
-            pending.push_back((message.to_owned(), effort, access));
+        if let Some(served) = lock(&self.prompts).get_mut(session) {
+            let access = self.access_for(&served.executor, session);
+            served
+                .pending
+                .push_back((message.to_owned(), effort, Some(access)));
         }
     }
 
@@ -172,7 +184,7 @@ impl Choices {
         message: &str,
     ) -> Option<(Option<String>, Option<AccessMode>)> {
         let mut prompts = lock(&self.prompts);
-        let pending = prompts.get_mut(session)?;
+        let pending = &mut prompts.get_mut(session)?.pending;
         let at = pending.iter().position(|(id, _, _)| id == message)?;
         pending
             .drain(..=at)

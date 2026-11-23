@@ -72,8 +72,10 @@ async fn finish_turn(
 async fn real_codex_streams_approves_resumes_and_stops() {
     assert_eq!(std::env::var("HOH_CODEX_LIVE").as_deref(), Ok("1"));
     let temp = TempDir::new().expect("live workspace");
-    let mut config = CodexConfig::default();
-    config.request_timeout = Duration::from_secs(45);
+    let config = CodexConfig {
+        request_timeout: Duration::from_secs(45),
+        ..CodexConfig::default()
+    };
     let harness = CodexHarness::new(config);
     let discovery = harness.discover().await.expect("discover installed Codex");
     assert!(discovery.installed, "Codex is not installed: {discovery:?}");

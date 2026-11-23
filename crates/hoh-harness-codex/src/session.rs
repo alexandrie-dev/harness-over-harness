@@ -790,13 +790,13 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
             }
         }
         "item/started" => {
-            if let Some(item) = params.get("item") {
-                if let Some((item_id, action)) = action_of(item) {
-                    lock(&inner.state)
-                        .items
-                        .insert(item_id.clone(), action.clone());
-                    emit_event(inner, HarnessEvent::ItemStarted { item_id, action }).await;
-                }
+            if let Some(item) = params.get("item")
+                && let Some((item_id, action)) = action_of(item)
+            {
+                lock(&inner.state)
+                    .items
+                    .insert(item_id.clone(), action.clone());
+                emit_event(inner, HarnessEvent::ItemStarted { item_id, action }).await;
             }
         }
         "item/completed" => {
