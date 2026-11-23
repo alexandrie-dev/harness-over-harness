@@ -9,6 +9,8 @@ export class FakeEngine {
     this.unavailable = new Set(unavailable); this.counter = 0; this.pending = new Set();
     /** What each chat is bound to once it has had a turn (the contract of the engine: `session` of access/get): executor, model and the mode of its live process. */
     this.bindings = new Map();
+    /** The exact four-state runtime mode selected for a concrete session before its first prompt. */
+    this.sessionModes = new Map();
   }
   tick() { return this.clock += 60_000; }
   /** A chat that already exists with a finished exchange. */
@@ -68,22 +70,30 @@ export class FakeEngine {
         // Only an engine that has the Claude executor setting answers; `access` is what is in effect, `accessAsked` what was last requested.
         if (this.access === undefined) throw new Error('method-unavailable');
         const bound = params.sessionId ? this.bindings.get(params.sessionId) : undefined;
-        const answer = { executor: 'claude', mode: this.accessAsked ?? this.access, effective: { mode: bound?.running ?? this.access, flags: [`--permission-mode=${bound?.running ?? this.access}`, ...(this.settingSources === undefined ? [] : ['--setting-sources', this.settingSources])] }, selected: this.selectedNow() };
+        const runtimeMode = this.accessAsked ?? this.access;
+        const sessionRuntimeMode = params.sessionId ? (this.sessionModes.get(params.sessionId) ?? this.access) : runtimeMode;
+        const effectiveMode = bound?.running ?? this.access;
+        const answer = { executor: 'claude', mode: runtimeMode === 'full' ? 'full' : 'confirm', effective: { mode: effectiveMode, flags: [`--permission-mode=${effectiveMode}`, ...(this.settingSources === undefined ? [] : ['--setting-sources', this.settingSources])] }, selected: this.selectedNow() };
         if (params.sessionId && !this.noSession) {
           // A chat that has had a turn keeps its own executor; a chat that has not follows the choice for new chats.
           const own = bound ?? this.selectedNow();
           answer.session = own?.executor === 'claude'
-            ? { executor: 'claude', model: own.model, privacy: 'remote', mode: this.access, running: bound?.running ?? null, pending: bound?.running != null && bound.running !== this.access }
-            : { executor: null, model: null, privacy: null, mode: null, running: null, pending: false };
+            ? { executor: 'claude', model: own.model, privacy: 'remote', mode: sessionRuntimeMode === 'full' ? 'full' : 'confirm', runtimeMode: sessionRuntimeMode, running: bound?.running ?? null, runningRuntimeMode: bound?.running ?? null, pending: bound?.running != null && bound.running !== sessionRuntimeMode }
+            : { executor: null, model: null, privacy: null, mode: null, runtimeMode: null, running: null, runningRuntimeMode: null, pending: false };
         }
         return answer;
       }
       case 'hoh/executor/access/set': {
         if (this.access === undefined) throw new Error('method-unavailable');
         if (this.accessRefuse) throw new Error('rejected');
-        this.accessAsked = params.mode;
-        if (!this.accessIgnore) this.access = params.mode; // `accessIgnore`: an engine that keeps running in its own mode
-        return { mode: params.mode };
+        const runtimeMode = params.runtimeMode ?? params.mode;
+        if (params.sessionId) {
+          if (!this.accessIgnore) this.sessionModes.set(params.sessionId, runtimeMode);
+          return { mode: params.mode, runtimeMode };
+        }
+        this.accessAsked = runtimeMode;
+        if (!this.accessIgnore) this.access = runtimeMode; // `accessIgnore`: an engine that keeps running in its own mode
+        return { mode: params.mode, runtimeMode };
       }
       case 'hoh/executor/discover': {
         // `claude`: what a real discover finds now; a function is asked on every call (a check changes it between calls).
@@ -104,7 +114,7 @@ export class FakeEngine {
   bind(id) {
     let bound = this.bindings.get(id);
     if (!bound) { const chosen = this.selectedNow(); bound = { executor: chosen?.executor ?? null, model: chosen?.model ?? null, running: null }; this.bindings.set(id, bound); }
-    if (bound.executor === 'claude') bound.running = this.access;
+    if (bound.executor === 'claude') bound.running = this.sessionModes.get(id) ?? this.access;
   }
   /** Delivers the whole turn as live events of that session, whichever chat the window shows. */
   answer(session, messageId, text) {
