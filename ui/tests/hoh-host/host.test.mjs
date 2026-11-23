@@ -760,10 +760,94 @@ test('restart persistence: an engine still starting answers nothing at first —
   assert.deepEqual(host.home.entries(), []);
   starting = false;
   // The chats come to the window as the engine answers; Claude's check is announced on the config stream.
-  const threads = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-r2');
-  assert.equal(threads.thread.id, 'chat-r2');
+  const threads = await shell.until(value => (value.kind === 'thread.updated' && value.thread.id === 'chat-r2')
+    || (value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-r2')));
+  assert.equal(threads.kind === 'snapshot' ? threads.snapshot.threads.find(thread => thread.id === 'chat-r2').id : threads.thread.id, 'chat-r2');
   const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].message !== 'Failed to execute Claude Agent CLI health check.');
   assert.equal(ready.config.providers[0].status, 'ready');
+  host.stop();
+});
+
+test('cold start: lifecycle and empty shell do not wait for session list, Claude discovery, or conversation history', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-slow', 'Already saved', [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'u-slow', source: { kind: 'user' }, content: [{ type: 'text', text: 'persisted hello' }] }],
+  ]);
+  let releaseSessions; let releaseDiscovery; let releaseHistory;
+  const sessionsGate = new Promise(resolve => { releaseSessions = resolve; });
+  const discoveryGate = new Promise(resolve => { releaseDiscovery = resolve; });
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'session/list') await sessionsGate;
+    if (method === 'hoh/executor/discover') await discoveryGate;
+    if (method === 'session/events') await historyGate;
+    return request(method, params);
+  };
+
+  const { client, host } = connect(engine, { now: () => engine.clock });
+  const config = await client.stream('subscribeServerConfig', {});
+  const lifecycle = await client.stream('subscribeServerLifecycle', {});
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const firstConfig = await config.until(value => value.type === 'snapshot');
+  const welcome = await lifecycle.until(value => value.type === 'welcome');
+  const firstShell = await shell.until(value => value.kind === 'snapshot');
+  assert.equal(firstConfig.config.providers[0].status, 'error', 'the usable shell has an honest placeholder while discovery is pending');
+  assert.equal(welcome.payload.bootstrapStatus, 'pending');
+  assert.deepEqual(firstShell.snapshot.threads, [], 'the placeholder shell is not held by session/list');
+
+  releaseSessions();
+  const complete = await lifecycle.until(value => value.type === 'welcome' && value.payload.bootstrapStatus === 'complete');
+  assert.equal(complete.payload.bootstrapStatus, 'complete');
+  const metadata = await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-slow'), 1);
+  assert.equal(metadata.snapshot.threads[0].title, 'Already saved');
+  assert.deepEqual(host.home.entries(), [], 'history enrichment is still pending');
+
+  releaseDiscovery();
+  const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].status === 'ready');
+  assert.equal(ready.config.providers[0].status, 'ready');
+  const beforeHistory = shell.values.length;
+  releaseHistory();
+  const enriched = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-slow', beforeHistory);
+  assert.equal(enriched.thread.id, 'chat-slow');
+  await tick(5);
+  assert.equal(host.home.entries()[0].title, 'Already saved');
+  host.stop();
+});
+
+test('a delayed startup access read cannot overwrite model and mode chosen meanwhile', async () => {
+  const engine = new FakeEngine({ access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } } });
+  engine.seed('chat-choice', 'Choice', []);
+  let releaseAccess;
+  const accessGate = new Promise(resolve => { releaseAccess = resolve; });
+  const request = engine.request.bind(engine);
+  let delayed = true;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && !params.sessionId && delayed) {
+      delayed = false;
+      const stale = await request(method, params);
+      await accessGate;
+      return stale;
+    }
+    return request(method, params);
+  };
+
+  const { client, host } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const initial = await shell.until(value => value.kind === 'snapshot');
+  if (!initial.snapshot.threads.some(thread => thread.id === 'chat-choice'))
+    await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-choice');
+  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'mode-choice', threadId: 'chat-choice', runtimeMode: 'approval-required' });
+  await client.call('orchestration.dispatchCommand', { type: 'thread.model-selection.set', commandId: 'model-choice', threadId: 'chat-choice', modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' } });
+  releaseAccess();
+  await tick(5);
+  const settings = await client.call('server.getSettings', {});
+  const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-choice' });
+  assert.deepEqual(engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').map(entry => entry.params), [{ executor: 'claude', mode: 'confirm' }]);
+  assert.equal(settings.defaultModelSelection.model, 'claude-opus');
+  assert.equal(projection.thread.runtimeMode, 'approval-required');
+  assert.equal(projection.thread.modelSelection.model, 'claude-opus');
   host.stop();
 });
 

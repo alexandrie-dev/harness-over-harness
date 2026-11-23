@@ -106,6 +106,8 @@ export class HohHost {
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
   private readonly questions = new Map<string, EngineQuestion>();
   private readonly shellSinks = new Set<StreamSink>();
+  private readonly shellCompletionSinks = new Set<StreamSink>();
+  private readonly lifecycleSinks = new Set<StreamSink>();
   private readonly threadSinks = new Map<string, Set<StreamSink>>();
   private readonly configSinks = new Set<StreamSink>();
   private readonly dirty = new Set<string>();
@@ -113,13 +115,17 @@ export class HohHost {
   private sequence = 0;
   private homeDirty = false;
   private homeVersion = 0;
+  private sessionsKnown = false;
   private readonly homeListeners = new Set<() => void>();
   private discovery: ClaudeDiscovery | null = null;
   private mode: HohAccessMode = 'confirm';
+  private accessKnown = false;
   /** T3's "default permissions" setting: the mode a new thread starts in. Claude asks first until the person changes it. */
   private defaultMode: HohAccessMode = 'confirm';
   /** The model the engine runs new chats with (`hoh/executor/select`), once known. */
   private selectedModel: string | null = null;
+  /** A startup access/get captured before a person's later choice must never overwrite that choice. */
+  private accessRevision = 0;
   private settingsOverrides: Record<string, unknown> = {};
   private workspaceRoot: string;
   private workspaceKnown = false;
@@ -267,18 +273,42 @@ export class HohHost {
     if (this.engine.subscribeStatus) this.unsubscribers.push(await this.engine.subscribeStatus(status => {
       if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
     }));
-    const [, , sessionsRead] = await Promise.all([this.readDiscovery(), this.readAccess(), this.readSessions()]);
-    // The engine that was still starting answers nothing at first (and the window never asks again): go on asking in the background.
-    if (this.discovery === null || !sessionsRead) void this.retryLoad(this.discovery !== null, sessionsRead);
+    // Claude's probe and settings are independent of the shell. In particular, a slow CLI health check must not
+    // keep T3 from showing the window, the composer, or session metadata that the engine already has.
+    void this.loadConfiguration().then(discovered => { if (!discovered) void this.retryConfiguration(); });
+    const sessions = this.loadSessions();
+    // Preserve the single-snapshot fast path when session/list answers immediately, without letting a slow or
+    // wedged bridge own startup: after one event-loop turn T3 receives the explicit pending placeholder instead.
+    await Promise.race([sessions, new Promise<void>(resolve => setTimeout(resolve, 0))]);
+    // The first config, lifecycle and empty shell snapshots are usable immediately. Both engine reads reconcile
+    // them in the background, so even a stuck session/list cannot hold the T3 window behind a bridge timeout.
   }
 
-  /** The reads of `load` that failed, repeated until the engine answers; what arrives late is announced to the window. */
-  private async retryLoad(discovered: boolean, sessionsRead: boolean) {
-    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && !(discovered && sessionsRead); attempt++) {
+  /** Claude's probe and access settings, announced whenever that independent startup lane completes. */
+  private async loadConfiguration(): Promise<boolean> {
+    await Promise.all([this.readDiscovery(), this.readAccess()]);
+    this.configChanged();
+    return this.discovery !== null;
+  }
+
+  private async retryConfiguration() {
+    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && this.discovery === null; attempt++) {
       await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
       if (this.stopped) return;
-      if (!discovered) { await this.readDiscovery(); discovered = this.discovery !== null; if (discovered) { await this.readAccess(); this.configChanged(); } }
-      if (!sessionsRead) { sessionsRead = await this.readSessions(); if (sessionsRead) for (const id of this.threads.keys()) this.changed(id); }
+      await this.loadConfiguration();
+    }
+  }
+
+  /** Session metadata retries do not sit behind Claude discovery. */
+  private async loadSessions() {
+    if (!await this.readSessions()) void this.retrySessions();
+  }
+
+  private async retrySessions() {
+    for (let attempt = 0; attempt < this.loadRetries && !this.stopped; attempt++) {
+      await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
+      if (this.stopped) return;
+      if (await this.readSessions()) return;
     }
   }
 
@@ -287,9 +317,11 @@ export class HohHost {
   }
 
   private async readAccess() {
+    const revision = this.accessRevision;
     try {
       const access = await this.engine.request('hoh/executor/access/get', { executor: 'claude' });
-      if (access?.mode === 'full' || access?.mode === 'confirm') this.mode = access.mode;
+      if (revision !== this.accessRevision) return;
+      if (access?.mode === 'full' || access?.mode === 'confirm') { this.mode = access.mode; this.accessKnown = true; }
       if (typeof access?.selected?.model === 'string' && access.selected.model) this.selectedModel = access.selected.model;
     } catch { /* the engine has no Claude access setting: the default mode stays */ }
   }
@@ -301,10 +333,26 @@ export class HohHost {
       if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
       const at = Number(session.updatedAt) || this.startedAt;
       this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
+      // During the first load the metadata is already in the forthcoming snapshot. A retry happens after that
+      // snapshot, so it needs an update for each conversation that arrived late.
+      if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
-    await this.peekToday();
+    // History enriches home cards, but metadata is enough to render and select a conversation. It deliberately
+    // remains outside startup's critical path; opening a thread still performs the authoritative full load.
+    void this.peekToday();
+    this.sessionsReady();
     return true;
+  }
+
+  /** Finish T3's bootstrap only when the first authoritative session list (including an empty one) is known. */
+  private sessionsReady() {
+    if (this.sessionsKnown) return;
+    this.sessionsKnown = true;
+    for (const sink of this.lifecycleSinks) sink.emit(this.lifecycleWelcome('complete'));
+    for (const sink of this.shellSinks) sink.emit(this.shellSnapshot());
+    for (const sink of this.shellCompletionSinks) sink.emit({ kind: 'synchronized' });
+    this.shellCompletionSinks.clear();
   }
 
   /**
@@ -315,23 +363,27 @@ export class HohHost {
     const today = new Date(this.now()).toDateString();
     const recent = [...this.threads.values()].filter(thread => !thread.loaded && new Date(thread.updatedAt).toDateString() === today)
       .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
-    await Promise.all(recent.map(async thread => {
-      try {
-        let afterSeq: number | undefined;
-        for (;;) {
-          const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
-          const events: any[] = Array.isArray(page?.events) ? page.events : [];
-          for (const event of events) thread.applyEvent(event);
-          if (events.length < PAGE || (afterSeq !== undefined && page.nextSeq <= afterSeq)) break;
-          afterSeq = page.nextSeq;
-        }
-        // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
-        try { if ((await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
-        thread.settleUnfinished(this.now());
-        this.homeDirty = true;
-      } catch { /* the chat is not on the home screen */ }
-    }));
-    this.homeVersion++;
+    // Limit the background fan-out on a shared disk: three histories at a time keep metadata and foreground
+    // requests responsive without bringing the old all-or-nothing startup barrier back.
+    for (let offset = 0; offset < recent.length; offset += 3) {
+      await Promise.all(recent.slice(offset, offset + 3).map(async thread => {
+        try {
+          let afterSeq: number | undefined;
+          for (;;) {
+            const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
+            const events: any[] = Array.isArray(page?.events) ? page.events : [];
+            for (const event of events) thread.applyEvent(event);
+            if (events.length < PAGE || (afterSeq !== undefined && page.nextSeq <= afterSeq)) break;
+            afterSeq = page.nextSeq;
+          }
+          // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
+          try { if ((await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
+          thread.settleUnfinished(this.now());
+          if (thread.cwd) this.placeByFolder(thread);
+          this.changed(thread.id);
+        } catch { /* the chat is not on the home screen */ }
+      }));
+    }
   }
 
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
@@ -473,6 +525,11 @@ export class HohHost {
 
   private configChanged() {
     for (const sink of this.configSinks) sink.emit({ version: 1, type: 'snapshot', config: this.config() });
+  }
+
+  private lifecycleWelcome(bootstrapStatus: 'pending' | 'complete') {
+    const config = this.config();
+    return { version: 1, sequence: 0, type: 'welcome', payload: { environment: config.environment, cwd: this.workspaceRoot, projectName: 'HoH', bootstrapStatus } };
   }
 
   private shellSnapshot() {
@@ -651,15 +708,18 @@ export class HohHost {
   private async applyMode(mode: T3RuntimeMode | undefined) {
     if (!mode) return;
     const wanted = accessModeOf(mode);
-    if (wanted === this.mode) return;
+    this.accessRevision++;
+    if (wanted === this.mode && this.accessKnown) return;
     await this.engine.request('hoh/executor/access/set', { executor: 'claude', mode: wanted });
-    this.mode = wanted;
+    this.mode = wanted; this.accessKnown = true;
     for (const thread of this.threads.values()) { thread.mode = wanted; this.changed(thread.id); }
     this.configChanged();
   }
 
   private async applyModel(model: string | undefined) {
-    if (!model || model === this.selectedModel) return;
+    if (!model) return;
+    this.accessRevision++;
+    if (model === this.selectedModel) return;
     await this.engine.request('hoh/executor/select', { executor: 'claude', model });
     this.selectedModel = model;
   }
@@ -994,10 +1054,10 @@ export class HohHost {
           let open = true;
           void this.start().then(() => {
             if (!open) return;
-            const config = this.config();
-            sink.emit({ version: 1, sequence: 0, type: 'welcome', payload: { environment: config.environment, cwd: this.workspaceRoot, projectName: 'HoH', bootstrapStatus: 'complete' } });
+            sink.emit(this.lifecycleWelcome(this.sessionsKnown ? 'complete' : 'pending'));
+            this.lifecycleSinks.add(sink);
           });
-          return () => { open = false; };
+          return () => { open = false; this.lifecycleSinks.delete(sink); };
         },
         // Without an answer T3 assumes a repository and asks for a base branch before sending.
         subscribeVcsStatus: (_payload, sink) => { sink.emit({ _tag: 'snapshot', local: NOT_A_REPO_LOCAL, remote: null }); },
@@ -1006,10 +1066,13 @@ export class HohHost {
           void this.start().then(() => {
             if (!open) return;
             sink.emit(this.shellSnapshot());
-            if (payload?.requestCompletionMarker) sink.emit({ kind: 'synchronized' });
             this.shellSinks.add(sink);
+            if (payload?.requestCompletionMarker) {
+              if (this.sessionsKnown) sink.emit({ kind: 'synchronized' });
+              else this.shellCompletionSinks.add(sink);
+            }
           });
-          return () => { open = false; this.shellSinks.delete(sink); };
+          return () => { open = false; this.shellSinks.delete(sink); this.shellCompletionSinks.delete(sink); };
         },
         'orchestration.subscribeThread': (payload: any, sink) => {
           const threadId = String(payload?.threadId ?? '');
