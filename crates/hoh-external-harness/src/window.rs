@@ -14,8 +14,9 @@
 //! that profile starts with it ([`restore_choices`], from the `ExternalHarness` plugin).
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use hoh_agent::{AgentRegistry, AgentStatus, Agents, ExecutorSelection, stored_executor_binding};
 use hoh_error::BoxError;
@@ -35,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::agent::access_text;
-use crate::contract::{AccessMode, HarnessCommand, VersionStatus};
+use crate::contract::{AccessMode, HarnessCommand, HarnessCommands, VersionStatus};
 use crate::redact::{redact, redact_value};
 use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
 
@@ -51,6 +52,7 @@ const ACCESS_SET: &str = "hoh/executor/access/set";
 const COMMANDS: &str = "hoh/executor/commands";
 const ENTRIES: &str = "hoh/workspace/entries";
 const ADD: &str = "hoh/workspace/add";
+const FOLDER_CACHE_TTL: Duration = Duration::from_secs(30);
 const METHODS: [&str; 7] = [
     DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, COMMANDS, ENTRIES, ADD,
 ];
@@ -109,6 +111,7 @@ impl Plugin for ExternalHarnessWindowPlugin {
             folders: std::sync::Mutex::new(folders.into_iter().collect()),
             engine_home: deps.profile.home.clone(),
             saving: tokio::sync::Mutex::new(()),
+            folder_calls: std::sync::Mutex::new(BTreeMap::new()),
         });
         for method in METHODS {
             let window = window.clone();
@@ -157,6 +160,35 @@ struct Window {
     engine_home: PathBuf,
     /// One save at a time, so the file holds the last choice.
     saving: tokio::sync::Mutex<()>,
+    /// Expensive composer calls, serialized and briefly cached by canonical folder.
+    folder_calls: std::sync::Mutex<BTreeMap<PathBuf, Arc<tokio::sync::Mutex<FolderCalls>>>>,
+}
+
+#[derive(Default)]
+struct FolderCalls {
+    commands: BTreeMap<String, Cached<HarnessCommands>>,
+    entries: BTreeMap<EntriesKey, Cached<WorkspaceEntriesResult>>,
+}
+
+struct Cached<T> {
+    at: Instant,
+    value: T,
+}
+
+impl<T: Clone> Cached<T> {
+    fn is_fresh(&self) -> bool {
+        self.at.elapsed() < FOLDER_CACHE_TTL
+    }
+
+    fn fresh(&self) -> Option<T> {
+        self.is_fresh().then(|| self.value.clone())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct EntriesKey {
+    query: String,
+    limit: u32,
 }
 
 impl Window {
@@ -205,10 +237,10 @@ impl Window {
             return Err(unknown());
         }
         let wanted = tokio::fs::canonicalize(cwd).await.map_err(|_| unknown())?;
-        // The engine's own data is never a folder of `@`, `/` or `$`, even as the default folder
-        // (the desktop runs the engine there; its conversations work in the session folder).
-        if self.holds_engine_data(&wanted).await {
-            return Err(format!("{cwd:?} holds the data of HoH").into());
+        // This is repeated on every use, not only when a project is registered: a saved path may
+        // have been replaced with a link since then.
+        if let Some(reason) = self.folder_refusal(&wanted).await {
+            return Err(format!("{cwd:?} {reason}").into());
         }
         // A composition without working directories knows no folder.
         let directories = self.ctx.get::<WorkingDirectoryKey>().ok_or_else(unknown)?;
@@ -256,7 +288,23 @@ impl Window {
                 .to_owned(),
         };
         let folder = self.known_folder(&cwd).await?;
-        let found = harness.commands(folder).await?;
+        let calls = self.folder_calls(&folder);
+        let mut calls = calls.lock().await;
+        let found = match calls.commands.get(&params.executor).and_then(Cached::fresh) {
+            Some(found) => found,
+            None => {
+                let found = harness.commands(folder).await?;
+                calls.commands.retain(|_, cached| cached.is_fresh());
+                calls.commands.insert(
+                    params.executor.clone(),
+                    Cached {
+                        at: Instant::now(),
+                        value: found.clone(),
+                    },
+                );
+                found
+            }
+        };
         let wire = |list: Vec<HarnessCommand>| {
             list.into_iter()
                 .map(|command| ExecutorCommand {
@@ -290,17 +338,36 @@ impl Window {
             .into());
         }
         let folder = self.known_folder(&params.cwd).await?;
+        let key = EntriesKey {
+            query: params.query.clone(),
+            limit: params.limit,
+        };
+        let calls = self.folder_calls(&folder);
+        let mut calls = calls.lock().await;
+        if let Some(found) = calls.entries.get(&key).and_then(Cached::fresh) {
+            return Ok(found);
+        }
         let (entries, truncated) = tokio::task::spawn_blocking(move || {
             crate::entries::search(&folder, &params.query, params.limit as usize)
         })
         .await?;
-        Ok(WorkspaceEntriesResult { entries, truncated })
+        let found = WorkspaceEntriesResult { entries, truncated };
+        calls.entries.retain(|_, cached| cached.is_fresh());
+        calls.entries.insert(
+            key,
+            Cached {
+                at: Instant::now(),
+                value: found.clone(),
+            },
+        );
+        Ok(found)
     }
 
     /// A folder the person added as a project in the main window (`hoh/workspace/add`, privileged:
     /// the SDK server has the host confirm the exact call first). It must be an existing folder;
-    /// `~` is the engine's home folder; the engine's own data is refused, as the sandbox refuses it
-    /// for a conversation. Kept on disk before it counts, so a refused write changes nothing.
+    /// `~` is the user's home folder. Sensitive system and home folders and the engine's own data
+    /// are refused after links have been resolved. Kept on disk before it counts, so a refused
+    /// write changes nothing.
     async fn add_folder(&self, params: WorkspaceAddParams) -> Result<WorkspaceAddResult, BoxError> {
         let typed = params.cwd.trim();
         let path = match typed.strip_prefix('~') {
@@ -319,8 +386,8 @@ impl Window {
         if !tokio::fs::metadata(&folder).await?.is_dir() {
             return Err(format!("{typed:?} is not a folder").into());
         }
-        if self.holds_engine_data(&folder).await {
-            return Err(format!("{typed:?} holds the data of HoH and cannot be a project").into());
+        if let Some(reason) = self.folder_refusal(&folder).await {
+            return Err(format!("{typed:?} {reason} and cannot be a project").into());
         }
         let _one = self.saving.lock().await;
         let mut folders = lock_folders(&self.folders).clone();
@@ -350,8 +417,29 @@ impl Window {
         folder.starts_with(&home) || home.starts_with(folder)
     }
 
+    /// Why a canonical folder cannot be used by the composer's `@`, `/` or `$`.
+    async fn folder_refusal(&self, folder: &Path) -> Option<&'static str> {
+        if self.holds_engine_data(folder).await {
+            return Some("holds the data of HoH");
+        }
+        let user_home = std::env::var_os("HOME").map(PathBuf::from);
+        let user_home = match user_home {
+            Some(home) => Some(tokio::fs::canonicalize(&home).await.unwrap_or(home)),
+            None => None,
+        };
+        protected_folder(folder, user_home.as_deref())
+            .then_some("is a protected system or home folder")
+    }
+
     fn service(&self) -> &ExternalHarnessesService {
         &self.harnesses
+    }
+
+    fn folder_calls(&self, folder: &Path) -> Arc<tokio::sync::Mutex<FolderCalls>> {
+        lock_folder_calls(&self.folder_calls)
+            .entry(folder.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(FolderCalls::default())))
+            .clone()
     }
 
     fn known(&self, executor: &str) -> Result<(), BoxError> {
@@ -636,6 +724,53 @@ fn lock_folders(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+fn lock_folder_calls(
+    calls: &std::sync::Mutex<BTreeMap<PathBuf, Arc<tokio::sync::Mutex<FolderCalls>>>>,
+) -> std::sync::MutexGuard<'_, BTreeMap<PathBuf, Arc<tokio::sync::Mutex<FolderCalls>>>> {
+    calls
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Folders whose names alone may disclose credentials or host configuration. Both arguments are
+/// canonical: callers resolve links before this policy is evaluated.
+fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
+    if folder == Path::new("/") {
+        return true;
+    }
+    if let Some(home) = user_home {
+        if folder == home {
+            return true;
+        }
+        if folder
+            .strip_prefix(home)
+            .ok()
+            .and_then(|relative| relative.components().next())
+            .is_some_and(|component| match component {
+                Component::Normal(name) => name.as_encoded_bytes().first() == Some(&b'.'),
+                _ => false,
+            })
+        {
+            return true;
+        }
+    }
+    const SYSTEM: &[&str] = &[
+        "/etc", "/proc", "/sys", "/dev", "/run", "/boot", "/root", "/var", "/usr", "/bin", "/sbin",
+    ];
+    if SYSTEM.iter().any(|protected| folder.starts_with(protected)) {
+        return true;
+    }
+    // `/lib*`: `/lib`, `/lib64`, and any other top-level name beginning with `lib`.
+    folder
+        .strip_prefix("/")
+        .ok()
+        .and_then(|relative| relative.components().next())
+        .is_some_and(|component| match component {
+            Component::Normal(name) => name.as_encoded_bytes().starts_with(b"lib"),
+            _ => false,
+        })
+}
+
 fn wire(mode: AccessMode) -> ExecutorAccessMode {
     match mode {
         AccessMode::Confirm => ExecutorAccessMode::Confirm,
@@ -657,4 +792,65 @@ async fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::protected_folder;
+    use std::path::Path;
+
+    #[test]
+    fn protected_folders_cover_root_home_hidden_home_and_system_classes() {
+        let home = Path::new("/home/person");
+        for path in [
+            "/",
+            "/home/person",
+            "/home/person/.ssh",
+            "/home/person/.ssh/keys",
+            "/home/person/.config/app",
+            "/etc",
+            "/etc/ssh",
+            "/proc",
+            "/proc/1",
+            "/sys",
+            "/sys/kernel",
+            "/dev",
+            "/dev/zero",
+            "/run",
+            "/run/secrets",
+            "/boot",
+            "/boot/loader",
+            "/root",
+            "/root/work",
+            "/var",
+            "/var/lib",
+            "/usr",
+            "/usr/local",
+            "/bin",
+            "/bin/sh",
+            "/sbin",
+            "/sbin/init",
+            "/lib",
+            "/lib64",
+            "/libexec/tool",
+        ] {
+            assert!(
+                protected_folder(Path::new(path), Some(home)),
+                "{path} must be protected"
+            );
+        }
+        for path in [
+            "/home/person/work",
+            "/home/person/project/.hidden",
+            "/home/other/.ssh",
+            "/opt/project",
+            "/etcetera/project",
+            "/usrland/project",
+        ] {
+            assert!(
+                !protected_folder(Path::new(path), Some(home)),
+                "{path} is not in a protected class"
+            );
+        }
+    }
 }

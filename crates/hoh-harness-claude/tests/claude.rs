@@ -178,8 +178,8 @@ async fn discover_reports_install_version_sign_in_and_models() {
 
 /// HOH-41: `/` and `$` are what the CLI itself declares for the folder — the commands of its
 /// `initialize`, the skills of its `reload_skills` — trimmed and one per name, nothing added; the
-/// probe runs in the folder with the profile's setting sources, no hooks, no MCP server, no stored
-/// session, and no turn.
+/// probe runs in the folder with user settings but no project/local setting files, no hooks, no
+/// MCP server, no stored session, and no turn. Commands and skills still come from the CLI.
 #[tokio::test]
 async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
     let env = Env::new();
@@ -222,7 +222,7 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
         .iter()
         .position(|arg| arg == "--setting-sources")
         .unwrap();
-    assert_eq!(args[at + 1], "user,project,local");
+    assert_eq!(args[at + 1], "user");
     assert!(
         !args
             .iter()
@@ -234,9 +234,20 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
     // A CLI without `reload_skills` still gives its commands; a missing folder, nothing.
     let mut env = Env::new();
     env.mode = Some("no-skills");
+    env.setting_sources = SettingSources::Isolated;
     let found = env.harness().commands(env.dir.path().into()).await.unwrap();
     assert_eq!(found.commands.len(), 3);
     assert!(found.skills.is_empty());
+    let args = env.args();
+    let at = args
+        .iter()
+        .position(|arg| arg == "--setting-sources")
+        .unwrap();
+    assert_eq!(
+        args[at + 1],
+        "user",
+        "the probe is independent of the profile"
+    );
     let missing = env.harness().commands(env.dir.path().join("gone")).await;
     assert_eq!(missing.unwrap_err().code, hoh_external_harness::code::IO);
 }

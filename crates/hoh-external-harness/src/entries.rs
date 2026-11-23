@@ -9,6 +9,7 @@
 //! near the top.
 
 use std::collections::VecDeque;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use hoh_protocol::{WorkspaceEntry, WorkspaceEntryKind};
@@ -19,6 +20,8 @@ pub(crate) const MAX_SCANNED: usize = 25_000;
 pub(crate) const MAX_LIMIT: u32 = 200;
 /// The longest query (T3 `PROJECT_SEARCH_ENTRIES_QUERY_MAX_LENGTH`).
 pub(crate) const MAX_QUERY_CHARS: usize = 256;
+/// The largest `.gitignore` the `@` scan will inspect.
+const MAX_GITIGNORE_BYTES: u64 = 1024 * 1024;
 
 /// The entries of `root` (canonical) matching `query`, the best `limit` of them, and whether more
 /// matched or the walk was cut.
@@ -132,7 +135,7 @@ impl Ignored {
             anywhere: Vec::new(),
             top: Vec::new(),
         };
-        let text = std::fs::read_to_string(root.join(".gitignore")).unwrap_or_default();
+        let text = safe_gitignore(root).unwrap_or_default();
         for line in text.lines().map(str::trim) {
             if line.is_empty()
                 || line.starts_with(['#', '!'])
@@ -160,10 +163,36 @@ impl Ignored {
     }
 }
 
+/// Read only a small regular `.gitignore`, never a link, FIFO, device or unbounded file. The
+/// second metadata check is on the opened handle, and the bounded read also catches a regular file
+/// that grows after its path metadata was checked.
+fn safe_gitignore(root: &Path) -> Option<String> {
+    let path = root.join(".gitignore");
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_GITIGNORE_BYTES {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_GITIGNORE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_GITIGNORE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_GITIGNORE_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     fn tree() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -198,6 +227,14 @@ mod tests {
 
     fn paths(entries: &[WorkspaceEntry]) -> Vec<&str> {
         entries.iter().map(|entry| entry.path.as_str()).collect()
+    }
+
+    fn search_finishes(root: PathBuf) {
+        let (done, result) = mpsc::sync_channel(1);
+        std::thread::spawn(move || done.send(search(&root, "", 200)).unwrap());
+        result
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the unsafe .gitignore must be ignored without blocking");
     }
 
     #[test]
@@ -282,5 +319,36 @@ mod tests {
         let (entries, truncated) = search(&root, "", 200);
         assert_eq!(entries.len(), 200);
         assert!(truncated);
+    }
+
+    #[test]
+    fn a_gitignore_link_to_dev_zero_is_ignored_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        symlink("/dev/zero", root.join(".gitignore")).unwrap();
+        search_finishes(root);
+    }
+
+    #[test]
+    fn a_gitignore_fifo_is_ignored_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(root.join(".gitignore"))
+            .status()
+            .expect("mkfifo is available on the Unix test host");
+        assert!(status.success(), "mkfifo failed: {status}");
+        search_finishes(root);
+    }
+
+    #[test]
+    fn a_gitignore_over_one_mib_is_ignored_without_reading_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::File::create(root.join(".gitignore"))
+            .unwrap()
+            .set_len(MAX_GITIGNORE_BYTES + 1)
+            .unwrap();
+        search_finishes(root);
     }
 }

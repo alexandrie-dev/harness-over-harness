@@ -347,10 +347,11 @@ fn probe_args() -> Vec<String> {
 }
 
 /// The probe of the slash commands and skills of a folder (HOH-41), T3
-/// `buildClaudeCapabilitiesProbeQueryOptions` with the folder as its cwd: the setting sources a
-/// session of this profile reads (so the commands are the ones the session will have), no hooks,
-/// no MCP server, no stored session, and nothing allowed without a question. It runs no turn.
-fn commands_probe_args(sources: SettingSources) -> Vec<String> {
+/// `buildClaudeCapabilitiesProbeQueryOptions` with the folder as its cwd: user settings but never
+/// the untrusted folder's project/local settings, no hooks, no MCP server, no stored session, and
+/// nothing allowed without a question. Project commands and skills are discovered by the CLI's
+/// `initialize` and `reload_skills` independently of setting-file sources. It runs no turn.
+fn commands_probe_args() -> Vec<String> {
     let mut args = base_args();
     args.extend(
         [
@@ -358,12 +359,11 @@ fn commands_probe_args(sources: SettingSources) -> Vec<String> {
             "default",
             "--permission-prompt-tool",
             "stdio",
+            "--setting-sources",
+            "user",
         ]
         .map(str::to_owned),
     );
-    let sources = sources.args();
-    let strict = sources.iter().any(|arg| arg == "--strict-mcp-config");
-    args.extend(sources);
     args.extend(
         [
             "--settings",
@@ -374,9 +374,7 @@ fn commands_probe_args(sources: SettingSources) -> Vec<String> {
         ]
         .map(str::to_owned),
     );
-    if !strict {
-        args.push("--strict-mcp-config".to_owned());
-    }
+    args.push("--strict-mcp-config".to_owned());
     args
 }
 
@@ -438,7 +436,7 @@ async fn commands_of(config: &ClaudeConfig, cwd: PathBuf) -> HarnessResult<Harne
             return Err(HarnessFailure::new(code::UNSUPPORTED_VERSION, message));
         }
     };
-    let args = commands_probe_args(config.setting_sources);
+    let args = commands_probe_args();
     let sup = spawn(&spec(config, args, cwd.clone(), true)).await?;
     let (session, _events, init) = ClaudeSession::start(
         sup,
