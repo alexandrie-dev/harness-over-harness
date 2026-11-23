@@ -7,14 +7,6 @@
       "type": "string"
     },
     "rootIdentity": {
-      "$ref": "#/$defs/WorkingDirectoryRootIdentity"
-    }
-  },
-  "required": [
-    "cwd"
-  ],
-  "$defs": {
-    "WorkingDirectoryRootIdentity": {
       "type": "object",
       "properties": {
         "device": {
@@ -30,5 +22,8 @@
       ]
     }
   },
+  "required": [
+    "cwd"
+  ],
   "x-method": "session/working-directory/set"
 }
