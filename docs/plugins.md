@@ -1260,7 +1260,7 @@ Node используется только автором до упаковки 
   "requestedPermissions": { "ui": ["page"] },
   "contributes": {
     "ui": {
-      "pages": [{ "id": "hello", "name": "Привет", "handler": "hello" }]
+      "pages": [{ "id": "hello", "name": "Привет", "handler": "hello", "stateSchema": { "type": "object", "additionalProperties": false } }]
     }
   },
   "requires": { "services": { "ui": { "protocolVersions": [1] } } }
@@ -1300,10 +1300,11 @@ export const hello = page((root) => { root.textContent = "Привет!"; });
       "name": "hello",
       "description": "Вернуть приветствие",
       "inputSchema": { "type": "object", "additionalProperties": false },
-      "outputSchema": { "type": "string" }
+      "outputSchema": { "type": "string" },
+      "handler": "hello"
     }],
     "ui": {
-      "pages": [{ "id": "hello", "name": "Привет", "handler": "hello" }]
+      "pages": [{ "id": "hello", "name": "Привет", "handler": "hello", "stateSchema": { "type": "object", "additionalProperties": false } }]
     }
   },
   "requires": {
