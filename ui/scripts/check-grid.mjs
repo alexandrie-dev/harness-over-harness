@@ -3,7 +3,7 @@
 // 1) Исходники: grid/tokens.css — 20 дорожек ровно в сумме 64, линии g1..g21 и числа --gc-x/--gc-y совпадают с blocks.ts; в CSS окна
 //    положение блока (grid-column/-row/-area) задано только линиями g1..g21 (как check_design.py эталона); все линии карты блоков в 1..21.
 // 2) Собранное окно (dist/index.html, headless Chrome, подделка движка): window.hohGridCheck() (src/t3-entry/grid/check.ts, допуск 2 px
-//    как у gc-debug.js эталона) на пустой главной и на главной с агентами при 1440×900, 1280×720 и 1100×700, а также при 1000×625
+//    как у gc-debug.js эталона) на пустой главной и на главной с агентами при 2560×1440, 1920×1080, 1440×900, 1280×720 и 1100×700, а также при 1000×625
 //    (сетка отступает: блоки не выходят за край). Любой блок вне линии — ошибка с именем блока, стороной и числом px.
 import { chromium } from 'playwright-core';
 import { readdir, readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -72,17 +72,19 @@ function engineWith(busy) {
   engine.access = 'confirm';
   engine.claude = { installed: true, version: '2.1.0', auth: 'authenticated', models: [{ id: 'opus', displayName: 'Claude Opus', isDefault: true }] };
   if (!busy) return engine;
-  for (const [id, title] of [['w1', 'Prepare the weekly report'], ['w2', 'Fix the build']]) {
+  for (const [id, title] of [['w1', 'Prepare the weekly report'], ['w2', 'Fix the build'], ['w3', 'Review the release notes']]) {
     const session = engine.open(id, title);
     engine.append(session, 'turn/start', { turn: 1 });
     engine.append(session, 'user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: title }] });
     engine.append(session, 'tool/call', { callId: `${id}-c`, turn: 1, name: 'Bash', arguments: { command: id === 'w2' ? 'printf "prepare report, verify every source, and save the complete result to the requested destination"' : 'ls' } });
   }
-  const done = engine.open('d1', 'Summarize the invoices');
-  engine.append(done, 'turn/start', { turn: 1 });
-  engine.append(done, 'user/message', { id: 'd1-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Summarize the invoices' }] });
-  engine.append(done, 'assistant/message', { message: { id: 'd1-a', content: [{ type: 'text', text: 'ok' }] } });
-  engine.append(done, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  for (const [id, title] of [['d1', 'Summarize the invoices'], ['d2', 'Check the final totals']]) {
+    const done = engine.open(id, title);
+    engine.append(done, 'turn/start', { turn: 1 });
+    engine.append(done, 'user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: title }] });
+    engine.append(done, 'assistant/message', { message: { id: `${id}-a`, content: [{ type: 'text', text: 'ok' }] } });
+    engine.append(done, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  }
   return engine;
 }
 async function open(browser, engine, size) {
@@ -121,7 +123,7 @@ try {
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache') },
     args: ['--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--no-first-run'],
   });
-  for (const [width, height] of [[1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]) {
+  for (const [width, height] of [[2560, 1440], [1920, 1080], [1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]) {
     for (const busy of [false, true]) {
       const label = `${width}×${height} ${busy ? 'с агентами' : 'пустая главная'}`;
       const engine = engineWith(busy);
@@ -133,13 +135,15 @@ try {
         }
         await page.getByText(/Good (night|morning|afternoon|evening)/).first().waitFor({ state: 'attached' });
         if (busy) {
-          for (const sessionId of ['w1', 'w2']) engine.emit('session.status', { sessionId, status: 'running' });
+          for (const sessionId of ['w1', 'w2', 'w3']) engine.emit('session.status', { sessionId, status: 'running' });
           const waitingSession = engine.sessions.get('w2');
           engine.emit('session.event', { sessionId: 'w2', event: engine.append(waitingSession, 'turn/start', { turn: 2 }) });
           engine.emit('session.event', { sessionId: 'w2', event: engine.append(waitingSession, 'tool/call', { callId: 'w2-live-c', turn: 2, name: 'Bash', arguments: { command: 'printf "prepare the weekly report, verify every source twice, compare the totals with the previous period, explain every discrepancy, and save the complete reviewed result to the requested destination"' } }) });
           engine.emit('approval.pending', { approvalId: 'appr-1', sessionId: 'w2', risk: 'unassessed', humanText: 'Claude asks to run a deliberately long command that wraps over several lines: printf "prepare report, verify every source, and save the complete result"', expiresAt: Date.now() + 600_000 });
           await page.locator('.hoh-card').first().waitFor({ state: 'attached' });
           await page.locator('.hoh-ask').first().waitFor({ state: 'attached' });
+          await page.evaluate(() => window.__HOH_HOME__.complete('d1'));
+          await page.locator('.hoh-card[data-state="done"]').waitFor({ state: 'attached' });
         }
         await page.evaluate(() => document.fonts.ready);
         await page.waitForTimeout(800);
@@ -183,6 +187,23 @@ try {
         const found = await page.evaluate(() => (window.hohGridCheck ? window.hohGridCheck() : null));
         if (found === null) fail(`${label}: в окне нет window.hohGridCheck`);
         else for (const miss of found) fail(`${label}: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected} (ближайшая ${miss.nearest || '—'})`);
+        if (busy) {
+          const cards = await page.locator('.hoh-card').evaluateAll((nodes) => nodes.map((node) => {
+            const box = node.getBoundingClientRect();
+            return { x: box.x, y: box.y, right: box.right, width: box.width, state: node.getAttribute('data-state') };
+          }));
+          const count = state => cards.filter(card => card.state === state).length;
+          if (cards.length !== 5 || count('working') !== 2 || count('waiting') !== 2 || count('done') !== 1)
+            fail(`${label}: нужны 5 карточек (2 working, 2 waiting, 1 done), получено ${JSON.stringify(cards.map(card => card.state))}`);
+          if (cards.some(card => card.x < -0.5 || card.right > width + 0.5)) fail(`${label}: карточка вышла за окно`);
+          if (width >= 1100) {
+            if (cards.some(card => card.width > 360.5)) fail(`${label}: карточка шире 360 px: ${cards.map(card => card.width.toFixed(1)).join(', ')}`);
+            const firstY = Math.min(...cards.map(card => card.y));
+            const firstRow = cards.filter(card => Math.abs(card.y - firstY) < 1).length;
+            const expected = width === 1440 ? 2 : width === 1920 ? 3 : width === 2560 ? 4 : 2;
+            if (firstRow !== expected) fail(`${label}: в первом ряду ${firstRow} карточек, нужно ${expected}`);
+          }
+        }
         if (busy) { // Learning / Widgets: пустая страница с заголовком и «Coming soon», пункт подсвечен, блок на линиях; «New chat» её закрывает
           for (const title of ['Learning', 'Widgets']) {
             await page.locator(`[data-hoh-page-item="${title.toLowerCase()}"]`).click();
@@ -215,4 +236,4 @@ try {
 } finally { await browser?.close(); await rm(home, { recursive: true, force: true }); }
 
 if (errors.length) { for (const message of errors) console.error('grid: ' + message); process.exit(1); }
-console.log('grid: все блоки на линиях g1..g21 (1440×900, 1280×720, 1100×700, 1000×625, 800×550; допуск 2 px)');
+console.log('grid: все блоки на линиях g1..g21; карточки 2/3/4 в ряд при 1440/1920/2560 и не шире 360 px (также 1280×720, 1100×700, 1000×625, 800×550; допуск 2 px)');

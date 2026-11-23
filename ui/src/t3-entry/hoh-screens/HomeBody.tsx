@@ -13,6 +13,7 @@ import './home.css';
 
 interface Entry {
   id: string; title: string; projectId: string; state: 'working' | 'waiting' | 'done' | 'ended';
+  turnOrdinal: number; canComplete?: boolean;
   startedAt: number; doneAt: number | null; steps: { done: number; total: number };
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
   agents: Agent[];
@@ -24,6 +25,7 @@ interface Agent {
 interface Home {
   version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectTitle(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
+  complete(threadId: string): Promise<void>;
 }
 const ENVIRONMENT_ID = 'hoh-local';
 const home = (): Home | undefined => (globalThis as { __HOH_HOME__?: Home }).__HOH_HOME__;
@@ -121,20 +123,20 @@ function Ask({ entry, view }: { entry: Entry; view: View }) {
     </div>
   );
 }
-const press = (open: () => void) => ({ role: 'button' as const, tabIndex: 0, onClick: open, onKeyDown: (event: React.KeyboardEvent) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } } });
 const stateLabel = (entry: Entry) => entry.state === 'working' ? <><span className="hoh-orbit" aria-hidden />Working</> : 'Waiting for your answer';
 /** An agent as a card (HOH-41): the executor's mark top-left, the title, where it works, its subagents inside, the state at the bottom.
  *  The glow of the border follows the state (home.css: blue — working, red — waits for the person, neutral — done). */
 function Card({ entry, view, children }: { entry: Entry; view: View; children: React.ReactNode }) {
   const project = projectLabel(entry.projectId, view.where(entry));
   return (
-    <div className="hoh-card" data-state={entry.state} {...press(() => view.open(entry.id))}>
+    <article className="hoh-card" data-state={entry.state}>
+      <button type="button" className="hoh-card__open" aria-label={`Open ${entry.title}`} onClick={() => view.open(entry.id)} />
       <Mark />
       <span className="hoh-card__title">{entry.title}</span>
       {project ? <span className="hoh-card__where">{project}</span> : null}
       {entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
       {children}
-    </div>
+    </article>
   );
 }
 const DoneCards = ({ done, view }: { done: Entry[]; view: View }) => done.length === 0 ? null : (
@@ -159,7 +161,13 @@ function Cards({ working, done, asking, view }: Lists) {
             <div className="hoh-home__cards">
               {working.slice(0, 6).map((entry) => (
                 <Card key={entry.id} entry={entry} view={view}>
-                  <span className="hoh-card__state"><b>{stateLabel(entry)}</b><span>{elapsed(entry.startedAt, view.now)}</span></span>
+                  <span className="hoh-card__state">
+                    <b>{stateLabel(entry)}</b>
+                    <span className="hoh-card__state-actions">
+                      {entry.canComplete ? <Button className="hoh-card__complete" variant="ghost-muted" size="micro" onClick={() => void view.host?.complete(entry.id)}><CheckIcon aria-hidden />Mark done</Button> : null}
+                      <span>{elapsed(entry.startedAt, view.now)}</span>
+                    </span>
+                  </span>
                   <Steps entry={entry} />
                 </Card>
               ))}

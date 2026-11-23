@@ -50,6 +50,16 @@ test('request detail is an accessible two-line disclosure', async () => {
   assert.match(css, /\.hoh-ask__text\[data-expanded\][^}]*-webkit-line-clamp: initial/);
 });
 
+test('agent cards have a separate accessible open target and an explicit human completion action', async () => {
+  const css = await readFile(new URL('../src/t3-entry/hoh-screens/home.css', import.meta.url), 'utf8');
+  assert.match(homeSource, /className="hoh-card__open" aria-label=\{`Open \$\{entry\.title\}`\}/);
+  assert.match(homeSource, /className="hoh-card__complete"[^>]*onClick=\{\(\) => void view\.host\?\.complete\(entry\.id\)\}/);
+  assert.match(homeSource, />Mark done<\/Button>/);
+  assert.match(css, /--hoh-card-width:\s*min\(360px, calc\(\(50vw - 14px\) \/ 2\)\)/);
+  assert.match(css, /grid-template-columns:\s*repeat\(auto-fill, var\(--hoh-card-width\)\)/);
+  assert.match(css, /\.hoh-card__complete\s*\{[^}]*pointer-events:\s*auto/);
+});
+
 test('visible T3 draft and palette copy is patched to New chat and documented', async () => {
   const root = new URL('../', import.meta.url);
   const [draftPatch, palettePatch, manifestText, map] = await Promise.all([
