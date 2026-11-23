@@ -171,6 +171,46 @@ async fn every_mode_is_present_on_thread_and_first_turn() {
 }
 
 #[tokio::test]
+async fn a_future_model_effort_is_forwarded_without_a_hard_coded_allowlist() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "future-effort");
+    let mut params = start_params(&temp, None);
+    params.effort = Some("super-high".into());
+    let mut started = harness
+        .start_with_access(params, AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-hoh".into(),
+            text: "hello".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    loop {
+        if matches!(
+            event(&mut started.events).await,
+            HarnessEvent::ApprovalRequested { .. }
+        ) {
+            break;
+        }
+    }
+    started.session.terminate(Duration::from_millis(100)).await;
+    let wire = lines(&log);
+    let turn = wire
+        .iter()
+        .find(|line| line.get("method") == Some(&Value::String("turn/start".into())))
+        .unwrap();
+    assert_eq!(
+        turn.pointer("/params/effort").and_then(Value::as_str),
+        Some("super-high")
+    );
+}
+
+#[tokio::test]
 async fn stream_steps_and_exact_approval_ids_round_trip() {
     let temp = TempDir::new().unwrap();
     let (harness, log) = harness(&temp, "approvals");

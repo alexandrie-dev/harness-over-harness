@@ -575,12 +575,21 @@ object!(ExecutorSelectParams {
     executor: Option<String>,
     model: String
 });
+optional!(ExecutorEffort {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    description: Option<String>,
+});
 optional!(ExecutorModel {
     id: String,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     is_default: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    effort_levels: Option<Vec<ExecutorEffort>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    default_effort: Option<String>,
 });
 object!(ExecutorDiscoverResult {
     executor: String,

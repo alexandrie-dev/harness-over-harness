@@ -63,6 +63,12 @@ pub trait ExternalHarness: Send + Sync + 'static {
         &[]
     }
 
+    /// Whether a level supplied by the model catalog may be forwarded. Most harnesses use their
+    /// fixed list above; catalog-driven harnesses can accept the value they just advertised.
+    fn accepts_effort(&self, effort: &str) -> bool {
+        self.effort_levels().contains(&effort)
+    }
+
     /// The slash commands and skills the harness declares for the folder `cwd` (HOH-41), asked
     /// without a turn: the window's `/` and `$` before the first message. The caller has checked
     /// that the engine knows the folder. Default: none.

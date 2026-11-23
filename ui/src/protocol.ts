@@ -123,7 +123,9 @@ export type ExecutorDiscoverResult = { "executor": string; "installed": boolean;
 
 export type ExecutorEffectiveAccess = { "mode": ExecutorAccessMode; "flags": Array<string>; "text": string; };
 
-export type ExecutorModel = { "id": string; "displayName"?: (string | null); "isDefault"?: (boolean | null); };
+export type ExecutorEffort = { "id": string; "description"?: (string | null); };
+
+export type ExecutorModel = { "id": string; "displayName"?: (string | null); "isDefault"?: (boolean | null); "effortLevels"?: (Array<ExecutorEffort> | null); "defaultEffort"?: (string | null); };
 
 export type ExecutorParams = { "executor": string; };
 

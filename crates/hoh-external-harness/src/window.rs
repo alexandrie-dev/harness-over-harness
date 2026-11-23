@@ -64,7 +64,7 @@ const METHODS: [&str; 7] = [
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Saved {
     #[serde(default)]
-    access: BTreeMap<String, AccessMode>,
+    access: BTreeMap<String, ExecutorAccessMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selected: Option<SavedSelection>,
 }
@@ -549,6 +549,14 @@ impl Window {
                 ExecutorAccessMode::Full => AccessMode::Full,
             },
         };
+        if wire(mode) != params.mode {
+            return Err("runtimeMode does not match its downgrade-safe mode projection".into());
+        }
+        if params.session_id.is_none()
+            && matches!(mode, AccessMode::AutoAcceptEdits | AccessMode::Auto)
+        {
+            return Err("auto access modes require a concrete sessionId".into());
+        }
         if let Some(session) = params.session_id.as_deref() {
             self.commit(Change::SessionAccess {
                 session: session.to_owned(),
@@ -647,22 +655,32 @@ impl Window {
                 .set_session_access(session, executor, *mode);
             return Ok(());
         }
-        let mut access: BTreeMap<String, AccessMode> =
-            self.service().choices().all_access().into_iter().collect();
+        let mut access: BTreeMap<String, ExecutorAccessMode> = self
+            .service()
+            .choices()
+            .all_access()
+            .into_iter()
+            .map(|(executor, mode)| (executor, wire(mode)))
+            .collect();
         let mut selected = self.agents.selected_executor();
         match &change {
             Change::Select(selection) => selected.clone_from(selection),
             Change::Access(executor, mode) => {
-                access.insert(executor.clone(), *mode);
+                access.insert(executor.clone(), wire(*mode));
             }
             Change::SessionAccess { .. } => unreachable!("handled above"),
         }
         let saved = Saved {
             access,
-            selected: selected.map(|chosen| SavedSelection {
-                executor: chosen.executor,
-                model: chosen.model,
-            }),
+            // Codex did not exist in the legacy choices format. Keeping its global selection in
+            // that file makes an older HoH restore an executor it cannot register. T3 reapplies
+            // the provider before a new thread; existing threads keep their own binding record.
+            selected: selected
+                .filter(|chosen| chosen.executor != "codex")
+                .map(|chosen| SavedSelection {
+                    executor: chosen.executor,
+                    model: chosen.model,
+                }),
         };
         write(&self.path, &serde_json::to_vec_pretty(&saved)?)
             .await
@@ -699,7 +717,13 @@ pub(crate) async fn restore_choices(ctx: &Context, choices: &Choices, agents: &A
         Ok(bytes) => match serde_json::from_slice::<Saved>(&bytes) {
             Ok(saved) => {
                 for (executor, mode) in saved.access {
-                    choices.set_access(&executor, mode);
+                    choices.set_access(
+                        &executor,
+                        match mode {
+                            ExecutorAccessMode::Confirm => AccessMode::Confirm,
+                            ExecutorAccessMode::Full => AccessMode::Full,
+                        },
+                    );
                 }
                 agents.select_executor(saved.selected.map(|chosen| ExecutorSelection {
                     executor: chosen.executor,

@@ -771,11 +771,7 @@ impl ExternalAgent {
             return;
         };
         let effort = named.filter(|effort| {
-            let known = self
-                .shared
-                .harness
-                .effort_levels()
-                .contains(&effort.as_str());
+            let known = self.shared.harness.accepts_effort(effort);
             if !known {
                 self.ctx.logger().warn(format_args!(
                     "harness \"{}\" has no effort level {}: the turn runs without one",

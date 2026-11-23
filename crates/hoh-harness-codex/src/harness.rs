@@ -374,7 +374,9 @@ impl ExternalHarness for CodexHarness {
         true
     }
 
-    fn effort_levels(&self) -> &'static [&'static str] {
-        EFFORT_LEVELS
+    fn accepts_effort(&self, _effort: &str) -> bool {
+        // Codex's model/list is the authority. The host only offers values returned by it, and
+        // app-server deliberately permits future model-specific effort names.
+        true
     }
 }
