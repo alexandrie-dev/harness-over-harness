@@ -130,6 +130,13 @@ export class HohHost {
   private sessionsKnown = false;
   private readonly homeListeners = new Set<() => void>();
   private discovery: ClaudeDiscovery | null = null;
+  /** Undefined while the startup probe is pending; set only when its bounded retry lane ends. */
+  private discoveryFailure: unknown | undefined;
+  private discoveryPending = true;
+  private discoveryStartedAt: number;
+  /** A person's Refresh supersedes the startup lane; incidental workspace reads share its in-flight probe. */
+  private discoveryGeneration = 0;
+  private discoveryInFlight: { generation: number; promise: Promise<boolean> } | undefined;
   private mode: HohAccessMode = 'confirm';
   private accessKnown = false;
   /** T3's "default permissions" setting: the mode a new thread starts in. Claude asks first until the person changes it. */
@@ -178,6 +185,7 @@ export class HohHost {
     this.throttleMs = options.throttleMs ?? 40;
     this.loadRetryMs = options.loadRetryMs ?? 500;
     this.loadRetries = options.loadRetries ?? 60;
+    this.discoveryStartedAt = this.now();
     this.workspaceRoot = options.workspaceRoot ?? PLACEHOLDER_ROOT;
     this.startedAt = this.now();
     this.storage = options.storage === undefined ? windowStorage() : options.storage;
@@ -429,7 +437,11 @@ export class HohHost {
     }));
     // Claude's probe and settings are independent of the shell. In particular, a slow CLI health check must not
     // keep T3 from showing the window, the composer, or session metadata that the engine already has.
-    void this.loadConfiguration().then(discovered => { if (!discovered) void this.retryConfiguration(); });
+    this.discoveryStartedAt = this.now();
+    const discoveryGeneration = this.discoveryGeneration;
+    void this.loadConfiguration(discoveryGeneration).then(discovered => {
+      if (!discovered && discoveryGeneration === this.discoveryGeneration) void this.retryConfiguration(discoveryGeneration);
+    });
     const sessions = this.loadSessions();
     // Preserve the single-snapshot fast path when session/list answers immediately, without letting a slow or
     // wedged bridge own startup: after one event-loop turn T3 receives the explicit pending placeholder instead.
@@ -439,17 +451,21 @@ export class HohHost {
   }
 
   /** Claude's probe and access settings, announced whenever that independent startup lane completes. */
-  private async loadConfiguration(): Promise<boolean> {
-    await Promise.all([this.readDiscovery(), this.readAccess()]);
+  private async loadConfiguration(generation: number): Promise<boolean> {
+    const [discovered] = await Promise.all([this.readDiscovery(generation), this.readAccess()]);
     this.configChanged();
-    return this.discovery !== null;
+    return discovered;
   }
 
-  private async retryConfiguration() {
-    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && this.discovery === null; attempt++) {
+  private async retryConfiguration(generation: number) {
+    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && generation === this.discoveryGeneration && this.discoveryPending && this.discovery === null; attempt++) {
       await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
-      if (this.stopped) return;
-      await this.loadConfiguration();
+      if (this.stopped || generation !== this.discoveryGeneration) return;
+      await this.loadConfiguration(generation);
+    }
+    if (!this.stopped && generation === this.discoveryGeneration && this.discoveryPending && this.discovery === null) {
+      this.finishDiscoveryFailure(this.discoveryStartedAt);
+      this.configChanged();
     }
   }
 
@@ -469,8 +485,35 @@ export class HohHost {
     }
   }
 
-  private async readDiscovery() {
-    try { this.discovery = await this.engine.request('hoh/executor/discover', { executor: 'claude' }); } catch { this.discovery = null; }
+  private readDiscovery(generation = this.discoveryGeneration): Promise<boolean> {
+    if (this.discoveryInFlight?.generation === generation) return this.discoveryInFlight.promise;
+    const request = this.performDiscovery(generation);
+    const promise = request.finally(() => {
+      if (this.discoveryInFlight?.promise === promise) this.discoveryInFlight = undefined;
+    });
+    this.discoveryInFlight = { generation, promise };
+    return promise;
+  }
+
+  private async performDiscovery(generation: number): Promise<boolean> {
+    try {
+      const discovery = await this.engine.request('hoh/executor/discover', { executor: 'claude' });
+      if (generation !== this.discoveryGeneration) return this.discovery !== null;
+      this.discovery = discovery;
+      this.discoveryFailure = undefined;
+      this.discoveryPending = false;
+      return true;
+    } catch {
+      if (generation !== this.discoveryGeneration) return this.discovery !== null;
+      this.discovery = null;
+      return false;
+    }
+  }
+
+  private finishDiscoveryFailure(startedAt: number) {
+    const seconds = Math.max(1, Math.ceil((this.now() - startedAt) / 1000));
+    this.discoveryPending = false;
+    this.discoveryFailure = `HoH could not run the Claude health check after waiting ${seconds} ${seconds === 1 ? 'second' : 'seconds'} for the engine. Press Refresh to try again.`;
   }
 
   private async readAccess() {
@@ -732,7 +775,7 @@ export class HohHost {
   }
 
   private config() {
-    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, defaultMode: this.defaultMode, settingsOverrides: this.settingsOverrides, now: this.iso() });
+    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, discoveryFailure: this.discoveryFailure, defaultMode: this.defaultMode, settingsOverrides: this.settingsOverrides, now: this.iso() });
   }
 
   private settings() { return serverSettings(this.model(), this.defaultMode, this.settingsOverrides); }
@@ -1249,11 +1292,24 @@ export class HohHost {
           const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
           if (cwd && (payload?.instanceId === undefined || payload.instanceId === CLAUDE_INSTANCE_ID)) {
             if (this.discovery === null) await this.readDiscovery();
-            return { providers: [{ ...claudeProvider(this.discovery, this.iso()), workspaceSnapshots: [await this.workspaceSnapshot(cwd)] }] };
+            return { providers: [{ ...claudeProvider(this.discovery, this.iso(), this.discoveryFailure), workspaceSnapshots: [await this.workspaceSnapshot(cwd)] }] };
           }
-          await this.readDiscovery();
+          // Welcome mounts with an automatic empty refresh. While startup is pending it is an
+          // observer of that same bounded lane, not a user's request to replace it or fail early.
+          const targeted = payload?.instanceId !== undefined || payload?.refreshModels === true || payload?.reloadSecrets === true;
+          if (!targeted && this.discoveryPending) {
+            const generation = this.discoveryGeneration;
+            await this.readDiscovery(generation);
+            this.configChanged();
+            return { providers: [claudeProvider(this.discovery, this.iso(), this.discoveryFailure)] };
+          }
+          const generation = ++this.discoveryGeneration;
+          const startedAt = this.now();
+          this.discoveryPending = true;
+          this.discoveryFailure = undefined;
+          if (!await this.readDiscovery(generation) && generation === this.discoveryGeneration) this.finishDiscoveryFailure(startedAt);
           this.configChanged();
-          return { providers: [claudeProvider(this.discovery, this.iso())] };
+          return { providers: [claudeProvider(this.discovery, this.iso(), this.discoveryFailure)] };
         },
         'orchestration.dispatchCommand': (command: any) => this.dispatch(command ?? {}),
         'orchestration.launchThread': (input: any) => this.launch(input ?? {}),

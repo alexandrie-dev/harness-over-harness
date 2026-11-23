@@ -31,6 +31,10 @@ export interface ClaudeDiscovery {
   readonly auth: 'authenticated' | 'unauthenticated' | 'unknown';
   readonly models: ReadonlyArray<{ readonly id: string; readonly displayName?: string; readonly isDefault?: boolean }>;
   readonly detail?: string | null;
+  readonly failure?:
+    | { readonly kind: 'timeout'; readonly operation: 'version' | 'initialize'; readonly timeoutSeconds: number }
+    | { readonly kind: 'exit'; readonly operation: 'version' | 'initialize'; readonly exitCode: number | null }
+    | null;
 }
 
 /** Claude Code's pointer at its own default model: not a model, and T3 does not list it. */
@@ -127,17 +131,32 @@ export function listedClaudeModel(discovery: ClaudeDiscovery | null, id: unknown
 }
 
 /** T3's own words for Claude's state (apps/server/src/provider/ClaudeProvider.ts); the engine's are not English. */
-function claudeMessage(discovery: ClaudeDiscovery | null): string | undefined {
-  if (discovery === null) return 'Failed to execute Claude Agent CLI health check.';
+function probeFailureMessage(failure: ClaudeDiscovery['failure']): string | undefined {
+  if (!failure) return undefined;
+  const operation = failure.operation === 'version' ? 'running `claude --version`' : 'waiting for `initialize`';
+  if (failure.kind === 'timeout') {
+    const seconds = Math.max(0, Math.round(failure.timeoutSeconds));
+    return `Claude Agent CLI health check timed out after ${seconds} ${seconds === 1 ? 'second' : 'seconds'} while ${operation}.`;
+  }
+  const ended = failure.exitCode === null ? 'was terminated by a signal' : `exited with code ${failure.exitCode}`;
+  return `Claude Agent CLI health check failed: ${failure.operation === 'version' ? '`claude --version`' : '`initialize`'} ${ended}.`;
+}
+
+function claudeMessage(discovery: ClaudeDiscovery | null, requestFailure?: unknown): string | undefined {
+  if (discovery === null) return requestFailure === undefined ? undefined : englishError(requestFailure, 'Failed to execute Claude Agent CLI health check.');
   if (!discovery.installed) return 'Claude Agent CLI (`claude`) was not found on PATH.';
   if (discovery.auth === 'unauthenticated') return 'Claude Code is not authenticated. Run `claude auth login` and try again.';
+  const failure = probeFailureMessage(discovery.failure);
+  if (failure) return failure;
   const detail = discovery.detail?.trim();
   return detail ? englishError(detail, 'Claude Agent CLI is installed but failed to run.') : undefined;
 }
 
 /** What T3's welcome page and provider settings show: found or not, signed in or not, as the engine says. */
-export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
-  const ready = discovery !== null && discovery.installed && discovery.auth !== 'unauthenticated';
+export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, requestFailure?: unknown) {
+  const ready = discovery === null
+    ? requestFailure === undefined
+    : discovery.installed && discovery.auth !== 'unauthenticated' && discovery.failure == null;
   return {
     instanceId: CLAUDE_INSTANCE_ID,
     driver: CLAUDE_INSTANCE_ID,
@@ -147,13 +166,13 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
     supportsConversationRollback: false,
     supportsTextGeneration: false,
     enabled: true,
-    installed: discovery?.installed ?? false,
+    installed: discovery?.installed ?? requestFailure === undefined,
     version: discovery?.version?.trim() || null,
-    // An engine that could not look is not "still checking" (T3 would wait for ever): Claude is not found.
+    // Pending startup is optimistic so T3 can render the usable shell; a bounded failure replaces it.
     status: ready ? 'ready' : 'error',
     auth: { status: discovery?.auth ?? 'unknown' },
     checkedAt: now,
-    ...(claudeMessage(discovery) === undefined ? {} : { message: claudeMessage(discovery) }),
+    ...(claudeMessage(discovery, requestFailure) === undefined ? {} : { message: claudeMessage(discovery, requestFailure) }),
     models: claudeModels(discovery),
     slashCommands: [],
     skills: [],
@@ -177,6 +196,7 @@ export function serverSettings(model: string, defaultMode: HohAccessMode, overri
 export interface ConfigInput {
   readonly cwd: string;
   readonly discovery: ClaudeDiscovery | null;
+  readonly discoveryFailure?: unknown;
   readonly defaultMode: HohAccessMode;
   readonly settingsOverrides?: Record<string, unknown>;
   readonly now: string;
@@ -221,7 +241,7 @@ export function serverConfig(input: ConfigInput) {
     keybindingsConfigPath: input.cwd.replace(/\/$/, '') + '/.hoh-keybindings.json',
     keybindings: [],
     issues: [],
-    providers: [claudeProvider(input.discovery, input.now)],
+    providers: [claudeProvider(input.discovery, input.now, input.discoveryFailure)],
     availableEditors: [],
     observability: {
       logsDirectoryPath: '/hoh/logs',

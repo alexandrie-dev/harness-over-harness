@@ -576,6 +576,14 @@ test('Claude\'s models with T3\'s names, Claude Code\'s "default" left out, T3\'
   const missing = new FakeEngine({ discovery: { executor: 'claude', installed: false, version: null, auth: 'unknown', models: [], detail: 'Claude Code не установлен.' } });
   const other = connect(missing).client;
   assert.equal((await other.call('server.getConfig', {})).providers[0].message, 'Claude Agent CLI (`claude`) was not found on PATH.');
+  const signedOut = connect(new FakeEngine({ discovery: { executor: 'claude', installed: true, version: '2.1.329', auth: 'unauthenticated', models: [] } })).client;
+  assert.equal((await signedOut.call('server.getConfig', {})).providers[0].message, 'Claude Code is not authenticated. Run `claude auth login` and try again.');
+  const timedOut = connect(new FakeEngine({ discovery: { executor: 'claude', installed: true, version: null, auth: 'unknown', models: [], failure: { kind: 'timeout', operation: 'version', timeoutSeconds: 20 } } })).client;
+  assert.equal((await timedOut.call('server.getConfig', {})).providers[0].message, 'Claude Agent CLI health check timed out after 20 seconds while running `claude --version`.');
+  const initializeTimedOut = connect(new FakeEngine({ discovery: { executor: 'claude', installed: true, version: '2.1.329', auth: 'unknown', models: [], failure: { kind: 'timeout', operation: 'initialize', timeoutSeconds: 45 } } })).client;
+  assert.equal((await initializeTimedOut.call('server.getConfig', {})).providers[0].message, 'Claude Agent CLI health check timed out after 45 seconds while waiting for `initialize`.');
+  const exited = connect(new FakeEngine({ discovery: { executor: 'claude', installed: true, version: null, auth: 'unknown', models: [], failure: { kind: 'exit', operation: 'version', exitCode: 7 } } })).client;
+  assert.equal((await exited.call('server.getConfig', {})).providers[0].message, 'Claude Agent CLI health check failed: `claude --version` exited with code 7.');
 });
 
 test('reasoning levels: T3\'s levels and default for the model, the chosen one goes to the engine as `effort` of session/prompt', async () => {
@@ -1043,7 +1051,11 @@ test('restart persistence: an engine still starting answers nothing at first —
   const { client, host } = connect(engine, { loadRetryMs: 5 });
   const config = await client.stream('subscribeServerConfig', {});
   const first = await config.until(value => value.type === 'snapshot');
-  assert.equal(first.config.providers[0].message, 'Failed to execute Claude Agent CLI health check.');
+  assert.deepEqual(
+    [first.config.providers[0].status, first.config.providers[0].installed, first.config.providers[0].message],
+    ['ready', true, undefined],
+    'an engine-starting refusal stays pending instead of flashing the provider error',
+  );
   const shell = await client.stream('orchestration.subscribeShell', {});
   await shell.until(value => value.kind === 'snapshot');
   assert.deepEqual(host.home.entries(), []);
@@ -1052,8 +1064,130 @@ test('restart persistence: an engine still starting answers nothing at first —
   const threads = await shell.until(value => (value.kind === 'thread.updated' && value.thread.id === 'chat-r2')
     || (value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-r2')));
   assert.equal(threads.kind === 'snapshot' ? threads.snapshot.threads.find(thread => thread.id === 'chat-r2').id : threads.thread.id, 'chat-r2');
-  const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].message !== 'Failed to execute Claude Agent CLI health check.');
+  const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].version === '2.1.0');
   assert.equal(ready.config.providers[0].status, 'ready');
+  host.stop();
+});
+
+test('Claude discovery exhaustion names the engine wait, and Refresh clears it after recovery', async () => {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  let starting = true;
+  let clock = 0;
+  engine.request = (method, params) => {
+    if (method === 'hoh/executor/discover' && starting) {
+      clock += 1_100;
+      return Promise.reject({ code: 'failed', message: 'Помощник ещё подключается. Повторите запрос' });
+    }
+    return request(method, params);
+  };
+  const { client, host } = connect(engine, { loadRetryMs: 1, loadRetries: 1, now: () => clock });
+  const config = await client.stream('subscribeServerConfig', {});
+  const first = await config.until(value => value.type === 'snapshot');
+  assert.deepEqual([first.config.providers[0].status, first.config.providers[0].message], ['ready', undefined]);
+  const failed = await config.until(value => value.type === 'snapshot'
+    && value.config.providers[0].message === 'HoH could not run the Claude health check after waiting 3 seconds for the engine. Press Refresh to try again.');
+  assert.equal(failed.config.providers[0].status, 'error');
+  const workspace = await client.call('server.refreshProviders', { instanceId: 'claudeAgent', cwd: '/tmp' });
+  assert.deepEqual(
+    [workspace.providers[0].status, workspace.providers[0].message],
+    ['error', 'HoH could not run the Claude health check after waiting 3 seconds for the engine. Press Refresh to try again.'],
+    'a workspace refresh must not hide a confirmed discovery failure when its own retry also fails',
+  );
+  starting = false;
+  const refreshed = await client.call('server.refreshProviders', { instanceId: 'claudeAgent', refreshModels: true });
+  assert.deepEqual([refreshed.providers[0].status, refreshed.providers[0].version], ['ready', '2.1.0']);
+  const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].version === '2.1.0');
+  assert.equal(ready.config.providers[0].message, undefined);
+  host.stop();
+});
+
+test('a late startup probe failure cannot overwrite a successful targeted Refresh', async () => {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  let rejectStartup;
+  let discoveryCalls = 0;
+  engine.request = (method, params) => {
+    if (method !== 'hoh/executor/discover') return request(method, params);
+    if (++discoveryCalls === 1) return new Promise((_resolve, reject) => { rejectStartup = reject; });
+    return request(method, params);
+  };
+  const { client, host } = connect(engine, { loadRetryMs: 1, loadRetries: 1 });
+  const config = await client.stream('subscribeServerConfig', {});
+  const pending = await config.until(value => value.type === 'snapshot');
+  assert.deepEqual([pending.config.providers[0].status, pending.config.providers[0].version], ['ready', null]);
+  const refreshed = await client.call('server.refreshProviders', { instanceId: 'claudeAgent', refreshModels: true });
+  assert.deepEqual([refreshed.providers[0].status, refreshed.providers[0].version], ['ready', '2.1.0']);
+  rejectStartup({ code: 'failed', message: 'Помощник ещё подключается. Повторите запрос' });
+  await tick(10);
+  const latest = config.values.filter(value => value.type === 'snapshot').at(-1);
+  assert.deepEqual(
+    [latest.config.providers[0].status, latest.config.providers[0].version, latest.config.providers[0].message],
+    ['ready', '2.1.0', undefined],
+  );
+  host.stop();
+});
+
+test('Welcome empty refresh preserves cold-start retries instead of publishing an early error', async () => {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  let discoveryCalls = 0;
+  engine.request = (method, params) => {
+    if (method !== 'hoh/executor/discover') return request(method, params);
+    discoveryCalls += 1;
+    if (discoveryCalls <= 2) return Promise.reject({ code: 'failed', message: 'Помощник ещё подключается. Повторите запрос' });
+    return request(method, params);
+  };
+  const { client, host } = connect(engine, { loadRetryMs: 30, loadRetries: 2 });
+  const config = await client.stream('subscribeServerConfig', {});
+  const pending = await config.until(value => value.type === 'snapshot');
+  assert.deepEqual([pending.config.providers[0].status, pending.config.providers[0].message], ['ready', undefined]);
+  while (discoveryCalls < 1) await tick(1);
+  await tick(1);
+  const welcomeRefresh = await client.call('server.refreshProviders', {});
+  assert.deepEqual(
+    [welcomeRefresh.providers[0].status, welcomeRefresh.providers[0].message],
+    ['ready', undefined],
+    'the automatic empty refresh remains an optimistic view of the startup lane',
+  );
+  const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].version === '2.1.0');
+  assert.equal(ready.config.providers[0].status, 'ready');
+  assert.equal(discoveryCalls, 3);
+  assert.equal(
+    config.values.filter(value => value.type === 'snapshot').some(value => value.config.providers[0].status === 'error'),
+    false,
+  );
+  host.stop();
+});
+
+test('the startup retry lane cannot supersede a slower explicit Refresh', async () => {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  const healthy = await request('hoh/executor/discover', { executor: 'claude' });
+  let resolveRefresh;
+  let discoveryCalls = 0;
+  engine.request = (method, params) => {
+    if (method !== 'hoh/executor/discover') return request(method, params);
+    discoveryCalls += 1;
+    if (discoveryCalls === 1) return Promise.reject({ code: 'failed', message: 'engine is starting' });
+    return new Promise(resolve => { resolveRefresh = () => resolve(healthy); });
+  };
+  const { client, host } = connect(engine, { loadRetryMs: 5, loadRetries: 2 });
+  const config = await client.stream('subscribeServerConfig', {});
+  const pending = await config.until(value => value.type === 'snapshot');
+  assert.equal(pending.config.providers[0].status, 'ready');
+  const refresh = client.call('server.refreshProviders', { instanceId: 'claudeAgent', refreshModels: true });
+  while (!resolveRefresh) await tick(1);
+  await tick(15);
+  assert.equal(discoveryCalls, 2, 'the sleeping startup lane was cancelled instead of launching a third probe');
+  resolveRefresh();
+  const refreshed = await refresh;
+  assert.deepEqual([refreshed.providers[0].status, refreshed.providers[0].version], ['ready', '2.1.0']);
+  await tick(5);
+  assert.equal(
+    config.values.filter(value => value.type === 'snapshot').some(value => value.config.providers[0].status === 'error'),
+    false,
+  );
   host.stop();
 });
 
@@ -1082,7 +1216,11 @@ test('cold start: lifecycle and empty shell do not wait for session list, Claude
   const firstConfig = await config.until(value => value.type === 'snapshot');
   const welcome = await lifecycle.until(value => value.type === 'welcome');
   const firstShell = await shell.until(value => value.kind === 'snapshot');
-  assert.equal(firstConfig.config.providers[0].status, 'error', 'the usable shell has an honest placeholder while discovery is pending');
+  assert.deepEqual(
+    [firstConfig.config.providers[0].status, firstConfig.config.providers[0].installed, firstConfig.config.providers[0].message],
+    ['ready', true, undefined],
+    'the usable shell has a non-error placeholder while discovery is pending',
+  );
   assert.equal(welcome.payload.bootstrapStatus, 'pending');
   assert.deepEqual(firstShell.snapshot.threads, [], 'the placeholder shell is not held by session/list');
 

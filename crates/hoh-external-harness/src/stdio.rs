@@ -101,6 +101,7 @@ impl ExternalHarness for StdioHarness {
                         auth: AuthState::Unknown,
                         models: Vec::new(),
                         detail: Some(failure.message),
+                        failure: None,
                     };
                     return Ok((discovery, VersionStatus::Unknown));
                 }

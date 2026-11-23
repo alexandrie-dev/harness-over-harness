@@ -6,9 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hoh_external_harness::{
-    AccessMode, ApprovalDecision, ApprovalMode, AuthState, EndReason, ExternalHarness,
-    HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse, HarnessSession, ItemOutcome,
-    PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, Started, code,
+    AccessMode, ApprovalDecision, ApprovalMode, AuthState, DiscoveryFailure, DiscoveryOperation,
+    EndReason, ExternalHarness, HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse,
+    HarnessSession, ItemOutcome, PromptParams, QuestionAnswer, RespondParams, SandboxMode,
+    StartParams, Started, code,
 };
 use hoh_harness_claude::{ClaudeConfig, ClaudeHarness, SettingSources};
 use tokio::sync::mpsc::Receiver;
@@ -20,6 +21,7 @@ struct Env {
     mode: Option<&'static str>,
     version: Option<&'static str>,
     executable: PathBuf,
+    version_timeout: Duration,
     init_timeout: Duration,
     access: AccessMode,
     setting_sources: SettingSources,
@@ -34,6 +36,7 @@ impl Env {
             mode: None,
             version: None,
             executable: PathBuf::from(STUB),
+            version_timeout: Duration::from_secs(10),
             init_timeout: Duration::from_secs(10),
             access: AccessMode::Confirm,
             setting_sources: ClaudeConfig::default().setting_sources,
@@ -73,7 +76,7 @@ impl Env {
             executable: self.executable.clone(),
             setting_sources: self.setting_sources,
             extra_env: env,
-            version_timeout: Duration::from_secs(10),
+            version_timeout: self.version_timeout,
             init_timeout: self.init_timeout,
             event_queue: self.event_queue,
             interrupt_timeout: self.interrupt_timeout,
@@ -713,8 +716,23 @@ async fn a_cli_that_never_answers_initialize_fails_the_start() {
         .await
         .err()
         .unwrap();
-    assert_eq!(error.code, code::PROTOCOL);
+    assert_eq!(error.code, code::TIMEOUT);
     assert!(error.message.contains("нет ответа на initialize"));
+}
+
+#[tokio::test]
+async fn discovery_names_the_bounded_initialize_timeout() {
+    let mut env = Env::new();
+    env.mode = Some("silent");
+    env.init_timeout = Duration::from_millis(50);
+    let found = env.harness().discover().await.unwrap();
+    assert_eq!(
+        found.failure,
+        Some(DiscoveryFailure::Timeout {
+            operation: DiscoveryOperation::Initialize,
+            timeout_seconds: 1,
+        })
+    );
 }
 
 #[tokio::test]
@@ -1869,6 +1887,33 @@ async fn a_version_program_that_fails_is_not_a_version() {
             .detail
             .unwrap()
             .contains("Не удалось определить версию")
+    );
+    assert_eq!(
+        found.failure,
+        Some(DiscoveryFailure::Exit {
+            operation: DiscoveryOperation::Version,
+            exit_code: Some(1),
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_slow_version_probe_reports_its_configured_timeout() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut env = Env::new();
+    let executable = env.dir.path().join("slow-claude");
+    std::fs::write(&executable, "#!/bin/sh\nsleep 2\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    env.executable = executable;
+    env.version_timeout = Duration::from_millis(50);
+    let found = env.harness().discover().await.unwrap();
+    assert_eq!(
+        found.failure,
+        Some(DiscoveryFailure::Timeout {
+            operation: DiscoveryOperation::Version,
+            timeout_seconds: 1,
+        })
     );
 }
 
