@@ -74,7 +74,7 @@ done
 [[ -x $ENGINE ]] || { echo "engine is not executable: $ENGINE" >&2; exit 2; }
 REAL_CODEX=$(command -v codex || true)
 [[ -n $REAL_CODEX && -x $REAL_CODEX ]] || { echo "codex is not executable on PATH" >&2; exit 2; }
-REAL_HOME=${HOME:?HOME must point to the user's native Codex home}
+REAL_HOME=${HOME:?HOME must point to the native Codex home of the user}
 [[ -d $REAL_HOME ]] || { echo "HOME does not exist: $REAL_HOME" >&2; exit 2; }
 [[ $OUTPUT = /* && $OUTPUT != *'/../'* && $OUTPUT != */.. ]] || {
   echo "--output must be an absolute path without '..': $OUTPUT" >&2; exit 2;
