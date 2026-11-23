@@ -2897,6 +2897,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hoh-session-stats"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hoh-session-telemetry"
 version = "0.1.0"
 dependencies = [
