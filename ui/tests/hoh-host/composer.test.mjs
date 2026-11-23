@@ -158,7 +158,7 @@ test('/ and $ before the first turn: the folder\'s snapshot is what Claude decla
   assert.equal(snapshot.cwd, DEFAULT_FOLDER);
   assert.equal(snapshot.slashCommandsPending, undefined);
   assert.deepEqual(snapshot.slashCommands, [{ name: 'review', description: 'Review a pull request', input: { hint: '[pr]' } }, { name: 'init' }]);
-  assert.deepEqual(snapshot.skills, [{ name: 'release-notes', path: 'release-notes', enabled: true, description: 'Write the release notes' }]);
+  assert.deepEqual(snapshot.skills, [{ name: 'release-notes', path: 'hoh-skill:release-notes', enabled: true, description: 'Write the release notes' }]);
   assert.equal(sent(engine, 'session/prompt').length, 0);
   assert.deepEqual(sent(engine, 'hoh/executor/commands').at(-1).params, { executor: 'claude', cwd: DEFAULT_FOLDER });
 

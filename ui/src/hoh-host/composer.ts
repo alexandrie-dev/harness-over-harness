@@ -98,9 +98,9 @@ export function workspaceSnapshot(cwd: string, checkedAt: string, found: any) {
       ...(typeof command.description === 'string' && command.description.trim() ? { description: command.description.trim() } : {}),
       ...(typeof command.argumentHint === 'string' && command.argumentHint.trim() ? { input: { hint: command.argumentHint.trim() } } : {}),
     })),
-    // Claude names a skill, not its file: T3's required `path` carries the name (its "view instructions" finds no file).
+    // Claude names a skill, not its file: the sentinel satisfies T3's contract while its two openers hide unsafe file access.
     skills: list(found?.skills).map((skill: any) => ({
-      name: skill.name.trim(), path: skill.name.trim(), enabled: true,
+      name: skill.name.trim(), path: `hoh-skill:${skill.name.trim()}`, enabled: true,
       ...(typeof skill.description === 'string' && skill.description.trim() ? { description: skill.description.trim() } : {}),
     })),
   };
