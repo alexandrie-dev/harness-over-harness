@@ -563,7 +563,7 @@ fn real_stub_child_accepts_host_handshake_serves_settings_and_stops() {
 }
 
 #[test]
-fn window_may_call_exactly_the_four_executor_methods_and_no_new_ones() {
+fn window_may_call_exactly_the_five_executor_methods_and_no_new_ones() {
     let mut executor: Vec<&str> = bridge::WINDOW_METHODS
         .iter()
         .copied()
@@ -575,12 +575,14 @@ fn window_may_call_exactly_the_four_executor_methods_and_no_new_ones() {
         [
             "hoh/executor/access/get",
             "hoh/executor/access/set",
+            "hoh/executor/commands",
             "hoh/executor/discover",
             "hoh/executor/select"
         ]
     );
-    // 47 methods before the executor ones; a new window method must be a deliberate change of this number.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 4);
+    // 47 methods before the executor ones, the five executor ones and `hoh/workspace/entries`
+    // (HOH-41); a new window method must be a deliberate change of this number.
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 5 + 1);
     for method in ["hoh/executor/access/get", "hoh/executor/discover"] {
         assert!(!bridge::needs_approval(
             method,
@@ -686,5 +688,86 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
         );
     }
     assert_eq!(broker.audit_log().len(), 1);
+    engine.stop();
+}
+
+/// HOH-41: the composer's `/`, `$` and `@` reach the engine only from the main window, with
+/// parameters of the protocol, and without a confirmation (they only read); from any other window
+/// nothing is sent.
+#[test]
+fn commands_and_folder_entries_go_only_from_the_main_window() {
+    let (controls, _control_rx) = mpsc::channel();
+    let (events, event_rx) = mpsc::channel();
+    let frames: Frames = Arc::default();
+    let engine = Engine::start(
+        Arc::new(MemoryConnector {
+            host: true,
+            frames: frames.clone(),
+            launches: Arc::default(),
+            controls,
+        }),
+        json!({}),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
+    );
+    wait_memory_ready(&event_rx);
+    let calls = [
+        (
+            "hoh/workspace/entries",
+            json!({"cwd":"/home/u/work","query":"src","limit":80}),
+        ),
+        (
+            "hoh/executor/commands",
+            json!({"executor":"claude","cwd":"/home/u/work"}),
+        ),
+    ];
+    let sent = |method: &str| {
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|frame| frame["method"] == method)
+            .count()
+    };
+    for (method, params) in &calls {
+        assert!(!bridge::needs_approval(method, params), "{method}");
+        for label in ["approval-1", "executor", "claude", "preview", ""] {
+            assert!(
+                bridge::request(&engine, label, method, params.clone()).is_err(),
+                "{label} {method}"
+            );
+        }
+        assert_eq!(
+            sent(method),
+            0,
+            "{method} left a window that is not the main one"
+        );
+    }
+    for (method, params) in [
+        (
+            "hoh/workspace/entries",
+            json!({"cwd":"/home/u/work","query":"src"}),
+        ),
+        (
+            "hoh/workspace/entries",
+            json!({"cwd":1,"query":"src","limit":80}),
+        ),
+        (
+            "hoh/workspace/entries",
+            json!({"cwd":"/w","query":"src","limit":-1}),
+        ),
+        ("hoh/executor/commands", json!({"cwd":"/home/u/work"})),
+    ] {
+        assert!(
+            bridge::request(&engine, "main", method, params.clone()).is_err(),
+            "{method} {params}"
+        );
+        assert_eq!(sent(method), 0, "{method} {params}");
+    }
+    for (method, params) in &calls {
+        let _ = bridge::request(&engine, "main", method, params.clone());
+        assert_eq!(sent(method), 1, "{method} from the main window");
+    }
     engine.stop();
 }

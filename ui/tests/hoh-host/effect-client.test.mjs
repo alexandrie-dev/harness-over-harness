@@ -93,12 +93,42 @@ test('T3 client: handshake decodes (config stream, getConfig, probe, settings, u
 }));
 
 test('T3 client: unsupported methods fail with the typed error; hidden streams stay quiet', () => withClient(new FakeEngine(), async client => {
-  const exit = await runExit(client['projects.searchEntries']({ cwd: '/x', query: 'a', limit: 5 }));
+  const exit = await runExit(client['projects.readFile']({ cwd: '/x', relativePath: 'a' }));
   assert(Exit.isFailure(exit));
   const error = Cause.squash(exit.cause);
   assert.equal(error._tag, 'EnvironmentAuthorizationError');
   assert.equal(error.message, 'Not available in HoH.');
 }));
+
+test('T3 client: @, / and $ before the first turn, and a picture — all decode', () => {
+  const engine = new FakeEngine();
+  engine.commands = [{ name: 'review', description: 'Review a pull request', argumentHint: '[pr]' }];
+  engine.skills = [{ name: 'release-notes', description: 'Write the release notes' }];
+  engine.files = [{ path: 'src', kind: 'directory' }, { path: 'src/main.ts', kind: 'file' }];
+  return withClient(engine, async client => {
+    const cwd = '/home/person/Documents/HoH';
+    const refreshed = await run(client['server.refreshProviders']({ instanceId: 'claudeAgent', cwd, workspaceSnapshotsOnDemand: true }));
+    const snapshot = refreshed.providers[0].workspaceSnapshots[0];
+    assert.equal(snapshot.cwd, cwd);
+    assert.deepEqual(snapshot.slashCommands.map(command => [command.name, command.input?.hint]), [['review', '[pr]']]);
+    assert.deepEqual(snapshot.skills.map(skill => [skill.name, skill.enabled]), [['release-notes', true]]);
+    // "No project": T3's empty menu, decoded.
+    const none = await run(client['projects.searchEntries']({ cwd, query: 'src', limit: 80 }));
+    assert.deepEqual([...none.entries], []);
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==';
+    const persisted = await run(client['assets.persistChatAttachments']({
+      threadId: 'thread-p', messageId: 'm-p',
+      attachments: [{ type: 'image', id: 'img-1', name: 'red.png', mimeType: 'image/png', sizeBytes: Buffer.from(png, 'base64').length, dataUrl: `data:image/png;base64,${png}` }],
+    }));
+    assert.deepEqual(persisted.attachments.map(attachment => [attachment.type, attachment.id, attachment.name]), [['image', 'img-1', 'red.png']]);
+    const refused = await runExit(client['assets.persistChatAttachments']({
+      threadId: 'thread-p', messageId: 'm-q',
+      attachments: [{ type: 'image', id: 'img-2', name: 'big.png', mimeType: 'image/png', sizeBytes: 10 * 1024 * 1024, dataUrl: `data:image/png;base64,${png}` }],
+    }));
+    assert(Exit.isFailure(refused));
+    assert.equal(Cause.squash(refused.cause)._tag, 'PersistChatAttachmentsError');
+  });
+});
 
 test('T3 client: list, new chat, streamed answer, tool step, permission, question, Stop — all decode', () => {
   const engine = new FakeEngine();

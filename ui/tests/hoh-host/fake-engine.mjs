@@ -111,6 +111,17 @@ export class FakeEngine {
         return { messageId };
       }
       case 'session/cancel': this.cancelled = (this.cancelled ?? 0) + 1; return {};
+      // HOH-41: as the engine answers them, only for a folder it knows (its default one or a conversation's).
+      case 'hoh/workspace/entries': case 'hoh/executor/commands': {
+        const known = new Set([DEFAULT_FOLDER, ...[...this.store.values()].map(session => session.cwd).filter(Boolean)]);
+        if (!known.has(params.cwd)) throw new Error(`"${params.cwd}" is not the folder of a conversation of this window`);
+        if (method === 'hoh/executor/commands') {
+          if (this.commandsFail) throw new Error('Claude Code is not installed');
+          return { executor: 'claude', cwd: params.cwd, commands: this.commands ?? [], skills: this.skills ?? [] };
+        }
+        const entries = (this.files ?? []).filter(entry => entry.path.includes(params.query));
+        return { entries: entries.slice(0, params.limit), truncated: entries.length > params.limit };
+      }
       default: throw new Error('method-unavailable');
     }
   }

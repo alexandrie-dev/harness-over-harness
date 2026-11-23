@@ -24,7 +24,9 @@ type Status = 'idle' | 'pending' | 'running' | 'waiting' | 'completed' | 'failed
 type RunStatus = 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'cancelled';
 interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null }
 type Item = Record<string, any> & { id: string; type: string; status: Status; runId: string | null; ordinal: number };
-interface Message { id: string; runId: string | null; role: 'user' | 'assistant' | 'system'; text: string; streaming: boolean; createdAt: number; updatedAt: number }
+/** A picture of a message as T3 lists it (`ChatImageAttachment`): its bytes went to the engine, not into the thread. */
+export interface ShownAttachment { readonly type: 'image'; readonly id: string; readonly name: string; readonly mimeType: string; readonly sizeBytes: number }
+interface Message { id: string; runId: string | null; role: 'user' | 'assistant' | 'system'; text: string; streaming: boolean; createdAt: number; updatedAt: number; attachments?: ShownAttachment[] }
 interface Request {
   id: string; kind: string; status: 'pending' | 'resolved' | 'expired' | 'cancelled';
   createdAt: number; resolvedAt: number | null; decision?: string; answers?: Record<string, unknown>;
@@ -177,10 +179,13 @@ export class ThreadModel {
     if ('streaming' in item) item.streaming = false;
   }
 
-  /** The person sent this from T3: shown at once; the engine's echo of it (same id or same text) is not shown again. */
-  sendLocal(messageId: string, value: string, at: number) {
-    this.addUserMessage(messageId, value, at);
-    this.outgoing.push({ text: value, messageId, at });
+  /**
+   * The person sent this from T3: shown at once, with its pictures; the engine's echo of it (same id, or `sent`: the text
+   * as it went to the engine) is not shown again.
+   */
+  sendLocal(messageId: string, value: string, at: number, attachments: ShownAttachment[] = [], sent = value) {
+    this.addUserMessage(messageId, value, at, attachments);
+    this.outgoing.push({ text: sent, messageId, at });
     this.touch(at);
   }
 
@@ -215,7 +220,7 @@ export class ThreadModel {
     this.addUserMessage(messageId, value, at);
   }
 
-  private addUserMessage(messageId: string, value: string, at: number) {
+  private addUserMessage(messageId: string, value: string, at: number, attachments: ShownAttachment[] = []) {
     this.settledByGuess = false; this.stopRequested = false;
     // One run works at a time: the run this turn's start reopened was closed, and a run the engine never
     // closed ends where the next message begins (T3 shows any open run as working).
@@ -224,10 +229,10 @@ export class ThreadModel {
     if (!this.title) this.title = value.split('\n')[0].trim().slice(0, 80);
     const run: Run = { id: 'run-' + messageId, ordinal: this.runs.length + 1, model: this.model, userMessageId: messageId, status: 'running', requestedAt: at, startedAt: at, completedAt: null };
     this.runs.push(run);
-    this.messages.push({ id: messageId, runId: run.id, role: 'user', text: value, streaming: false, createdAt: at, updatedAt: at });
+    this.messages.push({ id: messageId, runId: run.id, role: 'user', text: value, streaming: false, createdAt: at, updatedAt: at, ...(attachments.length ? { attachments } : {}) });
     this.items.push({
       ...this.base('item-' + messageId, 'user_message', 'completed', at, run.id),
-      createdBy: 'user', creationSource: 'web', messageId, inputIntent: 'turn_start', text: value, attachments: [],
+      createdBy: 'user', creationSource: 'web', messageId, inputIntent: 'turn_start', text: value, attachments,
     });
     this.running = true;
   }
@@ -547,7 +552,7 @@ export class ThreadModel {
       messages: this.messages.map(message => ({
         createdBy: message.role === 'user' ? 'user' : 'agent', creationSource: message.role === 'user' ? 'web' : 'provider',
         id: message.id, threadId: this.id, runId: message.runId, nodeId: null, role: message.role, text: message.text,
-        attachments: [], streaming: message.streaming, createdAt: iso(message.createdAt), updatedAt: iso(message.updatedAt),
+        attachments: message.attachments ?? [], streaming: message.streaming, createdAt: iso(message.createdAt), updatedAt: iso(message.updatedAt),
       })),
       plans: [],
       turnItems: this.items.map(item => ({ ...item })),

@@ -55,6 +55,10 @@ pub const WINDOW_METHODS: &[&str] = &[
     "hoh/executor/access/set",
     "hoh/executor/discover",
     "hoh/executor/select",
+    // HOH-41: `/`, `$` and `@` of the T3 composer. Read-only, and only for a folder the engine
+    // knows (the engine checks it); like every method here, only from the main window.
+    "hoh/executor/commands",
+    "hoh/workspace/entries",
 ];
 pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), String> {
     if label != "main" {

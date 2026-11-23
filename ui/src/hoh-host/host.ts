@@ -11,10 +11,15 @@
 // window's folder choice (`session/working-directory/set`), before the first message. Folder projects and
 // which project each chat is in are kept in the window's storage, so they survive a restart; a chat whose
 // history names a project's folder (`working-directory/change`) is put in that project.
+// The composer (HOH-41): `/` and `$` are what Claude declares for the composer's folder (`server.refreshProviders`
+// with a cwd answers T3's workspace snapshot from `hoh/executor/commands`); `@` lists a folder project's files
+// (`projects.searchEntries` → `hoh/workspace/entries`, nothing for "No project"); pictures are checked and kept
+// (`assets.persistChatAttachments`) until their message goes to the engine with them (`session/prompt`).
 import {
-  accessModeOf, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
+  accessModeOf, CLAUDE_INSTANCE_ID, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
+import { readUploads, searchAnswer, skillsAsCommands, workspaceSnapshot, type KeptImage } from './composer.ts';
 import { englishError } from './errors.ts';
 import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
@@ -124,6 +129,10 @@ export class HohHost {
   private readonly folders = new Map<string, FolderProject>();
   /** The project of each chat the host placed (thread id → project id). */
   private readonly homes = new Map<string, string>();
+  /** Pictures the window gave (`assets.persistChatAttachments`), by id, until their message goes to the engine. */
+  private readonly uploads = new Map<string, KeptImage>();
+  /** The skills Claude declared for each folder (its last workspace snapshot): `$name` in a message goes as `/name`. */
+  private readonly skillsByFolder = new Map<string, Set<string>>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
   private readonly levels = new Map<string, { id: string; value: unknown }[]>();
   private readonly startedAt: number;
@@ -646,16 +655,72 @@ export class HohHost {
     this.selectedModel = model;
   }
 
-  private async send(thread: ThreadModel, messageId: string, text: string) {
-    thread.sendLocal(messageId, text, this.now());
+  /**
+   * One message to the engine: its pictures first (the bytes kept from `assets.persistChatAttachments`; the engine's
+   * attachment store checks and copies them), then its text, with the skills Claude declared for the chat's folder
+   * written as Claude runs them (`$name` → `/name`, T3's `planClaudeSkillDispatch`).
+   */
+  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = []) {
+    const images = this.keptImages(attachments);
+    const prompt = skillsAsCommands(text, this.skillsByFolder.get(folderPath(thread.cwd)) ?? new Set());
+    thread.sendLocal(messageId, text, this.now(), images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
     this.changed(thread.id);
+    const contentBlocks = [
+      ...images.map(image => ({ type: 'image', data: image.data, mimeType: image.mimeType, name: image.name })),
+      ...(prompt || !images.length ? [{ type: 'text', text: prompt }] : []),
+    ];
     try {
-      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }], ...effortParam(effortOf(thread.model, thread.options)) });
+      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks, ...effortParam(effortOf(thread.model, thread.options)) });
+      for (const image of images) this.uploads.delete(image.id);
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
     } catch (error) {
       thread.sendFailed(messageId, this.now(), error);
       this.changed(thread.id);
       throw error;
+    }
+  }
+
+  /** The kept pictures a message names; a picture this host does not hold (a file, or one given before a restart) is refused. */
+  private keptImages(attachments: unknown): KeptImage[] {
+    return (Array.isArray(attachments) ? attachments : []).map((attachment: any) => {
+      const kept = typeof attachment?.id === 'string' ? this.uploads.get(attachment.id) : undefined;
+      if (kept) return kept;
+      throw new Error(attachment?.type === 'image' ? `The picture ${String(attachment?.name ?? '')} is no longer here. Attach it again.` : 'This server does not support file attachments.');
+    });
+  }
+
+  /** T3's `assets.persistChatAttachments`: pictures checked as T3's server checks them, kept here until sent. */
+  private persistAttachments(payload: Record<string, any>) {
+    const read = readUploads(payload.attachments, () => 'img-' + (globalThis.crypto?.randomUUID?.() ?? `${this.now().toString(36)}-${this.uploads.size}`));
+    if ('error' in read) throw new RpcFailure({ _tag: 'PersistChatAttachmentsError', message: read.error });
+    for (const image of read.images) this.uploads.set(image.id, image);
+    return { attachments: read.images.map(({ data: _data, ...shown }) => ({ type: 'image', ...shown })) };
+  }
+
+  /**
+   * T3's `@` (`projects.searchEntries`): the files of a folder project, by relative path, from the engine (which answers
+   * only for a folder of its conversations). "No project" and a folder the engine cannot search give an empty list.
+   */
+  private async searchEntries(payload: Record<string, any>) {
+    await this.start();
+    const empty = { entries: [], truncated: false };
+    const cwd = folderPath(payload.cwd);
+    if (!cwd || !this.folderAt(cwd)) return empty;
+    const limit = Math.min(Math.max(Math.trunc(Number(payload.limit) || 1), 1), 200);
+    const query = typeof payload.query === 'string' ? payload.query.trim().slice(0, 256) : '';
+    try { return searchAnswer(await this.engine.request('hoh/workspace/entries', { cwd, query, limit }), payload.kind, payload.imageOnly); }
+    catch { return empty; }
+  }
+
+  /** T3's workspace snapshot of the composer's folder: the commands and skills Claude declares there, asked without a turn. */
+  private async workspaceSnapshot(cwd: string) {
+    try {
+      const snapshot = workspaceSnapshot(cwd, this.iso(), await this.engine.request('hoh/executor/commands', { executor: 'claude', cwd }));
+      this.skillsByFolder.set(folderPath(cwd), new Set(snapshot.skills.map(skill => skill.name)));
+      return snapshot;
+    } catch {
+      // Claude could not be asked here (not installed, signed out, a folder with no conversation yet): T3 asks again later.
+      return { cwd, checkedAt: this.iso(), slashCommands: [], skills: [], slashCommandsPending: true };
     }
   }
 
@@ -702,7 +767,7 @@ export class HohHost {
           const target = needThread();
           if (command.modelSelection?.model) { await this.applyModel(command.modelSelection.model); target.model = command.modelSelection.model; }
           this.setLevel(target, command.modelSelection?.options);
-          await this.send(target, String(command.messageId), String(command.text ?? ''));
+          await this.send(target, String(command.messageId), String(command.text ?? ''), command.attachments);
           break;
         }
         case 'thread.stop': case 'run.interrupt': await this.cancel(needThread()); break;
@@ -760,7 +825,7 @@ export class HohHost {
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
         this.setLevel(thread, input.modelSelection?.options);
-        await this.send(thread, messageId, message.text);
+        await this.send(thread, messageId, message.text, message.attachments);
       }
       this.flush();
       return { threadId, projection: thread.projection(), resumed: !!existing, sequence: this.sequence };
@@ -801,12 +866,20 @@ export class HohHost {
           return { projectId: HOH_PROJECT_ID };
         },
         'projects.mutate': (mutation: any) => this.mutateProject(mutation ?? {}),
+        'projects.searchEntries': (payload: any) => this.searchEntries(payload ?? {}),
+        'assets.persistChatAttachments': (payload: any) => this.persistAttachments(payload ?? {}),
         'filesystem.browse': (payload: any) => this.browse(payload ?? {}),
         // The welcome page looks for other agents' history to import; HoH imports none, and T3 then
         // leaves its Projects section out.
         'agentSessions.scan': () => ({ candidates: [], scannedAt: this.iso() }),
-        'server.refreshProviders': async () => {
+        'server.refreshProviders': async (payload: any) => {
           await this.start();
+          // The composer's folder (T3's workspace snapshot): `/` and `$` from Claude, without asking for discovery again.
+          const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
+          if (cwd && (payload?.instanceId === undefined || payload.instanceId === CLAUDE_INSTANCE_ID)) {
+            if (this.discovery === null) await this.readDiscovery();
+            return { providers: [{ ...claudeProvider(this.discovery, this.iso()), workspaceSnapshots: [await this.workspaceSnapshot(cwd)] }] };
+          }
           await this.readDiscovery();
           this.configChanged();
           return { providers: [claudeProvider(this.discovery, this.iso())] };
