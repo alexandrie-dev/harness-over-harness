@@ -1,5 +1,5 @@
 export const GROUP_AGENTS_STORAGE_KEY = 'hoh-home.group-agents-by-project.v1';
-export const PROJECT_COLOR_COUNT = 6;
+export const PROJECT_COLOR_COUNT = 8;
 
 export interface GroupableAgent {
   kind: string;
@@ -75,6 +75,8 @@ export function projectColor(path: string, paletteSize = PROJECT_COLOR_COUNT): n
     hash ^= path.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
+  // Fold the well-distributed high bits down before taking a small palette modulus.
+  hash ^= hash >>> 16;
   return (hash >>> 0) % Math.max(1, paletteSize);
 }
 
@@ -90,11 +92,12 @@ export function groupEntriesByProject<Entry extends GroupableEntry>(
   keyOf: (projectId: string) => string,
 ): ProjectGroup<Entry>[] {
   const grouped = new Map<string, Entry[]>();
+  const colorKeys = new Map<string, string>();
   for (const entry of entries) {
     const list = grouped.get(entry.projectId);
     if (list) list.push(entry); else grouped.set(entry.projectId, [entry]);
   }
-  return [...grouped].map(([id, projectEntries]) => {
+  const groups = [...grouped].map(([id, projectEntries]) => {
     projectEntries.sort((a, b) => b.startedAt - a.startedAt);
     const states = { working: 0, waiting: 0, done: 0 };
     for (const entry of projectEntries) {
@@ -102,14 +105,25 @@ export function groupEntriesByProject<Entry extends GroupableEntry>(
       else if (entry.state === 'waiting') states.waiting += 1;
       else states.done += 1;
     }
+    const colorKey = keyOf(id) || id;
+    colorKeys.set(id, colorKey);
     return {
       id,
       title: titleOf(id).trim() || 'No project',
-      color: projectColor(keyOf(id) || id),
+      color: projectColor(colorKey),
       entries: projectEntries,
       waiting: states.waiting,
       states,
       runners: runnerKinds(projectEntries),
     };
-  }).sort((a, b) => (b.waiting - a.waiting) || a.title.localeCompare(b.title));
+  });
+  // Resolve finite-palette collisions in path order, before presentation sorting. Renaming a
+  // project or changing its state therefore cannot transfer a collision adjustment to it.
+  const usedColors = new Set<number>();
+  for (const group of [...groups].sort((a, b) => colorKeys.get(a.id)!.localeCompare(colorKeys.get(b.id)!))) {
+    if (usedColors.size === PROJECT_COLOR_COUNT) usedColors.clear();
+    while (usedColors.has(group.color)) group.color = (group.color + 1) % PROJECT_COLOR_COUNT;
+    usedColors.add(group.color);
+  }
+  return groups.sort((a, b) => (b.waiting - a.waiting) || a.title.localeCompare(b.title));
 }

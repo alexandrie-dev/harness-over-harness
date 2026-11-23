@@ -4,8 +4,7 @@
 // чип модели с уровнями, Permissions, выбор проекта и отправка — настоящие, их. Здесь только содержимое над ними.
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
 import { CheckIcon, XIcon } from 'lucide-react';
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 
 import { ClaudeAI, OpenAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
@@ -209,24 +208,11 @@ function Cards({ working, done, asking, view }: Lists) {
   );
 }
 
-interface FolderPanelPosition {
-  left: number;
-  top?: number;
-  bottom?: number;
-  width: number;
-  maxHeight: number;
-}
-
-export function folderPanelPosition(rect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>, width: number, height: number): FolderPanelPosition {
-  const margin = 16;
-  const gap = 8;
-  const panelWidth = Math.max(280, Math.min(752, width - margin * 2));
-  const left = Math.max(margin, Math.min(rect.left, width - panelWidth - margin));
-  const below = height - rect.bottom - gap - margin;
-  const above = rect.top - gap - margin;
-  return below >= Math.min(240, above)
-    ? { left, top: rect.bottom + gap, width: panelWidth, maxHeight: Math.max(144, below) }
-    : { left, bottom: height - rect.top + gap, width: panelWidth, maxHeight: Math.max(144, above) };
+/** The disclosure follows its folder's rendered grid row, not the viewport. */
+export function projectPanelInsertAfter(activeIndex: number, groupCount: number, columnCount: number): number {
+  if (activeIndex < 0 || groupCount < 1) return -1;
+  const columns = Math.max(1, Math.floor(columnCount));
+  return Math.min(groupCount - 1, (Math.floor(activeIndex / columns) + 1) * columns - 1);
 }
 
 function Runners({ runners }: { runners: ProjectGroup<Entry>['runners'] }) {
@@ -260,7 +246,9 @@ function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: 
       ref={setButton}
       type="button"
       className="hoh-project"
+      data-color={group.color}
       data-waiting={group.waiting > 0 || undefined}
+      data-working={(group.waiting === 0 && group.states.working > 0) || undefined}
       data-expanded={expanded || undefined}
       aria-expanded={expanded}
       aria-controls={panelId}
@@ -297,7 +285,8 @@ function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: 
 
 function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view: View }) {
   const [disclosure, setDisclosure] = useState({ hovered: null as string | null, pinned: null as string | null });
-  const [position, setPosition] = useState<FolderPanelPosition | null>(null);
+  const [columnCount, setColumnCount] = useState(1);
+  const grid = useRef<HTMLDivElement>(null);
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const panel = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -305,6 +294,8 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
   const openGroup = groups.find((group) => group.id === openId) ?? null;
   const openGroupId = openGroup?.id ?? null;
   const groupLayoutKey = groups.map((group) => group.id).join('\u0000');
+  const openIndex = openGroup ? groups.indexOf(openGroup) : -1;
+  const panelAfter = projectPanelInsertAfter(openIndex, groups.length, columnCount);
 
   const cancelClose = () => { if (closeTimer.current) clearTimeout(closeTimer.current); closeTimer.current = null; };
   const enter = (id: string) => { cancelClose(); setDisclosure((state) => updateProjectDisclosure(state, { type: 'hover', id })); };
@@ -315,20 +306,34 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
 
   useEffect(() => () => cancelClose(), []);
   useEffect(() => {
-    if (!openId || !openGroupId) {
-      setPosition(null);
-      if (openId) setDisclosure((state) => updateProjectDisclosure(state, { type: 'close' }));
-      return;
-    }
+    if (openId && !openGroupId) setDisclosure((state) => updateProjectDisclosure(state, { type: 'close' }));
+  }, [openId, openGroupId]);
+  useLayoutEffect(() => {
+    const node = grid.current;
+    if (!node) return;
     const update = () => {
-      const trigger = buttons.current.get(openId);
-      if (trigger) setPosition(folderPanelPosition(trigger.getBoundingClientRect(), window.innerWidth, window.innerHeight));
+      const renderedColumns = getComputedStyle(node).gridTemplateColumns.replace(/\[[^\]]*\]/g, ' ').split(/\s+/).filter(Boolean).length;
+      setColumnCount(Math.max(1, renderedColumns));
     };
     update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(node);
     window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
-  }, [openId, groupLayoutKey, openGroupId]);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', update); };
+  }, [groupLayoutKey]);
+  useEffect(() => {
+    if (!openGroupId) return;
+    const frame = requestAnimationFrame(() => {
+      const disclosurePanel = panel.current;
+      const scroller = disclosurePanel?.closest<HTMLElement>('.hoh-home');
+      if (!disclosurePanel || !scroller) return;
+      const panelRect = disclosurePanel.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      if (panelRect.bottom > scrollerRect.bottom) scroller.scrollTo({ top: scroller.scrollTop + panelRect.bottom - scrollerRect.bottom + 8, behavior: 'smooth' });
+      else if (panelRect.top < scrollerRect.top) scroller.scrollTo({ top: scroller.scrollTop - (scrollerRect.top - panelRect.top) - 8, behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [openGroupId, panelAfter]);
   useEffect(() => {
     if (!openId) return;
     const close = (event: PointerEvent) => {
@@ -347,11 +352,11 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
   }, [openId]);
 
   return (
-    <>
-      <div className="hoh-projects">
-        {groups.map((group) => (
+    <div ref={grid} className="hoh-projects">
+      {groups.flatMap((group, index) => {
+        const items: React.ReactNode[] = [
           <FolderCard
-            key={group.id}
+            key={`folder-${group.id}`}
             group={group}
             expanded={openId === group.id}
             setButton={(node) => { if (node) buttons.current.set(group.id, node); else buttons.current.delete(group.id); }}
@@ -361,30 +366,33 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
               cancelClose();
               setDisclosure((state) => updateProjectDisclosure(state, { type: 'toggle', id: group.id }));
             }}
-          />
-        ))}
-      </div>
-      {openGroup && position ? createPortal(
-        <div
-          ref={panel}
-          id={`hoh-project-agents-${openGroup.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
-          className="hoh-project-popover"
-          data-project={openGroup.id}
-          onMouseEnter={cancelClose}
-          onMouseLeave={leave}
-          style={{ left: position.left, top: position.top, bottom: position.bottom, width: position.width, maxHeight: position.maxHeight }}
-        >
-          <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.entries.length} agents</small></div>
-          <div className="hoh-project-popover__cards">
-            {openGroup.entries.map((entry, index) => (
-              <div key={entry.id} className="hoh-project-popover__agent" style={{ '--hoh-agent-index': index } as CSSProperties}>
-                <EntryCard entry={entry} view={view} />
-              </div>
-            ))}
-          </div>
-        </div>, document.body,
-      ) : null}
-    </>
+          />,
+        ];
+        if (openGroup && index === panelAfter) items.push(
+          <div
+            key={`panel-${openGroup.id}`}
+            ref={panel}
+            id={`hoh-project-agents-${openGroup.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
+            className="hoh-project-popover"
+            data-project={openGroup.id}
+            role="region"
+            aria-label={`${openGroup.title} agents`}
+            onMouseEnter={cancelClose}
+            onMouseLeave={leave}
+          >
+            <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.entries.length} agents</small></div>
+            <div className="hoh-project-popover__cards">
+              {openGroup.entries.map((entry, agentIndex) => (
+                <div key={entry.id} className="hoh-project-popover__agent" style={{ '--hoh-agent-index': agentIndex } as CSSProperties}>
+                  <EntryCard entry={entry} view={view} />
+                </div>
+              ))}
+            </div>
+          </div>,
+        );
+        return items;
+      })}
+    </div>
   );
 }
 

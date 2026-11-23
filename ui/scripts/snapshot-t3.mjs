@@ -362,9 +362,35 @@ try {
         colorScheme: 'dark', reducedMotion, storage: groupingStorage(grouped),
       });
       const file = `${name}-${size.width}x${size.height}.png`;
-      let status = 'passed'; let error; let bounds;
+      let status = 'passed'; let error; let bounds; let projectState;
       try {
-        if (path === '/' && grouped) await readyGroupedHome(page, engine);
+        if (path === '/' && grouped) {
+          await readyGroupedHome(page, engine);
+          projectState = await page.evaluate(() => {
+            const folders = [...document.querySelectorAll('.hoh-project')];
+            const waiting = document.querySelector('.hoh-project[data-waiting]');
+            const working = document.querySelector('.hoh-project[data-working]');
+            const resolveColor = value => {
+              const probe = document.createElement('i');
+              probe.style.color = value; document.body.append(probe);
+              const color = getComputedStyle(probe).color; probe.remove(); return color;
+            };
+            return {
+              colors: folders.map(folder => folder.getAttribute('data-color')),
+              waitingCount: document.querySelectorAll('.hoh-project[data-waiting]').length,
+              workingCount: document.querySelectorAll('.hoh-project[data-working]').length,
+              waitingDot: waiting ? getComputedStyle(waiting.querySelector('.hoh-project__chip i')).backgroundColor : null,
+              workingDot: working ? getComputedStyle(working.querySelector('.hoh-project__chip i')).backgroundColor : null,
+              destructive: resolveColor('var(--destructive)'), primary: resolveColor('var(--primary)'),
+              waitingBorder: waiting ? getComputedStyle(waiting).borderColor : null,
+              workingBorder: working ? getComputedStyle(working).borderColor : null,
+            };
+          });
+          if (new Set(projectState.colors).size !== projectState.colors.length) throw new Error(`project palette collision: ${JSON.stringify(projectState.colors)}`);
+          if (projectState.waitingCount !== 1 || projectState.workingCount !== 2) throw new Error(`wrong project states: ${JSON.stringify(projectState)}`);
+          if (projectState.waitingDot !== projectState.destructive || projectState.workingDot !== projectState.primary) throw new Error(`wrong project dots: ${JSON.stringify(projectState)}`);
+          if (projectState.waitingBorder === projectState.workingBorder) throw new Error(`project state borders match: ${projectState.waitingBorder}`);
+        }
         else if (path === '/') await page.locator('.hoh-card').first().waitFor();
         else await page.getByRole('switch', { name: 'Group agents by project' }).waitFor();
         if (run) await run(page);
@@ -373,12 +399,34 @@ try {
           const panel = document.querySelector('.hoh-project-popover');
           if (!panel) return null;
           const rect = panel.getBoundingClientRect();
-          return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, viewport: [innerWidth, innerHeight], inside: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight };
+          const grid = document.querySelector('.hoh-projects')?.getBoundingClientRect();
+          const home = document.querySelector('.hoh-home')?.getBoundingClientRect();
+          const composer = document.querySelector('[data-chat-composer-stack]')?.getBoundingClientRect();
+          const cards = [...panel.querySelectorAll('.hoh-project-popover__agent')];
+          const visible = home ? { left: Math.max(rect.left, home.left), top: Math.max(rect.top, home.top), right: Math.min(rect.right, home.right), bottom: Math.min(rect.bottom, home.bottom) } : rect;
+          const overlapsComposer = composer ? visible.left < composer.right && visible.right > composer.left && visible.top < composer.bottom && visible.bottom > composer.top : false;
+          const last = cards.at(-1);
+          const allCardsVisible = cards.every(card => {
+            const cardRect = card.getBoundingClientRect();
+            return cardRect.left >= visible.left - 1 && cardRect.right <= visible.right + 1 && cardRect.top >= visible.top - 1 && cardRect.bottom <= visible.bottom + 1;
+          });
+          return {
+            left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, viewport: [innerWidth, innerHeight],
+            position: getComputedStyle(panel).position,
+            insideColumn: Boolean(grid && rect.left >= grid.left - 1 && rect.right <= grid.right + 1),
+            overlapsComposer, composerVisible: Boolean(composer && composer.top >= -1 && composer.bottom <= innerHeight + 1), cardCount: cards.length, allCardsVisible,
+            lastCardReachable: Boolean(last && last.offsetTop + last.offsetHeight <= panel.scrollHeight + 1),
+            panelScrollable: panel.scrollHeight > panel.clientHeight,
+          };
         });
-        if (bounds && !bounds.inside) throw new Error(`folder overlay leaves viewport: ${JSON.stringify(bounds)}`);
+        if (bounds && (!bounds.insideColumn || bounds.position === 'fixed' || bounds.position === 'absolute')) throw new Error(`folder disclosure leaves content flow: ${JSON.stringify(bounds)}`);
+        if (bounds?.overlapsComposer) throw new Error(`folder disclosure overlaps composer: ${JSON.stringify(bounds)}`);
+        if (bounds && !bounds.composerVisible) throw new Error(`folder disclosure moved composer outside viewport: ${JSON.stringify(bounds)}`);
+        if (bounds && (bounds.cardCount !== 3 || !bounds.lastCardReachable)) throw new Error(`not all project cards are reachable: ${JSON.stringify(bounds)}`);
+        if (name === 'projects-hover' && bounds && !bounds.allCardsVisible) throw new Error(`not all project cards are visible after expansion: ${JSON.stringify(bounds)}`);
       } catch (caught) { status = 'failed'; error = String(caught?.message ?? caught).split('\n')[0]; }
       await page.screenshot({ path: join(OUT, file) });
-      report.push({ screen: name, size: `${size.width}x${size.height}`, file, status, error, problems, bounds, text: (await page.evaluate(() => document.body.innerText)).slice(0, 400), metrics: await page.evaluate(metrics) });
+      report.push({ screen: name, size: `${size.width}x${size.height}`, file, status, error, problems, bounds, projectState, text: (await page.evaluate(() => document.body.innerText)).slice(0, 400), metrics: await page.evaluate(metrics) });
       console.log(`${status === 'passed' ? 'PASS' : 'FAIL'} ${file}${error ? ' — ' + error : ''}${problems.length ? ` (${problems.length} problems)` : ''}`);
       off(); await context.close();
     };
@@ -387,10 +435,10 @@ try {
     await capture({ name: 'home-flat', size: GROUPING_SIZES[0], grouped: false });
     for (const size of GROUPING_SIZES) await capture({ name: 'projects-closed', size });
     const alphaFolder = page => page.locator('.hoh-project').filter({ hasText: 'Alexandrie' }).first();
-    await capture({ name: 'projects-hover', size: GROUPING_SIZES[0], run: page => alphaFolder(page).hover(), delay: 320 });
-    await capture({ name: 'projects-hover', size: GROUPING_SIZES[2], run: page => alphaFolder(page).hover(), delay: 320 });
-    for (const delay of [0, 80, 160, 240]) {
-      await capture({ name: `projects-animation-${delay}ms`, size: GROUPING_SIZES[0], run: page => alphaFolder(page).hover(), delay });
+    const openAlpha = async page => { await alphaFolder(page).hover(); await page.locator('.hoh-project-popover').waitFor(); };
+    for (const size of GROUPING_SIZES) await capture({ name: 'projects-hover', size, run: openAlpha, delay: 320 });
+    for (const size of GROUPING_SIZES) for (const delay of [0, 80, 160, 240]) {
+      await capture({ name: `projects-animation-${delay}ms`, size, run: openAlpha, delay });
     }
     await capture({ name: 'projects-reduced-motion', size: GROUPING_SIZES[0], reducedMotion: 'reduce', run: page => alphaFolder(page).hover() });
     await capture({ name: 'projects-keyboard-pinned', size: GROUPING_SIZES[0], run: async page => { const folder = alphaFolder(page); await folder.focus(); await page.keyboard.press('Enter'); }, delay: 260 });
