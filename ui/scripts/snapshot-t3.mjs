@@ -16,7 +16,7 @@ const UI = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = process.env.HOH_T3_DIST ? resolve(process.env.HOH_T3_DIST) : join(UI, 'dist');
 const OUT = resolve(process.argv[2] ?? join(UI, 'test-results/t3-entry'));
 const ORIGIN = 'http://hoh-window.test';
-const SIZES = [{ width: 1440, height: 900 }, { width: 800, height: 550 }];
+const SIZES = [{ width: 1440, height: 900 }, { width: 1920, height: 1080 }, { width: 800, height: 550 }];
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.png': 'image/png',
   '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.json': 'application/json', '.wasm': 'application/wasm' };
 const CLAUDE = { installed: true, version: '2.1.0', auth: 'authenticated',
@@ -44,7 +44,7 @@ const CHAT = { id: 'chat-1', title: 'Files in the folder', user: 'What files are
   answer: 'The folder has three files:\n\n- `notes.txt`\n- `report.txt`\n- `script.py`' };
 
 async function open(browser, engine, size, path = '/') {
-  const context = await browser.newContext({ viewport: size, deviceScaleFactor: 1, locale: 'en-US', reducedMotion: 'reduce', colorScheme: 'light' });
+  const context = await browser.newContext({ viewport: size, deviceScaleFactor: 1, locale: 'en-US', reducedMotion: 'reduce', colorScheme: 'dark' });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const problems = [];
@@ -113,6 +113,30 @@ async function settle(page) {
   await page.mouse.move(0, 0);
 }
 
+async function openQuickView(page) {
+  const trigger = page.getByRole('button', { name: `Open ${CHAT.title}` }).first();
+  await trigger.waitFor();
+  const homePath = new URL(page.url()).pathname;
+  await trigger.click();
+  const dialog = page.getByRole('dialog').last();
+  await dialog.waitFor();
+  await dialog.getByRole('heading', { name: CHAT.title }).waitFor();
+  await dialog.getByText('The folder has three files').first().waitFor();
+  await dialog.getByRole('textbox').waitFor();
+  return { dialog, trigger, homePath };
+}
+
+function deferredReplyEngine() {
+  const engine = engineWith([CHAT]);
+  engine.answer = (session, messageId, text) => {
+    const send = (type, data) => engine.emit('session.event', { sessionId: session.id, event: engine.append(session, type, data) });
+    engine.emit('session.status', { sessionId: session.id, status: 'running' });
+    send('user/message', { id: messageId, source: { kind: 'user' }, content: [{ type: 'text', text }] });
+    send('turn/start', { turn: 2 });
+  };
+  return engine;
+}
+
 const screens = [
   {
     name: 'first-run', engine: () => engineWith([]),
@@ -128,6 +152,70 @@ const screens = [
     run: async page => {
       await page.getByText(CHAT.title).first().click();
       await page.getByText('The folder has three files').first().waitFor();
+    },
+  },
+  {
+    name: 'quick-view', engine: () => engineWith([CHAT]),
+    run: async (page, _engine, size) => {
+      let { dialog, trigger, homePath } = await openQuickView(page);
+      const box = await dialog.boundingBox();
+      if (!box) throw new Error('quick-view dialog has no geometry');
+      if (size.width >= 1440 && (box.width < 719 || box.width > 881)) throw new Error(`desktop quick-view width is ${box.width}px`);
+      if (size.width === 800 && (box.width < 760 || box.height < 500)) throw new Error(`compact quick-view is only ${box.width}×${box.height}px`);
+      const composer = await dialog.locator('[data-chat-composer-overlay="true"]').boundingBox();
+      if (!composer || composer.y < box.y + box.height / 2 || composer.y + composer.height > box.y + box.height + 1)
+        throw new Error(`composer is not pinned inside quick view: ${JSON.stringify({ box, composer })}`);
+
+      await page.keyboard.press('Escape');
+      await dialog.waitFor({ state: 'hidden' });
+      const focusedLabel = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'));
+      if (focusedLabel !== `Open ${CHAT.title}`) throw new Error(`Escape returned focus to ${focusedLabel ?? 'nothing'}`);
+      await trigger.press('Enter');
+      dialog = page.getByRole('dialog').last();
+      await dialog.waitFor();
+
+      if (size.width === 1440) {
+        await dialog.getByRole('button', { name: `Open ${CHAT.title} in full conversation` }).click();
+        await page.waitForTimeout(500);
+        if (!new URL(page.url()).pathname.endsWith(`/hoh-local/${CHAT.id}`)) throw new Error(`full transition opened ${page.url()}`);
+        await page.goBack();
+        await page.waitForFunction((path) => location.pathname === path, homePath);
+        ({ dialog, trigger, homePath } = await openQuickView(page));
+      }
+    },
+  },
+  {
+    name: 'quick-view-after-reply', engine: deferredReplyEngine,
+    run: async page => {
+      const { dialog, homePath } = await openQuickView(page);
+      const editor = dialog.getByRole('textbox');
+      await editor.fill('Continue from quick view');
+      await editor.press('Enter');
+      await dialog.getByText('Continue from quick view').waitFor();
+      await page.locator(`.hoh-card[data-state="working"]`).first().waitFor();
+      if (new URL(page.url()).pathname !== homePath) throw new Error(`quick reply navigated to ${page.url()}`);
+    },
+  },
+  {
+    name: 'quick-view-approval', engine: () => engineWith([CHAT]),
+    run: async (page, engine) => {
+      const { dialog } = await openQuickView(page);
+      engine.emit('approval.pending', { sessionId: CHAT.id, approvalId: 'quick-approval-1', risk: 'high',
+        humanText: 'Run the quick-view verification command?', expiresAt: Date.now() + 300_000 });
+      await dialog.getByRole('button', { name: 'Approve' }).first().waitFor();
+    },
+  },
+  {
+    name: 'quick-view-approval-action', engine: () => engineWith([CHAT]),
+    run: async (page, engine) => {
+      const { dialog } = await openQuickView(page);
+      engine.emit('approval.pending', { sessionId: CHAT.id, approvalId: 'quick-approval-1', risk: 'high',
+        humanText: 'Run the quick-view verification command?', expiresAt: Date.now() + 300_000 });
+      const approve = dialog.getByRole('button', { name: 'Approve' }).first();
+      await approve.waitFor();
+      await approve.click();
+      await page.waitForFunction(() => window.__hohT3Decisions.some(entry => entry.approvalId === 'quick-approval-1'));
+      await approve.waitFor({ state: 'hidden' });
     },
   },
   {
@@ -170,9 +258,9 @@ const screens = [
   },
   {
     // «Add project»: источник — только папка на диске; «Git URL» (клон) скрыт (features.ts, HIDDEN_PALETTE_ITEMS).
-    name: 'add-project', engine: () => engineWith([CHAT]),
+    name: 'add-project', engine: () => engineWith([]),
     run: async page => {
-      await page.getByRole('textbox').first().waitFor();
+      await page.getByRole('button', { name: 'Start', exact: true }).click();
       await page.getByRole('button', { name: 'Add project' }).first().click();
       await page.getByText('Local folder').first().waitFor();
       if (await page.getByText('Git URL').count()) throw new Error('«Git URL» виден в «Add project»');
@@ -184,6 +272,11 @@ const screens = [
   },
 ];
 
+const selectedScreens = process.env.HOH_T3_SCREEN
+  ? screens.filter(screen => screen.name === process.env.HOH_T3_SCREEN)
+  : screens;
+if (selectedScreens.length === 0) throw new Error(`Unknown HOH_T3_SCREEN: ${process.env.HOH_T3_SCREEN}`);
+
 await mkdir(OUT, { recursive: true });
 const home = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), 'hoh-t3-chromium-'));
 const report = [];
@@ -194,13 +287,13 @@ try {
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache') },
     args: ['--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--no-first-run', '--disable-default-apps', '--force-color-profile=srgb'],
   });
-  for (const screen of screens) {
+  for (const screen of selectedScreens) {
     for (const size of SIZES) {
       const engine = screen.engine();
       const { context, page, problems, off } = await open(browser, engine, size, screen.path);
       const file = `${screen.name}-${size.width}x${size.height}.png`;
       let status = 'passed'; let error;
-      try { await screen.run(page, engine); }
+      try { await screen.run(page, engine, size); }
       catch (caught) { status = 'failed'; error = String(caught?.message ?? caught).split('\n')[0]; }
       await settle(page);
       await page.screenshot({ path: join(OUT, file), animations: 'disabled' });

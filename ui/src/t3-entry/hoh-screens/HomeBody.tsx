@@ -3,12 +3,12 @@
 // Это не отдельный экран: vite.ts подставляет <HomeBody/> в пустой разговор T3 (ChatView, DraftHeroHeadline), так что поле ввода,
 // чип модели с уровнями, Permissions, выбор проекта и отправка — настоящие, их. Здесь только содержимое над ними.
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
-import { useNavigate } from '@tanstack/react-router';
 import { CheckIcon, XIcon } from 'lucide-react';
 import { useEffect, useId, useState, useSyncExternalStore } from 'react';
 
 import { ClaudeAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
+import { openQuickView, QuickViewDialog } from './QuickViewDialog';
 import './home.css';
 
 interface Entry {
@@ -27,7 +27,6 @@ interface Home {
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
   complete(threadId: string): Promise<void>;
 }
-const ENVIRONMENT_ID = 'hoh-local';
 const home = (): Home | undefined => (globalThis as { __HOH_HOME__?: Home }).__HOH_HOME__;
 
 export function greeting(hour: number): string {
@@ -212,7 +211,6 @@ export function HomeBody() {
   useSyncExternalStore(host?.subscribe ?? (() => () => {}), host?.version ?? (() => 0));
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(timer); }, []);
-  const navigate = useNavigate();
   const now = Date.now();
   const entries = host?.entries() ?? [];
   const working = entries.filter((entry) => entry.state === 'working' || entry.state === 'waiting').sort((a, b) => b.startedAt - a.startedAt);
@@ -220,13 +218,14 @@ export function HomeBody() {
   const asking = entries.filter((entry) => entry.request);
   const view: View = {
     host, now,
-    open: (threadId) => void navigate({ to: '/$environmentId/$threadId', params: { environmentId: ENVIRONMENT_ID, threadId } }),
+    open: openQuickView,
     where: (entry) => host?.projectTitle(entry.projectId) ?? '',
   };
   const lists = { working, done, asking, view };
   return (
     <div className="hoh-home" data-hoh-home-body="" data-busy={working.length + done.length + asking.length > 0 || undefined}>
       <Cards {...lists} />
+      <QuickViewDialog />
     </div>
   );
 }

@@ -61,6 +61,14 @@ test('agent cards have a separate accessible open target and an explicit human c
   assert.match(css, /\.hoh-card__complete\s*\{[^}]*pointer-events:\s*auto/);
 });
 
+test('agent cards open the shared quick-view host while Mark done keeps its direct action', () => {
+  assert.match(homeSource, /import \{ openQuickView, QuickViewDialog \} from '\.\/QuickViewDialog'/);
+  assert.match(homeSource, /open: openQuickView/);
+  assert.match(homeSource, /<QuickViewDialog \/>/);
+  assert.doesNotMatch(homeSource, /open:\s*\(threadId\).*navigate/);
+  assert.match(homeSource, /view\.host\?\.complete\(entry\.id\)/);
+});
+
 test('visible T3 draft and palette copy is patched to New chat and documented', async () => {
   const root = new URL('../', import.meta.url);
   const [draftPatch, palettePatch, manifestText, map] = await Promise.all([

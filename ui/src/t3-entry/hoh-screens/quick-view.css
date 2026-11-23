@@ -1,0 +1,37 @@
+/* Quick view is T3's dialog shell around T3's existing ChatView; spacing follows the shared 8 px rhythm. */
+.hoh-quick-view {
+  display: flex;
+  width: min(55rem, calc(100vw - 2rem));
+  max-width: 55rem !important;
+  height: min(51.25rem, calc(100dvh - 2rem));
+  max-height: calc(100dvh - 2rem);
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  background: var(--background);
+}
+.hoh-quick-view__header {
+  min-height: 4rem;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 3.5rem 0.75rem 1.25rem;
+}
+.hoh-quick-view__heading { min-width: 0; flex: 1 1 auto; }
+.hoh-quick-view__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; line-height: 1.5rem; }
+.hoh-quick-view__full { flex: 0 0 auto; }
+.hoh-quick-view__chat { display: flex; min-height: 0; flex: 1 1 0; overflow: hidden; background: var(--background); }
+
+@media (max-width: 840px) {
+  .hoh-quick-view {
+    width: calc(100vw - 2rem);
+    max-width: calc(100vw - 2rem) !important;
+    height: calc(100dvh - 2rem);
+    max-height: calc(100dvh - 2rem);
+  }
+  .hoh-quick-view__header { min-height: 3.5rem; padding: 0.5rem 3rem 0.5rem 1rem; }
+  .hoh-quick-view__full span { display: none; }
+}
