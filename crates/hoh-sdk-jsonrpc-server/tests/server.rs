@@ -472,7 +472,7 @@ async fn reproduces_the_node_path_resolve_error_for_a_missing_cwd() {
 }
 
 #[tokio::test]
-async fn reproduces_the_attachment_error_for_an_unsupported_prompt_image_type() {
+async fn rejects_unsupported_prompt_image_types_at_the_strict_sdk_wire_boundary() {
     let h = Env::new().await;
     h.initialize().await;
     support::images::Store::mount(&h).await;
@@ -486,14 +486,13 @@ async fn reproduces_the_attachment_error_for_an_unsupported_prompt_image_type() 
         )
         .await
         .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "Image type image/x-invalid is not accepted by this deployment."
+    assert!(
+        error
+            .to_string()
+            .contains("data did not match any variant of untagged enum SdkPromptContentBlock")
     );
-    assert_eq!(
-        hoh_error::HarnessError::of(error.as_ref()).map(hoh_error::HarnessError::code),
-        Some("UNSUPPORTED_IMAGE_TYPE")
-    );
+    assert!(hoh_error::HarnessError::of(error.as_ref()).is_none());
+    assert!(lock(&h.model.requests).is_empty());
     h.close().await;
 }
 
