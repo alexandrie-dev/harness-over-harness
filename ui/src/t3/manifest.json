@@ -185,7 +185,7 @@
     "patched": {
       "contracts/assets.ts": "превью отправленных изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP",
       "web/components/chat/ChatComposer.tsx": "скрепка в поле ввода доступна для поддерживаемых Claude изображений без объявления generic file attachments",
-      "web/components/chat/ComposerAttachmentStrip.tsx": "диалог скрепки принимает только GIF, JPEG, PNG и WebP и использует общий путь addComposerAttachments",
+      "web/components/chat/ComposerAttachmentStrip.tsx": "диалог скрепки принимает только GIF, JPEG, PNG и WebP, показывает лимит 10 МиБ и использует общий путь addComposerAttachments",
       "web/components/chat/SkillInlineText.tsx": "скрывает View instructions у навыка Claude: движок даёт имя, но не безопасный путь к файлу",
       "web/components/ComposerPromptEditorTiptap.tsx": "скрывает открытие файла для навыка Claude с внутренним hoh-skill идентификатором",
       "web/routeTree.gen.ts": "выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются",

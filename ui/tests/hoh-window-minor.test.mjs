@@ -49,6 +49,7 @@ test('paperclip uses T3 attachment intake with an image-only human picker', asyn
   ]);
   assert.match(composerPatch, /supportsAttachmentUploads/);
   assert.match(stripPatch, /accept="image\/gif,image\/jpeg,image\/png,image\/webp"/);
+  assert.match(stripPatch, /Attach images \(up to 10 MiB each\)/);
   assert.match(stripSource, /addComposerAttachments\(files\)/);
   assert.doesNotMatch(stripPatch, /accept="\*\/\*"/);
   const patched = JSON.parse(manifestText).base.patched;

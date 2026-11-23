@@ -769,7 +769,7 @@ export function ComposerAttachButton({
               size="icon-sm"
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => inputRef.current?.click()}
-              aria-label={gt("Attach images")}
+              aria-label={gt("Attach images (up to 10 MiB each)")}
             />
           }
         >
@@ -777,7 +777,7 @@ export function ComposerAttachButton({
           <PaperclipIcon className="translate-y-px" />
         </TooltipTrigger>
         <TooltipPopup>
-          <T>Attach images</T>
+          <T>Attach images (up to 10 MiB each)</T>
         </TooltipPopup>
       </Tooltip>
     </>
