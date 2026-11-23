@@ -67,10 +67,14 @@ const LOCAL_IMAGE_REQUEST_CACHE_MAX = 128;
 const LOCAL_IMAGE_FAILURE_TTL_MS = 5_000;
 const LOCAL_IMAGE_MAX_INFLIGHT = 6;
 const LOCAL_IMAGE_THREAD_MAX_INFLIGHT = 3;
+const LOCAL_IMAGE_ATTEMPT_MAX = 64;
+const LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX = 512;
+const LOCAL_IMAGE_ATTEMPT_WINDOW_MS = 10 * 60_000;
+const LOCAL_IMAGE_ATTEMPT_THREADS_MAX = LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX;
 
 type LocalImageUrl = { url: string; revision: string; sourcePath: string; sizeBytes: number; threadId: string };
 type LocalImageFailure = { message: string; expiresAt: number };
-type LocalImageReservation = { threadId: string };
+type LocalImageReservation = { threadId: string; reservedBytes: number; replacing: boolean };
 
 function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
   const value = map.get(key);
@@ -202,6 +206,11 @@ export class HohHost {
   /** Repeated broken markdown must not repeatedly cross the native bridge. */
   private readonly localImageFailures = new Map<string, LocalImageFailure>();
   private readonly localImageInflight = new Map<string, Promise<LocalImageUrl>>();
+  /** Raw request spellings remembered only to reserve a replacement before the next native read. */
+  private readonly localImageRequestKeys = new Map<string, string>();
+  /** Actual bridge calls, successful or not, in a per-conversation sliding window. */
+  private readonly localImageAttempts = new Map<string, number[]>();
+  private localImageGlobalAttempts: number[] = [];
   /** Worst-case byte/entry reservations are installed before native I/O. */
   private readonly localImageReservations = new Map<string, LocalImageReservation>();
   private localImageBytes = 0;
@@ -458,6 +467,9 @@ export class HohHost {
     this.localImageUrls.clear();
     this.localImageFailures.clear();
     this.localImageInflight.clear();
+    this.localImageRequestKeys.clear();
+    this.localImageAttempts.clear();
+    this.localImageGlobalAttempts = [];
     this.localImageReservations.clear();
     this.localImageBytes = 0;
     this.sentPreviewIds.clear();
@@ -482,12 +494,12 @@ export class HohHost {
     let reservedThreadEntries = 0;
     let threadInflight = 0;
     for (const reservation of this.localImageReservations.values()) {
-      reservedGlobalBytes += LOCAL_IMAGE_BYTES;
-      reservedGlobalEntries++;
+      reservedGlobalBytes += reservation.reservedBytes;
+      if (!reservation.replacing) reservedGlobalEntries++;
       if (reservation.threadId !== threadId) continue;
       threadInflight++;
-      reservedThreadBytes += LOCAL_IMAGE_BYTES;
-      reservedThreadEntries++;
+      reservedThreadBytes += reservation.reservedBytes;
+      if (!reservation.replacing) reservedThreadEntries++;
     }
     if (this.localImageReservations.size >= LOCAL_IMAGE_MAX_INFLIGHT || threadInflight >= LOCAL_IMAGE_THREAD_MAX_INFLIGHT)
       throw new Error('Image unavailable: too many project images are already being opened in this window.');
@@ -498,20 +510,40 @@ export class HohHost {
       threadBytes += retained.sizeBytes;
       threadEntries++;
     }
-    // A formerly canonical request path can be retargeted before this read. Reserve a new entry,
-    // never a replacement inferred from a stale alias, so every possible native answer fits.
+    const knownKey = lruGet(this.localImageRequestKeys, requestKey);
+    const existing = knownKey ? this.localImageUrls.get(knownKey) : undefined;
+    const replacedBytes = existing?.sizeBytes ?? 0;
+    // A known retained key is a replacement reservation: it cannot grow retention until the
+    // canonical post-read size check succeeds, so refreshing it needs no speculative byte slot.
+    const reservedSize = existing?.sizeBytes ?? LOCAL_IMAGE_BYTES;
     if (!localImageRetentionFits({
       globalBytes: this.localImageBytes + reservedGlobalBytes,
       globalEntries: this.localImageUrls.size + reservedGlobalEntries,
       threadBytes: threadBytes + reservedThreadBytes,
       threadEntries: threadEntries + reservedThreadEntries,
-      replacedBytes: 0, replacing: false, sizeBytes: LOCAL_IMAGE_BYTES,
+      replacedBytes, replacing: !!existing, sizeBytes: reservedSize,
     })) throw new Error('Image unavailable: too many project images are already open in this window.');
-    this.localImageReservations.set(requestKey, { threadId });
+    this.localImageReservations.set(requestKey, {
+      threadId, reservedBytes: reservedSize - replacedBytes, replacing: !!existing,
+    });
+  }
+
+  private consumeLocalImageAttempt(threadId: string) {
+    const now = this.now();
+    this.localImageGlobalAttempts = this.localImageGlobalAttempts
+      .filter(timestamp => timestamp > now - LOCAL_IMAGE_ATTEMPT_WINDOW_MS);
+    const previous = lruGet(this.localImageAttempts, threadId) ?? [];
+    const attempts = previous.filter(timestamp => timestamp > now - LOCAL_IMAGE_ATTEMPT_WINDOW_MS);
+    if (attempts.length >= LOCAL_IMAGE_ATTEMPT_MAX || this.localImageGlobalAttempts.length >= LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX)
+      throw new Error('Image unavailable: too many project image reads were attempted for this conversation; try again later.');
+    attempts.push(now);
+    this.localImageGlobalAttempts.push(now);
+    lruSet(this.localImageAttempts, threadId, attempts, LOCAL_IMAGE_ATTEMPT_THREADS_MAX);
   }
 
   private async readLocalImage(threadId: string, path: string, requestKey: string) {
     if (!this.engine.readImageAsset) throw new Error('Image unavailable: this window cannot read project images.');
+    this.consumeLocalImageAttempt(threadId);
     const image = await this.engine.readImageAsset({ sessionId: threadId, path });
     if (this.stopped) throw new Error('Image unavailable: this window has closed.');
     if (!LOCAL_IMAGE_TYPES.has(image?.mimeType) || !Number.isSafeInteger(image?.sizeBytes) || image.sizeBytes < 1 || image.sizeBytes > LOCAL_IMAGE_BYTES)
@@ -520,6 +552,7 @@ export class HohHost {
       throw new Error('Image unavailable: the native image identity is invalid.');
     const key = `${threadId}\0${image.sourcePath}`;
     const existing = this.localImageUrls.get(key);
+    lruSet(this.localImageRequestKeys, requestKey, key, LOCAL_IMAGE_REQUEST_CACHE_MAX);
     if (existing?.revision === image.fileRevision && existing.sizeBytes === image.sizeBytes) {
       this.localImageFailures.delete(requestKey);
       return existing;

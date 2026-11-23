@@ -8,7 +8,7 @@
 use serde::Serialize;
 use std::{
     ffi::CString,
-    fs::{File, OpenOptions},
+    fs::File,
     io::{Read, Take},
     path::{Component, Path, PathBuf},
 };
@@ -16,13 +16,14 @@ use std::{
 #[cfg(unix)]
 use std::os::{
     fd::{AsRawFd, FromRawFd},
-    unix::{ffi::OsStrExt, fs::MetadataExt, fs::OpenOptionsExt},
+    unix::{ffi::OsStrExt, fs::MetadataExt},
 };
 
 pub const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 16_384;
 const MAX_IMAGE_PIXELS: u64 = 40_000_000;
 const MAX_IMAGE_FRAMES: u32 = 300;
+const MAX_DECODED_PIXELS: u64 = 400_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,8 +61,8 @@ impl ImageKind {
     }
 }
 
-fn unavailable(reason: &str) -> String {
-    format!("Image unavailable: {reason}.")
+fn unavailable(reason: impl AsRef<str>) -> String {
+    format!("Image unavailable: {}.", reason.as_ref())
 }
 
 fn expected_kind(path: &Path) -> Result<ImageKind, String> {
@@ -123,6 +124,19 @@ fn validate_profile(width: u32, height: u32, frames: u32) -> Result<ImageProfile
     })
 }
 
+fn add_frame_pixels(total: &mut u64, width: u32, height: u32) -> Result<(), String> {
+    validate_profile(width, height, 1)?;
+    *total = total
+        .checked_add(u64::from(width) * u64::from(height))
+        .ok_or_else(invalid_header)?;
+    if *total > MAX_DECODED_PIXELS {
+        return Err(unavailable(
+            "the image exceeds the 400 million decoded-pixel budget",
+        ));
+    }
+    Ok(())
+}
+
 fn be_u16(bytes: &[u8]) -> Option<u16> {
     Some(u16::from_be_bytes(bytes.get(..2)?.try_into().ok()?))
 }
@@ -145,25 +159,172 @@ fn le_u32(bytes: &[u8]) -> Option<u32> {
 }
 
 fn png_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
-    if bytes.len() < 33
-        || !bytes.starts_with(b"\x89PNG\r\n\x1a\n")
-        || be_u32(&bytes[8..12]) != Some(13)
-        || bytes.get(12..16) != Some(b"IHDR")
-    {
+    if bytes.len() < 45 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err(invalid_header());
     }
-    let width = be_u32(&bytes[16..20]).ok_or_else(invalid_header)?;
-    let height = be_u32(&bytes[20..24]).ok_or_else(invalid_header)?;
-    let bit_depth = bytes[24];
-    let color_type = bytes[25];
-    let legal_depth = matches!(
-        (color_type, bit_depth),
-        (0, 1 | 2 | 4 | 8 | 16) | (2, 8 | 16) | (3, 1 | 2 | 4 | 8) | (4, 8 | 16) | (6, 8 | 16)
-    );
-    if !legal_depth || bytes[26] != 0 || bytes[27] != 0 || bytes[28] > 1 {
+    let mut offset = 8usize;
+    let mut canvas = None;
+    let mut has_idat = false;
+    let mut has_iend = false;
+    let mut animation_frames = None;
+    let mut frame_count = 0u32;
+    let mut decoded_pixels = 0u64;
+    let mut expected_sequence = 0u32;
+    let mut default_is_frame = false;
+    let mut current_fdat_frame = false;
+    let mut current_frame_has_data = false;
+
+    while offset < bytes.len() {
+        let header = bytes.get(offset..offset + 8).ok_or_else(invalid_header)?;
+        let length = usize::try_from(be_u32(&header[..4]).ok_or_else(invalid_header)?)
+            .map_err(|_| invalid_header())?;
+        let data_start = offset.checked_add(8).ok_or_else(invalid_header)?;
+        let data_end = data_start.checked_add(length).ok_or_else(invalid_header)?;
+        let chunk_end = data_end.checked_add(4).ok_or_else(invalid_header)?;
+        let data = bytes.get(data_start..data_end).ok_or_else(invalid_header)?;
+        if chunk_end > bytes.len() {
+            return Err(invalid_header());
+        }
+        match &header[4..8] {
+            b"IHDR" => {
+                if offset != 8 || length != 13 || canvas.is_some() {
+                    return Err(invalid_header());
+                }
+                let width = be_u32(&data[0..4]).ok_or_else(invalid_header)?;
+                let height = be_u32(&data[4..8]).ok_or_else(invalid_header)?;
+                let bit_depth = data[8];
+                let color_type = data[9];
+                let legal_depth = matches!(
+                    (color_type, bit_depth),
+                    (0, 1 | 2 | 4 | 8 | 16)
+                        | (2, 8 | 16)
+                        | (3, 1 | 2 | 4 | 8)
+                        | (4, 8 | 16)
+                        | (6, 8 | 16)
+                );
+                if !legal_depth || data[10] != 0 || data[11] != 0 || data[12] > 1 {
+                    return Err(invalid_header());
+                }
+                validate_profile(width, height, 1)?;
+                canvas = Some((width, height));
+            }
+            b"acTL" => {
+                if canvas.is_none() || has_idat || animation_frames.is_some() || length != 8 {
+                    return Err(invalid_header());
+                }
+                let frames = be_u32(&data[..4]).ok_or_else(invalid_header)?;
+                if frames == 0 {
+                    return Err(invalid_header());
+                }
+                if frames > MAX_IMAGE_FRAMES {
+                    return Err(unavailable("the image has more than 300 frames"));
+                }
+                animation_frames = Some(frames);
+            }
+            b"fcTL" => {
+                let (canvas_width, canvas_height) = canvas.ok_or_else(invalid_header)?;
+                if animation_frames.is_none()
+                    || length != 26
+                    || (current_fdat_frame && !current_frame_has_data)
+                {
+                    return Err(invalid_header());
+                }
+                let sequence = be_u32(&data[..4]).ok_or_else(invalid_header)?;
+                if sequence != expected_sequence {
+                    return Err(invalid_header());
+                }
+                expected_sequence = expected_sequence
+                    .checked_add(1)
+                    .ok_or_else(invalid_header)?;
+                let width = be_u32(&data[4..8]).ok_or_else(invalid_header)?;
+                let height = be_u32(&data[8..12]).ok_or_else(invalid_header)?;
+                let x = be_u32(&data[12..16]).ok_or_else(invalid_header)?;
+                let y = be_u32(&data[16..20]).ok_or_else(invalid_header)?;
+                if x.checked_add(width)
+                    .is_none_or(|right| right > canvas_width)
+                    || y.checked_add(height)
+                        .is_none_or(|bottom| bottom > canvas_height)
+                    || data[24] > 2
+                    || data[25] > 1
+                {
+                    return Err(invalid_header());
+                }
+                add_frame_pixels(&mut decoded_pixels, width, height)?;
+                frame_count = frame_count.checked_add(1).ok_or_else(invalid_header)?;
+                if !has_idat {
+                    if frame_count != 1
+                        || width != canvas_width
+                        || height != canvas_height
+                        || x != 0
+                        || y != 0
+                    {
+                        return Err(invalid_header());
+                    }
+                    default_is_frame = true;
+                    current_fdat_frame = false;
+                } else {
+                    current_fdat_frame = true;
+                    current_frame_has_data = false;
+                }
+            }
+            b"IDAT" => {
+                if canvas.is_none() || has_iend {
+                    return Err(invalid_header());
+                }
+                has_idat = true;
+            }
+            b"fdAT" => {
+                if animation_frames.is_none() || !has_idat || !current_fdat_frame || length < 5 {
+                    return Err(invalid_header());
+                }
+                let sequence = be_u32(&data[..4]).ok_or_else(invalid_header)?;
+                if sequence != expected_sequence {
+                    return Err(invalid_header());
+                }
+                expected_sequence = expected_sequence
+                    .checked_add(1)
+                    .ok_or_else(invalid_header)?;
+                current_frame_has_data = true;
+            }
+            b"IEND" => {
+                if length != 0
+                    || !has_idat
+                    || has_iend
+                    || (current_fdat_frame && !current_frame_has_data)
+                {
+                    return Err(invalid_header());
+                }
+                has_iend = true;
+            }
+            _ => {
+                if canvas.is_none() || has_iend {
+                    return Err(invalid_header());
+                }
+            }
+        }
+        offset = chunk_end;
+        if has_iend && offset != bytes.len() {
+            return Err(invalid_header());
+        }
+    }
+
+    let (width, height) = canvas.ok_or_else(invalid_header)?;
+    if !has_iend {
         return Err(invalid_header());
     }
-    validate_profile(width, height, 1)
+    let frames = if let Some(declared) = animation_frames {
+        if frame_count != declared {
+            return Err(invalid_header());
+        }
+        if !default_is_frame {
+            add_frame_pixels(&mut decoded_pixels, width, height)?;
+        }
+        declared
+    } else {
+        add_frame_pixels(&mut decoded_pixels, width, height)?;
+        1
+    };
+    validate_profile(width, height, frames)
 }
 
 fn jpeg_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
@@ -248,6 +409,7 @@ fn gif_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
         }
     }
     let mut frames = 0u32;
+    let mut decoded_pixels = 0u64;
     let mut trailer = false;
     while offset < bytes.len() {
         let marker = bytes[offset];
@@ -268,7 +430,7 @@ fn gif_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                 let descriptor = bytes.get(offset..offset + 9).ok_or_else(invalid_header)?;
                 let frame_width = u32::from(le_u16(&descriptor[4..6]).ok_or_else(invalid_header)?);
                 let frame_height = u32::from(le_u16(&descriptor[6..8]).ok_or_else(invalid_header)?);
-                validate_profile(frame_width, frame_height, 1)?;
+                add_frame_pixels(&mut decoded_pixels, frame_width, frame_height)?;
                 offset += 9;
                 if descriptor[8] & 0x80 != 0 {
                     let colors = 2usize << usize::from(descriptor[8] & 0x07);
@@ -350,6 +512,7 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
     let mut has_anim = false;
     let mut has_top_image = false;
     let mut frames = 0u32;
+    let mut decoded_pixels = 0u64;
     while offset < end {
         let header = bytes.get(offset..offset + 8).ok_or_else(invalid_header)?;
         let tag = &header[..4];
@@ -382,7 +545,7 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                 if has_top_image || animation_flag || (!has_vp8x && offset != 12) {
                     return Err(invalid_header());
                 }
-                validate_profile(parsed.0, parsed.1, 1)?;
+                add_frame_pixels(&mut decoded_pixels, parsed.0, parsed.1)?;
                 if has_vp8x && dimensions != Some(parsed) {
                     return Err(invalid_header());
                 } else if !has_vp8x {
@@ -395,7 +558,7 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                 if has_top_image || animation_flag || (!has_vp8x && offset != 12) {
                     return Err(invalid_header());
                 }
-                validate_profile(parsed.0, parsed.1, 1)?;
+                add_frame_pixels(&mut decoded_pixels, parsed.0, parsed.1)?;
                 if has_vp8x && dimensions != Some(parsed) {
                     return Err(invalid_header());
                 } else if !has_vp8x {
@@ -430,6 +593,7 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                 {
                     return Err(invalid_header());
                 }
+                add_frame_pixels(&mut decoded_pixels, frame_width, frame_height)?;
                 frames = frames.checked_add(1).ok_or_else(invalid_header)?;
                 if frames > MAX_IMAGE_FRAMES {
                     return Err(unavailable("the image has more than 300 frames"));
@@ -464,19 +628,12 @@ fn inspect_image(kind: ImageKind, bytes: &[u8]) -> Result<ImageProfile, String> 
     }
 }
 
-fn canonical_directory(path: &Path) -> Result<PathBuf, String> {
-    let canonical = path
-        .canonicalize()
-        .map_err(|_| unavailable("the conversation project folder cannot be resolved"))?;
-    if !canonical.is_dir() {
-        return Err(unavailable(
-            "the conversation project folder is not available",
-        ));
-    }
-    Ok(canonical)
-}
-
 fn protected_home_path(path: &Path, home: &Path) -> bool {
+    if path.components().any(|component| {
+        matches!(component, Component::Normal(name) if name == ".claude" || name == ".codex")
+    }) {
+        return true;
+    }
     let canonical_home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
     path.starts_with(canonical_home.join(".claude"))
         || path.starts_with(canonical_home.join(".codex"))
@@ -523,7 +680,19 @@ fn open_root_directory(path: &Path) -> Result<RootDirectory, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn open_beneath(root: &File, relative: &Path) -> Result<Option<File>, String> {
+fn descriptor_path(file: &File, kind: &str) -> Result<PathBuf, String> {
+    let path = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .map_err(|_| unavailable(format!("the {kind} descriptor cannot be resolved")))?;
+    if !path.is_absolute() || path.to_string_lossy().ends_with(" (deleted)") {
+        return Err(unavailable(format!(
+            "the {kind} descriptor no longer names an available path"
+        )));
+    }
+    Ok(path)
+}
+
+#[cfg(target_os = "linux")]
+fn open_beneath(root: &File, relative: &Path) -> Result<File, String> {
     let encoded = CString::new(relative.as_os_str().as_bytes())
         .map_err(|_| unavailable("the image path is invalid"))?;
     // libc marks open_how non-exhaustive, so initialize its known v0 fields through zeroed memory.
@@ -543,39 +712,16 @@ fn open_beneath(root: &File, relative: &Path) -> Result<Option<File>, String> {
     };
     if descriptor >= 0 {
         // SAFETY: descriptor is fresh, valid, and has no other Rust owner.
-        return Ok(Some(unsafe { File::from_raw_fd(descriptor) }));
+        return Ok(unsafe { File::from_raw_fd(descriptor) });
     }
     match std::io::Error::last_os_error().raw_os_error() {
-        // Old kernels and seccomp profiles can make openat2 unavailable. The caller retains the
-        // canonical/O_NOFOLLOW checks and adds same-device plus single-hardlink enforcement.
-        Some(code) if matches!(code, libc::ENOSYS | libc::EINVAL | libc::EPERM) => Ok(None),
+        Some(code) if matches!(code, libc::ENOSYS | libc::EINVAL | libc::EPERM) => Err(
+            unavailable("safe descriptor-relative image resolution is unavailable on this system"),
+        ),
         _ => Err(unavailable(
             "the file cannot be resolved beneath the conversation project",
         )),
     }
-}
-
-#[cfg(all(unix, not(target_os = "linux")))]
-fn open_beneath(_root: &File, _relative: &Path) -> Result<Option<File>, String> {
-    Ok(None)
-}
-
-#[cfg(unix)]
-fn open_regular(path: &Path) -> Result<File, String> {
-    OpenOptions::new()
-        .read(true)
-        // A swapped-in FIFO must not hang the desktop, and a final symlink must not be followed.
-        .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|_| unavailable("the file cannot be opened safely"))
-}
-
-#[cfg(not(unix))]
-fn open_regular(path: &Path) -> Result<File, String> {
-    OpenOptions::new()
-        .read(true)
-        .open(path)
-        .map_err(|_| unavailable("the file cannot be opened safely"))
 }
 
 fn read_bounded(mut file: Take<&mut File>) -> Result<Vec<u8>, String> {
@@ -598,18 +744,6 @@ fn unchanged_file(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool
         && before.mtime_nsec() == after.mtime_nsec()
 }
 
-#[cfg(unix)]
-fn root_is_unchanged(root: &Path, opened: &std::fs::Metadata) -> bool {
-    root.metadata()
-        .map(|named| named.dev() == opened.dev() && named.ino() == opened.ino())
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn unchanged_file(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool {
-    before.len() == after.len() && before.modified().ok() == after.modified().ok()
-}
-
 fn content_fingerprint(bytes: &[u8]) -> u64 {
     // The revision is a cache validator, not an authenticity primitive. Hashing every returned
     // byte prevents an in-place rewrite with restored timestamps from reusing a stale Blob URL.
@@ -618,9 +752,9 @@ fn content_fingerprint(bytes: &[u8]) -> u64 {
     })
 }
 
-/// Read one image after binding it to the requesting conversation's authoritative project root.
-pub fn read_project_image(
-    project_root: &Path,
+#[cfg(target_os = "linux")]
+fn read_project_image_from_root(
+    root_directory: &RootDirectory,
     requested: &str,
     home: &Path,
 ) -> Result<ImageAsset, String> {
@@ -635,7 +769,7 @@ pub fn read_project_image(
         return Err(unavailable("parent path segments are not allowed"));
     }
 
-    let root = canonical_directory(project_root)?;
+    let root = descriptor_path(&root_directory.file, "conversation project folder")?;
     let candidate = if requested_path.is_absolute() {
         requested_path.to_path_buf()
     } else {
@@ -662,46 +796,8 @@ pub fn read_project_image(
     }
     let expected = expected_kind(&candidate)?;
 
-    #[cfg(unix)]
-    let root_directory = open_root_directory(&root)?;
-    #[cfg(unix)]
-    {
-        if !root_is_unchanged(&root, &root_directory.metadata) {
-            return Err(unavailable("the conversation project folder changed"));
-        }
-    }
-
-    #[cfg(unix)]
-    let mut file = match open_beneath(&root_directory.file, &relative)? {
-        Some(file) => file,
-        None => {
-            let fallback = candidate
-                .canonicalize()
-                .map_err(|_| unavailable("the file was not found"))?;
-            if !fallback.starts_with(&root) {
-                return Err(unavailable(
-                    "the file is outside this conversation's project",
-                ));
-            }
-            open_regular(&fallback)?
-        }
-    };
-    #[cfg(not(unix))]
-    let mut file = {
-        let fallback = candidate
-            .canonicalize()
-            .map_err(|_| unavailable("the file was not found"))?;
-        if !fallback.starts_with(&root) {
-            return Err(unavailable(
-                "the file is outside this conversation's project",
-            ));
-        }
-        open_regular(&fallback)?
-    };
-
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|_| unavailable("the file was not found"))?;
+    let mut file = open_beneath(&root_directory.file, &relative)?;
+    let canonical = descriptor_path(&file, "image file")?;
     if !canonical.starts_with(&root) {
         return Err(unavailable(
             "the file is outside this conversation's project",
@@ -722,32 +818,13 @@ pub fn read_project_image(
     if opened.len() > MAX_IMAGE_BYTES {
         return Err(unavailable("the image is larger than 20 MiB"));
     }
-    #[cfg(unix)]
-    {
-        if opened.nlink() != 1 {
-            return Err(unavailable("files with multiple hardlinks cannot be shown"));
-        }
-        if opened.dev() != root_directory.metadata.dev() {
-            return Err(unavailable(
-                "the file crosses the conversation project's device boundary",
-            ));
-        }
+    if opened.nlink() != 1 {
+        return Err(unavailable("files with multiple hardlinks cannot be shown"));
     }
-
-    // Resolve after opening. A directory or final entry replaced during the check is rejected,
-    // and on Unix the opened inode must be the same object the canonical path now names.
-    let checked = canonical
-        .canonicalize()
-        .map_err(|_| unavailable("the file changed while it was being opened"))?;
-    if checked != canonical || !checked.starts_with(&root) || protected_home_path(&checked, home) {
-        return Err(unavailable("the file changed while it was being opened"));
-    }
-    let named = checked
-        .metadata()
-        .map_err(|_| unavailable("the file changed while it was being opened"))?;
-    #[cfg(unix)]
-    if opened.dev() != named.dev() || opened.ino() != named.ino() {
-        return Err(unavailable("the file changed while it was being opened"));
+    if opened.dev() != root_directory.metadata.dev() {
+        return Err(unavailable(
+            "the file crosses the conversation project's device boundary",
+        ));
     }
 
     let bytes = read_bounded((&mut file).take(MAX_IMAGE_BYTES + 1))?;
@@ -767,30 +844,19 @@ pub fn read_project_image(
     if !unchanged_file(&opened, &after_read) || after_read.len() != bytes.len() as u64 {
         return Err(unavailable("the file changed while it was being read"));
     }
-    #[cfg(unix)]
-    if after_read.nlink() != 1 || !root_is_unchanged(&root, &root_directory.metadata) {
+    if after_read.nlink() != 1
+        || descriptor_path(&root_directory.file, "conversation project folder")? != root
+    {
         return Err(unavailable(
             "the file or conversation project folder changed",
         ));
     }
-    let checked_after = canonical
-        .canonicalize()
-        .map_err(|_| unavailable("the file changed while it was being read"))?;
-    if checked_after != canonical
-        || !checked_after.starts_with(&root)
-        || protected_home_path(&checked_after, home)
-    {
-        return Err(unavailable("the file changed while it was being read"));
-    }
-    let named_after = checked_after
-        .metadata()
-        .map_err(|_| unavailable("the file changed while it was being read"))?;
-    if !unchanged_file(&after_read, &named_after) {
+    let checked_after = descriptor_path(&file, "image file")?;
+    if checked_after != canonical || !checked_after.starts_with(&root) {
         return Err(unavailable("the file changed while it was being read"));
     }
     let fingerprint = content_fingerprint(&bytes);
 
-    #[cfg(unix)]
     let revision = format!(
         "{}:{}:{}:{}:{}:{fingerprint:016x}",
         after_read.dev(),
@@ -799,9 +865,6 @@ pub fn read_project_image(
         after_read.mtime(),
         after_read.mtime_nsec()
     );
-    #[cfg(not(unix))]
-    let revision = format!("{}:{fingerprint:016x}", bytes.len());
-
     Ok(ImageAsset {
         data_base64: encode_base64(&bytes),
         mime_type: expected.mime_type(),
@@ -809,6 +872,29 @@ pub fn read_project_image(
         source_path: canonical.to_string_lossy().into_owned(),
         file_revision: revision,
     })
+}
+
+/// Read one image after binding it to the requesting conversation's authoritative project root.
+#[cfg(target_os = "linux")]
+pub fn read_project_image(
+    project_root: &Path,
+    requested: &str,
+    home: &Path,
+) -> Result<ImageAsset, String> {
+    let root_directory = open_root_directory(project_root)?;
+    read_project_image_from_root(&root_directory, requested, home)
+}
+
+/// Image reads are fail-closed where descriptor-relative resolution is not implemented.
+#[cfg(not(target_os = "linux"))]
+pub fn read_project_image(
+    _project_root: &Path,
+    _requested: &str,
+    _home: &Path,
+) -> Result<ImageAsset, String> {
+    Err(unavailable(
+        "safe descriptor-relative image reads are unsupported on this platform",
+    ))
 }
 
 fn encode_base64(bytes: &[u8]) -> String {
@@ -867,11 +953,68 @@ mod tests {
         assert!(error.contains(words), "{error:?} did not contain {words:?}");
     }
 
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn descriptor_relative_reads_fail_closed_on_unsupported_platforms() {
+        assert_refused(
+            read_project_image(Path::new("."), "image.png", Path::new(".")),
+            "unsupported on this platform",
+        );
+    }
+
     fn png(width: u32, height: u32) -> Vec<u8> {
-        let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
-        bytes.extend_from_slice(&width.to_be_bytes());
-        bytes.extend_from_slice(&height.to_be_bytes());
-        bytes.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        png_chunk(&mut bytes, b"IHDR", &ihdr);
+        png_chunk(&mut bytes, b"IDAT", &[0]);
+        png_chunk(&mut bytes, b"IEND", &[]);
+        bytes
+    }
+
+    fn png_chunk(bytes: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
+        bytes.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(tag);
+        bytes.extend_from_slice(data);
+        // The bounded parser deliberately does not perform decompression or CRC validation.
+        bytes.extend_from_slice(&[0; 4]);
+    }
+
+    fn apng(width: u32, height: u32, frames: usize) -> Vec<u8> {
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        png_chunk(&mut bytes, b"IHDR", &ihdr);
+        let mut actl = Vec::new();
+        actl.extend_from_slice(&(frames as u32).to_be_bytes());
+        actl.extend_from_slice(&0u32.to_be_bytes());
+        png_chunk(&mut bytes, b"acTL", &actl);
+        let mut sequence = 0u32;
+        for frame in 0..frames {
+            let mut fctl = Vec::new();
+            fctl.extend_from_slice(&sequence.to_be_bytes());
+            sequence += 1;
+            fctl.extend_from_slice(&width.to_be_bytes());
+            fctl.extend_from_slice(&height.to_be_bytes());
+            fctl.extend_from_slice(&[0; 8]);
+            fctl.extend_from_slice(&1u16.to_be_bytes());
+            fctl.extend_from_slice(&100u16.to_be_bytes());
+            fctl.extend_from_slice(&[0, 0]);
+            png_chunk(&mut bytes, b"fcTL", &fctl);
+            if frame == 0 {
+                png_chunk(&mut bytes, b"IDAT", &[0]);
+            } else {
+                let mut fdat = sequence.to_be_bytes().to_vec();
+                sequence += 1;
+                fdat.push(0);
+                png_chunk(&mut bytes, b"fdAT", &fdat);
+            }
+        }
+        png_chunk(&mut bytes, b"IEND", &[]);
         bytes
     }
 
@@ -977,6 +1120,7 @@ mod tests {
         webp_animation_with_bitstream(width, height, frames, Some((width, height)))
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn reads_a_raster_inside_the_conversation_project() {
         let scratch = Scratch::new("inside");
@@ -996,6 +1140,7 @@ mod tests {
         assert_ne!(changed_image.file_revision, image.file_revision);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn rejects_parent_segments_and_another_projects_file() {
         let scratch = Scratch::new("scope");
@@ -1017,7 +1162,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn rejects_a_symlink_that_escapes_the_project() {
         let scratch = Scratch::new("symlink");
@@ -1032,7 +1177,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn rejects_a_hardlink_to_an_image_outside_the_project() {
         let scratch = Scratch::new("hardlink");
@@ -1049,6 +1194,27 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_open_root_descriptor_cannot_be_substituted_by_name() {
+        let scratch = Scratch::new("root-substitution");
+        let project = scratch.0.join("project");
+        let held = scratch.0.join("held-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let original = png(2, 2);
+        std::fs::write(project.join("shown.png"), &original).unwrap();
+        let root = open_root_directory(&project).unwrap();
+
+        std::fs::rename(&project, &held).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("shown.png"), png(3, 3)).unwrap();
+
+        let image = read_project_image_from_root(&root, "shown.png", &scratch.0).unwrap();
+        assert_eq!(image.data_base64, encode_base64(&original));
+        assert!(Path::new(&image.source_path).starts_with(&held));
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn rejects_protected_home_and_system_files_even_under_a_broad_root() {
         let scratch = Scratch::new("protected");
@@ -1065,23 +1231,20 @@ mod tests {
             read_project_image(&home, ".codex/screenshot.png", &home),
             "protected assistant settings",
         );
-        #[cfg(unix)]
-        {
-            let linked_home = scratch.0.join("linked-home");
-            let vault = scratch.0.join("vault");
-            std::fs::create_dir_all(&linked_home).unwrap();
-            std::fs::create_dir_all(&vault).unwrap();
-            std::fs::write(vault.join("screenshot.png"), png(2, 2)).unwrap();
-            std::os::unix::fs::symlink(&vault, linked_home.join(".claude")).unwrap();
-            assert_refused(
-                read_project_image(
-                    &scratch.0,
-                    "linked-home/.claude/screenshot.png",
-                    &linked_home,
-                ),
-                "protected assistant settings",
-            );
-        }
+        let linked_home = scratch.0.join("linked-home");
+        let vault = scratch.0.join("vault");
+        std::fs::create_dir_all(&linked_home).unwrap();
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(vault.join("screenshot.png"), png(2, 2)).unwrap();
+        std::os::unix::fs::symlink(&vault, linked_home.join(".claude")).unwrap();
+        assert_refused(
+            read_project_image(
+                &scratch.0,
+                "linked-home/.claude/screenshot.png",
+                &linked_home,
+            ),
+            "protected assistant settings",
+        );
         assert_refused(
             read_project_image(Path::new("/"), "/proc/version", &home),
             "system and device files",
@@ -1092,6 +1255,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn rejects_non_images_mismatched_contents_and_oversized_images() {
         let scratch = Scratch::new("type-size");
@@ -1224,6 +1388,43 @@ mod tests {
         assert_refused(
             inspect_image(ImageKind::Webp, &webp_animation(1, 1, 301)).map(|_| unreachable!()),
             "more than 300 frames",
+        );
+        assert_refused(
+            inspect_image(ImageKind::Png, &apng(1, 1, 301)).map(|_| unreachable!()),
+            "more than 300 frames",
+        );
+    }
+
+    #[test]
+    fn rejects_aggregate_animated_decode_budgets() {
+        for (kind, bytes) in [
+            (ImageKind::Png, apng(8_000, 5_000, 300)),
+            (ImageKind::Gif, gif(8_000, 5_000, 11)),
+            (ImageKind::Webp, webp_animation(8_000, 5_000, 11)),
+        ] {
+            assert_refused(
+                inspect_image(kind, &bytes).map(|_| unreachable!()),
+                "400 million decoded-pixel budget",
+            );
+        }
+
+        assert_eq!(
+            inspect_image(ImageKind::Png, &apng(8_000, 5_000, 10))
+                .unwrap()
+                .frames,
+            10
+        );
+        assert_eq!(
+            inspect_image(ImageKind::Gif, &gif(8_000, 5_000, 10))
+                .unwrap()
+                .frames,
+            10
+        );
+        assert_eq!(
+            inspect_image(ImageKind::Webp, &webp_animation(8_000, 5_000, 10))
+                .unwrap()
+                .frames,
+            10
         );
     }
 }
