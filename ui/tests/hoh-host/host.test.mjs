@@ -617,8 +617,8 @@ test('home turn lifecycle: Claude reply waits for the person, Mark done survives
   second.clock = engine.clock;
   const again = connect(second, { storage, now: () => second.clock });
   await again.host.start();
-  const replayed = again.host.home.entries().find(entry => entry.id === 'live-home');
   const projection = await again.client.call('orchestration.getThreadProjection', { threadId: 'live-home' });
+  const replayed = again.host.home.entries().find(entry => entry.id === 'live-home');
   assert.notEqual(projection.runs[0].id, 'run-local-message-1');
   assert.deepEqual([replayed.state, replayed.turnOrdinal], ['done', 2]);
 
@@ -642,6 +642,8 @@ test('home turn lifecycle: Claude reply waits for the person, Mark done survives
   later.clock = second.clock + 2 * 24 * 60 * 60 * 1000;
   const restored = connect(later, { storage, now: () => later.clock });
   await restored.host.start();
+  await tick(5);
+  restored.host.flush();
   const oldWaiting = restored.host.home.entries().find(entry => entry.id === 'live-home');
   assert.deepEqual([oldWaiting.state, oldWaiting.turnOrdinal, oldWaiting.canComplete], ['waiting', 3, true]);
 });
@@ -659,6 +661,8 @@ test('home disposition migration classifies a completed reply older than today e
   engine.clock += 2 * 24 * 60 * 60 * 1000;
   const { host } = connect(engine, { storage, now: () => engine.clock });
   await host.start();
+  await tick(5); // Home history classification is intentionally outside the T3 startup barrier.
+  host.flush();
   const migrated = host.home.entries().find(entry => entry.id === 'before-upgrade');
   assert.deepEqual([migrated.state, migrated.turnOrdinal, migrated.canComplete], ['waiting', 1, true]);
   let saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
@@ -675,6 +679,8 @@ test('home disposition migration classifies a completed reply older than today e
   away.emitEvent('before-upgrade', 'turn/end', { turn: 2, reason: { kind: 'completed' } });
   const reopened = connect(away, { storage, now: () => away.clock });
   await reopened.host.start();
+  await tick(5);
+  reopened.host.flush();
   const changedWhileAway = reopened.host.home.entries().find(entry => entry.id === 'before-upgrade');
   assert.deepEqual([changedWhileAway.state, changedWhileAway.turnOrdinal, changedWhileAway.canComplete], ['waiting', 2, true]);
   saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
@@ -903,11 +909,204 @@ test('restart persistence: an engine still starting answers nothing at first —
   assert.deepEqual(host.home.entries(), []);
   starting = false;
   // The chats come to the window as the engine answers; Claude's check is announced on the config stream.
-  const threads = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-r2');
-  assert.equal(threads.thread.id, 'chat-r2');
+  const threads = await shell.until(value => (value.kind === 'thread.updated' && value.thread.id === 'chat-r2')
+    || (value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-r2')));
+  assert.equal(threads.kind === 'snapshot' ? threads.snapshot.threads.find(thread => thread.id === 'chat-r2').id : threads.thread.id, 'chat-r2');
   const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].message !== 'Failed to execute Claude Agent CLI health check.');
   assert.equal(ready.config.providers[0].status, 'ready');
   host.stop();
+});
+
+test('cold start: lifecycle and empty shell do not wait for session list, Claude discovery, or conversation history', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-slow', 'Already saved', [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'u-slow', source: { kind: 'user' }, content: [{ type: 'text', text: 'persisted hello' }] }],
+  ]);
+  let releaseSessions; let releaseDiscovery; let releaseHistory;
+  const sessionsGate = new Promise(resolve => { releaseSessions = resolve; });
+  const discoveryGate = new Promise(resolve => { releaseDiscovery = resolve; });
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'session/list') await sessionsGate;
+    if (method === 'hoh/executor/discover') await discoveryGate;
+    if (method === 'session/events') await historyGate;
+    return request(method, params);
+  };
+
+  const { client, host } = connect(engine, { now: () => engine.clock });
+  const config = await client.stream('subscribeServerConfig', {});
+  const lifecycle = await client.stream('subscribeServerLifecycle', {});
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const firstConfig = await config.until(value => value.type === 'snapshot');
+  const welcome = await lifecycle.until(value => value.type === 'welcome');
+  const firstShell = await shell.until(value => value.kind === 'snapshot');
+  assert.equal(firstConfig.config.providers[0].status, 'error', 'the usable shell has an honest placeholder while discovery is pending');
+  assert.equal(welcome.payload.bootstrapStatus, 'pending');
+  assert.deepEqual(firstShell.snapshot.threads, [], 'the placeholder shell is not held by session/list');
+
+  releaseSessions();
+  const complete = await lifecycle.until(value => value.type === 'welcome' && value.payload.bootstrapStatus === 'complete');
+  assert.equal(complete.payload.bootstrapStatus, 'complete');
+  const metadata = await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-slow'), 1);
+  assert.equal(metadata.snapshot.threads[0].title, 'Already saved');
+  assert.deepEqual(host.home.entries(), [], 'history enrichment is still pending');
+
+  releaseDiscovery();
+  const ready = await config.until(value => value.type === 'snapshot' && value.config.providers[0].status === 'ready');
+  assert.equal(ready.config.providers[0].status, 'ready');
+  const beforeHistory = shell.values.length;
+  releaseHistory();
+  const enriched = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-slow', beforeHistory);
+  assert.equal(enriched.thread.id, 'chat-slow');
+  await tick(5);
+  assert.equal(host.home.entries()[0].title, 'Already saved');
+  host.stop();
+});
+
+test('a delayed startup access read cannot overwrite model and mode chosen meanwhile', async () => {
+  const engine = new FakeEngine({ access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } } });
+  engine.seed('chat-choice', 'Choice', []);
+  let releaseAccess;
+  const accessGate = new Promise(resolve => { releaseAccess = resolve; });
+  const request = engine.request.bind(engine);
+  let delayed = true;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && !params.sessionId && delayed) {
+      delayed = false;
+      const stale = await request(method, params);
+      await accessGate;
+      return stale;
+    }
+    return request(method, params);
+  };
+
+  const { client, host } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const initial = await shell.until(value => value.kind === 'snapshot');
+  if (!initial.snapshot.threads.some(thread => thread.id === 'chat-choice'))
+    await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-choice');
+  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'mode-choice', threadId: 'chat-choice', runtimeMode: 'approval-required' });
+  await client.call('orchestration.dispatchCommand', { type: 'thread.model-selection.set', commandId: 'model-choice', threadId: 'chat-choice', modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' } });
+  releaseAccess();
+  await tick(5);
+  const settings = await client.call('server.getSettings', {});
+  const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-choice' });
+  assert.deepEqual(engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').map(entry => entry.params), [{ executor: 'claude', mode: 'confirm' }]);
+  assert.equal(settings.defaultModelSelection.model, 'claude-opus');
+  assert.equal(projection.thread.runtimeMode, 'approval-required');
+  assert.equal(projection.thread.modelSelection.model, 'claude-opus');
+  host.stop();
+});
+
+test('a delayed startup access read still applies the field the person did not change', async () => {
+  const run = async ({ access, change, expectedModel, expectedMode }) => {
+    const engine = new FakeEngine({ access });
+    engine.seed('chat-one-choice', 'One choice', []);
+    let releaseAccess;
+    const accessGate = new Promise(resolve => { releaseAccess = resolve; });
+    const request = engine.request.bind(engine);
+    let delayed = true;
+    engine.request = async (method, params) => {
+      if (method === 'hoh/executor/access/get' && !params.sessionId && delayed) {
+        delayed = false;
+        const stale = await request(method, params);
+        await accessGate;
+        return stale;
+      }
+      return request(method, params);
+    };
+
+    const { client, host } = connect(engine);
+    const shell = await client.stream('orchestration.subscribeShell', {});
+    const initial = await shell.until(value => value.kind === 'snapshot');
+    if (!initial.snapshot.threads.some(thread => thread.id === 'chat-one-choice'))
+      await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'chat-one-choice'), 1);
+    await change(client);
+    releaseAccess();
+    await tick(5);
+    const settings = await client.call('server.getSettings', {});
+    const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-one-choice' });
+    assert.equal(settings.defaultModelSelection.model, expectedModel);
+    assert.equal(projection.thread.runtimeMode, expectedMode);
+    host.stop();
+  };
+
+  await run({
+    access: { mode: 'full', selected: { executor: 'claude', model: 'claude-opus' } },
+    change: client => client.call('orchestration.dispatchCommand', {
+      type: 'thread.runtime-mode.set', commandId: 'mode-only', threadId: 'chat-one-choice', runtimeMode: 'approval-required',
+    }),
+    expectedModel: 'claude-opus', expectedMode: 'approval-required',
+  });
+  await run({
+    access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } },
+    change: client => client.call('orchestration.dispatchCommand', {
+      type: 'thread.model-selection.set', commandId: 'model-only', threadId: 'chat-one-choice',
+      modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' },
+    }),
+    expectedModel: 'claude-opus', expectedMode: 'full-access',
+  });
+});
+
+test('Add project immediately rehomes a conversation already classified in the background', async () => {
+  const engine = new FakeEngine();
+  engine.seed('background-folder', 'Background folder', [
+    ['working-directory/change', { cwd: '/home/person/Projects/tools' }],
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'background-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'plan' }] }],
+  ]);
+  const { client, host } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(thread => thread.id === 'background-folder'));
+  await tick(5);
+  host.flush();
+  assert.equal(host.home.entries().find(entry => entry.id === 'background-folder').projectId, 'hoh-project');
+
+  const beforeCreate = shell.values.length;
+  await client.call('projects.mutate', {
+    type: 'project.create', commandId: 'background-project', projectId: 'p-background', title: 'Tools',
+    workspaceRoot: '/home/person/Projects/tools', createWorkspaceRootIfMissing: true, defaultModelSelection: null,
+  });
+  const moved = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'background-folder' && value.thread.projectId === 'p-background', beforeCreate);
+  assert.equal(moved.thread.projectId, 'p-background');
+  assert.equal(host.home.entries().find(entry => entry.id === 'background-folder').projectId, 'p-background');
+  host.stop();
+});
+
+test('stopping the host prevents an in-flight background history from writing stale Home state', async () => {
+  const initial = JSON.stringify({ version: 1 });
+  const items = new Map([[mod.host.STORAGE_KEY, initial]]);
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('stopped-background', 'Stopped background', [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'stopped-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'old work' }] }],
+    ['assistant/message', { turn: 1, step: 1, message: { id: 'stopped-a', content: [{ type: 'text', text: 'done' }] } }],
+    ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+  ]);
+  let releaseHistory; let historyStarted;
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  const started = new Promise(resolve => { historyStarted = resolve; });
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'session/events') { historyStarted(); await historyGate; }
+    return request(method, params);
+  };
+
+  const { host } = connect(engine, { storage });
+  let homeChanges = 0;
+  host.home.subscribe(() => { homeChanges++; });
+  await host.start();
+  await started;
+  host.stop();
+  releaseHistory();
+  await tick(10);
+  host.flush();
+  assert.equal(items.get(mod.host.STORAGE_KEY), initial);
+  assert.equal(homeChanges, 0);
+  assert.deepEqual(host.home.entries(), []);
 });
 
 test('an empty draft has no «first message» stamp (the window keeps it out of Recent chats until the first message); chats of the history do, read or not', async () => {
