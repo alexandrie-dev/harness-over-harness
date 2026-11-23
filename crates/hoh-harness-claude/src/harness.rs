@@ -681,6 +681,8 @@ pub(crate) fn models_from(response: &Value) -> Vec<HarnessModel> {
         id: "default".into(),
         display_name: Some("По умолчанию (модель Claude Code)".into()),
         is_default: true,
+        effort_levels: Vec::new(),
+        default_effort: None,
     }];
     let reported: Vec<HarnessModel> = response
         .get("models")
@@ -697,6 +699,8 @@ pub(crate) fn models_from(response: &Value) -> Vec<HarnessModel> {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
                 is_default: false,
+                effort_levels: Vec::new(),
+                default_effort: None,
             })
         })
         .collect();
@@ -705,6 +709,8 @@ pub(crate) fn models_from(response: &Value) -> Vec<HarnessModel> {
             id: alias.into(),
             display_name: None,
             is_default: false,
+            effort_levels: Vec::new(),
+            default_effort: None,
         }));
     } else {
         models.extend(reported);
@@ -838,7 +844,7 @@ impl ExternalHarness for ClaudeHarness {
         let config = self.config.clone();
         Box::pin(async move {
             // In full access nothing is asked by definition, so `never` changes nothing there.
-            if params.policy.approval == ApprovalMode::Never && access == AccessMode::Confirm {
+            if params.policy.approval == ApprovalMode::Never && access != AccessMode::Full {
                 return Err(HarnessFailure::new(code::ESCALATION_DENIED, NEVER_REFUSED));
             }
             // Only a level of the list follows `--effort` (the slot passes no other).

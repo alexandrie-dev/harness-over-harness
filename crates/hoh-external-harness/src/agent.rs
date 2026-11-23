@@ -77,6 +77,12 @@ pub(crate) fn access_text(executor: &str, access: AccessMode) -> String {
             "С подтверждением: команды, правки файлов и сеть {name} выполняет после вашего \
              подтверждения"
         ),
+        AccessMode::AutoAcceptEdits => format!(
+            "Автоправки: {name} правит файлы сам, команды и расширение доступа подтверждаете вы"
+        ),
+        AccessMode::Auto => {
+            format!("Авто: обычные действия {name} проверяет и принимает автоматически")
+        }
         AccessMode::Full => format!("Полный доступ: {name} выполняет команды без вопросов"),
     }
 }
@@ -98,7 +104,7 @@ pub(crate) fn launch_policy(configured: &HarnessPolicy, access: AccessMode) -> H
             approval: ApprovalMode::OnRequest,
             network: NetworkAccess::Allowed,
         },
-        AccessMode::Confirm => HarnessPolicy {
+        AccessMode::Confirm | AccessMode::AutoAcceptEdits | AccessMode::Auto => HarnessPolicy {
             sandbox: match configured.sandbox {
                 SandboxMode::FullAccess => SandboxMode::WorkspaceWrite,
                 other => other,
@@ -170,6 +176,9 @@ struct State {
     /// The effort level of the turns (HOH-40): the one the last prompt named, when the harness
     /// has it; a turn without a prompt of its own keeps it.
     effort: Option<String>,
+    /// Access snapshotted for the last accepted prompt. A later choice affects only a later
+    /// prompt, even when this turn waited in the inbox.
+    access: AccessMode,
 }
 
 pub(crate) struct NewAgent {
@@ -188,7 +197,8 @@ impl ExternalAgent {
     pub(crate) fn new(init: NewAgent) -> Arc<ExternalAgent> {
         init.shared
             .choices
-            .serve_efforts(init.session.id().as_ref());
+            .serve_prompts(init.session.id().as_ref(), &init.shared.name);
+        let access = init.shared.access_for(init.session.id().as_ref());
         let model = ExternalModel {
             provider: init.shared.name.clone(),
             model: Mutex::new(init.model.clone()),
@@ -211,6 +221,7 @@ impl ExternalAgent {
                 last_turn: init.last_turn,
                 native: init.native,
                 recorded_model: init.model,
+                access,
                 ..State::default()
             }),
             revision: AtomicU64::new(0),
@@ -473,7 +484,7 @@ impl ExternalAgent {
             self.emit_error(turn, step, error);
             return;
         }
-        self.take_prompt_effort(&input);
+        self.take_prompt_settings(&input);
         let messages = input.messages;
         let mut log = TurnLog::new(self.clone(), turn, step, signal.clone());
         let outcome = self.native_turn(live, &mut log, &messages, &signal).await;
@@ -658,7 +669,7 @@ impl ExternalAgent {
                     )),
                 }
             }
-            let chosen = session.access != self.shared.access();
+            let chosen = session.access != lock(&self.state).access;
             // The window's mode choice ends an idle process outside this driver and forgets its
             // launch (`Shared::retire_idle`); a terminate may say nothing on the events, so the
             // mode being back to this session's does not make the process alive again.
@@ -682,7 +693,7 @@ impl ExternalAgent {
         }
         self.model.restart.store(false, Ordering::SeqCst);
         // Read at every start, from the user's choice in the window only.
-        let access = self.shared.access();
+        let access = lock(&self.state).access;
         let policy = self.policy_for(access)?;
         // `never` (built only with `never-mode`) is put to the user once per process; full
         // access was already the user's own action in the window, so it is not asked again.
@@ -750,23 +761,22 @@ impl ExternalAgent {
     /// (none: the harness's own), so a prompt queued behind it does not decide it. A level the
     /// harness does not have is not passed on, and said in the log. A turn whose prompt named
     /// nothing through `session/prompt` (a wake, another method) keeps the last level.
-    fn take_prompt_effort(&self, input: &TurnInput) {
+    fn take_prompt_settings(&self, input: &TurnInput) {
         let Some(prompt) = input.messages.last().filter(|_| input.last_from_next_turn) else {
             return;
         };
-        let Some(named) = self
+        let (named, access) = self
             .shared
             .choices
-            .take_effort(self.id.as_ref(), prompt.id.as_ref())
-        else {
-            return;
-        };
+            .take_prompt(self.id.as_ref(), prompt.id.as_ref())
+            .unwrap_or_else(|| {
+                // Internal/test inbox input has no session/prompt hook to snapshot it. Preserve
+                // the legacy global choice for that path; window prompts always take the exact
+                // per-message snapshot above.
+                (None, Some(self.shared.access_for(self.id.as_ref())))
+            });
         let effort = named.filter(|effort| {
-            let known = self
-                .shared
-                .harness
-                .effort_levels()
-                .contains(&effort.as_str());
+            let known = self.shared.harness.accepts_effort(effort);
             if !known {
                 self.ctx.logger().warn(format_args!(
                     "harness \"{}\" has no effort level {}: the turn runs without one",
@@ -776,7 +786,11 @@ impl ExternalAgent {
             }
             known
         });
-        lock(&self.state).effort = effort;
+        let mut state = lock(&self.state);
+        state.effort = effort;
+        if let Some(access) = access {
+            state.access = access;
+        }
     }
 
     /// [`launch_policy`], said in the log when it caps the configuration; `never` without its
@@ -1291,7 +1305,7 @@ impl TurnLog {
     fn new(agent: Arc<ExternalAgent>, turn: u64, step: u64, signal: AbortSignal) -> Self {
         // Under full access the CLI asks nothing: `never`'s rule applies only with confirmation.
         let never = agent.shared.config.policy.approval == ApprovalMode::Never
-            && agent.shared.access() == AccessMode::Confirm;
+            && lock(&agent.state).access == AccessMode::Confirm;
         Self {
             agent,
             turn,

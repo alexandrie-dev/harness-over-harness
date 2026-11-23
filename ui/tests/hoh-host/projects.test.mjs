@@ -111,7 +111,7 @@ test('a chat whose history names a project folder joins that project; refusing t
   assert.equal((await shell.until(value => value.kind === 'snapshot')).snapshot.threads[0].projectId, 'hoh-project');
   await client.call('projects.mutate', create('p-tools', '/home/person/Projects/tools'));
   await client.call('orchestration.getThreadProjection', { threadId: 'chat-old' });
-  assert.equal((await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-old')).thread.projectId, 'p-tools');
+  assert.equal((await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-old' && value.thread.projectId === 'p-tools')).thread.projectId, 'p-tools');
 
   engine.refuseFolder = true;
   const refused = await client.request('orchestration.launchThread', {

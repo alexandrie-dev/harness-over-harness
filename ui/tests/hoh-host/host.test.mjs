@@ -25,7 +25,7 @@ function connect(engine, options = {}) {
 const lastSnapshot = stream => stream.values.filter(value => value.kind === 'snapshot').at(-1);
 const itemsOf = snapshot => snapshot.projection.turnItems;
 
-test('handshake: config snapshot, probe, settings, ping; only Claude is offered', async () => {
+test('handshake: config snapshot, probe, settings, ping; Claude and Codex are offered', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);
   const config = await client.stream('subscribeServerConfig', { environmentThemes: true, workspaceSnapshotsOnDemand: true });
@@ -33,10 +33,12 @@ test('handshake: config snapshot, probe, settings, ping; only Claude is offered'
   assert.equal(first.version, 1);
   assert.equal(first.config.environment.environmentId, 'hoh-local');
   assert.equal(first.config.environment.orchestrationProtocolVersion, 2);
-  assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent']);
+  assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent', 'codex']);
   assert.deepEqual(first.config.providers[0].models.map(model => model.slug), ['claude-sonnet', 'claude-opus']);
   assert.equal(first.config.providers[0].status, 'ready');
   assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'full-access']);
+  assert.deepEqual(first.config.providers[1].models.map(model => model.slug), ['gpt-6-sol']);
+  assert.deepEqual(first.config.providers[1].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
   assert.deepEqual(first.config.settings.defaultModelSelection, { instanceId: 'claudeAgent', model: 'claude-sonnet' });
   assert.equal(first.config.settings.defaultRuntimeMode, 'approval-required');
   // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
@@ -89,6 +91,53 @@ test('the list: chats of the engine, newest first, with the completion marker', 
   assert.equal(snapshot.snapshot.projects[0].id, 'hoh-project');
   assert.deepEqual(snapshot.snapshot.archivedThreads, []);
   await shell.until(value => value.kind === 'synchronized');
+});
+
+test('a closed Codex chat uses the Codex default model before resume', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-codex-closed', 'Codex saved chat', []);
+  engine.store.get('chat-codex-closed').executor = 'codex';
+  const { client } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  const chat = snapshot.snapshot.threads.find(thread => thread.id === 'chat-codex-closed');
+  assert.equal(chat.providerInstanceId, 'codex');
+  assert.deepEqual(chat.modelSelection, { instanceId: 'codex', model: 'gpt-6-sol' });
+  assert.equal(
+    engine.requests.some(request => request.method === 'session/resume'),
+    false,
+    'the shell model must be correct before opening the saved chat',
+  );
+});
+
+test('delayed discovery resolves closed Codex models before shell materialization', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-codex-default', 'Catalog default', []);
+  engine.store.get('chat-codex-default').executor = 'codex';
+  engine.seed('chat-codex-explicit', 'Persisted model', []);
+  Object.assign(engine.store.get('chat-codex-explicit'), { executor: 'codex', model: 'gpt-persisted' });
+  const request = engine.request.bind(engine);
+  let releaseDiscovery;
+  const discoveryMayFinish = new Promise(resolve => { releaseDiscovery = resolve; });
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/discover' && params.executor === 'codex') await discoveryMayFinish;
+    return request(method, params);
+  };
+
+  const { client } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await tick(0);
+  assert.equal(
+    shell.values.some(value => value.kind === 'snapshot'),
+    false,
+    'a Codex row without a persisted model must wait for the provider catalog before publication',
+  );
+  releaseDiscovery();
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  const row = id => snapshot.snapshot.threads.find(thread => thread.id === id);
+  assert.deepEqual(row('chat-codex-default').modelSelection, { instanceId: 'codex', model: 'gpt-6-sol' });
+  assert.deepEqual(row('chat-codex-explicit').modelSelection, { instanceId: 'codex', model: 'gpt-persisted' });
+  assert.equal(engine.requests.some(entry => entry.method === 'session/resume'), false);
 });
 
 test('new chat with a first message, streamed answer, tool step, end of turn', async () => {
@@ -255,20 +304,179 @@ test('question of Claude: T3 question card, answers in the engine\'s form', asyn
   assert.deepEqual(engine.answers.at(-1).answer, { answers: [{ id: 'name', selected: [], custom: 'Вася' }] });
 });
 
-test('access mode: T3\'s switch goes to the engine at once and every thread shows it; the default setting stays where new threads start', async () => {
+test('access mode: T3\'s exact switch is scoped to the thread; the default setting stays where new threads start', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-m', 'M', []);
   const { client } = connect(engine);
   const config = await client.stream('subscribeServerConfig', {});
   await config.until(value => value.type === 'snapshot');
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'chat-m', runtimeMode: 'full-access' });
-  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', mode: 'full' }]);
+  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', sessionId: 'chat-m', mode: 'full', runtimeMode: 'full' }]);
   assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-m' })).thread.runtimeMode, 'full-access');
   // T3 shows the mode chip under the composer of a started thread while its mode differs from this setting.
   assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'approval-required');
-  // T3's in-between modes ask first.
+  // T3's in-between modes keep their exact Codex meaning (the legacy field stays confirm).
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c2', threadId: 'chat-m', runtimeMode: 'auto-accept-edits' });
-  assert.equal(engine.access.mode, 'confirm');
+  assert.equal(engine.sessionAccess.get('chat-m'), 'auto-accept-edits');
+});
+
+test('Codex: app-server models and effort are offered; executor and exact mode apply before the first message', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine);
+  const config = await client.call('server.getConfig', {});
+  const codex = config.providers.find(provider => provider.instanceId === 'codex');
+  assert.equal(codex.driver, 'codex');
+  assert.deepEqual(codex.models.map(model => model.slug), ['gpt-6-sol']);
+  assert.deepEqual(codex.models[0].capabilities.optionDescriptors[0].options.map(option => [option.id, !!option.isDefault]), [
+    ['low', false], ['medium', true], ['high', false],
+  ]);
+
+  const launched = await client.call('orchestration.launchThread', {
+    commandId: 'cx-launch', threadId: 'cx-chat', projectId: 'hoh-project', title: 'Codex task',
+    modelSelection: { instanceId: 'codex', model: 'gpt-6-sol', options: [{ id: 'reasoningEffort', value: 'high' }] },
+    runtimeMode: 'auto', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'cx-message', text: 'work', attachments: [] },
+  });
+  assert.equal(launched.projection.thread.providerInstanceId, 'codex');
+  assert.equal(launched.projection.thread.runtimeMode, 'auto');
+  const selected = engine.requests.find(request => request.method === 'hoh/executor/select' && request.params.executor === 'codex');
+  const access = engine.requests.find(request => request.method === 'hoh/executor/access/set' && request.params.sessionId === 'cx-chat');
+  const prompt = engine.requests.find(request => request.method === 'session/prompt' && request.params.sessionId === 'cx-chat');
+  assert.deepEqual(selected.params, { executor: 'codex', model: 'gpt-6-sol' });
+  assert.deepEqual(access.params, { executor: 'codex', sessionId: 'cx-chat', mode: 'confirm', runtimeMode: 'auto' });
+  assert.equal(prompt.params.effort, 'high');
+  assert(engine.requests.indexOf(access) < engine.requests.indexOf(prompt));
+  assert.equal(host.home.entries()[0].providerInstanceId, 'codex');
+
+  const unsupported = new FakeEngine({ codexDiscovery: {
+    executor: 'codex', installed: true, version: '0.200.0', versionStatus: 'unsupported',
+    auth: 'authenticated', detail: null, models: [{ id: 'future-model', isDefault: true }],
+  } });
+  const unsupportedConfig = await connect(unsupported).client.call('server.getConfig', {});
+  const unsupportedCodex = unsupportedConfig.providers.find(provider => provider.instanceId === 'codex');
+  assert.equal(unsupportedCodex.status, 'error');
+  assert.match(unsupportedCodex.message, /not supported/);
+});
+
+test('a restored global Codex selection remains the default provider and model', async () => {
+  const engine = new FakeEngine({
+    access: { mode: 'confirm', selected: { executor: 'codex', model: 'gpt-6-sol' } },
+  });
+  const { client } = connect(engine);
+  const config = await client.call('server.getConfig', {});
+  assert.deepEqual(config.settings.defaultModelSelection, { instanceId: 'codex', model: 'gpt-6-sol' });
+});
+
+test('Codex: two conversations keep independent modes instead of racing through a provider global', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  const create = (threadId, runtimeMode) => client.call('orchestration.launchThread', {
+    commandId: 'create-' + threadId, threadId, projectId: 'hoh-project', title: threadId,
+    modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode,
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+  });
+  const [a, b] = await Promise.all([create('cx-a', 'auto-accept-edits'), create('cx-b', 'full-access')]);
+  assert.deepEqual([a.projection.thread.runtimeMode, b.projection.thread.runtimeMode], ['auto-accept-edits', 'full-access']);
+  assert.deepEqual([...engine.sessionAccess.entries()].sort(), [['cx-a', 'auto-accept-edits'], ['cx-b', 'full']]);
+});
+
+test('concurrent Claude and Codex launches atomically bind their requested executor, model, and mode', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  const launch = (threadId, instanceId, model, runtimeMode) => client.call('orchestration.launchThread', {
+    commandId: 'parallel-' + threadId, threadId, projectId: 'hoh-project', title: threadId,
+    modelSelection: { instanceId, model }, runtimeMode,
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'message-' + threadId, text: 'hello', attachments: [] },
+  });
+  const [claude, codex] = await Promise.all([
+    launch('parallel-claude', 'claudeAgent', 'claude-opus', 'approval-required'),
+    launch('parallel-codex', 'codex', 'gpt-6-sol', 'auto-accept-edits'),
+  ]);
+  assert.deepEqual(
+    [claude.projection.thread.providerInstanceId, codex.projection.thread.providerInstanceId],
+    ['claudeAgent', 'codex'],
+  );
+  assert.deepEqual(
+    ['parallel-claude', 'parallel-codex'].map(id => {
+      const session = engine.store.get(id);
+      return [id, session.executor, session.model, session.runtimeMode];
+    }),
+    [
+      ['parallel-claude', 'claude', 'claude-opus', 'confirm'],
+      ['parallel-codex', 'codex', 'gpt-6-sol', 'auto-accept-edits'],
+    ],
+  );
+  for (const id of ['parallel-claude', 'parallel-codex']) {
+    const access = engine.requests.find(request => request.method === 'hoh/executor/access/set' && request.params.sessionId === id);
+    const prompt = engine.requests.find(request => request.method === 'session/prompt' && request.params.sessionId === id);
+    assert(engine.requests.indexOf(access) < engine.requests.indexOf(prompt));
+  }
+});
+
+test('new-session binding excludes every overlapping global model-selection path', async () => {
+  for (const mutation of ['message.dispatch', 'thread.model-selection.set', 'server.updateSettings']) {
+    const engine = new FakeEngine();
+    engine.seed('existing', 'Existing', []);
+    Object.assign(engine.store.get('existing'), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
+    const { client } = connect(engine);
+    await client.call('orchestration.getThreadProjection', { threadId: 'existing' });
+
+    const originalRequest = engine.request.bind(engine);
+    let selectedCodex; let releaseCreate;
+    const codexSelected = new Promise(resolve => { selectedCodex = resolve; });
+    const createMayContinue = new Promise(resolve => { releaseCreate = resolve; });
+    engine.request = async (method, params) => {
+      const result = await originalRequest(method, params);
+      if (method === 'hoh/executor/select' && params.executor === 'codex') {
+        selectedCodex();
+        await createMayContinue;
+      }
+      return result;
+    };
+
+    const threadId = 'created-' + mutation;
+    const launching = client.call('orchestration.launchThread', {
+      commandId: 'launch-' + mutation, threadId, projectId: 'hoh-project', title: threadId,
+      modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode: 'auto-accept-edits',
+      interactionMode: 'default', workspaceStrategy: { type: 'root' },
+      initialMessage: { messageId: 'first-' + mutation, text: 'first send', attachments: [] },
+    });
+    await codexSelected;
+    let changing;
+    if (mutation === 'message.dispatch') {
+      changing = client.call('orchestration.dispatchCommand', {
+        type: mutation, commandId: 'mutate-message', threadId: 'existing', messageId: 'existing-message',
+        text: 'existing send', attachments: [], modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' },
+      });
+    } else if (mutation === 'thread.model-selection.set') {
+      changing = client.call('orchestration.dispatchCommand', {
+        type: mutation, commandId: 'mutate-model', threadId: 'existing',
+        modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' },
+      });
+    } else {
+      changing = client.call('server.updateSettings', {
+        patch: { defaultModelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' } },
+      });
+    }
+    await tick(0);
+    releaseCreate();
+    const [launched] = await Promise.all([launching, changing]);
+    assert.equal(launched.projection.thread.providerInstanceId, 'codex', mutation);
+    assert.deepEqual(
+      [engine.store.get(threadId).executor, engine.store.get(threadId).model, engine.store.get(threadId).runtimeMode],
+      ['codex', 'gpt-6-sol', 'auto-accept-edits'],
+      mutation,
+    );
+    assert(
+      engine.requests.some(request => request.method === 'session/prompt' && request.params.sessionId === threadId),
+      `${mutation}: the first send did not reach its bound session`,
+    );
+    const methods = engine.requests.map(request => [request.method, request.params.executor, request.params.sessionId]);
+    const create = methods.findIndex(([method, , session]) => method === 'session/working-directory/get' && session === threadId);
+    const laterClaudeSelection = methods.findIndex(([method, executor], index) => method === 'hoh/executor/select' && executor === 'claude' && index > create);
+    assert(create >= 0 && laterClaudeSelection > create, `${mutation}: global selection entered the create critical section`);
+  }
 });
 
 test('after a restart the chat comes back from the engine\'s history; an unfinished turn waits on Home as interrupted', async () => {
@@ -484,7 +692,7 @@ test('settings: whole values are kept, partial nested patches are not; the folde
   });
   const project = await shell.until(value => value.kind === 'project.updated');
   assert.equal(project.project.workspaceRoot, '/home/person/Documents/HoH');
-  assert.equal(engine.access.mode, 'full');
+  assert.equal(engine.sessionAccess.get('thread-f'), 'full');
 });
 
 test('Stop answered only by the engine going idle still ends the turn as stopped', async () => {
@@ -510,7 +718,7 @@ test('the mode chosen for a new thread is in effect for its first message: acces
     initialMessage: { messageId: 'm-w', text: 'hi', attachments: [] },
   });
   const order = engine.requests.map(r => r.method);
-  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', mode: 'full' }]);
+  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', sessionId: 'thread-w', mode: 'full', runtimeMode: 'full' }]);
   assert(order.indexOf('hoh/executor/access/set') < order.indexOf('session/prompt'), 'the engine has the mode before Claude starts');
   assert.equal(launched.projection.thread.runtimeMode, 'full-access');
   // A started thread: T3 sends the switch right before the next message (ChatView `persistThreadSettingsForNextTurn`).
@@ -519,14 +727,14 @@ test('the mode chosen for a new thread is in effect for its first message: acces
   await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c2', threadId: 'thread-w', messageId: 'm-2', text: 'again', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
   assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set' || r.method === 'session/prompt').map(r => [r.method, r.params.mode ?? r.params.contentBlocks?.[0]?.text]),
     [['hoh/executor/access/set', 'confirm'], ['session/prompt', 'again']]);
-  assert.equal(engine.access.mode, 'confirm');
+  assert.equal(engine.sessionAccess.get('thread-w'), 'confirm');
   // A thread created with the default mode starts in it.
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c3', threadId: 'thread-w', runtimeMode: 'full-access' });
   await client.call('orchestration.dispatchCommand', {
     type: 'thread.create', commandId: 'c4', threadId: 'thread-n', projectId: 'hoh-project', title: 'N', createdBy: 'user', creationSource: 'web',
     modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
   });
-  assert.equal(engine.access.mode, 'confirm');
+  assert.equal(engine.sessionAccess.get('thread-n'), 'confirm');
 });
 
 test('after a restart a finished history has no open turn, and the next answer closes its turn (the engine starts a turn before its message)', async () => {
@@ -1075,7 +1283,7 @@ test('Claude discovery exhaustion names the engine wait, and Refresh clears it a
   let starting = true;
   let clock = 0;
   engine.request = (method, params) => {
-    if (method === 'hoh/executor/discover' && starting) {
+    if (method === 'hoh/executor/discover' && params.executor === 'claude' && starting) {
       clock += 1_100;
       return Promise.reject({ code: 'failed', message: 'Помощник ещё подключается. Повторите запрос' });
     }
@@ -1108,7 +1316,7 @@ test('a late startup probe failure cannot overwrite a successful targeted Refres
   let rejectStartup;
   let discoveryCalls = 0;
   engine.request = (method, params) => {
-    if (method !== 'hoh/executor/discover') return request(method, params);
+    if (method !== 'hoh/executor/discover' || params.executor !== 'claude') return request(method, params);
     if (++discoveryCalls === 1) return new Promise((_resolve, reject) => { rejectStartup = reject; });
     return request(method, params);
   };
@@ -1133,7 +1341,7 @@ test('Welcome empty refresh preserves cold-start retries instead of publishing a
   const request = engine.request.bind(engine);
   let discoveryCalls = 0;
   engine.request = (method, params) => {
-    if (method !== 'hoh/executor/discover') return request(method, params);
+    if (method !== 'hoh/executor/discover' || params.executor !== 'claude') return request(method, params);
     discoveryCalls += 1;
     if (discoveryCalls <= 2) return Promise.reject({ code: 'failed', message: 'Помощник ещё подключается. Повторите запрос' });
     return request(method, params);
@@ -1167,7 +1375,7 @@ test('the startup retry lane cannot supersede a slower explicit Refresh', async 
   let resolveRefresh;
   let discoveryCalls = 0;
   engine.request = (method, params) => {
-    if (method !== 'hoh/executor/discover') return request(method, params);
+    if (method !== 'hoh/executor/discover' || params.executor !== 'claude') return request(method, params);
     discoveryCalls += 1;
     if (discoveryCalls === 1) return Promise.reject({ code: 'failed', message: 'engine is starting' });
     return new Promise(resolve => { resolveRefresh = () => resolve(healthy); });
@@ -1271,7 +1479,7 @@ test('a delayed startup access read cannot overwrite model and mode chosen meanw
   await tick(5);
   const settings = await client.call('server.getSettings', {});
   const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-choice' });
-  assert.deepEqual(engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').map(entry => entry.params), [{ executor: 'claude', mode: 'confirm' }]);
+  assert.deepEqual(engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').map(entry => entry.params), []);
   assert.equal(settings.defaultModelSelection.model, 'claude-opus');
   assert.equal(projection.thread.runtimeMode, 'approval-required');
   assert.equal(projection.thread.modelSelection.model, 'claude-opus');

@@ -31,8 +31,8 @@ use hoh_error::{BoxError, HarnessError, SharedError};
 use hoh_goal::Goals;
 use hoh_kernel::{Context, Disposer, Fiber, Inject, Service, Undo};
 use hoh_llm::{
-    ContentBlock, Llm, LlmCallConfig, LlmCallControls, MessageSource, NewUserMessage,
-    ReasoningEffortId, StreamChunk, create_user_message,
+    ContentBlock, Llm, LlmCallConfig, LlmCallControls, MessageId, MessageSource, ReasoningEffortId,
+    StreamChunk, UserMessage,
 };
 use hoh_protocol::{
     ApprovalHost, HohInitializeResult, InitializeParams, InitializeResult, SecretString,
@@ -641,24 +641,30 @@ impl HarnessSdkJsonRpcServer {
         params: Option<&Value>,
     ) -> Result<SessionPromptResult, BoxError> {
         self.assert_initialized()?;
+        // Allocate and announce the message before the first await. JSON-RPC requests run
+        // concurrently, so a following access-change request must not overtake the snapshot for
+        // this prompt while its session or durable attachments are still being prepared. If
+        // preparation fails, the listener deliberately leaves an abandoned snapshot which its
+        // next successful message drops by id.
+        let message_id: MessageId = hoh_util_crypto::random_uuid().as_str().into();
+        if let (Some(params), Some(methods)) = (params, self.inner.ctx.get::<HohRpcMethods>()) {
+            methods.prompted(session_id.as_ref(), message_id.as_ref(), params);
+        }
         let rec = self.get_or_create_session(session_id.clone()).await?;
         self.inner.lifetime.signal().throw_if_aborted()?;
         self.assert_live_agent(&rec, &session_id)?;
         let content = durable_prompt_content(&self.inner.ctx, blocks).await?;
         self.inner.lifetime.signal().throw_if_aborted()?;
         self.assert_live_agent(&rec, &session_id)?;
-        let message = create_user_message(NewUserMessage {
+        let message = UserMessage {
             content,
             source: MessageSource::new("user"),
-        });
-        let message_id = message.id.to_string();
-        // HOH-40: the rest of the params (the window's `effort`) to the plugin that serves it,
-        // with the message they belong to, before the message can start a turn.
-        if let (Some(params), Some(methods)) = (params, self.inner.ctx.get::<HohRpcMethods>()) {
-            methods.prompted(session_id.as_ref(), &message_id, params);
-        }
+            id: message_id.clone(),
+        };
         rec.handle.agent.followup(message)?;
-        Ok(SessionPromptResult { message_id })
+        Ok(SessionPromptResult {
+            message_id: message_id.to_string(),
+        })
     }
     pub async fn query(&self, params: SessionQueryParams) -> Result<SessionQueryResult, BoxError> {
         self.query_blocks(

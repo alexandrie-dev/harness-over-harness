@@ -10,32 +10,49 @@ import { englishError } from './errors.ts';
 export const HOH_ENVIRONMENT_ID = 'hoh-local';
 export const HOH_LABEL = 'HoH';
 export const CLAUDE_INSTANCE_ID = 'claudeAgent';
+export const CODEX_INSTANCE_ID = 'codex';
 /** T3's orchestration protocol (packages/contracts/src/environment.ts `ORCHESTRATION_PROTOCOL_VERSION`). */
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 
 export type T3RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
-export type HohAccessMode = 'confirm' | 'full';
+export type HohAccessMode = 'confirm' | 'auto-accept-edits' | 'auto' | 'full';
+export type HohExecutor = 'claude' | 'codex';
 
-/** HoH has two modes: Claude asks first, or works on its own. T3's in-between modes ask first. */
+/** T3's four choices are Codex's four native approval/sandbox policies, one-to-one. */
 export function accessModeOf(mode: T3RuntimeMode): HohAccessMode {
-  return mode === 'full-access' ? 'full' : 'confirm';
+  if (mode === 'full-access') return 'full';
+  if (mode === 'auto-accept-edits') return 'auto-accept-edits';
+  if (mode === 'auto') return 'auto';
+  return 'confirm';
 }
 export function runtimeModeOf(mode: HohAccessMode): T3RuntimeMode {
-  return mode === 'full' ? 'full-access' : 'approval-required';
+  if (mode === 'full') return 'full-access';
+  if (mode === 'auto-accept-edits') return 'auto-accept-edits';
+  if (mode === 'auto') return 'auto';
+  return 'approval-required';
 }
 
 /** `hoh/executor/discover` for Claude (ui/src/lib/executor.d.mts `DiscoverResult`). */
-export interface ClaudeDiscovery {
+export interface HarnessDiscovery {
   readonly installed: boolean;
   readonly version: string | null;
+  readonly versionStatus: 'supported' | 'unsupported' | 'unknown';
   readonly auth: 'authenticated' | 'unauthenticated' | 'unknown';
-  readonly models: ReadonlyArray<{ readonly id: string; readonly displayName?: string; readonly isDefault?: boolean }>;
+  readonly models: ReadonlyArray<{
+    readonly id: string;
+    readonly displayName?: string;
+    readonly isDefault?: boolean;
+    readonly effortLevels?: ReadonlyArray<{ readonly id: string; readonly description?: string }>;
+    readonly defaultEffort?: string;
+  }>;
   readonly detail?: string | null;
   readonly failure?:
     | { readonly kind: 'timeout'; readonly operation: 'version' | 'initialize'; readonly timeoutSeconds: number }
     | { readonly kind: 'exit'; readonly operation: 'version' | 'initialize'; readonly exitCode: number | null }
     | null;
 }
+export type ClaudeDiscovery = HarnessDiscovery;
+export type CodexDiscovery = HarnessDiscovery;
 
 /** Claude Code's pointer at its own default model: not a model, and T3 does not list it. */
 const CLAUDE_CODE_DEFAULT = 'default';
@@ -152,6 +169,82 @@ function claudeMessage(discovery: ClaudeDiscovery | null, requestFailure?: unkno
   return detail ? englishError(detail, 'Claude Agent CLI is installed but failed to run.') : undefined;
 }
 
+const CODEX_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max', ultra: 'Ultra',
+};
+
+/** Codex's catalog is not copied into HoH: app-server's ordered `model/list` is the catalog. */
+export function codexModels(discovery: CodexDiscovery | null) {
+  const models = (discovery?.models ?? []).filter(model => typeof model.id === 'string' && model.id.trim());
+  if (!models.length) return [{ slug: 'default', name: 'Codex', isCustom: false, capabilities: null }];
+  return models.map(model => {
+    const options = (model.effortLevels ?? []).map(effort => ({
+      id: effort.id,
+      label: CODEX_EFFORT_LABELS[effort.id] ?? effort.id,
+      ...(effort.description ? { description: effort.description } : {}),
+      ...(effort.id === model.defaultEffort ? { isDefault: true } : {}),
+    }));
+    return {
+      slug: model.id,
+      name: model.displayName?.trim() || model.id,
+      isCustom: false,
+      ...(model.isDefault ? { isDefault: true } : {}),
+      capabilities: options.length ? { optionDescriptors: [{ id: 'reasoningEffort', label: 'Reasoning', type: 'select', options, ...(model.defaultEffort ? { currentValue: model.defaultEffort } : {}) }] } : null,
+    };
+  });
+}
+
+export function defaultCodexModel(discovery: CodexDiscovery | null): string {
+  const models = codexModels(discovery);
+  return (models.find(model => model.isDefault) ?? models[0]).slug;
+}
+
+export function listedCodexModel(discovery: CodexDiscovery | null, id: unknown): string | null {
+  return typeof id === 'string' && codexModels(discovery).some(model => model.slug === id) ? id : null;
+}
+
+/** T3 calls Codex's option `reasoningEffort`; the engine forwards its native value unchanged. */
+export function codexEffortOf(selection: unknown): string | null {
+  const chosen = Array.isArray(selection) ? selection.find((entry: any) => entry?.id === 'reasoningEffort')?.value : undefined;
+  return typeof chosen === 'string' && chosen.trim() ? chosen : null;
+}
+
+function codexMessage(discovery: CodexDiscovery | null, requestFailure?: unknown): string | undefined {
+  if (discovery === null) return requestFailure === undefined ? undefined : englishError(requestFailure, 'Failed to execute Codex CLI health check.');
+  if (!discovery.installed) return 'Codex CLI (`codex`) was not found on PATH.';
+  if (discovery.versionStatus !== 'supported') return 'This Codex CLI version is not supported by HoH.';
+  if (discovery.auth === 'unauthenticated') return 'Codex CLI is not authenticated. Run `codex login` and try again.';
+  const detail = discovery.detail?.trim();
+  return detail ? englishError(detail, 'Codex CLI is installed but failed to run.') : undefined;
+}
+
+export function codexProvider(discovery: CodexDiscovery | null, now: string, requestFailure?: unknown) {
+  const message = codexMessage(discovery, requestFailure);
+  const ready = discovery === null
+    ? requestFailure === undefined
+    : discovery.installed && discovery.versionStatus === 'supported'
+      && discovery.auth !== 'unauthenticated' && message === undefined && discovery.models.length > 0;
+  return {
+    instanceId: CODEX_INSTANCE_ID,
+    driver: CODEX_INSTANCE_ID,
+    displayName: 'Codex',
+    showInteractionModeToggle: true,
+    supportedRuntimeModes: ['approval-required', 'auto-accept-edits', 'auto', 'full-access'],
+    supportsConversationRollback: false,
+    supportsTextGeneration: false,
+    enabled: true,
+    installed: discovery?.installed ?? requestFailure === undefined,
+    version: discovery?.version?.trim() || null,
+    status: ready ? 'ready' : 'error',
+    auth: { status: discovery?.auth ?? 'unknown' },
+    checkedAt: now,
+    ...(message === undefined ? {} : { message }),
+    models: codexModels(discovery),
+    slashCommands: [],
+    skills: [],
+  };
+}
+
 /** What T3's welcome page and provider settings show: found or not, signed in or not, as the engine says. */
 export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, requestFailure?: unknown) {
   const ready = discovery === null
@@ -180,13 +273,13 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, r
 }
 
 /** Every `ServerSettings` field has a decoding default; only what HoH decides is sent. */
-export function serverSettings(model: string, defaultMode: HohAccessMode, overrides: Record<string, unknown> = {}) {
+export function serverSettings(model: string, defaultMode: HohAccessMode, overrides: Record<string, unknown> = {}, instanceId = CLAUDE_INSTANCE_ID) {
   return {
     ...overrides,
     // "Add project" offers no repository host to clone from (T3 turns its default host off by this setting:
     // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
     offeredSourceControlProviders: { github: false },
-    defaultModelSelection: { instanceId: CLAUDE_INSTANCE_ID, model },
+    defaultModelSelection: { instanceId, model },
     // The mode a new thread starts in (T3's setting), not the mode in effect: T3 shows the mode chip under
     // the composer only while a thread's mode differs from it (chat/composerControlsOwnership.ts).
     defaultRuntimeMode: runtimeModeOf(defaultMode),
@@ -195,9 +288,13 @@ export function serverSettings(model: string, defaultMode: HohAccessMode, overri
 
 export interface ConfigInput {
   readonly cwd: string;
-  readonly discovery: ClaudeDiscovery | null;
+  readonly claudeDiscovery: ClaudeDiscovery | null;
+  readonly codexDiscovery: CodexDiscovery | null;
   readonly discoveryFailure?: unknown;
+  readonly codexDiscoveryFailure?: unknown;
   readonly defaultMode: HohAccessMode;
+  readonly defaultInstanceId?: string;
+  readonly defaultModel?: string;
   readonly settingsOverrides?: Record<string, unknown>;
   readonly now: string;
 }
@@ -213,12 +310,13 @@ export const HOH_MANAGED_POLICY = {
   limits: {
     connect: false,
     telemetry: false,
-    providers: { allowedDrivers: [CLAUDE_INSTANCE_ID] },
+    providers: { allowedDrivers: [CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID] },
   },
 };
 
 export function serverConfig(input: ConfigInput) {
-  const model = defaultClaudeModel(input.discovery);
+  const instanceId = input.defaultInstanceId === CODEX_INSTANCE_ID ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID;
+  const model = input.defaultModel ?? (instanceId === CODEX_INSTANCE_ID ? defaultCodexModel(input.codexDiscovery) : defaultClaudeModel(input.claudeDiscovery));
   return {
     environment: {
       environmentId: HOH_ENVIRONMENT_ID,
@@ -241,7 +339,10 @@ export function serverConfig(input: ConfigInput) {
     keybindingsConfigPath: input.cwd.replace(/\/$/, '') + '/.hoh-keybindings.json',
     keybindings: [],
     issues: [],
-    providers: [claudeProvider(input.discovery, input.now, input.discoveryFailure)],
+    providers: [
+      claudeProvider(input.claudeDiscovery, input.now, input.discoveryFailure),
+      codexProvider(input.codexDiscovery, input.now, input.codexDiscoveryFailure),
+    ],
     availableEditors: [],
     observability: {
       logsDirectoryPath: '/hoh/logs',
@@ -250,7 +351,7 @@ export function serverConfig(input: ConfigInput) {
       otlpMetricsEnabled: false,
       otlpLogsEnabled: false,
     },
-    settings: serverSettings(model, input.defaultMode, input.settingsOverrides),
+    settings: serverSettings(model, input.defaultMode, input.settingsOverrides, instanceId),
     serverTime: input.now,
   };
 }

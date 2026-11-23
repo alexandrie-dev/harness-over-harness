@@ -507,16 +507,30 @@ object!(SettingsRulesSetParams {
 // External agent harnesses in the window (HOH-18): the access mode of an executor (Claude Code),
 // chosen only by the user; discovery and the choice of the executor that new chats go to.
 choices!(ExecutorAccessMode { Confirm => "confirm", Full => "full" });
+// Exact T3/Codex runtime mode. `ExecutorAccessMode` remains the downgrade-safe two-value
+// projection used by older hosts and by the privileged approval copy.
+choices!(ExecutorRuntimeMode {
+    Confirm => "confirm",
+    AutoAcceptEdits => "auto-accept-edits",
+    Auto => "auto",
+    Full => "full"
+});
 choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
 choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
 object!(ExecutorParams { executor: String });
-object!(ExecutorAccessSetParams {
+optional!(ExecutorAccessSetParams {
     executor: String,
-    mode: ExecutorAccessMode
+    mode: ExecutorAccessMode,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    runtime_mode: Option<ExecutorRuntimeMode>,
 });
-object!(ExecutorAccessSetResult {
+optional!(ExecutorAccessSetResult {
     executor: String,
-    mode: ExecutorAccessMode
+    mode: ExecutorAccessMode,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    runtime_mode: Option<ExecutorRuntimeMode>,
 });
 object!(ExecutorEffectiveAccess {
     mode: ExecutorAccessMode,
@@ -537,12 +551,16 @@ optional!(ExecutorAccessGetParams {
 // What one conversation runs with, from its own binding in the engine (not from the choice for
 // new chats). `executor` is null for a conversation the agent loop drives; then `model`, `mode`
 // and `running` are null and `pending` is false.
-object!(ExecutorSessionAccess {
+optional!(ExecutorSessionAccess {
     executor: Option<String>,
     model: Option<String>,
     privacy: Option<String>,
     mode: Option<ExecutorAccessMode>,
     running: Option<ExecutorAccessMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    runtime_mode: Option<ExecutorRuntimeMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    running_runtime_mode: Option<ExecutorRuntimeMode>,
     pending: bool
 });
 optional!(ExecutorAccessGetResult {
@@ -557,12 +575,21 @@ object!(ExecutorSelectParams {
     executor: Option<String>,
     model: String
 });
+optional!(ExecutorEffort {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    description: Option<String>,
+});
 optional!(ExecutorModel {
     id: String,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     is_default: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    effort_levels: Option<Vec<ExecutorEffort>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    default_effort: Option<String>,
 });
 choices!(ExecutorDiscoveryOperation { Version => "version", Initialize => "initialize" });
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

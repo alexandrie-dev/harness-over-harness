@@ -264,17 +264,17 @@ async function welcomeAgents(config) {
   return groupWelcomeAgents(config.providers, config.settings, provider => provider.displayName, provider => isManagedDriverAllowed(config.managedPolicy, provider.driver));
 }
 
-test('T3 first run: an engine without chats is a fresh workspace (T3\'s welcome page), Claude found and ready, "Start without a project" gets T3\'s No project', () => withClient(new FakeEngine(), async client => {
+test('T3 first run: an engine without chats is a fresh workspace, Claude and Codex are ready, "Start without a project" gets T3\'s No project', () => withClient(new FakeEngine(), async client => {
   const { isFreshFirstRunWorkspace } = await contracts.loadWeb('web/firstRun.logic');
   const { isManagedDriverAllowed } = await contracts.load('index');
   const { config, shell, snapshot, workspace } = await firstRunInput(client);
   assert.deepEqual([snapshot.projects.length, snapshot.threads.length], [0, 0]);
   assert.equal(isFreshFirstRunWorkspace(workspace), true);
   const agents = await welcomeAgents(config);
-  assert.deepEqual({ ready: agents.readyCount, checking: agents.checking, found: agents.found.map(p => p.instanceId), available: agents.available.length }, { ready: 1, checking: false, found: ['claudeAgent'], available: 0 });
+  assert.deepEqual({ ready: agents.readyCount, checking: agents.checking, found: agents.found.map(p => p.instanceId), available: agents.available.length }, { ready: 2, checking: false, found: ['claudeAgent', 'codex'], available: 0 });
   // No ACP registry and no other agent to add; no T3 Connect; T3's usage-data notice says it is off.
   assert.equal(isManagedDriverAllowed(config.managedPolicy, 'acpRegistry'), false);
-  assert.equal(isManagedDriverAllowed(config.managedPolicy, 'codex'), false);
+  assert.equal(isManagedDriverAllowed(config.managedPolicy, 'codex'), true);
   assert.deepEqual({ connect: config.managedPolicy.limits.connect, telemetry: config.managedPolicy.limits.telemetry }, { connect: false, telemetry: false });
   // The Projects section (other agents' history to import) has nothing.
   assert.equal((await run(client['agentSessions.scan']({}))).candidates.length, 0);
@@ -318,7 +318,7 @@ test('T3 first run: an engine with a chat opens the app; Claude not found, or no
   await withClient(new FakeEngine({ discovery: { executor: 'claude', installed: false, version: null, auth: 'unknown', models: [] } }), async client => {
     const { config, shell } = await firstRunInput(client);
     const agents = await welcomeAgents(config);
-    assert.deepEqual([agents.readyCount, agents.checking, welcomeAgentState(config.providers[0], config.settings)], [0, false, 'install']);
+    assert.deepEqual([agents.readyCount, agents.checking, welcomeAgentState(config.providers[0], config.settings)], [1, false, 'install']);
     await shell.stop();
   });
   const unchecked = new FakeEngine({ discovery: {
@@ -328,7 +328,7 @@ test('T3 first run: an engine with a chat opens the app; Claude not found, or no
   await withClient(unchecked, async client => {
     const { config, shell } = await firstRunInput(client);
     const agents = await welcomeAgents(config);
-    assert.deepEqual([agents.readyCount, agents.checking, config.providers[0].installed, config.providers[0].message], [0, false, true, 'Claude Agent CLI health check timed out after 20 seconds while running `claude --version`.']);
+    assert.deepEqual([agents.readyCount, agents.checking, config.providers[0].installed, config.providers[0].message], [1, false, true, 'Claude Agent CLI health check timed out after 20 seconds while running `claude --version`.']);
     await shell.stop();
   });
 });

@@ -121,15 +121,40 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
             let request: hoh_protocol::ExecutorAccessSetParams =
                 serde_json::from_value(params.clone()).map_err(|_| "invalid executor access")?;
             let name = executor_name(&request.executor);
-            Ok(match request.mode {
-                hoh_protocol::ExecutorAccessMode::Full => format!(
+            let runtime = match (&request.mode, request.runtime_mode.as_ref()) {
+                (
+                    hoh_protocol::ExecutorAccessMode::Full,
+                    None | Some(hoh_protocol::ExecutorRuntimeMode::Full),
+                ) => hoh_protocol::ExecutorRuntimeMode::Full,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    None | Some(hoh_protocol::ExecutorRuntimeMode::Confirm),
+                ) => hoh_protocol::ExecutorRuntimeMode::Confirm,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    Some(hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits),
+                ) => hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    Some(hoh_protocol::ExecutorRuntimeMode::Auto),
+                ) => hoh_protocol::ExecutorRuntimeMode::Auto,
+                _ => return Err("executor access mode does not match runtimeMode".into()),
+            };
+            Ok(match runtime {
+                hoh_protocol::ExecutorRuntimeMode::Full => format!(
                     "Включить полный доступ для {name}? Помощник сам удаляет и меняет файлы в \
                      любых папках, куда есть доступ у вас, запускает программы и выходит в \
                      интернет, не спрашивая. Сделанное нельзя отменить."
                 ),
-                hoh_protocol::ExecutorAccessMode::Confirm => {
+                hoh_protocol::ExecutorRuntimeMode::Confirm => {
                     format!("Вернуть режим «Спрашивать разрешение» для {name}?")
                 }
+                hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits => format!(
+                    "Включить режим «Принимать правки» для {name}? Помощник сам принимает изменения файлов в рабочей папке, но спрашивает перед другими действиями."
+                ),
+                hoh_protocol::ExecutorRuntimeMode::Auto => format!(
+                    "Включить режим «Авто» для {name}? Помощник сам принимает изменения файлов в рабочей папке и автоматически проверяет остальные запросы разрешений."
+                ),
             })
         }
         "hoh/executor/select" => {

@@ -111,11 +111,16 @@ pub struct PeerInfo {
 /// (`hoh/executor/access/set`, a privileged command); nothing in a session — the chat, the model,
 /// the harness, a file in the working folder, the parameters a session is created with — sets it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum AccessMode {
     /// «С подтверждением»: the CLI keeps its sandbox (the session folder, no network) and puts
     /// every command, write and network step it does not settle itself to the user through HoH.
     Confirm,
+    /// T3 «Auto-accept edits»: Codex may write in the workspace, while commands and wider
+    /// permissions still reach the person.
+    AutoAcceptEdits,
+    /// T3 «Auto»: Codex's own auto-reviewer settles ordinary workspace actions.
+    Auto,
     /// «Полный доступ», as in T3 Code: the CLI runs commands without questions and without a
     /// sandbox. A session configured read-only stays read-only (a reviewer stays one): full access
     /// only takes the questions away (review 232500, item 4).
@@ -135,6 +140,8 @@ impl AccessMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Confirm => "confirm",
+            Self::AutoAcceptEdits => "auto-accept-edits",
+            Self::Auto => "auto",
             Self::Full => "full",
         }
     }
@@ -236,6 +243,19 @@ pub struct HarnessModel {
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_default: bool,
+    /// Reasoning levels the native model reports, in its own order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effort_levels: Vec<HarnessEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessEffort {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// What the harness may do on its own. The default is the safe one of the HOH-18 note:

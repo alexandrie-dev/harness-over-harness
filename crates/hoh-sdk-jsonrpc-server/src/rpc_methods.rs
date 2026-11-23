@@ -100,10 +100,10 @@ impl HohRpcMethodRegistry {
     }
 
     /// GLUE (HOH-40): hear every `session/prompt` — the session id, the id of the message it
-    /// queues, the whole `params` — once its session and message exist and before the message
-    /// can start a turn, for the lifetime of `ctx`. The fields the server does not read itself
-    /// (the window's `effort`) reach the plugin that serves them, tied to their own message. One
-    /// listener.
+    /// queues, the whole `params` — after the message id is allocated and before any asynchronous
+    /// session/attachment preparation or a following request can overtake its settings, for the
+    /// lifetime of `ctx`. The fields the server does not read itself (the window's `effort`)
+    /// reach the plugin that serves them, tied to their own message. One listener.
     pub fn on_prompt<F>(&self, ctx: &Context, listener: F) -> Result<Disposer, BoxError>
     where
         F: Fn(&str, &str, &Value) + Send + Sync + 'static,

@@ -20,7 +20,8 @@ import './home.css';
 
 interface Entry {
   id: string; title: string; projectId: string; state: 'working' | 'waiting' | 'done' | 'ended';
-  runner?: 'claude' | 'codex';
+  providerInstanceId: string;
+  runner: 'claude' | 'codex';
   turnOrdinal: number; canComplete?: boolean; interrupted?: boolean;
   startedAt: number; doneAt: number | null; steps: { done: number; total: number };
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
@@ -69,8 +70,10 @@ const clock = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour:
 
 interface View { host: Home | undefined; now: number; open(threadId: string): void; where(entry: Entry): string; projectKey(projectId: string): string }
 
-/** The executor's mark: Claude's logo from T3's set (the host runs only Claude). */
-const Mark = () => <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
+/** The executor's mark from T3's own provider set. */
+const Mark = ({ entry }: { entry: Entry }) => entry.providerInstanceId === 'codex'
+  ? <OpenAI className="hoh-mark" role="img" aria-label="Codex" />
+  : <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
 
 function Steps({ entry }: { entry: Entry }) {
   if (entry.steps.total === 0) return null;
@@ -140,7 +143,7 @@ function Card({ entry, view, children }: { entry: Entry; view: View; children: R
   return (
     <article className="hoh-card" data-state={entry.state}>
       <button type="button" className="hoh-card__open" aria-label={`Open ${entry.title}`} onClick={() => view.open(entry.id)} />
-      <Mark />
+      <Mark entry={entry} />
       <span className="hoh-card__title">{entry.title}</span>
       {project ? <span className="hoh-card__where">{project}</span> : null}
       {entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
@@ -197,7 +200,7 @@ function Cards({ working, done, asking, view }: Lists) {
             <div className="hoh-ask__head"><span>Needs your answer</span><span className="hoh-ask__count">{asking.length}</span></div>
             {asking.map((entry) => (
               <div key={entry.request!.id} className="hoh-ask__block">
-                <div className="hoh-ask__where"><span><Mark />{entry.title}</span><span>{elapsed(entry.startedAt, view.now)}</span></div>
+                <div className="hoh-ask__where"><span><Mark entry={entry} />{entry.title}</span><span>{elapsed(entry.startedAt, view.now)}</span></div>
                 <Ask entry={entry} view={view} />
               </div>
             ))}
@@ -419,7 +422,7 @@ function GroupedCards({ working, done, asking, view }: Lists) {
             <div className="hoh-ask__head"><span>Needs your answer</span><span className="hoh-ask__count">{asking.length}</span></div>
             {asking.map((entry) => (
               <div key={entry.request!.id} className="hoh-ask__block">
-                <div className="hoh-ask__where"><span><Mark />{entry.title}</span><span>{elapsed(entry.startedAt, view.now)}</span></div>
+                <div className="hoh-ask__where"><span><Mark entry={entry} />{entry.title}</span><span>{elapsed(entry.startedAt, view.now)}</span></div>
                 <Ask entry={entry} view={view} />
               </div>
             ))}
@@ -449,7 +452,10 @@ export function HomeBody() {
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(timer); }, []);
   const now = Date.now();
-  const entries = host?.entries() ?? [];
+  const entries = (host?.entries() ?? []).map((entry) => ({
+    ...entry,
+    runner: entry.providerInstanceId === 'codex' ? 'codex' as const : 'claude' as const,
+  }));
   const working = entries.filter((entry) => entry.state === 'working' || entry.state === 'waiting').sort((a, b) => b.startedAt - a.startedAt);
   const done = entries.filter((entry) => entry.state === 'done' && entry.doneAt !== null && sameDay(entry.doneAt, now)).sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
   const asking = entries.filter((entry) => entry.request);

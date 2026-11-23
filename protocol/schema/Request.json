@@ -2360,6 +2360,22 @@
         },
         "mode": {
           "$ref": "#/$defs/ExecutorAccessMode"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtimeMode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorRuntimeMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2371,6 +2387,15 @@
       "type": "string",
       "enum": [
         "confirm",
+        "full"
+      ]
+    },
+    "ExecutorRuntimeMode": {
+      "type": "string",
+      "enum": [
+        "confirm",
+        "auto-accept-edits",
+        "auto",
         "full"
       ]
     },
