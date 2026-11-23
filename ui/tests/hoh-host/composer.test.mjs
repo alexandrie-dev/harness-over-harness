@@ -319,6 +319,9 @@ test('a local reply image is minted only for its conversation and native failure
   const missing = await client.request('assets.createUrl', { resource: { ...resource, path: 'missing.png' } });
   assert.equal(failureOf(missing)._tag, 'AssetWorkspaceAssetNotFoundError');
   assert.match(failureOf(missing).detail, /file was not found/);
+  const missingAgain = await client.request('assets.createUrl', { resource: { ...resource, path: 'missing.png' } });
+  assert.match(failureOf(missingAgain).detail, /file was not found/);
+  assert.equal(reads.length, 4, 'a native failure is cached negatively');
   host.stop();
   await assert.rejects(fetch(first.relativeUrl));
 });
@@ -338,13 +341,17 @@ test('local reply image retention is bounded per conversation with a visible fai
     replacedBytes: 20 * 1024 * 1024, replacing: true, sizeBytes: 20 * 1024 * 1024,
   }), true, 'same-size replacement does not grow either budget');
   const engine = new FakeEngine();
-  engine.readImageAsset = async ({ path }) => ({
-    dataBase64: PNG,
-    mimeType: 'image/png',
-    sizeBytes: PNG_BYTES,
-    sourcePath: `${DEFAULT_FOLDER}/${path}`,
-    fileRevision: `revision:${path}`,
-  });
+  let reads = 0;
+  engine.readImageAsset = async ({ path }) => {
+    reads++;
+    return {
+      dataBase64: PNG,
+      mimeType: 'image/png',
+      sizeBytes: PNG_BYTES,
+      sourcePath: `${DEFAULT_FOLDER}/${path}`,
+      fileRevision: `revision:${path}`,
+    };
+  };
   const { host, client } = connect(engine);
   await newThread(client, 'chat-image-budget');
   for (let index = 0; index < 32; index++) {
@@ -358,6 +365,45 @@ test('local reply image retention is bounded per conversation with a visible fai
   } });
   assert.equal(failureOf(overflow)._tag, 'AssetWorkspaceAssetNotFoundError');
   assert.match(failureOf(overflow).detail, /too many project images/i);
+  assert.equal(reads, 32, 'the retention budget is enforced before native I/O');
+  const revalidateAtCapacity = await client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-image-budget', path: 'shots/0.png', hostOnly: true,
+  } });
+  assert.equal(failureOf(revalidateAtCapacity)._tag, 'AssetWorkspaceAssetNotFoundError');
+  assert.equal(reads, 32, 'a cached path is not trusted as a replacement before native I/O');
+  host.stop();
+});
+
+test('identical local image reads in flight are combined and failure history is a bounded LRU', async () => {
+  const engine = new FakeEngine();
+  let release;
+  let reads = 0;
+  engine.readImageAsset = ({ path }) => {
+    reads++;
+    if (path === 'shots/shared.png') return new Promise(resolve => { release = resolve; });
+    throw new Error(`Image unavailable: ${path} was not found.`);
+  };
+  const { host, client } = connect(engine);
+  await newThread(client, 'chat-image-cache');
+  const resource = path => ({ _tag: 'media-file', threadId: 'chat-image-cache', path, hostOnly: true });
+  const first = client.call('assets.createUrl', { resource: resource('shots/shared.png') });
+  const second = client.call('assets.createUrl', { resource: resource('shots/shared.png') });
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 1, 'only one native read starts for an identical in-flight request');
+  release({
+    dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+    sourcePath: `${DEFAULT_FOLDER}/shots/shared.png`, fileRevision: 'shared',
+  });
+  assert.equal((await first).relativeUrl, (await second).relativeUrl);
+
+  const failed = path => client.request('assets.createUrl', { resource: resource(path) });
+  await failed('missing/first.png');
+  await failed('missing/first.png');
+  assert.equal(reads, 2, 'a repeated failure uses the negative cache');
+  for (let index = 0; index < 128; index++) await failed(`missing/${index}.png`);
+  assert.equal(reads, 130);
+  await failed('missing/first.png');
+  assert.equal(reads, 131, 'the oldest failure is evicted from the 128-entry LRU');
   host.stop();
 });
 

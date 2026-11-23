@@ -156,6 +156,21 @@ const isSettled = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
   !AsyncResult.isInitial(result) && !result.waiting;
 
 const KEEP_URL_MIN_LIFE_MS = 5 * 60_000;
+const ASSET_REVISION_HISTORY_MAX = 512;
+
+function lruRead<V>(map: Map<string, V>, key: string): V | undefined {
+  const value = map.get(key);
+  if (value === undefined) return undefined;
+  map.delete(key);
+  map.set(key, value);
+  return value;
+}
+
+function lruWrite<V>(map: Map<string, V>, key: string, value: V): void {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > ASSET_REVISION_HISTORY_MAX) map.delete(map.keys().next().value!);
+}
 
 /**
  * A re-mint signs a new URL even when the file is unchanged, and a new URL reloads the image.
@@ -192,9 +207,8 @@ export function makeRevisionedAssetUrlFamily(
   now: () => number = Date.now,
 ) {
   // Outside the nodes: a node is dropped once unmounted, and the next read of
-  // its revision must still see the revisions minted since. Never pruned on
-  // purpose: pruning would forget the revision and re-mint on the next mount.
-  // It holds one short entry per file shown, and goes with the registry.
+  // its revision still sees recently minted revisions. Bound the per-registry
+  // history so a long-lived window cannot grow it without limit.
   const mintedUnder = new WeakMap<AtomRegistry.AtomRegistry, Map<string, string | null>>();
   // Also per resource: a new revision builds a new node, which must keep the URL on screen.
   const shownUnder = new WeakMap<
@@ -213,12 +227,13 @@ export function makeRevisionedAssetUrlFamily(
           minted = new Map();
           mintedUnder.set(get.registry, minted);
         }
-        const firstRead = !minted.has(resourceKey);
-        let pending = minted.get(resourceKey) !== revision;
+        const mintedRevision = lruRead(minted, resourceKey);
+        const firstRead = mintedRevision === undefined;
+        let pending = mintedRevision !== revision;
         const current = get.once(query);
         if (pending && (firstRead || isSettled(current))) {
           pending = false;
-          minted.set(resourceKey, revision);
+          lruWrite(minted, resourceKey, revision);
           if (isSettled(current)) get.refresh(query);
         }
         let shownByResource = shownUnder.get(get.registry);
@@ -227,16 +242,16 @@ export function makeRevisionedAssetUrlFamily(
           shownUnder.set(get.registry, shownByResource);
         }
         const show = (value: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>) => {
-          const previous = shownByResource.get(resourceKey);
+          const previous = lruRead(shownByResource, resourceKey);
           const shown = previous === undefined ? value : keepUnchangedFile(previous, value, now());
-          shownByResource.set(resourceKey, shown);
+          lruWrite(shownByResource, resourceKey, shown);
           return shown;
         };
         get.subscribe(query, (value) => {
           get.setSelf(show(value));
           if (!pending || !isSettled(value)) return;
           pending = false;
-          minted.set(resourceKey, revision);
+          lruWrite(minted, resourceKey, revision);
           get.refresh(query);
         });
         return show(get.once(query));

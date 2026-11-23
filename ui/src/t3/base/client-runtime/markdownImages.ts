@@ -10,7 +10,7 @@ import {
   splitMarkdownLinkSearchAndHash,
 } from "@t3tools/shared/markdownLinks";
 
-const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
+const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|blob:|\/\/)/i;
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export type MarkdownImageSource =

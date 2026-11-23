@@ -21,6 +21,25 @@ test('T3 asset contract admits only its server paths and process-local blob prev
   assert.match(map, /contracts\/assets\.ts\.patch[^\n]*Blob URL/);
 });
 
+test('assistant data images are blocked and T3 image URL history is bounded', async () => {
+  const [imagePatch, imageSource, assetPatch, assetSource, manifestText, map] = await Promise.all([
+    readFile(new URL('src/t3/base-patches/client-runtime/markdownImages.ts.patch', root), 'utf8'),
+    readFile(new URL('src/t3/base/client-runtime/markdownImages.ts', root), 'utf8'),
+    readFile(new URL('src/t3/base-patches/client-runtime/state/assets.ts.patch', root), 'utf8'),
+    readFile(new URL('src/t3/base/client-runtime/state/assets.ts', root), 'utf8'),
+    readFile(new URL('src/t3/manifest.json', root), 'utf8'),
+    readFile(new URL('T3-MAP.md', root), 'utf8'),
+  ]);
+  assert.match(imagePatch, /-const DIRECT_IMAGE_SOURCE_PATTERN = \/\^\(\?:https\?:\|data:/);
+  assert.match(imageSource, /DIRECT_IMAGE_SOURCE_PATTERN = \/\^\(\?:https\?:\|blob:/);
+  assert.doesNotMatch(imageSource, /DIRECT_IMAGE_SOURCE_PATTERN = [^\n]*data:/);
+  assert.match(assetPatch, /ASSET_REVISION_HISTORY_MAX = 512/);
+  assert.match(assetSource, /while \(map\.size > ASSET_REVISION_HISTORY_MAX\)/);
+  const patched = JSON.parse(manifestText).base.patched;
+  assert(patched['client-runtime/markdownImages.ts']);
+  assert.match(map, /markdownImages\.ts\.patch[^\n]*data URI/);
+});
+
 test('thread details card stays visible (CEO: it becomes the HOH-43 stats panel)', async () => {
   const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
   assert.doesNotMatch(features, /\[data-thread-details-card\]/);

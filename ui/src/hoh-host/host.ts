@@ -63,6 +63,28 @@ const LOCAL_IMAGE_MAX_RETAINED_BYTES = 128 * 1024 * 1024;
 const LOCAL_IMAGE_MAX_RETAINED_ENTRIES = 64;
 const LOCAL_IMAGE_THREAD_MAX_RETAINED_BYTES = 64 * 1024 * 1024;
 const LOCAL_IMAGE_THREAD_MAX_RETAINED_ENTRIES = 32;
+const LOCAL_IMAGE_REQUEST_CACHE_MAX = 128;
+const LOCAL_IMAGE_FAILURE_TTL_MS = 5_000;
+const LOCAL_IMAGE_MAX_INFLIGHT = 6;
+const LOCAL_IMAGE_THREAD_MAX_INFLIGHT = 3;
+
+type LocalImageUrl = { url: string; revision: string; sourcePath: string; sizeBytes: number; threadId: string };
+type LocalImageFailure = { message: string; expiresAt: number };
+type LocalImageReservation = { threadId: string };
+
+function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  const value = map.get(key);
+  if (value === undefined) return undefined;
+  map.delete(key);
+  map.set(key, value);
+  return value;
+}
+
+function lruSet<K, V>(map: Map<K, V>, key: K, value: V, maximum: number) {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > maximum) map.delete(map.keys().next().value!);
+}
 
 export function localImageRetentionFits(input: {
   readonly globalBytes: number; readonly globalEntries: number;
@@ -176,7 +198,12 @@ export class HohHost {
   /** Upload ids already adopted by a local message: their preview is kept until this window closes. */
   private readonly sentPreviewIds = new Set<string>();
   /** One process-local URL per conversation/canonical path, bounded globally and per conversation. */
-  private readonly localImageUrls = new Map<string, { url: string; revision: string; sourcePath: string; sizeBytes: number; threadId: string }>();
+  private readonly localImageUrls = new Map<string, LocalImageUrl>();
+  /** Repeated broken markdown must not repeatedly cross the native bridge. */
+  private readonly localImageFailures = new Map<string, LocalImageFailure>();
+  private readonly localImageInflight = new Map<string, Promise<LocalImageUrl>>();
+  /** Worst-case byte/entry reservations are installed before native I/O. */
+  private readonly localImageReservations = new Map<string, LocalImageReservation>();
   private localImageBytes = 0;
   /** The skills Claude declared for each folder (its last workspace snapshot): `$name` in a message goes as `/name`. */
   private readonly skillsByFolder = new Map<string, Set<string>>();
@@ -429,6 +456,9 @@ export class HohHost {
     this.previewUrls.clear();
     for (const image of this.localImageUrls.values()) URL.revokeObjectURL(image.url);
     this.localImageUrls.clear();
+    this.localImageFailures.clear();
+    this.localImageInflight.clear();
+    this.localImageReservations.clear();
     this.localImageBytes = 0;
     this.sentPreviewIds.clear();
   }
@@ -445,8 +475,42 @@ export class HohHost {
     return url;
   }
 
-  /** A conversation-bound Blob URL for a native image that passed the single Rust file policy. */
-  private async localImageUrl(threadId: string, path: string) {
+  private reserveLocalImage(requestKey: string, threadId: string) {
+    let reservedGlobalBytes = 0;
+    let reservedGlobalEntries = 0;
+    let reservedThreadBytes = 0;
+    let reservedThreadEntries = 0;
+    let threadInflight = 0;
+    for (const reservation of this.localImageReservations.values()) {
+      reservedGlobalBytes += LOCAL_IMAGE_BYTES;
+      reservedGlobalEntries++;
+      if (reservation.threadId !== threadId) continue;
+      threadInflight++;
+      reservedThreadBytes += LOCAL_IMAGE_BYTES;
+      reservedThreadEntries++;
+    }
+    if (this.localImageReservations.size >= LOCAL_IMAGE_MAX_INFLIGHT || threadInflight >= LOCAL_IMAGE_THREAD_MAX_INFLIGHT)
+      throw new Error('Image unavailable: too many project images are already being opened in this window.');
+    let threadBytes = 0;
+    let threadEntries = 0;
+    for (const retained of this.localImageUrls.values()) {
+      if (retained.threadId !== threadId) continue;
+      threadBytes += retained.sizeBytes;
+      threadEntries++;
+    }
+    // A formerly canonical request path can be retargeted before this read. Reserve a new entry,
+    // never a replacement inferred from a stale alias, so every possible native answer fits.
+    if (!localImageRetentionFits({
+      globalBytes: this.localImageBytes + reservedGlobalBytes,
+      globalEntries: this.localImageUrls.size + reservedGlobalEntries,
+      threadBytes: threadBytes + reservedThreadBytes,
+      threadEntries: threadEntries + reservedThreadEntries,
+      replacedBytes: 0, replacing: false, sizeBytes: LOCAL_IMAGE_BYTES,
+    })) throw new Error('Image unavailable: too many project images are already open in this window.');
+    this.localImageReservations.set(requestKey, { threadId });
+  }
+
+  private async readLocalImage(threadId: string, path: string, requestKey: string) {
     if (!this.engine.readImageAsset) throw new Error('Image unavailable: this window cannot read project images.');
     const image = await this.engine.readImageAsset({ sessionId: threadId, path });
     if (this.stopped) throw new Error('Image unavailable: this window has closed.');
@@ -456,7 +520,10 @@ export class HohHost {
       throw new Error('Image unavailable: the native image identity is invalid.');
     const key = `${threadId}\0${image.sourcePath}`;
     const existing = this.localImageUrls.get(key);
-    if (existing?.revision === image.fileRevision && existing.sizeBytes === image.sizeBytes) return existing;
+    if (existing?.revision === image.fileRevision && existing.sizeBytes === image.sizeBytes) {
+      this.localImageFailures.delete(requestKey);
+      return existing;
+    }
     let threadBytes = 0;
     let threadEntries = 0;
     for (const retained of this.localImageUrls.values()) {
@@ -484,7 +551,41 @@ export class HohHost {
     const minted = { url, revision: image.fileRevision, sourcePath: image.sourcePath, sizeBytes: image.sizeBytes, threadId };
     this.localImageUrls.set(key, minted);
     this.localImageBytes += image.sizeBytes;
+    this.localImageFailures.delete(requestKey);
     return minted;
+  }
+
+  /** A conversation-bound Blob URL for a native image that passed the single Rust file policy. */
+  private localImageUrl(threadId: string, path: string): Promise<LocalImageUrl> {
+    if (this.stopped) return Promise.reject(new Error('Image unavailable: this window has closed.'));
+    if (path.length > 4096) return Promise.reject(new Error('Image unavailable: the image path is too long.'));
+    const requestKey = `${threadId}\0${path}`;
+    const failure = lruGet(this.localImageFailures, requestKey);
+    if (failure && failure.expiresAt > this.now()) return Promise.reject(new Error(failure.message));
+    const pending = this.localImageInflight.get(requestKey);
+    if (pending) return pending;
+    try {
+      this.reserveLocalImage(requestKey, threadId);
+    } catch (error) {
+      const message = errorText(error).slice(0, 512);
+      lruSet(this.localImageFailures, requestKey, {
+        message, expiresAt: this.now() + LOCAL_IMAGE_FAILURE_TTL_MS,
+      }, LOCAL_IMAGE_REQUEST_CACHE_MAX);
+      return Promise.reject(error);
+    }
+    const read = this.readLocalImage(threadId, path, requestKey)
+      .catch(error => {
+        if (!this.stopped) lruSet(this.localImageFailures, requestKey, {
+          message: errorText(error).slice(0, 512), expiresAt: this.now() + LOCAL_IMAGE_FAILURE_TTL_MS,
+        }, LOCAL_IMAGE_REQUEST_CACHE_MAX);
+        throw error;
+      })
+      .finally(() => {
+        this.localImageReservations.delete(requestKey);
+        if (this.localImageInflight.get(requestKey) === read) this.localImageInflight.delete(requestKey);
+      });
+    this.localImageInflight.set(requestKey, read);
+    return read;
   }
 
   private async load() {
