@@ -1,7 +1,7 @@
 import { scopeThreadRef } from '@t3tools/client-runtime/environment';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowUpRightIcon } from 'lucide-react';
-import { useCallback, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useSyncExternalStore } from 'react';
 
 import ChatView from '~/components/ChatView';
 import { BackgroundThreadContext } from '~/components/chat/backgroundThread';
@@ -19,6 +19,52 @@ import { closeQuickView, openQuickView, quickViewStore } from './quick-view-stor
 import './quick-view.css';
 
 const ENVIRONMENT_ID = 'hoh-local';
+const FRAME_VARIANT_KEY = 'hoh.quick-view-frame';
+const EMPTY_SUBSCRIBE = () => () => {};
+const EMPTY_VERSION = () => 0;
+
+type QuickViewFrameState = 'working' | 'waiting' | 'ready';
+type HomeState = 'working' | 'waiting' | 'done' | 'ended';
+interface QuickViewHome {
+  version(): number;
+  subscribe(listener: () => void): () => void;
+  entries(): ReadonlyArray<{ readonly id: string; readonly state: HomeState }>;
+}
+
+function quickViewHome(): QuickViewHome | undefined {
+  return (globalThis as { __HOH_HOME__?: QuickViewHome }).__HOH_HOME__;
+}
+
+/** Temporary design-review switch: `localStorage[hoh.quick-view-frame] = "2"`; variant 1 is canonical. */
+export function quickViewFrameVariant(): '1' | '2' {
+  try {
+    return globalThis.localStorage?.getItem(FRAME_VARIANT_KEY) === '2' ? '2' : '1';
+  } catch {
+    return '1';
+  }
+}
+
+export function quickViewFrameState(
+  homeState: HomeState | undefined,
+  thread: {
+    readonly hasPendingApprovals: boolean;
+    readonly hasPendingUserInput: boolean;
+    readonly pendingSubagentRequest?: 'approval' | 'user_input' | null;
+    readonly runtime: { readonly status: string } | null;
+  } | null,
+): QuickViewFrameState {
+  if (homeState === 'waiting') return 'waiting';
+  if (homeState === 'working') return 'working';
+  if (
+    thread?.hasPendingApprovals ||
+    thread?.hasPendingUserInput ||
+    thread?.pendingSubagentRequest === 'approval' ||
+    thread?.pendingSubagentRequest === 'user_input'
+  ) return 'waiting';
+  return thread?.runtime && ['preparing', 'queued', 'starting', 'running'].includes(thread.runtime.status)
+    ? 'working'
+    : 'ready';
+}
 
 export { openQuickView };
 
@@ -27,8 +73,28 @@ export function QuickViewDialog() {
   const { threadId } = useSyncExternalStore(quickViewStore.subscribe, quickViewStore.getSnapshot);
   const threadRef = threadId === null ? null : scopeThreadRef(ENVIRONMENT_ID, threadId);
   const thread = useQuietThreadShell(threadRef);
+  const home = quickViewHome();
+  useSyncExternalStore(home?.subscribe ?? EMPTY_SUBSCRIBE, home?.version ?? EMPTY_VERSION);
+  const homeState = home?.entries().find((entry) => entry.id === threadId)?.state;
+  const frameState = quickViewFrameState(homeState, thread);
+  const frameVariant = quickViewFrameVariant();
   const navigate = useNavigate();
   const title = thread?.title?.trim() || 'Conversation';
+  useLayoutEffect(() => {
+    if (threadId === null) return;
+    const root = document.documentElement;
+    const sidebarGap = document.querySelector<HTMLElement>('[data-slot="sidebar-gap"]');
+    const publishInset = () => {
+      root.style.setProperty('--quick-view-content-inset', `${sidebarGap?.getBoundingClientRect().width ?? 0}px`);
+    };
+    publishInset();
+    const observer = sidebarGap ? new ResizeObserver(publishInset) : null;
+    observer?.observe(sidebarGap!);
+    return () => {
+      observer?.disconnect();
+      root.style.removeProperty('--quick-view-content-inset');
+    };
+  }, [threadId]);
   const openFullConversation = useCallback(async () => {
     if (threadId === null) return;
     await navigate({
@@ -47,6 +113,8 @@ export function QuickViewDialog() {
     <Dialog open={threadId !== null} onOpenChange={(open) => { if (!open) closeQuickView(); }}>
       <DialogPopup
         className="hoh-quick-view"
+        data-frame-state={frameState}
+        data-frame-variant={frameVariant}
         bottomStickOnMobile={false}
         finalFocus={false}
       >
