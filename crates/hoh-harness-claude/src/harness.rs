@@ -1528,8 +1528,10 @@ mod tests {
         assert_eq!(limits.frame_queue, 2);
         assert_eq!(limits.stdin_queue, 1);
 
-        let mut config = ClaudeConfig::default();
-        config.setting_sources = SettingSources::Isolated;
+        let mut config = ClaudeConfig {
+            setting_sources: SettingSources::Isolated,
+            ..ClaudeConfig::default()
+        };
         config.extra_env.push((
             "CLAUDE_CONFIG_DIR".to_owned(),
             "/human/claude-state".to_owned(),
