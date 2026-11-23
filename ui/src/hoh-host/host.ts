@@ -12,7 +12,7 @@
 // which project each chat is in are kept in the window's storage, so they survive a restart; a chat whose
 // history names a project's folder (`working-directory/change`) is put in that project.
 import {
-  accessModeOf, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
+  accessModeOf, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3InteractionMode, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
 import { englishError } from './errors.ts';
@@ -40,6 +40,7 @@ export interface HohStorage {
 
 /** The reasoning level goes to the engine as `effort` of `session/prompt` (agreed with the engine's writer). */
 const effortParam = (effort: string | null) => effort ? { effort } : {};
+const interactionModeOf = (value: unknown): T3InteractionMode => value === 'plan' ? 'plan' : 'default';
 
 export const STORAGE_KEY = 'hoh-host.projects.v1';
 const PLACEHOLDER_ROOT = '~/Documents/HoH';
@@ -60,7 +61,6 @@ const PAGE = 1000;
 const NO_OP_COMMANDS = new Set([
   'thread.visit', 'thread.mark-unread', 'thread.settle', 'thread.unsettle', 'thread.auto-settle', 'thread.auto-settle.set',
   'thread.pin', 'thread.unpin', 'thread.pin.reorder', 'thread.active.reorder', 'thread.tag.set', 'thread.snooze', 'thread.unsnooze',
-  'thread.interaction-mode.set',
 ]);
 
 /** The chat folder is not a git repository for T3: no branch, no worktree, nothing to commit. */
@@ -126,6 +126,8 @@ export class HohHost {
   private readonly homes = new Map<string, string>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
   private readonly levels = new Map<string, { id: string; value: unknown }[]>();
+  /** T3's per-thread composer interaction mode. */
+  private readonly interactions = new Map<string, T3InteractionMode>();
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
@@ -159,6 +161,7 @@ export class HohHost {
     const threads = saved?.threads && typeof saved.threads === 'object' ? saved.threads : {};
     for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
+    for (const [threadId, mode] of Object.entries(saved?.interactions && typeof saved.interactions === 'object' ? saved.interactions : {})) this.interactions.set(threadId, interactionModeOf(mode));
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
   }
@@ -168,7 +171,7 @@ export class HohHost {
     const value = {
       version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
-      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels),
+      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels), interactions: Object.fromEntries(this.interactions),
     };
     try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
   }
@@ -288,7 +291,7 @@ export class HohHost {
     for (const session of sessions) {
       if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
       const at = Number(session.updatedAt) || this.startedAt;
-      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
+      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, interactionMode: this.interactions.get(session.id), projectId: this.homeOf(session.id) }));
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
     await this.peekToday();
@@ -366,7 +369,7 @@ export class HohHost {
     let thread = this.threads.get(sessionId);
     if (!thread) {
       // A chat started elsewhere (another window, a schedule): it joins the list.
-      thread = new ThreadModel({ id: sessionId, createdAt: this.now(), model: this.model(), mode: this.mode });
+      thread = new ThreadModel({ id: sessionId, createdAt: this.now(), model: this.model(), mode: this.mode, interactionMode: this.interactions.get(sessionId) });
       thread.loaded = true;
       this.threads.set(sessionId, thread);
       this.showProject();
@@ -485,7 +488,7 @@ export class HohHost {
    * first message, by the request the current window uses for the person's folder choice; the Tauri host
    * may ask the person to allow it. Claude then runs in that folder.
    */
-  private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown) {
+  private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown, interactionMode?: unknown) {
     const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
     if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
     await this.applyMode(mode);
@@ -502,7 +505,9 @@ export class HohHost {
         this.emitProject(folderProject(folder));
       }
     }
-    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode, projectId: folder?.id ?? HOH_PROJECT_ID });
+    const interaction = interactionModeOf(interactionMode);
+    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode, interactionMode: interaction, projectId: folder?.id ?? HOH_PROJECT_ID });
+    this.interactions.set(threadId, interaction);
     thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
     thread.loaded = true;
     this.threads.set(threadId, thread);
@@ -650,7 +655,7 @@ export class HohHost {
     thread.sendLocal(messageId, text, this.now());
     this.changed(thread.id);
     try {
-      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }], ...effortParam(effortOf(thread.model, thread.options)) });
+      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }], interactionMode: thread.interactionMode, ...effortParam(effortOf(thread.model, thread.options)) });
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
     } catch (error) {
       thread.sendFailed(messageId, this.now(), error);
@@ -696,7 +701,7 @@ export class HohHost {
     try {
       switch (type) {
         case 'thread.create':
-          if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId);
+          if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId, command.interactionMode);
           break;
         case 'message.dispatch': {
           const target = needThread();
@@ -718,6 +723,13 @@ export class HohHost {
           break;
         }
         case 'thread.runtime-mode.set': needThread(); await this.applyMode(command.runtimeMode); break;
+        case 'thread.interaction-mode.set': {
+          const target = needThread();
+          target.setInteractionMode(interactionModeOf(command.interactionMode));
+          this.interactions.set(target.id, target.interactionMode);
+          this.save(); this.changed(target.id);
+          break;
+        }
         case 'thread.model-selection.set': {
           const target = needThread();
           await this.applyModel(command.modelSelection?.model);
@@ -754,8 +766,12 @@ export class HohHost {
     const threadId = typeof input.threadId === 'string' && input.threadId ? input.threadId : 'thread-' + (globalThis.crypto?.randomUUID?.() ?? this.now().toString(36));
     const existing = await this.loaded(threadId);
     try {
-      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId);
+      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.interactionMode);
       if (existing) await this.applyMode(input.runtimeMode);
+      if (existing && input.interactionMode !== undefined) {
+        thread.setInteractionMode(interactionModeOf(input.interactionMode));
+        this.interactions.set(thread.id, thread.interactionMode); this.save();
+      }
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);

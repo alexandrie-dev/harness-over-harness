@@ -95,11 +95,14 @@ pub(crate) struct Choices {
     /// For each conversation an external agent serves (by HoH session id), the levels its
     /// prompts named, until their turns take them (HOH-40).
     efforts: Mutex<HashMap<String, PromptEfforts>>,
+    /// Interaction modes named by prompts, paired to the same message ids as effort.
+    interactions: Mutex<HashMap<String, PromptInteractions>>,
 }
 
 /// The `effort` each `session/prompt` of a conversation named (none: it named none), by the id
 /// of its message, oldest first.
 type PromptEfforts = VecDeque<(String, Option<String>)>;
+type PromptInteractions = VecDeque<(String, InteractionMode)>;
 
 impl Choices {
     pub(crate) fn access(&self, executor: &str) -> AccessMode {
@@ -121,6 +124,9 @@ impl Choices {
     /// Conversations of the engine's own model keep nothing.
     pub(crate) fn serve_efforts(&self, session: &str) {
         lock(&self.efforts).entry(session.to_owned()).or_default();
+        lock(&self.interactions)
+            .entry(session.to_owned())
+            .or_default();
     }
 
     /// The level the prompt `message` of `session` named, kept for that message's turn.
@@ -137,6 +143,19 @@ impl Choices {
         let pending = efforts.get_mut(session)?;
         let at = pending.iter().position(|(id, _)| id == message)?;
         pending.drain(..=at).next_back().map(|(_, effort)| effort)
+    }
+
+    pub(crate) fn note_interaction(&self, session: &str, message: &str, mode: InteractionMode) {
+        if let Some(pending) = lock(&self.interactions).get_mut(session) {
+            pending.push_back((message.to_owned(), mode));
+        }
+    }
+
+    pub(crate) fn take_interaction(&self, session: &str, message: &str) -> Option<InteractionMode> {
+        let mut interactions = lock(&self.interactions);
+        let pending = interactions.get_mut(session)?;
+        let at = pending.iter().position(|(id, _)| id == message)?;
+        pending.drain(..=at).next_back().map(|(_, mode)| mode)
     }
 }
 

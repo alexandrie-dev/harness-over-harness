@@ -37,6 +37,7 @@ test('handshake: config snapshot, probe, settings, ping; only Claude is offered'
   assert.deepEqual(first.config.providers[0].models.map(model => model.slug), ['claude-sonnet', 'claude-opus']);
   assert.equal(first.config.providers[0].status, 'ready');
   assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'full-access']);
+  assert.equal(first.config.providers[0].showInteractionModeToggle, true);
   assert.deepEqual(first.config.settings.defaultModelSelection, { instanceId: 'claudeAgent', model: 'claude-sonnet' });
   assert.equal(first.config.settings.defaultRuntimeMode, 'approval-required');
   // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
@@ -104,7 +105,7 @@ test('new chat with a first message, streamed answer, tool step, end of turn', a
   assert.equal(launched.threadId, 'thread-1');
   assert.equal(launched.resumed, false);
   assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/select').map(r => r.params), [{ executor: 'claude', model: 'claude-opus' }]);
-  assert.deepEqual(engine.requests.find(r => r.method === 'session/prompt').params, { sessionId: 'thread-1', contentBlocks: [{ type: 'text', text: 'Посчитай файлы' }] });
+  assert.deepEqual(engine.requests.find(r => r.method === 'session/prompt').params, { sessionId: 'thread-1', contentBlocks: [{ type: 'text', text: 'Посчитай файлы' }], interactionMode: 'default' });
   const user = launched.projection.turnItems.find(item => item.type === 'user_message');
   assert.equal(user.messageId, 'm-t3-1'); assert.equal(user.text, 'Посчитай файлы');
   assert.equal(launched.projection.runs[0].status, 'running');
@@ -143,6 +144,33 @@ test('new chat with a first message, streamed answer, tool step, end of turn', a
   const row = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-1' && value.thread.status === 'completed');
   assert.equal(row.thread.latestVisibleMessage.text, 'Файлов: 7.');
   assert.equal(row.thread.title, 'Hello');
+});
+
+test('Plan mode follows the T3 composer command and ExitPlanMode becomes its proposed-plan artifact', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'p0', threadId: 'thread-plan', projectId: 'hoh-project', title: 'Plan',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'plan',
+  });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'thread-plan' });
+  await thread.until(value => value.kind === 'snapshot');
+  await client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'p1', threadId: 'thread-plan', messageId: 'm-plan', text: 'Составь план', attachments: [],
+    createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(engine.requests.find(r => r.method === 'session/prompt').params.interactionMode, 'plan');
+  engine.emitEvent('thread-plan', 'tool/call', { turn: 1, callId: 'exit-plan', name: 'ExitPlanMode', arguments: { plan: '# План\n\n1. Проверить код\n2. Внести правку' } });
+  const planned = await thread.until(value => value.kind === 'snapshot' && value.projection.plans.length === 1);
+  assert.equal(planned.projection.thread.interactionMode, 'plan');
+  assert.equal(planned.projection.plans[0].status, 'active');
+  assert.equal(planned.projection.turnItems.find(item => item.type === 'proposed_plan').markdown, '# План\n\n1. Проверить код\n2. Внести правку');
+  engine.emitEvent('thread-plan', 'tool/call', { turn: 1, callId: 'exit-plan-2', name: 'ExitPlanMode', arguments: { plan: '# Новый план' } });
+  const replanned = await thread.until(value => value.kind === 'snapshot' && value.projection.plans.length === 2);
+  assert.deepEqual(replanned.projection.plans.map(plan => plan.status), ['superseded', 'active']);
+  await client.call('orchestration.dispatchCommand', { type: 'thread.interaction-mode.set', commandId: 'p2', threadId: 'thread-plan', interactionMode: 'default' });
+  const ordinary = await thread.until(value => value.kind === 'snapshot' && value.projection.thread.interactionMode === 'default');
+  assert.equal(ordinary.projection.thread.interactionMode, 'default');
 });
 
 test('a follow-up message goes to the same chat; Stop is the engine\'s cancel and the run ends interrupted', async () => {

@@ -14,6 +14,7 @@ export const CLAUDE_INSTANCE_ID = 'claudeAgent';
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 
 export type T3RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
+export type T3InteractionMode = 'default' | 'plan';
 export type HohAccessMode = 'confirm' | 'full';
 
 /** HoH has two modes: Claude asks first, or works on its own. T3's in-between modes ask first. */
@@ -142,7 +143,7 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
     instanceId: CLAUDE_INSTANCE_ID,
     driver: CLAUDE_INSTANCE_ID,
     displayName: 'Claude',
-    showInteractionModeToggle: false,
+    showInteractionModeToggle: true,
     supportedRuntimeModes: ['approval-required', 'full-access'],
     supportsConversationRollback: false,
     supportsTextGeneration: false,

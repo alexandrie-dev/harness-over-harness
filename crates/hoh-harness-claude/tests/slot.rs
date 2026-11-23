@@ -156,6 +156,7 @@ impl Slot {
             cwd: self.dir.path().to_string_lossy().into_owned(),
             model: None,
             effort: None,
+            interaction_mode: hoh_external_harness::InteractionMode::Default,
             policy,
             resume: None,
         }

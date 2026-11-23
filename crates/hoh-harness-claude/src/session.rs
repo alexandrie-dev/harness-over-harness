@@ -964,6 +964,19 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
     let native_id = text(request, "tool_use_id")
         .unwrap_or(request_id)
         .to_owned();
+    let tool_use_id = text(request, "tool_use_id").map(str::to_owned);
+    if name == "ExitPlanMode" {
+        if let Some(id) = tool_use_id.as_deref() {
+            ensure_item_started(inner, id, name, Some(&input)).await;
+        }
+        let captured = json!({
+            "behavior": "deny",
+            "message": "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+            "toolUseID": native_id,
+        });
+        let _ = inner.reply(request_id, captured).await;
+        return;
+    }
     if name == "AskUserQuestion" {
         let (questions, texts) = questions_from(&input);
         lock(&inner.state).pending.insert(
@@ -982,7 +995,6 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
             .await;
         return;
     }
-    let tool_use_id = text(request, "tool_use_id").map(str::to_owned);
     let of_subagent = tool_use_id
         .as_deref()
         .is_some_and(|id| lock(&inner.state).subagent_tools.contains(id));

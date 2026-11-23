@@ -247,6 +247,7 @@ const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidErro
 import { toastManager } from "../ui/toast";
 import { m as resolveMessage } from "../../i18n/messages";
 import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
+import { ComposerControl } from "./ComposerControl";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
@@ -623,6 +624,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isEditingQueuedMessage = editingQueuedAttachments !== null;
   const applyThreadModelPick = useApplyThreadModelPick();
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const setComposerDraftInteractionMode = useComposerDraftStore(
+    (store) => store.setInteractionMode,
+  );
   const composerDraftTargetKeyRef = useRef("");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
   useLayoutEffect(() => {
@@ -2503,6 +2507,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? 0
       : expandedControlsIconOnlyBlockCount;
   const composerControls = (
+    <>
+      {selectedProviderEntry?.snapshot.showInteractionModeToggle === true ? (
+        <ComposerControl
+          size={composerControlsCollapsed ? "xs" : "sm"}
+          aria-label={gt("Plan mode")}
+          aria-pressed={
+            (composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") ===
+            "plan"
+          }
+          disabled={isSendBusy}
+          onClick={() =>
+            setComposerDraftInteractionMode(
+              composerDraftTarget,
+              (composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") ===
+                "plan"
+                ? "default"
+                : "plan",
+            )
+          }
+        >
+          <span data-composer-control-label>{gt("Plan")}</span>
+        </ComposerControl>
+      ) : null}
     <ComposerControlsBar
       environmentId={environmentId}
       workspaceCwd={gitCwd}
@@ -2550,6 +2577,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
       getModelDisabledReason={getModelDisabledReason}
     />
+    </>
   );
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.

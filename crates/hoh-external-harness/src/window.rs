@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::agent::access_text;
-use crate::contract::{AccessMode, VersionStatus};
+use crate::contract::{AccessMode, InteractionMode, VersionStatus};
 use crate::redact::{redact, redact_value};
 use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
 
@@ -106,6 +106,18 @@ impl Plugin for ExternalHarnessWindowPlugin {
                     }
                 };
                 choices.note_effort(session, message, effort);
+                let interaction = match params.get("interactionMode") {
+                    None | Some(Value::Null) => InteractionMode::Default,
+                    Some(Value::String(value)) if value == "default" => InteractionMode::Default,
+                    Some(Value::String(value)) if value == "plan" => InteractionMode::Plan,
+                    Some(_) => {
+                        log.warn(format_args!(
+                            "session/prompt interactionMode is not default or plan: the turn uses default"
+                        ));
+                        InteractionMode::Default
+                    }
+                };
+                choices.note_interaction(session, message, interaction);
             })?;
         Ok(())
     }

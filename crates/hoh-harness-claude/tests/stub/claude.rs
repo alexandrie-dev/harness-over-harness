@@ -350,6 +350,13 @@ impl Stub {
             );
             self.say(&message_id, 1, &["Hel", "lo"]);
             self.result("success", false, "Hello");
+        } else if text == "plan" {
+            self.forced_turn(
+                &message_id,
+                "ExitPlanMode",
+                &json!({ "plan": "# Plan\n\n1. Inspect\n2. Implement" }),
+                "",
+            );
         } else if let Some(command) = text.strip_prefix("run: ") {
             self.tool_turn(&message_id, "Bash", &json!({ "command": command }), command);
         } else if let Some(path) = text.strip_prefix("edit: ") {

@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, ApprovalMode, AuthState, EndReason, ExternalHarness,
-    HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse, HarnessSession, ItemOutcome,
-    PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, Started, code,
+    HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse, HarnessSession, InteractionMode,
+    ItemOutcome, PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, Started,
+    code,
 };
 use hoh_harness_claude::{ClaudeConfig, ClaudeHarness, SettingSources};
 use tokio::sync::mpsc::Receiver;
@@ -95,6 +96,7 @@ fn params(dir: &Path, resume: Option<&str>, policy: HarnessPolicy) -> StartParam
         cwd: dir.to_string_lossy().into_owned(),
         model: None,
         effort: None,
+        interaction_mode: hoh_external_harness::InteractionMode::Default,
         policy,
         resume: resume.map(Into::into),
     }
@@ -109,6 +111,38 @@ async fn start(env: &Env, resume: Option<&str>) -> Started {
         .await
         .map_err(|e| e.message)
         .unwrap()
+}
+
+#[tokio::test]
+async fn plan_mode_captures_exit_plan_without_asking_for_permission() {
+    let env = Env::new();
+    let mut parameters = params(env.dir.path(), None, HarnessPolicy::default());
+    parameters.interaction_mode = InteractionMode::Plan;
+    let mut started = env
+        .harness()
+        .start_with_access(parameters, AccessMode::Confirm)
+        .await
+        .unwrap();
+    prompt(&started.session, "turn-plan", "plan");
+    let events = until(&mut started.events, |event| {
+        matches!(event, HarnessEvent::TurnCompleted { .. })
+    })
+    .await;
+    assert!(events.iter().any(|event| matches!(event,
+        HarnessEvent::ItemStarted { action: HarnessAction::Tool { name, input }, .. }
+            if name == "ExitPlanMode" && input["plan"] == "# Plan\n\n1. Inspect\n2. Implement"
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, HarnessEvent::ApprovalRequested { .. }))
+    );
+    let args = env.args();
+    let at = args
+        .iter()
+        .position(|arg| arg == "--permission-mode")
+        .unwrap();
+    assert_eq!(args[at + 1], "plan");
 }
 
 fn prompt(session: &Arc<dyn HarnessSession>, turn: &str, text: &str) {

@@ -188,6 +188,8 @@
       "web/components/sidebar/SidebarChrome.tsx": "имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3",
       "web/terminalUiStateStore.ts": "выключатель: терминал — ящик терминала не открывается (normalizeThreadTerminalUiState держит terminalOpen: false), клавиши и действия ничего не открывают",
       "web/components/chat/PanelLayoutControls.tsx": "выключатель: терминал — кнопки ящика терминала нет (showTerminalControl по умолчанию false)",
+      "web/components/chat/ChatComposer.tsx": "Plan mode: переключатель в composer пишет interactionMode в черновик T3 и остаётся видимым для провайдера, который объявил showInteractionModeToggle",
+      "web/components/chat/useComposerSend.ts": "Plan mode: composer передаёт выбранный interactionMode при создании разговора и следующих ходах вместо жёсткого default",
       "web/components/settings/ThemeSettings.tsx": "выключатель: импорт тем VS Code / Open VSX — кнопки «Add theme» нет, диалог импорта не открывается",
       "gt.config.json": "языки интерфейса: английский и русский (остальные переводы не переносятся); gt.config.json T3 читает web/i18n/locales.ts",
       "web/branding.ts": "имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет",

@@ -2,7 +2,7 @@
 // ui/src/screens/chat/projection.mjs) are folded into T3's `OrchestrationV2ThreadProjection` and
 // `OrchestrationV2ThreadShell` (packages/contracts/src/orchestrationV2.ts), in their encoded JSON form.
 // One user message is one run; answers, tool steps, permission requests and questions are turn items.
-import { CLAUDE_INSTANCE_ID, runtimeModeOf, type HohAccessMode } from './config.ts';
+import { CLAUDE_INSTANCE_ID, runtimeModeOf, type HohAccessMode, type T3InteractionMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
 
@@ -108,6 +108,7 @@ export interface ThreadSeed {
   readonly updatedAt?: number;
   readonly model: string;
   readonly mode: HohAccessMode;
+  readonly interactionMode?: T3InteractionMode;
   /** The T3 project the chat belongs to: "No project" unless it was started in a folder project. */
   readonly projectId?: string;
 }
@@ -119,6 +120,7 @@ export class ThreadModel {
   updatedAt: number;
   model: string;
   mode: HohAccessMode;
+  interactionMode: T3InteractionMode;
   projectId: string;
   /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
   cwd: string | null = null;
@@ -139,6 +141,7 @@ export class ThreadModel {
   private readonly items: Item[] = [];
   private readonly messages: Message[] = [];
   private readonly requests: Request[] = [];
+  private readonly plans: Record<string, any>[] = [];
   private readonly live = new Map<string, Live>();
   private readonly retired = new Set<string>();
   private readonly calls = new Map<string, string>();
@@ -158,6 +161,7 @@ export class ThreadModel {
     this.updatedAt = seed.updatedAt ?? seed.createdAt;
     this.model = seed.model;
     this.mode = seed.mode;
+    this.interactionMode = seed.interactionMode ?? 'default';
     this.projectId = seed.projectId ?? HOH_PROJECT_ID;
   }
 
@@ -256,6 +260,17 @@ export class ThreadModel {
     if (this.calls.has(callId)) return;
     const name = text(data.name); const args = argumentsOf(data.arguments);
     const id = 'item-tool-' + callId.replace(/[^A-Za-z0-9_.:-]/g, '_');
+    if (name === 'ExitPlanMode' && text(args.plan).trim()) {
+      const markdown = text(args.plan).trim();
+      const planId = 'plan-' + callId.replace(/[^A-Za-z0-9_.:-]/g, '_');
+      const runId = this.currentRun()?.id ?? null;
+      for (const plan of this.plans) {
+        if (plan.status === 'active') plan.status = 'superseded';
+      }
+      this.plans.push({ id: planId, threadId: this.id, runId, nodeId: NODE_ID, kind: 'proposed_plan', status: 'active', markdown });
+      this.items.push({ ...this.base(id, 'proposed_plan', 'completed', at, runId), planId, markdown, streaming: false });
+      return;
+    }
     const path = text(args.file_path ?? args.path ?? args.filePath ?? args.notebook_path);
     const kind = toolKind(name);
     let item: Item;
@@ -513,6 +528,7 @@ export class ThreadModel {
 
   pendingRequest(id: string) { return this.requests.find(request => request.id === id && request.status === 'pending'); }
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
+  setInteractionMode(mode: T3InteractionMode) { this.interactionMode = mode; }
 
   private modelSelection() { return { instanceId: CLAUDE_INSTANCE_ID, model: this.model, ...(this.options?.length ? { options: this.options } : {}) }; }
   private titleText() { return nonBlank(this.title, 'New thread'); }
@@ -524,7 +540,7 @@ export class ThreadModel {
       thread: {
         createdBy: 'user', creationSource: 'web',
         id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: CLAUDE_INSTANCE_ID,
-        modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: 'default',
+        modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.interactionMode,
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
@@ -549,7 +565,7 @@ export class ThreadModel {
         id: message.id, threadId: this.id, runId: message.runId, nodeId: null, role: message.role, text: message.text,
         attachments: [], streaming: message.streaming, createdAt: iso(message.createdAt), updatedAt: iso(message.updatedAt),
       })),
-      plans: [],
+      plans: this.plans.map(plan => ({ ...plan })),
       turnItems: this.items.map(item => ({ ...item })),
       checkpointScopes: [], checkpoints: [], contextHandoffs: [], contextTransfers: [],
       visibleTurnItems: this.items.map((item, position) => ({ position, visibility: 'local', sourceThreadId: this.id, sourceItemId: item.id, item: { ...item } })),
@@ -598,7 +614,7 @@ export class ThreadModel {
     return {
       createdBy: 'user', creationSource: 'web',
       id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: CLAUDE_INSTANCE_ID,
-      modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: 'default',
+      modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.interactionMode,
       branch: null, worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
       forkedFrom: null, activeProviderThreadId: null,
@@ -609,7 +625,7 @@ export class ThreadModel {
       // Null only for a chat made here that has no message yet (an empty draft): the window keeps it out of «Recent chats»
       // until the first message. A chat of the engine's history not read yet (older than today) is stamped by its last activity.
       latestUserMessageAt: lastUser ? iso(lastUser.createdAt) : this.loaded ? null : iso(this.updatedAt),
-      hasActionableProposedPlan: false,
+      hasActionableProposedPlan: this.plans.some(plan => plan.kind === 'proposed_plan' && plan.status === 'active'),
       itemCount: this.items.length, visibleItemCount: this.items.length,
       createdAt: iso(this.createdAt), updatedAt: iso(this.updatedAt),
       archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, deletedAt: null,

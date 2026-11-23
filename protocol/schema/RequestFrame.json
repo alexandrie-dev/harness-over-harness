@@ -983,8 +983,13 @@
           "items": {
             "$ref": "#/$defs/SdkPromptContentBlock"
           }
+        },
+        "interactionMode": {
+          "description": "T3's per-turn interaction mode. Missing is the ordinary chat mode.",
+          "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "sessionId",
         "contentBlocks"

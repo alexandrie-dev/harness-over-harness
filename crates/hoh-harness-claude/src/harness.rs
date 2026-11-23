@@ -11,9 +11,9 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, ExternalHarness,
-    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, NetworkAccess, ProcessSpec,
-    SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits, VersionStatus,
-    code,
+    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, InteractionMode, NetworkAccess,
+    ProcessSpec, SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits,
+    VersionStatus, code,
 };
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
@@ -219,6 +219,28 @@ pub(crate) struct Launch {
 /// tools when the session is read-only. `approval: never` under confirm is refused before this
 /// point ([`NEVER_REFUSED`]).
 pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
+    launch_for_interaction(policy, access, InteractionMode::Default)
+}
+
+fn launch_for_interaction(
+    policy: &HarnessPolicy,
+    access: AccessMode,
+    interaction_mode: InteractionMode,
+) -> Launch {
+    if interaction_mode == InteractionMode::Plan {
+        let read_only = policy.sandbox == SandboxMode::ReadOnly;
+        return Launch {
+            permission_mode: "plan",
+            permission_prompt: true,
+            bypass: false,
+            // Plan mode changes Claude's interaction policy, not the session sandbox. T3 keeps
+            // its read-only allow-list here too, so a reviewer cannot acquire Bash/Write merely
+            // by asking Claude to plan.
+            tools: read_only.then_some(READ_ONLY_TOOLS),
+            disallowed_tools: (!read_only && policy.network == NetworkAccess::Denied)
+                .then_some("WebFetch,WebSearch"),
+        };
+    }
     if access == AccessMode::Full && policy.sandbox == SandboxMode::ReadOnly {
         // Full access does not widen a read-only session (a reviewer stays one): the read tools
         // only, as T3 does for read-only (`ClaudeAdapterV2.ts:3380-3386`, `dontAsk` + tools), and
@@ -738,7 +760,7 @@ impl ExternalHarness for ClaudeHarness {
                 Some(id) => id.clone(),
                 None => random_uuid()?,
             };
-            let launch = launch_for(&params.policy, access);
+            let launch = launch_for_interaction(&params.policy, access, params.interaction_mode);
             let args = session_args(
                 &launch,
                 config.setting_sources,
@@ -887,6 +909,40 @@ mod tests {
     }
 
     #[test]
+    fn plan_interaction_is_claudes_plan_permission_mode_even_under_full_access() {
+        let harness = ClaudeHarness::new(ClaudeConfig::default());
+        let argv = permission_args(
+            &launch_for_interaction(
+                &HarnessPolicy::default(),
+                AccessMode::Full,
+                InteractionMode::Plan,
+            ),
+            harness.config.setting_sources,
+        );
+        let at = argv
+            .iter()
+            .position(|arg| arg == "--permission-mode")
+            .unwrap();
+        assert_eq!(argv[at + 1], "plan");
+        assert!(argv.contains(&"--permission-prompt-tool".to_owned()));
+        assert!(!argv.contains(&"--allow-dangerously-skip-permissions".to_owned()));
+
+        let read_only = HarnessPolicy {
+            sandbox: SandboxMode::ReadOnly,
+            ..HarnessPolicy::default()
+        };
+        let read_only_argv = permission_args(
+            &launch_for_interaction(&read_only, AccessMode::Full, InteractionMode::Plan),
+            harness.config.setting_sources,
+        );
+        let tools = read_only_argv
+            .iter()
+            .position(|arg| arg == "--tools")
+            .unwrap();
+        assert_eq!(read_only_argv[tools + 1], READ_ONLY_TOOLS);
+    }
+
+    #[test]
     fn the_launch_flags_are_the_slice_of_the_argv_between_the_stream_flags_and_the_ids() {
         let read_only = HarnessPolicy {
             sandbox: SandboxMode::ReadOnly,
@@ -1031,6 +1087,7 @@ mod tests {
             cwd: "/".into(),
             model: None,
             effort: Some("--dangerously-skip-permissions".into()),
+            interaction_mode: InteractionMode::Default,
             policy: HarnessPolicy::default(),
             resume: None,
         };
