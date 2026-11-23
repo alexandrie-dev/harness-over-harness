@@ -283,6 +283,20 @@ fn the_main_window_may_shrink_as_far_as_in_t3() {
     );
 }
 
+/// HOH-41: a file dropped on the window reaches the T3 client as an HTML drop (its picture intake),
+/// not Tauri's native drop that nothing handles; a drop elsewhere cannot navigate the window
+/// (`main_navigation_allowed`).
+#[test]
+fn a_dropped_file_reaches_the_page() {
+    let conf: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    assert_eq!(conf["app"]["windows"][0]["dragDropEnabled"], false);
+    assert!(!main_navigation_allowed(
+        &"file:///home/user/picture.png".parse().unwrap(),
+        false,
+        |_| false
+    ));
+}
+
 /// The window icon is offered in sizes from 32 to 512 (`_NET_WM_ICON`), square and RGBA.
 #[test]
 fn the_window_icon_has_several_sizes() {
