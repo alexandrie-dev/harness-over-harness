@@ -809,10 +809,22 @@ fn assert_main_window_signature(core: &AuditEntry) {
 fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_person() {
     let broker = broker();
     let cases = [
-        (json!({"executor":"claude","mode":"full","runtimeMode":"full"}), "полный доступ"),
-        (json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}), "Спрашивать разрешение"),
-        (json!({"executor":"claude","mode":"confirm","runtimeMode":"auto-accept-edits"}), "Принимать правки"),
-        (json!({"executor":"claude","mode":"confirm","runtimeMode":"auto"}), "Авто"),
+        (
+            json!({"executor":"claude","mode":"full","runtimeMode":"full"}),
+            "полный доступ",
+        ),
+        (
+            json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}),
+            "Спрашивать разрешение",
+        ),
+        (
+            json!({"executor":"claude","mode":"confirm","runtimeMode":"auto-accept-edits"}),
+            "Принимать правки",
+        ),
+        (
+            json!({"executor":"claude","mode":"confirm","runtimeMode":"auto"}),
+            "Авто",
+        ),
     ];
     for (n, (params, _)) in cases.iter().enumerate() {
         broker
@@ -828,7 +840,11 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
     }
     let log = broker.audit_log();
     assert_eq!(log.len(), 8);
-    for (index, (human, core)) in log.chunks_exact(2).map(|pair| (&pair[0], &pair[1])).enumerate() {
+    for (index, (human, core)) in log
+        .chunks_exact(2)
+        .map(|pair| (&pair[0], &pair[1]))
+        .enumerate()
+    {
         assert_eq!(
             (human.who, human.via, human.outcome.as_str()),
             ("human", "main-window", "allowed-once")
@@ -839,7 +855,11 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
             "подтверждено человеком действием в главном окне"
         );
         assert_main_window_signature(core);
-        assert!(human.human_text.contains(cases[index].1), "{}", human.human_text);
+        assert!(
+            human.human_text.contains(cases[index].1),
+            "{}",
+            human.human_text
+        );
     }
     assert!(
         log[0]
@@ -905,7 +925,11 @@ fn only_the_exact_claude_and_codex_choices_are_confirmed_by_the_main_window_itse
             None,
         ),
         (SELECT, json!({"executor":null,"model":"local"}), None),
-        (SELECT, json!({"executor":"future-agent","model":"gpt"}), None),
+        (
+            SELECT,
+            json!({"executor":"future-agent","model":"gpt"}),
+            None,
+        ),
         (
             FOLDER_SET,
             json!({"sessionId":"s-loop","path":"/home/u/work"}),

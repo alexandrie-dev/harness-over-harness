@@ -949,11 +949,18 @@ async fn production_stop_for_a_process_ending_harness_reaps_the_group_and_resume
         .await
         .expect("production Stop finished");
     assert_eq!(last_turn_end(&agent)["kind"], "aborted");
-    assert!(until_dead(pid).await, "process-group child {pid} survived Stop");
+    assert!(
+        until_dead(pid).await,
+        "process-group child {pid} survived Stop"
+    );
     assert!(stopped.elapsed() < Duration::from_secs(3));
     turn(&agent, "hello").await;
     assert_eq!(last_answer(&agent), "Hello from native-1 turn 1");
-    assert_eq!(counter(&dirs, "starts"), 2, "the next turn starts a resumed process");
+    assert_eq!(
+        counter(&dirs, "starts"),
+        2,
+        "the next turn starts a resumed process"
+    );
     env.close().await;
 }
 
@@ -2996,14 +3003,24 @@ async fn a_codex_selection_and_model_survive_restart_in_a_downgrade_safe_sidecar
             .expect("legacy choices"),
     )
     .expect("legacy JSON");
-    assert_eq!(legacy["selected"], Value::Null, "an older HoH must not restore Codex");
+    assert_eq!(
+        legacy["selected"],
+        Value::Null,
+        "an older HoH must not restore Codex"
+    );
     let sidecar: Value = serde_json::from_str(
-        &std::fs::read_to_string(dirs.profile.join(hoh_external_harness::CODEX_SELECTION_FILE))
-            .expect("Codex sidecar"),
+        &std::fs::read_to_string(
+            dirs.profile
+                .join(hoh_external_harness::CODEX_SELECTION_FILE),
+        )
+        .expect("Codex sidecar"),
     )
     .expect("sidecar JSON");
     assert_eq!(sidecar["version"], 1);
-    assert_eq!(sidecar["selected"], json!({"executor":"codex","model":"gpt-test"}));
+    assert_eq!(
+        sidecar["selected"],
+        json!({"executor":"codex","model":"gpt-test"})
+    );
 
     let restarted = window(&dirs, quick(), Host::Absent, |_| {}).await;
     assert_eq!(

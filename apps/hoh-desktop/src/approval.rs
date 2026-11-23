@@ -1303,21 +1303,34 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         // the same words as hoh-user-approval/src/method.rs).
         "hoh/executor/access/set" => {
             let request: hoh_protocol::ExecutorAccessSetParams =
-                serde_json::from_value(params.clone())
-                    .map_err(|_| "Некорректный режим доступа")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Некорректный режим доступа")?;
             let name = executor_name(&request.executor);
             let runtime = match (&request.mode, request.runtime_mode.as_ref()) {
-                (hoh_protocol::ExecutorAccessMode::Full, None | Some(hoh_protocol::ExecutorRuntimeMode::Full)) => hoh_protocol::ExecutorRuntimeMode::Full,
-                (hoh_protocol::ExecutorAccessMode::Confirm, None | Some(hoh_protocol::ExecutorRuntimeMode::Confirm)) => hoh_protocol::ExecutorRuntimeMode::Confirm,
-                (hoh_protocol::ExecutorAccessMode::Confirm, Some(hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits)) => hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits,
-                (hoh_protocol::ExecutorAccessMode::Confirm, Some(hoh_protocol::ExecutorRuntimeMode::Auto)) => hoh_protocol::ExecutorRuntimeMode::Auto,
+                (
+                    hoh_protocol::ExecutorAccessMode::Full,
+                    None | Some(hoh_protocol::ExecutorRuntimeMode::Full),
+                ) => hoh_protocol::ExecutorRuntimeMode::Full,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    None | Some(hoh_protocol::ExecutorRuntimeMode::Confirm),
+                ) => hoh_protocol::ExecutorRuntimeMode::Confirm,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    Some(hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits),
+                ) => hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    Some(hoh_protocol::ExecutorRuntimeMode::Auto),
+                ) => hoh_protocol::ExecutorRuntimeMode::Auto,
                 _ => return Err("Режим доступа не совпадает с runtimeMode".into()),
             };
             match runtime {
                 hoh_protocol::ExecutorRuntimeMode::Full => Ok(format!(
                     "Включить полный доступ для {name}? Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить."
                 )),
-                hoh_protocol::ExecutorRuntimeMode::Confirm => Ok(format!("Вернуть режим «Спрашивать разрешение» для {name}?")),
+                hoh_protocol::ExecutorRuntimeMode::Confirm => {
+                    Ok(format!("Вернуть режим «Спрашивать разрешение» для {name}?"))
+                }
                 hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits => Ok(format!(
                     "Включить режим «Принимать правки» для {name}? Помощник сам принимает изменения файлов в рабочей папке, но спрашивает перед другими действиями."
                 )),

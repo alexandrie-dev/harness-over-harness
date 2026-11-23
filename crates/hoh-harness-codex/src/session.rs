@@ -54,10 +54,9 @@ fn current_thread_context(state: &State, params: &Value) -> Result<RequestContex
         .clone()
         .filter(|_| state.turn_opened)
         .ok_or_else(|| "Codex sent a turn-scoped message without an active HoH turn".to_owned())?;
-    let native_turn = state
-        .native_turn
-        .clone()
-        .ok_or_else(|| "Codex sent a turn-scoped message before the native turn opened".to_owned())?;
+    let native_turn = state.native_turn.clone().ok_or_else(|| {
+        "Codex sent a turn-scoped message before the native turn opened".to_owned()
+    })?;
     let thread_id = string(params, "threadId")
         .ok_or_else(|| "Codex turn-scoped message has no threadId".to_owned())?;
     if thread_id != state.thread_id {
@@ -539,7 +538,11 @@ impl HarnessSession for CodexSession {
                 .to_owned();
             let (emit, mismatch) = {
                 let mut state = lock(&session.inner.state);
-                if state.native_turn.as_ref().is_some_and(|turn| turn != &native) {
+                if state
+                    .native_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn != &native)
+                {
                     (None, true)
                 } else {
                     state.native_turn = Some(native);
@@ -601,13 +604,22 @@ impl HarnessSession for CodexSession {
         Box::pin(async move {
             let pending = {
                 let mut state = lock(&session.inner.state);
-                let pending = state.server.get(&params.request_id).cloned().ok_or_else(|| {
-                    HarnessFailure::new(code::PROTOCOL, "Codex request is no longer pending")
-                })?;
+                let pending = state
+                    .server
+                    .get(&params.request_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        HarnessFailure::new(code::PROTOCOL, "Codex request is no longer pending")
+                    })?;
                 if !context_is_current(&state, &pending.context) {
                     None
                 } else {
-                    Some(state.server.remove(&params.request_id).expect("pending request"))
+                    Some(
+                        state
+                            .server
+                            .remove(&params.request_id)
+                            .expect("pending request"),
+                    )
                 }
             };
             let Some(pending) = pending else {
@@ -1043,7 +1055,11 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                                 .is_none_or(|current| current == &native_turn) =>
                     {
                         state.native_turn = Some(native_turn);
-                        let emit = if state.turn_opened { None } else { Some(hoh_turn) };
+                        let emit = if state.turn_opened {
+                            None
+                        } else {
+                            Some(hoh_turn)
+                        };
                         state.turn_opened = true;
                         Ok(emit)
                     }
@@ -1149,31 +1165,35 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                         Err("Codex serverRequest/resolved belongs to another thread".to_owned())
                     }
                     Ok(_) if state.server_standalone_seen.contains(&request_id) => Ok(false),
-                    Ok(_) => current_thread_context(&state, &params).and_then(|context| {
-                        match state.server.get(&request_id) {
-                            Some(pending)
-                                if pending.context == context
-                                    && context_is_current(&state, &pending.context) =>
-                            {
-                                state.server.remove(&request_id);
-                                Ok(true)
-                            }
-                            Some(_) => Err(
-                                "Codex resolved a request belonging to another turn".to_owned(),
-                            ),
-                            None => match state.server_seen.get(&request_id) {
-                                Some(seen)
-                                    if seen == &context && context_is_current(&state, seen) =>
+                    Ok(_) => {
+                        current_thread_context(&state, &params).and_then(|context| {
+                            match state.server.get(&request_id) {
+                                Some(pending)
+                                    if pending.context == context
+                                        && context_is_current(&state, &pending.context) =>
                                 {
-                                    Ok(false)
+                                    state.server.remove(&request_id);
+                                    Ok(true)
                                 }
-                                Some(_) => Err(
-                                    "Codex resolved a request belonging to a prior turn".to_owned(),
-                                ),
-                                None => Err("Codex resolved an unknown request id".to_owned()),
-                            },
-                        }
-                    }),
+                                Some(_) => {
+                                    Err("Codex resolved a request belonging to another turn"
+                                        .to_owned())
+                                }
+                                None => match state.server_seen.get(&request_id) {
+                                    Some(seen)
+                                        if seen == &context && context_is_current(&state, seen) =>
+                                    {
+                                        Ok(false)
+                                    }
+                                    Some(_) => {
+                                        Err("Codex resolved a request belonging to a prior turn"
+                                            .to_owned())
+                                    }
+                                    None => Err("Codex resolved an unknown request id".to_owned()),
+                                },
+                            }
+                        })
+                    }
                 }
             };
             match resolved {
@@ -1276,7 +1296,9 @@ async fn complete_item(inner: &Arc<Inner>, item: &Value) {
                 if state.items.contains_key(&item_id) {
                     Ok(None)
                 } else if !state.items_seen.insert(item_id.clone()) {
-                    Err(format!("Codex reused completed itemId {item_id:?} in one turn"))
+                    Err(format!(
+                        "Codex reused completed itemId {item_id:?} in one turn"
+                    ))
                 } else if let Some((_, action)) = action_of(item) {
                     state.items.insert(item_id.clone(), action.clone());
                     Ok(Some(action))

@@ -451,12 +451,21 @@ async fn duplicate_native_request_ids_close_fail_closed_without_answering_anothe
             .unwrap();
         let first = loop {
             match event(&mut started.events).await {
-                HarnessEvent::ApprovalRequested { request_id, action, .. } => {
-                    assert!(matches!(action, hoh_external_harness::HarnessAction::Command { .. }));
+                HarnessEvent::ApprovalRequested {
+                    request_id, action, ..
+                } => {
+                    assert!(matches!(
+                        action,
+                        hoh_external_harness::HarnessAction::Command { .. }
+                    ));
                     break request_id;
                 }
-                HarnessEvent::SessionEnded { reason, message, .. } => {
-                    panic!("duplicate closed before first request was observable: {reason:?} {message:?}")
+                HarnessEvent::SessionEnded {
+                    reason, message, ..
+                } => {
+                    panic!(
+                        "duplicate closed before first request was observable: {reason:?} {message:?}"
+                    )
                 }
                 _ => {}
             }
@@ -471,22 +480,42 @@ async fn duplicate_native_request_ids_close_fail_closed_without_answering_anothe
                 },
             })
             .await;
-        assert!(response.is_ok(), "{scenario}: the first action's answer should win its race");
+        assert!(
+            response.is_ok(),
+            "{scenario}: the first action's answer should win its race"
+        );
         let ended = loop {
-            if let HarnessEvent::SessionEnded { reason, message, .. } = event(&mut started.events).await {
+            if let HarnessEvent::SessionEnded {
+                reason, message, ..
+            } = event(&mut started.events).await
+            {
                 break (reason, message);
             }
         };
         assert_eq!(ended.0, hoh_external_harness::EndReason::ProtocolError);
-        assert!(ended.1.as_deref().is_some_and(|text| text.contains("reused JSON-RPC")));
-        let duplicate = if scenario == "duplicate-string" { Value::String("duplicate-approval".into()) } else { Value::from(404) };
+        assert!(
+            ended
+                .1
+                .as_deref()
+                .is_some_and(|text| text.contains("reused JSON-RPC"))
+        );
+        let duplicate = if scenario == "duplicate-string" {
+            Value::String("duplicate-approval".into())
+        } else {
+            Value::from(404)
+        };
         let wire = lines(&log);
         assert_eq!(
-            wire.iter().filter(|line| line.get("id") == Some(&duplicate) && line.get("result").is_some()).count(),
+            wire.iter()
+                .filter(|line| line.get("id") == Some(&duplicate) && line.get("result").is_some())
+                .count(),
             1,
             "{scenario}: a second action received the first action's approval"
         );
-        assert!(wire.iter().any(|line| line["stubEvent"] == "second-duplicate-action"));
+        assert!(
+            wire.iter()
+                .any(|line| line["stubEvent"] == "second-duplicate-action")
+        );
     }
 }
 
@@ -570,11 +599,15 @@ async fn canonical_resolved_without_a_turn_id_removes_the_exact_pending_request(
     assert_eq!(request_id, "codex:\"canonical-resolved\"");
     loop {
         match event(&mut started.events).await {
-            HarnessEvent::RequestResolved { request_id: resolved } => {
+            HarnessEvent::RequestResolved {
+                request_id: resolved,
+            } => {
                 assert_eq!(resolved, request_id);
                 break;
             }
-            HarnessEvent::SessionEnded { reason, message, .. } => {
+            HarnessEvent::SessionEnded {
+                reason, message, ..
+            } => {
                 panic!("canonical resolved failed: {reason:?} {message:?}")
             }
             _ => {}
@@ -603,7 +636,10 @@ async fn resolved_ids_are_unambiguous_for_the_lifetime_of_the_app_server_process
             .await
             .unwrap();
         loop {
-            if matches!(event(&mut started.events).await, HarnessEvent::TurnCompleted { .. }) {
+            if matches!(
+                event(&mut started.events).await,
+                HarnessEvent::TurnCompleted { .. }
+            ) {
                 break;
             }
         }
@@ -670,7 +706,10 @@ async fn mcp_elicitation_accepts_schema_exact_omitted_and_null_turn_ids() {
             .await
             .unwrap();
         loop {
-            if matches!(event(&mut started.events).await, HarnessEvent::TurnCompleted { .. }) {
+            if matches!(
+                event(&mut started.events).await,
+                HarnessEvent::TurnCompleted { .. }
+            ) {
                 break;
             }
         }
@@ -767,7 +806,10 @@ async fn a_request_from_the_prior_turn_cannot_rebind_a_reused_item_id() {
         .await
         .unwrap();
     loop {
-        if matches!(event(&mut started.events).await, HarnessEvent::TurnCompleted { .. }) {
+        if matches!(
+            event(&mut started.events).await,
+            HarnessEvent::TurnCompleted { .. }
+        ) {
             break;
         }
     }

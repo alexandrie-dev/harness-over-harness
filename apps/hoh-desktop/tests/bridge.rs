@@ -687,7 +687,9 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
                 label,
                 method,
                 params.clone(),
-                |params| broker.confirm_from_main_window(method, params, session_executor, now_ms()),
+                |params| {
+                    broker.confirm_from_main_window(method, params, session_executor, now_ms())
+                },
                 None,
             );
             assert!(sent.is_err(), "{label} {method}");

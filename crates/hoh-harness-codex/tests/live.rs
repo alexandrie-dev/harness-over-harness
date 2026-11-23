@@ -162,13 +162,21 @@ async fn real_codex_streams_approves_resumes_and_stops() {
     );
     let mut after_stop = harness
         .start_with_access(
-            params(&temp, model.id.clone(), model.default_effort.clone(), Some(native.clone())),
+            params(
+                &temp,
+                model.id.clone(),
+                model.default_effort.clone(),
+                Some(native.clone()),
+            ),
             AccessMode::Confirm,
         )
         .await
         .expect("resume after the production Stop termination");
     assert!(after_stop.result.resumed);
-    assert_eq!(String::from(after_stop.result.native_session_id.clone()), native);
+    assert_eq!(
+        String::from(after_stop.result.native_session_id.clone()),
+        native
+    );
     after_stop
         .session
         .prompt(PromptParams {
@@ -180,8 +188,14 @@ async fn real_codex_streams_approves_resumes_and_stops() {
         .await
         .expect("continue after Stop");
     let (after_stop_answer, _, _) = finish_turn(&after_stop.session, &mut after_stop.events).await;
-    assert!(!after_stop_answer.trim().is_empty(), "no answer after Stop resume");
-    after_stop.session.terminate(Duration::from_millis(500)).await;
+    assert!(
+        !after_stop_answer.trim().is_empty(),
+        "no answer after Stop resume"
+    );
+    after_stop
+        .session
+        .terminate(Duration::from_millis(500))
+        .await;
     eprintln!(
         "LIVE_OK model={} steps={steps} approvals={approvals} stop_ms={}",
         model.id,

@@ -122,10 +122,22 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
                 serde_json::from_value(params.clone()).map_err(|_| "invalid executor access")?;
             let name = executor_name(&request.executor);
             let runtime = match (&request.mode, request.runtime_mode.as_ref()) {
-                (hoh_protocol::ExecutorAccessMode::Full, None | Some(hoh_protocol::ExecutorRuntimeMode::Full)) => hoh_protocol::ExecutorRuntimeMode::Full,
-                (hoh_protocol::ExecutorAccessMode::Confirm, None | Some(hoh_protocol::ExecutorRuntimeMode::Confirm)) => hoh_protocol::ExecutorRuntimeMode::Confirm,
-                (hoh_protocol::ExecutorAccessMode::Confirm, Some(hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits)) => hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits,
-                (hoh_protocol::ExecutorAccessMode::Confirm, Some(hoh_protocol::ExecutorRuntimeMode::Auto)) => hoh_protocol::ExecutorRuntimeMode::Auto,
+                (
+                    hoh_protocol::ExecutorAccessMode::Full,
+                    None | Some(hoh_protocol::ExecutorRuntimeMode::Full),
+                ) => hoh_protocol::ExecutorRuntimeMode::Full,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    None | Some(hoh_protocol::ExecutorRuntimeMode::Confirm),
+                ) => hoh_protocol::ExecutorRuntimeMode::Confirm,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    Some(hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits),
+                ) => hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits,
+                (
+                    hoh_protocol::ExecutorAccessMode::Confirm,
+                    Some(hoh_protocol::ExecutorRuntimeMode::Auto),
+                ) => hoh_protocol::ExecutorRuntimeMode::Auto,
                 _ => return Err("executor access mode does not match runtimeMode".into()),
             };
             Ok(match runtime {
