@@ -119,9 +119,7 @@ export type ExecutorCommandsParams = { "executor": string; "cwd"?: (string | nul
 
 export type ExecutorCommandsResult = { "executor": string; "cwd": string; "commands": Array<ExecutorCommand>; "skills": Array<ExecutorCommand>; };
 
-export type ExecutorDiscoverResult = { "executor": string; "installed": boolean; "version"?: (string | null); "versionStatus": ExecutorVersionStatus; "auth": ExecutorAuth; "models": Array<ExecutorModel>; "detail"?: (string | null); "failure"?: (ExecutorDiscoveryFailure | null); };
-
-export type ExecutorDiscoveryFailure = ({ "kind": "timeout"; "operation": ExecutorDiscoveryOperation; "timeoutSeconds": number; } | { "kind": "exit"; "operation": ExecutorDiscoveryOperation; "exitCode"?: (number | null); });
+export type ExecutorDiscoverResult = { "executor": string; "installed": boolean; "version"?: (string | null); "versionStatus": ExecutorVersionStatus; "auth": ExecutorAuth; "models": Array<ExecutorModel>; "detail"?: (string | null); "failure"?: ({ "kind": "timeout"; "operation": ExecutorDiscoveryOperation; "timeoutSeconds": number; } | { "kind": "exit"; "operation": ExecutorDiscoveryOperation; "exitCode"?: (number | null); }); };
 
 export type ExecutorDiscoveryOperation = "version" | "initialize";
 
