@@ -134,6 +134,9 @@ test('T3 client: @, / and $ before the first turn, and a picture — all decode'
     assert(Exit.isFailure(file));
     assert.equal(Cause.squash(file.cause)._tag, 'EnvironmentAuthorizationError');
     assert.match(Cause.squash(file.cause).message, /does not support file attachments/);
+    const missing = await runExit(client['assets.createUrl']({ resource: { _tag: 'attachment', attachmentId: minted.attachmentId } }));
+    assert(Exit.isFailure(missing));
+    assert.equal(Cause.squash(missing.cause)._tag, 'AssetAttachmentNotFoundError');
     await run(client['attachments.delete']({ attachmentId: minted.attachmentId }));
   });
 });

@@ -923,6 +923,14 @@ export class HohHost {
         'projects.searchEntries': (payload: any) => this.searchEntries(payload ?? {}),
         'assets.persistChatAttachments': (payload: any) => this.persistAttachments(payload ?? {}),
         'attachments.createUploadUrl': (payload: any) => this.createUploadUrl(payload ?? {}),
+        // T3 checks a picture it uploaded before it sends it: held here — an address; gone — T3 uploads it again.
+        'assets.createUrl': (payload: any) => {
+          const resource = payload?.resource;
+          if (resource?._tag !== 'attachment') throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:read' });
+          const id = String(resource.attachmentId ?? '');
+          if (!this.uploads.has(id) || !UPLOAD_PATH.test(`/api/attachments/upload/${id}`)) throw new RpcFailure({ _tag: 'AssetAttachmentNotFoundError', resource });
+          return { relativeUrl: `/api/assets/attachment/${id}`, expiresAt: this.now() + UPLOAD_TTL_MS };
+        },
         'attachments.delete': (payload: any) => {
           const id = String(payload?.attachmentId ?? '');
           this.slots.delete(id); this.uploads.delete(id);

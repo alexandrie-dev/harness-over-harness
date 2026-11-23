@@ -228,6 +228,13 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
   assert.equal((await host.receiveUpload(wrongSize.relativeUrl, 'image/png', new Blob([png.subarray(1)]))).status, 400);
   assert.equal((await host.receiveUpload(minted.relativeUrl, 'image/png', new Blob([png]))).status, 204);
   assert.equal((await host.receiveUpload(minted.relativeUrl, 'image/png', new Blob([png]))).status, 404);
+  // T3 checks an uploaded picture before sending: held here, or T3's "not found" (it uploads again).
+  const verified = await client.call('assets.createUrl', { resource: { _tag: 'attachment', attachmentId: minted.attachmentId } });
+  assert.equal(verified.relativeUrl, `/api/assets/attachment/${minted.attachmentId}`);
+  // contracts/assets.ts AssetCreateUrlResult.relativeUrl
+  assert.match(verified.relativeUrl, /^\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+$/u);
+  const lost = await client.request('assets.createUrl', { resource: { _tag: 'attachment', attachmentId: wrongType.attachmentId } });
+  assert.equal(failureOf(lost)._tag, 'AssetAttachmentNotFoundError');
   // T3's server refusals for what cannot be a picture for Claude.
   for (const [fields, words] of [
     [{ type: 'file', name: 'report.pdf', mimeType: 'application/pdf' }, /does not support file attachments/],
