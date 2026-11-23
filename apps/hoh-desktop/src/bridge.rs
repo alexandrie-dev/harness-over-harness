@@ -61,6 +61,7 @@ pub const WINDOW_METHODS: &[&str] = &[
     "hoh/workspace/entries",
     // The person's "Add project": privileged, confirmed by that action in the main window.
     "hoh/workspace/add",
+    "hoh/executor/title/generate",
 ];
 pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), String> {
     if label != "main" {

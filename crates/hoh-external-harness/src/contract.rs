@@ -327,9 +327,27 @@ pub struct StartParams {
     /// [`effort_levels`](crate::ExternalHarness::effort_levels); none: the harness's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// The interaction mode selected for this turn. A changed mode starts another native
+    /// process on the same continued conversation.
+    #[serde(default, skip_serializing_if = "InteractionMode::is_default")]
+    pub interaction_mode: InteractionMode,
     pub policy: HarnessPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<NativeSessionId>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InteractionMode {
+    #[default]
+    Default,
+    Plan,
+}
+
+impl InteractionMode {
+    fn is_default(value: &Self) -> bool {
+        *value == Self::Default
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -681,6 +699,16 @@ pub enum HarnessEvent {
     /// stream. The external agent persists it as an ignorable plugin record.
     Telemetry {
         record: HarnessTelemetryRecord,
+    },
+    /// The latest root model-message context snapshot. These are per-message counts, not the
+    /// aggregate usage of every model call in a turn.
+    Usage {
+        input_tokens: u64,
+        cache_creation_input_tokens: u64,
+        cache_read_input_tokens: u64,
+        output_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_tokens: Option<u64>,
     },
     /// A step began: a command, a file change, another tool.
     ItemStarted {

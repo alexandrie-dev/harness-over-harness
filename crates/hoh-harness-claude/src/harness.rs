@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,11 +15,12 @@ use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, ExternalHarness,
     HarnessCommand, HarnessCommands, HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult,
-    NetworkAccess, ProcessSpec, SandboxMode, StartParams, StartResult, Started, Supervisor,
-    SupervisorLimits, VersionStatus, code,
+    InteractionMode, NetworkAccess, ProcessSpec, SandboxMode, StartParams, StartResult, Started,
+    Supervisor, SupervisorLimits, VersionStatus, code,
 };
 use serde_json::Value;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
 
 use crate::session::{ClaudeSession, SessionSettings};
 use crate::version;
@@ -257,6 +259,28 @@ pub(crate) struct Launch {
 /// confirm's callback and network limit; a read-only session stays confirm's read-only launch.
 /// `approval: never` under an asking mode is refused before this point ([`NEVER_REFUSED`]).
 pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
+    launch_for_interaction(policy, access, InteractionMode::Default)
+}
+
+fn launch_for_interaction(
+    policy: &HarnessPolicy,
+    access: AccessMode,
+    interaction_mode: InteractionMode,
+) -> Launch {
+    if interaction_mode == InteractionMode::Plan {
+        let read_only = policy.sandbox == SandboxMode::ReadOnly;
+        return Launch {
+            permission_mode: "plan",
+            permission_prompt: true,
+            bypass: false,
+            // Plan mode changes Claude's interaction policy, not the session sandbox. T3 keeps
+            // its read-only allow-list here too, so a reviewer cannot acquire Bash/Write merely
+            // by asking Claude to plan.
+            tools: read_only.then_some(READ_ONLY_TOOLS),
+            disallowed_tools: (!read_only && policy.network == NetworkAccess::Denied)
+                .then_some("WebFetch,WebSearch"),
+        };
+    }
     if access == AccessMode::Full && policy.sandbox == SandboxMode::ReadOnly {
         // Full access does not widen a read-only session (a reviewer stays one): the read tools
         // only, as T3 does for read-only (`ClaudeAdapterV2.ts:3380-3386`, `dontAsk` + tools), and
@@ -506,6 +530,142 @@ async fn commands_of(config: &ClaudeConfig, cwd: PathBuf) -> HarnessResult<Harne
             .map(|answer| commands_from(answer.get("skills")))
             .unwrap_or_default(),
     })
+}
+
+const TITLE_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string"}},"required":["title"],"additionalProperties":false}"#;
+
+fn managed_mcp_config_path() -> &'static Path {
+    if cfg!(target_os = "macos") {
+        Path::new("/Library/Application Support/ClaudeCode/managed-mcp.json")
+    } else if cfg!(target_os = "windows") {
+        Path::new(r"C:\Program Files\ClaudeCode\managed-mcp.json")
+    } else {
+        Path::new("/etc/claude-code/managed-mcp.json")
+    }
+}
+
+fn title_args(no_session_persistence: bool, managed_mcp_config: bool) -> Vec<String> {
+    let mut args = [
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        TITLE_SCHEMA,
+        "--model",
+        "claude-haiku-5-5",
+        "--effort",
+        "low",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+        "--tools",
+        "",
+        "--disable-slash-commands",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    if no_session_persistence {
+        args.push("--no-session-persistence".into());
+    }
+    // Claude rejects strict MCP mode when the administrator has installed managed-mcp.json;
+    // that file already excludes every other MCP source. This is T3's exact conditional.
+    if !managed_mcp_config {
+        args.push("--strict-mcp-config".into());
+    }
+    args.extend(["--permission-mode".into(), "dontAsk".into()]);
+    args
+}
+
+async fn run_title_command(
+    config: &ClaudeConfig,
+    cwd: &Path,
+    prompt: &str,
+    no_session_persistence: bool,
+) -> Result<std::process::Output, HarnessFailure> {
+    let mut command = Command::new(&config.executable);
+    command
+        .args(title_args(
+            no_session_persistence,
+            managed_mcp_config_path().exists(),
+        ))
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    for (name, value) in &config.extra_env {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().map_err(|error| {
+        HarnessFailure::new(
+            code::HARNESS,
+            format!("cannot start Claude title request: {error}"),
+        )
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes()).await.map_err(|error| {
+            HarnessFailure::new(
+                code::HARNESS,
+                format!("cannot send Claude title request: {error}"),
+            )
+        })?;
+        let _ = stdin.shutdown().await;
+    }
+    tokio::time::timeout(Duration::from_secs(45), child.wait_with_output())
+        .await
+        .map_err(|_| HarnessFailure::new(code::HARNESS, "Claude title request timed out"))?
+        .map_err(|error| {
+            HarnessFailure::new(
+                code::HARNESS,
+                format!("Claude title request failed: {error}"),
+            )
+        })
+}
+
+async fn generate_title(config: ClaudeConfig, prompt: String) -> HarnessResult<String> {
+    let directory = std::env::temp_dir().join(format!("hoh-claude-title-{}", random_uuid()?));
+    tokio::fs::create_dir(&directory).await.map_err(|error| {
+        HarnessFailure::new(
+            code::HARNESS,
+            format!("cannot create title directory: {error}"),
+        )
+    })?;
+    let outcome = async {
+        let first = run_title_command(&config, &directory, &prompt, true).await;
+        match first {
+            Ok(output)
+                if !output.status.success()
+                    && String::from_utf8_lossy(&output.stderr)
+                        .contains("--no-session-persistence") =>
+            {
+                run_title_command(&config, &directory, &prompt, false).await
+            }
+            output => output,
+        }
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(&directory).await;
+    let output = outcome?;
+    if !output.status.success() {
+        let detail = hoh_external_harness::redact::redact(&String::from_utf8_lossy(&output.stderr));
+        return Err(HarnessFailure::new(
+            code::HARNESS,
+            format!(
+                "Claude title request exited unsuccessfully: {}",
+                detail.trim()
+            ),
+        ));
+    }
+    let envelope: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
+        HarnessFailure::new(code::PROTOCOL, "Claude returned an invalid title response")
+    })?;
+    let title = envelope
+        .get("structured_output")
+        .and_then(|value| value.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty() && title.len() <= 120)
+        .ok_or_else(|| HarnessFailure::new(code::PROTOCOL, "Claude returned an invalid title"))?;
+    Ok(title.to_owned())
 }
 
 fn settings_of(config: &ClaudeConfig, bypass: bool) -> SessionSettings {
@@ -860,6 +1020,11 @@ impl ExternalHarness for ClaudeHarness {
             .map_or(0, |snapshot| snapshot.revision)
     }
 
+    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+        let config = self.config.clone();
+        Box::pin(async move { generate_title(config, prompt).await })
+    }
+
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).
     fn start_or_resume(&self, params: StartParams) -> BoxFuture<'static, HarnessResult<Started>> {
         self.start_with_access(params, DEFAULT_ACCESS)
@@ -915,7 +1080,7 @@ impl ExternalHarness for ClaudeHarness {
                 Some(id) => id.clone(),
                 None => random_uuid()?,
             };
-            let launch = launch_for(&params.policy, access);
+            let launch = launch_for_interaction(&params.policy, access, params.interaction_mode);
             let args = session_args(
                 &launch,
                 config.setting_sources,
@@ -1077,6 +1242,61 @@ mod tests {
         assert!(argv.contains(&"--permission-prompt-tool".to_owned()));
         assert!(!argv.contains(&"--disallowedTools".to_owned()));
         assert!(!argv.contains(&"--tools".to_owned()));
+    }
+
+    #[test]
+    fn plan_interaction_is_claudes_plan_permission_mode_even_under_full_access() {
+        let harness = ClaudeHarness::new(ClaudeConfig::default());
+        let argv = permission_args(
+            &launch_for_interaction(
+                &HarnessPolicy::default(),
+                AccessMode::Full,
+                InteractionMode::Plan,
+            ),
+            harness.config.setting_sources,
+        );
+        let at = argv
+            .iter()
+            .position(|arg| arg == "--permission-mode")
+            .unwrap();
+        assert_eq!(argv[at + 1], "plan");
+        assert!(argv.contains(&"--permission-prompt-tool".to_owned()));
+        assert!(!argv.contains(&"--allow-dangerously-skip-permissions".to_owned()));
+
+        let read_only = HarnessPolicy {
+            sandbox: SandboxMode::ReadOnly,
+            ..HarnessPolicy::default()
+        };
+        let read_only_argv = permission_args(
+            &launch_for_interaction(&read_only, AccessMode::Full, InteractionMode::Plan),
+            harness.config.setting_sources,
+        );
+        let tools = read_only_argv
+            .iter()
+            .position(|arg| arg == "--tools")
+            .unwrap();
+        assert_eq!(read_only_argv[tools + 1], READ_ONLY_TOOLS);
+    }
+
+    #[test]
+    fn title_request_is_haiku_low_isolated_and_has_no_tools() {
+        let args = title_args(true, false);
+        let value = |flag: &str| {
+            let at = args.iter().position(|arg| arg == flag).unwrap();
+            args[at + 1].as_str()
+        };
+        assert_eq!(value("--model"), "claude-haiku-5-5");
+        assert_eq!(value("--effort"), "low");
+        assert_eq!(value("--tools"), "");
+        assert_eq!(value("--permission-mode"), "dontAsk");
+        assert!(args.contains(&"--no-session-persistence".to_owned()));
+        assert!(args.contains(&"--strict-mcp-config".to_owned()));
+        assert!(args.contains(&"--disable-slash-commands".to_owned()));
+        assert_eq!(value("--settings"), r#"{"disableAllHooks":true}"#);
+
+        let managed_args = title_args(true, true);
+        assert!(!managed_args.contains(&"--strict-mcp-config".to_owned()));
+        assert!(managed_args.contains(&"--no-session-persistence".to_owned()));
     }
 
     #[test]
@@ -1257,6 +1477,7 @@ mod tests {
             cwd: "/".into(),
             model: None,
             effort: Some("--dangerously-skip-permissions".into()),
+            interaction_mode: InteractionMode::Default,
             policy: HarnessPolicy::default(),
             resume: None,
         };

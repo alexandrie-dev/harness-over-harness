@@ -15,6 +15,7 @@ export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 
 export type T3RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
 export type HohAccessMode = 'confirm' | 'acceptEdits' | 'auto' | 'full';
+export type T3InteractionMode = 'default' | 'plan';
 
 /**
  * T3's four modes for Claude and the engine's, one to one (CEO 23.11 00:07; T3 ClaudeAdapterV2.ts
@@ -159,10 +160,11 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, a
     instanceId: CLAUDE_INSTANCE_ID,
     driver: CLAUDE_INSTANCE_ID,
     displayName: 'Claude',
-    showInteractionModeToggle: false,
+    showInteractionModeToggle: true,
     supportedRuntimeModes: accessKnown ? RUNTIME_MODES : [],
     supportsConversationRollback: false,
     supportsTextGeneration: false,
+    reportsContextWindow: true,
     enabled: true,
     installed: discovery?.installed ?? false,
     version: discovery?.version?.trim() || null,
@@ -185,6 +187,9 @@ export function serverSettings(model: string, defaultMode: HohAccessMode, overri
     // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
     offeredSourceControlProviders: { github: false },
     defaultModelSelection: { instanceId: CLAUDE_INSTANCE_ID, model },
+    // The native T3 context-window component lives in Thread details and is opt-in by default.
+    // HoH reports Claude usage, so keep that row visible without requiring a hidden Labs setting.
+    threadDetailsItems: { context: true },
     // The mode a new thread starts in (T3's setting), not the mode in effect: T3 shows the mode chip under
     // the composer only while a thread's mode differs from it (chat/composerControlsOwnership.ts).
     defaultRuntimeMode: runtimeModeOf(defaultMode),

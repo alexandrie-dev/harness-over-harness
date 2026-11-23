@@ -26,7 +26,8 @@ use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
     ExecutorEffectiveAccess, ExecutorParams, ExecutorSelectParams, ExecutorSessionAccess,
-    WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult,
+    ExecutorTitleGenerateParams, WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams,
+    WorkspaceEntriesResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -36,7 +37,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::agent::access_text;
-use crate::contract::{AccessMode, HarnessCommand, HarnessCommands, VersionStatus};
+use crate::contract::{
+    AccessMode, HarnessCommand, HarnessCommands, InteractionMode, VersionStatus,
+};
 use crate::redact::{redact, redact_value};
 use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
 
@@ -53,8 +56,16 @@ const COMMANDS: &str = "hoh/executor/commands";
 const ENTRIES: &str = "hoh/workspace/entries";
 const ADD: &str = "hoh/workspace/add";
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(30);
-const METHODS: [&str; 7] = [
-    DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, COMMANDS, ENTRIES, ADD,
+const TITLE_GENERATE: &str = "hoh/executor/title/generate";
+const METHODS: [&str; 8] = [
+    DISCOVER,
+    SELECT,
+    ACCESS_GET,
+    ACCESS_SET,
+    COMMANDS,
+    ENTRIES,
+    ADD,
+    TITLE_GENERATE,
 ];
 
 /// The saved choices.
@@ -146,6 +157,18 @@ impl Plugin for ExternalHarnessWindowPlugin {
                     }
                 };
                 choices.note_effort(session, message, effort);
+                let interaction = match params.get("interactionMode") {
+                    None | Some(Value::Null) => InteractionMode::Default,
+                    Some(Value::String(value)) if value == "default" => InteractionMode::Default,
+                    Some(Value::String(value)) if value == "plan" => InteractionMode::Plan,
+                    Some(_) => {
+                        log.warn(format_args!(
+                            "session/prompt interactionMode is not default or plan: the turn uses default"
+                        ));
+                        InteractionMode::Default
+                    }
+                };
+                choices.note_interaction(session, message, interaction);
             })?;
         Ok(())
     }
@@ -234,6 +257,14 @@ impl Window {
             ADD => Ok(serde_json::to_value(
                 self.add_folder(parse(method, params)?).await?,
             )?),
+            TITLE_GENERATE => {
+                let params: ExecutorTitleGenerateParams = parse(method, params)?;
+                let harness = self
+                    .service()
+                    .get(&params.executor)
+                    .ok_or_else(|| format!("no external harness named {:?}", params.executor))?;
+                Ok(json!({ "title": harness.generate_title(params.prompt).await? }))
+            }
             _ => Err(format!("external harness window does not serve {method}").into()),
         }
     }

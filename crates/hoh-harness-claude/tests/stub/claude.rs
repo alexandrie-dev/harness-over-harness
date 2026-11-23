@@ -12,7 +12,7 @@
 //! `subagent-tool`, `parallel-subagents`, `unknown-request`, `withdraw-question`, `leave-open`, `subagent-stream`,
 //! `truncate`, `read: <path>`, `close-stdin`, `notebook: <path>`, `login-expired`, `forbidden`, `question-body`, `question-odd`, `question-bare`, `two-open`, `silent-interrupt`; STUB_MODE `version-fails`, `root-refusal`, `secret-start`; prompts `protected: <path>`, `dangerous-rm`, `secret-crash`.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 
@@ -56,6 +56,26 @@ fn main() {
     }
     if let Some(file) = env("STUB_ARGS_FILE") {
         let _ = std::fs::write(file, args.join("\n"));
+    }
+    if args
+        .windows(2)
+        .any(|pair| pair == ["--output-format", "json"])
+        && !args.iter().any(|arg| arg == "--input-format")
+    {
+        let mut prompt = String::new();
+        let _ = std::io::stdin().read_to_string(&mut prompt);
+        if let Some(dir) = env("STUB_STATE") {
+            let cwd = std::env::current_dir().unwrap();
+            let _ = std::fs::write(
+                PathBuf::from(dir).join("title-cwd"),
+                cwd.to_string_lossy().as_bytes(),
+            );
+        }
+        println!(
+            "{}",
+            json!({ "structured_output": { "title": "Context Window Indicator" } })
+        );
+        return;
     }
     let value_of = |flag: &str| {
         args.iter()
@@ -287,6 +307,10 @@ impl Stub {
         self.stream(json!({ "type": "message_start", "message": { "id": message_id, "role": "assistant" } }));
     }
 
+    fn start_message_with_usage(&self, message_id: &str, usage: Value) {
+        self.stream(json!({ "type": "message_start", "message": { "id": message_id, "role": "assistant", "usage": usage } }));
+    }
+
     /// Ask for permission and wait for the answer; `true` when allowed.
     fn ask(&mut self, tool: &str, tool_id: &str, input: &Value) -> Option<Value> {
         if self.no_callback {
@@ -509,6 +533,35 @@ impl Stub {
         }
         self.system_init();
         let message_id = self.id("msg");
+        if text == "usage" {
+            self.start_message_with_usage(
+                &message_id,
+                json!({
+                    "input_tokens": 100, "cache_creation_input_tokens": 20,
+                    "cache_read_input_tokens": 30, "output_tokens": 1
+                }),
+            );
+            self.stream(json!({ "type": "message_delta", "usage": { "output_tokens": 7 } }));
+            let final_message = self.id("msg");
+            self.start_message_with_usage(
+                &final_message,
+                json!({
+                    "input_tokens": 200, "cache_creation_input_tokens": 40,
+                    "cache_read_input_tokens": 60, "output_tokens": 2
+                }),
+            );
+            self.stream(json!({ "type": "message_delta", "usage": {
+                "input_tokens": null, "cache_creation_input_tokens": null,
+                "cache_read_input_tokens": null, "output_tokens": 9
+            } }));
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false, "result": "done",
+                "session_id": self.session, "duration_ms": 1, "num_turns": 2,
+                "usage": { "input_tokens": 9999, "output_tokens": 9999 },
+                "modelUsage": { "stub": { "contextWindow": 200000 } }
+            }));
+            return;
+        }
         self.start_message(&message_id);
         if text == "hello" {
             self.stream(json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }));
@@ -519,6 +572,13 @@ impl Stub {
             );
             self.say(&message_id, 1, &["Hel", "lo"]);
             self.result("success", false, "Hello");
+        } else if text == "plan" {
+            self.forced_turn(
+                &message_id,
+                "ExitPlanMode",
+                &json!({ "plan": "# Plan\n\n1. Inspect\n2. Implement" }),
+                "",
+            );
         } else if let Some(command) = text.strip_prefix("run: ") {
             self.tool_turn(&message_id, "Bash", &json!({ "command": command }), command);
         } else if let Some(path) = text.strip_prefix("edit: ") {

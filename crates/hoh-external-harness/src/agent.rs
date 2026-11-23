@@ -41,8 +41,9 @@ use crate::contract::{
     AccessMode, ApprovalDecision, ApprovalMode, EndReason, FileChange, FileChangeKind,
     HarnessAction, HarnessBackgroundTask, HarnessEvent, HarnessFailure, HarnessPolicy,
     HarnessQuestion, HarnessResponse, HarnessTelemetry, HarnessTelemetryRecord,
-    HarnessWorkflowProgress, ItemOutcome, NativeSessionId, NetworkAccess, PromptImage,
-    PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, TELEMETRY_RECORD, code,
+    HarnessWorkflowProgress, InteractionMode, ItemOutcome, NativeSessionId, NetworkAccess,
+    PromptImage, PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams,
+    TELEMETRY_RECORD, code,
 };
 use crate::executor::{BINDING_RECORD, Launched, Shared};
 use crate::harness::HarnessSession;
@@ -281,6 +282,8 @@ struct State {
     /// The effort level of the turns (HOH-40): the one the last prompt named, when the harness
     /// has it; a turn without a prompt of its own keeps it.
     effort: Option<String>,
+    /// T3's interaction mode for the current turn. A wake without a prompt keeps it.
+    interaction_mode: InteractionMode,
 }
 
 pub(crate) struct NewAgent {
@@ -600,7 +603,7 @@ impl ExternalAgent {
             self.emit_error(turn, step, error);
             return;
         }
-        self.take_prompt_effort(&input);
+        self.take_prompt_choices(&input);
         let messages = input.messages;
         let mut log = TurnLog::new(self.clone(), turn, step, signal.clone());
         let outcome = self.native_turn(live, &mut log, &messages, &signal).await;
@@ -621,13 +624,14 @@ impl ExternalAgent {
                 json!({"kind": "error", "error": {"message": failure.message, "code": failure.code}})
             }
         };
+        let mut end = json!({"turn": turn, "reason": reason});
+        if let Some(usage) = log.usage {
+            end["usage"] = json!(usage);
+        }
         let closed = self
             .session
             .append("step/end", json!({"turn": turn, "step": step}), None)
-            .and_then(|_| {
-                self.session
-                    .append("turn/end", json!({"turn": turn, "reason": reason}), None)
-            });
+            .and_then(|_| self.session.append("turn/end", end, None));
         if let Err(error) = closed {
             self.ctx
                 .logger()
@@ -761,7 +765,10 @@ impl ExternalAgent {
         live: &mut Option<LiveSession>,
         signal: &AbortSignal,
     ) -> Result<(), HarnessFailure> {
-        let effort = lock(&self.state).effort.clone();
+        let (effort, interaction_mode) = {
+            let state = lock(&self.state);
+            (state.effort.clone(), state.interaction_mode)
+        };
         if let Some(session) = live.as_mut() {
             while let Ok(event) = session.events.try_recv() {
                 match event {
@@ -793,10 +800,12 @@ impl ExternalAgent {
             let retired = self.shared.running_launch_of(self.id.as_ref()).is_none();
             // Another effort level is another process on the same native session, as in T3.
             let other_effort = session.effort != effort;
+            let other_interaction = session.interaction_mode != interaction_mode;
             if session.dead
                 || chosen
                 || retired
                 || other_effort
+                || other_interaction
                 || self.model.restart.swap(false, Ordering::SeqCst)
             {
                 if let Some(old) = live.take() {
@@ -827,6 +836,7 @@ impl ExternalAgent {
             cwd: self.cwd(),
             model: lock(&self.model.model).clone(),
             effort: effort.clone(),
+            interaction_mode,
             policy,
             resume: resume.clone(),
         };
@@ -870,6 +880,7 @@ impl ExternalAgent {
             dead: false,
             access,
             effort,
+            interaction_mode,
         });
         Ok(())
     }
@@ -878,33 +889,39 @@ impl ExternalAgent {
     /// (none: the harness's own), so a prompt queued behind it does not decide it. A level the
     /// harness does not have is not passed on, and said in the log. A turn whose prompt named
     /// nothing through `session/prompt` (a wake, another method) keeps the last level.
-    fn take_prompt_effort(&self, input: &TurnInput) {
+    fn take_prompt_choices(&self, input: &TurnInput) {
         let Some(prompt) = input.messages.last().filter(|_| input.last_from_next_turn) else {
             return;
         };
-        let Some(named) = self
+        if let Some(named) = self
             .shared
             .choices
             .take_effort(self.id.as_ref(), prompt.id.as_ref())
-        else {
-            return;
-        };
-        let effort = named.filter(|effort| {
-            let known = self
-                .shared
-                .harness
-                .effort_levels()
-                .contains(&effort.as_str());
-            if !known {
-                self.ctx.logger().warn(format_args!(
-                    "harness \"{}\" has no effort level {}: the turn runs without one",
-                    self.shared.name,
-                    js_json_stringify(&json!(effort))
-                ));
-            }
-            known
-        });
-        lock(&self.state).effort = effort;
+        {
+            let effort = named.filter(|effort| {
+                let known = self
+                    .shared
+                    .harness
+                    .effort_levels()
+                    .contains(&effort.as_str());
+                if !known {
+                    self.ctx.logger().warn(format_args!(
+                        "harness \"{}\" has no effort level {}: the turn runs without one",
+                        self.shared.name,
+                        js_json_stringify(&json!(effort))
+                    ));
+                }
+                known
+            });
+            lock(&self.state).effort = effort;
+        }
+        if let Some(mode) = self
+            .shared
+            .choices
+            .take_interaction(self.id.as_ref(), prompt.id.as_ref())
+        {
+            lock(&self.state).interaction_mode = mode;
+        }
     }
 
     /// [`launch_policy`], said in the log when it caps the configuration; `never` without its
@@ -1343,6 +1360,8 @@ pub(crate) struct LiveSession {
     access: AccessMode,
     /// The effort level it was started with: another one in a prompt restarts it.
     effort: Option<String>,
+    /// The interaction mode it was started with: another prompt mode restarts it.
+    interaction_mode: InteractionMode,
 }
 
 enum TurnOutcome {
@@ -1403,6 +1422,17 @@ struct TurnLog {
     /// The harness opened this turn (`turn-started` with its id). A request before that was made
     /// between turns, whenever it reaches HoH: it is withdrawn, nobody is asked.
     opened: bool,
+    usage: Option<HarnessUsage>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessUsage {
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    output_tokens: u64,
+    max_tokens: Option<u64>,
 }
 
 impl TurnLog {
@@ -1426,6 +1456,7 @@ impl TurnLog {
             allowed: Arc::default(),
             broken: false,
             opened: false,
+            usage: None,
         }
     }
 
@@ -1518,6 +1549,32 @@ impl TurnLog {
             }
             HarnessEvent::Status { .. } => {}
             HarnessEvent::Telemetry { record } => self.agent.record_telemetry(record),
+            HarnessEvent::Usage {
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                output_tokens,
+                max_tokens,
+            } => {
+                let usage = HarnessUsage {
+                    input_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens,
+                    output_tokens,
+                    max_tokens,
+                };
+                // Usage is a live projection, not merely turn-end accounting. Persisting the
+                // snapshot also broadcasts it through session.event so T3 can repaint its native
+                // context component while Claude is still streaming.
+                if let Err(error) = self.agent.session.append(
+                    "turn/usage",
+                    json!({"turn": self.turn, "usage": usage}),
+                    None,
+                ) {
+                    self.warn("cannot record context usage", error);
+                }
+                self.usage = Some(usage);
+            }
             // Sent before the harness took this turn's prompt: the request belongs to the time
             // between turns (after the last turn ended), even when it reaches HoH only now. It is
             // withdrawn like one found before the prompt, never put to the user as this turn's.

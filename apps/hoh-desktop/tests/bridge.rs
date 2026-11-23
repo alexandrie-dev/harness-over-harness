@@ -577,13 +577,18 @@ fn window_may_call_exactly_the_five_executor_methods_and_no_new_ones() {
             "hoh/executor/access/set",
             "hoh/executor/commands",
             "hoh/executor/discover",
-            "hoh/executor/select"
+            "hoh/executor/select",
+            "hoh/executor/title/generate"
         ]
     );
-    // 47 methods before the executor ones, the five executor ones, `hoh/workspace/entries` and
+    // 47 methods before the executor ones, the six executor ones, `hoh/workspace/entries` and
     // `hoh/workspace/add` (HOH-41); a new window method must be a deliberate change of this number.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 5 + 2);
-    for method in ["hoh/executor/access/get", "hoh/executor/discover"] {
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 6 + 2);
+    for method in [
+        "hoh/executor/access/get",
+        "hoh/executor/discover",
+        "hoh/executor/title/generate",
+    ] {
         assert!(!bridge::needs_approval(
             method,
             &json!({"executor":"claude"})

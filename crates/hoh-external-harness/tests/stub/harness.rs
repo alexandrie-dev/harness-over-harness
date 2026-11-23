@@ -416,6 +416,15 @@ impl Stub {
                 self.text("m1", "telemetry stored");
                 self.event(json!({"type": "turn-completed", "turnId": turn_id}));
             }
+            "usage" => {
+                self.event(json!({"type": "usage", "inputTokens": 100,
+                    "cacheCreationInputTokens": 20, "cacheReadInputTokens": 30,
+                    "outputTokens": 1}));
+                self.event(json!({"type": "usage", "inputTokens": 200,
+                    "cacheCreationInputTokens": 40, "cacheReadInputTokens": 60,
+                    "outputTokens": 9, "maxTokens": 200000}));
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
             "double final" => {
                 self.event(json!({"type": "text-delta", "messageId": "m1", "text": "once"}));
                 self.text("m1", "once");

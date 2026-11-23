@@ -1,0 +1,41 @@
+--- a/web/components/chat/useComposerSend.ts
++++ b/web/components/chat/useComposerSend.ts
+@@ -416,6 +416,11 @@
+     },
+   ) => {
+     e?.preventDefault();
++    const interactionMode =
++      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.interactionMode ??
++      draftThread?.interactionMode ??
++      activeThread?.interactionMode ??
++      DEFAULT_INTERACTION_MODE;
+     // What the user pressed send on; uploads below can take a while, and a redirect must not
+     // decline approvals for a draft that changed meanwhile.
+     const promptAtSend = promptRef.current;
+@@ -1392,7 +1397,7 @@
+           ? { branch: localCheckoutBranchMismatch.currentBranch }
+           : {}),
+         runtimeMode,
+-        interactionMode: DEFAULT_INTERACTION_MODE,
++        interactionMode,
+       });
+       if (settingsResult._tag === "Failure") {
+         failure = settingsResult;
+@@ -1446,7 +1451,7 @@
+                       title,
+                       modelSelection: threadCreateModelSelection,
+                       runtimeMode,
+-                      interactionMode: DEFAULT_INTERACTION_MODE,
++                      interactionMode,
+                       branch: activeThreadBranch,
+                       worktreePath: activeThread.worktreePath,
+                       createdAt: activeThread.createdAt,
+@@ -1495,7 +1500,7 @@
+           modelSelection: ctxSelectedModelSelection,
+           titleSeed: title,
+           runtimeMode,
+-          interactionMode: DEFAULT_INTERACTION_MODE,
++          interactionMode,
+           dispatchMode: turnDispatchMode,
+           ...(freshArm === undefined ? {} : { freshContext: true }),
+           ...(bootstrap ? { bootstrap } : {}),

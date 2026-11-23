@@ -38,8 +38,11 @@ test('handshake: config snapshot, probe, settings, ping; only Claude is offered'
   assert.equal(first.config.providers[0].status, 'ready');
   // T3's four modes for Claude, in T3's order (CEO 23.11 00:07).
   assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
+  assert.equal(first.config.providers[0].showInteractionModeToggle, true);
+  assert.equal(first.config.providers[0].reportsContextWindow, true);
   assert.deepEqual(first.config.settings.defaultModelSelection, { instanceId: 'claudeAgent', model: 'claude-sonnet' });
   assert.equal(first.config.settings.defaultRuntimeMode, 'approval-required');
+  assert.deepEqual(first.config.settings.threadDetailsItems, { context: true });
   // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
   assert.deepEqual(Object.keys(first.config.environment.capabilities).sort(), ['connectionProbe', 'inlineMessageContext', 'providerWorkspaceSnapshotsOnDemand', 'repositoryIdentity', 'threadForceStop']);
   assert.deepEqual(await client.call('server.probe', {}), {});
@@ -105,7 +108,7 @@ test('new chat with a first message, streamed answer, tool step, end of turn', a
   assert.equal(launched.threadId, 'thread-1');
   assert.equal(launched.resumed, false);
   assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/select').map(r => r.params), [{ executor: 'claude', model: 'claude-opus' }]);
-  assert.deepEqual(engine.requests.find(r => r.method === 'session/prompt').params, { sessionId: 'thread-1', contentBlocks: [{ type: 'text', text: 'Посчитай файлы' }] });
+  assert.deepEqual(engine.requests.find(r => r.method === 'session/prompt').params, { sessionId: 'thread-1', contentBlocks: [{ type: 'text', text: 'Посчитай файлы' }], interactionMode: 'default' });
   const user = launched.projection.turnItems.find(item => item.type === 'user_message');
   assert.equal(user.messageId, 'm-t3-1'); assert.equal(user.text, 'Посчитай файлы');
   assert.equal(launched.projection.runs[0].status, 'running');
@@ -144,6 +147,94 @@ test('new chat with a first message, streamed answer, tool step, end of turn', a
   const row = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-1' && value.thread.status === 'completed');
   assert.equal(row.thread.latestVisibleMessage.text, 'Файлов: 7.');
   assert.equal(row.thread.title, 'Hello');
+});
+
+test('Plan mode follows the T3 composer command and ExitPlanMode becomes its proposed-plan artifact', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'p0', threadId: 'thread-plan', projectId: 'hoh-project', title: 'Plan',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'plan',
+  });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'thread-plan' });
+  await thread.until(value => value.kind === 'snapshot');
+  await client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'p1', threadId: 'thread-plan', messageId: 'm-plan', text: 'Составь план', attachments: [],
+    createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(engine.requests.find(r => r.method === 'session/prompt').params.interactionMode, 'plan');
+  engine.emitEvent('thread-plan', 'tool/call', { turn: 1, callId: 'exit-plan', name: 'ExitPlanMode', arguments: { plan: '# План\n\n1. Проверить код\n2. Внести правку' } });
+  const planned = await thread.until(value => value.kind === 'snapshot' && value.projection.plans.length === 1);
+  assert.equal(planned.projection.thread.interactionMode, 'plan');
+  assert.equal(planned.projection.plans[0].status, 'active');
+  assert.equal(planned.projection.turnItems.find(item => item.type === 'proposed_plan').markdown, '# План\n\n1. Проверить код\n2. Внести правку');
+  engine.emitEvent('thread-plan', 'tool/call', { turn: 1, callId: 'exit-plan-2', name: 'ExitPlanMode', arguments: { plan: '# Новый план' } });
+  const replanned = await thread.until(value => value.kind === 'snapshot' && value.projection.plans.length === 2);
+  assert.deepEqual(replanned.projection.plans.map(plan => plan.status), ['superseded', 'active']);
+  await client.call('orchestration.dispatchCommand', { type: 'thread.interaction-mode.set', commandId: 'p2', threadId: 'thread-plan', interactionMode: 'default' });
+  const ordinary = await thread.until(value => value.kind === 'snapshot' && value.projection.thread.interactionMode === 'default');
+  assert.equal(ordinary.projection.thread.interactionMode, 'default');
+});
+
+test('Claude stream usage reaches T3 providerTurns with its exact context fill', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  await client.call('orchestration.launchThread', {
+    commandId: 'u0', threadId: 'thread-usage', projectId: 'hoh-project', title: 'Usage',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    initialMessage: { messageId: 'm-usage', text: 'Покажи контекст', attachments: [] },
+  });
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'thread-usage' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitEvent('thread-usage', 'turn/usage', {
+    usage: { inputTokens: 200, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, outputTokens: 9 },
+  });
+  const live = await stream.until(value => value.kind === 'snapshot' && value.projection.providerTurns.length === 1);
+  assert.equal(live.projection.providerTurns[0].status, 'running');
+  assert.equal(live.projection.providerTurns[0].tokenUsage.usedTokens, 309);
+  assert.equal(live.projection.providerTurns[0].tokenUsage.maxTokens, undefined);
+  engine.emitEvent('thread-usage', 'turn/usage', {
+    usage: { inputTokens: 200, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, outputTokens: 9, maxTokens: 200_000 },
+  });
+  engine.emitEvent('thread-usage', 'turn/end', {
+    reason: { kind: 'completed' },
+    usage: { inputTokens: 200, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, outputTokens: 9, maxTokens: 200_000 },
+  });
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.providerTurns[0]?.status === 'completed' && value.projection.providerTurns[0]?.tokenUsage.maxTokens === 200_000);
+  const usage = snapshot.projection.providerTurns[0].tokenUsage;
+  assert.deepEqual(usage, { usedTokens: 309, maxTokens: 200_000, inputTokens: 300, cachedInputTokens: 60, outputTokens: 9, reasoningOutputTokens: 0, updatedAt: usage.updatedAt });
+  assert.equal((usage.usedTokens / usage.maxTokens) * 100, 0.1545);
+});
+
+test('the first message gets a Claude title; failure keeps its beginning and a late result cannot overwrite a manual rename', async () => {
+  const launch = (client, id, text) => client.call('orchestration.launchThread', {
+    commandId: 'title-' + id, threadId: id, projectId: 'hoh-project',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    initialMessage: { messageId: 'm-' + id, text, attachments: [] },
+  });
+
+  const success = new FakeEngine(); const successRequest = success.request.bind(success);
+  success.request = (method, params) => {
+    if (method === 'hoh/executor/title/generate') { success.requests.push({ method, params }); return Promise.resolve({ title: 'Context Window Indicator' }); }
+    return successRequest(method, params);
+  };
+  const successful = connect(success); await launch(successful.client, 'title-ok', 'Покажи заполнение контекста'); await tick(5);
+  assert.equal((await successful.client.call('orchestration.getThreadProjection', { threadId: 'title-ok' })).thread.title, 'Context Window Indicator');
+  const titleCall = success.requests.find(request => request.method === 'hoh/executor/title/generate');
+  assert.equal(titleCall.params.executor, 'claude'); assert.match(titleCall.params.prompt, /3-8 words/);
+
+  const failed = new FakeEngine(); const failedRequest = failed.request.bind(failed);
+  failed.request = (method, params) => method === 'hoh/executor/title/generate' ? Promise.reject(new Error('offline')) : failedRequest(method, params);
+  const failure = connect(failed); await launch(failure.client, 'title-fail', 'Сохрани начало сообщения при ошибке'); await tick(5);
+  assert.equal((await failure.client.call('orchestration.getThreadProjection', { threadId: 'title-fail' })).thread.title, 'Сохрани начало сообщения при ошибке');
+
+  let finishTitle; const pending = new Promise(resolve => { finishTitle = resolve; });
+  const stale = new FakeEngine(); const staleRequest = stale.request.bind(stale);
+  stale.request = (method, params) => method === 'hoh/executor/title/generate' ? pending : staleRequest(method, params);
+  const guarded = connect(stale); await launch(guarded.client, 'title-stale', 'Первое имя');
+  await guarded.client.call('orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: 'rename', threadId: 'title-stale', title: 'Моё название' });
+  finishTitle({ title: 'Late Generated Title' }); await tick(5);
+  assert.equal((await guarded.client.call('orchestration.getThreadProjection', { threadId: 'title-stale' })).thread.title, 'Моё название');
 });
 
 test('a follow-up message goes to the same chat; Stop is the engine\'s cancel and the run ends interrupted', async () => {

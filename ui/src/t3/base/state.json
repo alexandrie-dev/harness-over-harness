@@ -19,6 +19,7 @@
     "web/components/chat/PanelLayoutControls.tsx",
     "web/components/chat/SkillInlineText.tsx",
     "web/components/chat/turnDetailAnnouncement.ts",
+    "web/components/chat/useComposerSend.ts",
     "web/components/settings/ThemeSettings.tsx",
     "web/components/settings/settingsSearch.ts",
     "web/components/sidebar/SidebarChrome.tsx",

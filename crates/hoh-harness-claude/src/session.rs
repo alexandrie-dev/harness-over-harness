@@ -150,6 +150,30 @@ async fn emit_telemetry(
         .await;
 }
 
+fn stream_usage(value: &Value) -> StreamUsage {
+    StreamUsage {
+        input_tokens: count(value, "input_tokens").unwrap_or(0),
+        cache_creation_input_tokens: count(value, "cache_creation_input_tokens").unwrap_or(0),
+        cache_read_input_tokens: count(value, "cache_read_input_tokens").unwrap_or(0),
+        output_tokens: count(value, "output_tokens").unwrap_or(0),
+    }
+}
+
+fn context_window(result: &Value, model: Option<&str>) -> Option<u64> {
+    let usage = result.get("modelUsage")?.as_object()?;
+    let of = |entry: &Value| count(entry, "contextWindow").filter(|value| *value > 0);
+    model
+        .and_then(|model| usage.get(model))
+        .and_then(of)
+        .or_else(|| {
+            (usage.len() == 1)
+                .then(|| usage.values().next())
+                .flatten()
+                .and_then(of)
+        })
+        .or_else(|| usage.values().filter_map(of).max())
+}
+
 /// What a held `can_use_tool` request is, until HoH answers it.
 #[derive(Clone)]
 enum Pending {
@@ -208,6 +232,34 @@ struct State {
     /// This CLI has named a prompt of this session by its uuid (an echo in a `result`, or a
     /// `command_lifecycle`): T3 `promptEchoMode` other than `unknown`.
     echoes: bool,
+    /// The model named by system/init, used to select its context window from result.modelUsage.
+    model: Option<String>,
+    /// The latest root assistant message's per-message usage (never result.usage, which aggregates
+    /// multiple model calls in a turn).
+    stream_usage: Option<StreamUsage>,
+    /// The last model context window Claude reported. The CLI supplies this on a result, so the
+    /// first turn gains it at completion and later streaming snapshots can reuse it immediately.
+    context_window: Option<u64>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct StreamUsage {
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    output_tokens: u64,
+}
+
+async fn emit_usage(inner: &Inner, usage: StreamUsage, max_tokens: Option<u64>) {
+    inner
+        .emit(HarnessEvent::Usage {
+            input_tokens: usage.input_tokens,
+            cache_creation_input_tokens: usage.cache_creation_input_tokens,
+            cache_read_input_tokens: usage.cache_read_input_tokens,
+            output_tokens: usage.output_tokens,
+            max_tokens,
+        })
+        .await;
 }
 
 struct Inner {
@@ -680,6 +732,9 @@ async fn handle_system(inner: &Inner, message: &Value) {
     let source_id = text(message, "uuid").map(str::to_owned);
     match text(message, "subtype") {
         Some("init") => {
+            if let Some(model) = text(message, "model") {
+                lock(&inner.state).model = Some(model.to_owned());
+            }
             if let Some(id) = text(message, "session_id")
                 && id != lock(&inner.state).native
             {
@@ -808,10 +863,56 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                 .get("message")
                 .and_then(|m| text(m, "id"))
                 .map(str::to_owned);
-            if let Some(id) = id {
-                lock(&inner.state)
-                    .message_ids
-                    .insert(parent_item_id.clone(), id);
+            let usage = event
+                .get("message")
+                .and_then(|message| message.get("usage"))
+                .map(stream_usage);
+            let max_tokens = {
+                let mut state = lock(&inner.state);
+                if let Some(id) = id {
+                    state.message_ids.insert(parent_item_id.clone(), id);
+                }
+                if parent_item_id.is_none() {
+                    state.stream_usage = usage;
+                    Some(state.context_window)
+                } else {
+                    None
+                }
+            };
+            if let (Some(usage), Some(max_tokens)) = (usage, max_tokens) {
+                emit_usage(inner, usage, max_tokens).await;
+            }
+        }
+        Some("message_delta") => {
+            if parent_item_id.is_some() {
+                return;
+            }
+            let Some(delta) = event.get("usage") else {
+                return;
+            };
+            let snapshot = {
+                let mut state = lock(&inner.state);
+                let max_tokens = state.context_window;
+                if let Some(usage) = state.stream_usage.as_mut() {
+                    if let Some(value) = count(delta, "input_tokens") {
+                        usage.input_tokens = value;
+                    }
+                    if let Some(value) = count(delta, "cache_creation_input_tokens") {
+                        usage.cache_creation_input_tokens = value;
+                    }
+                    if let Some(value) = count(delta, "cache_read_input_tokens") {
+                        usage.cache_read_input_tokens = value;
+                    }
+                    if let Some(value) = count(delta, "output_tokens") {
+                        usage.output_tokens = value;
+                    }
+                    Some((*usage, max_tokens))
+                } else {
+                    None
+                }
+            };
+            if let Some((usage, max_tokens)) = snapshot {
+                emit_usage(inner, usage, max_tokens).await;
             }
         }
         Some("content_block_delta") => {
@@ -1242,7 +1343,11 @@ async fn handle_result(inner: &Inner, message: &Value) {
     if other_turn {
         return;
     }
-    let (turn, interrupted, open, withdrawn, auth_failed) = {
+    let reported_context_window = {
+        let model = lock(&inner.state).model.clone();
+        context_window(message, model.as_deref())
+    };
+    let (turn, interrupted, open, withdrawn, auth_failed, usage, max_tokens) = {
         let mut state = lock(&inner.state);
         state.prompt_uuid = None;
         let parents = std::mem::take(&mut state.item_parents);
@@ -1257,6 +1362,9 @@ async fn handle_result(inner: &Inner, message: &Value) {
         state.declined.clear();
         state.consumed.clear();
         state.message_ids.clear();
+        if reported_context_window.is_some() {
+            state.context_window = reported_context_window;
+        }
         let withdrawn: Vec<String> = state.pending.drain().map(|(id, _)| id).collect();
         (
             state.turn.take(),
@@ -1264,6 +1372,8 @@ async fn handle_result(inner: &Inner, message: &Value) {
             open,
             withdrawn,
             std::mem::take(&mut state.auth_failed),
+            state.stream_usage.take(),
+            state.context_window,
         )
     };
     for request_id in withdrawn {
@@ -1285,6 +1395,9 @@ async fn handle_result(inner: &Inner, message: &Value) {
     let Some(turn_id) = turn else {
         return;
     };
+    if let Some(usage) = usage {
+        emit_usage(inner, usage, max_tokens).await;
+    }
     let failed = message.get("is_error").and_then(Value::as_bool) == Some(true)
         || text(message, "subtype").is_some_and(|subtype| subtype != "success");
     let event = if interrupted {
@@ -1364,6 +1477,26 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
             .or_else(|| state.turn.clone());
         (parent_item_id, origin_turn)
     };
+    if name == "ExitPlanMode" {
+        if let Some(id) = tool_use_id.as_deref() {
+            ensure_item_started(
+                inner,
+                id,
+                name,
+                Some(&input),
+                parent_item_id.clone(),
+                origin_turn.clone(),
+            )
+            .await;
+        }
+        let captured = json!({
+            "behavior": "deny",
+            "message": "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+            "toolUseID": native_id,
+        });
+        let _ = inner.reply(request_id, captured).await;
+        return;
+    }
     if name == "AskUserQuestion" {
         let (questions, texts) = questions_from(&input);
         lock(&inner.state).pending.insert(

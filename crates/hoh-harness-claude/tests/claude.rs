@@ -8,6 +8,7 @@ use std::time::Duration;
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, ApprovalMode, AuthState, EndReason, ExternalHarness,
     HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse, HarnessSession, HarnessTelemetry,
+    InteractionMode,
     ItemOutcome, PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, Started,
     code,
 };
@@ -96,6 +97,7 @@ fn params(dir: &Path, resume: Option<&str>, policy: HarnessPolicy) -> StartParam
         cwd: dir.to_string_lossy().into_owned(),
         model: None,
         effort: None,
+        interaction_mode: hoh_external_harness::InteractionMode::Default,
         policy,
         resume: resume.map(Into::into),
     }
@@ -110,6 +112,108 @@ async fn start(env: &Env, resume: Option<&str>) -> Started {
         .await
         .map_err(|e| e.message)
         .unwrap()
+}
+
+#[tokio::test]
+async fn plan_mode_captures_exit_plan_without_asking_for_permission() {
+    let env = Env::new();
+    let mut parameters = params(env.dir.path(), None, HarnessPolicy::default());
+    parameters.interaction_mode = InteractionMode::Plan;
+    let mut started = env
+        .harness()
+        .start_with_access(parameters, AccessMode::Confirm)
+        .await
+        .unwrap();
+    prompt(&started.session, "turn-plan", "plan");
+    let events = until(&mut started.events, |event| {
+        matches!(event, HarnessEvent::TurnCompleted { .. })
+    })
+    .await;
+    assert!(events.iter().any(|event| matches!(event,
+        HarnessEvent::ItemStarted { action: HarnessAction::Tool { name, input }, .. }
+            if name == "ExitPlanMode" && input["plan"] == "# Plan\n\n1. Inspect\n2. Implement"
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, HarnessEvent::ApprovalRequested { .. }))
+    );
+    let args = env.args();
+    let at = args
+        .iter()
+        .position(|arg| arg == "--permission-mode")
+        .unwrap();
+    assert_eq!(args[at + 1], "plan");
+}
+
+#[tokio::test]
+async fn context_usage_is_the_last_root_message_snapshot_not_aggregate_result_usage() {
+    let env = Env::new();
+    let mut started = start(&env, None).await;
+    prompt(&started.session, "turn-usage", "usage");
+    let events = until(&mut started.events, |event| {
+        matches!(event, HarnessEvent::TurnCompleted { .. })
+    })
+    .await;
+    let usage_events: Vec<&HarnessEvent> = events
+        .iter()
+        .filter(|event| matches!(event, HarnessEvent::Usage { .. }))
+        .collect();
+    assert_eq!(usage_events.len(), 5, "{usage_events:?}");
+    assert!(matches!(
+        usage_events[0],
+        HarnessEvent::Usage {
+            input_tokens: 100,
+            output_tokens: 1,
+            max_tokens: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        usage_events[3],
+        HarnessEvent::Usage {
+            input_tokens: 200,
+            cache_creation_input_tokens: 40,
+            cache_read_input_tokens: 60,
+            output_tokens: 9,
+            max_tokens: None,
+        }
+    ));
+    assert!(matches!(
+        usage_events[4],
+        HarnessEvent::Usage {
+            input_tokens: 200,
+            cache_creation_input_tokens: 40,
+            cache_read_input_tokens: 60,
+            output_tokens: 9,
+            max_tokens: Some(200_000),
+        }
+    ));
+}
+
+#[tokio::test]
+async fn title_generation_is_a_short_isolated_no_tools_call_outside_the_project() {
+    let env = Env::new();
+    let title = env
+        .harness()
+        .generate_title("title this conversation".into())
+        .await
+        .unwrap();
+    assert_eq!(title, "Context Window Indicator");
+    let args = env.args();
+    let value = |flag: &str| {
+        let at = args.iter().position(|arg| arg == flag).unwrap();
+        args[at + 1].as_str()
+    };
+    assert_eq!(value("--model"), "claude-haiku-5-5");
+    assert_eq!(value("--effort"), "low");
+    assert_eq!(value("--tools"), "");
+    let cwd = std::fs::read_to_string(env.dir.path().join("title-cwd")).unwrap();
+    assert_ne!(Path::new(&cwd), env.dir.path());
+    assert!(
+        !Path::new(&cwd).exists(),
+        "the temporary title directory is removed"
+    );
 }
 
 fn prompt(session: &Arc<dyn HarnessSession>, turn: &str, text: &str) {

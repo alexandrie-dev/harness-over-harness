@@ -54,7 +54,20 @@ object!(HohInitializeResult {
     protocol_version: u32,
     approvals: ApprovalHost
 });
-object!(SessionPromptParams { session_id: String, content_blocks: Vec<SdkPromptContentBlock> });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionPromptParams {
+    pub session_id: String,
+    pub content_blocks: Vec<SdkPromptContentBlock>,
+    /// T3's per-turn interaction mode. Missing is the ordinary chat mode.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::present"
+    )]
+    #[schemars(required)]
+    pub interaction_mode: Option<String>,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionQueryParams {

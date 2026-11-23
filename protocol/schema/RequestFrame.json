@@ -912,6 +912,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/executor/title/generate"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorTitleGenerateParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "approval/request"
         },
         "params": {
@@ -1031,8 +1047,13 @@
           "items": {
             "$ref": "#/$defs/SdkPromptContentBlock"
           }
+        },
+        "interactionMode": {
+          "description": "T3's per-turn interaction mode. Missing is the ordinary chat mode.",
+          "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "sessionId",
         "contentBlocks"
@@ -2453,6 +2474,21 @@
       },
       "required": [
         "cwd"
+      ]
+    },
+    "ExecutorTitleGenerateParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "executor",
+        "prompt"
       ]
     },
     "ApprovalRequestParams": {
