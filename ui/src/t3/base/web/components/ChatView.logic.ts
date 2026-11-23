@@ -459,7 +459,8 @@ export function buildLocalDraftThread(
   return presentThreadShell(draftThread.environmentId, {
     id: threadId,
     projectId: draftThread.projectId,
-    title: resolve(msg("New thread")),
+    // HoH (ui/T3-MAP.md): видимый заголовок нового черновика совпадает с «New chat» в нашей боковой панели.
+    title: resolve(msg("New chat")),
     providerInstanceId: fallbackModelSelection.instanceId,
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,

@@ -5,7 +5,7 @@
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
 import { useNavigate } from '@tanstack/react-router';
 import { CheckIcon, XIcon } from 'lucide-react';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useId, useState, useSyncExternalStore } from 'react';
 
 import { ClaudeAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
@@ -26,7 +26,12 @@ const ENVIRONMENT_ID = 'hoh-local';
 const home = (): Home | undefined => (globalThis as { __HOH_HOME__?: Home }).__HOH_HOME__;
 
 export function greeting(hour: number): string {
-  return hour < 5 ? 'Good evening' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  return hour < 5 ? 'Good night' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+}
+/** The scratch project is an engine detail; cards name only projects the person chose. */
+export function projectLabel(projectId: string, title: string): string | null {
+  const label = title.trim();
+  return projectId !== 'hoh-project' && label ? label : null;
 }
 const dateLabel = (date: Date) => date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 /** Title of the home without projects (NoProjectsHero.tsx, vite.ts): greeting and the date. */
@@ -79,10 +84,24 @@ function Sub({ agent, now }: { agent: Agent; now: number }) {
 /** What Claude asks, as T3 shows its request: the kind, the command or file itself, the chat's own Approve / Decline. */
 function Ask({ entry, view }: { entry: Entry; view: View }) {
   const request = entry.request!;
+  const detailId = useId();
+  const [expanded, setExpanded] = useState(false);
   return (
     <div className="hoh-ask__item">
       <div className="hoh-ask__kind">{requestLabel(request)}</div>
-      <code className="hoh-ask__text" data-approval-detail="complete">{request.text || requestLabel(request)}</code>
+      <button
+        type="button"
+        className="hoh-ask__detail"
+        aria-controls={detailId}
+        aria-expanded={expanded}
+        aria-label={expanded ? 'Collapse request details' : 'Expand request details'}
+        title={expanded ? 'Collapse request details' : 'Expand request details'}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <code id={detailId} className="hoh-ask__text" data-approval-detail="complete" data-expanded={expanded || undefined}>
+          {request.text || requestLabel(request)}
+        </code>
+      </button>
       {request.kind === 'approval' ? (
         <div className="hoh-ask__actions">
           <Button variant="outline" size="sm" onClick={() => void view.host?.answer(entry.id, request.id, 'decline')}>Decline</Button>
@@ -99,11 +118,12 @@ const stateLabel = (entry: Entry) => entry.state === 'working' ? <><span classNa
 /** An agent as a card (HOH-41): the executor's mark top-left, the title, where it works, its subagents inside, the state at the bottom.
  *  The glow of the border follows the state (home.css: blue — working, red — waits for the person, neutral — done). */
 function Card({ entry, view, children }: { entry: Entry; view: View; children: React.ReactNode }) {
+  const project = projectLabel(entry.projectId, view.where(entry));
   return (
     <div className="hoh-card" data-state={entry.state} {...press(() => view.open(entry.id))}>
       <Mark />
       <span className="hoh-card__title">{entry.title}</span>
-      <span className="hoh-card__where">{view.where(entry)}</span>
+      {project ? <span className="hoh-card__where">{project}</span> : null}
       {entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
       {children}
     </div>
