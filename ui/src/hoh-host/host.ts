@@ -107,6 +107,8 @@ export class HohHost {
   private readonly restored = new Set<string>();
   /** Histories already peeked successfully during startup; a cached row is retried until its log is readable. */
   private readonly peeked = new Set<string>();
+  /** Last-known rows wait here until `access/get` supplies their real runtime mode. */
+  private readonly savedSessions: any[] = [];
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
   private readonly questions = new Map<string, EngineQuestion>();
   private readonly shellSinks = new Set<StreamSink>();
@@ -183,9 +185,14 @@ export class HohHost {
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (isAccessMode(saved?.defaultMode)) this.defaultMode = saved.defaultMode;
-    // Last-known-good list metadata makes the first post-restart snapshot lossless even when the
-    // engine's first disk scan is temporarily incomplete. History still comes only from the engine.
-    for (const entry of Array.isArray(saved?.sessions) ? saved.sessions : []) {
+    this.savedSessions.push(...(Array.isArray(saved?.sessions) ? saved.sessions : []));
+  }
+
+  /** Restore list metadata only after the engine has supplied the mode the row must display. */
+  private materializeSavedSessions() {
+    const mode = this.mode;
+    if (mode === null) return;
+    for (const entry of this.savedSessions.splice(0)) {
       const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
       const title = typeof entry?.title === 'string' ? entry.title.trim() : '';
       const createdAt = timeOf(entry?.createdAt);
@@ -194,7 +201,7 @@ export class HohHost {
       const projectId = entry?.projectId === HOH_PROJECT_ID || (typeof entry?.projectId === 'string' && this.folders.has(entry.projectId))
         ? entry.projectId : this.homeOf(id);
       const model = typeof entry?.model === 'string' && entry.model.trim() ? entry.model.trim() : this.model();
-      const thread = new ThreadModel({ id, title, createdAt, updatedAt, model, mode: this.mode, projectId });
+      const thread = new ThreadModel({ id, title, createdAt, updatedAt, model, mode, projectId });
       thread.options = this.levels.get(id);
       thread.archivedAt = entry?.archivedAt === null ? null : timeOf(entry?.archivedAt);
       this.threads.set(id, thread);
@@ -321,6 +328,9 @@ export class HohHost {
       else if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
     }));
     const [, accessRead] = await Promise.all([this.readDiscovery(), this.readAccess()]);
+    // Initial sessions are part of the first shell snapshot. Do not queue synthetic updates
+    // before the shell sink exists: their timer could fire just after the snapshot and expose
+    // stale placement metadata. Late retry/ready reads below still announce additions.
     if (accessRead) await this.readSessions();
     // The engine that was still starting answers nothing at first (and the window never asks again): go on asking in the background.
     // Even a successful first disk scan is reconciled during this bounded window: the previous
@@ -354,6 +364,7 @@ export class HohHost {
       const changed = this.mode !== access.mode;
       this.mode = access.mode;
       this.accessError = null;
+      this.materializeSavedSessions();
       if (typeof access?.selected?.model === 'string' && access.selected.model) this.selectedModel = access.selected.model;
       if (changed) for (const thread of this.threads.values()) { thread.mode = access.mode; this.changed(thread.id); }
       return true;
@@ -372,7 +383,10 @@ export class HohHost {
   private async onEngineReady() {
     await this.readDiscovery();
     const accessRead = await this.readAccess();
-    if (accessRead) await this.readSessions();
+    if (accessRead) {
+      const added = await this.readSessions();
+      if (added !== null) for (const id of added) this.changed(id);
+    }
     this.configChanged();
     if (accessRead) this.flush();
   }
@@ -463,12 +477,14 @@ export class HohHost {
           if (own?.executor === 'claude' && typeof own.model === 'string' && own.model) thread.model = own.model;
         } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
-        // The list row learns what the history knows (a title from the first message, the last answer).
-        this.changed(threadId);
+        // Place the chat before publishing what its history taught us. Otherwise the first
+        // `thread.updated` briefly assigns a chat with a known cwd to "No project".
         if (thread.cwd) this.placeByFolder(thread);
         else if (!this.workspaceKnown && thread.projectId === HOH_PROJECT_ID) {
           try { this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }
         }
+        // The list row learns what the history knows (a title from the first message, the last answer).
+        this.changed(threadId);
         return thread;
       })().finally(() => this.loading.delete(threadId));
       this.loading.set(threadId, pending);
