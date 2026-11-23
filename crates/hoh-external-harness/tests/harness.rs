@@ -623,6 +623,73 @@ async fn raw_telemetry_is_durable_and_keeps_provider_provenance() {
 }
 
 #[tokio::test]
+async fn durable_telemetry_is_redacted_bounded_and_never_partially_snapshotted() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let (logs, _exporter) = capture_logs(&env.ctx);
+    let agent = env.create("s-telemetry-safe").await;
+    turn(&agent, "telemetry unsafe").await;
+
+    let records = of_type(&agent, TELEMETRY_RECORD);
+    assert_eq!(
+        records.len(),
+        2,
+        "oversized records must be dropped: {records:#?}"
+    );
+    let encoded = serde_json::to_string(&records).unwrap();
+    assert!(encoded.contains("[redacted]"), "{encoded}");
+    for secret in [
+        "top-secret",
+        "abcdefgh12345678",
+        "subtype-secret",
+        "type-secret",
+        "description-secret",
+        "status-secret",
+        "summary-secret",
+        "kind-secret",
+        "title-secret",
+        "label-secret",
+        "state-secret",
+        "phase-secret",
+        "model-secret",
+        "prompt-secret",
+        "result-secret",
+    ] {
+        assert!(
+            !encoded.contains(secret),
+            "secret leaked: {secret}: {encoded}"
+        );
+    }
+    let update = &records[1]["record"]["payload"]["update"];
+    assert_eq!(update["task"]["taskId"], "task-id-kept");
+    assert_eq!(update["task"]["runId"], "run-id-kept");
+    assert_eq!(update["workflowProgress"][0]["agentId"], "agent-id-kept");
+    assert!(
+        update["task"]["description"]
+            .as_str()
+            .is_some_and(|text| text.len() <= 4 * 1024)
+    );
+    assert!(!encoded.contains("oversized-roster"));
+    let dropped: Vec<_> = lock(&logs)
+        .iter()
+        .filter(|line| line.contains("dropping harness telemetry"))
+        .cloned()
+        .collect();
+    assert_eq!(dropped.len(), 2, "{dropped:#?}");
+    assert!(
+        dropped
+            .iter()
+            .any(|line| line.contains("too many background tasks"))
+    );
+    assert!(
+        dropped
+            .iter()
+            .any(|line| line.contains("telemetry record is too large"))
+    );
+    env.close().await;
+}
+
+#[tokio::test]
 async fn restart_resumes_the_saved_native_session() {
     let dirs = dirs();
     let env = env(&dirs).await;

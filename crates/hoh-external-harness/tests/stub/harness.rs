@@ -5,7 +5,7 @@
 //! Prompts: `hello`, `double final`, `run: <command>`, `delete: <path>`, `race`, `question`,
 //! `run in <folder>: <command>`, `long command`, `stubborn command`, `break stream`, `crash`, `garbage`, `flood`,
 //! `slow start`, `mute`, `huge frame`, `no final`, `only reasoning`, `fail secret`, `leak`,
-//! `bad event`, `split key`, `nested events`, `telemetry`, `update: <path>`, `changes: <JSON list of changes>`,
+//! `bad event`, `split key`, `nested events`, `telemetry`, `telemetry unsafe`, `update: <path>`, `changes: <JSON list of changes>`,
 //! `permission: <description>`, `tool: <name> <JSON input>`, `repeat request`, `late request`, `late request after prompt`, `late leak`, `swap`, `bypass: <command>` (runs it without asking),
 //! and any prompt containing `echo`.
 //!
@@ -348,6 +348,52 @@ impl Stub {
         self.event(json!({"type": "turn-started", "turnId": turn_id}));
         let native = self.native.clone().unwrap_or_default();
         match text {
+            "telemetry unsafe" => {
+                let provenance = |source: Value| {
+                    json!({
+                        "launchId": format!("stub-{}", std::process::id()),
+                        "nativeSessionId": native.clone(),
+                        "turnId": turn_id,
+                        "sourceId": source,
+                    })
+                };
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance(json!("unsafe-mcp")),
+                    "payload": {"kind": "mcp-servers", "servers": [{
+                        "name": "server TOKEN=top-secret", "status": "Authorization: Bearer abcdefgh12345678"
+                    }]}
+                }}));
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance(json!("unsafe-task")),
+                    "payload": {"kind": "background-task", "update": {
+                        "subtype": "task_progress TOKEN=subtype-secret",
+                        "task": {"taskId": "task-id-kept", "runId": "run-id-kept",
+                            "taskType": "type TOKEN=type-secret",
+                            "description": format!("TOKEN=description-secret {}", "x".repeat(5000))},
+                        "status": "TOKEN=status-secret", "summary": "TOKEN=summary-secret",
+                        "workflowProgress": [{
+                            "kind": "kind TOKEN=kind-secret", "agentId": "agent-id-kept",
+                            "title": "TOKEN=title-secret", "label": "TOKEN=label-secret",
+                            "state": "TOKEN=state-secret", "phaseTitle": "TOKEN=phase-secret",
+                            "model": "TOKEN=model-secret", "promptPreview": "TOKEN=prompt-secret",
+                            "resultPreview": "TOKEN=result-secret"
+                        }]
+                    }}
+                }}));
+                let oversized_tasks: Vec<_> = (0..257)
+                    .map(|index| json!({"taskId": format!("task-{index}")}))
+                    .collect();
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance(json!("oversized-roster")),
+                    "payload": {"kind": "background-tasks-snapshot", "tasks": oversized_tasks}
+                }}));
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance(json!("p".repeat(70_000))),
+                    "payload": {"kind": "assistant-usage", "usage": {"inputTokens": 1}}
+                }}));
+                self.text("m1", "unsafe telemetry filtered");
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
             "telemetry" => {
                 let provenance = |source: &str| {
                     json!({

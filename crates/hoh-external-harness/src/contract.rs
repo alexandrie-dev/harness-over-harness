@@ -445,6 +445,12 @@ pub enum HarnessTelemetry {
     BackgroundTask {
         update: HarnessBackgroundTaskUpdate,
     },
+    BackgroundTaskUpdated {
+        task_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        patch: HarnessBackgroundTaskPatch,
+    },
     BackgroundTasksSnapshot {
         tasks: Vec<HarnessBackgroundTask>,
     },
@@ -500,6 +506,10 @@ pub struct HarnessMcpServer {
 #[serde(rename_all = "camelCase")]
 pub struct HarnessBackgroundTask {
     pub task_id: String,
+    /// A resumed task may reuse `task_id`; when Claude supplies this identity it distinguishes
+    /// the concrete run without making the harness infer lifecycle state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_use_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -524,6 +534,19 @@ pub struct HarnessBackgroundTaskUpdate {
     /// Typed-safe subset of a workflow progress roster. Unknown item shapes are omitted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workflow_progress: Vec<HarnessWorkflowProgress>,
+}
+
+/// Typed-safe subset of Claude's `task_updated.patch`. Missing fields remain unknown; aliases
+/// seen across CLI versions are normalized by the adapter before this record is emitted.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessBackgroundTaskPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

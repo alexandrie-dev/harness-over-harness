@@ -7,7 +7,7 @@
 //! `initialize` lists five commands and `reload_skills` two skills, some of them odd (HOH-41).
 //! `rename` makes `system/init` report a new session id; the session id of each user line is
 //! appended to `$STUB_STATE/prompt-sessions`.
-//! Prompts: `withdraw`, `toolfail`, `subagent`, `run-reason`, `hello`, `telemetry`, `run: <command>`, `edit: <path>`, `question`, `long`, `garbage`, `stderr`,
+//! Prompts: `withdraw`, `toolfail`, `subagent`, `run-reason`, `hello`, `telemetry`, `telemetry-parent`, `telemetry-late-parent`, `telemetry-tasks`, `run: <command>`, `edit: <path>`, `question`, `long`, `garbage`, `stderr`,
 //! `crash`, `failure`, `write: <path>`, `kill-self` (SIGABRT), `ask-abort`, `echo-decision`,
 //! `subagent-tool`, `parallel-subagents`, `unknown-request`, `withdraw-question`, `leave-open`, `subagent-stream`,
 //! `truncate`, `read: <path>`, `close-stdin`, `notebook: <path>`, `login-expired`, `forbidden`, `question-body`, `question-odd`, `question-bare`, `two-open`, `silent-interrupt`; STUB_MODE `version-fails`, `root-refusal`, `secret-start`; prompts `protected: <path>`, `dangerous-rm`, `secret-crash`.
@@ -361,6 +361,60 @@ impl Stub {
             self.result("success", false, "done");
             return;
         }
+        if text == "telemetry-parent" {
+            write_line(&json!({
+                "type": "assistant", "session_id": self.session, "parent_tool_use_id": null,
+                "message": { "id": "parent-message", "role": "assistant",
+                    "usage": { "input_tokens": 3 }, "content": [{
+                        "type": "tool_use", "id": "toolu-old-parent", "name": "Agent",
+                        "input": { "description": "background child" }
+                    }] }
+            }));
+            self.result("success", false, "parent started");
+            return;
+        }
+        if text == "telemetry-late-parent" {
+            for (id, parent, tokens) in [
+                ("late-known", "toolu-old-parent", 4),
+                ("late-unknown", "toolu-never-seen", 5),
+            ] {
+                write_line(&json!({
+                    "type": "assistant", "session_id": self.session,
+                    "parent_tool_use_id": parent,
+                    "message": { "id": id, "role": "assistant",
+                        "usage": { "input_tokens": tokens }, "content": [] }
+                }));
+            }
+            self.result("success", false, "late child settled");
+            return;
+        }
+        if text == "telemetry-tasks" {
+            for frame in [
+                json!({ "type": "system", "subtype": "task_started",
+                    "session_id": self.session, "uuid": "run-1-start", "task_id": "same-task",
+                    "run_id": "run-1", "description": "first run" }),
+                json!({ "type": "system", "subtype": "task_notification",
+                    "session_id": self.session, "uuid": "run-1-end", "task_id": "same-task",
+                    "run_id": "run-1", "status": "completed" }),
+                json!({ "type": "system", "subtype": "task_started",
+                    "session_id": self.session, "uuid": "run-2-start", "task_id": "same-task",
+                    "run_id": "run-2", "description": "resumed run" }),
+                // A late frame of the old run remains distinguishable, not reconciled here.
+                json!({ "type": "system", "subtype": "task_updated",
+                    "session_id": self.session, "uuid": "run-1-late", "task_id": "same-task",
+                    "run_id": "run-1", "patch": { "status": "completed", "end_time": 17 } }),
+                json!({ "type": "system", "subtype": "task_updated",
+                    "session_id": self.session, "uuid": "run-2-foreground", "task_id": "same-task",
+                    "run_id": "run-2", "patch": { "status": "running", "is_backgrounded": false } }),
+                json!({ "type": "system", "subtype": "task_updated",
+                    "session_id": self.session, "uuid": "run-2-background", "task_id": "same-task",
+                    "run_id": "run-2", "patch": { "background": true } }),
+            ] {
+                write_line(&frame);
+            }
+            self.result("success", false, "tasks recorded");
+            return;
+        }
         if text == "telemetry" {
             write_line(&json!({
                 "type": "system", "subtype": "init", "session_id": self.session,
@@ -379,15 +433,22 @@ impl Stub {
                         "cache_read_input_tokens": 5 },
                     "content": [{ "type": "text", "text": "telemetry done" }] }
             }));
+            for tokens in [1, 2] {
+                write_line(&json!({
+                    "type": "assistant", "session_id": self.session, "parent_tool_use_id": null,
+                    "message": { "role": "assistant", "usage": { "input_tokens": tokens },
+                        "content": [] }
+                }));
+            }
             write_line(&json!({
                 "type": "system", "subtype": "task_started", "session_id": self.session,
-                "uuid": "task-start-telemetry", "task_id": "task-1",
+                "uuid": "task-start-telemetry", "task_id": "task-1", "run_id": "run-main",
                 "tool_use_id": "toolu-background", "task_type": "local_bash",
                 "description": "Background build", "is_backgrounded": true
             }));
             write_line(&json!({
                 "type": "system", "subtype": "task_progress", "session_id": self.session,
-                "uuid": "task-progress-telemetry", "task_id": "task-1",
+                "uuid": "task-progress-telemetry", "task_id": "task-1", "run_id": "run-main",
                 "tool_use_id": "toolu-background", "task_type": "local_workflow",
                 "description": "Build phase", "workflow_progress": [
                     { "type": "workflow_phase", "index": 1, "title": "Build" },
@@ -398,10 +459,22 @@ impl Stub {
             }));
             write_line(&json!({
                 "type": "system", "subtype": "task_notification", "session_id": self.session,
-                "uuid": "task-end-telemetry", "task_id": "task-1",
+                "uuid": "task-end-telemetry", "task_id": "task-1", "run_id": "run-main",
                 "tool_use_id": "toolu-background", "task_type": "local_bash",
                 "status": "completed", "summary": "Build complete",
                 "output_file": "/tmp/secret-output"
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "background_tasks_changed",
+                "session_id": self.session, "uuid": "tasks-mixed-telemetry", "tasks": [
+                    { "task_id": "valid-task", "description": "valid" },
+                    { "description": "missing id" }
+                ]
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "background_tasks_changed",
+                "session_id": self.session, "uuid": "tasks-malformed-telemetry",
+                "tasks": [{ "not_a_task": true }]
             }));
             write_line(&json!({
                 "type": "system", "subtype": "background_tasks_changed",

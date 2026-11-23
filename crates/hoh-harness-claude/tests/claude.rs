@@ -433,13 +433,21 @@ async fn telemetry_keeps_raw_usage_safe_mcp_and_background_provenance() {
             _ => None,
         })
         .collect();
-    assert_eq!(records.len(), 7, "{seen:#?}");
+    assert_eq!(records.len(), 9, "{seen:#?}");
+    for rejected in ["tasks-mixed-telemetry", "tasks-malformed-telemetry"] {
+        assert!(
+            records
+                .iter()
+                .all(|record| record.provenance.source_id.as_deref() != Some(rejected)),
+            "an incomplete roster must emit no snapshot: {seen:#?}"
+        );
+    }
     assert!(records.iter().all(|record| {
         !String::from(record.provenance.native_session_id.clone()).is_empty()
             && !record.provenance.launch_id.is_empty()
     }));
     for (index, record) in records.iter().enumerate() {
-        let expected_turn = matches!(index, 1 | 6).then_some("t-telemetry");
+        let expected_turn = matches!(index, 1 | 2 | 3 | 8).then_some("t-telemetry");
         assert_eq!(
             record.provenance.turn_id.as_deref(),
             expected_turn,
@@ -468,31 +476,42 @@ async fn telemetry_keeps_raw_usage_safe_mcp_and_background_provenance() {
                 && usage.cache_read_input_tokens == Some(5)
                 && usage.cache_creation_input_tokens.is_none()
     ));
+    for record in &records[2..=3] {
+        assert!(matches!(
+            &record.payload,
+            HarnessTelemetry::AssistantUsage { .. }
+        ));
+        assert_eq!(
+            record.provenance.source_id, None,
+            "an id-less assistant frame must not get an invented source id"
+        );
+    }
     assert!(matches!(
-        &records[2].payload,
+        &records[4].payload,
         HarnessTelemetry::BackgroundTask { update }
             if update.subtype == "task_started"
                 && update.task.task_id == "task-1"
+                && update.task.run_id.as_deref() == Some("run-main")
                 && update.is_backgrounded == Some(true)
     ));
     assert!(matches!(
-        &records[3].payload,
+        &records[5].payload,
         HarnessTelemetry::BackgroundTask { update }
             if update.subtype == "task_progress"
                 && update.workflow_progress.len() == 2
                 && update.workflow_progress[1].agent_id.as_deref() == Some("agent-1")
     ));
     assert!(matches!(
-        &records[4].payload,
+        &records[6].payload,
         HarnessTelemetry::BackgroundTask { update }
             if update.subtype == "task_notification"
                 && update.status.as_deref() == Some("completed")
     ));
     assert!(matches!(
-        &records[5].payload,
+        &records[7].payload,
         HarnessTelemetry::BackgroundTasksSnapshot { tasks } if tasks.is_empty()
     ));
-    match &records[6].payload {
+    match &records[8].payload {
         HarnessTelemetry::ResultUsage {
             usage,
             model_usage,
@@ -551,6 +570,87 @@ async fn telemetry_keeps_raw_usage_safe_mcp_and_background_provenance() {
         String::from(resumed_record.provenance.native_session_id.clone()),
         native
     );
+    session.terminate(Duration::from_millis(500)).await;
+}
+
+#[tokio::test]
+async fn late_parented_assistant_usage_keeps_its_origin_turn() {
+    let env = Env::new();
+    let Started {
+        session,
+        mut events,
+        ..
+    } = start(&env, None).await;
+    prompt(&session, "t-origin", "telemetry-parent");
+    let origin = until(&mut events, turn_end).await;
+    assert!(origin.iter().any(|event| matches!(
+        event,
+        HarnessEvent::Telemetry { record }
+            if record.provenance.source_id.as_deref() == Some("parent-message")
+                && record.provenance.turn_id.as_deref() == Some("t-origin")
+    )));
+
+    prompt(&session, "t-next", "telemetry-late-parent");
+    let late = until(&mut events, turn_end).await;
+    let turn_of = |source: &str| {
+        late.iter().find_map(|event| match event {
+            HarnessEvent::Telemetry { record }
+                if record.provenance.source_id.as_deref() == Some(source) =>
+            {
+                Some(record.provenance.turn_id.as_deref())
+            }
+            _ => None,
+        })
+    };
+    assert_eq!(turn_of("late-known"), Some(Some("t-origin")), "{late:#?}");
+    assert_eq!(turn_of("late-unknown"), Some(None), "{late:#?}");
+    session.terminate(Duration::from_millis(500)).await;
+}
+
+#[tokio::test]
+async fn task_runs_and_typed_updates_remain_distinguishable() {
+    let env = Env::new();
+    let Started {
+        session,
+        mut events,
+        ..
+    } = start(&env, None).await;
+    prompt(&session, "t-tasks", "telemetry-tasks");
+    let seen = until(&mut events, turn_end).await;
+    let records: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            HarnessEvent::Telemetry { record } => Some(record),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(records.len(), 6, "{seen:#?}");
+    let lifecycle_runs: Vec<_> = records[..3]
+        .iter()
+        .filter_map(|record| match &record.payload {
+            HarnessTelemetry::BackgroundTask { update } => update.task.run_id.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lifecycle_runs, ["run-1", "run-1", "run-2"]);
+    assert!(matches!(
+        &records[3].payload,
+        HarnessTelemetry::BackgroundTaskUpdated { task_id, run_id, patch }
+            if task_id == "same-task"
+                && run_id.as_deref() == Some("run-1")
+                && patch.status.as_deref() == Some("completed")
+                && patch.end_time == Some(17)
+    ));
+    assert!(matches!(
+        &records[4].payload,
+        HarnessTelemetry::BackgroundTaskUpdated { run_id, patch, .. }
+            if run_id.as_deref() == Some("run-2") && patch.background == Some(false)
+    ));
+    assert!(matches!(
+        &records[5].payload,
+        HarnessTelemetry::BackgroundTaskUpdated { run_id, patch, .. }
+            if run_id.as_deref() == Some("run-2") && patch.background == Some(true)
+    ));
     session.terminate(Duration::from_millis(500)).await;
 }
 

@@ -14,11 +14,11 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     ApprovalDecision, EndReason, FileChange, FileChangeKind, Frame, HarnessAction,
-    HarnessBackgroundTask, HarnessBackgroundTaskUpdate, HarnessEvent, HarnessFailure,
-    HarnessMcpServer, HarnessModelUsage, HarnessQuestion, HarnessResponse, HarnessSession,
-    HarnessTelemetry, HarnessTelemetryProvenance, HarnessTelemetryRecord, HarnessTokenUsage,
-    HarnessWorkflowProgress, ItemOutcome, PromptParams, QuestionAnswer, QuestionOption,
-    RespondParams, Supervisor, code,
+    HarnessBackgroundTask, HarnessBackgroundTaskPatch, HarnessBackgroundTaskUpdate, HarnessEvent,
+    HarnessFailure, HarnessMcpServer, HarnessModelUsage, HarnessQuestion, HarnessResponse,
+    HarnessSession, HarnessTelemetry, HarnessTelemetryProvenance, HarnessTelemetryRecord,
+    HarnessTokenUsage, HarnessWorkflowProgress, ItemOutcome, PromptParams, QuestionAnswer,
+    QuestionOption, RespondParams, Supervisor, code,
 };
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
@@ -77,8 +77,13 @@ fn model_usage(value: &Value) -> Option<Vec<HarnessModelUsage>> {
 }
 
 fn background_task(value: &Value) -> Option<HarnessBackgroundTask> {
+    let task_id = text(value, "task_id")?;
+    if task_id.is_empty() {
+        return None;
+    }
     Some(HarnessBackgroundTask {
-        task_id: text(value, "task_id")?.to_owned(),
+        task_id: task_id.to_owned(),
+        run_id: text(value, "run_id").map(str::to_owned),
         tool_use_id: text(value, "tool_use_id").map(str::to_owned),
         parent_task_id: text(value, "parent_task_id").map(str::to_owned),
         task_type: text(value, "task_type").map(str::to_owned),
@@ -179,6 +184,9 @@ struct State {
     started: HashSet<String>,
     /// A subagent tool call id to the Agent/Task call that owns it.
     item_parents: HashMap<String, String>,
+    /// Provider tool ids keep the HoH turn where they originated. This outlives visible item
+    /// settlement because background/subagent assistant frames may arrive in a later prompt.
+    item_turns: HashMap<String, String>,
     declined: HashSet<String>,
     turn: Option<String>,
     interrupting: bool,
@@ -733,11 +741,48 @@ async fn handle_system(inner: &Inner, message: &Value) {
             )
             .await;
         }
+        Some("task_updated") => {
+            let Some(task_id) = text(message, "task_id").filter(|id| !id.is_empty()) else {
+                return;
+            };
+            let Some(patch) = message.get("patch").and_then(Value::as_object) else {
+                return;
+            };
+            let patch = HarnessBackgroundTaskPatch {
+                status: patch
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                end_time: patch.get("end_time").and_then(Value::as_u64),
+                background: patch
+                    .get("background")
+                    .or_else(|| patch.get("is_backgrounded"))
+                    .and_then(Value::as_bool),
+            };
+            emit_telemetry(
+                inner,
+                message,
+                None,
+                source_id,
+                None,
+                HarnessTelemetry::BackgroundTaskUpdated {
+                    task_id: task_id.to_owned(),
+                    run_id: text(message, "run_id").map(str::to_owned),
+                    patch,
+                },
+            )
+            .await;
+        }
         Some("background_tasks_changed") => {
             let Some(tasks) = message.get("tasks").and_then(Value::as_array) else {
                 return;
             };
-            let tasks = tasks.iter().filter_map(background_task).collect();
+            // A roster is authoritative only when every entry is understood. In particular,
+            // preserve a genuine `[]`, but never turn a mixed/malformed roster into a plausible
+            // partial or empty snapshot.
+            let Some(tasks) = tasks.iter().map(background_task).collect() else {
+                return;
+            };
             emit_telemetry(
                 inner,
                 message,
@@ -832,14 +877,25 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
     let Some(body) = message.get("message") else {
         return;
     };
-    let message_id = text(body, "id").unwrap_or("message").to_owned();
+    let telemetry_source_id = text(body, "id").map(str::to_owned);
+    // The visible stream still needs an internal key for id-less provider frames. That fallback
+    // is deliberately separate from telemetry provenance: it is not a provider identity.
+    let message_id = telemetry_source_id
+        .clone()
+        .unwrap_or_else(|| "message".to_owned());
+    let origin_turn = {
+        let state = lock(&inner.state);
+        match parent_item_id.as_deref() {
+            Some(parent) => state.item_turns.get(parent).cloned(),
+            None => state.turn.clone(),
+        }
+    };
     if let Some(usage) = body.get("usage").and_then(token_usage) {
-        let turn_id = lock(&inner.state).turn.clone();
         emit_telemetry(
             inner,
             message,
-            turn_id,
-            Some(message_id.clone()),
+            origin_turn.clone(),
+            telemetry_source_id,
             parent_item_id.clone(),
             HarnessTelemetry::AssistantUsage { usage },
         )
@@ -888,6 +944,7 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
                         name,
                         block.get("input"),
                         parent_item_id.clone(),
+                        origin_turn.clone(),
                     )
                     .await;
                 }
@@ -903,6 +960,7 @@ async fn ensure_item_started(
     name: &str,
     input: Option<&Value>,
     parent_item_id: Option<String>,
+    origin_turn: Option<String>,
 ) {
     let fresh = {
         let mut state = lock(&inner.state);
@@ -910,6 +968,9 @@ async fn ensure_item_started(
             state
                 .item_parents
                 .insert(id.to_owned(), parent_item_id.clone());
+        }
+        if let Some(origin_turn) = origin_turn {
+            state.item_turns.entry(id.to_owned()).or_insert(origin_turn);
         }
         state.started.insert(id.to_owned())
     };
@@ -1287,9 +1348,22 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
         .unwrap_or(request_id)
         .to_owned();
     let tool_use_id = text(request, "tool_use_id").map(str::to_owned);
-    let parent_item_id = tool_use_id
-        .as_deref()
-        .and_then(|id| lock(&inner.state).item_parents.get(id).cloned());
+    let (parent_item_id, origin_turn) = {
+        let state = lock(&inner.state);
+        let parent_item_id = tool_use_id
+            .as_deref()
+            .and_then(|id| state.item_parents.get(id).cloned());
+        let origin_turn = tool_use_id
+            .as_deref()
+            .and_then(|id| state.item_turns.get(id).cloned())
+            .or_else(|| {
+                parent_item_id
+                    .as_deref()
+                    .and_then(|id| state.item_turns.get(id).cloned())
+            })
+            .or_else(|| state.turn.clone());
+        (parent_item_id, origin_turn)
+    };
     if name == "AskUserQuestion" {
         let (questions, texts) = questions_from(&input);
         lock(&inner.state).pending.insert(
@@ -1310,7 +1384,15 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
         return;
     }
     if let Some(id) = tool_use_id.as_deref() {
-        ensure_item_started(inner, id, name, Some(&input), parent_item_id.clone()).await;
+        ensure_item_started(
+            inner,
+            id,
+            name,
+            Some(&input),
+            parent_item_id.clone(),
+            origin_turn,
+        )
+        .await;
     }
     if inner.bypass && is_removal_safety_refusal(name, request) {
         // T3 `ClaudeAdapterV2.ts:12494-12510`: the CLI's own removal check refused it under

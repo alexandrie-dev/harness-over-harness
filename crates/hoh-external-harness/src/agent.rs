@@ -39,9 +39,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::contract::{
     AccessMode, ApprovalDecision, ApprovalMode, EndReason, FileChange, FileChangeKind,
-    HarnessAction, HarnessEvent, HarnessFailure, HarnessPolicy, HarnessQuestion, HarnessResponse,
-    HarnessTelemetryRecord, ItemOutcome, NativeSessionId, NetworkAccess, PromptImage, PromptParams,
-    QuestionAnswer, RespondParams, SandboxMode, StartParams, TELEMETRY_RECORD, code,
+    HarnessAction, HarnessBackgroundTask, HarnessEvent, HarnessFailure, HarnessPolicy,
+    HarnessQuestion, HarnessResponse, HarnessTelemetry, HarnessTelemetryRecord,
+    HarnessWorkflowProgress, ItemOutcome, NativeSessionId, NetworkAccess, PromptImage,
+    PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, TELEMETRY_RECORD, code,
 };
 use crate::executor::{BINDING_RECORD, Launched, Shared};
 use crate::harness::HarnessSession;
@@ -54,6 +55,107 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 const MAX_OUTPUT_CHARS: usize = 64 * 1024;
 const MAX_HEADLINE_CHARS: usize = 600;
 const MAX_DETAILS_CHARS: usize = 3600;
+/// Telemetry is durable and provider-controlled: bound every display string, every repeated
+/// collection, and the final encoded record before it reaches the session log.
+const MAX_TELEMETRY_TEXT_BYTES: usize = 4 * 1024;
+const MAX_TELEMETRY_ITEMS: usize = 256;
+const MAX_TELEMETRY_RECORD_BYTES: usize = 64 * 1024;
+
+fn telemetry_text(text: &str) -> String {
+    let mut text = redact(text);
+    if text.len() > MAX_TELEMETRY_TEXT_BYTES {
+        let mut end = MAX_TELEMETRY_TEXT_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
+}
+
+fn scrub_background_task(task: &mut HarnessBackgroundTask) {
+    task.task_type = task.task_type.as_deref().map(telemetry_text);
+    task.description = task.description.as_deref().map(telemetry_text);
+}
+
+fn scrub_workflow_progress(progress: &mut HarnessWorkflowProgress) {
+    progress.kind = telemetry_text(&progress.kind);
+    progress.title = progress.title.as_deref().map(telemetry_text);
+    progress.label = progress.label.as_deref().map(telemetry_text);
+    progress.state = progress.state.as_deref().map(telemetry_text);
+    progress.phase_title = progress.phase_title.as_deref().map(telemetry_text);
+    progress.model = progress.model.as_deref().map(telemetry_text);
+    progress.prompt_preview = progress.prompt_preview.as_deref().map(telemetry_text);
+    progress.result_preview = progress.result_preview.as_deref().map(telemetry_text);
+}
+
+/// Redact only payload display/free-text: provenance and task/message/run ids are identities and
+/// must remain byte-for-byte provider values. A repeated collection over the limit is rejected
+/// whole, so a complete roster can never become a believable partial snapshot.
+fn prepare_telemetry(record: &mut HarnessTelemetryRecord) -> Result<(), &'static str> {
+    match &mut record.payload {
+        HarnessTelemetry::AssistantUsage { .. } => {}
+        HarnessTelemetry::ResultUsage {
+            model_usage,
+            user_message_uuids,
+            origin,
+            ..
+        } => {
+            if model_usage
+                .as_ref()
+                .is_some_and(|models| models.len() > MAX_TELEMETRY_ITEMS)
+            {
+                return Err("too many model usage entries");
+            }
+            if user_message_uuids.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many echoed user message ids");
+            }
+            if let Some(models) = model_usage {
+                for model in models {
+                    model.model = telemetry_text(&model.model);
+                }
+            }
+            *origin = origin.as_deref().map(telemetry_text);
+        }
+        HarnessTelemetry::McpServers { servers } => {
+            if servers.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many MCP servers");
+            }
+            for server in servers {
+                server.name = telemetry_text(&server.name);
+                server.status = server.status.as_deref().map(telemetry_text);
+            }
+        }
+        HarnessTelemetry::BackgroundTask { update } => {
+            if update.workflow_progress.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many workflow progress entries");
+            }
+            update.subtype = telemetry_text(&update.subtype);
+            update.status = update.status.as_deref().map(telemetry_text);
+            update.summary = update.summary.as_deref().map(telemetry_text);
+            scrub_background_task(&mut update.task);
+            for progress in &mut update.workflow_progress {
+                scrub_workflow_progress(progress);
+            }
+        }
+        HarnessTelemetry::BackgroundTaskUpdated { patch, .. } => {
+            patch.status = patch.status.as_deref().map(telemetry_text);
+        }
+        HarnessTelemetry::BackgroundTasksSnapshot { tasks } => {
+            if tasks.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many background tasks");
+            }
+            for task in tasks {
+                scrub_background_task(task);
+            }
+        }
+    }
+    let encoded = serde_json::to_vec(record).map_err(|_| "cannot encode telemetry")?;
+    if encoded.len() > MAX_TELEMETRY_RECORD_BYTES {
+        return Err("telemetry record is too large");
+    }
+    Ok(())
+}
 
 /// `approval: never` is built in (feature `never-mode`). Off by default until it passes its own
 /// review: the slot then refuses to start a native session under `never`, and nothing in the slot
@@ -330,9 +432,16 @@ impl ExternalAgent {
         }
     }
 
-    /// Preserve raw provider telemetry as an ignorable session record. Redaction and field
-    /// selection happened at the concrete harness boundary; this layer adds only its route.
-    fn record_telemetry(&self, record: HarnessTelemetryRecord) {
+    /// Preserve bounded, redacted provider telemetry as an ignorable session record. The
+    /// concrete adapter selects typed-safe fields; this common boundary enforces durable-log
+    /// safety for every adapter without rewriting provider identities.
+    fn record_telemetry(&self, mut record: HarnessTelemetryRecord) {
+        if let Err(reason) = prepare_telemetry(&mut record) {
+            self.ctx
+                .logger()
+                .warn(format_args!("dropping harness telemetry: {reason}"));
+            return;
+        }
         let data = json!({"harness": self.shared.name, "record": record});
         if let Err(error) = append_plugin_record(&self.session, TELEMETRY_RECORD, data) {
             self.ctx
