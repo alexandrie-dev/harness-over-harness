@@ -115,6 +115,34 @@ export function skillsAsCommands(text: string, skills: ReadonlySet<string>): str
   return text.replace(SKILL_MENTION, (whole, before: string, name: string) => skills.has(name) ? `${before}/${name}` : whole);
 }
 
+function fnv1a64(value: string): string {
+  let forward = 0x811c9dc5;
+  let reverse = 0x9dc5811c;
+  for (let index = 0; index < value.length; index += 1) {
+    forward ^= value.charCodeAt(index);
+    forward = Math.imul(forward, 0x01000193) >>> 0;
+    reverse ^= value.charCodeAt(value.length - 1 - index);
+    reverse = Math.imul(reverse, 0x01000193) >>> 0;
+  }
+  return `${forward.toString(16).padStart(8, '0')}${reverse.toString(16).padStart(8, '0')}`;
+}
+
+function imageContextId(imageId: string): string {
+  const producerId = `image_${imageId}`;
+  if (/^[a-z0-9_-]{1,128}$/i.test(producerId)) return producerId;
+  const slug = producerId.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  return `${slug || 'ctx'}-${fnv1a64(producerId)}`;
+}
+
+const IMAGE_CONTEXT_REFERENCE = /!\[([^\[\]\n]{0,512})\]\(t3-context:\/\/v1\/image\/([a-z0-9_-]{1,128})\)/gi;
+
+/** Remove only T3 image references whose bytes are already carried by this turn's image blocks. */
+export function stripAttachedImageReferences(text: string, imageIds: readonly string[]): string {
+  if (!imageIds.length) return text;
+  const attached = new Set(imageIds.map(imageContextId));
+  return text.replace(IMAGE_CONTEXT_REFERENCE, (reference, _label: string, contextId: string) => attached.has(contextId) ? '' : reference).trim();
+}
+
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
 
 /** T3's `projects.searchEntries` filters (`kind`, `imageOnly`) over the engine's answer. */

@@ -20,7 +20,7 @@ import {
   accessModeOf, CLAUDE_INSTANCE_ID, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
-import { base64Of, readUploads, searchAnswer, skillsAsCommands, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
+import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError } from './errors.ts';
 import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
@@ -696,7 +696,7 @@ export class HohHost {
       this.previewUrl(image);
       this.sentPreviewIds.add(image.id);
     }
-    const prompt = skillsAsCommands(text, this.skillsByFolder.get(folderPath(thread.cwd)) ?? new Set());
+    const prompt = skillsAsCommands(stripAttachedImageReferences(text, images.map(image => image.id)), this.skillsByFolder.get(folderPath(thread.cwd)) ?? new Set());
     thread.sendLocal(messageId, text, this.now(), images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
     this.changed(thread.id);
     const contentBlocks = [
