@@ -276,9 +276,13 @@ export class HohHost {
     if (this.engine.subscribeStatus) this.unsubscribers.push(await this.engine.subscribeStatus(status => {
       if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
     }));
-    const [, , sessionsRead] = await Promise.all([this.readDiscovery(), this.readAccess(), this.readSessions()]);
+    await Promise.all([this.readDiscovery(), this.readAccess()]);
+    const discovered = this.claudeDiscovery !== null && this.codexDiscovery !== null;
+    // Session rows without a persisted model need the discovered provider catalog. Do not
+    // materialize a placeholder model that would survive after a later successful retry.
+    const sessionsRead = discovered ? await this.readSessions() : false;
     // The engine that was still starting answers nothing at first (and the window never asks again): go on asking in the background.
-    if (this.claudeDiscovery === null || this.codexDiscovery === null || !sessionsRead) void this.retryLoad(this.claudeDiscovery !== null && this.codexDiscovery !== null, sessionsRead);
+    if (!discovered || !sessionsRead) void this.retryLoad(discovered, sessionsRead);
   }
 
   /** The reads of `load` that failed, repeated until the engine answers; what arrives late is announced to the window. */

@@ -223,14 +223,18 @@ struct State {
     closed: bool,
 }
 
-fn take_pending_interrupt(state: &mut State) -> Option<(String, String)> {
+fn take_pending_interrupt(state: &mut State) -> Option<RequestContext> {
     if state.closed || !state.interrupt_requested || state.interrupt_sent {
         return None;
     }
-    let turn_id = state.native_turn.clone()?;
-    state.hoh_turn.as_ref()?;
+    let native_turn = state.native_turn.clone()?;
+    let hoh_turn = state.hoh_turn.clone()?;
     state.interrupt_sent = true;
-    Some((state.thread_id.clone(), turn_id))
+    Some(RequestContext {
+        thread_id: state.thread_id.clone(),
+        native_turn,
+        hoh_turn,
+    })
 }
 
 struct Inner {
@@ -531,16 +535,19 @@ async fn request(
 
 async fn send_interrupt(
     inner: &Arc<Inner>,
-    thread_id: String,
-    turn_id: String,
+    context: &RequestContext,
 ) -> Result<(), HarnessFailure> {
     request(
         inner,
         "turn/interrupt",
-        json!({"threadId":thread_id,"turnId":turn_id}),
+        json!({"threadId":context.thread_id.clone(),"turnId":context.native_turn.clone()}),
     )
     .await?;
     Ok(())
+}
+
+fn interrupt_failure_is_current(inner: &Inner, context: &RequestContext) -> bool {
+    context_is_current(&lock(&inner.state), context)
 }
 
 impl HarnessSession for CodexSession {
@@ -574,11 +581,13 @@ impl HarnessSession for CodexSession {
                 Ok(result) => result,
                 Err(error) => {
                     let mut state = lock(&session.inner.state);
-                    state.hoh_turn = None;
-                    state.native_turn = None;
-                    state.turn_opened = false;
-                    state.interrupt_requested = false;
-                    state.interrupt_sent = false;
+                    if state.hoh_turn.as_deref() == Some(params.turn_id.as_str()) {
+                        state.hoh_turn = None;
+                        state.native_turn = None;
+                        state.turn_opened = false;
+                        state.interrupt_requested = false;
+                        state.interrupt_sent = false;
+                    }
                     return Err(error);
                 }
             };
@@ -638,8 +647,11 @@ impl HarnessSession for CodexSession {
             if let Some(turn_id) = emit {
                 emit_event(&session.inner, HarnessEvent::TurnStarted { turn_id }).await;
             }
-            if let Some((thread_id, turn_id)) = interrupt {
-                send_interrupt(&session.inner, thread_id, turn_id).await?;
+            if let Some(context) = interrupt
+                && let Err(failure) = send_interrupt(&session.inner, &context).await
+                && interrupt_failure_is_current(&session.inner, &context)
+            {
+                return Err(failure);
             }
             Ok(())
         })
@@ -659,10 +671,15 @@ impl HarnessSession for CodexSession {
                 state.interrupt_requested = true;
                 take_pending_interrupt(&mut state)
             };
-            let Some((thread_id, turn_id)) = interrupt else {
+            let Some(context) = interrupt else {
                 return Ok(());
             };
-            send_interrupt(&session.inner, thread_id, turn_id).await
+            match send_interrupt(&session.inner, &context).await {
+                Err(failure) if interrupt_failure_is_current(&session.inner, &context) => {
+                    Err(failure)
+                }
+                _ => Ok(()),
+            }
         })
     }
 
@@ -822,6 +839,16 @@ async fn close(inner: &Inner, reason: EndReason, message: Option<String>) {
             std::mem::take(&mut state.server),
         )
     };
+    finish_close(inner, host, requests, reason, message).await;
+}
+
+async fn finish_close(
+    inner: &Inner,
+    host: HashMap<u64, HostReply>,
+    requests: HashMap<String, ServerRequest>,
+    reason: EndReason,
+    message: Option<String>,
+) {
     for (_, reply) in host {
         let _ = reply.send(Err(HarnessFailure::new(
             code::CLOSED,
@@ -848,6 +875,35 @@ async fn close(inner: &Inner, reason: EndReason, message: Option<String>) {
 
 async fn protocol_violation(inner: &Arc<Inner>, message: impl Into<String>) {
     close(inner, EndReason::ProtocolError, Some(message.into())).await;
+    if !inner.terminated.swap(true, Ordering::SeqCst) {
+        inner.supervisor.terminate(Duration::ZERO).await;
+    }
+}
+
+async fn interrupt_protocol_violation_if_current(
+    inner: &Arc<Inner>,
+    context: &RequestContext,
+    message: String,
+) {
+    let (host, requests) = {
+        let mut state = lock(&inner.state);
+        if state.closed || !context_is_current(&state, context) {
+            return;
+        }
+        state.closed = true;
+        (
+            std::mem::take(&mut state.host),
+            std::mem::take(&mut state.server),
+        )
+    };
+    finish_close(
+        inner,
+        host,
+        requests,
+        EndReason::ProtocolError,
+        Some(message),
+    )
+    .await;
     if !inner.terminated.swap(true, Ordering::SeqCst) {
         inner.supervisor.terminate(Duration::ZERO).await;
     }
@@ -1160,12 +1216,13 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                     if let Some(turn_id) = emit {
                         emit_event(inner, HarnessEvent::TurnStarted { turn_id }).await;
                     }
-                    if let Some((thread_id, turn_id)) = interrupt {
+                    if let Some(context) = interrupt {
                         let inner = inner.clone();
                         tokio::spawn(async move {
-                            if let Err(failure) = send_interrupt(&inner, thread_id, turn_id).await {
-                                protocol_violation(
+                            if let Err(failure) = send_interrupt(&inner, &context).await {
+                                interrupt_protocol_violation_if_current(
                                     &inner,
+                                    &context,
                                     format!(
                                         "Codex failed the latched turn interrupt: {}",
                                         failure.message

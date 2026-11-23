@@ -161,6 +161,24 @@ async fn real_codex_streams_approves_resumes_and_stops() {
     );
     prompted.expect("start the turn that will be stopped");
     interrupted.expect("interrupt the new Codex turn, including before turn/started");
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(45), resumed.events.recv())
+            .await
+            .expect("Codex did not acknowledge the native interrupt")
+            .expect("Codex event stream ended before the native interrupt completed");
+        match event {
+            HarnessEvent::TurnAborted { turn_id } if turn_id == "cx-live-stop" => break,
+            HarnessEvent::TurnCompleted { turn_id }
+            | HarnessEvent::TurnFailed { turn_id, .. }
+            | HarnessEvent::TurnAborted { turn_id } => {
+                panic!("unexpected terminal event while stopping {turn_id}")
+            }
+            HarnessEvent::SessionEnded {
+                reason, message, ..
+            } => panic!("Codex ended before native Stop completed: {reason:?}: {message:?}"),
+            _ => {}
+        }
+    }
     resumed.session.terminate(Duration::from_millis(500)).await;
     assert!(
         stopped_at.elapsed() < Duration::from_secs(5),

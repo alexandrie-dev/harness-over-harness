@@ -78,6 +78,8 @@ fn main() {
     let mut approval = 0_u8;
     let mut child: Option<Child> = None;
     let mut duplicate_after_answer: Option<Value> = None;
+    let mut late_turn_start: Option<Value> = None;
+    let mut late_interrupt: Option<Value> = None;
     let mut turn_count = 0_u8;
     for line in BufReader::new(stdin.lock()).lines() {
         let line = line.unwrap();
@@ -112,6 +114,32 @@ fn main() {
             }
             Some("turn/start") => {
                 turn_count += 1;
+                if scenario == "late-start-error" || scenario == "late-interrupt-error" {
+                    if turn_count == 1 {
+                        late_turn_start = id;
+                        if scenario == "late-interrupt-error" {
+                            // The test calls Stop while neither source of the native id is visible.
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                        }
+                        send(
+                            json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
+                        );
+                    } else {
+                        send(
+                            json!({"id":id,"result":{"turn":{"id":"turn-stub","status":"inProgress","startedAt":2}}}),
+                        );
+                        send(
+                            json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":2}}}),
+                        );
+                        if let Some(old) = late_turn_start.take() {
+                            send(json!({"id":old,"error":{"code":-32000,"message":"late old turn/start failure"}}));
+                        }
+                        if let Some(old) = late_interrupt.take() {
+                            send(json!({"id":old,"error":{"code":-32000,"message":"late old interrupt failure"}}));
+                        }
+                    }
+                    continue;
+                }
                 if scenario == "early-interrupt" {
                     let spawned = Command::new("sh")
                         .args(["-c", "sleep 120"])
@@ -298,6 +326,11 @@ fn main() {
                 }
             }
             Some("turn/interrupt") => {
+                if scenario == "late-interrupt-error" && turn_count == 1 {
+                    late_interrupt = id;
+                    finish_turn("interrupted");
+                    continue;
+                }
                 send(json!({"id":id,"result":{}}));
                 finish_turn("interrupted");
             }

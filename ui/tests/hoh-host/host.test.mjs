@@ -110,6 +110,36 @@ test('a closed Codex chat uses the Codex default model before resume', async () 
   );
 });
 
+test('delayed discovery resolves closed Codex models before shell materialization', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-codex-default', 'Catalog default', []);
+  engine.store.get('chat-codex-default').executor = 'codex';
+  engine.seed('chat-codex-explicit', 'Persisted model', []);
+  Object.assign(engine.store.get('chat-codex-explicit'), { executor: 'codex', model: 'gpt-persisted' });
+  const request = engine.request.bind(engine);
+  let releaseDiscovery;
+  const discoveryMayFinish = new Promise(resolve => { releaseDiscovery = resolve; });
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/discover' && params.executor === 'codex') await discoveryMayFinish;
+    return request(method, params);
+  };
+
+  const { client } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await tick(0);
+  assert.equal(
+    engine.requests.some(entry => entry.method === 'session/list'),
+    false,
+    'sessions must wait for the provider catalog',
+  );
+  releaseDiscovery();
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  const row = id => snapshot.snapshot.threads.find(thread => thread.id === id);
+  assert.deepEqual(row('chat-codex-default').modelSelection, { instanceId: 'codex', model: 'gpt-6-sol' });
+  assert.deepEqual(row('chat-codex-explicit').modelSelection, { instanceId: 'codex', model: 'gpt-persisted' });
+  assert.equal(engine.requests.some(entry => entry.method === 'session/resume'), false);
+});
+
 test('new chat with a first message, streamed answer, tool step, end of turn', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);

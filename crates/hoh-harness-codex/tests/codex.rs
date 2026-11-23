@@ -57,6 +57,24 @@ async fn event(events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>) -> Harnes
         .unwrap()
 }
 
+async fn turn_aborted(
+    events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>,
+    expected: &str,
+) {
+    loop {
+        match event(events).await {
+            HarnessEvent::TurnAborted { turn_id } => {
+                assert_eq!(turn_id, expected);
+                return;
+            }
+            HarnessEvent::SessionEnded {
+                reason, message, ..
+            } => panic!("session ended before {expected} was aborted: {reason:?}: {message:?}"),
+            _ => {}
+        }
+    }
+}
+
 async fn protocol_end_without_a_request_card(
     events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>,
     scenario: &str,
@@ -1159,6 +1177,128 @@ async fn early_interrupt_is_latched_until_native_turn_and_reaps_process_tree() {
         !Path::new(&format!("/proc/{child}")).exists(),
         "child {child} survived early Stop"
     );
+}
+
+#[tokio::test]
+async fn late_turn_start_error_does_not_clear_replacement_turn() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "late-start-error");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    let first_session = started.session.clone();
+    let first = tokio::spawn(async move {
+        first_session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-old-start".into(),
+                text: "old".into(),
+                images: Vec::new(),
+            })
+            .await
+    });
+    while !lines(&log)
+        .iter()
+        .any(|line| line.get("method") == Some(&Value::String("turn/start".into())))
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    started.session.interrupt().await.unwrap();
+    turn_aborted(&mut started.events, "turn-old-start").await;
+    assert_eq!(
+        lines(&log)
+            .iter()
+            .filter(|line| line.get("method") == Some(&Value::String("turn/interrupt".into())))
+            .count(),
+        1
+    );
+
+    let second_session = started.session.clone();
+    let second = tokio::spawn(async move {
+        second_session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-after-late-start".into(),
+                text: "replacement".into(),
+                images: Vec::new(),
+            })
+            .await
+    });
+    second.await.unwrap().unwrap();
+    assert!(first.await.unwrap().is_err());
+    started.session.interrupt().await.unwrap();
+    turn_aborted(&mut started.events, "turn-after-late-start").await;
+    assert_eq!(
+        lines(&log)
+            .iter()
+            .filter(|line| line.get("method") == Some(&Value::String("turn/interrupt".into())))
+            .count(),
+        2,
+        "each generation must receive exactly one native interrupt"
+    );
+    started.session.terminate(Duration::from_millis(100)).await;
+}
+
+#[tokio::test]
+async fn late_interrupt_error_does_not_close_replacement_turn() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "late-interrupt-error");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    let first_session = started.session.clone();
+    let first = tokio::spawn(async move {
+        first_session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-old-interrupt".into(),
+                text: "old".into(),
+                images: Vec::new(),
+            })
+            .await
+    });
+    while !lines(&log)
+        .iter()
+        .any(|line| line.get("method") == Some(&Value::String("turn/start".into())))
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    started.session.interrupt().await.unwrap();
+    turn_aborted(&mut started.events, "turn-old-interrupt").await;
+    assert_eq!(
+        lines(&log)
+            .iter()
+            .filter(|line| line.get("method") == Some(&Value::String("turn/interrupt".into())))
+            .count(),
+        1
+    );
+
+    let second_session = started.session.clone();
+    let second = tokio::spawn(async move {
+        second_session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-after-late-interrupt".into(),
+                text: "replacement".into(),
+                images: Vec::new(),
+            })
+            .await
+    });
+    second.await.unwrap().unwrap();
+    assert!(first.await.unwrap().is_err());
+    started.session.interrupt().await.unwrap();
+    turn_aborted(&mut started.events, "turn-after-late-interrupt").await;
+    assert_eq!(
+        lines(&log)
+            .iter()
+            .filter(|line| line.get("method") == Some(&Value::String("turn/interrupt".into())))
+            .count(),
+        2,
+        "a stale interrupt failure must not duplicate or erase the replacement Stop"
+    );
+    started.session.terminate(Duration::from_millis(100)).await;
 }
 
 #[tokio::test]
