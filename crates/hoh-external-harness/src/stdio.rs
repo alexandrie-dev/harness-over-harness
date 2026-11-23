@@ -375,7 +375,7 @@ async fn pump(
             Frame::Message(value) => match route(&value, &rpc) {
                 Routed::Event(event) => {
                     // A full queue holds stdout back; a gone driver drops the event.
-                    let _ = events.send(event).await;
+                    let _ = events.send(*event).await;
                 }
                 Routed::Request(id) => {
                     let reply = json!({"jsonrpc": "2.0", "id": id, "error": {
@@ -454,7 +454,7 @@ async fn pump(
 }
 
 enum Routed {
-    Event(HarnessEvent),
+    Event(Box<HarnessEvent>),
     Request(Value),
     Done,
     Invalid(String),
@@ -467,7 +467,7 @@ fn route(value: &Value, rpc: &Rpc) -> Routed {
         (Some(id), Some(_)) => Routed::Request(id.clone()),
         (None, Some(name)) if name == method::EVENT => {
             match serde_json::from_value::<EventParams>(value["params"].clone()) {
-                Ok(params) => Routed::Event(params.event),
+                Ok(params) => Routed::Event(Box::new(params.event)),
                 Err(error) => {
                     Routed::Invalid(redact(&format!("invalid {name} notification: {error}")))
                 }
