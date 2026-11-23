@@ -8,8 +8,11 @@
     "web/components/T3Wordmark.tsx"
   ],
   "patched": [
+    "contracts/assets.ts",
     "gt.config.json",
     "web/branding.ts",
+    "web/components/ChatView.logic.ts",
+    "web/components/CommandPalette.tsx",
     "web/components/chat/PanelLayoutControls.tsx",
     "web/components/chat/turnDetailAnnouncement.ts",
     "web/components/settings/ThemeSettings.tsx",

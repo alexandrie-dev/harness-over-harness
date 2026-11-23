@@ -138,6 +138,10 @@ export class HohHost {
   private readonly uploads = new Map<string, KeptImage>();
   /** Pictures T3 announced (`attachments.createUploadUrl`) whose bytes have not come yet. */
   private readonly slots = new Map<string, UploadSlot>();
+  /** Process-local image addresses for the native <img> loader; sent previews outlive T3 deleting their upload slot. */
+  private readonly previewUrls = new Map<string, string>();
+  /** Upload ids already adopted by a local message: their preview is kept until this window closes. */
+  private readonly sentPreviewIds = new Set<string>();
   /** The skills Claude declared for each folder (its last workspace snapshot): `$name` in a message goes as `/name`. */
   private readonly skillsByFolder = new Map<string, Set<string>>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
@@ -290,6 +294,21 @@ export class HohHost {
     for (const off of this.unsubscribers) off();
     this.unsubscribers = [];
     if (this.flushTimer) clearTimeout(this.flushTimer);
+    for (const url of this.previewUrls.values()) URL.revokeObjectURL(url);
+    this.previewUrls.clear();
+    this.sentPreviewIds.clear();
+  }
+
+  /** A CSP-local address for bytes already checked by the attachment intake. */
+  private previewUrl(image: KeptImage): string {
+    const existing = this.previewUrls.get(image.id);
+    if (existing) return existing;
+    const binary = atob(image.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    const url = URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));
+    this.previewUrls.set(image.id, url);
+    return url;
   }
 
   private async load() {
@@ -725,6 +744,12 @@ export class HohHost {
    */
   private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = []) {
     const images = this.keptImages(attachments);
+    // T3 releases the completed upload immediately after send. Promote its process-local preview
+    // first, so the timeline can keep rendering it without retaining upload bytes or opening CSP.
+    for (const image of images) {
+      this.previewUrl(image);
+      this.sentPreviewIds.add(image.id);
+    }
     const prompt = skillsAsCommands(text, this.skillsByFolder.get(folderPath(thread.cwd)) ?? new Set());
     thread.sendLocal(messageId, text, this.now(), images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
     this.changed(thread.id);
@@ -982,12 +1007,21 @@ export class HohHost {
           const resource = payload?.resource;
           if (resource?._tag !== 'attachment') throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:read' });
           const id = String(resource.attachmentId ?? '');
-          if (!this.uploads.has(id) || !UPLOAD_PATH.test(`/api/attachments/upload/${id}`)) throw new RpcFailure({ _tag: 'AssetAttachmentNotFoundError', resource });
-          return { relativeUrl: `/api/assets/attachment/${id}`, expiresAt: this.now() + UPLOAD_TTL_MS };
+          const image = this.uploads.get(id);
+          const relativeUrl = this.previewUrls.get(id) ?? (image ? this.previewUrl(image) : undefined);
+          if (!relativeUrl || !UPLOAD_PATH.test(`/api/attachments/upload/${id}`)) throw new RpcFailure({ _tag: 'AssetAttachmentNotFoundError', resource });
+          return { relativeUrl, expiresAt: this.now() + UPLOAD_TTL_MS };
         },
         'attachments.delete': (payload: any) => {
           const id = String(payload?.attachmentId ?? '');
           this.slots.delete(id); this.uploads.delete(id);
+          // Removing an unsent draft frees its URL. A sent message owns its preview independently:
+          // this same RPC is T3's normal post-send upload cleanup.
+          if (!this.sentPreviewIds.has(id)) {
+            const url = this.previewUrls.get(id);
+            if (url) URL.revokeObjectURL(url);
+            this.previewUrls.delete(id);
+          }
           return null;
         },
         'filesystem.browse': (payload: any) => this.browse(payload ?? {}),
