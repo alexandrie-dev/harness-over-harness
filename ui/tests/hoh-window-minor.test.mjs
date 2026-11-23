@@ -24,3 +24,10 @@ test('the timeline minimap strips that look like an equals sign are hidden', asy
   const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
   assert.match(features, /['"]\[data-testid="timeline-minimap"\]['"]/);
 });
+
+test('Recent chats omits T3 draft rows until a sent thread exists', async () => {
+  const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
+  assert.match(features, /components\/sidebar\/SidebarDraftBlock\.tsx['"]:\s*\[['"]SidebarDraftBlock['"]\]/);
+  const vite = await readFile(new URL('src/t3-entry/vite.ts', root), 'utf8');
+  assert.match(vite, /latestUserMessageAt != null/);
+});
