@@ -665,13 +665,11 @@ impl TitleTempRoot {
 
 impl Drop for TitleTempRoot {
     fn drop(&mut self) {
-        if !self.closed {
-            if let Err(error) = std::fs::remove_dir_all(&self.path) {
-                // Drop cannot return the cleanup failure, but it must not be silent: this means
-                // cancellation may have left isolated Claude persistence behind. Do not print the
-                // path because it can identify a sensitive title request.
-                eprintln!("cannot remove cancelled Claude title storage: {error}");
-            }
+        if !self.closed && let Err(error) = std::fs::remove_dir_all(&self.path) {
+            // Drop cannot return the cleanup failure, but it must not be silent: this means
+            // cancellation may have left isolated Claude persistence behind. Do not print the
+            // path because it can identify a sensitive title request.
+            eprintln!("cannot remove cancelled Claude title storage: {error}");
         }
     }
 }
