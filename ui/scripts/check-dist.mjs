@@ -121,8 +121,13 @@ const tauriConf = JSON.parse(await readFile(process.env.HOH_TAURI_CONF ?? new UR
 const security = tauriConf.app?.security ?? {};
 assert(typeof security.csp === 'string', 'окно без CSP');
 assert(!('dangerousDisableAssetCspModification' in security), 'CSP окна ослаблен настройкой tauri.conf.json');
-const csp = Object.fromEntries(security.csp.split(';').map(part => part.trim()).filter(Boolean)
-  .map(part => { const [name, ...sources] = part.split(/\s+/); return [name, sources]; }));
+const cspEntries = security.csp.split(';').map(part => part.trim()).filter(Boolean)
+  .map(part => { const [name, ...sources] = part.split(/\s+/); return [name.toLowerCase(), sources]; });
+// Браузер применяет первую одноимённую директиву и молча пропускает повторы; Object.fromEntries взял бы последнюю —
+// повтор любой директивы роняет проверку, иначе опасная первая запись прошла бы под безопасной последней.
+for (const [index, [name]] of cspEntries.entries())
+  assert(cspEntries.findIndex(([other]) => other === name) === index, `CSP окна: директива ${name} повторяется`);
+const csp = Object.fromEntries(cspEntries);
 assert.deepEqual(csp['default-src'], ["'self'"], "CSP окна: default-src не 'self'");
 for (const name of CSP_REQUIRED) assert(name in csp, `CSP окна: нет ${name}`);
 assert.deepEqual(csp['script-src'], ["'self'", "'wasm-unsafe-eval'"],

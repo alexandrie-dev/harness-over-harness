@@ -60,6 +60,11 @@ test('dist gate requires only the narrow WebAssembly execution permission', asyn
   await check({ 'app.js': 'console.log(1)' }, message,
     withDirective("script-src 'self' 'wasm-unsafe-eval' https://scripts.example.com"));
 });
+test('dist gate rejects a repeated directive (the browser applies the first one)', async () => {
+  const dangerousFirst = "script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' https://scripts.example.com; " + WINDOW_CSP;
+  await check({ 'app.js': 'console.log(1)' }, 'директива script-src повторяется', dangerousFirst);
+  await check({ 'app.js': 'console.log(1)' }, 'директива img-src повторяется', WINDOW_CSP + "; IMG-SRC 'self'");
+});
 test('dist gate rejects a window CSP that lets anything out', async () => {
   await check({ 'app.js': 'console.log(1)' }, "default-src не 'self'", withDirective('default-src *'));
   for (const directive of ['connect-src ipc: http://ipc.localhost https://api.example.com', 'img-src \'self\' data: blob: https:',
