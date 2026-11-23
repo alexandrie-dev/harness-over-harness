@@ -13,6 +13,8 @@
     "web/branding.ts",
     "web/components/ChatView.logic.ts",
     "web/components/CommandPalette.tsx",
+    "web/components/chat/ChatComposer.tsx",
+    "web/components/chat/ComposerAttachmentStrip.tsx",
     "web/components/chat/PanelLayoutControls.tsx",
     "web/components/chat/turnDetailAnnouncement.ts",
     "web/components/settings/ThemeSettings.tsx",

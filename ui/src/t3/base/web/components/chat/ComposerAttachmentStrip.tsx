@@ -746,6 +746,8 @@ export function ComposerAttachButton({
         ref={inputRef}
         type="file"
         multiple
+        // HoH (ui/T3-MAP.md): the host and Claude accept pictures, not generic file attachments.
+        accept="image/gif,image/jpeg,image/png,image/webp"
         className="hidden"
         onChange={(event) => {
           const files = Array.from(event.currentTarget.files ?? []);
@@ -767,7 +769,7 @@ export function ComposerAttachButton({
               size="icon-sm"
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => inputRef.current?.click()}
-              aria-label={gt("Attach files")}
+              aria-label={gt("Attach images")}
             />
           }
         >
@@ -775,7 +777,7 @@ export function ComposerAttachButton({
           <PaperclipIcon className="translate-y-px" />
         </TooltipTrigger>
         <TooltipPopup>
-          <T>Attach files</T>
+          <T>Attach images</T>
         </TooltipPopup>
       </Tooltip>
     </>
