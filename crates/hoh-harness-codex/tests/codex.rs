@@ -54,6 +54,27 @@ async fn event(events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>) -> Harnes
         .unwrap()
 }
 
+async fn protocol_end_without_a_request_card(
+    events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>,
+    scenario: &str,
+) {
+    loop {
+        match event(events).await {
+            HarnessEvent::ApprovalRequested { .. } | HarnessEvent::QuestionAsked { .. } => {
+                panic!("{scenario}: a stale or foreign request was shown to the user")
+            }
+            HarnessEvent::SessionEnded {
+                reason, message, ..
+            } => {
+                assert_eq!(reason, hoh_external_harness::EndReason::ProtocolError);
+                assert!(message.as_deref().is_some_and(|text| !text.is_empty()));
+                return;
+            }
+            _ => {}
+        }
+    }
+}
+
 #[tokio::test]
 async fn discovery_uses_app_server_models_and_account() {
     let temp = TempDir::new().unwrap();
@@ -467,6 +488,117 @@ async fn duplicate_native_request_ids_close_fail_closed_without_answering_anothe
         );
         assert!(wire.iter().any(|line| line["stubEvent"] == "second-duplicate-action"));
     }
+}
+
+#[tokio::test]
+async fn foreign_thread_requests_and_resolutions_fail_before_showing_a_card() {
+    for (scenario, forbidden_id) in [
+        ("foreign-thread-request", "foreign-approval"),
+        ("foreign-resolved", "ghost"),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let (harness, log) = harness(&temp, scenario);
+        let mut started = harness
+            .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+            .await
+            .unwrap();
+        started
+            .session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-hoh".into(),
+                text: scenario.into(),
+                images: Vec::new(),
+            })
+            .await
+            .unwrap();
+        protocol_end_without_a_request_card(&mut started.events, scenario).await;
+        assert!(
+            !lines(&log).iter().any(|line| {
+                line.get("id") == Some(&Value::String(forbidden_id.into()))
+                    && line.get("result").is_some()
+            }),
+            "{scenario}: a result escaped for a foreign request"
+        );
+        if scenario == "foreign-thread-request" {
+            let child = lines(&log)
+                .iter()
+                .find_map(|line| line.get("childPid").and_then(Value::as_u64))
+                .expect("foreign-request fixture child");
+            let start = Instant::now();
+            while Path::new(&format!("/proc/{child}")).exists()
+                && start.elapsed() < Duration::from_secs(3)
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(
+                !Path::new(&format!("/proc/{child}")).exists(),
+                "foreign request protocol failure left owned child {child} running"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_request_from_the_prior_turn_cannot_rebind_a_reused_item_id() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "stale-prior-turn");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "hoh-first".into(),
+            text: "first".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    loop {
+        if matches!(event(&mut started.events).await, HarnessEvent::TurnCompleted { .. }) {
+            break;
+        }
+    }
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "hoh-second".into(),
+            text: "second".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    protocol_end_without_a_request_card(&mut started.events, "stale-prior-turn").await;
+    assert!(!lines(&log).iter().any(|line| {
+        line.get("id") == Some(&Value::String("stale-approval".into()))
+            && line.get("result").is_some()
+    }));
+}
+
+#[tokio::test]
+async fn reusing_an_item_id_for_a_different_action_fails_before_approval() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "reused-item");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-hoh".into(),
+            text: "reuse item".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    protocol_end_without_a_request_card(&mut started.events, "reused-item").await;
+    assert!(!lines(&log).iter().any(|line| line.get("result").is_some()));
 }
 
 #[tokio::test]

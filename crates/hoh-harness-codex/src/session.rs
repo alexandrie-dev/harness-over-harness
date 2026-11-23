@@ -28,6 +28,53 @@ fn rpc_key(id: &Value) -> String {
     serde_json::to_string(id).unwrap_or_else(|_| "null".to_owned())
 }
 
+fn native_turn_of(params: &Value) -> Option<String> {
+    string(params, "turnId").or_else(|| {
+        params
+            .pointer("/turn/id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    })
+}
+
+fn active_context(state: &State, params: &Value) -> Result<RequestContext, String> {
+    if state.closed {
+        return Err("Codex sent a turn-scoped message after the session closed".to_owned());
+    }
+    let hoh_turn = state
+        .hoh_turn
+        .clone()
+        .filter(|_| state.turn_opened)
+        .ok_or_else(|| "Codex sent a turn-scoped message without an active HoH turn".to_owned())?;
+    let native_turn = state
+        .native_turn
+        .clone()
+        .ok_or_else(|| "Codex sent a turn-scoped message before the native turn opened".to_owned())?;
+    let thread_id = string(params, "threadId")
+        .ok_or_else(|| "Codex turn-scoped message has no threadId".to_owned())?;
+    let message_turn = native_turn_of(params)
+        .ok_or_else(|| "Codex turn-scoped message has no turnId".to_owned())?;
+    if thread_id != state.thread_id {
+        return Err("Codex turn-scoped message belongs to another thread".to_owned());
+    }
+    if message_turn != native_turn {
+        return Err("Codex turn-scoped message belongs to another turn".to_owned());
+    }
+    Ok(RequestContext {
+        thread_id,
+        native_turn,
+        hoh_turn,
+    })
+}
+
+fn context_is_current(state: &State, context: &RequestContext) -> bool {
+    !state.closed
+        && state.turn_opened
+        && state.thread_id == context.thread_id
+        && state.native_turn.as_deref() == Some(context.native_turn.as_str())
+        && state.hoh_turn.as_deref() == Some(context.hoh_turn.as_str())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ModeSettings {
     pub approval_policy: Value,
@@ -86,6 +133,14 @@ enum ServerRequestKind {
 struct ServerRequest {
     id: Value,
     kind: ServerRequestKind,
+    context: RequestContext,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RequestContext {
+    thread_id: String,
+    native_turn: String,
+    hoh_turn: String,
 }
 
 #[derive(Default)]
@@ -96,6 +151,7 @@ struct State {
     /// closes the race where a repeated id arrives while the first answer is being sent.
     server_seen: HashSet<String>,
     items: HashMap<String, HarnessAction>,
+    items_seen: HashSet<String>,
     thread_id: String,
     hoh_turn: Option<String>,
     native_turn: Option<String>,
@@ -411,6 +467,7 @@ impl HarnessSession for CodexSession {
                 state.native_turn = None;
                 state.turn_opened = false;
                 state.items.clear();
+                state.items_seen.clear();
                 state.server_seen.clear();
             }
             let result = session
@@ -431,16 +488,32 @@ impl HarnessSession for CodexSession {
                     HarnessFailure::new(code::PROTOCOL, "turn/start returned no turn.id")
                 })?
                 .to_owned();
-            let emit = {
+            let (emit, mismatch) = {
                 let mut state = lock(&session.inner.state);
-                state.native_turn = Some(native);
-                if state.turn_opened {
-                    None
+                if state.native_turn.as_ref().is_some_and(|turn| turn != &native) {
+                    (None, true)
                 } else {
-                    state.turn_opened = true;
-                    state.hoh_turn.clone()
+                    state.native_turn = Some(native);
+                    let emit = if state.turn_opened {
+                        None
+                    } else {
+                        state.turn_opened = true;
+                        state.hoh_turn.clone()
+                    };
+                    (emit, false)
                 }
             };
+            if mismatch {
+                protocol_violation(
+                    &session.inner,
+                    "turn/start returned a turn.id different from turn/started",
+                )
+                .await;
+                return Err(HarnessFailure::new(
+                    code::PROTOCOL,
+                    "Codex app-server changed the active turn id",
+                ));
+            }
             if let Some(turn_id) = emit {
                 emit_event(&session.inner, HarnessEvent::TurnStarted { turn_id }).await;
             }
@@ -477,12 +550,28 @@ impl HarnessSession for CodexSession {
             owner: self.owner.clone(),
         });
         Box::pin(async move {
-            let pending = lock(&session.inner.state)
-                .server
-                .remove(&params.request_id)
-                .ok_or_else(|| {
+            let pending = {
+                let mut state = lock(&session.inner.state);
+                let pending = state.server.get(&params.request_id).cloned().ok_or_else(|| {
                     HarnessFailure::new(code::PROTOCOL, "Codex request is no longer pending")
                 })?;
+                if !context_is_current(&state, &pending.context) {
+                    None
+                } else {
+                    Some(state.server.remove(&params.request_id).expect("pending request"))
+                }
+            };
+            let Some(pending) = pending else {
+                protocol_violation(
+                    &session.inner,
+                    "an answer targeted a Codex request from another turn",
+                )
+                .await;
+                return Err(HarnessFailure::new(
+                    code::PROTOCOL,
+                    "Codex request does not belong to the active turn",
+                ));
+            };
             let result = match (pending.kind, params.response) {
                 (ServerRequestKind::CommandOrFile, HarnessResponse::Approval { decision }) => {
                     json!({"decision": if decision == ApprovalDecision::Allow {"accept"} else {"decline"}})
@@ -626,6 +715,13 @@ async fn close(inner: &Inner, reason: EndReason, message: Option<String>) {
     }
 }
 
+async fn protocol_violation(inner: &Arc<Inner>, message: impl Into<String>) {
+    close(inner, EndReason::ProtocolError, Some(message.into())).await;
+    if !inner.terminated.swap(true, Ordering::SeqCst) {
+        inner.supervisor.terminate(Duration::ZERO).await;
+    }
+}
+
 async fn handle_message(inner: &Arc<Inner>, message: Value) {
     if message.get("id").is_some()
         && (message.get("result").is_some() || message.get("error").is_some())
@@ -664,153 +760,226 @@ async fn handle_message(inner: &Arc<Inner>, message: Value) {
 }
 
 async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, params: Value) {
+    if !matches!(
+        method,
+        "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval"
+            | "item/tool/requestUserInput"
+            | "mcpServer/elicitation/request"
+    ) {
+        let _ = inner
+            .supervisor
+            .send(&json!({"id":id,"error":{"code":-32601,"message":"unsupported client request"}}))
+            .await;
+        return;
+    }
     let request_id = format!("codex:{}", rpc_key(&id));
     let item_id = string(&params, "itemId");
     let reason = string(&params, "reason");
-    let (kind, event) = match method {
-        "item/commandExecution/requestApproval" => {
-            let action = item_id
-                .as_ref()
-                .and_then(|item| lock(&inner.state).items.get(item).cloned())
-                .unwrap_or_else(|| HarnessAction::Command {
-                    command: string(&params, "command").unwrap_or_else(|| "command".to_owned()),
-                    cwd: string(&params, "cwd"),
-                });
-            (
-                ServerRequestKind::CommandOrFile,
-                HarnessEvent::ApprovalRequested {
-                    request_id: request_id.clone(),
-                    item_id,
-                    action,
-                    reason,
-                },
-            )
-        }
-        "item/fileChange/requestApproval" => {
-            let action = item_id
-                .as_ref()
-                .and_then(|item| lock(&inner.state).items.get(item).cloned())
-                .unwrap_or_else(|| HarnessAction::FileChange {
-                    changes: file_changes(&params),
-                });
-            (
-                ServerRequestKind::CommandOrFile,
-                HarnessEvent::ApprovalRequested {
-                    request_id: request_id.clone(),
-                    item_id,
-                    action,
-                    reason,
-                },
-            )
-        }
-        "item/permissions/requestApproval" => {
-            let requested = params
-                .get("permissions")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            (
-                ServerRequestKind::Permissions {
-                    requested: requested.clone(),
-                },
-                HarnessEvent::ApprovalRequested {
-                    request_id: request_id.clone(),
-                    item_id,
-                    action: HarnessAction::Permission {
-                        description: reason.clone().unwrap_or_else(|| requested.to_string()),
-                    },
-                    reason,
-                },
-            )
-        }
-        "item/tool/requestUserInput" => {
-            let questions = questions(&params);
-            let ids = questions
-                .iter()
-                .map(|question| question.id.clone())
-                .collect();
-            (
-                ServerRequestKind::Question { ids },
-                HarnessEvent::QuestionAsked {
-                    request_id: request_id.clone(),
-                    questions,
-                },
-            )
-        }
-        "mcpServer/elicitation/request" => (
-            ServerRequestKind::McpElicitation,
-            HarnessEvent::ApprovalRequested {
-                request_id: request_id.clone(),
-                item_id: None,
-                action: HarnessAction::Tool {
-                    name: "mcp-elicitation".to_owned(),
-                    input: params.clone(),
-                },
-                reason,
-            },
-        ),
-        _ => {
-            let _ = inner
-                .supervisor
-                .send(&json!({"id":id,"error":{"code":-32601,"message":"unsupported client request"}}))
-                .await;
-            return;
-        }
-    };
-    let duplicate = {
+    let registered = {
         let mut state = lock(&inner.state);
-        if !state.server_seen.insert(request_id.clone()) {
-            true
-        } else {
+        let context = active_context(&state, &params);
+        context.and_then(|context| {
+            let (kind, event) = match method {
+                "item/commandExecution/requestApproval" => {
+                    let item = item_id
+                        .as_deref()
+                        .ok_or_else(|| "Codex command approval has no itemId".to_owned())?;
+                    let action = state.items.get(item).cloned().ok_or_else(|| {
+                        "Codex command approval names an item outside the active turn".to_owned()
+                    })?;
+                    match &action {
+                        HarnessAction::Command { command, cwd }
+                            if string(&params, "command")
+                                .is_none_or(|requested| requested == command.as_str())
+                                && (!params.get("cwd").is_some()
+                                    || string(&params, "cwd") == cwd.clone()) => {}
+                        _ => {
+                            return Err(
+                                "Codex command approval reused or changed another action's itemId"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    (
+                        ServerRequestKind::CommandOrFile,
+                        HarnessEvent::ApprovalRequested {
+                            request_id: request_id.clone(),
+                            item_id: item_id.clone(),
+                            action,
+                            reason: reason.clone(),
+                        },
+                    )
+                }
+                "item/fileChange/requestApproval" => {
+                    let item = item_id
+                        .as_deref()
+                        .ok_or_else(|| "Codex file approval has no itemId".to_owned())?;
+                    let action = state.items.get(item).cloned().ok_or_else(|| {
+                        "Codex file approval names an item outside the active turn".to_owned()
+                    })?;
+                    match &action {
+                        HarnessAction::FileChange { changes }
+                            if params.get("changes").is_none()
+                                || file_changes(&params) == changes.clone() => {}
+                        _ => {
+                            return Err(
+                                "Codex file approval reused or changed another action's itemId"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    (
+                        ServerRequestKind::CommandOrFile,
+                        HarnessEvent::ApprovalRequested {
+                            request_id: request_id.clone(),
+                            item_id: item_id.clone(),
+                            action,
+                            reason: reason.clone(),
+                        },
+                    )
+                }
+                "item/permissions/requestApproval" => {
+                    let requested = params
+                        .get("permissions")
+                        .cloned()
+                        .unwrap_or_else(|| json!({}));
+                    (
+                        ServerRequestKind::Permissions {
+                            requested: requested.clone(),
+                        },
+                        HarnessEvent::ApprovalRequested {
+                            request_id: request_id.clone(),
+                            item_id: item_id.clone(),
+                            action: HarnessAction::Permission {
+                                description: reason
+                                    .clone()
+                                    .unwrap_or_else(|| requested.to_string()),
+                            },
+                            reason: reason.clone(),
+                        },
+                    )
+                }
+                "item/tool/requestUserInput" => {
+                    let questions = questions(&params);
+                    let ids = questions
+                        .iter()
+                        .map(|question| question.id.clone())
+                        .collect();
+                    (
+                        ServerRequestKind::Question { ids },
+                        HarnessEvent::QuestionAsked {
+                            request_id: request_id.clone(),
+                            questions,
+                        },
+                    )
+                }
+                "mcpServer/elicitation/request" => (
+                    ServerRequestKind::McpElicitation,
+                    HarnessEvent::ApprovalRequested {
+                        request_id: request_id.clone(),
+                        item_id: None,
+                        action: HarnessAction::Tool {
+                            name: "mcp-elicitation".to_owned(),
+                            input: params.clone(),
+                        },
+                        reason: reason.clone(),
+                    },
+                ),
+                _ => unreachable!("supported method checked above"),
+            };
+            if !state.server_seen.insert(request_id.clone()) {
+                return Err(format!(
+                    "Codex app-server reused JSON-RPC request id in one turn: {}",
+                    rpc_key(&id)
+                ));
+            }
             match state.server.entry(request_id.clone()) {
                 Entry::Vacant(entry) => {
                     entry.insert(ServerRequest {
                         id: id.clone(),
                         kind,
+                        context,
                     });
-                    false
+                    Ok(event)
                 }
-                Entry::Occupied(_) => true,
+                Entry::Occupied(_) => Err(format!(
+                    "Codex app-server reused pending JSON-RPC request id: {}",
+                    rpc_key(&id)
+                )),
             }
-        }
+        })
     };
-    if duplicate {
-        close(
-            inner,
-            EndReason::ProtocolError,
-            Some(format!(
-                "Codex app-server reused JSON-RPC request id in one turn: {}",
-                rpc_key(&id)
-            )),
-        )
-        .await;
-        if !inner.terminated.swap(true, Ordering::SeqCst) {
-            inner.supervisor.terminate(Duration::ZERO).await;
-        }
-        return;
+    match registered {
+        Ok(event) => emit_event(inner, event).await,
+        Err(message) => protocol_violation(inner, message).await,
     }
-    emit_event(inner, event).await;
 }
 
 async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
+    if matches!(
+        method,
+        "item/agentMessage/delta"
+            | "item/reasoning/summaryTextDelta"
+            | "item/reasoning/textDelta"
+            | "item/commandExecution/outputDelta"
+            | "item/fileChange/outputDelta"
+            | "item/mcpToolCall/outputDelta"
+            | "item/dynamicToolCall/outputDelta"
+            | "item/started"
+            | "item/completed"
+            | "turn/completed"
+            | "serverRequest/resolved"
+    ) {
+        let checked = active_context(&lock(&inner.state), &params);
+        if let Err(message) = checked {
+            protocol_violation(inner, message).await;
+            return;
+        }
+    }
     match method {
         "turn/started" => {
-            let emit = {
+            let opened = {
                 let mut state = lock(&inner.state);
-                if state.native_turn.is_none() {
-                    state.native_turn = params
-                        .pointer("/turn/id")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned);
+                if state.closed {
+                    return;
                 }
-                if state.turn_opened {
-                    None
-                } else {
-                    state.turn_opened = true;
-                    state.hoh_turn.clone()
+                let thread_id = string(&params, "threadId")
+                    .ok_or_else(|| "Codex turn/started has no threadId".to_owned());
+                let native_turn = native_turn_of(&params)
+                    .ok_or_else(|| "Codex turn/started has no turn.id".to_owned());
+                match (thread_id, native_turn, state.hoh_turn.clone()) {
+                    (Ok(thread_id), Ok(native_turn), Some(hoh_turn))
+                        if thread_id == state.thread_id
+                            && state
+                                .native_turn
+                                .as_ref()
+                                .is_none_or(|current| current == &native_turn) =>
+                    {
+                        state.native_turn = Some(native_turn);
+                        let emit = if state.turn_opened { None } else { Some(hoh_turn) };
+                        state.turn_opened = true;
+                        Ok(emit)
+                    }
+                    (Ok(thread_id), _, _) if thread_id != state.thread_id => {
+                        Err("Codex turn/started belongs to another thread".to_owned())
+                    }
+                    (Ok(_), Ok(_), None) => {
+                        Err("Codex turn/started has no active HoH turn".to_owned())
+                    }
+                    (Ok(_), Ok(_), Some(_)) => {
+                        Err("Codex turn/started changed the active native turn".to_owned())
+                    }
+                    (Err(message), _, _) | (_, Err(message), _) => Err(message),
                 }
             };
-            if let Some(turn_id) = emit {
-                emit_event(inner, HarnessEvent::TurnStarted { turn_id }).await;
+            match opened {
+                Ok(Some(turn_id)) => {
+                    emit_event(inner, HarnessEvent::TurnStarted { turn_id }).await;
+                }
+                Ok(None) => {}
+                Err(message) => protocol_violation(inner, message).await,
             }
         }
         "item/agentMessage/delta" => {
@@ -841,9 +1010,23 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
             if let Some(item) = params.get("item")
                 && let Some((item_id, action)) = action_of(item)
             {
-                lock(&inner.state)
-                    .items
-                    .insert(item_id.clone(), action.clone());
+                let inserted = {
+                    let mut state = lock(&inner.state);
+                    if !state.items_seen.insert(item_id.clone()) {
+                        false
+                    } else {
+                        state.items.insert(item_id.clone(), action.clone());
+                        true
+                    }
+                };
+                if !inserted {
+                    protocol_violation(
+                        inner,
+                        format!("Codex reused itemId {item_id:?} in one turn"),
+                    )
+                    .await;
+                    return;
+                }
                 emit_event(inner, HarnessEvent::ItemStarted { item_id, action }).await;
             }
         }
@@ -858,11 +1041,35 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                 .get("requestId")
                 .or_else(|| params.get("id"))
                 .cloned();
-            if let Some(raw) = raw {
-                let request_id = format!("codex:{}", rpc_key(&raw));
-                if lock(&inner.state).server.remove(&request_id).is_some() {
+            let Some(raw) = raw else {
+                protocol_violation(inner, "Codex serverRequest/resolved has no request id").await;
+                return;
+            };
+            let request_id = format!("codex:{}", rpc_key(&raw));
+            let resolved = {
+                let mut state = lock(&inner.state);
+                let context = active_context(&state, &params);
+                match context {
+                    Err(message) => Err(message),
+                    Ok(context) => match state.server.get(&request_id) {
+                        Some(pending) if pending.context == context => {
+                            state.server.remove(&request_id);
+                            Ok(true)
+                        }
+                        Some(_) => Err(
+                            "Codex resolved a request belonging to another turn".to_owned(),
+                        ),
+                        None if state.server_seen.contains(&request_id) => Ok(false),
+                        None => Err("Codex resolved an unknown request id".to_owned()),
+                    },
+                }
+            };
+            match resolved {
+                Ok(true) => {
                     emit_event(inner, HarnessEvent::RequestResolved { request_id }).await;
                 }
+                Ok(false) => {}
+                Err(message) => protocol_violation(inner, message).await,
             }
         }
         _ => {}
@@ -870,19 +1077,30 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
 }
 
 async fn complete_turn(inner: &Arc<Inner>, params: &Value) {
-    let (turn_id, interrupted) = {
+    let completed = {
         let mut state = lock(&inner.state);
-        let status = params
-            .pointer("/turn/status")
-            .or_else(|| params.get("status"))
-            .and_then(Value::as_str)
-            .unwrap_or("completed");
-        let interrupted = status == "interrupted" || status == "cancelled";
-        let turn_id = state.hoh_turn.take();
-        state.native_turn = None;
-        state.turn_opened = false;
-        state.items.clear();
-        (turn_id, interrupted)
+        if !state.server.is_empty() {
+            Err("Codex completed a turn while a human request was still pending".to_owned())
+        } else {
+            let status = params
+                .pointer("/turn/status")
+                .or_else(|| params.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("completed");
+            let interrupted = status == "interrupted" || status == "cancelled";
+            let turn_id = state.hoh_turn.take();
+            state.native_turn = None;
+            state.turn_opened = false;
+            state.items.clear();
+            Ok((turn_id, interrupted))
+        }
+    };
+    let (turn_id, interrupted) = match completed {
+        Ok(completed) => completed,
+        Err(message) => {
+            protocol_violation(inner, message).await;
+            return;
+        }
     };
     let Some(turn_id) = turn_id else { return };
     let status = params
@@ -941,12 +1159,27 @@ async fn complete_item(inner: &Arc<Inner>, item: &Value) {
             .await;
         }
         kind if is_step(kind) => {
-            if !lock(&inner.state).items.contains_key(&item_id)
-                && let Some((_, action)) = action_of(item)
-            {
-                lock(&inner.state)
-                    .items
-                    .insert(item_id.clone(), action.clone());
+            let started = {
+                let mut state = lock(&inner.state);
+                if state.items.contains_key(&item_id) {
+                    Ok(None)
+                } else if !state.items_seen.insert(item_id.clone()) {
+                    Err(format!("Codex reused completed itemId {item_id:?} in one turn"))
+                } else if let Some((_, action)) = action_of(item) {
+                    state.items.insert(item_id.clone(), action.clone());
+                    Ok(Some(action))
+                } else {
+                    Ok(None)
+                }
+            };
+            let started = match started {
+                Ok(started) => started,
+                Err(message) => {
+                    protocol_violation(inner, message).await;
+                    return;
+                }
+            };
+            if let Some(action) = started {
                 emit_event(
                     inner,
                     HarnessEvent::ItemStarted {

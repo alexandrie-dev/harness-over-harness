@@ -336,6 +336,71 @@ test('concurrent Claude and Codex launches atomically bind their requested execu
   }
 });
 
+test('new-session binding excludes every overlapping global model-selection path', async () => {
+  for (const mutation of ['message.dispatch', 'thread.model-selection.set', 'server.updateSettings']) {
+    const engine = new FakeEngine();
+    engine.seed('existing', 'Existing', []);
+    Object.assign(engine.store.get('existing'), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
+    const { client } = connect(engine);
+    await client.call('orchestration.getThreadProjection', { threadId: 'existing' });
+
+    const originalRequest = engine.request.bind(engine);
+    let selectedCodex; let releaseCreate;
+    const codexSelected = new Promise(resolve => { selectedCodex = resolve; });
+    const createMayContinue = new Promise(resolve => { releaseCreate = resolve; });
+    engine.request = async (method, params) => {
+      const result = await originalRequest(method, params);
+      if (method === 'hoh/executor/select' && params.executor === 'codex') {
+        selectedCodex();
+        await createMayContinue;
+      }
+      return result;
+    };
+
+    const threadId = 'created-' + mutation;
+    const launching = client.call('orchestration.launchThread', {
+      commandId: 'launch-' + mutation, threadId, projectId: 'hoh-project', title: threadId,
+      modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode: 'auto-accept-edits',
+      interactionMode: 'default', workspaceStrategy: { type: 'root' },
+      initialMessage: { messageId: 'first-' + mutation, text: 'first send', attachments: [] },
+    });
+    await codexSelected;
+    let changing;
+    if (mutation === 'message.dispatch') {
+      changing = client.call('orchestration.dispatchCommand', {
+        type: mutation, commandId: 'mutate-message', threadId: 'existing', messageId: 'existing-message',
+        text: 'existing send', attachments: [], modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' },
+      });
+    } else if (mutation === 'thread.model-selection.set') {
+      changing = client.call('orchestration.dispatchCommand', {
+        type: mutation, commandId: 'mutate-model', threadId: 'existing',
+        modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' },
+      });
+    } else {
+      changing = client.call('server.updateSettings', {
+        patch: { defaultModelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' } },
+      });
+    }
+    await tick(0);
+    releaseCreate();
+    const [launched] = await Promise.all([launching, changing]);
+    assert.equal(launched.projection.thread.providerInstanceId, 'codex', mutation);
+    assert.deepEqual(
+      [engine.store.get(threadId).executor, engine.store.get(threadId).model, engine.store.get(threadId).runtimeMode],
+      ['codex', 'gpt-6-sol', 'auto-accept-edits'],
+      mutation,
+    );
+    assert(
+      engine.requests.some(request => request.method === 'session/prompt' && request.params.sessionId === threadId),
+      `${mutation}: the first send did not reach its bound session`,
+    );
+    const methods = engine.requests.map(request => [request.method, request.params.executor, request.params.sessionId]);
+    const create = methods.findIndex(([method, , session]) => method === 'session/working-directory/get' && session === threadId);
+    const laterClaudeSelection = methods.findIndex(([method, executor], index) => method === 'hoh/executor/select' && executor === 'claude' && index > create);
+    assert(create >= 0 && laterClaudeSelection > create, `${mutation}: global selection entered the create critical section`);
+  }
+});
+
 test('after a restart the chat comes back from the engine\'s history; an unfinished turn ends as stopped', async () => {
   const store = new Map();
   const before = new FakeEngine({ store });

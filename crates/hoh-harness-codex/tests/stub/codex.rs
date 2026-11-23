@@ -78,6 +78,7 @@ fn main() {
     let mut approval = 0_u8;
     let mut child: Option<Child> = None;
     let mut duplicate_after_answer: Option<Value> = None;
+    let mut turn_count = 0_u8;
     for line in BufReader::new(stdin.lock()).lines() {
         let line = line.unwrap();
         let message: Value = serde_json::from_str(&line).unwrap();
@@ -110,6 +111,21 @@ fn main() {
                 send(json!({"id":id,"result":{"thread":{"id":returned}}}));
             }
             Some("turn/start") => {
+                turn_count += 1;
+                if scenario == "stale-prior-turn" {
+                    let turn = if turn_count == 1 { "turn-first" } else { "turn-second" };
+                    send(json!({"id":id,"result":{"turn":{"id":turn,"status":"inProgress","startedAt":1}}}));
+                    send(json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":turn,"status":"inProgress","startedAt":1}}}));
+                    if turn_count == 1 {
+                        send(json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-first","item":{"type":"commandExecution","id":"cmd-reused","command":"printf old","cwd":"/old","status":"inProgress","aggregatedOutput":""}}}));
+                        send(json!({"method":"item/completed","params":{"threadId":"thread-stub","turnId":"turn-first","item":{"type":"commandExecution","id":"cmd-reused","command":"printf old","cwd":"/old","status":"completed","aggregatedOutput":"old","exitCode":0}}}));
+                        send(json!({"method":"turn/completed","params":{"threadId":"thread-stub","turn":{"id":"turn-first","status":"completed"}}}));
+                    } else {
+                        send(json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-second","item":{"type":"commandExecution","id":"cmd-reused","command":"printf current","cwd":"/current","status":"inProgress","aggregatedOutput":""}}}));
+                        send(json!({"id":"stale-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-first","itemId":"cmd-reused","command":"printf old","cwd":"/old","reason":"old turn action"}}));
+                    }
+                    continue;
+                }
                 send(
                     json!({"id":id,"result":{"turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
                 );
@@ -135,6 +151,18 @@ fn main() {
                     log(&json!({"stubEvent":"first-duplicate-action","id":duplicate_id.clone()}));
                     send(json!({"id":duplicate_id.clone(),"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","approvalId":"first","command":"printf first","cwd":"/work","reason":"first action"}}));
                     duplicate_after_answer = Some(duplicate_id);
+                } else if scenario == "foreign-thread-request" {
+                    let spawned = Command::new("sh")
+                        .args(["-c", "sleep 120"])
+                        .spawn()
+                        .unwrap();
+                    log(&json!({"childPid":spawned.id()}));
+                    child = Some(spawned);
+                    send(json!({"id":"foreign-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-foreign","turnId":"turn-stub","itemId":"cmd-1","command":"printf foreign","cwd":"/work","reason":"foreign thread"}}));
+                } else if scenario == "foreign-resolved" {
+                    send(json!({"method":"serverRequest/resolved","params":{"threadId":"thread-foreign","turnId":"turn-stub","requestId":"ghost"}}));
+                } else if scenario == "reused-item" {
+                    send(json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"commandExecution","id":"cmd-1","command":"printf replacement","cwd":"/other","status":"inProgress","aggregatedOutput":""}}}));
                 } else {
                     send(
                         json!({"id":"approval-command","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","approvalId":"approval-command","command":"printf hello","cwd":"/work","reason":"run it"}}),

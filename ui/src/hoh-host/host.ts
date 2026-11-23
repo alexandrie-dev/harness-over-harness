@@ -145,8 +145,8 @@ export class HohHost {
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
-  /** New SDK sessions inherit the engine's global executor/model, so creation is one critical section. */
-  private createTail: Promise<void> = Promise.resolve();
+  /** Every mutation of the engine's global executor/model shares the new-session critical section. */
+  private selectionTail: Promise<void> = Promise.resolve();
 
   constructor(options: HohHostOptions) {
     this.engine = options.engine;
@@ -523,11 +523,7 @@ export class HohHost {
    * may ask the person to allow it. Claude then runs in that folder.
    */
   private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown, providerInstanceId?: unknown) {
-    let release!: () => void;
-    const previous = this.createTail;
-    this.createTail = new Promise<void>(resolve => { release = resolve; });
-    await previous;
-    try {
+    return this.withSelectionMutation(async () => {
       const executor = executorOf(providerInstanceId ?? instanceOf(this.selectedExecutor));
       const chosenModel = model ?? this.model(executor);
       const chosenMode = accessModeOf(mode ?? runtimeModeOf(this.defaultMode));
@@ -540,7 +536,7 @@ export class HohHost {
       }
       const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
       if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
-      await this.applyModel(executor, chosenModel);
+      await this.applyModelLocked(executor, chosenModel);
       // working-directory/get creates the SDK session. Keep select → create → binding check →
       // per-session access under this lock: the engine's global selection must not be changed by
       // another Claude/Codex launch in between.
@@ -574,9 +570,7 @@ export class HohHost {
       if (!folder) this.showProject();
       this.changed(threadId);
       return thread;
-    } finally {
-      release();
-    }
+    });
   }
 
   // ---- folder projects ("Add project") ----
@@ -716,12 +710,25 @@ export class HohHost {
     this.changed(thread.id);
   }
 
-  private async applyModel(executor: HohExecutor, model: string | undefined) {
+  private async withSelectionMutation<T>(operation: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const previous = this.selectionTail;
+    this.selectionTail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { return await operation(); } finally { release(); }
+  }
+
+  /** Caller holds `selectionTail`; createThread keeps this through session binding verification. */
+  private async applyModelLocked(executor: HohExecutor, model: string | undefined) {
     if (!model || (executor === this.selectedExecutor && model === this.selectedModel)) return;
     await this.engine.request('hoh/executor/select', { executor, model });
     this.selectedExecutor = executor;
     this.selectedModel = model;
     this.configChanged();
+  }
+
+  private async applyModel(executor: HohExecutor, model: string | undefined) {
+    await this.withSelectionMutation(() => this.applyModelLocked(executor, model));
   }
 
   /**
