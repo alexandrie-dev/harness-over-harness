@@ -24,8 +24,9 @@ use hoh_loader::ProfileContextKey;
 use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
-    ExecutorEffectiveAccess, ExecutorParams, ExecutorSelectParams, ExecutorSessionAccess,
-    WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult,
+    ExecutorEffectiveAccess, ExecutorParams, ExecutorRuntimeMode, ExecutorSelectParams,
+    ExecutorSessionAccess, WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams,
+    WorkspaceEntriesResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -41,6 +42,9 @@ use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
 
 /// The file in the engine's profile folder that keeps the window's choices.
 pub const CHOICES_FILE: &str = "external-harness.json";
+/// Exact per-conversation modes. Kept separate so older HoH versions ignore it instead of
+/// rejecting their legacy choices file when it contains a newer four-mode value.
+pub const SESSION_ACCESS_FILE: &str = "external-harness-session-access.json";
 /// The file in the engine's profile folder that keeps the project folders the person added.
 pub const FOLDERS_FILE: &str = "workspace-folders.json";
 
@@ -70,6 +74,13 @@ struct Saved {
 struct SavedSelection {
     executor: String,
     model: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SavedSessionAccess {
+    version: u32,
+    sessions: BTreeMap<String, crate::SessionAccessChoice>,
 }
 
 #[derive(Inject)]
@@ -105,6 +116,7 @@ impl Plugin for ExternalHarnessWindowPlugin {
             harnesses: deps.harnesses,
             agents: deps.agents,
             path: deps.profile.dir.join(CHOICES_FILE),
+            session_access_path: deps.profile.dir.join(SESSION_ACCESS_FILE),
             folders_path,
             folders: std::sync::Mutex::new(folders.into_iter().collect()),
             engine_home: deps.profile.home.clone(),
@@ -117,8 +129,8 @@ impl Plugin for ExternalHarnessWindowPlugin {
                 async move { window.call(method, params).await }
             })?;
         }
-        // HOH-40: the window names the effort level with each prompt (`effort`); it holds for
-        // the turn of that prompt's message.
+        // The prompt accepts effort plus a snapshot of the privileged per-session access. Both
+        // are bound to this message before the agent can dequeue it.
         let choices = window.service().choices().clone();
         let log = ctx.logger();
         deps.methods
@@ -133,7 +145,7 @@ impl Plugin for ExternalHarnessWindowPlugin {
                         None
                     }
                 };
-                choices.note_effort(session, message, effort);
+                choices.note_prompt(session, message, effort);
             })?;
         Ok(())
     }
@@ -143,6 +155,11 @@ impl Plugin for ExternalHarnessWindowPlugin {
 enum Change {
     Select(Option<ExecutorSelection>),
     Access(String, AccessMode),
+    SessionAccess {
+        session: String,
+        executor: String,
+        mode: AccessMode,
+    },
 }
 
 struct Window {
@@ -150,6 +167,7 @@ struct Window {
     harnesses: Service<ExternalHarnesses>,
     agents: Service<Agents>,
     path: PathBuf,
+    session_access_path: PathBuf,
     folders_path: PathBuf,
     /// The project folders the person added, resolved (HOH-41).
     folders: std::sync::Mutex<std::collections::BTreeSet<PathBuf>>,
@@ -425,6 +443,7 @@ impl Window {
             .shared(executor)
             .ok_or_else(|| format!("no external harness named \"{executor}\""))?;
         let mode = shared.access();
+        let requested = session_id.map_or(mode, |id| shared.access_for(id));
         let session = match session_id {
             Some(id) => Some(self.session_access(id).await?),
             None => None,
@@ -441,8 +460,8 @@ impl Window {
         };
         let (running, flags) = launch.unwrap_or_else(|| {
             let policy = shared.config.policy;
-            let next = crate::agent::launch_policy(&policy, mode);
-            (mode, shared.harness.launch_flags(&next, mode))
+            let next = crate::agent::launch_policy(&policy, requested);
+            (requested, shared.harness.launch_flags(&next, requested))
         });
         let selected = self.agents.selected_executor();
         Ok(ExecutorAccessGetResult {
@@ -490,6 +509,8 @@ impl Window {
                 privacy: None,
                 mode: None,
                 running: None,
+                runtime_mode: None,
+                running_runtime_mode: None,
                 pending: false,
             });
         };
@@ -497,7 +518,7 @@ impl Window {
             .service()
             .shared(&name)
             .ok_or_else(|| format!("no external harness named \"{name}\""))?;
-        let mode = shared.access();
+        let mode = shared.access_for(id.as_ref());
         let running = shared.running_launch_of(id.as_ref()).map(|(mode, _)| mode);
         Ok(ExecutorSessionAccess {
             executor: Some(name),
@@ -506,6 +527,8 @@ impl Window {
             privacy: Some("remote".to_owned()),
             mode: Some(wire(mode)),
             running: running.map(wire),
+            runtime_mode: Some(runtime_wire(mode)),
+            running_runtime_mode: running.map(runtime_wire),
             pending: running.is_some_and(|running| running != mode),
         })
     }
@@ -516,16 +539,34 @@ impl Window {
         params: ExecutorAccessSetParams,
     ) -> Result<ExecutorAccessSetResult, BoxError> {
         self.known(&params.executor)?;
-        let mode = match params.mode {
-            ExecutorAccessMode::Confirm => AccessMode::Confirm,
-            ExecutorAccessMode::Full => AccessMode::Full,
+        let mode = match params.runtime_mode.as_ref() {
+            Some(ExecutorRuntimeMode::Confirm) => AccessMode::Confirm,
+            Some(ExecutorRuntimeMode::AutoAcceptEdits) => AccessMode::AutoAcceptEdits,
+            Some(ExecutorRuntimeMode::Auto) => AccessMode::Auto,
+            Some(ExecutorRuntimeMode::Full) => AccessMode::Full,
+            None => match &params.mode {
+                ExecutorAccessMode::Confirm => AccessMode::Confirm,
+                ExecutorAccessMode::Full => AccessMode::Full,
+            },
         };
-        self.commit(Change::Access(params.executor.clone(), mode))
+        if let Some(session) = params.session_id.as_deref() {
+            self.commit(Change::SessionAccess {
+                session: session.to_owned(),
+                executor: params.executor.clone(),
+                mode,
+            })
             .await?;
-        self.retire_idle(&params.executor, mode).await;
+            self.retire_idle_session(&params.executor, session, mode)
+                .await;
+        } else {
+            self.commit(Change::Access(params.executor.clone(), mode))
+                .await?;
+            self.retire_idle(&params.executor, mode).await;
+        }
         Ok(ExecutorAccessSetResult {
             executor: params.executor,
             mode: params.mode,
+            runtime_mode: params.runtime_mode,
         })
     }
 
@@ -548,11 +589,64 @@ impl Window {
         }
     }
 
+    async fn retire_idle_session(&self, executor: &str, session: &str, mode: AccessMode) {
+        let Some(shared) = self.service().shared(executor) else {
+            return;
+        };
+        let idle = self
+            .agents
+            .get(&SessionId::from(session))
+            .is_none_or(|agent| agent.status() == AgentStatus::Idle);
+        for control in shared.retire_idle_session(session, mode, idle) {
+            control.terminate(shared.terminate_grace()).await;
+        }
+    }
+
     /// The window's choice, applied only once it is on disk: the write comes first, under one lock
     /// for every choice, so that two decisions in a row take effect in order and a refused write
     /// leaves the earlier state exactly as it was (and tells the human).
     async fn commit(&self, change: Change) -> Result<(), BoxError> {
         let _one = self.saving.lock().await;
+        if let Change::SessionAccess {
+            session,
+            executor,
+            mode,
+        } = &change
+        {
+            let mut sessions: BTreeMap<String, crate::SessionAccessChoice> = self
+                .service()
+                .choices()
+                .all_session_access()
+                .into_iter()
+                .collect();
+            sessions.insert(
+                session.clone(),
+                crate::SessionAccessChoice {
+                    executor: executor.clone(),
+                    mode: *mode,
+                },
+            );
+            let saved = SavedSessionAccess {
+                version: 1,
+                sessions,
+            };
+            write(
+                &self.session_access_path,
+                &serde_json::to_vec_pretty(&saved)?,
+            )
+            .await
+            .map_err(|error| -> BoxError {
+                format!(
+                    "the conversation access could not be saved to {}: {error}",
+                    self.session_access_path.display()
+                )
+                .into()
+            })?;
+            self.service()
+                .choices()
+                .set_session_access(session, executor, *mode);
+            return Ok(());
+        }
         let mut access: BTreeMap<String, AccessMode> =
             self.service().choices().all_access().into_iter().collect();
         let mut selected = self.agents.selected_executor();
@@ -561,6 +655,7 @@ impl Window {
             Change::Access(executor, mode) => {
                 access.insert(executor.clone(), *mode);
             }
+            Change::SessionAccess { .. } => unreachable!("handled above"),
         }
         let saved = Saved {
             access,
@@ -581,6 +676,7 @@ impl Window {
         match change {
             Change::Select(selection) => self.agents.select_executor(selection),
             Change::Access(executor, mode) => self.service().choices().set_access(&executor, mode),
+            Change::SessionAccess { .. } => unreachable!("handled above"),
         }
         Ok(())
     }
@@ -599,33 +695,53 @@ pub(crate) async fn restore_choices(ctx: &Context, choices: &Choices, agents: &A
         return;
     };
     let path = profile.dir.join(CHOICES_FILE);
-    let saved: Saved = match tokio::fs::read(&path).await {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(saved) => saved,
-            Err(error) => {
-                logger.warn(format_args!(
-                    "saved external harness choices {} are unusable: {error}",
-                    path.display()
-                ));
-                return;
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => match serde_json::from_slice::<Saved>(&bytes) {
+            Ok(saved) => {
+                for (executor, mode) in saved.access {
+                    choices.set_access(&executor, mode);
+                }
+                agents.select_executor(saved.selected.map(|chosen| ExecutorSelection {
+                    executor: chosen.executor,
+                    model: chosen.model,
+                }));
             }
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-        Err(error) => {
-            logger.warn(format_args!(
-                "saved external harness choices {} could not be read: {error}",
+            Err(error) => logger.warn(format_args!(
+                "saved external harness choices {} are unusable: {error}",
                 path.display()
-            ));
-            return;
-        }
-    };
-    for (executor, mode) in saved.access {
-        choices.set_access(&executor, mode);
+            )),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => logger.warn(format_args!(
+            "saved external harness choices {} could not be read: {error}",
+            path.display()
+        )),
     }
-    agents.select_executor(saved.selected.map(|chosen| ExecutorSelection {
-        executor: chosen.executor,
-        model: chosen.model,
-    }));
+
+    let session_path = profile.dir.join(SESSION_ACCESS_FILE);
+    match tokio::fs::read(&session_path).await {
+        Ok(bytes) => match serde_json::from_slice::<SavedSessionAccess>(&bytes) {
+            Ok(saved) if saved.version == 1 => {
+                for (session, choice) in saved.sessions {
+                    choices.set_session_access(&session, &choice.executor, choice.mode);
+                }
+            }
+            Ok(saved) => logger.warn(format_args!(
+                "saved conversation access {} has unsupported version {}",
+                session_path.display(),
+                saved.version
+            )),
+            Err(error) => logger.warn(format_args!(
+                "saved conversation access {} is unusable: {error}",
+                session_path.display()
+            )),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => logger.warn(format_args!(
+            "saved conversation access {} could not be read: {error}",
+            session_path.display()
+        )),
+    }
 }
 
 fn lock_folders(
@@ -639,7 +755,17 @@ fn lock_folders(
 fn wire(mode: AccessMode) -> ExecutorAccessMode {
     match mode {
         AccessMode::Confirm => ExecutorAccessMode::Confirm,
+        AccessMode::AutoAcceptEdits | AccessMode::Auto => ExecutorAccessMode::Confirm,
         AccessMode::Full => ExecutorAccessMode::Full,
+    }
+}
+
+fn runtime_wire(mode: AccessMode) -> ExecutorRuntimeMode {
+    match mode {
+        AccessMode::Confirm => ExecutorRuntimeMode::Confirm,
+        AccessMode::AutoAcceptEdits => ExecutorRuntimeMode::AutoAcceptEdits,
+        AccessMode::Auto => ExecutorRuntimeMode::Auto,
+        AccessMode::Full => ExecutorRuntimeMode::Full,
     }
 }
 

@@ -43,7 +43,7 @@ pub use executor::BINDING_RECORD;
 pub use harness::{ExternalHarness, HarnessResult, HarnessSession, Started};
 pub use stdio::{StdioHarness, StdioHarnessConfig};
 pub use supervisor::{ExitInfo, Frame, ProcessSpec, StderrSink, Supervisor, SupervisorLimits};
-pub use window::{CHOICES_FILE, ExternalHarnessWindowPlugin};
+pub use window::{CHOICES_FILE, ExternalHarnessWindowPlugin, SESSION_ACCESS_FILE};
 
 use executor::{ExternalExecutor, Shared};
 
@@ -93,14 +93,24 @@ struct Inner {
 #[derive(Default)]
 pub(crate) struct Choices {
     access: Mutex<HashMap<String, AccessMode>>,
+    /// Exact access selected for a conversation. Unlike the executor-wide legacy default this
+    /// survives independently for each T3 thread.
+    session_access: Mutex<HashMap<String, SessionAccessChoice>>,
     /// For each conversation an external agent serves (by HoH session id), the levels its
     /// prompts named, until their turns take them (HOH-40).
-    efforts: Mutex<HashMap<String, PromptEfforts>>,
+    prompts: Mutex<HashMap<String, PromptSettings>>,
 }
 
-/// The `effort` each `session/prompt` of a conversation named (none: it named none), by the id
-/// of its message, oldest first.
-type PromptEfforts = VecDeque<(String, Option<String>)>;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SessionAccessChoice {
+    pub executor: String,
+    pub mode: AccessMode,
+}
+
+/// Settings snapshotted when `session/prompt` accepts a message. A later access change cannot
+/// alter a queued turn, and another conversation never shares this queue.
+type PromptSettings = VecDeque<(String, Option<String>, Option<AccessMode>)>;
 
 impl Choices {
     pub(crate) fn access(&self, executor: &str) -> AccessMode {
@@ -118,26 +128,56 @@ impl Choices {
         lock(&self.access).clone()
     }
 
-    /// An external agent serves `session`: the levels its prompts name are kept from now on.
-    /// Conversations of the engine's own model keep nothing.
-    pub(crate) fn serve_efforts(&self, session: &str) {
-        lock(&self.efforts).entry(session.to_owned()).or_default();
+    pub(crate) fn access_for(&self, executor: &str, session: &str) -> AccessMode {
+        lock(&self.session_access)
+            .get(session)
+            .filter(|choice| choice.executor == executor)
+            .map_or_else(|| self.access(executor), |choice| choice.mode)
     }
 
-    /// The level the prompt `message` of `session` named, kept for that message's turn.
-    pub(crate) fn note_effort(&self, session: &str, message: &str, effort: Option<String>) {
-        if let Some(pending) = lock(&self.efforts).get_mut(session) {
-            pending.push_back((message.to_owned(), effort));
+    pub(crate) fn set_session_access(&self, session: &str, executor: &str, mode: AccessMode) {
+        lock(&self.session_access).insert(
+            session.to_owned(),
+            SessionAccessChoice {
+                executor: executor.to_owned(),
+                mode,
+            },
+        );
+    }
+
+    pub(crate) fn all_session_access(&self) -> HashMap<String, SessionAccessChoice> {
+        lock(&self.session_access).clone()
+    }
+
+    /// An external agent serves `session`: the levels its prompts name are kept from now on.
+    /// Conversations of the engine's own model keep nothing.
+    pub(crate) fn serve_prompts(&self, session: &str) {
+        lock(&self.prompts).entry(session.to_owned()).or_default();
+    }
+
+    /// The level and privileged per-session access in force when this prompt was accepted.
+    pub(crate) fn note_prompt(&self, session: &str, message: &str, effort: Option<String>) {
+        let access = lock(&self.session_access)
+            .get(session)
+            .map(|choice| choice.mode);
+        if let Some(pending) = lock(&self.prompts).get_mut(session) {
+            pending.push_back((message.to_owned(), effort, access));
         }
     }
 
-    /// The level the prompt `message` of `session` named (`Some(None)`: it named none), with the
-    /// older ones dropped; `None`: no level was kept for that message.
-    pub(crate) fn take_effort(&self, session: &str, message: &str) -> Option<Option<String>> {
-        let mut efforts = lock(&self.efforts);
-        let pending = efforts.get_mut(session)?;
-        let at = pending.iter().position(|(id, _)| id == message)?;
-        pending.drain(..=at).next_back().map(|(_, effort)| effort)
+    /// The prompt settings for `message`, with older abandoned prompts dropped.
+    pub(crate) fn take_prompt(
+        &self,
+        session: &str,
+        message: &str,
+    ) -> Option<(Option<String>, Option<AccessMode>)> {
+        let mut prompts = lock(&self.prompts);
+        let pending = prompts.get_mut(session)?;
+        let at = pending.iter().position(|(id, _, _)| id == message)?;
+        pending
+            .drain(..=at)
+            .next_back()
+            .map(|(_, effort, access)| (effort, access))
     }
 }
 

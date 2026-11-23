@@ -77,6 +77,11 @@ impl Shared {
         self.choices.access(&self.name)
     }
 
+    /// The access selected for one conversation, or this harness's legacy default.
+    pub(crate) fn access_for(&self, session: &str) -> AccessMode {
+        self.choices.access_for(&self.name, session)
+    }
+
     /// The mode and switches of the running native session started last, if it still runs.
     pub(crate) fn running_launch(&self) -> Option<(AccessMode, Vec<String>)> {
         lock(&self.launched)
@@ -122,6 +127,28 @@ impl Shared {
                 return false;
             };
             if launched.access == mode || !idle(id) {
+                return true;
+            }
+            ended.push(session);
+            false
+        });
+        ended
+    }
+
+    /// Retire only `session` when its live process was started in another mode and it is idle.
+    pub(crate) fn retire_idle_session(
+        &self,
+        session_id: &str,
+        mode: AccessMode,
+        idle: bool,
+    ) -> Vec<Arc<dyn HarnessSession>> {
+        let mut all = lock(&self.launched);
+        let mut ended = Vec::new();
+        all.retain(|(id, launched)| {
+            let Some(session) = launched.session.upgrade() else {
+                return false;
+            };
+            if id != session_id || launched.access == mode || !idle {
                 return true;
             }
             ended.push(session);

@@ -137,9 +137,9 @@ export type ExecutorAccessGetResult = { "executor": string; "mode": ExecutorAcce
 
 export type ExecutorAccessMode = "confirm" | "full";
 
-export type ExecutorAccessSetParams = { "executor": string; "mode": ExecutorAccessMode; };
+export type ExecutorAccessSetParams = { "executor": string; "mode": ExecutorAccessMode; "sessionId"?: (string | null); "runtimeMode"?: (ExecutorRuntimeMode | null); };
 
-export type ExecutorAccessSetResult = { "executor": string; "mode": ExecutorAccessMode; };
+export type ExecutorAccessSetResult = { "executor": string; "mode": ExecutorAccessMode; "runtimeMode"?: (ExecutorRuntimeMode | null); };
 
 export type ExecutorAuth = "authenticated" | "unauthenticated" | "unknown";
 
@@ -159,13 +159,15 @@ export type ExecutorModel = { "id": string; "displayName"?: (string | null); "is
 
 export type ExecutorParams = { "executor": string; };
 
+export type ExecutorRuntimeMode = "confirm" | "auto-accept-edits" | "auto" | "full";
+
 export type ExecutorSelectParams = { "executor"?: (string | null); "model": string; };
 
 export type ExecutorSelectResult = { "executor"?: (string | null); "model"?: (string | null); };
 
 export type ExecutorSelection = { "executor"?: (string | null); "model"?: (string | null); };
 
-export type ExecutorSessionAccess = { "executor"?: (string | null); "model"?: (string | null); "privacy"?: (string | null); "mode"?: (ExecutorAccessMode | null); "running"?: (ExecutorAccessMode | null); "pending": boolean; };
+export type ExecutorSessionAccess = { "executor"?: (string | null); "model"?: (string | null); "privacy"?: (string | null); "mode"?: (ExecutorAccessMode | null); "running"?: (ExecutorAccessMode | null); "runtimeMode"?: (ExecutorRuntimeMode | null); "runningRuntimeMode"?: (ExecutorRuntimeMode | null); "pending": boolean; };
 
 export type ExecutorVersionStatus = "supported" | "unsupported" | "unknown";
 

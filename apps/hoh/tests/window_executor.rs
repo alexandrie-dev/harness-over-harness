@@ -709,6 +709,29 @@ impl Host {
             .await
     }
 
+    /// The window binds Codex's four-state access choice to one conversation. The legacy
+    /// two-state field stays present so an older engine can still reject or project the call.
+    async fn set_session_access(
+        &mut self,
+        session: &str,
+        runtime_mode: &str,
+        outcome: &str,
+    ) -> Value {
+        let legacy = if runtime_mode == "full" {
+            "full"
+        } else {
+            "confirm"
+        };
+        let params = json!({
+            "executor": "claude",
+            "mode": legacy,
+            "sessionId": session,
+            "runtimeMode": runtime_mode,
+        });
+        self.privileged("hoh/executor/access/set", params, outcome)
+            .await
+    }
+
     async fn access(&mut self) -> Value {
         self.ok("hoh/executor/access/get", json!({"executor": "claude"}))
             .await
@@ -3216,5 +3239,117 @@ async fn p18_the_engines_own_data_is_not_a_folder_of_the_composer() {
             .all(|start| start.has("--version") || !start.cwd.starts_with(&workspace.folder)),
         "claude was asked in the engine's data"
     );
+    host.shutdown().await;
+}
+
+/// HOH-18. The four-state Codex choice is captured with the exact prompt. A later mode change
+/// for the same chat cannot widen a turn which the engine already accepted, and only that chat is
+/// retired for the following message.
+#[tokio::test]
+async fn cx1_session_access_is_bound_to_the_message_without_a_cross_chat_race() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+
+    let chosen = host
+        .set_session_access("chat-a", "auto", "allowed-once")
+        .await;
+    assert_eq!(chosen["result"]["runtimeMode"], "auto", "{chosen}");
+
+    // The first request has entered the engine before the second privileged request is written.
+    // Its prompt settings therefore remain `auto`, even though the chat immediately changes to
+    // full access while the native turn is running.
+    let from = host.frames.len();
+    let prompt = host
+        .send(
+            "session/prompt",
+            json!({"sessionId":"chat-a","contentBlocks":[{"type":"text","text":"hello"}]}),
+        )
+        .await;
+    host.set_session_access("chat-a", "full", "allowed-once")
+        .await;
+
+    let (mut answered, mut running, mut idle, mut index) = (false, false, false, from);
+    while !(answered && running && idle) {
+        while index < host.frames.len() {
+            let frame = &host.frames[index];
+            index += 1;
+            answered |= frame["id"] == prompt && frame.get("method").is_none();
+            if frame["method"] == "session.status" && frame["params"]["sessionId"] == "chat-a" {
+                running |= frame["params"]["status"] == "running";
+                idle |= running && frame["params"]["status"] == "idle";
+            }
+        }
+        if !(answered && running && idle) {
+            host.next().await;
+        }
+    }
+
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    assert_confirm(&starts[0]);
+    let access = host.access_of("chat-a").await;
+    assert_eq!(access["session"]["runtimeMode"], "full", "{access}");
+    assert_eq!(access["session"]["runningRuntimeMode"], "auto", "{access}");
+    assert_eq!(access["session"]["pending"], true, "{access}");
+
+    host.turn("chat-a", "next", None).await;
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert_full(&starts[1]);
+    let access = host.access_of("chat-a").await;
+    assert_eq!(access["session"]["runtimeMode"], "full", "{access}");
+    assert_eq!(access["session"]["runningRuntimeMode"], "full", "{access}");
+    host.shutdown().await;
+}
+
+/// HOH-18. Conversation choices neither overwrite one another nor depend on the old global file.
+/// The separate versioned file survives a restart; if it is unreadable the legacy choices still
+/// load and the safe global default is used for the conversation.
+#[tokio::test]
+async fn cx2_session_access_is_isolated_persistent_and_downgrade_safe() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+    host.set_session_access("chat-a", "auto-accept-edits", "allowed-once")
+        .await;
+    host.set_session_access("chat-b", "auto", "allowed-once")
+        .await;
+    host.turn("chat-a", "hello", None).await;
+    host.turn("chat-b", "hello", None).await;
+    let a = host.access_of("chat-a").await;
+    let b = host.access_of("chat-b").await;
+    assert_eq!(a["session"]["runtimeMode"], "auto-accept-edits", "{a}");
+    assert_eq!(b["session"]["runtimeMode"], "auto", "{b}");
+    host.shutdown().await;
+
+    let saved = workspace
+        .profile()
+        .join("external-harness-session-access.json");
+    let document: Value = serde_json::from_slice(&std::fs::read(&saved).expect("session access"))
+        .expect("session access JSON");
+    assert_eq!(document["version"], 1, "{document}");
+    assert_eq!(
+        document["sessions"]["chat-a"]["mode"], "auto-accept-edits",
+        "{document}"
+    );
+    assert_eq!(document["sessions"]["chat-b"]["mode"], "auto", "{document}");
+
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let a = host.access_of("chat-a").await;
+    let b = host.access_of("chat-b").await;
+    assert_eq!(a["session"]["runtimeMode"], "auto-accept-edits", "{a}");
+    assert_eq!(b["session"]["runtimeMode"], "auto", "{b}");
+    host.shutdown().await;
+
+    std::fs::write(&saved, "{ not json").expect("damage only session access");
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let a = host.access_of("chat-a").await;
+    assert_eq!(a["session"]["runtimeMode"], "confirm", "{a}");
+    assert_eq!(a["selected"]["executor"], "claude", "{a}");
     host.shutdown().await;
 }

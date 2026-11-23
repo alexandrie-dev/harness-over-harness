@@ -120,12 +120,41 @@
             }
           ]
         },
+        "runtimeMode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorRuntimeMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runningRuntimeMode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorRuntimeMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "pending": {
           "type": "boolean"
         }
       },
       "required": [
         "pending"
+      ]
+    },
+    "ExecutorRuntimeMode": {
+      "type": "string",
+      "enum": [
+        "confirm",
+        "auto-accept-edits",
+        "auto",
+        "full"
       ]
     }
   },
