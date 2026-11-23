@@ -124,6 +124,8 @@ export class ThreadModel {
   updatedAt: number;
   model: string;
   mode: HohAccessMode;
+  /** Durable `approval/asked` can arrive before the native `approval.pending`; keep its exact id. */
+  private readonly approvalDetails = new Map<string, { requestKind: string }>();
   projectId: string;
   /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
   cwd: string | null = null;
@@ -418,13 +420,16 @@ export class ThreadModel {
       case 'tool/call': this.toolCall(data, at); break;
       // The permission request of a tool call: the card shows that call as T3 shows a Claude request.
       case 'approval/asked': {
-        const item = this.item('item-approval-' + text(data.id));
+        const id = text(data.id);
+        if (!id) return false;
         const tool = this.toolInputs.get(text(data.callId));
-        if (!item || !tool) return false;
-        const request = toolRequest(tool.name, tool.args, this.cwd);
-        item.requestKind = request.requestKind; delete item.prompt;
-        if (request.prompt) item.prompt = request.prompt;
-        const entry = this.requests.find(candidate => candidate.id === text(data.id));
+        const request = tool
+          ? toolRequest(tool.name, tool.args, this.cwd)
+          : toolRequest(text(data.toolName), {}, this.cwd);
+        this.approvalDetails.set(id, { requestKind: request.requestKind });
+        const item = this.item('item-approval-' + id);
+        if (item) item.requestKind = request.requestKind;
+        const entry = this.requests.find(candidate => candidate.id === id);
         if (entry) entry.kind = request.requestKind;
         break;
       }
@@ -505,20 +510,18 @@ export class ThreadModel {
   }
 
   /**
-   * A permission request of the assistant (`approval.pending`), answered in the chat. The engine's own text
-   * (`humanText`) is not English; the request is the tool call waiting for it, which `approval/asked` names.
+   * A permission request of the assistant (`approval.pending`), answered in the chat. Its visible text is
+   * the engine's `humanText` for this approval id; the durable `approval/asked` only supplies the card kind.
    */
   approvalPending(params: { approvalId: string; humanText?: string; risk?: string }, at = Date.now()) {
     if (!text(params.approvalId) || this.requests.some(request => request.id === params.approvalId)) return false;
     const run = this.currentRun();
-    // Until `approval/asked` names it: the latest call still running is the one that waits.
-    const waiting = [...this.toolInputs.values()].reverse().find(tool => this.item(tool.itemId)?.status === 'running');
-    const request = waiting ? toolRequest(waiting.name, waiting.args, this.cwd) : { requestKind: 'command' };
+    const request = this.approvalDetails.get(params.approvalId) ?? { requestKind: 'command' };
     this.requests.push({ id: params.approvalId, kind: request.requestKind, status: 'pending', createdAt: at, resolvedAt: null });
     this.items.push({
       ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at),
       requestId: params.approvalId, requestKind: request.requestKind,
-      ...(request.prompt ? { prompt: request.prompt } : {}),
+      ...(text(params.humanText) ? { prompt: text(params.humanText) } : {}),
       // T3's own set for a Claude request without a standing grant (apps/server ClaudeAdapterV2.ts
       // `CLAUDE_NO_STANDING_GRANT_OPTIONS`): HoH allows one action at a time.
       options: [{ decision: 'decline', label: 'Decline' }, { decision: 'accept', label: 'Approve' }],
@@ -537,6 +540,7 @@ export class ThreadModel {
     if (request.status === 'resolved') request.decision = allowed ? 'accept' : 'decline';
     const item = this.item('item-approval-' + params.approvalId);
     if (item) this.settleItem(item, request.status === 'resolved' ? 'completed' : 'cancelled', at);
+    this.approvalDetails.delete(params.approvalId);
     const run = this.currentRun();
     if (run && run.status === 'waiting' && !this.requests.some(entry => entry.status === 'pending')) run.status = 'running';
     this.touch(at);

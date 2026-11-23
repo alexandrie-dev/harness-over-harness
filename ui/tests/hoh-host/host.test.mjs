@@ -169,7 +169,7 @@ test('a follow-up message goes to the same chat; Stop is the engine\'s cancel an
   assert.equal(engine.cancelled, 2);
 });
 
-test('permission request of Claude: shown in the chat as T3 shows Claude\'s (kind and text from the tool call), the answer goes to the engine', async () => {
+test('permission request of Claude: exact engine humanText and early approval/asked stay bound to the answered id', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-p', 'P', [
     ['turn/start', { turn: 1 }], ['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'удали tmp' }] }],
@@ -179,15 +179,16 @@ test('permission request of Claude: shown in the chat as T3 shows Claude\'s (kin
   await thread.until(value => value.kind === 'snapshot');
   engine.emitStatus('chat-p', 'running');
   engine.emitEvent('chat-p', 'tool/call', { turn: 1, step: 1, callId: 'call-1', name: 'bash', arguments: JSON.stringify({ command: 'rm -rf tmp', workdir: '/home/person' }) });
-  engine.askApproval('chat-p', 'appr-1', 'Claude хочет выполнить: rm -rf tmp');
+  engine.emitEvent('chat-p', 'approval/asked', { id: 'appr-1', toolName: 'bash', callId: 'call-1' });
+  engine.emitEvent('chat-p', 'tool/call', { turn: 1, step: 2, callId: 'decoy', name: 'write', arguments: JSON.stringify({ file_path: '/home/person/wrong.txt' }) });
+  engine.askApproval('chat-p', 'appr-1', 'Разрешить точную команду rm -rf tmp?');
   const asked = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.length === 1);
   const request = asked.projection.runtimeRequests[0];
-  // T3: a Bash request is a "command" request whose text is the command itself (ClaudeAdapterV2 canUseTool).
   assert.deepEqual([request.id, request.kind, request.status, request.responseCapability.type], ['appr-1', 'command', 'pending', 'live']);
   const item = itemsOf(asked).find(entry => entry.type === 'approval_request');
-  assert.deepEqual([item.requestId, item.requestKind, item.prompt], ['appr-1', 'command', 'rm -rf tmp']);
+  assert.deepEqual([item.requestId, item.requestKind, item.prompt], ['appr-1', 'command', 'Разрешить точную команду rm -rf tmp?']);
   assert.deepEqual(item.options.map(option => option.label), ['Decline', 'Approve']);
-  assert.doesNotMatch(JSON.stringify(item), /[Ѐ-ӿ]/, 'the engine\'s own (Russian) words are not shown in T3');
+  assert.doesNotMatch(item.prompt, /wrong\.txt/, 'a later running call cannot replace the signed request');
   assert.equal(asked.projection.runs[0].status, 'waiting');
   await client.call('orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: 'c1', threadId: 'chat-p', requestId: 'appr-1', decision: 'accept' });
   assert.deepEqual(engine.decisions, [{ approvalId: 'appr-1', outcome: 'allowed-once' }]);
@@ -195,13 +196,13 @@ test('permission request of Claude: shown in the chat as T3 shows Claude\'s (kin
   assert.equal(answered.projection.runtimeRequests[0].decision, 'accept');
   // The engine's own resolution afterwards changes nothing.
   engine.notify('approval.resolved', { approvalId: 'appr-1', outcome: 'allowed-once' });
-  // A file write: the engine names the call (`approval/asked`), T3 asks for a file change "Write: <file>".
+  // No call id still keeps the engine's id/text; toolName supplies only the T3 request kind.
   engine.emitEvent('chat-p', 'tool/call', { turn: 1, step: 2, callId: 'call-2', name: 'write', arguments: JSON.stringify({ file_path: '/home/person/notes.txt', content: 'x' }) });
-  engine.askApproval('chat-p', 'appr-2', 'Ещё раз');
-  engine.emitEvent('chat-p', 'approval/asked', { id: 'appr-2', toolName: 'write', callId: 'call-2' });
+  engine.emitEvent('chat-p', 'approval/asked', { id: 'appr-2', toolName: 'write' });
+  engine.askApproval('chat-p', 'appr-2', 'Изменить notes.txt?');
   const write = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.length === 2);
   assert.equal(write.projection.runtimeRequests[1].kind, 'file-change');
-  assert.equal(itemsOf(write).find(entry => entry.requestId === 'appr-2').prompt, '/home/person/notes.txt');
+  assert.equal(itemsOf(write).find(entry => entry.requestId === 'appr-2').prompt, 'Изменить notes.txt?');
   // A refusal maps to rejected.
   await client.call('orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: 'c2', threadId: 'chat-p', requestId: 'appr-2', decision: 'decline' });
   assert.deepEqual(engine.decisions.at(-1), { approvalId: 'appr-2', outcome: 'rejected' });
@@ -239,6 +240,43 @@ test('access mode: T3\'s switch goes to the engine at once and every thread show
   // T3's in-between modes are the engine's own (CEO 23.11 00:07).
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c2', threadId: 'chat-m', runtimeMode: 'auto-accept-edits' });
   assert.equal(engine.access.mode, 'acceptEdits');
+});
+
+test('access mode stays unknown until ready, sends no mode or prompt, then rereads every ready', async () => {
+  const engine = new FakeEngine({ access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } } });
+  engine.seed('chat-late', 'Late', []);
+  let ready = false;
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/access/get' && !ready
+    ? Promise.reject(new Error('engine is starting'))
+    : request(method, params);
+  const { client } = connect(engine, { loadRetryMs: 60_000, loadRetries: 1 });
+  const config = await client.stream('subscribeServerConfig', {});
+  const unknown = await config.until(value => value.type === 'snapshot');
+  assert.deepEqual(unknown.config.providers[0].supportedRuntimeModes, []);
+  assert.equal('defaultRuntimeMode' in unknown.config.settings, false);
+  assert.equal(engine.requests.some(entry => entry.method === 'session/list'), false, 'history is not projected with a guessed mode');
+
+  const failed = await client.request('orchestration.launchThread', {
+    commandId: 'unknown-mode', threadId: 'unknown-mode', projectId: 'hoh-project', title: 'Blocked',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required',
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'm-unknown', text: 'must not run', attachments: [] },
+  });
+  assert.equal(failed._tag, 'Failure');
+  assert.equal(engine.requests.some(entry => entry.method === 'hoh/executor/access/set' || entry.method === 'session/prompt'), false);
+
+  ready = true;
+  engine.setStatus('ready');
+  const known = await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4);
+  assert.equal(known.config.providers[0].supportedRuntimeModes.at(-1), 'full-access');
+  await tick(5);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-late' })).thread.runtimeMode, 'full-access');
+
+  engine.access = { ...engine.access, mode: 'auto' };
+  engine.setStatus('ready');
+  await tick(5);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-late' })).thread.runtimeMode, 'auto');
 });
 
 test('after a restart the chat comes back from the engine\'s history; an unfinished turn ends as stopped', async () => {
@@ -555,7 +593,7 @@ test('home screen data: working chats with real steps, a chat waiting for the pe
   host.flush();
   const by = Object.fromEntries(host.home.entries().map(entry => [entry.id, entry]));
   assert.deepEqual([by.w1.state, by.w1.steps, by.w2.state, by.p1.state, by.d1.state, by.d2.state], ['working', { done: 1, total: 2 }, 'working', 'waiting', 'done', 'done']);
-  assert.deepEqual(by.p1.request, { id: 'appr-h', kind: 'approval', requestKind: 'command', text: 'rm -rf tmp' });
+  assert.deepEqual(by.p1.request, { id: 'appr-h', kind: 'approval', requestKind: 'command', text: 'ignored' });
   assert(by.d1.doneAt > 0 && by.w1.doneAt === null);
   // The card's buttons are the chat's own answer.
   let changes = 0; host.home.subscribe(() => { changes++; });
@@ -582,15 +620,15 @@ test('home screen = the chat\'s own data: the request text and kind are the chat
     engine.emitEvent('chat-h', 'tool/result', { turn: 1, message: { toolCallId: 'c' + n, content: [{ type: 'text', text: 'ok' }] } });
   }
   engine.emitEvent('chat-h', 'tool/call', { turn: 1, step: 3, callId: 'c3', name: 'write', arguments: JSON.stringify({ file_path: '/home/person/notes.txt', content: 'x' }) });
-  engine.askApproval('chat-h', 'appr-h2', 'Claude хочет записать файл');
   engine.emitEvent('chat-h', 'approval/asked', { id: 'appr-h2', toolName: 'write', callId: 'c3' });
+  engine.askApproval('chat-h', 'appr-h2', 'Claude хочет записать файл');
   const snap = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.length === 1);
   host.flush();
   const entry = host.home.entries().find(candidate => candidate.id === 'chat-h');
   const item = itemsOf(snap).find(candidate => candidate.type === 'approval_request');
   // What the person is asked is what the chat shows: the same kind and text (no "step 1").
   assert.deepEqual(entry.request, { id: item.requestId, kind: 'approval', requestKind: item.requestKind, text: item.prompt });
-  assert.deepEqual([entry.request.requestKind, entry.request.text], ['file-change', '/home/person/notes.txt']);
+  assert.deepEqual([entry.request.requestKind, entry.request.text], ['file-change', 'Claude хочет записать файл']);
   // The strip counts the chat's tool items: three calls, two finished.
   const tools = itemsOf(snap).filter(candidate => ['command_execution', 'file_change', 'file_search', 'web_search', 'dynamic_tool'].includes(candidate.type));
   assert.equal(entry.steps.total, tools.length);
@@ -850,7 +888,7 @@ test('an empty draft has no «first message» stamp (the window keeps it out of 
   assert.notEqual(started.thread.latestUserMessageAt, null);
 });
 
-test('permission request text for the person: the point of a subagent, the command, the file path (relative inside the folder), an unknown tool as lines — never JSON', async () => {
+test('permission request text for the person is the exact engine humanText for that approval id — never another call or JSON', async () => {
   const engine = new FakeEngine();
   const { host } = connect(engine);
   await host.start();
@@ -859,23 +897,23 @@ test('permission request text for the person: the point of a subagent, the comma
   engine.emitEvent('chat-q', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'go' }] });
   engine.emitEvent('chat-q', 'session/cwd', { cwd: '/work/proj' });
   engine.emitStatus('chat-q', 'running');
-  const ask = (n, name, args) => {
+  const ask = (n, name, args, humanText) => {
     engine.emitEvent('chat-q', 'tool/call', { turn: 1, callId: 'c' + n, name, arguments: JSON.stringify(args) });
-    engine.askApproval('chat-q', 'a' + n, 'x');
     engine.emitEvent('chat-q', 'approval/asked', { id: 'a' + n, toolName: name, callId: 'c' + n });
+    engine.askApproval('chat-q', 'a' + n, humanText);
     host.flush();
     const request = host.home.entries().find(entry => entry.id === 'chat-q').request;
     engine.notify('approval.resolved', { approvalId: 'a' + n, outcome: 'allowed-once' });
     host.flush();
     return request;
   };
-  const agent = ask(1, 'Agent', { description: 'Count files', subagent_type: 'Explore', prompt: 'line one\n\nline two\nline three' });
-  assert.equal(agent.text, 'Subagent: Count files (Explore)\nline one\nline two');
-  const bash = ask(2, 'Bash', { command: 'ls -la' });
-  const edit = ask(3, 'Edit', { file_path: '/work/proj/src/a.ts', old_string: 'x', new_string: 'y' });
-  const unknown = ask(4, 'Frobnicate', { target: 'db', retries: 3, nested: { a: 1 }, items: [1, 2] });
+  const agent = ask(1, 'Agent', { description: 'Count files', subagent_type: 'Explore', prompt: 'line one\n\nline two\nline three' }, 'Разрешить субагента Count files?');
+  assert.equal(agent.text, 'Разрешить субагента Count files?');
+  const bash = ask(2, 'Bash', { command: 'ls -la' }, 'Выполнить ls -la?');
+  const edit = ask(3, 'Edit', { file_path: '/work/proj/src/a.ts', old_string: 'x', new_string: 'y' }, 'Изменить src/a.ts?');
+  const unknown = ask(4, 'Frobnicate', { target: 'db', retries: 3, nested: { a: 1 }, items: [1, 2] }, 'Разрешить Frobnicate?');
   for (const request of [agent, bash, edit, unknown]) assert(!/[{}]"|":/.test(request.text), 'no raw JSON: ' + request.text);
-  assert.equal(unknown.text, 'Frobnicate\ntarget: db\nretries: 3\nnested: {…}\nitems: 2 items');
+  assert.equal(unknown.text, 'Разрешить Frobnicate?');
 });
 
 // ---- four modes (CEO 23.11 00:07): T3's Supervised, Auto-accept edits, Auto, Full access

@@ -119,7 +119,9 @@ export class HohHost {
   private homeVersion = 0;
   private readonly homeListeners = new Set<() => void>();
   private discovery: ClaudeDiscovery | null = null;
-  private mode: HohAccessMode = 'confirm';
+  /** Null until the engine has answered `access/get`; never aliases the fail-closed state to confirm. */
+  private mode: HohAccessMode | null = null;
+  private accessError: string | null = 'Claude access mode has not been read yet.';
   /** T3's "default permissions" setting: the mode a new thread starts in. Claude asks first until the person changes it. */
   private defaultMode: HohAccessMode = 'confirm';
   /** The model the engine runs new chats with (`hoh/executor/select`), once known. */
@@ -315,24 +317,29 @@ export class HohHost {
     this.unsubscribers.push(await this.engine.subscribe(notification => this.onNotification(notification)));
     if (this.engine.subscribeQuestions) this.unsubscribers.push(await this.engine.subscribeQuestions(question => this.onQuestion(question)));
     if (this.engine.subscribeStatus) this.unsubscribers.push(await this.engine.subscribeStatus(status => {
-      if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
+      if (status.state === 'ready') void this.onEngineReady();
+      else if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
     }));
-    await Promise.all([this.readDiscovery(), this.readAccess(), this.readSessions()]);
-    // A successful first disk scan can still be incomplete while the previous process releases
-    // resources. Reconcile for the same bounded startup window used for an engine still starting.
-    void this.retryLoad(this.discovery !== null);
+    const [, accessRead] = await Promise.all([this.readDiscovery(), this.readAccess()]);
+    if (accessRead) await this.readSessions();
+    // The engine that was still starting answers nothing at first (and the window never asks again): go on asking in the background.
+    // Even a successful first disk scan is reconciled during this bounded window: the previous
+    // engine process may still be releasing its last stopped session.
+    void this.retryLoad(this.discovery !== null, accessRead);
   }
 
   /** The reads of `load` that failed, repeated until the engine answers; what arrives late is announced to the window. */
-  private async retryLoad(discovered: boolean) {
+  private async retryLoad(discovered: boolean, accessRead: boolean) {
     for (let attempt = 0; attempt < this.loadRetries && !this.stopped; attempt++) {
       await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
       if (this.stopped) return;
-      if (!discovered) { await this.readDiscovery(); discovered = this.discovery !== null; if (discovered) { await this.readAccess(); this.configChanged(); } }
-      const added = await this.readSessions();
-      if (added !== null) {
-        for (const id of added) this.changed(id);
+      if (!discovered) { await this.readDiscovery(); discovered = this.discovery !== null; }
+      if (!accessRead) accessRead = await this.readAccess();
+      if (accessRead) {
+        const added = await this.readSessions();
+        if (added !== null) for (const id of added) this.changed(id);
       }
+      if (discovered || accessRead) this.configChanged();
     }
   }
 
@@ -340,15 +347,39 @@ export class HohHost {
     try { this.discovery = await this.engine.request('hoh/executor/discover', { executor: 'claude' }); } catch { this.discovery = null; }
   }
 
-  private async readAccess() {
+  private async readAccess(): Promise<boolean> {
     try {
       const access = await this.engine.request('hoh/executor/access/get', { executor: 'claude' });
-      if (isAccessMode(access?.mode)) this.mode = access.mode;
+      if (!isAccessMode(access?.mode)) throw new Error('The engine returned an unknown Claude access mode.');
+      const changed = this.mode !== access.mode;
+      this.mode = access.mode;
+      this.accessError = null;
       if (typeof access?.selected?.model === 'string' && access.selected.model) this.selectedModel = access.selected.model;
-    } catch { /* the engine has no Claude access setting: the default mode stays */ }
+      if (changed) for (const thread of this.threads.values()) { thread.mode = access.mode; this.changed(thread.id); }
+      return true;
+    } catch (error) {
+      this.mode = null;
+      this.accessError = errorText(error) || 'Claude access mode is unavailable.';
+      return false;
+    }
+  }
+
+  private async requireAccess(): Promise<HohAccessMode> {
+    if (this.mode !== null || await this.readAccess()) return this.mode as HohAccessMode;
+    throw new Error(this.accessError ?? 'Claude access mode is unavailable.');
+  }
+
+  private async onEngineReady() {
+    await this.readDiscovery();
+    const accessRead = await this.readAccess();
+    if (accessRead) await this.readSessions();
+    this.configChanged();
+    if (accessRead) this.flush();
   }
 
   private async readSessions(): Promise<string[] | null> {
+    const mode = this.mode;
+    if (mode === null) return null;
     let sessions: any[] = [];
     try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return null; }
     const added: string[] = [];
@@ -366,7 +397,7 @@ export class HohHost {
         }
         continue;
       }
-      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
+      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode, projectId: this.homeOf(session.id) }));
       added.push(session.id);
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
@@ -450,6 +481,7 @@ export class HohHost {
     let thread = this.threads.get(sessionId);
     if (!thread) {
       // A chat started elsewhere (another window, a schedule): it joins the list.
+      if (this.mode === null) return undefined;
       thread = new ThreadModel({ id: sessionId, createdAt: this.now(), model: this.model(), mode: this.mode });
       thread.loaded = true;
       this.threads.set(sessionId, thread);
@@ -504,6 +536,8 @@ export class HohHost {
 
   /** The engine process ended: no turn of it is still running. History is read again when shown. */
   private onEngineLost() {
+    this.mode = null;
+    this.accessError = 'Claude access mode is unknown while the engine is unavailable.';
     for (const thread of this.threads.values()) {
       if (thread.running || thread.activeRunId()) { thread.engineRunning = false; thread.running = false; thread.settleUnfinished(this.now()); this.changed(thread.id); }
     }
@@ -539,10 +573,10 @@ export class HohHost {
   }
 
   private config() {
-    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, defaultMode: this.defaultMode, settingsOverrides: this.settingsOverrides, now: this.iso() });
+    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, defaultMode: this.defaultMode, accessKnown: this.mode !== null, settingsOverrides: this.settingsOverrides, now: this.iso() });
   }
 
-  private settings() { return serverSettings(this.model(), this.defaultMode, this.settingsOverrides); }
+  private settings() { return serverSettings(this.model(), this.defaultMode, this.settingsOverrides, this.mode !== null); }
 
   private configChanged() {
     for (const sink of this.configSinks) sink.emit({ version: 1, type: 'snapshot', config: this.config() });
@@ -571,6 +605,7 @@ export class HohHost {
    * may ask the person to allow it. Claude then runs in that folder.
    */
   private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown) {
+    const knownMode = await this.requireAccess();
     const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
     if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
     await this.applyMode(mode);
@@ -587,7 +622,7 @@ export class HohHost {
         this.emitProject(folderProject(folder));
       }
     }
-    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode, projectId: folder?.id ?? HOH_PROJECT_ID });
+    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode ?? knownMode, projectId: folder?.id ?? HOH_PROJECT_ID });
     thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
     thread.loaded = true;
     this.threads.set(threadId, thread);
@@ -722,9 +757,10 @@ export class HohHost {
    * chats, so every thread shows the mode in effect.
    */
   private async applyMode(mode: T3RuntimeMode | undefined) {
+    const current = await this.requireAccess();
     if (!mode) return;
     const wanted = accessModeOf(mode);
-    if (wanted === this.mode) return;
+    if (wanted === current) return;
     await this.engine.request('hoh/executor/access/set', { executor: 'claude', mode: wanted });
     this.mode = wanted;
     for (const thread of this.threads.values()) { thread.mode = wanted; this.changed(thread.id); }
@@ -738,7 +774,7 @@ export class HohHost {
    * the first message of a new thread in the mode they picked (`orchestration.launchThread`).
    */
   private notWider(mode: T3RuntimeMode | undefined): T3RuntimeMode | undefined {
-    return mode && accessRank(accessModeOf(mode)) <= accessRank(this.mode) ? mode : undefined;
+    return mode && this.mode !== null && accessRank(accessModeOf(mode)) <= accessRank(this.mode) ? mode : undefined;
   }
 
   private async applyModel(model: string | undefined) {
@@ -753,6 +789,7 @@ export class HohHost {
    * written as Claude runs them (`$name` → `/name`, T3's `planClaudeSkillDispatch`).
    */
   private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = []) {
+    await this.requireAccess();
     const images = this.keptImages(attachments);
     // T3 releases the completed upload immediately after send. Promote its process-local preview
     // first, so the timeline can keep rendering it without retaining upload bytes or opening CSP.

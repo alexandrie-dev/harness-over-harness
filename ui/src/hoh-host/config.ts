@@ -178,8 +178,8 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
 }
 
 /** Every `ServerSettings` field has a decoding default; only what HoH decides is sent. */
-export function serverSettings(model: string, defaultMode: HohAccessMode, overrides: Record<string, unknown> = {}) {
-  return {
+export function serverSettings(model: string, defaultMode: HohAccessMode, overrides: Record<string, unknown> = {}, accessKnown = true) {
+  const settings = {
     ...overrides,
     // "Add project" offers no repository host to clone from (T3 turns its default host off by this setting:
     // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
@@ -189,12 +189,16 @@ export function serverSettings(model: string, defaultMode: HohAccessMode, overri
     // the composer only while a thread's mode differs from it (chat/composerControlsOwnership.ts).
     defaultRuntimeMode: runtimeModeOf(defaultMode),
   };
+  if (accessKnown) return settings;
+  const { defaultRuntimeMode: _unknown, ...withoutMode } = settings;
+  return withoutMode;
 }
 
 export interface ConfigInput {
   readonly cwd: string;
   readonly discovery: ClaudeDiscovery | null;
   readonly defaultMode: HohAccessMode;
+  readonly accessKnown?: boolean;
   readonly settingsOverrides?: Record<string, unknown>;
   readonly now: string;
 }
@@ -238,7 +242,10 @@ export function serverConfig(input: ConfigInput) {
     keybindingsConfigPath: input.cwd.replace(/\/$/, '') + '/.hoh-keybindings.json',
     keybindings: [],
     issues: [],
-    providers: [claudeProvider(input.discovery, input.now)],
+    providers: [{
+      ...claudeProvider(input.discovery, input.now),
+      supportedRuntimeModes: input.accessKnown === false ? [] : RUNTIME_MODES,
+    }],
     availableEditors: [],
     observability: {
       logsDirectoryPath: '/hoh/logs',
@@ -247,7 +254,7 @@ export function serverConfig(input: ConfigInput) {
       otlpMetricsEnabled: false,
       otlpLogsEnabled: false,
     },
-    settings: serverSettings(model, input.defaultMode, input.settingsOverrides),
+    settings: serverSettings(model, input.defaultMode, input.settingsOverrides, input.accessKnown !== false),
     serverTime: input.now,
   };
 }
