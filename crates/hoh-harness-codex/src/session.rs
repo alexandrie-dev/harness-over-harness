@@ -216,15 +216,19 @@ struct State {
     hoh_turn: Option<String>,
     native_turn: Option<String>,
     turn_opened: bool,
-    /// Stop may arrive while `turn/start` is still in flight. Remember it until either the
-    /// response or `turn/started` supplies the native id; `interrupt_sent` arbitrates that race.
+    /// Stop may arrive while `turn/start` is still in flight. Remember it until the canonical
+    /// `turn/started` notification opens the native turn; its result alone is too early to stop.
     interrupt_requested: bool,
     interrupt_sent: bool,
     closed: bool,
 }
 
 fn take_pending_interrupt(state: &mut State) -> Option<RequestContext> {
-    if state.closed || !state.interrupt_requested || state.interrupt_sent {
+    if state.closed
+        || !state.turn_opened
+        || !state.interrupt_requested
+        || state.interrupt_sent
+    {
         return None;
     }
     let native_turn = state.native_turn.clone()?;
@@ -605,28 +609,23 @@ impl HarnessSession for CodexSession {
                     "turn/start returned no turn.id",
                 ));
             };
-            let (emit, interrupt, mismatch) = {
+            let mismatch = {
                 let mut state = lock(&session.inner.state);
                 if state.hoh_turn.as_deref() != Some(params.turn_id.as_str()) {
                     // The latched interrupt may have completed before the turn/start response, or
                     // a replacement turn may already exist. Never reopen or corrupt either state.
-                    (None, None, false)
+                    false
                 } else if state
                     .native_turn
                     .as_ref()
                     .is_some_and(|turn| turn != &native)
                 {
-                    (None, None, true)
+                    true
                 } else {
+                    // `turn/start` returning an id does not mean app-server accepts
+                    // `turn/interrupt` yet. Only `turn/started` opens and announces the turn.
                     state.native_turn = Some(native);
-                    let emit = if state.turn_opened {
-                        None
-                    } else {
-                        state.turn_opened = true;
-                        state.hoh_turn.clone()
-                    };
-                    let interrupt = take_pending_interrupt(&mut state);
-                    (emit, interrupt, false)
+                    false
                 }
             };
             if mismatch {
@@ -639,15 +638,6 @@ impl HarnessSession for CodexSession {
                     code::PROTOCOL,
                     "Codex app-server changed the active turn id",
                 ));
-            }
-            if let Some(turn_id) = emit {
-                emit_event(&session.inner, HarnessEvent::TurnStarted { turn_id }).await;
-            }
-            if let Some(context) = interrupt
-                && let Err(failure) = send_interrupt(&session.inner, &context).await
-                && interrupt_failure_is_current(&session.inner, &context)
-            {
-                return Err(failure);
             }
             Ok(())
         })

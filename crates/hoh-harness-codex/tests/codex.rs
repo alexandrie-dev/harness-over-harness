@@ -16,12 +16,17 @@ fn stub() -> PathBuf {
 
 fn harness(temp: &TempDir, scenario: &str) -> (CodexHarness, PathBuf) {
     let log = temp.path().join(format!("{scenario}.jsonl"));
+    let release = log.with_extension("release");
     let config = CodexConfig {
         executable: stub(),
         request_timeout: Duration::from_secs(3),
         extra_env: vec![
             ("CODEX_STUB_SCENARIO".into(), scenario.into()),
             ("CODEX_STUB_LOG".into(), log.to_string_lossy().into_owned()),
+            (
+                "CODEX_STUB_RELEASE".into(),
+                release.to_string_lossy().into_owned(),
+            ),
         ],
         ..CodexConfig::default()
     };
@@ -1105,9 +1110,9 @@ async fn terminate_removes_the_process_tree_without_a_native_interrupt() {
 }
 
 #[tokio::test]
-async fn early_interrupt_is_latched_until_native_turn_and_reaps_process_tree() {
+async fn early_interrupt_waits_for_turn_started_after_result_and_reaps_process_tree() {
     let temp = TempDir::new().unwrap();
-    let (harness, log) = harness(&temp, "early-interrupt");
+    let (harness, log) = harness(&temp, "result-before-turn-started");
     let mut started = harness
         .start_with_access(start_params(&temp, None), AccessMode::Confirm)
         .await
@@ -1139,6 +1144,19 @@ async fn early_interrupt_is_latched_until_native_turn_and_reaps_process_tree() {
 
     started.session.interrupt().await.unwrap();
     prompt.await.unwrap().unwrap();
+    assert!(
+        !lines(&log)
+            .iter()
+            .any(|line| line.get("method") == Some(&Value::String("turn/interrupt".into()))),
+        "turn/start result alone must not make the native turn interruptible"
+    );
+    assert!(
+        !lines(&log)
+            .iter()
+            .any(|line| line.get("stubEvent") == Some(&Value::String("interrupt-before-turn-started".into()))),
+        "HoH sent Stop before the canonical turn/started notification"
+    );
+    fs::write(log.with_extension("release"), b"start native turn").unwrap();
 
     let mut started_seen = false;
     loop {

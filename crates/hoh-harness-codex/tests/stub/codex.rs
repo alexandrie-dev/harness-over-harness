@@ -1,12 +1,23 @@
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Value, json};
 
 fn send(value: Value) {
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{value}").unwrap();
+    stdout.flush().unwrap();
+}
+
+/// Publish `turn/started` and make interrupts acceptable atomically from the peer's view: the
+/// flag changes while stdout is locked, before the notification is flushed to the client.
+fn send_turn_started(value: Value, active: &AtomicBool) {
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{value}").unwrap();
+    active.store(true, Ordering::SeqCst);
     stdout.flush().unwrap();
 }
 
@@ -80,6 +91,7 @@ fn main() {
     let mut duplicate_after_answer: Option<Value> = None;
     let mut late_turn_start: Option<Value> = None;
     let mut late_interrupt: Option<Value> = None;
+    let delayed_turn_active = Arc::new(AtomicBool::new(false));
     let mut turn_count = 0_u8;
     for line in BufReader::new(stdin.lock()).lines() {
         let line = line.unwrap();
@@ -114,6 +126,31 @@ fn main() {
             }
             Some("turn/start") => {
                 turn_count += 1;
+                if scenario == "result-before-turn-started" {
+                    let spawned = Command::new("sh")
+                        .args(["-c", "sleep 120"])
+                        .spawn()
+                        .unwrap();
+                    log(&json!({"childPid":spawned.id()}));
+                    child = Some(spawned);
+                    delayed_turn_active.store(false, Ordering::SeqCst);
+                    send(
+                        json!({"id":id,"result":{"turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
+                    );
+                    let active = delayed_turn_active.clone();
+                    let release = std::env::var("CODEX_STUB_RELEASE").unwrap();
+                    std::thread::spawn(move || {
+                        while !std::path::Path::new(&release).exists() {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        log(&json!({"stubEvent":"turn-started-sent"}));
+                        send_turn_started(
+                            json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
+                            &active,
+                        );
+                    });
+                    continue;
+                }
                 if scenario == "late-start-error" || scenario == "late-interrupt-error" {
                     if turn_count == 1 {
                         late_turn_start = id;
@@ -330,6 +367,13 @@ fn main() {
                 }
             }
             Some("turn/interrupt") => {
+                if scenario == "result-before-turn-started"
+                    && !delayed_turn_active.load(Ordering::SeqCst)
+                {
+                    log(&json!({"stubEvent":"interrupt-before-turn-started"}));
+                    send(json!({"id":id,"error":{"code":-32000,"message":"no active turn to interrupt"}}));
+                    continue;
+                }
                 if scenario == "late-interrupt-error" && turn_count == 1 {
                     late_interrupt = id;
                     finish_turn("interrupted");
