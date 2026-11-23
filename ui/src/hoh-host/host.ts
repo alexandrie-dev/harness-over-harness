@@ -46,7 +46,12 @@ export interface HohStorage {
 
 /** The reasoning level goes to the engine as `effort` of `session/prompt` (agreed with the engine's writer). */
 const effortParam = (effort: string | null) => effort ? { effort } : {};
-const interactionModeOf = (value: unknown): T3InteractionMode => value === 'plan' ? 'plan' : 'default';
+const isInteractionMode = (value: unknown): value is T3InteractionMode => value === 'default' || value === 'plan';
+const interactionModeOf = (value: unknown): T3InteractionMode => {
+  if (value === undefined) return 'default';
+  if (isInteractionMode(value)) return value;
+  throw new Error('Unknown interaction mode.');
+};
 
 export const STORAGE_KEY = 'hoh-host.projects.v1';
 const PLACEHOLDER_ROOT = '~/Documents/HoH';
@@ -188,7 +193,7 @@ export class HohHost {
     const threads = saved?.threads && typeof saved.threads === 'object' ? saved.threads : {};
     for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
-    for (const [threadId, mode] of Object.entries(saved?.interactions && typeof saved.interactions === 'object' ? saved.interactions : {})) this.interactions.set(threadId, interactionModeOf(mode));
+    for (const [threadId, mode] of Object.entries(saved?.interactions && typeof saved.interactions === 'object' ? saved.interactions : {})) if (isInteractionMode(mode)) this.interactions.set(threadId, mode);
     for (const [threadId, title] of Object.entries(saved?.titles && typeof saved.titles === 'object' ? saved.titles : {})) if (typeof title === 'string' && title.trim()) this.titles.set(threadId, title.trim());
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (isAccessMode(saved?.defaultMode)) this.defaultMode = saved.defaultMode;
@@ -650,6 +655,7 @@ export class HohHost {
    * may ask the person to allow it. Claude then runs in that folder.
    */
   private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown, interactionMode?: unknown) {
+    const interaction = interactionModeOf(interactionMode);
     const knownMode = await this.requireAccess();
     const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
     if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
@@ -667,7 +673,6 @@ export class HohHost {
         this.emitProject(folderProject(folder));
       }
     }
-    const interaction = interactionModeOf(interactionMode);
     const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode ?? knownMode, interactionMode: interaction, projectId: folder?.id ?? HOH_PROJECT_ID });
     this.interactions.set(threadId, interaction);
     thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;

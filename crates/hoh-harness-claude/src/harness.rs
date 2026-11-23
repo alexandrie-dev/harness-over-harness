@@ -6,21 +6,20 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
-    AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, ExternalHarness,
+    AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, ExitInfo, ExternalHarness, Frame,
     HarnessCommand, HarnessCommands, HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult,
     InteractionMode, NetworkAccess, ProcessSpec, SandboxMode, StartParams, StartResult, Started,
     Supervisor, SupervisorLimits, VersionStatus, code,
 };
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use tokio::io::AsyncReadExt;
+use tokio::sync::Semaphore;
 
 use crate::session::{ClaudeSession, SessionSettings};
 use crate::version;
@@ -544,7 +543,16 @@ fn managed_mcp_config_path() -> &'static Path {
     }
 }
 
-fn title_args(no_session_persistence: bool, managed_mcp_config: bool) -> Vec<String> {
+const TITLE_INPUT_MAX_BYTES: usize = 64 * 1024;
+const TITLE_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+const TITLE_TIMEOUT: Duration = Duration::from_secs(45);
+static TITLE_SLOT: Semaphore = Semaphore::const_new(1);
+
+fn title_args(
+    setting_sources: SettingSources,
+    no_session_persistence: bool,
+    managed_mcp_config: bool,
+) -> Vec<String> {
     let mut args = [
         "-p",
         "--output-format",
@@ -566,6 +574,16 @@ fn title_args(no_session_persistence: bool, managed_mcp_config: bool) -> Vec<Str
     if no_session_persistence {
         args.push("--no-session-persistence".into());
     }
+    args.extend(
+        [
+            "--setting-sources",
+            match setting_sources {
+                SettingSources::Personal => PERSONAL_SETTING_SOURCES,
+                SettingSources::Isolated => "",
+            },
+        ]
+        .map(str::to_owned),
+    );
     // Claude rejects strict MCP mode when the administrator has installed managed-mcp.json;
     // that file already excludes every other MCP source. This is T3's exact conditional.
     if !managed_mcp_config {
@@ -575,88 +593,189 @@ fn title_args(no_session_persistence: bool, managed_mcp_config: bool) -> Vec<Str
     args
 }
 
+struct TitleCommandOutput {
+    status: ExitInfo,
+    response: Option<Value>,
+    stderr: String,
+}
+
+/// A cancelled title future must not detach its CLI or any descendant. Successful/explicitly
+/// terminated supervisors make this a cheap idempotent no-op.
+struct AbandonTitleOnDrop<'a>(&'a Supervisor);
+
+impl Drop for AbandonTitleOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.abandon();
+    }
+}
+
+fn title_spec(
+    config: &ClaudeConfig,
+    cwd: &Path,
+    no_session_persistence: bool,
+    fallback_config_dir: Option<&Path>,
+) -> ProcessSpec {
+    let mut env: Vec<_> = config
+        .extra_env
+        .iter()
+        .filter(|(name, _)| fallback_config_dir.is_none() || name != "CLAUDE_CONFIG_DIR")
+        .cloned()
+        .collect();
+    if let Some(directory) = fallback_config_dir {
+        env.push((
+            "CLAUDE_CONFIG_DIR".to_owned(),
+            directory.to_string_lossy().into_owned(),
+        ));
+    }
+    ProcessSpec {
+        program: config.executable.clone(),
+        args: title_args(
+            config.setting_sources,
+            no_session_persistence,
+            managed_mcp_config_path().exists(),
+        ),
+        cwd: Some(cwd.to_owned()),
+        env,
+        env_remove: Vec::new(),
+    }
+}
+
+fn title_limits() -> SupervisorLimits {
+    SupervisorLimits {
+        max_frame_bytes: TITLE_OUTPUT_MAX_BYTES,
+        frame_queue: 2,
+        stdin_queue: 1,
+        stderr_lines: 20,
+        stderr_line_bytes: 2048,
+    }
+}
+
 async fn run_title_command(
     config: &ClaudeConfig,
     cwd: &Path,
     prompt: &str,
     no_session_persistence: bool,
-) -> Result<std::process::Output, HarnessFailure> {
-    let mut command = Command::new(&config.executable);
-    command
-        .args(title_args(
-            no_session_persistence,
-            managed_mcp_config_path().exists(),
-        ))
-        .current_dir(cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    for (name, value) in &config.extra_env {
-        command.env(name, value);
-    }
-    let mut child = command.spawn().map_err(|error| {
-        HarnessFailure::new(
-            code::HARNESS,
-            format!("cannot start Claude title request: {error}"),
-        )
-    })?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(prompt.as_bytes()).await.map_err(|error| {
-            HarnessFailure::new(
-                code::HARNESS,
-                format!("cannot send Claude title request: {error}"),
-            )
-        })?;
-        let _ = stdin.shutdown().await;
-    }
-    tokio::time::timeout(Duration::from_secs(45), child.wait_with_output())
+    fallback_config_dir: Option<&Path>,
+) -> Result<TitleCommandOutput, HarnessFailure> {
+    let spec = title_spec(config, cwd, no_session_persistence, fallback_config_dir);
+    let supervisor = Supervisor::spawn(&spec, title_limits(), None)?;
+    let _abandon_on_drop = AbandonTitleOnDrop(&supervisor);
+    let Some(mut frames) = supervisor.take_frames() else {
+        supervisor.terminate(Duration::from_millis(200)).await;
+        return Err(HarnessFailure::new(
+            code::CLOSED,
+            "Claude title output is unavailable",
+        ));
+    };
+    if let Err(error) = supervisor
+        .send_input_and_close(prompt.as_bytes(), TITLE_INPUT_MAX_BYTES)
         .await
-        .map_err(|_| HarnessFailure::new(code::HARNESS, "Claude title request timed out"))?
-        .map_err(|error| {
-            HarnessFailure::new(
+    {
+        supervisor.terminate(Duration::from_millis(200)).await;
+        return Err(error);
+    }
+    let outcome = tokio::time::timeout(TITLE_TIMEOUT, async {
+        let mut response = None;
+        loop {
+            match frames.recv().await {
+                Some(Frame::Message(value)) if response.is_none() => response = Some(value),
+                Some(Frame::Message(_)) => {
+                    return Err(HarnessFailure::new(
+                        code::PROTOCOL,
+                        "Claude returned more than one title response",
+                    ));
+                }
+                Some(Frame::Violation(detail)) => {
+                    return Err(HarnessFailure::new(code::PROTOCOL, detail));
+                }
+                Some(Frame::Closed { truncated: true }) => {
+                    return Err(HarnessFailure::new(
+                        code::PROTOCOL,
+                        "Claude returned a truncated title response",
+                    ));
+                }
+                Some(Frame::Closed { truncated: false }) | None => break,
+            }
+        }
+        Ok((supervisor.wait().await, response))
+    })
+    .await;
+    let (status, response) = match outcome {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            supervisor.terminate(Duration::from_millis(200)).await;
+            return Err(error);
+        }
+        Err(_) => {
+            supervisor.terminate(Duration::from_millis(200)).await;
+            return Err(HarnessFailure::new(
                 code::HARNESS,
-                format!("Claude title request failed: {error}"),
-            )
-        })
+                "Claude title request timed out",
+            ));
+        }
+    };
+    supervisor.stderr_drained(Duration::from_millis(200)).await;
+    Ok(TitleCommandOutput {
+        status,
+        response,
+        stderr: supervisor.stderr_tail(),
+    })
 }
 
 async fn generate_title(config: ClaudeConfig, prompt: String) -> HarnessResult<String> {
-    let directory = std::env::temp_dir().join(format!("hoh-claude-title-{}", random_uuid()?));
-    tokio::fs::create_dir(&directory).await.map_err(|error| {
+    let _slot = TITLE_SLOT.acquire().await.map_err(|_| {
+        HarnessFailure::new(code::CLOSED, "Claude title request slot is unavailable")
+    })?;
+    let root = std::env::temp_dir().join(format!("hoh-claude-title-{}", random_uuid()?));
+    let directory = root.join("cwd");
+    let fallback_config = root.join("config");
+    tokio::fs::create_dir_all(&directory).await.map_err(|error| {
         HarnessFailure::new(
             code::HARNESS,
             format!("cannot create title directory: {error}"),
         )
     })?;
     let outcome = async {
-        let first = run_title_command(&config, &directory, &prompt, true).await;
+        let first = run_title_command(&config, &directory, &prompt, true, None).await;
         match first {
             Ok(output)
                 if !output.status.success()
-                    && String::from_utf8_lossy(&output.stderr)
-                        .contains("--no-session-persistence") =>
+                    && output.stderr.contains("--no-session-persistence") =>
             {
-                run_title_command(&config, &directory, &prompt, false).await
+                tokio::fs::create_dir_all(&fallback_config)
+                    .await
+                    .map_err(|error| {
+                        HarnessFailure::new(
+                            code::HARNESS,
+                            format!("cannot create isolated title configuration: {error}"),
+                        )
+                    })?;
+                run_title_command(
+                    &config,
+                    &directory,
+                    &prompt,
+                    false,
+                    Some(&fallback_config),
+                )
+                .await
             }
             output => output,
         }
     }
     .await;
-    let _ = tokio::fs::remove_dir_all(&directory).await;
+    let _ = tokio::fs::remove_dir_all(&root).await;
     let output = outcome?;
     if !output.status.success() {
-        let detail = hoh_external_harness::redact::redact(&String::from_utf8_lossy(&output.stderr));
         return Err(HarnessFailure::new(
             code::HARNESS,
             format!(
                 "Claude title request exited unsuccessfully: {}",
-                detail.trim()
+                output.stderr.trim()
             ),
         ));
     }
-    let envelope: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-        HarnessFailure::new(code::PROTOCOL, "Claude returned an invalid title response")
+    let envelope = output.response.ok_or_else(|| {
+        HarnessFailure::new(code::PROTOCOL, "Claude returned no title response")
     })?;
     let title = envelope
         .get("structured_output")
@@ -1279,24 +1398,64 @@ mod tests {
     }
 
     #[test]
-    fn title_request_is_haiku_low_isolated_and_has_no_tools() {
-        let args = title_args(true, false);
-        let value = |flag: &str| {
-            let at = args.iter().position(|arg| arg == flag).unwrap();
-            args[at + 1].as_str()
-        };
-        assert_eq!(value("--model"), "claude-haiku-5-5");
-        assert_eq!(value("--effort"), "low");
-        assert_eq!(value("--tools"), "");
-        assert_eq!(value("--permission-mode"), "dontAsk");
-        assert!(args.contains(&"--no-session-persistence".to_owned()));
-        assert!(args.contains(&"--strict-mcp-config".to_owned()));
-        assert!(args.contains(&"--disable-slash-commands".to_owned()));
-        assert_eq!(value("--settings"), r#"{"disableAllHooks":true}"#);
+    fn title_attempts_are_bounded_isolated_and_have_no_tools() {
+        for (sources, expected) in [
+            (SettingSources::Personal, PERSONAL_SETTING_SOURCES),
+            (SettingSources::Isolated, ""),
+        ] {
+            for no_session_persistence in [true, false] {
+                let args = title_args(sources, no_session_persistence, false);
+                let value = |flag: &str| {
+                    let at = args.iter().position(|arg| arg == flag).unwrap();
+                    args[at + 1].as_str()
+                };
+                assert_eq!(value("--model"), "claude-haiku-5-5");
+                assert_eq!(value("--effort"), "low");
+                assert_eq!(value("--tools"), "");
+                assert_eq!(value("--permission-mode"), "dontAsk");
+                assert_eq!(value("--setting-sources"), expected);
+                assert_eq!(
+                    args.contains(&"--no-session-persistence".to_owned()),
+                    no_session_persistence
+                );
+                assert!(args.contains(&"--strict-mcp-config".to_owned()));
+                assert!(args.contains(&"--disable-slash-commands".to_owned()));
+                assert_eq!(value("--settings"), r#"{"disableAllHooks":true}"#);
+            }
+        }
 
-        let managed_args = title_args(true, true);
+        let managed_args = title_args(SettingSources::Isolated, true, true);
         assert!(!managed_args.contains(&"--strict-mcp-config".to_owned()));
         assert!(managed_args.contains(&"--no-session-persistence".to_owned()));
+        assert_eq!(TITLE_INPUT_MAX_BYTES, 64 * 1024);
+        assert_eq!(TITLE_OUTPUT_MAX_BYTES, 64 * 1024);
+        assert_eq!(TITLE_SLOT.available_permits(), 1);
+        let limits = title_limits();
+        assert_eq!(limits.max_frame_bytes, TITLE_OUTPUT_MAX_BYTES);
+        assert_eq!(limits.frame_queue, 2);
+        assert_eq!(limits.stdin_queue, 1);
+
+        let mut config = ClaudeConfig::default();
+        config.setting_sources = SettingSources::Isolated;
+        config.extra_env.push((
+            "CLAUDE_CONFIG_DIR".to_owned(),
+            "/human/claude-state".to_owned(),
+        ));
+        let fallback = title_spec(
+            &config,
+            Path::new("/isolated/title-cwd"),
+            false,
+            Some(Path::new("/isolated/title-config")),
+        );
+        assert_eq!(fallback.cwd.as_deref(), Some(Path::new("/isolated/title-cwd")));
+        assert!(!fallback.args.contains(&"--no-session-persistence".to_owned()));
+        assert_eq!(
+            fallback.env,
+            vec![(
+                "CLAUDE_CONFIG_DIR".to_owned(),
+                "/isolated/title-config".to_owned()
+            )]
+        );
     }
 
     #[test]

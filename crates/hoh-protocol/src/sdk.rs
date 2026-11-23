@@ -54,6 +54,7 @@ object!(HohInitializeResult {
     protocol_version: u32,
     approvals: ApprovalHost
 });
+choices!(SessionInteractionMode { Default => "default", Plan => "plan" });
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionPromptParams {
@@ -66,7 +67,7 @@ pub struct SessionPromptParams {
         deserialize_with = "crate::present"
     )]
     #[schemars(required)]
-    pub interaction_mode: Option<String>,
+    pub interaction_mode: Option<SessionInteractionMode>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

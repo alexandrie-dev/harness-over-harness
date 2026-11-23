@@ -176,6 +176,26 @@ test('Plan mode follows the T3 composer command and ExitPlanMode becomes its pro
   assert.equal(ordinary.projection.thread.interactionMode, 'default');
 });
 
+test('unknown interaction modes are rejected instead of becoming an ordinary prompt', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  await assert.rejects(() => client.call('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'bad-create', threadId: 'thread-bad-mode', projectId: 'hoh-project', title: 'Bad',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'future-mode',
+  }), /Unknown interaction mode/);
+  assert.equal(engine.requests.some(request => request.method === 'session/prompt'), false);
+
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'good-create', threadId: 'thread-known-mode', projectId: 'hoh-project', title: 'Known',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'plan',
+  });
+  await assert.rejects(() => client.call('orchestration.dispatchCommand', {
+    type: 'thread.interaction-mode.set', commandId: 'bad-set', threadId: 'thread-known-mode', interactionMode: 'future-mode',
+  }), /Unknown interaction mode/);
+  const projection = await client.call('orchestration.getThreadProjection', { threadId: 'thread-known-mode' });
+  assert.equal(projection.thread.interactionMode, 'plan');
+});
+
 test('Claude stream usage reaches T3 providerTurns with its exact context fill', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);

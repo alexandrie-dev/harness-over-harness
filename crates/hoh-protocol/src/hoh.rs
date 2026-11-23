@@ -512,10 +512,24 @@ choices!(ExecutorAccessMode { Confirm => "confirm", AcceptEdits => "acceptEdits"
 choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
 choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
 object!(ExecutorParams { executor: String });
-object!(ExecutorTitleGenerateParams {
-    executor: String,
-    prompt: String
-});
+pub const EXECUTOR_TITLE_PROMPT_MAX_CHARS: usize = 16 * 1024;
+
+fn title_prompt<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let prompt = String::deserialize(deserializer)?;
+    if prompt.chars().count() > EXECUTOR_TITLE_PROMPT_MAX_CHARS {
+        return Err(serde::de::Error::custom("title prompt is too long"));
+    }
+    Ok(prompt)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutorTitleGenerateParams {
+    pub executor: String,
+    #[serde(deserialize_with = "title_prompt")]
+    #[schemars(length(max = 16384))]
+    pub prompt: String,
+}
 object!(ExecutorTitleGenerateResult { title: String });
 object!(ExecutorAccessSetParams {
     executor: String,

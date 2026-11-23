@@ -26,8 +26,8 @@ use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
     ExecutorEffectiveAccess, ExecutorParams, ExecutorSelectParams, ExecutorSessionAccess,
-    ExecutorTitleGenerateParams, WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams,
-    WorkspaceEntriesResult,
+    ExecutorTitleGenerateParams, SessionInteractionMode, WorkspaceAddParams, WorkspaceAddResult,
+    WorkspaceEntriesParams, WorkspaceEntriesResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -158,17 +158,24 @@ impl Plugin for ExternalHarnessWindowPlugin {
                 };
                 choices.note_effort(session, message, effort);
                 let interaction = match params.get("interactionMode") {
-                    None | Some(Value::Null) => InteractionMode::Default,
-                    Some(Value::String(value)) if value == "default" => InteractionMode::Default,
-                    Some(Value::String(value)) if value == "plan" => InteractionMode::Plan,
-                    Some(_) => {
-                        log.warn(format_args!(
-                            "session/prompt interactionMode is not default or plan: the turn uses default"
-                        ));
-                        InteractionMode::Default
-                    }
+                    None | Some(Value::Null) => Some(InteractionMode::Default),
+                    Some(value) => match serde_json::from_value::<SessionInteractionMode>(value.clone()) {
+                        Ok(SessionInteractionMode::Default) => Some(InteractionMode::Default),
+                        Ok(SessionInteractionMode::Plan) => Some(InteractionMode::Plan),
+                        Err(error) => {
+                            // RPC admission normally rejects this before creating the message.
+                            // Keep the listener fail-closed too: an unknown restricted mode must
+                            // never become an ordinary (possibly full-access) prompt choice.
+                            log.error(format_args!(
+                                "rejected invalid session/prompt interactionMode: {error}"
+                            ));
+                            None
+                        }
+                    },
                 };
-                choices.note_interaction(session, message, interaction);
+                if let Some(interaction) = interaction {
+                    choices.note_interaction(session, message, interaction);
+                }
             })?;
         Ok(())
     }

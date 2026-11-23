@@ -14,7 +14,7 @@
     },
     "interactionMode": {
       "description": "T3's per-turn interaction mode. Missing is the ordinary chat mode.",
-      "type": "string"
+      "$ref": "#/$defs/SessionInteractionMode"
     }
   },
   "additionalProperties": false,
@@ -23,6 +23,13 @@
     "contentBlocks"
   ],
   "$defs": {
+    "SessionInteractionMode": {
+      "type": "string",
+      "enum": [
+        "default",
+        "plan"
+      ]
+    },
     "SdkPromptContentBlock": {
       "anyOf": [
         {
