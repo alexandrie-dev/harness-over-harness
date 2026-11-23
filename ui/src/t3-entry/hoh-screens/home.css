@@ -14,8 +14,12 @@
 body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat-composer-lane { visibility: hidden; }
 .hoh-home__inner { display: flex; flex: 0 0 auto; flex-direction: column; gap: 28px; width: 100%; max-width: var(--chat-content-max-width); margin: 0 auto; padding: 28px 0 var(--hoh-home-scroll-clearance); }
 /* T3 centres its one-item empty draft hero vertically. HoH inserts the greeting as a preceding sibling, so the two
-   compact children form one centred column; occupied Home keeps the existing bottom-docked, scrolling layout. */
-.hoh-draft-hero:has(> .hoh-home:not([data-busy])) { justify-content: center; }
+   compact children form one centred column. The app root starts below the notch band; extending only this empty hero
+   behind that band centres the visible group in the full-height content region. Occupied Home keeps its docked layout. */
+.hoh-draft-hero:has(> .hoh-home:not([data-busy])) {
+  justify-content: center;
+  inset-block-start: calc(-1 * var(--hoh-notch-height, 0px));
+}
 .hoh-home:not([data-busy]) { flex: 0 0 auto; overflow: visible; margin-bottom: 28px; -webkit-mask-image: none; mask-image: none; }
 .hoh-home:not([data-busy]) .hoh-home__inner { padding-block: 0; gap: 0; }
 @media (max-height: 34rem) {

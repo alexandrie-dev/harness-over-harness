@@ -28,6 +28,14 @@ function box(rect) {
   return rect && { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
 }
 
+function unionRects(...rects) {
+  const present = rects.filter(Boolean);
+  if (!present.length) return null;
+  const left = Math.min(...present.map(rect => rect.left)); const top = Math.min(...present.map(rect => rect.top));
+  const right = Math.max(...present.map(rect => rect.right)); const bottom = Math.max(...present.map(rect => rect.bottom));
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
 function completedEngine() {
   const engine = new FakeEngine();
   const today = new Date(); today.setHours(12, 0, 0, 0); engine.clock = today.getTime();
@@ -234,7 +242,6 @@ async function rectangles(page) {
       viewport: { left: 0, top: 0, right: innerWidth, bottom: innerHeight, width: innerWidth, height: innerHeight },
       content: firstVisible('[data-slot="sidebar-inset"]'), notch: firstVisible('.hoh-notch'),
       homeViewport, home: firstVisible('.hoh-home__inner'), greeting: firstVisible('.hoh-home__head'), composer,
-      draftHero: firstVisible('.hoh-draft-hero'), emptyGroup: union(homeViewport, composer),
       headline: firstVisible('[data-chat-composer-stack] > .absolute.inset-x-0.bottom-full'), homeLabel: firstVisible('.hoh-home__label'), cards: firstVisible('.hoh-home__cards'), projects: firstVisible('.hoh-projects'), disclosure: firstVisible('.hoh-project-popover'),
       cardItems: allVisible('.hoh-home__cards > .hoh-card'), projectItems: allVisible('.hoh-projects > .hoh-project'),
       homeBottomClearance: (() => {
@@ -305,7 +312,7 @@ function measure(label, scenario, size, sidebar, r) {
     if (r.greeting && r.home && r.greeting.top > r.home.top + 40) fail(label, `greeting starts ${round(r.greeting.top - r.home.top)}px below the column top`);
     if (scenario.name === 'home-empty') {
       add(label, scenario.name, size, sidebar, 'notch-composer', r.notch, r.chatLane, { equalMargins: false, tolerance: 2 });
-      addVertical(label, scenario.name, size, sidebar, 'empty-group', r.emptyGroup, r.draftHero, 8);
+      addVertical(label, scenario.name, size, sidebar, 'empty-group', unionRects(r.greeting, r.headline, r.composer), r.viewport, 8);
     }
   }
   if (scenario.blocks.includes('cards')) {

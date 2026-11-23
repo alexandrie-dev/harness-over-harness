@@ -193,6 +193,7 @@ test('empty Home joins the greeting and native T3 draft composer into one centre
   ]);
   assert.match(vite, /hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end/);
   assert.match(css, /\.hoh-draft-hero:has\(> \.hoh-home:not\(\[data-busy\]\)\)\s*\{\s*justify-content:\s*center/);
+  assert.match(css, /inset-block-start:\s*calc\(-1 \* var\(--hoh-notch-height, 0px\)\)/);
   assert.match(css, /\.hoh-home:not\(\[data-busy\]\)\s*\{[^}]*flex:\s*0 0 auto[^}]*margin-bottom:\s*28px/);
   assert.match(css, /@media \(max-height: 34rem\)[\s\S]*justify-content:\s*flex-end/);
 });
