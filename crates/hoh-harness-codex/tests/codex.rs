@@ -57,10 +57,7 @@ async fn event(events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>) -> Harnes
         .unwrap()
 }
 
-async fn turn_aborted(
-    events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>,
-    expected: &str,
-) {
+async fn turn_aborted(events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>, expected: &str) {
     loop {
         match event(events).await {
             HarnessEvent::TurnAborted { turn_id } => {
@@ -1129,7 +1126,9 @@ async fn early_interrupt_is_latched_until_native_turn_and_reaps_process_tree() {
     while !lines(&log).iter().any(|line| {
         line.get("method") == Some(&Value::String("turn/start".into()))
             && line.get("childPid").is_none()
-    }) || !lines(&log).iter().any(|line| line.get("childPid").is_some())
+    }) || !lines(&log)
+        .iter()
+        .any(|line| line.get("childPid").is_some())
     {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -1160,7 +1159,11 @@ async fn early_interrupt_is_latched_until_native_turn_and_reaps_process_tree() {
         .into_iter()
         .filter(|line| line.get("method") == Some(&Value::String("turn/interrupt".into())))
         .collect();
-    assert_eq!(interrupts.len(), 1, "early Stop must send one native interrupt");
+    assert_eq!(
+        interrupts.len(),
+        1,
+        "early Stop must send one native interrupt"
+    );
     assert_eq!(
         interrupts[0].get("params"),
         Some(&serde_json::json!({"threadId":"thread-stub","turnId":"turn-stub"}))

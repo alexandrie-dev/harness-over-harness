@@ -132,10 +132,14 @@ fn main() {
                             json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":2}}}),
                         );
                         if let Some(old) = late_turn_start.take() {
-                            send(json!({"id":old,"error":{"code":-32000,"message":"late old turn/start failure"}}));
+                            send(
+                                json!({"id":old,"error":{"code":-32000,"message":"late old turn/start failure"}}),
+                            );
                         }
                         if let Some(old) = late_interrupt.take() {
-                            send(json!({"id":old,"error":{"code":-32000,"message":"late old interrupt failure"}}));
+                            send(
+                                json!({"id":old,"error":{"code":-32000,"message":"late old interrupt failure"}}),
+                            );
                         }
                     }
                     continue;

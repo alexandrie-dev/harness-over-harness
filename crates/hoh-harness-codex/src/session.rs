@@ -492,11 +492,7 @@ impl CodexSession {
     }
 }
 
-async fn request(
-    inner: &Arc<Inner>,
-    method: &str,
-    params: Value,
-) -> Result<Value, HarnessFailure> {
+async fn request(inner: &Arc<Inner>, method: &str, params: Value) -> Result<Value, HarnessFailure> {
     let id = inner.next_request.fetch_add(1, Ordering::Relaxed);
     let (reply, answer) = oneshot::channel();
     {
