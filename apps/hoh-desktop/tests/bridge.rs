@@ -658,16 +658,28 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
     assert!(bridge::request(&engine, "main", "hoh/executor/access/set", params.clone()).is_err());
     // Lead 22.11 20:43: choosing Claude and the folder of its conversation — the same rule; from
     // any other window they are refused before the person's confirmation is even considered.
-    for (method, params) in [
+    for (method, params, session_executor) in [
         (
             "hoh/executor/select",
             json!({"executor":"claude","model":"default"}),
+            None,
         ),
         (
             "session/working-directory/set",
             json!({"sessionId":"s-claude","path":"/home/u/work"}),
+            Some("claude"),
         ),
-        ("hoh/workspace/add", json!({"cwd":"/home/u/work"})),
+        (
+            "hoh/executor/select",
+            json!({"executor":"codex","model":"gpt"}),
+            None,
+        ),
+        (
+            "session/working-directory/set",
+            json!({"sessionId":"s-codex","path":"/home/u/work"}),
+            Some("codex"),
+        ),
+        ("hoh/workspace/add", json!({"cwd":"/home/u/work"}), None),
     ] {
         for label in ["approval-1", "executor", "claude"] {
             let sent = bridge::request_with_approval_armed(
@@ -675,7 +687,7 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
                 label,
                 method,
                 params.clone(),
-                |params| broker.confirm_from_main_window(method, params, Some("claude"), now_ms()),
+                |params| broker.confirm_from_main_window(method, params, session_executor, now_ms()),
                 None,
             );
             assert!(sent.is_err(), "{label} {method}");

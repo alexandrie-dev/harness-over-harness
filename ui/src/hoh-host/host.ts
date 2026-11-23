@@ -145,6 +145,8 @@ export class HohHost {
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
+  /** New SDK sessions inherit the engine's global executor/model, so creation is one critical section. */
+  private createTail: Promise<void> = Promise.resolve();
 
   constructor(options: HohHostOptions) {
     this.engine = options.engine;
@@ -521,35 +523,60 @@ export class HohHost {
    * may ask the person to allow it. Claude then runs in that folder.
    */
   private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown, providerInstanceId?: unknown) {
-    const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
-    if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
-    const executor = executorOf(providerInstanceId ?? instanceOf(this.selectedExecutor));
-    const chosenModel = model ?? this.model(executor);
-    await this.applyModel(executor, chosenModel);
-    // This creates the engine session. Its access choice is written only after the concrete id
-    // exists, and before the first `session/prompt`, so two new chats cannot race through globals.
-    const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
-    this.setWorkspaceRoot(directory?.cwd);
-    if (folder) {
-      const set = await this.engine.request('session/working-directory/set', { sessionId: threadId, path: folder.workspaceRoot });
-      // A typed `~/…` root becomes the folder the engine resolved, so chats' recorded folders match it.
-      const resolved = folderPath(set?.cwd);
-      if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
-        folder.workspaceRoot = resolved;
-        folder.updatedAt = this.now();
-        this.emitProject(folderProject(folder));
+    let release!: () => void;
+    const previous = this.createTail;
+    this.createTail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      const executor = executorOf(providerInstanceId ?? instanceOf(this.selectedExecutor));
+      const chosenModel = model ?? this.model(executor);
+      const chosenMode = accessModeOf(mode ?? runtimeModeOf(this.defaultMode));
+      const already = this.threads.get(threadId);
+      if (already) {
+        if (already.executor !== executor || already.model !== chosenModel || already.mode !== chosenMode) {
+          throw new Error('Concurrent creation requested a different executor, model, or access mode for this conversation.');
+        }
+        return already;
       }
+      const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
+      if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
+      await this.applyModel(executor, chosenModel);
+      // working-directory/get creates the SDK session. Keep select → create → binding check →
+      // per-session access under this lock: the engine's global selection must not be changed by
+      // another Claude/Codex launch in between.
+      const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
+      this.setWorkspaceRoot(directory?.cwd);
+      const bound = await this.engine.request('hoh/executor/access/get', { executor, sessionId: threadId });
+      if (bound?.session?.executor !== executor || bound?.session?.model !== chosenModel) {
+        throw new Error('The engine bound the new conversation to a different executor or model. The message was not sent.');
+      }
+      if (folder) {
+        const set = await this.engine.request('session/working-directory/set', { sessionId: threadId, path: folder.workspaceRoot });
+        // A typed `~/…` root becomes the folder the engine resolved, so chats' recorded folders match it.
+        const resolved = folderPath(set?.cwd);
+        if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
+          folder.workspaceRoot = resolved;
+          folder.updatedAt = this.now();
+          this.emitProject(folderProject(folder));
+        }
+      }
+      const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor, projectId: folder?.id ?? HOH_PROJECT_ID });
+      thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
+      thread.loaded = true;
+      await this.applyMode(thread, mode ?? runtimeModeOf(this.defaultMode), true);
+      const verified = await this.engine.request('hoh/executor/access/get', { executor, sessionId: threadId });
+      if (verified?.session?.executor !== executor || verified?.session?.model !== chosenModel || verified?.session?.runtimeMode !== thread.mode) {
+        throw new Error('The engine did not retain the requested executor, model, and access mode. The message was not sent.');
+      }
+      this.threads.set(threadId, thread);
+      this.homes.set(threadId, thread.projectId);
+      this.save();
+      if (!folder) this.showProject();
+      this.changed(threadId);
+      return thread;
+    } finally {
+      release();
     }
-    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor, projectId: folder?.id ?? HOH_PROJECT_ID });
-    thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
-    thread.loaded = true;
-    this.threads.set(threadId, thread);
-    await this.applyMode(thread, mode ?? runtimeModeOf(this.defaultMode), true);
-    this.homes.set(threadId, thread.projectId);
-    this.save();
-    if (!folder) this.showProject();
-    this.changed(threadId);
-    return thread;
   }
 
   // ---- folder projects ("Add project") ----

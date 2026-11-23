@@ -808,22 +808,27 @@ fn assert_main_window_signature(core: &AuditEntry) {
 #[test]
 fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_person() {
     let broker = broker();
-    for (n, mode) in ["full", "confirm"].iter().enumerate() {
-        let params = json!({"executor":"claude","mode":mode});
+    let cases = [
+        (json!({"executor":"claude","mode":"full","runtimeMode":"full"}), "полный доступ"),
+        (json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}), "Спрашивать разрешение"),
+        (json!({"executor":"claude","mode":"confirm","runtimeMode":"auto-accept-edits"}), "Принимать правки"),
+        (json!({"executor":"claude","mode":"confirm","runtimeMode":"auto"}), "Авто"),
+    ];
+    for (n, (params, _)) in cases.iter().enumerate() {
         broker
-            .confirm_from_main_window(ACCESS_SET, &params, None, NOW)
+            .confirm_from_main_window(ACCESS_SET, params, None, NOW)
             .unwrap();
-        arm(&broker, ACCESS_SET, &params, NOW);
+        arm(&broker, ACCESS_SET, params, NOW);
         let begun = begin(
             &broker,
-            engine_request(ACCESS_SET, &params, &format!("acc-{n}"), NOW + 5),
+            engine_request(ACCESS_SET, params, &format!("acc-{n}"), NOW + 5),
             NOW + 5,
         );
-        assert!(is_signed(&begun), "{mode}: signed without a window");
+        assert!(is_signed(&begun), "{params}: signed without a window");
     }
     let log = broker.audit_log();
-    assert_eq!(log.len(), 4);
-    for (human, core) in [(&log[0], &log[1]), (&log[2], &log[3])] {
+    assert_eq!(log.len(), 8);
+    for (index, (human, core)) in log.chunks_exact(2).map(|pair| (&pair[0], &pair[1])).enumerate() {
         assert_eq!(
             (human.who, human.via, human.outcome.as_str()),
             ("human", "main-window", "allowed-once")
@@ -834,6 +839,7 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
             "подтверждено человеком действием в главном окне"
         );
         assert_main_window_signature(core);
+        assert!(human.human_text.contains(cases[index].1), "{}", human.human_text);
     }
     assert!(
         log[0]
@@ -842,7 +848,7 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
     );
     // The person reads it in the history as their own decision.
     let history = broker.history(10);
-    assert_eq!(history.len(), 2);
+    assert_eq!(history.len(), 4);
     assert!(history.iter().all(|entry| entry["asker"] == "you"));
 }
 
@@ -890,7 +896,7 @@ fn an_access_change_not_made_in_the_main_window_still_gets_a_window() {
 /// Every other privileged request keeps its confirmation window: the built-in agent loop's model and
 /// folder, the key, the rules and the settings.
 #[test]
-fn only_the_choices_for_claude_are_confirmed_by_the_main_window_itself() {
+fn only_the_exact_claude_and_codex_choices_are_confirmed_by_the_main_window_itself() {
     let broker = broker();
     for (method, params, session_executor) in [
         (
@@ -899,7 +905,7 @@ fn only_the_choices_for_claude_are_confirmed_by_the_main_window_itself() {
             None,
         ),
         (SELECT, json!({"executor":null,"model":"local"}), None),
-        (SELECT, json!({"executor":"codex","model":"gpt"}), None),
+        (SELECT, json!({"executor":"future-agent","model":"gpt"}), None),
         (
             FOLDER_SET,
             json!({"sessionId":"s-loop","path":"/home/u/work"}),
@@ -908,7 +914,7 @@ fn only_the_choices_for_claude_are_confirmed_by_the_main_window_itself() {
         (
             FOLDER_SET,
             json!({"sessionId":"s-other","path":"/home/u/work"}),
-            Some("codex"),
+            Some("future-agent"),
         ),
         (
             "hoh/settings/rules/set",
@@ -939,6 +945,47 @@ fn only_the_choices_for_claude_are_confirmed_by_the_main_window_itself() {
             .is_err()
     );
     assert!(broker.audit_log().is_empty());
+}
+
+#[test]
+fn codex_select_and_folder_are_main_window_actions_but_unknown_executors_are_not() {
+    let broker = broker();
+    for (method, params, executor) in [
+        (SELECT, json!({"executor":"codex","model":"gpt"}), None),
+        (
+            FOLDER_SET,
+            json!({"sessionId":"s-codex","path":"/home/u/work"}),
+            Some("codex"),
+        ),
+    ] {
+        broker
+            .confirm_from_main_window(method, &params, executor, NOW)
+            .unwrap();
+    }
+    for (method, params, executor) in [
+        (
+            ACCESS_SET,
+            json!({"executor":"codex-extra","mode":"confirm"}),
+            None,
+        ),
+        (
+            SELECT,
+            json!({"executor":"codex-extra","model":"gpt"}),
+            None,
+        ),
+        (
+            FOLDER_SET,
+            json!({"sessionId":"s-other","path":"/home/u/work"}),
+            Some("codex-extra"),
+        ),
+    ] {
+        assert!(
+            broker
+                .confirm_from_main_window(method, &params, executor, NOW)
+                .is_err(),
+            "{method} {params}"
+        );
+    }
 }
 
 const SELECT: &str = "hoh/executor/select";

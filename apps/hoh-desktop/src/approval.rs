@@ -289,22 +289,27 @@ fn session_of(action: &Value) -> String {
         .to_owned()
 }
 
-/// The executor whose choices the person makes in the main window itself (the T3 client: its model
-/// picker, its mode chip, its project folder).
+/// Exact executors whose choices the person makes in the main T3 window. Unknown future names do
+/// not inherit this grant.
 pub const MAIN_WINDOW_EXECUTOR: &str = "claude";
+const MAIN_WINDOW_EXECUTORS: [&str; 2] = [MAIN_WINDOW_EXECUTOR, "codex"];
+
+fn is_main_window_executor(executor: Option<&str>) -> bool {
+    executor.is_some_and(|executor| MAIN_WINDOW_EXECUTORS.contains(&executor))
+}
 
 /// Privileged window requests whose confirmation is the person's action in the main window itself,
 /// without a separate confirmation window (founder 22.11 19:16, lead 22.11 20:43; as in T3): the
-/// executor's access mode, Claude chosen to answer, and the folder of a conversation Claude runs
+/// executor's access mode, Claude or Codex chosen to answer, and the folder of a conversation it runs
 /// (`session_executor` — what the engine reports for that conversation). The built-in agent loop's
 /// model and folder keep their window. Only the main window may send these (`bridge::check_main`);
 /// the executor, the model and the SDK server never reach this path, and the engine's own request
 /// still needs the core's signature.
 pub fn main_window_confirms(method: &str, params: &Value, session_executor: Option<&str>) -> bool {
     match method {
-        "hoh/executor/access/set" => true,
-        "hoh/executor/select" => params["executor"].as_str() == Some(MAIN_WINDOW_EXECUTOR),
-        "session/working-directory/set" => session_executor == Some(MAIN_WINDOW_EXECUTOR),
+        "hoh/executor/access/set" => is_main_window_executor(params["executor"].as_str()),
+        "hoh/executor/select" => is_main_window_executor(params["executor"].as_str()),
+        "session/working-directory/set" => is_main_window_executor(session_executor),
         // The person picks the folder in the main window's "Add project" (HOH-41 package 1).
         "hoh/workspace/add" => true,
         _ => false,
@@ -1297,17 +1302,28 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         // The user's own choice of who answers and how freely: the text names the executor (review 232500, item 1;
         // the same words as hoh-user-approval/src/method.rs).
         "hoh/executor/access/set" => {
-            let name = executor_name(
-                params["executor"]
-                    .as_str()
-                    .ok_or("Некорректный исполнитель")?,
-            );
-            match params["mode"].as_str() {
-                Some("full") => Ok(format!(
+            let request: hoh_protocol::ExecutorAccessSetParams =
+                serde_json::from_value(params.clone())
+                    .map_err(|_| "Некорректный режим доступа")?;
+            let name = executor_name(&request.executor);
+            let runtime = match (&request.mode, request.runtime_mode.as_ref()) {
+                (hoh_protocol::ExecutorAccessMode::Full, None | Some(hoh_protocol::ExecutorRuntimeMode::Full)) => hoh_protocol::ExecutorRuntimeMode::Full,
+                (hoh_protocol::ExecutorAccessMode::Confirm, None | Some(hoh_protocol::ExecutorRuntimeMode::Confirm)) => hoh_protocol::ExecutorRuntimeMode::Confirm,
+                (hoh_protocol::ExecutorAccessMode::Confirm, Some(hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits)) => hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits,
+                (hoh_protocol::ExecutorAccessMode::Confirm, Some(hoh_protocol::ExecutorRuntimeMode::Auto)) => hoh_protocol::ExecutorRuntimeMode::Auto,
+                _ => return Err("Режим доступа не совпадает с runtimeMode".into()),
+            };
+            match runtime {
+                hoh_protocol::ExecutorRuntimeMode::Full => Ok(format!(
                     "Включить полный доступ для {name}? Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить."
                 )),
-                Some("confirm") => Ok(format!("Вернуть режим «Спрашивать разрешение» для {name}?")),
-                _ => Err("Некорректный режим доступа".into()),
+                hoh_protocol::ExecutorRuntimeMode::Confirm => Ok(format!("Вернуть режим «Спрашивать разрешение» для {name}?")),
+                hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits => Ok(format!(
+                    "Включить режим «Принимать правки» для {name}? Помощник сам принимает изменения файлов в рабочей папке, но спрашивает перед другими действиями."
+                )),
+                hoh_protocol::ExecutorRuntimeMode::Auto => Ok(format!(
+                    "Включить режим «Авто» для {name}? Помощник сам принимает изменения файлов в рабочей папке и автоматически проверяет остальные запросы разрешений."
+                )),
             }
         }
         "hoh/executor/select" => {
@@ -1706,6 +1722,17 @@ mod tests {
             "{full}"
         );
         assert_eq!(confirm, "Вернуть режим «Спрашивать разрешение» для Claude?");
+        let edits = text(
+            "hoh/executor/access/set",
+            json!({"executor":"codex","mode":"confirm","runtimeMode":"auto-accept-edits"}),
+        );
+        let auto = text(
+            "hoh/executor/access/set",
+            json!({"executor":"codex","mode":"confirm","runtimeMode":"auto"}),
+        );
+        assert!(edits.contains("«Принимать правки» для Codex"), "{edits}");
+        assert!(auto.contains("«Авто» для Codex"), "{auto}");
+        assert_ne!(edits, auto);
         assert_eq!(
             text(
                 "hoh/executor/select",
@@ -1734,6 +1761,13 @@ mod tests {
             preflight_text(
                 "hoh/executor/access/set",
                 &json!({"executor":"claude","mode":"root"})
+            )
+            .is_err()
+        );
+        assert!(
+            preflight_text(
+                "hoh/executor/access/set",
+                &json!({"executor":"codex","mode":"full","runtimeMode":"auto"})
             )
             .is_err()
         );

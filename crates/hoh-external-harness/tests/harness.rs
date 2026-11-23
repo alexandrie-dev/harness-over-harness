@@ -16,8 +16,8 @@ use hoh_destructive_classifier::{
 };
 use hoh_error::SharedError;
 use hoh_external_harness::{
-    BINDING_RECORD, Discovery, ExternalHarnessPlugin, ExternalHarnesses, ProcessSpec, StdioHarness,
-    StdioHarnessConfig,
+    BINDING_RECORD, Discovery, ExternalHarness, ExternalHarnessPlugin, ExternalHarnesses,
+    ProcessSpec, StdioHarness, StdioHarnessConfig,
 };
 use hoh_kernel::{Context, Disposer, Kernel, Plugin, Service};
 use hoh_llm::{ContentBlock, MessageSource, NewUserMessage, UserMessage, create_user_message};
@@ -35,6 +35,52 @@ use serde_json::{Value, json};
 
 const HARNESS: &str = "stub";
 const STUB: &str = env!("CARGO_BIN_EXE_hoh-external-harness-stub");
+
+/// A process harness with Codex's Stop contract: the agent's session/cancel path must terminate
+/// the supervised process group immediately and resume the native session on the next turn.
+struct StopEndsProcessHarness(StdioHarness);
+
+impl hoh_external_harness::ExternalHarness for StopEndsProcessHarness {
+    fn discover(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<Discovery>>
+    {
+        self.0.discover()
+    }
+
+    fn start_or_resume(
+        &self,
+        params: hoh_external_harness::StartParams,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        self.0.start_or_resume(params)
+    }
+
+    fn start_with_access(
+        &self,
+        params: hoh_external_harness::StartParams,
+        access: hoh_external_harness::AccessMode,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        self.0.start_with_access(params, access)
+    }
+
+    fn launch_flags(
+        &self,
+        policy: &hoh_external_harness::HarnessPolicy,
+        access: hoh_external_harness::AccessMode,
+    ) -> Vec<String> {
+        self.0.launch_flags(policy, access)
+    }
+
+    fn stop_ends_process(&self) -> bool {
+        true
+    }
+}
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -867,6 +913,47 @@ async fn stop_kills_the_process_group_of_a_harness_that_ignores_it() {
     // The next turn starts the harness again and continues the native session.
     turn(&agent, "hello").await;
     assert_eq!(last_answer(&agent), "Hello from native-1 turn 1");
+    env.close().await;
+}
+
+#[tokio::test]
+async fn production_stop_for_a_process_ending_harness_reaps_the_group_and_resumes() {
+    const STOP_HARNESS: &str = "stop-stub";
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let harness = StopEndsProcessHarness(StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_str().expect("utf-8").into()],
+        ..ProcessSpec::default()
+    })));
+    let _registration = env
+        .harnesses
+        .register(&env.ctx, STOP_HARNESS, Arc::new(harness))
+        .expect("process-ending harness registers");
+    let options = AgentOptions {
+        provider: Some(Live::Value(STOP_HARNESS.into())),
+        model: Some(Live::Value("stub-small".into())),
+        ..AgentOptions::default()
+    };
+    let agent = env.create_with("s-stop-process", options).await;
+    say(&agent, "stubborn command");
+    until_event(&agent, "tool/call").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let pid = grandchild(&dirs);
+    assert!(alive(pid));
+    let stopped = Instant::now();
+    agent
+        .cancel(AgentCancelCause::User, CancelOptions::default())
+        .expect("session/cancel");
+    tokio::time::timeout(Duration::from_secs(30), agent.when_idle())
+        .await
+        .expect("production Stop finished");
+    assert_eq!(last_turn_end(&agent)["kind"], "aborted");
+    assert!(until_dead(pid).await, "process-group child {pid} survived Stop");
+    assert!(stopped.elapsed() < Duration::from_secs(3));
+    turn(&agent, "hello").await;
+    assert_eq!(last_answer(&agent), "Hello from native-1 turn 1");
+    assert_eq!(counter(&dirs, "starts"), 2, "the next turn starts a resumed process");
     env.close().await;
 }
 
@@ -2879,4 +2966,64 @@ async fn the_saved_choice_is_where_a_new_run_starts() {
     assert_eq!(stub_argv(&dirs), expected);
     assert_eq!(started_with(&dirs)["access"], "full");
     window.close().await;
+}
+
+#[tokio::test]
+async fn a_codex_selection_and_model_survive_restart_in_a_downgrade_safe_sidecar() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, |_| {}).await;
+    let codex = StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_str().expect("utf-8").into()],
+        ..ProcessSpec::default()
+    }));
+    let _codex_registration = window
+        .base
+        .harnesses
+        .register(&window.base.ctx, "codex", Arc::new(codex))
+        .expect("Codex test harness registers");
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":"codex","model":"gpt-test"}),
+        )
+        .await
+        .expect("select Codex");
+    window.close().await;
+
+    let legacy: Value = serde_json::from_str(
+        &std::fs::read_to_string(dirs.profile.join(hoh_external_harness::CHOICES_FILE))
+            .expect("legacy choices"),
+    )
+    .expect("legacy JSON");
+    assert_eq!(legacy["selected"], Value::Null, "an older HoH must not restore Codex");
+    let sidecar: Value = serde_json::from_str(
+        &std::fs::read_to_string(dirs.profile.join(hoh_external_harness::CODEX_SELECTION_FILE))
+            .expect("Codex sidecar"),
+    )
+    .expect("sidecar JSON");
+    assert_eq!(sidecar["version"], 1);
+    assert_eq!(sidecar["selected"], json!({"executor":"codex","model":"gpt-test"}));
+
+    let restarted = window(&dirs, quick(), Host::Absent, |_| {}).await;
+    assert_eq!(
+        restarted.access().await["selected"],
+        json!({"executor":"codex","model":"gpt-test"})
+    );
+    restarted.close().await;
+
+    // An older HoH knows only the legacy file. If it later changes the selection, a subsequent
+    // upgrade must not resurrect the stale Codex sidecar.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    std::fs::write(
+        dirs.profile.join(hoh_external_harness::CHOICES_FILE),
+        json!({"access":{},"selected":{"executor":"stub","model":"stub-large"}}).to_string(),
+    )
+    .expect("older HoH choice");
+    let after_downgrade = window(&dirs, quick(), Host::Absent, |_| {}).await;
+    assert_eq!(
+        after_downgrade.access().await["selected"],
+        json!({"executor":"stub","model":"stub-large"})
+    );
+    after_downgrade.close().await;
 }

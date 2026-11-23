@@ -1,6 +1,6 @@
 //! One supervised `codex app-server` process and its newline-delimited JSON-RPC lifecycle.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -92,6 +92,9 @@ struct ServerRequest {
 struct State {
     host: HashMap<u64, HostReply>,
     server: HashMap<String, ServerRequest>,
+    /// Native ids accepted during this turn, including requests the human already answered. This
+    /// closes the race where a repeated id arrives while the first answer is being sent.
+    server_seen: HashSet<String>,
     items: HashMap<String, HarnessAction>,
     thread_id: String,
     hoh_turn: Option<String>,
@@ -208,7 +211,8 @@ impl CodexSession {
         )
         .await?;
         let mut params = session.thread_policy();
-        let resumed = resume.is_some();
+        let requested_resume = resume.clone();
+        let resumed = requested_resume.is_some();
         let method = if let Some(thread_id) = resume {
             params["threadId"] = json!(thread_id);
             params["excludeTurns"] = json!(false);
@@ -234,6 +238,17 @@ impl CodexSession {
                 HarnessFailure::new(code::PROTOCOL, "thread start did not return thread.id")
             })?
             .to_owned();
+        if let Some(requested) = requested_resume
+            && thread_id != requested
+        {
+            session.terminate_now(Duration::ZERO).await;
+            return Err(HarnessFailure::new(
+                code::PROTOCOL,
+                format!(
+                    "thread/resume returned a different thread.id: requested {requested:?}, got {thread_id:?}"
+                ),
+            ));
+        }
         lock(&session.inner.state).thread_id.clone_from(&thread_id);
         Ok((session, events, thread_id, resumed))
     }
@@ -396,6 +411,7 @@ impl HarnessSession for CodexSession {
                 state.native_turn = None;
                 state.turn_opened = false;
                 state.items.clear();
+                state.server_seen.clear();
             }
             let result = session
                 .request("turn/start", session.turn_params(&params.text))
@@ -740,9 +756,38 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
             return;
         }
     };
-    lock(&inner.state)
-        .server
-        .insert(request_id.clone(), ServerRequest { id, kind });
+    let duplicate = {
+        let mut state = lock(&inner.state);
+        if !state.server_seen.insert(request_id.clone()) {
+            true
+        } else {
+            match state.server.entry(request_id.clone()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(ServerRequest {
+                        id: id.clone(),
+                        kind,
+                    });
+                    false
+                }
+                Entry::Occupied(_) => true,
+            }
+        }
+    };
+    if duplicate {
+        close(
+            inner,
+            EndReason::ProtocolError,
+            Some(format!(
+                "Codex app-server reused JSON-RPC request id in one turn: {}",
+                rpc_key(&id)
+            )),
+        )
+        .await;
+        if !inner.terminated.swap(true, Ordering::SeqCst) {
+            inner.supervisor.terminate(Duration::ZERO).await;
+        }
+        return;
+    }
     emit_event(inner, event).await;
 }
 

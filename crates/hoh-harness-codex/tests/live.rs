@@ -154,17 +154,34 @@ async fn real_codex_streams_approves_resumes_and_stops() {
         .await
         .expect("start the turn that will be stopped");
     let stopped_at = Instant::now();
-    resumed
-        .session
-        .interrupt()
-        .await
-        .expect("interrupt Codex turn");
     resumed.session.terminate(Duration::from_millis(500)).await;
     assert!(
         stopped_at.elapsed() < Duration::from_secs(5),
         "Codex stop took {:?}",
         stopped_at.elapsed()
     );
+    let mut after_stop = harness
+        .start_with_access(
+            params(&temp, model.id.clone(), model.default_effort.clone(), Some(native.clone())),
+            AccessMode::Confirm,
+        )
+        .await
+        .expect("resume after the production Stop termination");
+    assert!(after_stop.result.resumed);
+    assert_eq!(String::from(after_stop.result.native_session_id.clone()), native);
+    after_stop
+        .session
+        .prompt(PromptParams {
+            session_id: "cx-live".into(),
+            turn_id: "cx-live-after-stop".into(),
+            text: "Reply exactly AFTER_STOP.".into(),
+            images: Vec::new(),
+        })
+        .await
+        .expect("continue after Stop");
+    let (after_stop_answer, _, _) = finish_turn(&after_stop.session, &mut after_stop.events).await;
+    assert!(!after_stop_answer.trim().is_empty(), "no answer after Stop resume");
+    after_stop.session.terminate(Duration::from_millis(500)).await;
     eprintln!(
         "LIVE_OK model={} steps={steps} approvals={approvals} stop_ms={}",
         model.id,

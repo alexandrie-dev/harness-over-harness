@@ -91,7 +91,10 @@ export class FakeEngine {
       case 'session/list': return { sessions: [...this.store.entries()].map(([id, s]) => ({ id, title: s.title, employeeId: 'employee-1', updatedAt: s.updatedAt })) };
       case 'session/resume': if (!this.store.has(params.sessionId)) throw new Error('session not found'); this.open.add(params.sessionId); return {};
       case 'session/working-directory/get':
-        if (!this.store.has(params.sessionId)) this.store.set(params.sessionId, { title: '', events: [], updatedAt: this.tick() });
+        if (!this.store.has(params.sessionId)) this.store.set(params.sessionId, {
+          title: '', events: [], updatedAt: this.tick(),
+          executor: this.access.selected.executor, model: this.access.selected.model,
+        });
         this.open.add(params.sessionId);
         return { cwd: this.store.get(params.sessionId).cwd ?? DEFAULT_FOLDER };
       // As the Tauri host and the engine answer it: the person allows the folder, the engine records it.
