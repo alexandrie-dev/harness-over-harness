@@ -239,7 +239,7 @@ export type SecurityModel = { "local": boolean; "host": string; };
 
 export type SecuritySummaryResult = { "model": SecurityModel; "egress": Array<EgressSummary>; "permissions": Array<PermissionSummary>; "approvals": Array<ApprovalSummary>; };
 
-export type SessionAssistantStreamChunk = ({ "type": "text-delta"; "text": string; });
+export type SessionAssistantStreamChunk = ({ "type": "text-delta"; "text": string; } | { "type": "reasoning-delta"; "text": string; });
 
 export type SessionAssistantStreamFrame = ({ "type": "start"; "attemptId": string; "revision": number; "turn": number; "step": number; } | { "type": "chunk"; "attemptId": string; "revision": number; "index": number; "time": number; "chunk": SessionAssistantStreamChunk; } | { "type": "gap"; "attemptId": string; "revision": number; "index": number; } | { "type": "end"; "attemptId": string; "revision": number; "index": number; "outcome": SessionAssistantStreamOutcome; });
 

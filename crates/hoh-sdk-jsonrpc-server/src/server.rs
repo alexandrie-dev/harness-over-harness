@@ -154,6 +154,19 @@ fn assistant_stream_frame(
             time: *time,
             chunk: SessionAssistantStreamChunk::TextDelta { text: text.clone() },
         },
+        AgentAssistantStreamFrame::Chunk {
+            attempt_id,
+            revision,
+            index,
+            time,
+            chunk: StreamChunk::ReasoningDelta { text, .. },
+        } => SessionAssistantStreamFrame::Chunk {
+            attempt_id: attempt_id.to_string(),
+            revision: *revision,
+            index: *index,
+            time: *time,
+            chunk: SessionAssistantStreamChunk::ReasoningDelta { text: text.clone() },
+        },
         AgentAssistantStreamFrame::Chunk { .. } => return None,
         AgentAssistantStreamFrame::End {
             attempt_id,

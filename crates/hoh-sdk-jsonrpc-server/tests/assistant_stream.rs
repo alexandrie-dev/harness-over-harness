@@ -106,6 +106,22 @@ fn emit_start(env: &Env, agent: &Arc<dyn Agent>, attempt: u64) {
     });
 }
 
+fn emit_chunk(env: &Env, agent: &Arc<dyn Agent>, attempt: u64, chunk: StreamChunk) {
+    agent_events(&env.ctx, agent).emit(|agent| {
+        let attempt_id = LlmAttemptId::from(format!("{}:{attempt}", agent.id()));
+        AgentAssistantStream {
+            agent,
+            frame: AssistantStreamFrame::Chunk {
+                attempt_id,
+                revision: attempt,
+                index: 0,
+                time: 123,
+                chunk,
+            },
+        }
+    });
+}
+
 fn chunks() -> Vec<StreamChunk> {
     [
         json!({"type":"block-start","index":0,"blockType":"text"}),
@@ -206,6 +222,36 @@ async fn sends_each_text_delta_before_the_durable_message_and_end_after_it() {
                 .unwrap())
             .collect::<Vec<_>>(),
         ["first ", "second"]
+    );
+    env.close().await;
+}
+
+#[tokio::test]
+async fn sends_reasoning_deltas_including_the_empty_block_opener() {
+    let env = Env::new().await;
+    env.initialize().await;
+    let agent = env.open("reasoning").await;
+    lock(&env.peer.notices).clear();
+
+    emit_start(&env, &agent, 1);
+    emit_chunk(
+        &env,
+        &agent,
+        1,
+        serde_json::from_value(json!({
+            "type": "reasoning-delta",
+            "index": 0,
+            "text": ""
+        }))
+        .unwrap(),
+    );
+
+    let stream = env.peer.events("session.assistant-stream");
+    assert_eq!(stream.len(), 2);
+    assert_eq!(stream[1]["frame"]["type"], "chunk");
+    assert_eq!(
+        stream[1]["frame"]["chunk"],
+        json!({"type": "reasoning-delta", "text": ""})
     );
     env.close().await;
 }

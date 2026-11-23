@@ -463,6 +463,10 @@ impl Stub {
                 self.event(json!({"type": "text-delta", "messageId": "m1", "text": "lo"}));
                 self.event(json!({"type": "turn-completed", "turnId": turn_id}));
             }
+            "empty reasoning" => {
+                self.event(json!({"type": "reasoning-delta", "messageId": "m1", "text": ""}));
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
             "only reasoning" => {
                 self.event(json!({"type": "reasoning-final", "messageId": "r1",
                     "text": "planned the steps"}));
@@ -478,6 +482,10 @@ impl Stub {
                 self.event(
                     json!({"type": "item-started", "itemId": "parent", "action": {
                     "kind": "tool", "name": "Agent", "input": {"description": "child"}}}),
+                );
+                self.event(
+                    json!({"type": "reasoning-delta", "messageId": "child-reasoning",
+                    "text": "child plan", "parentItemId": "parent"}),
                 );
                 self.event(json!({"type": "text-final", "messageId": "child-text",
                     "text": "child note", "parentItemId": "parent"}));

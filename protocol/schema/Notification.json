@@ -403,7 +403,7 @@
       ]
     },
     "SessionAssistantStreamFrame": {
-      "description": "Window-only projection of one process-local assistant attempt. Only visible text deltas cross\nthe JSON-RPC boundary; reasoning, tool-call, usage, and structural model chunks stay internal.",
+      "description": "Window-only projection of one process-local assistant attempt. Visible text and reasoning\ndeltas cross the JSON-RPC boundary; tool-call, usage, and structural model chunks stay internal.",
       "oneOf": [
         {
           "type": "object",
@@ -547,6 +547,22 @@
             "type": {
               "type": "string",
               "const": "text-delta"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "reasoning-delta"
             },
             "text": {
               "type": "string"
