@@ -342,14 +342,17 @@ test('local reply image retention is bounded per conversation with a visible fai
   }), true, 'same-size replacement does not grow either budget');
   const engine = new FakeEngine();
   let reads = 0;
-  engine.readImageAsset = async ({ path }) => {
+  engine.readImageAsset = async ({ path, sessionId }) => {
     reads++;
+    const sourcePath = path.startsWith('aliases/foreign/')
+      ? `${DEFAULT_FOLDER}/shots/foreign-${sessionId}.png`
+      : `${DEFAULT_FOLDER}/${path}`;
     return {
       dataBase64: PNG,
       mimeType: 'image/png',
       sizeBytes: PNG_BYTES,
-      sourcePath: `${DEFAULT_FOLDER}/${path}`,
-      fileRevision: `revision:${path}`,
+      sourcePath,
+      fileRevision: `revision:${sourcePath}`,
     };
   };
   const { host, client } = connect(engine);
@@ -368,11 +371,22 @@ test('local reply image retention is bounded per conversation with a visible fai
   assert.equal(failureOf(overflow)._tag, 'AssetWorkspaceAssetNotFoundError');
   assert.match(failureOf(overflow).detail, /too many project images/i);
   assert.equal(reads, 32, 'the retention budget is enforced before native I/O');
+  for (let thread = 0; thread < 4; thread++) {
+    const threadId = `chat-image-foreign-${thread}`;
+    await newThread(client, threadId);
+    for (let alias = 0; alias < 50; alias++) {
+      await client.call('assets.createUrl', { resource: {
+        _tag: 'media-file', threadId,
+        path: `aliases/foreign/${thread}/${alias}.png`, hostOnly: true,
+      } });
+    }
+  }
+  assert.equal(reads, 232, '200 aliases from other conversations complete within their own identity sets');
   const revalidateAtCapacity = await client.call('assets.createUrl', { resource: {
     _tag: 'media-file', threadId: 'chat-image-budget', path: 'shots/0.png', hostOnly: true,
   } });
   assert.equal(revalidateAtCapacity.relativeUrl, firstAtCapacity.relativeUrl);
-  assert.equal(reads, 33, 'an already-held canonical key can be revalidated at full capacity');
+  assert.equal(reads, 233, 'foreign alias churn cannot evict a retained conversation identity');
   host.stop();
 
   const byteEngine = new FakeEngine();
@@ -392,12 +406,10 @@ test('local reply image retention is bounded per conversation with a visible fai
     byteHost.localImageUrls.set(`${byteThread}\0${sourcePath}`, {
       url: `blob:retained-${index}`, revision: 'old', sourcePath,
       sizeBytes: 16 * 1024 * 1024, threadId: byteThread,
+      requestKeys: new Set(index === 0 ? [`${byteThread}\0shots/0.png`] : []),
     });
   }
   byteHost.localImageBytes = 64 * 1024 * 1024;
-  byteHost.localImageRequestKeys.set(
-    `${byteThread}\0shots/0.png`, `${byteThread}\0${DEFAULT_FOLDER}/shots/0.png`,
-  );
   const byteRefresh = await byteClient.call('assets.createUrl', { resource: {
     _tag: 'media-file', threadId: byteThread, path: 'shots/0.png', hostOnly: true,
   } });
@@ -437,6 +449,70 @@ test('identical local image reads in flight are combined and failure history is 
   assert.equal(reads, 130);
   await failed('missing/first.png');
   assert.equal(reads, 131, 'the oldest failure is evicted from the 128-entry LRU');
+  host.stop();
+});
+
+test('retained raw image identity slots are reserved before concurrent native reads', async () => {
+  const engine = new FakeEngine();
+  let reads = 0;
+  let now = 2_000_000;
+  let releaseConcurrent;
+  engine.readImageAsset = async ({ path }) => {
+    reads++;
+    if (path.startsWith('concurrent/')) {
+      return new Promise(resolve => { releaseConcurrent = () => resolve({
+        dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+        sourcePath: `${DEFAULT_FOLDER}/shots/0.png`, fileRevision: 'revision:0',
+      }); });
+    }
+    const canonical = path.startsWith('aliases/') ? 'shots/0.png' : path;
+    return {
+      dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+      sourcePath: `${DEFAULT_FOLDER}/${canonical}`,
+      fileRevision: canonical === 'shots/0.png' ? 'revision:0' : `revision:${canonical}`,
+    };
+  };
+  const { host, client } = connect(engine, { now: () => now });
+  const threadId = 'chat-image-identities';
+  await newThread(client, threadId);
+  const payload = path => ({ resource: {
+    _tag: 'media-file', threadId, path, hostOnly: true,
+  } });
+  let attemptsInWindow = 0;
+  const read = async path => {
+    if (attemptsInWindow === 64) {
+      now += 10 * 60_000 + 1;
+      attemptsInWindow = 0;
+    }
+    const result = await client.call('assets.createUrl', payload(path));
+    attemptsInWindow++;
+    return result;
+  };
+
+  const original = await read('shots/0.png');
+  for (let index = 0; index < 254; index++) await read(`aliases/${index}.png`);
+  assert.equal(reads, 255);
+
+  const admitted = client.call('assets.createUrl', payload('concurrent/admitted.png'));
+  while (!releaseConcurrent) await new Promise(resolve => setImmediate(resolve));
+  const blockedA = client.request('assets.createUrl', payload('concurrent/blocked-a.png'));
+  const blockedB = client.request('assets.createUrl', payload('concurrent/blocked-b.png'));
+  assert.equal(reads, 256, 'the final identity slot is reserved before native I/O');
+  releaseConcurrent();
+  await admitted;
+  for (const blocked of [await blockedA, await blockedB]) {
+    assert.match(failureOf(blocked).detail, /too many project image paths/i);
+  }
+  assert.equal(reads, 256);
+
+  const overCap = await client.request('assets.createUrl', payload('aliases/over-cap.png'));
+  assert.match(failureOf(overCap).detail, /too many project image paths/i);
+  assert.equal(reads, 256, 'an unknown identity over the lifetime cap is refused before native I/O');
+
+  now += 10 * 60_000 + 1;
+  const refreshed = await client.call('assets.createUrl', payload('shots/0.png'));
+  assert.equal(refreshed.relativeUrl, original.relativeUrl);
+  assert.equal(reads, 257, 'an admitted original identity still refreshes at the identity cap');
   host.stop();
 });
 

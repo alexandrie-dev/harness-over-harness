@@ -23,7 +23,10 @@ pub const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 16_384;
 const MAX_IMAGE_PIXELS: u64 = 40_000_000;
 const MAX_IMAGE_FRAMES: u32 = 300;
-const MAX_DECODED_PIXELS: u64 = 400_000_000;
+const MAX_DECODED_PIXELS: u64 = 100_000_000;
+const MAX_ANIMATION_PIXELS_PER_SECOND: u64 = 200_000_000;
+const MIN_FRAME_DELAY_NS: u64 = 20_000_000;
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,7 +134,36 @@ fn add_frame_pixels(total: &mut u64, width: u32, height: u32) -> Result<(), Stri
         .ok_or_else(invalid_header)?;
     if *total > MAX_DECODED_PIXELS {
         return Err(unavailable(
-            "the image exceeds the 400 million decoded-pixel budget",
+            "the image exceeds the 100 million decoded-pixel budget",
+        ));
+    }
+    Ok(())
+}
+
+fn add_frame_delay(total_ns: &mut u64, delay_ns: u64) -> Result<(), String> {
+    *total_ns = total_ns
+        .checked_add(delay_ns.max(MIN_FRAME_DELAY_NS))
+        .ok_or_else(invalid_header)?;
+    Ok(())
+}
+
+fn fraction_delay_ns(numerator: u16, denominator: u16) -> u64 {
+    let denominator = u64::from(if denominator == 0 { 100 } else { denominator });
+    (u64::from(numerator) * NANOS_PER_SECOND / denominator).max(MIN_FRAME_DELAY_NS)
+}
+
+fn milliseconds_delay_ns(milliseconds: u64) -> u64 {
+    milliseconds
+        .saturating_mul(1_000_000)
+        .max(MIN_FRAME_DELAY_NS)
+}
+
+fn validate_animation_rate(decoded_pixels: u64, duration_ns: u64) -> Result<(), String> {
+    if u128::from(decoded_pixels) * u128::from(NANOS_PER_SECOND)
+        > u128::from(MAX_ANIMATION_PIXELS_PER_SECOND) * u128::from(duration_ns)
+    {
+        return Err(unavailable(
+            "the animation exceeds 200 million frame-pixels per second",
         ));
     }
     Ok(())
@@ -169,8 +201,8 @@ fn png_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
     let mut animation_frames = None;
     let mut frame_count = 0u32;
     let mut decoded_pixels = 0u64;
+    let mut animation_duration_ns = 0u64;
     let mut expected_sequence = 0u32;
-    let mut default_is_frame = false;
     let mut current_fdat_frame = false;
     let mut current_frame_has_data = false;
 
@@ -250,6 +282,12 @@ fn png_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                     return Err(invalid_header());
                 }
                 add_frame_pixels(&mut decoded_pixels, width, height)?;
+                let delay_num = be_u16(&data[20..22]).ok_or_else(invalid_header)?;
+                let delay_den = be_u16(&data[22..24]).ok_or_else(invalid_header)?;
+                add_frame_delay(
+                    &mut animation_duration_ns,
+                    fraction_delay_ns(delay_num, delay_den),
+                )?;
                 frame_count = frame_count.checked_add(1).ok_or_else(invalid_header)?;
                 if !has_idat {
                     if frame_count != 1
@@ -260,7 +298,6 @@ fn png_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                     {
                         return Err(invalid_header());
                     }
-                    default_is_frame = true;
                     current_fdat_frame = false;
                 } else {
                     current_fdat_frame = true;
@@ -316,9 +353,7 @@ fn png_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
         if frame_count != declared {
             return Err(invalid_header());
         }
-        if !default_is_frame {
-            add_frame_pixels(&mut decoded_pixels, width, height)?;
-        }
+        validate_animation_rate(decoded_pixels, animation_duration_ns)?;
         declared
     } else {
         add_frame_pixels(&mut decoded_pixels, width, height)?;
@@ -410,6 +445,8 @@ fn gif_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
     }
     let mut frames = 0u32;
     let mut decoded_pixels = 0u64;
+    let mut animation_duration_ns = 0u64;
+    let mut pending_delay_ns = None;
     let mut trailer = false;
     while offset < bytes.len() {
         let marker = bytes[offset];
@@ -420,17 +457,37 @@ fn gif_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                 break;
             }
             0x21 => {
+                let label = *bytes.get(offset).ok_or_else(invalid_header)?;
                 offset += 1;
-                if offset > bytes.len() {
-                    return Err(invalid_header());
+                if label == 0xf9 {
+                    if pending_delay_ns.is_some() {
+                        return Err(invalid_header());
+                    }
+                    let control = bytes.get(offset..offset + 6).ok_or_else(invalid_header)?;
+                    if control[0] != 4 || control[5] != 0 {
+                        return Err(invalid_header());
+                    }
+                    let delay_cs = le_u16(&control[2..4]).ok_or_else(invalid_header)?;
+                    pending_delay_ns = Some(milliseconds_delay_ns(u64::from(delay_cs) * 10));
+                    offset += 6;
+                } else {
+                    skip_gif_sub_blocks(bytes, &mut offset)?;
+                    // A Graphic Control Extension applies to the next rendering block. A plain
+                    // text extension is such a block, so its delay must not leak to a later image.
+                    if label == 0x01 {
+                        pending_delay_ns = None;
+                    }
                 }
-                skip_gif_sub_blocks(bytes, &mut offset)?;
             }
             0x2c => {
                 let descriptor = bytes.get(offset..offset + 9).ok_or_else(invalid_header)?;
                 let frame_width = u32::from(le_u16(&descriptor[4..6]).ok_or_else(invalid_header)?);
                 let frame_height = u32::from(le_u16(&descriptor[6..8]).ok_or_else(invalid_header)?);
                 add_frame_pixels(&mut decoded_pixels, frame_width, frame_height)?;
+                add_frame_delay(
+                    &mut animation_duration_ns,
+                    pending_delay_ns.take().unwrap_or(MIN_FRAME_DELAY_NS),
+                )?;
                 offset += 9;
                 if descriptor[8] & 0x80 != 0 {
                     let colors = 2usize << usize::from(descriptor[8] & 0x07);
@@ -451,6 +508,9 @@ fn gif_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
     }
     if !trailer {
         return Err(invalid_header());
+    }
+    if frames > 1 {
+        validate_animation_rate(decoded_pixels, animation_duration_ns)?;
     }
     validate_profile(width, height, frames)
 }
@@ -513,6 +573,7 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
     let mut has_top_image = false;
     let mut frames = 0u32;
     let mut decoded_pixels = 0u64;
+    let mut animation_duration_ns = 0u64;
     while offset < end {
         let header = bytes.get(offset..offset + 8).ok_or_else(invalid_header)?;
         let tag = &header[..4];
@@ -581,6 +642,7 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                 let y = le_u24(&data[3..6]).ok_or_else(invalid_header)? * 2;
                 let frame_width = le_u24(&data[6..9]).ok_or_else(invalid_header)? + 1;
                 let frame_height = le_u24(&data[9..12]).ok_or_else(invalid_header)? + 1;
+                let duration_ms = le_u24(&data[12..15]).ok_or_else(invalid_header)?;
                 let encoded = webp_frame_dimensions(&data[16..]).ok_or_else(invalid_header)?;
                 validate_profile(encoded.0, encoded.1, 1)?;
                 if encoded != (frame_width, frame_height) {
@@ -594,6 +656,10 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
                     return Err(invalid_header());
                 }
                 add_frame_pixels(&mut decoded_pixels, frame_width, frame_height)?;
+                add_frame_delay(
+                    &mut animation_duration_ns,
+                    milliseconds_delay_ns(u64::from(duration_ms)),
+                )?;
                 frames = frames.checked_add(1).ok_or_else(invalid_header)?;
                 if frames > MAX_IMAGE_FRAMES {
                     return Err(unavailable("the image has more than 300 frames"));
@@ -616,6 +682,9 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
         return Err(invalid_header());
     }
     let (width, height) = dimensions.ok_or_else(invalid_header)?;
+    if animation_flag {
+        validate_animation_rate(decoded_pixels, animation_duration_ns)?;
+    }
     validate_profile(width, height, if animation_flag { frames } else { 1 })
 }
 
@@ -645,33 +714,80 @@ fn system_pseudo_path(path: &Path) -> bool {
         .any(|root| path.starts_with(root))
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 struct RootDirectory {
     file: File,
     metadata: std::fs::Metadata,
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn open_root_directory(path: &Path) -> Result<RootDirectory, String> {
-    let encoded = CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| unavailable("the conversation project folder is invalid"))?;
-    #[cfg(target_os = "linux")]
-    let flags = libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC;
-    #[cfg(not(target_os = "linux"))]
-    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
-    // SAFETY: encoded is NUL-terminated, and a successful descriptor is immediately owned by File.
-    let descriptor = unsafe { libc::open(encoded.as_ptr(), flags) };
-    if descriptor < 0 {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
         return Err(unavailable(
-            "the conversation project folder cannot be opened safely",
+            "the conversation project folder path must be absolute and normalized",
         ));
+    }
+    let slash = CString::new("/").expect("slash contains no NUL");
+    // SAFETY: slash is NUL-terminated, and a successful descriptor is immediately owned by File.
+    let slash_descriptor = unsafe {
+        libc::open(
+            slash.as_ptr(),
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if slash_descriptor < 0 {
+        return Err(unavailable("the filesystem root cannot be opened safely"));
+    }
+    // SAFETY: descriptor is fresh, valid, and has no other Rust owner.
+    let slash_file = unsafe { File::from_raw_fd(slash_descriptor) };
+    let relative = path
+        .strip_prefix(Path::new("/"))
+        .map_err(|_| unavailable("the conversation project folder path is invalid"))?;
+    let relative = if relative.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        relative
+    };
+    let encoded = CString::new(relative.as_os_str().as_bytes())
+        .map_err(|_| unavailable("the conversation project folder is invalid"))?;
+    // libc marks open_how non-exhaustive, so initialize its known v0 fields through zeroed memory.
+    // SAFETY: all-zero is a valid open_how v0 value; fields are then set before the syscall.
+    let mut how = unsafe { std::mem::zeroed::<libc::open_how>() };
+    how.flags = (libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
+    how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS | libc::RESOLVE_NO_MAGICLINKS;
+    // SAFETY: slash_file is a live directory FD and encoded/how point to initialized memory.
+    let descriptor = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            slash_file.as_raw_fd(),
+            encoded.as_ptr(),
+            &how,
+            std::mem::size_of::<libc::open_how>(),
+        ) as libc::c_int
+    };
+    if descriptor < 0 {
+        return match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::ELOOP) => Err(unavailable(
+                "the conversation project folder path contains a symbolic link",
+            )),
+            Some(code) if matches!(code, libc::ENOSYS | libc::EINVAL | libc::EPERM) => Err(
+                unavailable("safe project-folder resolution is unavailable on this system"),
+            ),
+            _ => Err(unavailable(
+                "the conversation project folder cannot be opened safely",
+            )),
+        };
     }
     // SAFETY: descriptor is fresh, valid, and has no other Rust owner.
     let file = unsafe { File::from_raw_fd(descriptor) };
     let metadata = file
         .metadata()
         .map_err(|_| unavailable("the conversation project folder cannot be inspected"))?;
-    if !metadata.is_dir() {
+    if !metadata.is_dir() || metadata.nlink() == 0 {
         return Err(unavailable(
             "the conversation project folder is not available",
         ));
@@ -683,7 +799,7 @@ fn open_root_directory(path: &Path) -> Result<RootDirectory, String> {
 fn descriptor_path(file: &File, kind: &str) -> Result<PathBuf, String> {
     let path = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
         .map_err(|_| unavailable(format!("the {kind} descriptor cannot be resolved")))?;
-    if !path.is_absolute() || path.to_string_lossy().ends_with(" (deleted)") {
+    if !path.is_absolute() {
         return Err(unavailable(format!(
             "the {kind} descriptor no longer names an available path"
         )));
@@ -844,7 +960,14 @@ fn read_project_image_from_root(
     if !unchanged_file(&opened, &after_read) || after_read.len() != bytes.len() as u64 {
         return Err(unavailable("the file changed while it was being read"));
     }
+    let root_after = root_directory
+        .file
+        .metadata()
+        .map_err(|_| unavailable("the conversation project folder changed"))?;
     if after_read.nlink() != 1
+        || root_after.nlink() == 0
+        || root_after.dev() != root_directory.metadata.dev()
+        || root_after.ino() != root_directory.metadata.ino()
         || descriptor_path(&root_directory.file, "conversation project folder")? != root
     {
         return Err(unavailable(
@@ -983,6 +1106,16 @@ mod tests {
     }
 
     fn apng(width: u32, height: u32, frames: usize) -> Vec<u8> {
+        apng_with_delay(width, height, frames, 1, 10)
+    }
+
+    fn apng_with_delay(
+        width: u32,
+        height: u32,
+        frames: usize,
+        delay_num: u16,
+        delay_den: u16,
+    ) -> Vec<u8> {
         let mut ihdr = Vec::new();
         ihdr.extend_from_slice(&width.to_be_bytes());
         ihdr.extend_from_slice(&height.to_be_bytes());
@@ -1001,8 +1134,8 @@ mod tests {
             fctl.extend_from_slice(&width.to_be_bytes());
             fctl.extend_from_slice(&height.to_be_bytes());
             fctl.extend_from_slice(&[0; 8]);
-            fctl.extend_from_slice(&1u16.to_be_bytes());
-            fctl.extend_from_slice(&100u16.to_be_bytes());
+            fctl.extend_from_slice(&delay_num.to_be_bytes());
+            fctl.extend_from_slice(&delay_den.to_be_bytes());
             fctl.extend_from_slice(&[0, 0]);
             png_chunk(&mut bytes, b"fcTL", &fctl);
             if frame == 0 {
@@ -1027,11 +1160,18 @@ mod tests {
     }
 
     fn gif(width: u16, height: u16, frames: usize) -> Vec<u8> {
+        gif_with_delay(width, height, frames, 10)
+    }
+
+    fn gif_with_delay(width: u16, height: u16, frames: usize, delay_cs: u16) -> Vec<u8> {
         let mut bytes = b"GIF89a".to_vec();
         bytes.extend_from_slice(&width.to_le_bytes());
         bytes.extend_from_slice(&height.to_le_bytes());
         bytes.extend_from_slice(&[0, 0, 0]);
         for _ in 0..frames {
+            bytes.extend_from_slice(&[0x21, 0xf9, 4, 0]);
+            bytes.extend_from_slice(&delay_cs.to_le_bytes());
+            bytes.extend_from_slice(&[0, 0]);
             bytes.push(0x2c);
             bytes.extend_from_slice(&[0, 0, 0, 0]);
             bytes.extend_from_slice(&width.to_le_bytes());
@@ -1094,6 +1234,16 @@ mod tests {
         frames: usize,
         bitstream: Option<(u32, u32)>,
     ) -> Vec<u8> {
+        webp_animation_with_bitstream_and_duration(width, height, frames, bitstream, 100)
+    }
+
+    fn webp_animation_with_bitstream_and_duration(
+        width: u32,
+        height: u32,
+        frames: usize,
+        bitstream: Option<(u32, u32)>,
+        duration_ms: u32,
+    ) -> Vec<u8> {
         let vp8x = vp8x_payload(width, height, 0x02);
         let mut chunks = vec![(b"VP8X", vp8x), (b"ANIM", vec![0; 6])];
         chunks.extend((0..frames).map(|_| {
@@ -1102,7 +1252,8 @@ mod tests {
                 let bytes = dimension.to_le_bytes();
                 frame.extend_from_slice(&bytes[..3]);
             }
-            frame.extend_from_slice(&[0; 4]);
+            frame.extend_from_slice(&duration_ms.to_le_bytes()[..3]);
+            frame.push(0);
             if let Some((encoded_width, encoded_height)) = bitstream {
                 let bits = (encoded_width - 1) | ((encoded_height - 1) << 14);
                 frame.extend_from_slice(b"VP8L");
@@ -1212,6 +1363,49 @@ mod tests {
         let image = read_project_image_from_root(&root, "shown.png", &scratch.0).unwrap();
         assert_eq!(image.data_base64, encode_base64(&original));
         assert!(Path::new(&image.source_path).starts_with(&held));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rejects_symlinks_in_any_project_root_component() {
+        let scratch = Scratch::new("root-symlinks");
+        let project = scratch.0.join("project");
+        let held = scratch.0.join("held-project");
+        let outside = scratch.0.join("outside");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("private.png"), png(2, 2)).unwrap();
+        std::fs::rename(&project, &held).unwrap();
+        std::os::unix::fs::symlink(&outside, &project).unwrap();
+        assert_refused(
+            read_project_image(&project, "private.png", &scratch.0),
+            "symbolic link",
+        );
+
+        let real_parent = scratch.0.join("real-parent");
+        std::fs::create_dir_all(real_parent.join("nested-project")).unwrap();
+        std::fs::write(real_parent.join("nested-project/image.png"), png(2, 2)).unwrap();
+        let linked_parent = scratch.0.join("linked-parent");
+        std::os::unix::fs::symlink(&real_parent, &linked_parent).unwrap();
+        assert_refused(
+            read_project_image(
+                &linked_parent.join("nested-project"),
+                "image.png",
+                &scratch.0,
+            ),
+            "symbolic link",
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn accepts_a_live_project_with_a_literal_deleted_suffix() {
+        let scratch = Scratch::new("literal-deleted");
+        let project = scratch.0.join("project (deleted)");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("image.png"), png(2, 2)).unwrap();
+        let image = read_project_image(&project, "image.png", &scratch.0).unwrap();
+        assert!(image.source_path.contains("project (deleted)"));
     }
 
     #[cfg(target_os = "linux")]
@@ -1398,30 +1592,79 @@ mod tests {
     #[test]
     fn rejects_aggregate_animated_decode_budgets() {
         for (kind, bytes) in [
-            (ImageKind::Png, apng(8_000, 5_000, 300)),
-            (ImageKind::Gif, gif(8_000, 5_000, 11)),
-            (ImageKind::Webp, webp_animation(8_000, 5_000, 11)),
+            (ImageKind::Png, apng(8_000, 5_000, 3)),
+            (ImageKind::Gif, gif(8_000, 5_000, 3)),
+            (ImageKind::Webp, webp_animation(8_000, 5_000, 3)),
         ] {
             assert_refused(
                 inspect_image(kind, &bytes).map(|_| unreachable!()),
-                "400 million decoded-pixel budget",
+                "100 million decoded-pixel budget",
             );
         }
 
         assert_eq!(
-            inspect_image(ImageKind::Png, &apng(8_000, 5_000, 10))
+            inspect_image(ImageKind::Png, &apng(1_000, 1_000, 10))
                 .unwrap()
                 .frames,
             10
         );
         assert_eq!(
-            inspect_image(ImageKind::Gif, &gif(8_000, 5_000, 10))
+            inspect_image(ImageKind::Gif, &gif_with_delay(500, 500, 10, 10))
                 .unwrap()
                 .frames,
             10
         );
         assert_eq!(
-            inspect_image(ImageKind::Webp, &webp_animation(8_000, 5_000, 10))
+            inspect_image(ImageKind::Webp, &webp_animation(1_000, 1_000, 10))
+                .unwrap()
+                .frames,
+            10
+        );
+    }
+
+    #[test]
+    fn rejects_excessive_animation_pixel_rates_after_delay_clamping() {
+        for (kind, bytes) in [
+            (ImageKind::Png, apng_with_delay(5_000, 5_000, 2, 0, 100)),
+            (ImageKind::Gif, gif_with_delay(5_000, 5_000, 2, 0)),
+            (
+                ImageKind::Webp,
+                webp_animation_with_bitstream_and_duration(
+                    5_000,
+                    5_000,
+                    2,
+                    Some((5_000, 5_000)),
+                    0,
+                ),
+            ),
+        ] {
+            assert_refused(
+                inspect_image(kind, &bytes).map(|_| unreachable!()),
+                "200 million frame-pixels per second",
+            );
+        }
+
+        for (kind, bytes) in [
+            (ImageKind::Png, apng_with_delay(5_000, 5_000, 1, 0, 100)),
+            (
+                ImageKind::Webp,
+                webp_animation_with_bitstream_and_duration(
+                    5_000,
+                    5_000,
+                    1,
+                    Some((5_000, 5_000)),
+                    0,
+                ),
+            ),
+        ] {
+            assert_refused(
+                inspect_image(kind, &bytes).map(|_| unreachable!()),
+                "200 million frame-pixels per second",
+            );
+        }
+
+        assert_eq!(
+            inspect_image(ImageKind::Gif, &gif_with_delay(500, 500, 10, 10))
                 .unwrap()
                 .frames,
             10
