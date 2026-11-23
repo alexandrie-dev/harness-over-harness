@@ -767,6 +767,67 @@ test('restart persistence: an engine still starting answers nothing at first —
   host.stop();
 });
 
+test('restart after Stop: the first shell snapshot keeps all cached chats when the engine first returns 3, then reconciles an uncached fifth chat', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const store = new Map();
+  const before = new FakeEngine({ store });
+  for (const [id, title] of [['chat-1', 'One'], ['chat-2', 'Two'], ['chat-3', 'Three'], ['chat-stopped', 'Count from 1 to 500']]) {
+    before.seed(id, title, []);
+  }
+  const first = connect(before, { storage, loadRetryMs: 5, loadRetries: 5 });
+  const firstShell = await first.client.stream('orchestration.subscribeShell', {});
+  assert.equal((await firstShell.until(value => value.kind === 'snapshot')).snapshot.threads.length, 4);
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).sessions.length, 4, 'the last-known-good inventory is durable before close');
+  first.host.stop();
+
+  const after = new FakeEngine({ store });
+  after.seed('chat-late', 'Created elsewhere', []);
+  let listCalls = 0;
+  const request = after.request.bind(after);
+  after.request = async (method, params) => {
+    const result = await request(method, params);
+    if (method === 'session/list' && ++listCalls === 1) {
+      return { sessions: result.sessions.filter(session => !['chat-stopped', 'chat-late'].includes(session.id)) };
+    }
+    return result;
+  };
+  const restarted = connect(after, { storage, loadRetryMs: 5, loadRetries: 5 });
+  const shell = await restarted.client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  assert.deepEqual(new Set(snapshot.snapshot.threads.map(thread => thread.id)), new Set(['chat-1', 'chat-2', 'chat-3', 'chat-stopped']));
+  assert(!snapshot.snapshot.threads.some(thread => thread.id === 'chat-late'), 'the first engine result really was partial');
+  const late = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'chat-late');
+  assert.equal(late.thread.title, 'Created elsewhere');
+  assert(listCalls >= 2);
+  restarted.host.stop();
+});
+
+test('the durable thread inventory rejects malformed rows and never saves an unsent empty draft', async () => {
+  const items = new Map([[mod.host.STORAGE_KEY, JSON.stringify({
+    version: 1,
+    sessions: [
+      { id: 'kept', title: 'Kept', projectId: 'hoh-project', createdAt: 100, updatedAt: 200, archivedAt: null },
+      { id: '', title: 'No id', createdAt: 100, updatedAt: 200 },
+      { id: 'no-title', title: ' ', createdAt: 100, updatedAt: 200 },
+      { id: 'bad-time', title: 'Bad time', createdAt: 0, updatedAt: 200 },
+    ],
+  })]]);
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const { client, host } = connect(new FakeEngine(), { storage, loadRetryMs: 5, loadRetries: 1 });
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  assert.deepEqual(snapshot.snapshot.threads.map(thread => thread.id), ['kept']);
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'draft', threadId: 'empty-draft', projectId: 'hoh-project', title: 'New thread',
+    createdBy: 'user', creationSource: 'web', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
+    runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
+  });
+  host.flush();
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).sessions.map(session => session.id), ['kept']);
+  host.stop();
+});
+
 test('an empty draft has no «first message» stamp (the window keeps it out of Recent chats until the first message); chats of the history do, read or not', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-old', 'Old chat', []);
