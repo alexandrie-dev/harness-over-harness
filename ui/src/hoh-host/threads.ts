@@ -98,7 +98,10 @@ export interface HomeEntry {
   /** Subagents of the run: Claude's Task (Agent) calls — name and kind from the call, state from its result. */
   agents: HomeAgent[];
 }
-export interface HomeAgent { id: string; name: string; kind: string; state: 'working' | 'done' | 'failed'; startedAt: number; doneAt: number | null }
+export interface HomeAgent {
+  id: string; name: string; kind: string; state: 'working' | 'done' | 'failed';
+  startedAt: number; doneAt: number | null; currentStep: string | null;
+}
 
 /** Claude starts a subagent with its Task tool (named Agent in newer versions): the call is the subagent. */
 const isSubagentCall = (item: Item) => item.type === 'dynamic_tool' && ['task', 'agent'].includes(String(item.toolName ?? '').toLowerCase());
@@ -166,10 +169,10 @@ export class ThreadModel {
   private touch(at: number) { if (at > this.updatedAt) this.updatedAt = at; }
   private item(id: string) { return this.items.find(item => item.id === id); }
   private currentRun() { return this.runs.at(-1); }
-  private base(id: string, type: string, status: Status, at: number, runId = this.currentRun()?.id ?? null): Item {
+  private base(id: string, type: string, status: Status, at: number, runId = this.currentRun()?.id ?? null, parentItemId: string | null = null): Item {
     return {
       id, threadId: this.id, runId, nodeId: null, providerThreadId: null, providerTurnId: null, nativeItemRef: null,
-      parentItemId: null, ordinal: this.ordinal++, status, title: null,
+      parentItemId, ordinal: this.ordinal++, status, title: null,
       startedAt: iso(at), completedAt: status === 'running' || status === 'waiting' || status === 'pending' ? null : iso(at), updatedAt: iso(at), type,
     };
   }
@@ -237,22 +240,72 @@ export class ThreadModel {
     this.running = true;
   }
 
-  private assistantText(key: string, messageId: string, value: string, at: number) {
+  private assistantText(key: string, messageId: string, value: string, at: number, parentItemId: string | null) {
     const live = this.live.get(key);
     if (live) { this.live.delete(key); this.retired.add(live.attemptId); }
     const id = live?.itemId ?? 'item-a-' + messageId;
     const existing = this.item(id);
-    if (!value) { if (existing) this.items.splice(this.items.indexOf(existing), 1); return; }
+    if (!value) {
+      if (existing) this.items.splice(this.items.indexOf(existing), 1);
+      if (parentItemId) this.refreshSubagent(parentItemId);
+      return;
+    }
     const msgId = 'msg-a-' + messageId;
     if (existing) {
       Object.assign(existing, { text: value, messageId: msgId });
       this.settleItem(existing, 'completed', at);
     } else if (!this.item('item-a-' + messageId)) {
-      this.items.push({ ...this.base(id, 'assistant_message', 'completed', at), messageId: msgId, text: value, streaming: false });
+      this.items.push({ ...this.base(id, 'assistant_message', 'completed', at, undefined, parentItemId), messageId: msgId, text: value, streaming: false });
     }
-    const message = this.messages.find(entry => entry.id === msgId);
-    if (message) Object.assign(message, { text: value, streaming: false, updatedAt: at });
-    else this.messages.push({ id: msgId, runId: this.currentRun()?.id ?? null, role: 'assistant', text: value, streaming: false, createdAt: at, updatedAt: at });
+    // A child assistant message belongs to the Task inspector. Putting it in `messages` as well would make
+    // T3 render it as a second, top-level answer instead of work performed inside the subagent.
+    if (!parentItemId) {
+      const message = this.messages.find(entry => entry.id === msgId);
+      if (message) Object.assign(message, { text: value, streaming: false, updatedAt: at });
+      else this.messages.push({ id: msgId, runId: this.currentRun()?.id ?? null, role: 'assistant', text: value, streaming: false, createdAt: at, updatedAt: at });
+    }
+    if (parentItemId) this.refreshSubagent(parentItemId);
+  }
+
+  /** A provider-native child names the native Task/Agent call; T3 items name their projected parent. */
+  private parentItem(data: Record<string, any>): string | null {
+    const parentCallId = text(data.parentCallId);
+    // Claude tool-use ids are native session ids, independent of HoH's turn counter. A subagent may finish
+    // after another turn was opened, so a turn-qualified lookup would silently flatten that late event.
+    return parentCallId ? this.toolInputs.get(parentCallId)?.itemId ?? null : null;
+  }
+
+  /** Fold native child items into the output of T3's ordinary expandable Agent/Task tool row. */
+  private refreshSubagent(parentItemId: string) {
+    const parent = this.item(parentItemId);
+    if (!parent || !isSubagentCall(parent)) return;
+    const sections = this.items
+      .filter(item => item.parentItemId === parentItemId)
+      .sort((a, b) => a.ordinal - b.ordinal)
+      .map(item => {
+        if (item.type === 'assistant_message') return text(item.text).trim();
+        const state = item.status === 'failed' ? 'failed' : item.status === 'running' || item.status === 'waiting' || item.status === 'pending' ? 'running' : 'done';
+        let label = text(item.toolName);
+        if (item.type === 'command_execution') label = `Command: ${text(item.input)}`;
+        else if (item.type === 'file_change') label = `File: ${text(item.fileName)}`;
+        else if (item.type === 'file_search') label = `Search: ${text(item.pattern)}`;
+        else if (item.type === 'web_search') label = `Web: ${Array.isArray(item.patterns) ? item.patterns.join(', ') : ''}`;
+        else if (!label) label = item.type.replaceAll('_', ' ');
+        const result = text(item.subagentOutput ?? item.output).trim();
+        return [`[${state}] ${label}`.trim(), result].filter(Boolean).join('\n');
+      })
+      .filter(Boolean);
+    const result = text(parent.subagentResult).trim();
+    if (result) sections.push(`Result\n${result}`);
+    const transcript = sections.join('\n\n');
+    if (transcript.length <= 20_000) parent.output = transcript;
+    else {
+      // Preserve orientation plus the latest work and authoritative result. Keeping only the prefix makes
+      // a long early Read/Bash erase the very information the folded row exists to expose.
+      const marker = '\n\n… earlier subagent output truncated …\n\n';
+      const headSize = 8_000;
+      parent.output = transcript.slice(0, headSize) + marker + transcript.slice(-(20_000 - headSize - marker.length));
+    }
   }
 
   private toolCall(data: Record<string, any>, at: number) {
@@ -261,38 +314,46 @@ export class ThreadModel {
     if (this.calls.has(callId)) return;
     const name = text(data.name); const args = argumentsOf(data.arguments);
     const id = 'item-tool-' + callId.replace(/[^A-Za-z0-9_.:-]/g, '_');
+    const parentItemId = this.parentItem(data);
     const path = text(args.file_path ?? args.path ?? args.filePath ?? args.notebook_path);
     const kind = toolKind(name);
     let item: Item;
-    if (kind === 'command') item = { ...this.base(id, 'command_execution', 'running', at), input: text(args.command ?? args.cmd) || name };
+    if (kind === 'command') item = { ...this.base(id, 'command_execution', 'running', at, undefined, parentItemId), input: text(args.command ?? args.cmd) || name };
     else if (kind === 'write' && path.trim()) {
       const newStr = text(args.new_string ?? args.new_str ?? args.content ?? args.file_text);
       const oldStr = text(args.old_string ?? args.old_str);
-      item = { ...this.base(id, 'file_change', 'running', at), fileName: path.trim(), ...(newStr ? { newStr } : {}), ...(oldStr ? { oldStr } : {}) };
+      item = { ...this.base(id, 'file_change', 'running', at, undefined, parentItemId), fileName: path.trim(), ...(newStr ? { newStr } : {}), ...(oldStr ? { oldStr } : {}) };
     } else if (kind === 'search') {
       const pattern = text(args.pattern ?? args.query ?? args.path);
-      item = { ...this.base(id, 'file_search', 'running', at), ...(pattern ? { pattern } : {}) };
+      item = { ...this.base(id, 'file_search', 'running', at, undefined, parentItemId), ...(pattern ? { pattern } : {}) };
     } else if (kind === 'web') {
       const pattern = text(args.query ?? args.url);
-      item = { ...this.base(id, 'web_search', 'running', at), ...(pattern ? { patterns: [pattern] } : {}) };
-    } else item = { ...this.base(id, 'dynamic_tool', 'running', at), toolName: name.trim() || null, input: args };
+      item = { ...this.base(id, 'web_search', 'running', at, undefined, parentItemId), ...(pattern ? { patterns: [pattern] } : {}) };
+    } else item = { ...this.base(id, 'dynamic_tool', 'running', at, undefined, parentItemId), toolName: name.trim() || null, input: args };
     this.calls.set(callId, id);
     this.toolInputs.set(rawId, { name, args, itemId: id });
     this.items.push(item);
+    if (parentItemId) this.refreshSubagent(parentItemId);
   }
 
   private toolResult(message: Record<string, any>, turn: unknown, at: number) {
-    const id = this.calls.get(String(turn ?? '') + ':' + text(message.toolCallId));
+    const rawId = text(message.toolCallId);
+    const id = this.calls.get(String(turn ?? '') + ':' + rawId) ?? this.toolInputs.get(rawId)?.itemId;
     const item = id ? this.item(id) : undefined;
     if (!item) return;
     const output = contentText(message.content) || text(message.content);
     const failed = message.isError === true;
-    if (item.type === 'command_execution') {
+    if (isSubagentCall(item)) {
+      item.subagentResult = output.slice(0, 20_000);
+    } else if (item.type === 'command_execution') {
       const match = Array.from(output.matchAll(/\[(?:Command finished with exit code|shell exited: code)\s+(-?\d+)\]/gi)).at(-1);
       const exitCode = match ? Number(match[1]) : undefined;
       Object.assign(item, { output: output.slice(0, 20_000), ...(exitCode === undefined ? {} : { exitCode }), ...(failed || (exitCode ?? 0) !== 0 ? { outputIndicatesFailure: true } : {}) });
     } else if (item.type === 'dynamic_tool') item.output = output.slice(0, 20_000);
+    if (item.parentItemId) item.subagentOutput = output.slice(0, 20_000);
     this.settleItem(item, failed ? 'failed' : 'completed', at);
+    if (isSubagentCall(item)) this.refreshSubagent(item.id);
+    if (item.parentItemId) this.refreshSubagent(item.parentItemId);
   }
 
   private endTurn(reason: string, at: number, error?: unknown) {
@@ -305,6 +366,7 @@ export class ThreadModel {
       if (item.status === 'running' || item.status === 'waiting' || item.status === 'pending')
         this.settleItem(item, item.type === 'assistant_message' ? 'completed' : status === 'completed' ? 'completed' : 'interrupted', at);
     }
+    for (const item of this.items) if (isSubagentCall(item)) this.refreshSubagent(item.id);
     for (const live of this.live.values()) this.retired.add(live.attemptId);
     this.live.clear();
     for (const request of this.requests) if (request.status === 'pending') { request.status = 'cancelled'; request.resolvedAt = at; }
@@ -348,7 +410,9 @@ export class ThreadModel {
       case 'assistant/message': {
         const message = record(data.message);
         if (!text(message.id)) return false;
-        this.assistantText(String(data.turn ?? '') + ':' + String(data.step ?? ''), text(message.id), contentText(message.content), at);
+        const parentItemId = this.parentItem(data);
+        const key = String(data.turn ?? '') + ':' + String(data.step ?? '') + (text(data.parentCallId) ? ':' + text(data.parentCallId) : '');
+        this.assistantText(key, text(message.id), contentText(message.content), at, parentItemId);
         break;
       }
       case 'tool/call': this.toolCall(data, at); break;
@@ -525,6 +589,7 @@ export class ThreadModel {
   /** `OrchestrationV2ThreadProjection`, encoded. */
   projection() {
     const updatedAt = iso(this.updatedAt);
+    const visibleItems = this.items.filter(item => item.parentItemId === null);
     return {
       thread: {
         createdBy: 'user', creationSource: 'web',
@@ -557,7 +622,9 @@ export class ThreadModel {
       plans: [],
       turnItems: this.items.map(item => ({ ...item })),
       checkpointScopes: [], checkpoints: [], contextHandoffs: [], contextTransfers: [],
-      visibleTurnItems: this.items.map((item, position) => ({ position, visibility: 'local', sourceThreadId: this.id, sourceItemId: item.id, item: { ...item } })),
+      // Native subagent items stay in turnItems for state and attribution, while T3 displays their folded
+      // transcript inside the expandable Agent/Task row instead of duplicating them in the root timeline.
+      visibleTurnItems: visibleItems.map((item, position) => ({ position, visibility: 'local', sourceThreadId: this.id, sourceItemId: item.id, item: { ...item } })),
       updatedAt,
     };
   }
@@ -570,14 +637,31 @@ export class ThreadModel {
     const run = this.currentRun();
     if (!run) return null;
     const calls = this.items.filter(item => item.runId === run.id && STEP_TYPES.has(item.type));
-    const steps = calls.filter(item => !isSubagentCall(item));
-    const agents: HomeAgent[] = calls.filter(isSubagentCall).map(item => {
+    const roots = calls.filter(item => item.parentItemId === null);
+    const steps = roots.filter(item => !isSubagentCall(item));
+    const agents: HomeAgent[] = roots.filter(isSubagentCall).map(item => {
       const input = record(item.input);
       const kind = text(input.subagent_type) || 'general-purpose';
+      const child = this.items.filter(candidate => candidate.parentItemId === item.id).sort((a, b) => b.ordinal - a.ordinal)[0];
+      const childTool = child ? text(child.toolName) || child.type.replaceAll('_', ' ') : '';
+      const currentStep = child?.type === 'assistant_message'
+        ? text(child.text).replace(/\s+/g, ' ').trim()
+        : child?.type === 'command_execution' ? text(child.input).replace(/\s+/g, ' ').trim()
+        : child?.type === 'file_change' ? text(child.fileName)
+        : child?.type === 'file_search' ? `Search: ${text(child.pattern)}`
+        : child?.type === 'web_search' ? `Web: ${Array.isArray(child.patterns) ? child.patterns.join(', ') : ''}`
+        : child ? (toolRequest(childTool, record(child.input), this.cwd).prompt ?? childTool).split('\n')[0] : '';
+      const children = this.items.filter(candidate => candidate.parentItemId === item.id);
+      const activeChild = children.some(candidate => candidate.status === 'running' || candidate.status === 'waiting' || candidate.status === 'pending');
+      const active = item.status === 'running' || item.status === 'waiting' || item.status === 'pending' || activeChild;
+      // The Agent/Task result is authoritative: a subagent may recover from a failed inner command.
+      const failed = item.status === 'failed';
+      const completedTimes = [item, ...children].map(candidate => candidate.completedAt ? Date.parse(candidate.completedAt) : null).filter((value): value is number => value !== null);
       return {
         id: item.id, kind, name: text(input.description) || text(input.prompt).slice(0, 80) || kind,
-        state: item.status === 'failed' ? 'failed' : item.status === 'running' || item.status === 'waiting' ? 'working' : 'done',
-        startedAt: Date.parse(item.startedAt), doneAt: item.completedAt ? Date.parse(item.completedAt) : null,
+        state: active ? 'working' : failed ? 'failed' : 'done',
+        startedAt: Date.parse(item.startedAt), doneAt: active ? null : completedTimes.length ? Math.max(...completedTimes) : null,
+        currentStep: currentStep ? currentStep.slice(0, 160) : null,
       };
     });
     const pending = this.requests.find(request => request.status === 'pending');
@@ -615,7 +699,7 @@ export class ThreadModel {
       // until the first message. A chat of the engine's history not read yet (older than today) is stamped by its last activity.
       latestUserMessageAt: lastUser ? iso(lastUser.createdAt) : this.loaded ? null : iso(this.updatedAt),
       hasActionableProposedPlan: false,
-      itemCount: this.items.length, visibleItemCount: this.items.length,
+      itemCount: this.items.length, visibleItemCount: this.items.filter(item => item.parentItemId === null).length,
       createdAt: iso(this.createdAt), updatedAt: iso(this.updatedAt),
       archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, deletedAt: null,
     };

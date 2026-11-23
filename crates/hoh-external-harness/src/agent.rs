@@ -1234,6 +1234,7 @@ struct LiveText {
 struct OpenItem {
     item_id: String,
     call_seq: SessionSeq,
+    parent_item_id: Option<String>,
     command: bool,
     /// A command or a file change: under `approval: never` it runs only after `allow`.
     guarded: bool,
@@ -1242,6 +1243,8 @@ struct OpenItem {
     output: String,
 }
 
+type OpenQuestions = Arc<Mutex<HashMap<String, (SessionSeq, Option<String>)>>>;
+
 /// Everything one turn writes to the log.
 struct TurnLog {
     agent: Arc<ExternalAgent>,
@@ -1249,13 +1252,13 @@ struct TurnLog {
     step: u64,
     signal: AbortSignal,
     live: Vec<LiveText>,
-    reasoning: Vec<(String, String)>,
+    reasoning: Vec<(String, String, Option<String>)>,
     items: Vec<OpenItem>,
     requests: HashMap<String, Arc<AbortController>>,
     tasks: Vec<Disposer>,
     /// Question calls of this turn still without a result, by call id. A question task writes
     /// its result only while the call is here; the end of the turn closes the rest.
-    questions: Arc<Mutex<HashMap<String, SessionSeq>>>,
+    questions: OpenQuestions,
     /// Native message and item ids this turn already settled: a repeated final or completion
     /// is dropped.
     settled: HashSet<String>,
@@ -1314,10 +1317,11 @@ impl TurnLog {
             let item = match self.items.iter().position(|item| item.item_id == item_id) {
                 Some(index) => Some(self.items.remove(index)),
                 None => self
-                    .write_call(item_id, "step", &json!({}))
+                    .write_call(item_id, "step", &json!({}), None)
                     .map(|call_seq| OpenItem {
                         item_id: item_id.to_owned(),
                         call_seq,
+                        parent_item_id: None,
                         command: false,
                         guarded: true,
                         action: None,
@@ -1330,7 +1334,13 @@ impl TurnLog {
                     text.push('\n');
                 }
                 text.push_str("[The harness ran this step without asking for permission.]");
-                self.write_result(item_id, item.call_seq, text, Some(code::APPROVAL_BYPASSED));
+                self.write_result(
+                    item_id,
+                    item.call_seq,
+                    text,
+                    Some(code::APPROVAL_BYPASSED),
+                    item.parent_item_id.as_deref(),
+                );
             }
         }
         TurnOutcome::Failed(HarnessFailure::new(
@@ -1406,23 +1416,51 @@ impl TurnLog {
             | HarnessEvent::TurnFailed { .. } => {
                 // A stale end of an earlier turn.
             }
-            HarnessEvent::TextDelta { message_id, text } => self.delta(message_id, &text),
-            HarnessEvent::TextFinal { message_id, text } => self.final_text(&message_id, text),
-            HarnessEvent::ReasoningDelta { message_id, text } => {
-                match self.reasoning.iter_mut().find(|(id, _)| *id == message_id) {
-                    Some((_, buffer)) => {
+            HarnessEvent::TextDelta {
+                message_id,
+                text,
+                parent_item_id,
+            } => self.delta(message_id, &text, parent_item_id.as_deref()),
+            HarnessEvent::TextFinal {
+                message_id,
+                text,
+                parent_item_id,
+            } => self.final_text(&message_id, text, parent_item_id.as_deref()),
+            HarnessEvent::ReasoningDelta {
+                message_id,
+                text,
+                parent_item_id,
+            } => {
+                match self.reasoning.iter_mut().find(|(id, _, parent)| {
+                    *id == message_id && parent.as_deref() == parent_item_id.as_deref()
+                }) {
+                    Some((_, buffer, _)) => {
                         buffer.push_str(&text);
                         keep_tail(buffer);
                     }
-                    None => self.reasoning.push((message_id, text)),
+                    None => self.reasoning.push((message_id, text, parent_item_id)),
                 }
             }
-            HarnessEvent::ReasoningFinal { message_id, text } => {
-                self.reasoning.retain(|(id, _)| *id != message_id);
-                self.reasoning.push((message_id, text));
+            HarnessEvent::ReasoningFinal {
+                message_id,
+                text,
+                parent_item_id,
+            } => {
+                self.reasoning.retain(|(id, _, parent)| {
+                    *id != message_id || parent.as_deref() != parent_item_id.as_deref()
+                });
+                self.reasoning.push((message_id, text, parent_item_id));
             }
-            HarnessEvent::ItemStarted { item_id, action } => self.start_item(item_id, &action),
-            HarnessEvent::ItemOutput { item_id, text } => {
+            HarnessEvent::ItemStarted {
+                item_id,
+                action,
+                parent_item_id,
+            } => self.start_item(item_id, &action, parent_item_id),
+            HarnessEvent::ItemOutput {
+                item_id,
+                text,
+                parent_item_id: _,
+            } => {
                 if let Some(item) = self.items.iter_mut().find(|item| item.item_id == item_id) {
                     item.output.push_str(&text);
                     keep_tail(&mut item.output);
@@ -1437,6 +1475,7 @@ impl TurnLog {
                 outcome,
                 output,
                 exit_code,
+                parent_item_id,
             } => {
                 let ran = matches!(outcome, ItemOutcome::Completed | ItemOutcome::Failed);
                 let (guarded, started) =
@@ -1451,18 +1490,20 @@ impl TurnLog {
                 {
                     return Some(self.bypassed(&item_id, output));
                 }
-                self.complete_item(&item_id, outcome, output, exit_code);
+                self.complete_item(&item_id, outcome, output, exit_code, parent_item_id);
             }
             HarnessEvent::ApprovalRequested {
                 request_id,
                 item_id,
                 action,
                 reason,
+                parent_item_id: _,
             } => return self.spawn_approval(session, request_id, item_id, action, reason),
             HarnessEvent::QuestionAsked {
                 request_id,
                 questions,
-            } => return self.spawn_question(session, request_id, questions),
+                parent_item_id,
+            } => return self.spawn_question(session, request_id, questions, parent_item_id),
             HarnessEvent::RequestResolved { request_id } => {
                 if let Some(controller) = self.requests.remove(&request_id) {
                     controller.abort();
@@ -1494,8 +1535,13 @@ impl TurnLog {
         None
     }
 
-    fn delta(&mut self, message_id: String, text: &str) {
+    fn delta(&mut self, message_id: String, text: &str, parent_item_id: Option<&str>) {
         if self.settled.contains(&format!("text:{message_id}")) {
+            return;
+        }
+        // The window-only live stream has no parent field. Never flatten a subagent delta into
+        // the root answer; its authoritative `text-final` is recorded below with `parentCallId`.
+        if parent_item_id.is_some() {
             return;
         }
         let index = match self
@@ -1534,17 +1580,21 @@ impl TurnLog {
         self.agent.emit_frame_of(live, &piece);
     }
 
-    fn final_text(&mut self, message_id: &str, text: String) {
+    fn final_text(&mut self, message_id: &str, text: String, parent_item_id: Option<&str>) {
         if !self.settled.insert(format!("text:{message_id}")) {
             return;
         }
-        let live = self
-            .live
-            .iter()
-            .position(|live| live.message_id == message_id)
-            .map(|index| self.live.remove(index))
-            .map(|live| self.shown_whole(live));
-        let seq = self.write_assistant(text, false, Vec::new());
+        let live = parent_item_id
+            .is_none()
+            .then(|| {
+                self.live
+                    .iter()
+                    .position(|live| live.message_id == message_id)
+                    .map(|index| self.live.remove(index))
+                    .map(|live| self.shown_whole(live))
+            })
+            .flatten();
+        let seq = self.write_assistant(text, false, Vec::new(), parent_item_id);
         if let Some(live) = live {
             self.end_live(live, seq);
         }
@@ -1557,14 +1607,21 @@ impl TurnLog {
         text: String,
         interrupted: bool,
         calls: Vec<ContentBlock>,
+        parent_item_id: Option<&str>,
     ) -> Option<SessionSeq> {
         let mut content = Vec::new();
-        let reasoning: Vec<String> = self
-            .reasoning
-            .drain(..)
-            .map(|(_, text)| text)
-            .filter(|text| !text.is_empty())
-            .collect();
+        let mut reasoning = Vec::new();
+        let mut other_reasoning = Vec::new();
+        for (message_id, text, parent) in self.reasoning.drain(..) {
+            if parent.as_deref() == parent_item_id {
+                if !text.is_empty() {
+                    reasoning.push(text);
+                }
+            } else {
+                other_reasoning.push((message_id, text, parent));
+            }
+        }
+        self.reasoning = other_reasoning;
         if !reasoning.is_empty() {
             content.push(ContentBlock::reasoning(redact(&reasoning.join("\n\n"))));
         }
@@ -1598,6 +1655,9 @@ impl TurnLog {
         }
         if interrupted {
             data["interrupted"] = json!(true);
+        }
+        if let Some(parent_item_id) = parent_item_id {
+            data["parentCallId"] = json!(parent_item_id);
         }
         match self
             .agent
@@ -1639,19 +1699,27 @@ impl TurnLog {
         });
     }
 
-    fn start_item(&mut self, item_id: String, action: &HarnessAction) {
+    fn start_item(
+        &mut self,
+        item_id: String,
+        action: &HarnessAction,
+        parent_item_id: Option<String>,
+    ) {
         if self.settled.contains(&format!("item:{item_id}"))
             || self.items.iter().any(|item| item.item_id == item_id)
         {
             return;
         }
         let (name, arguments) = step_call(action);
-        let Some(call_seq) = self.write_call(&item_id, &name, &arguments) else {
+        let Some(call_seq) =
+            self.write_call(&item_id, &name, &arguments, parent_item_id.as_deref())
+        else {
             return;
         };
         self.items.push(OpenItem {
             item_id,
             call_seq,
+            parent_item_id,
             command: matches!(action, HarnessAction::Command { .. }),
             guarded: matches!(
                 action,
@@ -1665,21 +1733,30 @@ impl TurnLog {
     /// Record a step as the loop does: an `assistant/message` advertising the call (with the
     /// reasoning that led to it), then `tool/call`. The stored log accepts no call it was not
     /// told of; every advertised call gets its `tool/result` before `step/end`.
-    fn write_call(&mut self, call_id: &str, name: &str, arguments: &Value) -> Option<SessionSeq> {
+    fn write_call(
+        &mut self,
+        call_id: &str,
+        name: &str,
+        arguments: &Value,
+        parent_item_id: Option<&str>,
+    ) -> Option<SessionSeq> {
         let arguments = js_json_stringify(&redact_value(arguments));
         let call = ContentBlock::from(ToolCallBlock {
             id: ToolCallId::from(call_id),
             name: name.to_owned(),
             arguments: arguments.clone(),
         });
-        self.write_assistant(String::new(), false, vec![call])?;
-        let data = json!({
+        self.write_assistant(String::new(), false, vec![call], parent_item_id)?;
+        let mut data = json!({
             "turn": self.turn,
             "step": self.step,
             "callId": call_id,
             "name": name,
             "arguments": arguments,
         });
+        if let Some(parent_item_id) = parent_item_id {
+            data["parentCallId"] = json!(parent_item_id);
+        }
         match self.agent.session.append("tool/call", data, None) {
             Ok(event) => Some(event.seq()),
             Err(error) => {
@@ -1695,6 +1772,7 @@ impl TurnLog {
         outcome: ItemOutcome,
         output: Option<String>,
         exit_code: Option<i64>,
+        parent_item_id: Option<String>,
     ) {
         if !self.settled.insert(format!("item:{item_id}")) {
             return;
@@ -1703,12 +1781,15 @@ impl TurnLog {
             Some(index) => self.items.remove(index),
             None => {
                 // A completion without a start: record the step it completes.
-                let Some(call_seq) = self.write_call(item_id, "step", &json!({})) else {
+                let Some(call_seq) =
+                    self.write_call(item_id, "step", &json!({}), parent_item_id.as_deref())
+                else {
                     return;
                 };
                 OpenItem {
                     item_id: item_id.to_owned(),
                     call_seq,
+                    parent_item_id,
                     command: exit_code.is_some(),
                     guarded: exit_code.is_some(),
                     action: None,
@@ -1739,10 +1820,23 @@ impl TurnLog {
             ItemOutcome::Declined => Some("declined"),
             ItemOutcome::Interrupted => Some("interrupted"),
         };
-        self.write_result(item_id, item.call_seq, text, code);
+        self.write_result(
+            item_id,
+            item.call_seq,
+            text,
+            code,
+            item.parent_item_id.as_deref(),
+        );
     }
 
-    fn write_result(&self, call_id: &str, call_seq: SessionSeq, text: String, error: Option<&str>) {
+    fn write_result(
+        &self,
+        call_id: &str,
+        call_seq: SessionSeq,
+        text: String,
+        error: Option<&str>,
+        parent_item_id: Option<&str>,
+    ) {
         let message = create_tool_result_message(ToolResultMessageInput {
             call_id: ToolCallId::from(call_id),
             content: vec![ContentBlock::text(text)],
@@ -1758,6 +1852,9 @@ impl TurnLog {
         }
         if let Some(code) = error {
             data["error"] = json!({"name": "ExternalHarnessError", "code": code});
+        }
+        if let Some(parent_item_id) = parent_item_id {
+            data["parentCallId"] = json!(parent_item_id);
         }
         let intent = SurfaceIntent {
             surface_op: Some(SurfaceOp::append()),
@@ -1827,18 +1924,22 @@ impl TurnLog {
         session: &LiveSession,
         request_id: String,
         questions: Vec<HarnessQuestion>,
+        parent_item_id: Option<String>,
     ) -> Option<TurnOutcome> {
         let Some(signal) = self.open_request(&request_id) else {
             return Some(self.repeated(&request_id));
         };
         let call_id = format!("question-{request_id}");
-        let Some(call_seq) =
-            self.write_call(&call_id, "user_question", &json!({"questions": questions}))
-        else {
+        let Some(call_seq) = self.write_call(
+            &call_id,
+            "user_question",
+            &json!({"questions": questions}),
+            parent_item_id.as_deref(),
+        ) else {
             // An unrecorded question is not asked; the harness hears so instead of waiting.
             return self.refuse(session, request_id, "the question could not be recorded");
         };
-        lock(&self.questions).insert(call_id.clone(), call_seq);
+        lock(&self.questions).insert(call_id.clone(), (call_seq, parent_item_id));
         let asked = AskedQuestion {
             agent: self.agent.clone(),
             control: session.control.clone(),
@@ -1918,24 +2019,34 @@ impl TurnLog {
         // its call gone and writes nothing.
         let questions = self.questions.clone();
         let mut open = lock(&questions);
-        for (call_id, call_seq) in open.drain() {
+        for (call_id, (call_seq, parent_item_id)) in open.drain() {
             self.write_result(
                 &call_id,
                 call_seq,
                 "The question was withdrawn before it was answered.".to_owned(),
                 Some("interrupted"),
+                parent_item_id.as_deref(),
             );
         }
         drop(open);
         for live in std::mem::take(&mut self.live) {
             self.settled.insert(format!("text:{}", live.message_id));
             let live = self.shown_whole(live);
-            let seq = self.write_assistant(live.text.clone(), !completed, Vec::new());
+            let seq = self.write_assistant(live.text.clone(), !completed, Vec::new(), None);
             self.end_live(live, seq);
         }
         // Reasoning no text followed (a turn of steps only) is kept as a message of its own.
-        if !self.reasoning.is_empty() {
-            self.write_assistant(String::new(), !completed, Vec::new());
+        while let Some(parent_item_id) = self
+            .reasoning
+            .first()
+            .map(|(_, _, parent_item_id)| parent_item_id.clone())
+        {
+            self.write_assistant(
+                String::new(),
+                !completed,
+                Vec::new(),
+                parent_item_id.as_deref(),
+            );
         }
         for item in std::mem::take(&mut self.items) {
             self.settled.insert(format!("item:{}", item.item_id));
@@ -1944,6 +2055,7 @@ impl TurnLog {
                 item.call_seq,
                 "The action was interrupted before the harness reported its outcome.".to_owned(),
                 Some("interrupted"),
+                item.parent_item_id.as_deref(),
             );
         }
     }
@@ -2053,7 +2165,7 @@ struct AskedQuestion {
     step: u64,
     request_id: String,
     call_id: String,
-    open: Arc<Mutex<HashMap<String, SessionSeq>>>,
+    open: OpenQuestions,
 }
 
 async fn answer_question(
@@ -2130,10 +2242,10 @@ async fn answer_question(
         // Under the lock: the end of the turn either waits for this result or has closed the
         // call already (then nothing is written after `step/end`).
         let mut open = lock(&open);
-        let Some(call_seq) = open.remove(&call_id) else {
+        let Some((call_seq, parent_item_id)) = open.remove(&call_id) else {
             return;
         };
-        log.write_result(&call_id, call_seq, text, error);
+        log.write_result(&call_id, call_seq, text, error, parent_item_id.as_deref());
     }
     if signal.aborted() {
         return;

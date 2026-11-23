@@ -82,7 +82,9 @@
 .hoh-tick[data-failed] { color: var(--destructive-foreground, var(--warning)); }
 .hoh-subs { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--border); padding-top: 8px; }
 .hoh-sub { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; min-width: 0; }
-.hoh-sub__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.hoh-sub__copy { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.hoh-sub__name, .hoh-sub__step { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.hoh-sub__step { color: var(--muted-foreground); font-size: 0.6875rem; line-height: 1rem; }
 .hoh-sub small, .hoh-sub time { color: var(--muted-foreground); white-space: nowrap; font-size: 0.6875rem; }
 .hoh-sub[data-state="done"] .hoh-sub__name { color: var(--muted-foreground); }
 .hoh-orbit { flex-shrink: 0; }

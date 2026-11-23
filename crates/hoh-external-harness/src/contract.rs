@@ -418,19 +418,28 @@ pub enum HarnessEvent {
     TextDelta {
         message_id: String,
         text: String,
+        /// The item whose native tool call owns this subagent event.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     /// The complete text of one answer message; authoritative over the deltas.
     TextFinal {
         message_id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     ReasoningDelta {
         message_id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     ReasoningFinal {
         message_id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     /// A progress line (not part of the answer).
     Status {
@@ -440,11 +449,15 @@ pub enum HarnessEvent {
     ItemStarted {
         item_id: String,
         action: HarnessAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     /// Output of a running step (command output).
     ItemOutput {
         item_id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     ItemCompleted {
         item_id: String,
@@ -454,6 +467,8 @@ pub enum HarnessEvent {
         output: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exit_code: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     /// The native permission request: HoH answers with `harness/respond`. A `request_id` is used
     /// once per turn: a repeated one breaks the contract (HoH ends the turn with
@@ -467,12 +482,16 @@ pub enum HarnessEvent {
         action: HarnessAction,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     /// A question to the user: HoH answers with `harness/respond`. Its `request_id` is unique in
     /// the turn, as for [`HarnessEvent::ApprovalRequested`].
     QuestionAsked {
         request_id: String,
         questions: Vec<HarnessQuestion>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_item_id: Option<String>,
     },
     /// The harness no longer waits for this request (answered elsewhere, timed out, turn over).
     RequestResolved {

@@ -1134,6 +1134,53 @@ async fn a_completed_turn_keeps_a_text_without_final_and_lone_reasoning() {
 }
 
 #[tokio::test]
+async fn parented_harness_events_extend_existing_session_events() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let agent = env.create("s-nested-events").await;
+    turn(&agent, "nested events").await;
+
+    let messages = of_type(&agent, "assistant/message");
+    let child_text = messages
+        .iter()
+        .find(|data| {
+            data["message"]["content"]
+                .as_array()
+                .is_some_and(|content| content.iter().any(|block| block["text"] == "child note"))
+        })
+        .expect("child text");
+    assert_eq!(child_text["parentCallId"], "parent");
+
+    let calls = of_type(&agent, "tool/call");
+    let child_call = calls
+        .iter()
+        .find(|data| data["callId"] == "child-read")
+        .expect("child call");
+    assert_eq!(child_call["parentCallId"], "parent");
+    let parent_call = calls
+        .iter()
+        .find(|data| data["callId"] == "parent")
+        .expect("parent call");
+    assert!(parent_call.get("parentCallId").is_none(), "{parent_call}");
+
+    let results = of_type(&agent, "tool/result");
+    let child_result = results
+        .iter()
+        .find(|data| data["message"]["toolCallId"] == "child-read")
+        .expect("child result");
+    assert_eq!(child_result["parentCallId"], "parent");
+    let parent_result = results
+        .iter()
+        .find(|data| data["message"]["toolCallId"] == "parent")
+        .expect("parent result");
+    assert!(
+        parent_result.get("parentCallId").is_none(),
+        "{parent_result}"
+    );
+    env.close().await;
+}
+
+#[tokio::test]
 async fn harness_errors_reach_the_log_masked() {
     let dirs = dirs();
     let env = env(&dirs).await;
