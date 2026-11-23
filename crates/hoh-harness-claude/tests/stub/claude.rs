@@ -8,7 +8,7 @@
 //! appended to `$STUB_STATE/prompt-sessions`.
 //! Prompts: `withdraw`, `toolfail`, `subagent`, `run-reason`, `hello`, `run: <command>`, `edit: <path>`, `question`, `long`, `garbage`, `stderr`,
 //! `crash`, `failure`, `write: <path>`, `kill-self` (SIGABRT), `ask-abort`, `echo-decision`,
-//! `subagent-tool`, `unknown-request`, `withdraw-question`, `leave-open`, `subagent-stream`,
+//! `subagent-tool`, `parallel-subagents`, `unknown-request`, `withdraw-question`, `leave-open`, `subagent-stream`,
 //! `truncate`, `read: <path>`, `close-stdin`, `notebook: <path>`, `login-expired`, `forbidden`, `question-body`, `question-odd`, `question-bare`, `two-open`, `silent-interrupt`; STUB_MODE `version-fails`, `root-refusal`, `secret-start`; prompts `protected: <path>`, `dangerous-rm`, `secret-crash`.
 
 use std::io::{BufRead, Write};
@@ -502,6 +502,75 @@ impl Stub {
                 ] },
             }));
             self.say(&message_id, 0, &["shown"]);
+            self.result("success", false, "done");
+        } else if text == "parallel-subagents" {
+            write_line(&json!({
+                "type": "assistant", "session_id": self.session, "parent_tool_use_id": null,
+                "message": { "id": "root-agents", "role": "assistant", "content": [
+                    { "type": "tool_use", "id": "toolu_alpha", "name": "Agent",
+                      "input": { "description": "Alpha", "prompt": "inspect alpha" } },
+                    { "type": "tool_use", "id": "toolu_beta", "name": "Agent",
+                      "input": { "description": "Beta", "prompt": "inspect beta" } }
+                ] },
+            }));
+            write_line(&json!({
+                "type": "assistant", "session_id": self.session,
+                "parent_tool_use_id": "toolu_alpha",
+                "message": { "id": "alpha-1", "role": "assistant", "content": [
+                    { "type": "text", "text": "alpha note" },
+                    { "type": "tool_use", "id": "toolu_alpha_read", "name": "Read",
+                      "input": { "file_path": "alpha.txt" } }
+                ] },
+            }));
+            write_line(&json!({
+                "type": "assistant", "session_id": self.session,
+                "parent_tool_use_id": "toolu_beta",
+                "message": { "id": "beta-1", "role": "assistant", "content": [
+                    { "type": "text", "text": "beta note" },
+                    { "type": "tool_use", "id": "toolu_beta_grep", "name": "Grep",
+                      "input": { "pattern": "beta" } }
+                ] },
+            }));
+            write_line(&json!({
+                "type": "user", "session_id": self.session,
+                "parent_tool_use_id": "toolu_beta",
+                "message": { "role": "user", "content": [
+                    { "type": "tool_result", "tool_use_id": "toolu_beta_grep",
+                      "content": "beta match" }
+                ] },
+            }));
+            write_line(&json!({
+                "type": "assistant", "session_id": self.session,
+                "parent_tool_use_id": "toolu_beta",
+                "message": { "id": "beta-2", "role": "assistant", "content": [
+                    { "type": "text", "text": "beta final" }
+                ] },
+            }));
+            write_line(&json!({
+                "type": "user", "session_id": self.session,
+                "parent_tool_use_id": "toolu_alpha",
+                "message": { "role": "user", "content": [
+                    { "type": "tool_result", "tool_use_id": "toolu_alpha_read",
+                      "content": "alpha contents" }
+                ] },
+            }));
+            write_line(&json!({
+                "type": "assistant", "session_id": self.session,
+                "parent_tool_use_id": "toolu_alpha",
+                "message": { "id": "alpha-2", "role": "assistant", "content": [
+                    { "type": "text", "text": "alpha final" }
+                ] },
+            }));
+            write_line(&json!({
+                "type": "user", "session_id": self.session, "parent_tool_use_id": null,
+                "message": { "role": "user", "content": [
+                    { "type": "tool_result", "tool_use_id": "toolu_beta",
+                      "content": "beta final" },
+                    { "type": "tool_result", "tool_use_id": "toolu_alpha",
+                      "content": "alpha final" }
+                ] },
+            }));
+            self.say(&message_id, 0, &["combined"]);
             self.result("success", false, "done");
         } else if text == "unknown-request" {
             let request = self.id("odd");

@@ -5,7 +5,7 @@
 //! Prompts: `hello`, `double final`, `run: <command>`, `delete: <path>`, `race`, `question`,
 //! `run in <folder>: <command>`, `long command`, `stubborn command`, `break stream`, `crash`, `garbage`, `flood`,
 //! `slow start`, `mute`, `huge frame`, `no final`, `only reasoning`, `fail secret`, `leak`,
-//! `bad event`, `split key`, `update: <path>`, `changes: <JSON list of changes>`,
+//! `bad event`, `split key`, `nested events`, `update: <path>`, `changes: <JSON list of changes>`,
 //! `permission: <description>`, `tool: <name> <JSON input>`, `repeat request`, `late request`, `late request after prompt`, `late leak`, `swap`, `bypass: <command>` (runs it without asking),
 //! and any prompt containing `echo`.
 //!
@@ -472,6 +472,22 @@ impl Stub {
                     "outcome": "completed", "exitCode": 0}));
                 self.event(json!({"type": "reasoning-final", "messageId": "r2",
                     "text": "checked the result"}));
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
+            "nested events" => {
+                self.event(
+                    json!({"type": "item-started", "itemId": "parent", "action": {
+                    "kind": "tool", "name": "Agent", "input": {"description": "child"}}}),
+                );
+                self.event(json!({"type": "text-final", "messageId": "child-text",
+                    "text": "child note", "parentItemId": "parent"}));
+                self.event(json!({"type": "item-started", "itemId": "child-read",
+                    "parentItemId": "parent", "action": {
+                        "kind": "tool", "name": "Read", "input": {"file_path": "a.txt"}}}));
+                self.event(json!({"type": "item-completed", "itemId": "child-read",
+                    "parentItemId": "parent", "outcome": "completed", "output": "contents"}));
+                self.event(json!({"type": "item-completed", "itemId": "parent",
+                    "outcome": "completed", "output": "child done"}));
                 self.event(json!({"type": "turn-completed", "turnId": turn_id}));
             }
             "fail secret" => {

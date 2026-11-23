@@ -17,7 +17,10 @@ interface Entry {
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
   agents: Agent[];
 }
-interface Agent { id: string; name: string; kind: string; state: 'working' | 'done' | 'failed'; startedAt: number; doneAt: number | null }
+interface Agent {
+  id: string; name: string; kind: string; state: 'working' | 'done' | 'failed';
+  startedAt: number; doneAt: number | null; currentStep: string | null;
+}
 interface Home {
   version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectTitle(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
@@ -70,8 +73,13 @@ function StateDot({ state }: { state: Agent['state'] }) {
 }
 function Sub({ agent, now }: { agent: Agent; now: number }) {
   return (
-    <div className="hoh-sub" data-state={agent.state} title={`${agent.kind}: ${agent.name}`}>
-      <StateDot state={agent.state} /><span className="hoh-sub__name">{agent.name}</span><small>{agent.kind}</small>
+    <div className="hoh-sub" data-state={agent.state} title={[`${agent.kind}: ${agent.name}`, agent.currentStep].filter(Boolean).join('\n')}>
+      <StateDot state={agent.state} />
+      <span className="hoh-sub__copy">
+        <span className="hoh-sub__name">{agent.name}</span>
+        {agent.currentStep ? <span className="hoh-sub__step">{agent.currentStep}</span> : null}
+      </span>
+      <small>{agent.kind}</small>
       <time>{elapsed(agent.startedAt, agent.doneAt ?? now)}</time>
     </div>
   );

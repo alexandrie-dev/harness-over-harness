@@ -295,15 +295,17 @@ async fn a_turn_streams_reasoning_and_text_and_completes() {
         _ => None,
     });
     let final_id = seen.iter().find_map(|e| match e {
-        HarnessEvent::TextFinal { message_id, text } if text == "Hello" => Some(message_id.clone()),
+        HarnessEvent::TextFinal {
+            message_id, text, ..
+        } if text == "Hello" => Some(message_id.clone()),
         _ => None,
     });
     assert!(delta_id.is_some());
     assert_eq!(delta_id, final_id, "the final text replaces its own deltas");
     let thinking = seen.iter().find_map(|e| match e {
-        HarnessEvent::ReasoningDelta { message_id, text } => {
-            Some((message_id.clone(), text.clone()))
-        }
+        HarnessEvent::ReasoningDelta {
+            message_id, text, ..
+        } => Some((message_id.clone(), text.clone())),
         _ => None,
     });
     let thinking_final = seen.iter().find_map(|e| match e {
@@ -444,6 +446,7 @@ async fn a_question_reaches_the_user_and_the_answer_goes_back() {
         Some(HarnessEvent::QuestionAsked {
             request_id,
             questions,
+            ..
         }) => (request_id.clone(), questions[0].clone()),
         other => panic!("{other:?}"),
     };
@@ -1001,7 +1004,7 @@ async fn a_failed_tool_result_fails_the_step() {
 }
 
 #[tokio::test]
-async fn text_of_a_subagent_is_not_part_of_the_answer() {
+async fn text_of_a_subagent_is_a_parented_answer_not_root_text() {
     let env = Env::new();
     let Started {
         session,
@@ -1013,11 +1016,15 @@ async fn text_of_a_subagent_is_not_part_of_the_answer() {
     let finals: Vec<_> = seen
         .iter()
         .filter_map(|e| match e {
-            HarnessEvent::TextFinal { text, .. } => Some(text.as_str()),
+            HarnessEvent::TextFinal {
+                text,
+                parent_item_id,
+                ..
+            } => Some((text.as_str(), parent_item_id.as_deref())),
             _ => None,
         })
         .collect();
-    assert_eq!(finals, ["shown"]);
+    assert_eq!(finals, [("hidden", Some("toolu_p")), ("shown", None)]);
     session.terminate(Duration::from_millis(500)).await;
 }
 
@@ -1073,7 +1080,7 @@ async fn a_process_killed_by_a_signal_names_the_signal() {
 }
 
 #[tokio::test]
-async fn a_step_of_a_subagent_is_not_a_step_of_the_turn() {
+async fn a_step_and_approval_of_a_subagent_keep_their_parent() {
     let env = Env::new();
     let Started {
         session,
@@ -1089,9 +1096,11 @@ async fn a_step_of_a_subagent_is_not_a_step_of_the_turn() {
         Some(HarnessEvent::ApprovalRequested {
             request_id,
             item_id,
+            parent_item_id,
             ..
         }) => {
-            assert_eq!(*item_id, None, "no step of the turn to attach to");
+            assert_eq!(item_id.as_deref(), Some("toolu_sub"));
+            assert_eq!(parent_item_id.as_deref(), Some("toolu_p"));
             request_id.clone()
         }
         other => panic!("{other:?}"),
@@ -1104,13 +1113,31 @@ async fn a_step_of_a_subagent_is_not_a_step_of_the_turn() {
         },
     );
     let rest = until(&mut events, turn_end).await;
-    let steps = seen.iter().chain(rest.iter()).filter(|e| {
-        matches!(
-            e,
-            HarnessEvent::ItemStarted { .. } | HarnessEvent::ItemCompleted { .. }
-        )
-    });
-    assert_eq!(steps.count(), 0, "{seen:?} {rest:?}");
+    let steps: Vec<_> = seen
+        .iter()
+        .chain(rest.iter())
+        .filter_map(|event| match event {
+            HarnessEvent::ItemStarted {
+                item_id,
+                parent_item_id,
+                ..
+            }
+            | HarnessEvent::ItemCompleted {
+                item_id,
+                parent_item_id,
+                ..
+            } => Some((item_id.as_str(), parent_item_id.as_deref())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("toolu_sub", Some("toolu_p")),
+            ("toolu_sub", Some("toolu_p"))
+        ],
+        "{seen:?} {rest:?}"
+    );
     assert!(matches!(
         rest.last(),
         Some(HarnessEvent::TurnCompleted { .. })
@@ -1389,7 +1416,7 @@ async fn a_request_left_open_at_the_end_of_the_turn_is_resolved() {
 }
 
 #[tokio::test]
-async fn a_stream_delta_of_a_subagent_is_not_part_of_the_answer() {
+async fn a_stream_delta_of_a_subagent_keeps_the_parent() {
     let env = Env::new();
     let Started {
         session,
@@ -1398,10 +1425,88 @@ async fn a_stream_delta_of_a_subagent_is_not_part_of_the_answer() {
     } = start(&env, None).await;
     prompt(&session, "t1", "subagent-stream");
     let seen = until(&mut events, turn_end).await;
-    assert!(!seen.iter().any(|e| matches!(
+    assert!(seen.iter().any(|e| matches!(
         e,
-        HarnessEvent::TextDelta { text, .. } if text == "hidden-delta"
+        HarnessEvent::TextDelta { text, parent_item_id: Some(parent), .. }
+            if text == "hidden-delta" && parent == "toolu_p"
     )));
+    session.terminate(Duration::from_millis(500)).await;
+}
+
+#[tokio::test]
+async fn two_parallel_subagents_keep_parent_order_text_steps_results_and_outcomes() {
+    let env = Env::new();
+    let Started {
+        session,
+        mut events,
+        ..
+    } = start(&env, None).await;
+    prompt(&session, "t1", "parallel-subagents");
+    let seen = until(&mut events, turn_end).await;
+    let routed: Vec<String> = seen
+        .iter()
+        .filter_map(|event| match event {
+            HarnessEvent::TextFinal {
+                text,
+                parent_item_id: Some(parent),
+                ..
+            } => Some(format!("{parent}:text:{text}")),
+            HarnessEvent::ItemStarted {
+                item_id,
+                parent_item_id: Some(parent),
+                ..
+            } => Some(format!("{parent}:start:{item_id}")),
+            HarnessEvent::ItemCompleted {
+                item_id,
+                output,
+                parent_item_id: Some(parent),
+                ..
+            } => Some(format!(
+                "{parent}:result:{item_id}:{}",
+                output.as_deref().unwrap_or_default()
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        routed,
+        [
+            "toolu_alpha:text:alpha note",
+            "toolu_alpha:start:toolu_alpha_read",
+            "toolu_beta:text:beta note",
+            "toolu_beta:start:toolu_beta_grep",
+            "toolu_beta:result:toolu_beta_grep:beta match",
+            "toolu_beta:text:beta final",
+            "toolu_alpha:result:toolu_alpha_read:alpha contents",
+            "toolu_alpha:text:alpha final",
+        ],
+        "{seen:#?}"
+    );
+    let parent_outcomes: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            HarnessEvent::ItemCompleted {
+                item_id,
+                outcome,
+                parent_item_id: None,
+                ..
+            } if matches!(item_id.as_str(), "toolu_alpha" | "toolu_beta") => {
+                Some((item_id.as_str(), *outcome))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        parent_outcomes,
+        [
+            ("toolu_beta", ItemOutcome::Completed),
+            ("toolu_alpha", ItemOutcome::Completed)
+        ]
+    );
+    assert!(matches!(
+        seen.last(),
+        Some(HarnessEvent::TurnCompleted { .. })
+    ));
     session.terminate(Duration::from_millis(500)).await;
 }
 
@@ -1631,6 +1736,7 @@ async fn the_answer_to_a_question_has_the_body_of_t3() {
         Some(HarnessEvent::QuestionAsked {
             request_id,
             questions,
+            ..
         }) => (request_id.clone(), questions[0].id.clone()),
         other => panic!("{other:?}"),
     };
@@ -1770,6 +1876,7 @@ async fn questions_are_projected_as_in_t3() {
         Some(HarnessEvent::QuestionAsked {
             request_id,
             questions,
+            ..
         }) => (request_id.clone(), questions.clone()),
         other => panic!("{other:?}"),
     };

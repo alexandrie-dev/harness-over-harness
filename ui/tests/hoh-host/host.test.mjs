@@ -623,6 +623,127 @@ test('home screen subagents: Claude\'s Task (Agent) calls are the chat\'s subage
   assert.deepEqual(entry.steps, { done: 1, total: 1 });
 });
 
+test('parallel subagent text and tools stay nested under their Task, drive each home row, and keep an approval on its original id', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine);
+  engine.seed('chat-nested', 'Nested', []);
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-nested' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-nested', 'turn/start', { turn: 1 });
+  engine.emitEvent('chat-nested', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'Run both' }] });
+  engine.emitStatus('chat-nested', 'running');
+  const call = (callId, name, args, parentCallId) => engine.emitEvent('chat-nested', 'tool/call', {
+    turn: 1, callId, name, arguments: JSON.stringify(args), ...(parentCallId ? { parentCallId } : {}),
+  });
+  call('task-alpha', 'Agent', { description: 'Alpha', subagent_type: 'Explore', prompt: 'alpha work' });
+  call('task-beta', 'Task', { description: 'Beta', subagent_type: 'general-purpose', prompt: 'beta work' });
+  call('read-alpha', 'Read', { file_path: '/work/a.txt' }, 'task-alpha');
+  engine.emitEvent('chat-nested', 'assistant/message', {
+    turn: 1, step: 2, parentCallId: 'task-beta',
+    message: { id: 'beta-note', content: [{ type: 'text', text: 'Beta is inspecting tests' }] },
+  });
+  engine.emitEvent('chat-nested', 'tool/result', {
+    turn: 1, parentCallId: 'task-alpha', message: { toolCallId: 'read-alpha', content: [{ type: 'text', text: 'alpha contents' }] },
+  });
+  engine.emitEvent('chat-nested', 'assistant/message', {
+    turn: 1, step: 3, parentCallId: 'task-alpha',
+    message: { id: 'alpha-note', content: [{ type: 'text', text: 'Alpha found the entry point' }] },
+  });
+  call('bash-beta', 'Bash', { command: 'echo beta' }, 'task-beta');
+  engine.askApproval('chat-nested', 'approval-from-beta', 'ignored');
+  engine.emitEvent('chat-nested', 'approval/asked', { id: 'approval-from-beta', toolName: 'Bash', callId: 'bash-beta' });
+
+  const snapshot = await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests[0]?.id === 'approval-from-beta');
+  host.flush();
+  const items = itemsOf(snapshot);
+  const alpha = items.find(item => item.type === 'dynamic_tool' && item.toolName === 'Agent');
+  const beta = items.find(item => item.type === 'dynamic_tool' && item.toolName === 'Task');
+  assert(alpha && beta);
+  assert.deepEqual(
+    items.filter(item => item.parentItemId === alpha.id).map(item => [item.type, item.text ?? item.toolName ?? item.input]),
+    [['dynamic_tool', 'Read'], ['assistant_message', 'Alpha found the entry point']],
+  );
+  assert.deepEqual(
+    items.filter(item => item.parentItemId === beta.id).map(item => [item.type, item.text ?? item.toolName ?? item.input]),
+    [['assistant_message', 'Beta is inspecting tests'], ['command_execution', 'echo beta']],
+  );
+  assert.match(alpha.output, /\[done\] Read[\s\S]*alpha contents[\s\S]*Alpha found the entry point/);
+  assert.match(beta.output, /Beta is inspecting tests[\s\S]*\[running\] Command: echo beta/);
+  assert.deepEqual(
+    snapshot.projection.visibleTurnItems.map(entry => entry.item.id).filter(id => [alpha.id, beta.id].includes(id)),
+    [alpha.id, beta.id],
+    'T3 sees the expandable Task rows at the top level',
+  );
+  assert.equal(
+    snapshot.projection.visibleTurnItems.some(entry => entry.item.parentItemId !== null), false,
+    'child text and tools are shown inside Task output, never duplicated in the root timeline',
+  );
+  assert.equal(snapshot.projection.messages.some(message => /Alpha found|Beta is inspecting/.test(message.text)), false);
+  const approval = items.find(item => item.requestId === 'approval-from-beta');
+  assert.equal(approval.parentItemId, null, 'a subagent approval remains the ordinary conversation card');
+  const entry = host.home.entries().find(candidate => candidate.id === 'chat-nested');
+  assert.deepEqual(entry.agents.map(agent => [agent.name, agent.currentStep]), [
+    ['Alpha', 'Alpha found the entry point'], ['Beta', 'echo beta'],
+  ]);
+  assert.deepEqual(entry.steps, { done: 0, total: 0 }, 'nested steps are not root-agent steps');
+
+  // A native child can arrive after its Task result and after HoH has moved to another turn. Its native
+  // parent id remains stable, and an unfinished late child keeps the home row working.
+  engine.emitEvent('chat-nested', 'tool/result', {
+    turn: 1, message: { toolCallId: 'task-alpha', content: [{ type: 'text', text: 'alpha final' }] },
+  });
+  engine.emitEvent('chat-nested', 'tool/call', {
+    turn: 2, callId: 'late-alpha', parentCallId: 'task-alpha', name: 'Grep', arguments: JSON.stringify({ pattern: 'late' }),
+  });
+  host.flush();
+  let lateEntry = host.home.entries().find(candidate => candidate.id === 'chat-nested').agents.find(agent => agent.name === 'Alpha');
+  assert.deepEqual([lateEntry.state, lateEntry.currentStep, lateEntry.doneAt], ['working', 'Search: late', null]);
+  engine.emitEvent('chat-nested', 'tool/result', {
+    turn: 3, message: { toolCallId: 'late-alpha', content: [{ type: 'text', text: 'late match' }] },
+  });
+  const lateSnapshot = await thread.until(value => value.kind === 'snapshot'
+    && itemsOf(value).some(item => item.parentItemId === alpha.id && item.pattern === 'late' && item.status === 'completed'));
+  host.flush();
+  const lateAlpha = itemsOf(lateSnapshot).find(item => item.parentItemId === alpha.id && item.pattern === 'late');
+  assert(lateAlpha);
+  assert.match(itemsOf(lateSnapshot).find(item => item.id === alpha.id).output, /late match[\s\S]*Result\nalpha final/);
+  lateEntry = host.home.entries().find(candidate => candidate.id === 'chat-nested').agents.find(agent => agent.name === 'Alpha');
+  assert.deepEqual([lateEntry.state, lateEntry.currentStep], ['done', 'Search: late']);
+
+  engine.emitEvent('chat-nested', 'tool/call', {
+    turn: 2, callId: 'failed-alpha', parentCallId: 'task-alpha', name: 'Bash', arguments: JSON.stringify({ command: 'false' }),
+  });
+  engine.emitEvent('chat-nested', 'tool/result', {
+    turn: 2, message: { toolCallId: 'failed-alpha', isError: true, content: [{ type: 'text', text: 'command failed' }] },
+  });
+  host.flush();
+  assert.equal(
+    host.home.entries().find(candidate => candidate.id === 'chat-nested').agents.find(agent => agent.name === 'Alpha').state,
+    'done',
+    'a recovered failed child does not override the successful Task result',
+  );
+
+  engine.emitEvent('chat-nested', 'tool/call', {
+    turn: 2, callId: 'large-alpha', parentCallId: 'task-alpha', name: 'Bash', arguments: JSON.stringify({ command: 'large output' }),
+  });
+  engine.emitEvent('chat-nested', 'tool/result', {
+    turn: 2, message: { toolCallId: 'large-alpha', content: [{ type: 'text', text: 'x'.repeat(25_000) }] },
+  });
+  engine.emitEvent('chat-nested', 'assistant/message', {
+    turn: 2, step: 9, parentCallId: 'task-alpha',
+    message: { id: 'alpha-after-large', content: [{ type: 'text', text: 'Alpha kept the final finding' }] },
+  });
+  const largeSnapshot = await thread.until(value => value.kind === 'snapshot'
+    && itemsOf(value).some(item => item.parentItemId === alpha.id && item.text === 'Alpha kept the final finding'));
+  const largeOutput = itemsOf(largeSnapshot).find(item => item.id === alpha.id).output;
+  assert.equal(largeOutput.length, 20_000);
+  assert.match(largeOutput, /earlier subagent output truncated/);
+  assert.match(largeOutput, /Alpha kept the final finding[\s\S]*Result\nalpha final$/);
+
+  await host.home.answer('chat-nested', 'approval-from-beta', 'accept');
+  assert.deepEqual(engine.decisions, [{ approvalId: 'approval-from-beta', outcome: 'allowed-once' }]);
+});
+
 test('restart persistence: an engine still starting answers nothing at first — the chats and Claude\'s check arrive when it is ready (they were lost for good before)', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-r1', 'First', [['turn/start', { turn: 1 }], ['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'first' }] }]]);

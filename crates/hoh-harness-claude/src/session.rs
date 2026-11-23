@@ -62,12 +62,13 @@ struct State {
     /// Requests the CLI sent here and still waits for, by the CLI's request id.
     pending: HashMap<String, Pending>,
     started: HashSet<String>,
-    /// `tool_use` ids of subagents: their steps are not the turn's own (T3 nests them).
-    subagent_tools: HashSet<String>,
+    /// A subagent tool call id to the Agent/Task call that owns it.
+    item_parents: HashMap<String, String>,
     declined: HashSet<String>,
     turn: Option<String>,
     interrupting: bool,
-    message_id: Option<String>,
+    /// Current streamed message id per root (`None`) or subagent parent call.
+    message_ids: HashMap<Option<String>, String>,
     /// The native id of the session; the CLI may assign a new one when it resumes.
     native: String,
     /// Why the stream was cut off (a line that is not a contract message), for the window.
@@ -519,12 +520,7 @@ async fn handle_system(inner: &Inner, message: &Value) {
 }
 
 async fn handle_stream_event(inner: &Inner, message: &Value) {
-    if message
-        .get("parent_tool_use_id")
-        .is_some_and(|v| !v.is_null())
-    {
-        return;
-    }
+    let parent_item_id = text(message, "parent_tool_use_id").map(str::to_owned);
     let Some(event) = message.get("event") else {
         return;
     };
@@ -534,14 +530,18 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                 .get("message")
                 .and_then(|m| text(m, "id"))
                 .map(str::to_owned);
-            lock(&inner.state).message_id = id;
+            if let Some(id) = id {
+                lock(&inner.state)
+                    .message_ids
+                    .insert(parent_item_id.clone(), id);
+            }
         }
         Some("content_block_delta") => {
             let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
             let Some(delta) = event.get("delta") else {
                 return;
             };
-            let message_id = block_id(inner, None, index as usize);
+            let message_id = block_id(inner, parent_item_id.as_deref(), None, index as usize);
             match text(delta, "type") {
                 Some("text_delta") => {
                     if let Some(text) = text(delta, "text") {
@@ -549,6 +549,7 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                             .emit(HarnessEvent::TextDelta {
                                 message_id,
                                 text: text.to_owned(),
+                                parent_item_id: parent_item_id.clone(),
                             })
                             .await;
                     }
@@ -559,6 +560,7 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                             .emit(HarnessEvent::ReasoningDelta {
                                 message_id,
                                 text: text.to_owned(),
+                                parent_item_id: parent_item_id.clone(),
                             })
                             .await;
                     }
@@ -571,8 +573,14 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
 }
 
 /// `<message id>:<block index>` — the same for the streamed deltas and the final block.
-fn block_id(inner: &Inner, message_id: Option<&str>, index: usize) -> String {
-    let current = lock(&inner.state).message_id.clone();
+fn block_id(
+    inner: &Inner,
+    parent_item_id: Option<&str>,
+    message_id: Option<&str>,
+    index: usize,
+) -> String {
+    let parent = parent_item_id.map(str::to_owned);
+    let current = lock(&inner.state).message_ids.get(&parent).cloned();
     let id = message_id.map(str::to_owned).or(current);
     format!("{}:{index}", id.as_deref().unwrap_or("message"))
 }
@@ -587,9 +595,7 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
     {
         lock(&inner.state).auth_failed = true;
     }
-    let subagent = message
-        .get("parent_tool_use_id")
-        .is_some_and(|v| !v.is_null());
+    let parent_item_id = text(message, "parent_tool_use_id").map(str::to_owned);
     let Some(body) = message.get("message") else {
         return;
     };
@@ -607,33 +613,38 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
         };
         let id = format!("{message_id}:{ordinal}");
         match text(block, "type") {
-            Some("text") if !subagent => {
+            Some("text") => {
                 if let Some(text) = text(block, "text") {
                     inner
                         .emit(HarnessEvent::TextFinal {
                             message_id: id,
                             text: text.to_owned(),
+                            parent_item_id: parent_item_id.clone(),
                         })
                         .await;
                 }
             }
-            Some("thinking") if !subagent => {
+            Some("thinking") => {
                 if let Some(text) = text(block, "thinking") {
                     inner
                         .emit(HarnessEvent::ReasoningFinal {
                             message_id: id,
                             text: text.to_owned(),
+                            parent_item_id: parent_item_id.clone(),
                         })
                         .await;
                 }
             }
             Some("tool_use") => {
                 if let (Some(tool_id), Some(name)) = (text(block, "id"), text(block, "name")) {
-                    if subagent {
-                        lock(&inner.state).subagent_tools.insert(tool_id.to_owned());
-                    } else {
-                        ensure_item_started(inner, tool_id, name, block.get("input")).await;
-                    }
+                    ensure_item_started(
+                        inner,
+                        tool_id,
+                        name,
+                        block.get("input"),
+                        parent_item_id.clone(),
+                    )
+                    .await;
                 }
             }
             _ => {}
@@ -641,14 +652,29 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
     }
 }
 
-async fn ensure_item_started(inner: &Inner, id: &str, name: &str, input: Option<&Value>) {
-    let fresh = lock(&inner.state).started.insert(id.to_owned());
+async fn ensure_item_started(
+    inner: &Inner,
+    id: &str,
+    name: &str,
+    input: Option<&Value>,
+    parent_item_id: Option<String>,
+) {
+    let fresh = {
+        let mut state = lock(&inner.state);
+        if let Some(parent_item_id) = parent_item_id.as_ref() {
+            state
+                .item_parents
+                .insert(id.to_owned(), parent_item_id.clone());
+        }
+        state.started.insert(id.to_owned())
+    };
     if fresh {
         let action = action_for(name, input.unwrap_or(&Value::Null), &inner.cwd).await;
         inner
             .emit(HarnessEvent::ItemStarted {
                 item_id: id.to_owned(),
                 action,
+                parent_item_id,
             })
             .await;
     }
@@ -761,6 +787,7 @@ pub(crate) async fn action_for(name: &str, input: &Value, cwd: &std::path::Path)
 }
 
 async fn handle_user(inner: &Inner, message: &Value) {
+    let message_parent = text(message, "parent_tool_use_id").map(str::to_owned);
     let Some(blocks) = message
         .get("message")
         .and_then(|m| m.get("content"))
@@ -775,10 +802,17 @@ async fn handle_user(inner: &Inner, message: &Value) {
         let Some(id) = text(block, "tool_use_id") else {
             continue;
         };
-        let (known, declined) = {
+        let (known, declined, parent_item_id) = {
             let mut state = lock(&inner.state);
-            state.subagent_tools.remove(id);
-            (state.started.remove(id), state.declined.remove(id))
+            let parent_item_id = state
+                .item_parents
+                .remove(id)
+                .or_else(|| message_parent.clone());
+            (
+                state.started.remove(id),
+                state.declined.remove(id),
+                parent_item_id,
+            )
         };
         if !known {
             continue;
@@ -802,6 +836,7 @@ async fn handle_user(inner: &Inner, message: &Value) {
                 outcome,
                 output: Some(tool_result_text(block.get("content"))),
                 exit_code: None,
+                parent_item_id,
             })
             .await;
     }
@@ -871,10 +906,18 @@ async fn handle_result(inner: &Inner, message: &Value) {
             return;
         }
         state.prompt_uuid = None;
-        let open: Vec<String> = state.started.drain().collect();
+        let parents = std::mem::take(&mut state.item_parents);
+        let open: Vec<(String, Option<String>)> = state
+            .started
+            .drain()
+            .map(|id| {
+                let parent = parents.get(&id).cloned();
+                (id, parent)
+            })
+            .collect();
         state.declined.clear();
-        state.subagent_tools.clear();
         state.consumed.clear();
+        state.message_ids.clear();
         let withdrawn: Vec<String> = state.pending.drain().map(|(id, _)| id).collect();
         (
             state.turn.take(),
@@ -889,13 +932,14 @@ async fn handle_result(inner: &Inner, message: &Value) {
             .emit(HarnessEvent::RequestResolved { request_id })
             .await;
     }
-    for item_id in open {
+    for (item_id, parent_item_id) in open {
         inner
             .emit(HarnessEvent::ItemCompleted {
                 item_id,
                 outcome: ItemOutcome::Interrupted,
                 output: None,
                 exit_code: None,
+                parent_item_id,
             })
             .await;
     }
@@ -964,6 +1008,10 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
     let native_id = text(request, "tool_use_id")
         .unwrap_or(request_id)
         .to_owned();
+    let tool_use_id = text(request, "tool_use_id").map(str::to_owned);
+    let parent_item_id = tool_use_id
+        .as_deref()
+        .and_then(|id| lock(&inner.state).item_parents.get(id).cloned());
     if name == "AskUserQuestion" {
         let (questions, texts) = questions_from(&input);
         lock(&inner.state).pending.insert(
@@ -978,16 +1026,13 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
             .emit(HarnessEvent::QuestionAsked {
                 request_id: request_id.to_owned(),
                 questions,
+                parent_item_id,
             })
             .await;
         return;
     }
-    let tool_use_id = text(request, "tool_use_id").map(str::to_owned);
-    let of_subagent = tool_use_id
-        .as_deref()
-        .is_some_and(|id| lock(&inner.state).subagent_tools.contains(id));
-    if let Some(id) = tool_use_id.as_deref().filter(|_| !of_subagent) {
-        ensure_item_started(inner, id, name, Some(&input)).await;
+    if let Some(id) = tool_use_id.as_deref() {
+        ensure_item_started(inner, id, name, Some(&input), parent_item_id.clone()).await;
     }
     if inner.bypass && is_removal_safety_refusal(name, request) {
         // T3 `ClaudeAdapterV2.ts:12494-12510`: the CLI's own removal check refused it under
@@ -1017,9 +1062,10 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
     inner
         .emit(HarnessEvent::ApprovalRequested {
             request_id: request_id.to_owned(),
-            item_id: tool_use_id.filter(|_| !of_subagent),
+            item_id: tool_use_id,
             action,
             reason,
+            parent_item_id,
         })
         .await;
 }
@@ -1191,7 +1237,7 @@ fn spawn_interrupt_watch(inner: &Arc<Inner>, turn_id: String) {
 
 async fn settle_unanswered_interrupt(inner: Arc<Inner>, turn_id: String) {
     tokio::time::sleep(inner.interrupt_timeout).await;
-    let open: Vec<String> = {
+    let open: Vec<(String, Option<String>)> = {
         let mut state = lock(&inner.state);
         if state.turn.as_deref() != Some(turn_id.as_str())
             || inner.terminated.load(Ordering::SeqCst)
@@ -1201,21 +1247,30 @@ async fn settle_unanswered_interrupt(inner: Arc<Inner>, turn_id: String) {
         state.turn = None;
         state.interrupting = false;
         state.declined.clear();
-        state.subagent_tools.clear();
+        let parents = std::mem::take(&mut state.item_parents);
         state.consumed.clear();
-        state.started.drain().collect()
+        state.message_ids.clear();
+        state
+            .started
+            .drain()
+            .map(|id| {
+                let parent = parents.get(&id).cloned();
+                (id, parent)
+            })
+            .collect()
     };
     inner.terminated.store(true, Ordering::SeqCst);
     // The settlement is not the watcher's to lose: the end of the stream aborts the watchers,
     // and the turn must still get its one end and the session its `SessionEnded`.
     tokio::spawn(async move {
-        for item_id in open {
+        for (item_id, parent_item_id) in open {
             inner
                 .emit(HarnessEvent::ItemCompleted {
                     item_id,
                     outcome: ItemOutcome::Interrupted,
                     output: None,
                     exit_code: None,
+                    parent_item_id,
                 })
                 .await;
         }
