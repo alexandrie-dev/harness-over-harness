@@ -15,6 +15,7 @@
 
 mod agent;
 pub mod contract;
+mod entries;
 mod executor;
 mod harness;
 pub mod redact;

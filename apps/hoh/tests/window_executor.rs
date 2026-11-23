@@ -219,8 +219,8 @@ impl Workspace {
 
 /// A stand-in for the `claude` CLI (`@STARTS@` and `@VERSION@` are filled in). Every start
 /// writes its arguments, folder and the names of its environment variables to its own file in
-/// `claude-starts`. It answers `--version`, `initialize` (a signed-in account, two models) and
-/// `interrupt`. A turn begins with `system/init` naming the model `claude-x-1`; the prompt picks
+/// `claude-starts`. It answers `--version`, `initialize` (a signed-in account, two models, two
+/// commands), `reload_skills` (one skill) and `interrupt`. A turn begins with `system/init` naming the model `claude-x-1`; the prompt picks
 /// the step:
 /// - `edit` / `run`: an `Edit` of `notes.txt` / a `Bash` `touch ran.txt`, asked with `can_use_tool`
 ///   (under `bypassPermissions` run without asking, as the CLI does);
@@ -304,7 +304,12 @@ def control(message):
     if request.get("subtype") == "initialize":
         response = {"models": [{"value": "default", "displayName": "Default"},
                                {"value": "sonnet", "displayName": "Sonnet"}],
-                    "account": {"email": "user@example.com", "tokenSource": "claude.ai"}}
+                    "account": {"email": "user@example.com", "tokenSource": "claude.ai"},
+                    "commands": [{"name": "review", "description": "Review the folder " + os.path.basename(CWD),
+                                  "argumentHint": "[pr]"},
+                                 {"name": "release-notes", "description": "Write the release notes"}]}
+    if request.get("subtype") == "reload_skills":
+        response = {"skills": [{"name": "release-notes", "description": "Write the release notes"}]}
     write({"type": "control_response",
            "response": {"subtype": "success", "request_id": message.get("request_id"), "response": response}})
 
@@ -2918,5 +2923,170 @@ async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing
     }
     assert!(workspace.prompts().is_empty(), "{:?}", workspace.prompts());
     assert!(workspace.sessions().is_empty());
+    host.shutdown().await;
+}
+
+// ------------------------------------------------- `/`, `$` and `@` of the window (HOH-41 package 1)
+
+/// 16. Before any turn, `/` and `$` are what Claude itself declares for the folder: the commands of
+/// its `initialize` and the skills of its `reload_skills`, from a probe in that folder that starts
+/// no conversation.
+#[tokio::test]
+async fn p16_commands_and_skills_come_from_claude_before_the_first_turn() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let result = host
+        .ok(
+            "hoh/executor/commands",
+            json!({"executor": "claude", "cwd": workspace.folder}),
+        )
+        .await;
+    assert_eq!(
+        result["commands"],
+        json!([
+            {"name": "review", "description": "Review the folder work", "argumentHint": "[pr]"},
+            {"name": "release-notes", "description": "Write the release notes"},
+        ]),
+        "{result}"
+    );
+    assert_eq!(
+        result["skills"],
+        json!([{"name": "release-notes", "description": "Write the release notes"}])
+    );
+    assert!(
+        workspace.sessions().is_empty(),
+        "{:?}",
+        workspace.sessions()
+    );
+    let probe = workspace.starts().pop().expect("the probe");
+    assert_eq!(probe.cwd.canonicalize().expect("cwd"), workspace.folder);
+    assert!(probe.has("--no-session-persistence"), "{probe:?}");
+    assert!(workspace.prompts().is_empty());
+    host.shutdown().await;
+}
+
+/// 16 (folders). `/`, `$` and `@` answer only for a folder the engine knows: the default one or
+/// that of a conversation. Another folder, a relative path, a `..` out of the folder or a link to
+/// another folder is refused before anything is read or started; a link or `..` back to a known
+/// folder is that folder.
+#[tokio::test]
+async fn p16_only_a_folder_the_engine_knows_is_searched_or_probed() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let other = workspace.root.path().join("elsewhere");
+    std::fs::create_dir_all(&other).expect("another folder");
+    std::fs::write(other.join("secret.txt"), "x").expect("a file elsewhere");
+    let other = other.canonicalize().expect("canonical");
+    let link_out = workspace.root.path().join("link-out");
+    std::os::unix::fs::symlink(&other, &link_out).expect("link");
+    let link_in = workspace.root.path().join("link-in");
+    std::os::unix::fs::symlink(&workspace.folder, &link_in).expect("link");
+    let refused = [
+        other.display().to_string(),
+        "work".to_owned(),
+        format!("{}/..", workspace.folder.display()),
+        format!("{}/../elsewhere", workspace.folder.display()),
+        link_out.display().to_string(),
+        "/".to_owned(),
+    ];
+    let starts = workspace.starts().len();
+    for cwd in &refused {
+        for (method, params) in [
+            (
+                "hoh/workspace/entries",
+                json!({"cwd": cwd, "query": "", "limit": 80}),
+            ),
+            (
+                "hoh/executor/commands",
+                json!({"executor": "claude", "cwd": cwd}),
+            ),
+        ] {
+            let id = host.send(method, params).await;
+            let (frame, _) = host.response(&id, None).await;
+            let message = frame["error"]["message"].as_str().unwrap_or_default();
+            assert!(
+                message.contains("is not the folder of a conversation"),
+                "{method} {cwd}: {frame}"
+            );
+        }
+    }
+    assert_eq!(
+        workspace.starts().len(),
+        starts,
+        "a refused folder started claude"
+    );
+    for cwd in [
+        link_in.display().to_string(),
+        format!("{}/../work", workspace.folder.display()),
+    ] {
+        let found = host
+            .ok(
+                "hoh/workspace/entries",
+                json!({"cwd": cwd, "query": "", "limit": 80}),
+            )
+            .await;
+        assert_eq!(
+            found["entries"],
+            json!([{"path": "build", "kind": "directory"}, {"path": "notes.txt", "kind": "file"}]),
+            "{cwd}: {found}"
+        );
+    }
+
+    // A conversation moved to the other folder makes it known.
+    host.select_claude().await;
+    host.ok(
+        "session/working-directory/get",
+        json!({"sessionId": "chat-other"}),
+    )
+    .await;
+    host.privileged(
+        "session/working-directory/set",
+        json!({"sessionId": "chat-other", "path": other}),
+        "allowed-once",
+    )
+    .await;
+    let found = host
+        .ok(
+            "hoh/workspace/entries",
+            json!({"cwd": other, "query": "secr", "limit": 80}),
+        )
+        .await;
+    assert_eq!(
+        found["entries"],
+        json!([{"path": "secret.txt", "kind": "file"}])
+    );
+    host.shutdown().await;
+}
+
+/// 16 (limits). `@` takes at most 200 entries and 256 characters of query, as T3; the answer says
+/// when there were more.
+#[tokio::test]
+async fn p16_the_search_keeps_t3s_limits() {
+    let workspace = Workspace::new();
+    for index in 0..30 {
+        std::fs::write(workspace.folder.join(format!("file-{index:02}.txt")), "").expect("file");
+    }
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    for params in [
+        json!({"cwd": workspace.folder, "query": "", "limit": 0}),
+        json!({"cwd": workspace.folder, "query": "", "limit": 201}),
+        json!({"cwd": workspace.folder, "query": "x".repeat(257), "limit": 80}),
+    ] {
+        let id = host.send("hoh/workspace/entries", params.clone()).await;
+        let (frame, _) = host.response(&id, None).await;
+        assert!(frame.get("error").is_some(), "{params}: {frame}");
+    }
+    let found = host
+        .ok(
+            "hoh/workspace/entries",
+            json!({"cwd": workspace.folder, "query": "file", "limit": 10}),
+        )
+        .await;
+    assert_eq!(found["entries"].as_array().map(Vec::len), Some(10));
+    assert_eq!(found["truncated"], true);
+    assert_eq!(found["entries"][0]["path"], "file-00.txt");
     host.shutdown().await;
 }

@@ -864,6 +864,38 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/executor/commands"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorCommandsParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/workspace/entries"
+        },
+        "params": {
+          "$ref": "#/$defs/WorkspaceEntriesParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "approval/request"
         },
         "params": {
@@ -2354,6 +2386,42 @@
       "enum": [
         "confirm",
         "full"
+      ]
+    },
+    "ExecutorCommandsParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "executor",
+        "cwd"
+      ]
+    },
+    "WorkspaceEntriesParams": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "cwd",
+        "query",
+        "limit"
       ]
     },
     "ApprovalRequestParams": {

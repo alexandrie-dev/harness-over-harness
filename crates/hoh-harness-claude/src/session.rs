@@ -260,6 +260,42 @@ impl ClaudeSession {
 }
 
 impl ClaudeSession {
+    /// One control request of HoH and the CLI's answer to it, within `timeout` (the probe's
+    /// `reload_skills`, HOH-41).
+    pub(crate) async fn control(
+        &self,
+        subtype: &str,
+        timeout: Duration,
+    ) -> Result<Value, HarnessFailure> {
+        let id = self.inner.request_id();
+        let (tx, rx) = oneshot::channel();
+        lock(&self.inner.state).host.insert(id.clone(), tx);
+        let sent = self
+            .inner
+            .send(json!({
+                "type": "control_request",
+                "request_id": id,
+                "request": { "subtype": subtype },
+            }))
+            .await;
+        if let Err(failure) = sent {
+            lock(&self.inner.state).host.remove(&id);
+            return Err(failure);
+        }
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(Ok(answer))) => Ok(answer),
+            Ok(Ok(Err(error))) => Err(HarnessFailure::new(code::HARNESS, error)),
+            Ok(Err(_)) => Err(HarnessFailure::new(code::CLOSED, "the process ended")),
+            Err(_) => {
+                lock(&self.inner.state).host.remove(&id);
+                Err(HarnessFailure::new(
+                    code::PROTOCOL,
+                    format!("no answer to {subtype}"),
+                ))
+            }
+        }
+    }
+
     /// End the process at once (a probe has nothing to finish).
     pub async fn terminate_now(&self) {
         self.inner.terminated.store(true, Ordering::SeqCst);

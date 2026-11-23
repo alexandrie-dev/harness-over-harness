@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkspaceEntriesParams",
+  "type": "object",
+  "properties": {
+    "cwd": {
+      "type": "string"
+    },
+    "query": {
+      "type": "string"
+    },
+    "limit": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "cwd",
+    "query",
+    "limit"
+  ]
+}

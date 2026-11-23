@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutorCommandsResult",
+  "type": "object",
+  "properties": {
+    "executor": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExecutorCommand"
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExecutorCommand"
+      }
+    }
+  },
+  "required": [
+    "executor",
+    "cwd",
+    "commands",
+    "skills"
+  ],
+  "$defs": {
+    "ExecutorCommand": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "argumentHint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  "x-method": "hoh/executor/commands"
+}

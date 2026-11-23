@@ -7,8 +7,8 @@ use futures_util::future::BoxFuture;
 use tokio::sync::mpsc;
 
 use crate::contract::{
-    AccessMode, Discovery, HarnessEvent, HarnessFailure, HarnessPolicy, PromptParams,
-    RespondParams, StartParams, StartResult, VersionStatus, code,
+    AccessMode, Discovery, HarnessCommands, HarnessEvent, HarnessFailure, HarnessPolicy,
+    PromptParams, RespondParams, StartParams, StartResult, VersionStatus, code,
 };
 
 pub type HarnessResult<T> = Result<T, HarnessFailure>;
@@ -61,6 +61,17 @@ pub trait ExternalHarness: Send + Sync + 'static {
     /// process has starts the session anew. Default: none, so a level is not passed.
     fn effort_levels(&self) -> &'static [&'static str] {
         &[]
+    }
+
+    /// The slash commands and skills the harness declares for the folder `cwd` (HOH-41), asked
+    /// without a turn: the window's `/` and `$` before the first message. The caller has checked
+    /// that the engine knows the folder. Default: none.
+    fn commands(
+        &self,
+        cwd: std::path::PathBuf,
+    ) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
+        let _ = cwd;
+        Box::pin(std::future::ready(Ok(HarnessCommands::default())))
     }
 
     /// [`discover`](Self::discover), and where the found version stands against the range the

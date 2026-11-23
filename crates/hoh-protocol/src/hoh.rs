@@ -573,3 +573,40 @@ object!(ExecutorDiscoverResult {
     models: Vec<ExecutorModel>,
     detail: Option<String>
 });
+// `hoh/executor/commands` (HOH-41): the slash commands and skills the executor itself declares
+// for a folder the engine knows (the default one or that of an open conversation), asked before
+// the first turn without starting one. Nothing here is read from the executor's files by HoH.
+object!(ExecutorCommandsParams {
+    executor: String,
+    cwd: String
+});
+optional!(ExecutorCommand {
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    argument_hint: Option<String>,
+});
+object!(ExecutorCommandsResult {
+    executor: String,
+    cwd: String,
+    commands: Vec<ExecutorCommand>,
+    skills: Vec<ExecutorCommand>
+});
+// `hoh/workspace/entries` (HOH-41): files and folders of a folder the engine knows whose relative
+// path matches `query` (the window's `@`), at most `limit` (1..=200) of them. Names and relative
+// paths only, never contents.
+object!(WorkspaceEntriesParams {
+    cwd: String,
+    query: String,
+    limit: u32
+});
+choices!(WorkspaceEntryKind { File => "file", Directory => "directory" });
+object!(WorkspaceEntry {
+    path: String,
+    kind: WorkspaceEntryKind
+});
+object!(WorkspaceEntriesResult {
+    entries: Vec<WorkspaceEntry>,
+    truncated: bool
+});

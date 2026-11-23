@@ -11,9 +11,9 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, ExternalHarness,
-    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, NetworkAccess, ProcessSpec,
-    SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits, VersionStatus,
-    code,
+    HarnessCommand, HarnessCommands, HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult,
+    NetworkAccess, ProcessSpec, SandboxMode, StartParams, StartResult, Started, Supervisor,
+    SupervisorLimits, VersionStatus, code,
 };
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
@@ -344,6 +344,118 @@ fn probe_args() -> Vec<String> {
         .map(str::to_owned),
     );
     args
+}
+
+/// The probe of the slash commands and skills of a folder (HOH-41), T3
+/// `buildClaudeCapabilitiesProbeQueryOptions` with the folder as its cwd: the setting sources a
+/// session of this profile reads (so the commands are the ones the session will have), no hooks,
+/// no MCP server, no stored session, and nothing allowed without a question. It runs no turn.
+fn commands_probe_args(sources: SettingSources) -> Vec<String> {
+    let mut args = base_args();
+    args.extend(
+        [
+            "--permission-mode",
+            "default",
+            "--permission-prompt-tool",
+            "stdio",
+        ]
+        .map(str::to_owned),
+    );
+    let sources = sources.args();
+    let strict = sources.iter().any(|arg| arg == "--strict-mcp-config");
+    args.extend(sources);
+    args.extend(
+        [
+            "--settings",
+            "{\"disableAllHooks\":true}",
+            "--no-session-persistence",
+            "--mcp-config",
+            "{\"mcpServers\":{}}",
+        ]
+        .map(str::to_owned),
+    );
+    if !strict {
+        args.push("--strict-mcp-config".to_owned());
+    }
+    args
+}
+
+/// Commands as Claude Code lists them (`initialize` → `commands`, `reload_skills` → `skills`):
+/// each with a name, trimmed; empty parts dropped; one per name regardless of case, the first,
+/// filled with a later one's description and hint (T3 `parseClaudeInitializationCommands`,
+/// `dedupeSlashCommands`). Nothing is added.
+pub(crate) fn commands_from(list: Option<&Value>) -> Vec<HarnessCommand> {
+    let field = |command: &Value, key: &str| {
+        command
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let mut found: Vec<HarnessCommand> = Vec::new();
+    for command in list.and_then(Value::as_array).into_iter().flatten() {
+        let Some(name) = field(command, "name") else {
+            continue;
+        };
+        let description = field(command, "description");
+        let argument_hint = field(command, "argumentHint");
+        match found
+            .iter_mut()
+            .find(|seen| seen.name.to_lowercase() == name.to_lowercase())
+        {
+            Some(seen) => {
+                if seen.description.is_none() {
+                    seen.description = description;
+                }
+                if seen.argument_hint.is_none() {
+                    seen.argument_hint = argument_hint;
+                }
+            }
+            None => found.push(HarnessCommand {
+                name,
+                description,
+                argument_hint,
+            }),
+        }
+    }
+    found
+}
+
+/// What Claude Code declares for `cwd`, from [`commands_probe_args`]: the commands of its answer
+/// to `initialize`, the skills of its answer to `reload_skills` (a CLI without that request gives
+/// none). HoH reads none of Claude Code's files.
+async fn commands_of(config: &ClaudeConfig, cwd: PathBuf) -> HarnessResult<HarnessCommands> {
+    let version = match check_version(config).await {
+        VersionCheck::Supported(version) => version,
+        VersionCheck::NotInstalled => {
+            return Err(HarnessFailure::new(
+                code::NOT_INSTALLED,
+                version::not_installed_message(),
+            ));
+        }
+        VersionCheck::Refused { message, .. } => {
+            return Err(HarnessFailure::new(code::UNSUPPORTED_VERSION, message));
+        }
+    };
+    let args = commands_probe_args(config.setting_sources);
+    let sup = spawn(&spec(config, args, cwd.clone(), true)).await?;
+    let (session, _events, init) = ClaudeSession::start(
+        sup,
+        String::new(),
+        cwd,
+        &version,
+        settings_of(config, false),
+    )
+    .await?;
+    let skills = session.control("reload_skills", config.init_timeout).await;
+    session.terminate_now().await;
+    Ok(HarnessCommands {
+        commands: commands_from(init.response.get("commands")),
+        skills: skills
+            .map(|answer| commands_from(answer.get("skills")))
+            .unwrap_or_default(),
+    })
 }
 
 fn settings_of(config: &ClaudeConfig, bypass: bool) -> SessionSettings {
@@ -682,6 +794,11 @@ impl ExternalHarness for ClaudeHarness {
 
     fn effort_levels(&self) -> &'static [&'static str] {
         EFFORT_LEVELS
+    }
+
+    fn commands(&self, cwd: PathBuf) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
+        let config = self.config.clone();
+        Box::pin(async move { commands_of(&config, cwd).await })
     }
 
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).

@@ -171,6 +171,25 @@ pub struct Discovery {
     pub detail: Option<String>,
 }
 
+/// What the harness itself declares for a folder (HOH-41): its slash commands and its skills, as
+/// the window's `/` and `$` offer them. Only what the harness answered; HoH reads none of its files.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessCommands {
+    pub commands: Vec<HarnessCommand>,
+    pub skills: Vec<HarnessCommand>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessCommand {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argument_hint: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthState {

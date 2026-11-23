@@ -25,6 +25,14 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::to_value(serde_json::from_value::<ExecutorAccessSetResult>(value).unwrap())
                 .unwrap()
         }
+        "hoh/executor/commands" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorCommandsResult>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/workspace/entries" => {
+            serde_json::to_value(serde_json::from_value::<WorkspaceEntriesResult>(value).unwrap())
+                .unwrap()
+        }
         "session/prompt" => {
             serde_json::to_value(serde_json::from_value::<SessionPromptResult>(value).unwrap())
                 .unwrap()

@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/executor/commands","result":{"executor":"claude","cwd":"/home/user/project","commands":[{"name":"review","description":"Review a pull request","argumentHint":"[pr]"},{"name":"init"}],"skills":[{"name":"release-notes","description":"Write the release notes"}]}}

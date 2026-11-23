@@ -3,7 +3,8 @@
 //!
 //! Environment: `STUB_VERSION` (answer of `--version`), `STUB_STATE` (folder of known sessions),
 //! `STUB_ARGS_FILE` (where the argv of the last start is written), `STUB_MODE` (`garbage-start`,
-//! `crash-start`, `silent`, `init-error`, `signed-out`).
+//! `crash-start`, `silent`, `init-error`, `signed-out`, `no-skills` — `reload_skills` is not known).
+//! `initialize` lists five commands and `reload_skills` two skills, some of them odd (HOH-41).
 //! `rename` makes `system/init` report a new session id; the session id of each user line is
 //! appended to `$STUB_STATE/prompt-sessions`.
 //! Prompts: `withdraw`, `toolfail`, `subagent`, `run-reason`, `hello`, `run: <command>`, `edit: <path>`, `question`, `long`, `garbage`, `stderr`,
@@ -141,6 +142,19 @@ impl Stub {
                 match message["request"]["subtype"].as_str() {
                     Some("initialize") => self.initialize(&id),
                     Some("interrupt") => self.ok(&id, json!({})),
+                    Some("reload_skills") if env("STUB_MODE").as_deref() == Some("no-skills") => {
+                        write_line(&json!({
+                            "type": "control_response",
+                            "response": { "subtype": "error", "request_id": id, "error": "Unknown subtype: reload_skills" },
+                        }));
+                    }
+                    Some("reload_skills") => self.ok(
+                        &id,
+                        json!({ "skills": [
+                            { "name": "release-notes", "description": "Write the release notes", "argumentHint": "" },
+                            { "name": "  ", "description": "nameless" },
+                        ] }),
+                    ),
                     _ => {}
                 }
             }
@@ -184,7 +198,13 @@ impl Stub {
                 self.ok(
                     id,
                     json!({
-                        "commands": [],
+                        "commands": [
+                            { "name": "review", "description": "Review a pull request", "argumentHint": "[pr]" },
+                            { "name": "Review", "description": "again", "argumentHint": "[other]" },
+                            { "name": "init", "description": " " },
+                            { "name": "", "description": "nameless" },
+                            { "name": "release-notes", "description": "Write the release notes" },
+                        ],
                         "output_style": "default",
                         "models": [
                             { "value": "default", "displayName": "Default", "description": "x" },

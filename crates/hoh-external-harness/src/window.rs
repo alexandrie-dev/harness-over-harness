@@ -1,6 +1,9 @@
 //! The window's commands for external harnesses (HOH-18, CEO 20.11): what is installed
 //! (`hoh/executor/discover`), the executor new chats go to (`hoh/executor/select`) and the access
-//! mode of an executor (`hoh/executor/access/get`, `hoh/executor/access/set`).
+//! mode of an executor (`hoh/executor/access/get`, `hoh/executor/access/set`). HOH-41 adds what
+//! the window's `/`, `$` and `@` offer for a folder: the executor's own commands and skills
+//! (`hoh/executor/commands`) and the folder's files (`hoh/workspace/entries`). Both answer only for
+//! a folder the engine knows ([`Window::known_folder`]), never for any path the page names.
 //!
 //! `select` and `access/set` are privileged (`hoh_protocol::PRIVILEGED_METHODS`): the SDK server
 //! has the user allow the exact call before it reaches a handler here, and refuses it without a
@@ -18,17 +21,19 @@ use hoh_kernel::{Cfg, Context, Inject, Logger, NoConfig, Plugin, Service};
 use hoh_loader::ProfileContextKey;
 use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
-    ExecutorAccessSetResult, ExecutorEffectiveAccess, ExecutorParams, ExecutorSelectParams,
-    ExecutorSessionAccess,
+    ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
+    ExecutorEffectiveAccess, ExecutorParams, ExecutorSelectParams, ExecutorSessionAccess,
+    WorkspaceEntriesParams, WorkspaceEntriesResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
+use hoh_working_directory::WorkingDirectoryKey;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::agent::access_text;
-use crate::contract::{AccessMode, VersionStatus};
+use crate::contract::{AccessMode, HarnessCommand, VersionStatus};
 use crate::redact::{redact, redact_value};
 use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
 
@@ -39,7 +44,9 @@ const DISCOVER: &str = "hoh/executor/discover";
 const SELECT: &str = "hoh/executor/select";
 const ACCESS_GET: &str = "hoh/executor/access/get";
 const ACCESS_SET: &str = "hoh/executor/access/set";
-const METHODS: [&str; 4] = [DISCOVER, SELECT, ACCESS_GET, ACCESS_SET];
+const COMMANDS: &str = "hoh/executor/commands";
+const ENTRIES: &str = "hoh/workspace/entries";
+const METHODS: [&str; 6] = [DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, COMMANDS, ENTRIES];
 
 /// The saved choices.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -66,7 +73,7 @@ pub struct WindowDeps {
     profile: Service<ProfileContextKey>,
 }
 
-/// Serves the four `hoh/executor/*` methods of the window.
+/// Serves the `hoh/executor/*` methods of the window and its `hoh/workspace/entries`.
 pub struct ExternalHarnessWindowPlugin;
 
 impl Plugin for ExternalHarnessWindowPlugin {
@@ -144,8 +151,99 @@ impl Window {
             ACCESS_SET => Ok(serde_json::to_value(
                 self.access_set(parse(method, params)?).await?,
             )?),
+            COMMANDS => Ok(serde_json::to_value(
+                self.commands(parse(method, params)?).await?,
+            )?),
+            ENTRIES => Ok(serde_json::to_value(
+                self.entries(parse(method, params)?).await?,
+            )?),
             _ => Err(format!("external harness window does not serve {method}").into()),
         }
+    }
+
+    /// The folder `cwd` names, when the engine knows it (HOH-41): the default folder of new chats,
+    /// or the folder of a conversation open in the engine — a folder the person chose in the main
+    /// window (`session/working-directory/set`, confirmed and journalled there). Both sides are
+    /// resolved (links, `..`) before they are compared, so another spelling of a known folder
+    /// passes and nothing else does. The answer is the resolved folder.
+    async fn known_folder(&self, cwd: &str) -> Result<PathBuf, BoxError> {
+        let unknown = || -> BoxError {
+            format!("{cwd:?} is not the folder of a conversation of this window").into()
+        };
+        if !Path::new(cwd).is_absolute() {
+            return Err(unknown());
+        }
+        let wanted = tokio::fs::canonicalize(cwd).await.map_err(|_| unknown())?;
+        // A composition without working directories knows no folder.
+        let directories = self.ctx.get::<WorkingDirectoryKey>().ok_or_else(unknown)?;
+        let mut known = vec![directories.default_directory().to_owned()];
+        known.extend(
+            self.agents
+                .list()
+                .iter()
+                .map(|agent| directories.get(agent.session())),
+        );
+        for folder in known {
+            if tokio::fs::canonicalize(&folder)
+                .await
+                .is_ok_and(|folder| folder == wanted)
+            {
+                return Ok(wanted);
+            }
+        }
+        Err(unknown())
+    }
+
+    /// `/` and `$` of the window: what the executor itself declares for a known folder, asked
+    /// without a turn (masked like everything else the harness says).
+    async fn commands(
+        &self,
+        params: ExecutorCommandsParams,
+    ) -> Result<ExecutorCommandsResult, BoxError> {
+        let harness = self
+            .service()
+            .get(&params.executor)
+            .ok_or_else(|| format!("no external harness named \"{}\"", params.executor))?;
+        let folder = self.known_folder(&params.cwd).await?;
+        let found = harness.commands(folder).await?;
+        let wire = |list: Vec<HarnessCommand>| {
+            list.into_iter()
+                .map(|command| ExecutorCommand {
+                    name: redact(&command.name),
+                    description: command.description.as_deref().map(redact),
+                    argument_hint: command.argument_hint.as_deref().map(redact),
+                })
+                .collect()
+        };
+        Ok(ExecutorCommandsResult {
+            executor: params.executor,
+            cwd: params.cwd,
+            commands: wire(found.commands),
+            skills: wire(found.skills),
+        })
+    }
+
+    /// `@` of the window: entries of a known folder by relative path ([`crate::entries`]).
+    async fn entries(
+        &self,
+        params: WorkspaceEntriesParams,
+    ) -> Result<WorkspaceEntriesResult, BoxError> {
+        if params.limit == 0 || params.limit > crate::entries::MAX_LIMIT {
+            return Err(format!("limit must be from 1 to {}", crate::entries::MAX_LIMIT).into());
+        }
+        if params.query.chars().count() > crate::entries::MAX_QUERY_CHARS {
+            return Err(format!(
+                "query is longer than {} characters",
+                crate::entries::MAX_QUERY_CHARS
+            )
+            .into());
+        }
+        let folder = self.known_folder(&params.cwd).await?;
+        let (entries, truncated) = tokio::task::spawn_blocking(move || {
+            crate::entries::search(&folder, &params.query, params.limit as usize)
+        })
+        .await?;
+        Ok(WorkspaceEntriesResult { entries, truncated })
     }
 
     fn service(&self) -> &ExternalHarnessesService {

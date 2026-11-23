@@ -176,6 +176,71 @@ async fn discover_reports_install_version_sign_in_and_models() {
     assert!(args.contains(&"--strict-mcp-config".to_owned()));
 }
 
+/// HOH-41: `/` and `$` are what the CLI itself declares for the folder — the commands of its
+/// `initialize`, the skills of its `reload_skills` — trimmed and one per name, nothing added; the
+/// probe runs in the folder with the profile's setting sources, no hooks, no MCP server, no stored
+/// session, and no turn.
+#[tokio::test]
+async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
+    let env = Env::new();
+    let folder = env.dir.path().join("project");
+    std::fs::create_dir(&folder).unwrap();
+    let found = env.harness().commands(folder.clone()).await.unwrap();
+    let commands: Vec<_> = found
+        .commands
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                c.description.as_deref(),
+                c.argument_hint.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            ("review", Some("Review a pull request"), Some("[pr]")),
+            ("init", None, None),
+            ("release-notes", Some("Write the release notes"), None),
+        ]
+    );
+    let skills: Vec<_> = found.skills.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(skills, ["release-notes"]);
+    assert_eq!(found.skills[0].argument_hint, None);
+    let args = env.args();
+    for switch in [
+        "--no-session-persistence",
+        "--strict-mcp-config",
+        "--setting-sources",
+    ] {
+        assert!(args.contains(&switch.to_owned()), "{switch}: {args:?}");
+    }
+    let at = args.iter().position(|arg| arg == "--settings").unwrap();
+    assert_eq!(args[at + 1], "{\"disableAllHooks\":true}");
+    let at = args
+        .iter()
+        .position(|arg| arg == "--setting-sources")
+        .unwrap();
+    assert_eq!(args[at + 1], "user,project,local");
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg == "--session-id" || arg == "--resume")
+    );
+    // No prompt was sent: nothing reached the stub's prompt log.
+    assert!(!env.dir.path().join("prompt-sessions").exists());
+
+    // A CLI without `reload_skills` still gives its commands; a missing folder, nothing.
+    let mut env = Env::new();
+    env.mode = Some("no-skills");
+    let found = env.harness().commands(env.dir.path().into()).await.unwrap();
+    assert_eq!(found.commands.len(), 3);
+    assert!(found.skills.is_empty());
+    let missing = env.harness().commands(env.dir.path().join("gone")).await;
+    assert_eq!(missing.unwrap_err().code, hoh_external_harness::code::IO);
+}
+
 #[tokio::test]
 async fn discover_says_when_the_user_is_signed_out() {
     let mut env = Env::new();
