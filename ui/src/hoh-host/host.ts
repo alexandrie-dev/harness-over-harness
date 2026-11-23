@@ -297,6 +297,19 @@ export class HohHost {
     const entry = latest && disposition && latest.turnOrdinal !== disposition.turnOrdinal && this.failedHomePrompts.has(thread.id)
       ? thread.home(disposition.turnOrdinal)
       : latest;
+    // Cold start must not wait for history, but a persisted human decision must remain actionable
+    // while that authoritative history is still being replayed. The stable turn ordinal lets replay
+    // replace this metadata-only card without caching a second copy of the conversation projection.
+    if (!entry && disposition && !thread.loaded) {
+      return {
+        id: thread.id, title: thread.shell().title, projectId: thread.projectId,
+        state: disposition.state, turnOrdinal: disposition.turnOrdinal,
+        startedAt: thread.updatedAt, doneAt: thread.updatedAt,
+        steps: { done: 0, total: 0 }, agents: [],
+        ...(disposition.state === 'waiting' ? { canComplete: true } : {}),
+        ...(disposition.interrupted === true ? { interrupted: true } : {}),
+      };
+    }
     const interrupted = entry?.interrupted === true || (disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.interrupted === true);
     const completable = entry?.state === 'done' || (entry?.state === 'ended' && interrupted);
     if (!entry || !completable) return entry;
