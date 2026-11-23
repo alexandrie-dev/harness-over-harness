@@ -90,9 +90,13 @@ export const AssetImageDimensions = Schema.Struct({
 export type AssetImageDimensions = typeof AssetImageDimensions.Type;
 
 export const AssetCreateUrlResult = Schema.Struct({
+  // HoH (ui/T3-MAP.md): attachment bytes live in the window, so the host may mint a
+  // process-local Blob URL. CSP admits blob: images but no additional network origin.
   relativeUrl: TrimmedNonEmptyString.check(
     Schema.isMaxLength(4096),
-    Schema.isPattern(/^\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+$/u),
+    Schema.isPattern(
+      /^(?:\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+|blob:[^\s]+)$/u,
+    ),
   ),
   expiresAt: Schema.Number,
   sourcePath: Schema.optional(

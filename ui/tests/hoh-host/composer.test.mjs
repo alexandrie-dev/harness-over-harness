@@ -230,9 +230,8 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
   assert.equal((await host.receiveUpload(minted.relativeUrl, 'image/png', new Blob([png]))).status, 404);
   // T3 checks an uploaded picture before sending: held here, or T3's "not found" (it uploads again).
   const verified = await client.call('assets.createUrl', { resource: { _tag: 'attachment', attachmentId: minted.attachmentId } });
-  assert.equal(verified.relativeUrl, `/api/assets/attachment/${minted.attachmentId}`);
-  // contracts/assets.ts AssetCreateUrlResult.relativeUrl
-  assert.match(verified.relativeUrl, /^\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+$/u);
+  assert.match(verified.relativeUrl, /^blob:/);
+  assert.equal(Buffer.from(await (await fetch(verified.relativeUrl)).arrayBuffer()).toString('base64'), PNG);
   const lost = await client.request('assets.createUrl', { resource: { _tag: 'attachment', attachmentId: wrongType.attachmentId } });
   assert.equal(failureOf(lost)._tag, 'AssetAttachmentNotFoundError');
   // T3's server refusals for what cannot be a picture for Claude.
@@ -256,6 +255,14 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
     { type: 'image', data: PNG, mimeType: 'image/png', name: 'red.png' },
     { type: 'text', text: 'What is this?' },
   ]);
+  // T3 normally deletes the completed upload slot after send. The sent message, not that slot,
+  // owns the preview; a later/reminted asset lookup must still return readable bytes.
+  await client.call('attachments.delete', { attachmentId: minted.attachmentId });
+  const reminted = await client.call('assets.createUrl', { resource: { _tag: 'attachment', attachmentId: minted.attachmentId } });
+  assert.equal(reminted.relativeUrl, verified.relativeUrl);
+  assert.equal(Buffer.from(await (await fetch(reminted.relativeUrl)).arrayBuffer()).toString('base64'), PNG);
+  host.stop();
+  await assert.rejects(fetch(reminted.relativeUrl));
 });
 
 test('T3\'s XMLHttpRequest to the HoH address is answered in the window; any other goes to the platform', async () => {
