@@ -1090,6 +1090,78 @@ async fn terminate_removes_the_process_tree_without_a_native_interrupt() {
 }
 
 #[tokio::test]
+async fn early_interrupt_is_latched_until_native_turn_and_reaps_process_tree() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "early-interrupt");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    let session = started.session.clone();
+    let prompt = tokio::spawn(async move {
+        session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-early-stop".into(),
+                text: "sleep".into(),
+                images: Vec::new(),
+            })
+            .await
+    });
+    while !lines(&log).iter().any(|line| {
+        line.get("method") == Some(&Value::String("turn/start".into()))
+            && line.get("childPid").is_none()
+    }) || !lines(&log).iter().any(|line| line.get("childPid").is_some())
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let child = lines(&log)
+        .iter()
+        .find_map(|line| line.get("childPid").and_then(Value::as_u64))
+        .unwrap();
+
+    started.session.interrupt().await.unwrap();
+    prompt.await.unwrap().unwrap();
+
+    let mut started_seen = false;
+    loop {
+        match event(&mut started.events).await {
+            HarnessEvent::TurnStarted { turn_id } => {
+                assert_eq!(turn_id, "turn-early-stop");
+                started_seen = true;
+            }
+            HarnessEvent::TurnAborted { turn_id } => {
+                assert_eq!(turn_id, "turn-early-stop");
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(started_seen);
+    let interrupts: Vec<_> = lines(&log)
+        .into_iter()
+        .filter(|line| line.get("method") == Some(&Value::String("turn/interrupt".into())))
+        .collect();
+    assert_eq!(interrupts.len(), 1, "early Stop must send one native interrupt");
+    assert_eq!(
+        interrupts[0].get("params"),
+        Some(&serde_json::json!({"threadId":"thread-stub","turnId":"turn-stub"}))
+    );
+
+    let stopped_at = Instant::now();
+    started.session.terminate(Duration::from_millis(200)).await;
+    while Path::new(&format!("/proc/{child}")).exists()
+        && stopped_at.elapsed() < Duration::from_secs(3)
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !Path::new(&format!("/proc/{child}")).exists(),
+        "child {child} survived early Stop"
+    );
+}
+
+#[tokio::test]
 async fn unsupported_and_unrecognized_versions_never_start_a_session() {
     for banner in ["codex-cli 0.167.0", "not a version"] {
         let temp = TempDir::new().unwrap();

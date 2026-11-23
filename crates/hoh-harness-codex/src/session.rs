@@ -216,7 +216,21 @@ struct State {
     hoh_turn: Option<String>,
     native_turn: Option<String>,
     turn_opened: bool,
+    /// Stop may arrive while `turn/start` is still in flight. Remember it until either the
+    /// response or `turn/started` supplies the native id; `interrupt_sent` arbitrates that race.
+    interrupt_requested: bool,
+    interrupt_sent: bool,
     closed: bool,
+}
+
+fn take_pending_interrupt(state: &mut State) -> Option<(String, String)> {
+    if state.closed || !state.interrupt_requested || state.interrupt_sent {
+        return None;
+    }
+    let turn_id = state.native_turn.clone()?;
+    state.hoh_turn.as_ref()?;
+    state.interrupt_sent = true;
+    Some((state.thread_id.clone(), turn_id))
 }
 
 struct Inner {
@@ -450,41 +464,7 @@ impl CodexSession {
     }
 
     async fn request(&self, method: &str, params: Value) -> Result<Value, HarnessFailure> {
-        let id = self.inner.next_request.fetch_add(1, Ordering::Relaxed);
-        let (reply, answer) = oneshot::channel();
-        {
-            let mut state = lock(&self.inner.state);
-            if state.closed {
-                return Err(HarnessFailure::new(
-                    code::CLOSED,
-                    "Codex app-server is closed",
-                ));
-            }
-            state.host.insert(id, reply);
-        }
-        if let Err(error) = self
-            .inner
-            .supervisor
-            .send(&json!({"id":id,"method":method,"params":params}))
-            .await
-        {
-            lock(&self.inner.state).host.remove(&id);
-            return Err(error);
-        }
-        match tokio::time::timeout(self.inner.request_timeout, answer).await {
-            Ok(Ok(answer)) => answer,
-            Ok(Err(_)) => Err(HarnessFailure::new(
-                code::CLOSED,
-                format!("Codex app-server closed while waiting for {method}"),
-            )),
-            Err(_) => {
-                lock(&self.inner.state).host.remove(&id);
-                Err(HarnessFailure::new(
-                    code::PROTOCOL,
-                    format!("Codex app-server did not answer {method}"),
-                ))
-            }
-        }
+        request(&self.inner, method, params).await
     }
 
     async fn notify(&self, method: &str, params: Value) -> Result<(), HarnessFailure> {
@@ -508,6 +488,61 @@ impl CodexSession {
     }
 }
 
+async fn request(
+    inner: &Arc<Inner>,
+    method: &str,
+    params: Value,
+) -> Result<Value, HarnessFailure> {
+    let id = inner.next_request.fetch_add(1, Ordering::Relaxed);
+    let (reply, answer) = oneshot::channel();
+    {
+        let mut state = lock(&inner.state);
+        if state.closed {
+            return Err(HarnessFailure::new(
+                code::CLOSED,
+                "Codex app-server is closed",
+            ));
+        }
+        state.host.insert(id, reply);
+    }
+    if let Err(error) = inner
+        .supervisor
+        .send(&json!({"id":id,"method":method,"params":params}))
+        .await
+    {
+        lock(&inner.state).host.remove(&id);
+        return Err(error);
+    }
+    match tokio::time::timeout(inner.request_timeout, answer).await {
+        Ok(Ok(answer)) => answer,
+        Ok(Err(_)) => Err(HarnessFailure::new(
+            code::CLOSED,
+            format!("Codex app-server closed while waiting for {method}"),
+        )),
+        Err(_) => {
+            lock(&inner.state).host.remove(&id);
+            Err(HarnessFailure::new(
+                code::PROTOCOL,
+                format!("Codex app-server did not answer {method}"),
+            ))
+        }
+    }
+}
+
+async fn send_interrupt(
+    inner: &Arc<Inner>,
+    thread_id: String,
+    turn_id: String,
+) -> Result<(), HarnessFailure> {
+    request(
+        inner,
+        "turn/interrupt",
+        json!({"threadId":thread_id,"turnId":turn_id}),
+    )
+    .await?;
+    Ok(())
+}
+
 impl HarnessSession for CodexSession {
     fn prompt(&self, params: PromptParams) -> BoxFuture<'static, Result<(), HarnessFailure>> {
         let session = Arc::new(Self {
@@ -526,6 +561,8 @@ impl HarnessSession for CodexSession {
                 state.hoh_turn = Some(params.turn_id.clone());
                 state.native_turn = None;
                 state.turn_opened = false;
+                state.interrupt_requested = false;
+                state.interrupt_sent = false;
                 state.items.clear();
                 state.item_parents.clear();
                 state.items_seen.clear();
@@ -538,24 +575,43 @@ impl HarnessSession for CodexSession {
                 Err(error) => {
                     let mut state = lock(&session.inner.state);
                     state.hoh_turn = None;
+                    state.native_turn = None;
+                    state.turn_opened = false;
+                    state.interrupt_requested = false;
+                    state.interrupt_sent = false;
                     return Err(error);
                 }
             };
             let native = result
                 .pointer("/turn/id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    HarnessFailure::new(code::PROTOCOL, "turn/start returned no turn.id")
-                })?
-                .to_owned();
-            let (emit, mismatch) = {
+                .map(str::to_owned);
+            let Some(native) = native else {
                 let mut state = lock(&session.inner.state);
-                if state
+                if state.hoh_turn.as_deref() == Some(params.turn_id.as_str()) {
+                    state.hoh_turn = None;
+                    state.native_turn = None;
+                    state.turn_opened = false;
+                    state.interrupt_requested = false;
+                    state.interrupt_sent = false;
+                }
+                return Err(HarnessFailure::new(
+                    code::PROTOCOL,
+                    "turn/start returned no turn.id",
+                ));
+            };
+            let (emit, interrupt, mismatch) = {
+                let mut state = lock(&session.inner.state);
+                if state.hoh_turn.as_deref() != Some(params.turn_id.as_str()) {
+                    // The latched interrupt may have completed before the turn/start response, or
+                    // a replacement turn may already exist. Never reopen or corrupt either state.
+                    (None, None, false)
+                } else if state
                     .native_turn
                     .as_ref()
                     .is_some_and(|turn| turn != &native)
                 {
-                    (None, true)
+                    (None, None, true)
                 } else {
                     state.native_turn = Some(native);
                     let emit = if state.turn_opened {
@@ -564,7 +620,8 @@ impl HarnessSession for CodexSession {
                         state.turn_opened = true;
                         state.hoh_turn.clone()
                     };
-                    (emit, false)
+                    let interrupt = take_pending_interrupt(&mut state);
+                    (emit, interrupt, false)
                 }
             };
             if mismatch {
@@ -581,6 +638,9 @@ impl HarnessSession for CodexSession {
             if let Some(turn_id) = emit {
                 emit_event(&session.inner, HarnessEvent::TurnStarted { turn_id }).await;
             }
+            if let Some((thread_id, turn_id)) = interrupt {
+                send_interrupt(&session.inner, thread_id, turn_id).await?;
+            }
             Ok(())
         })
     }
@@ -591,20 +651,18 @@ impl HarnessSession for CodexSession {
             owner: self.owner.clone(),
         });
         Box::pin(async move {
-            let (thread_id, turn_id) = {
-                let state = lock(&session.inner.state);
-                (state.thread_id.clone(), state.native_turn.clone())
+            let interrupt = {
+                let mut state = lock(&session.inner.state);
+                if state.hoh_turn.is_none() {
+                    return Ok(());
+                }
+                state.interrupt_requested = true;
+                take_pending_interrupt(&mut state)
             };
-            let Some(turn_id) = turn_id else {
+            let Some((thread_id, turn_id)) = interrupt else {
                 return Ok(());
             };
-            session
-                .request(
-                    "turn/interrupt",
-                    json!({"threadId":thread_id,"turnId":turn_id}),
-                )
-                .await?;
-            Ok(())
+            send_interrupt(&session.inner, thread_id, turn_id).await
         })
     }
 
@@ -1082,7 +1140,8 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                             Some(hoh_turn)
                         };
                         state.turn_opened = true;
-                        Ok(emit)
+                        let interrupt = take_pending_interrupt(&mut state);
+                        Ok((emit, interrupt))
                     }
                     (Ok(thread_id), _, _) if thread_id != state.thread_id => {
                         Err("Codex turn/started belongs to another thread".to_owned())
@@ -1097,10 +1156,26 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                 }
             };
             match opened {
-                Ok(Some(turn_id)) => {
-                    emit_event(inner, HarnessEvent::TurnStarted { turn_id }).await;
+                Ok((emit, interrupt)) => {
+                    if let Some(turn_id) = emit {
+                        emit_event(inner, HarnessEvent::TurnStarted { turn_id }).await;
+                    }
+                    if let Some((thread_id, turn_id)) = interrupt {
+                        let inner = inner.clone();
+                        tokio::spawn(async move {
+                            if let Err(failure) = send_interrupt(&inner, thread_id, turn_id).await {
+                                protocol_violation(
+                                    &inner,
+                                    format!(
+                                        "Codex failed the latched turn interrupt: {}",
+                                        failure.message
+                                    ),
+                                )
+                                .await;
+                            }
+                        });
+                    }
                 }
-                Ok(None) => {}
                 Err(message) => protocol_violation(inner, message).await,
             }
         }
@@ -1291,6 +1366,8 @@ async fn complete_turn(inner: &Arc<Inner>, params: &Value) {
             let turn_id = state.hoh_turn.take();
             state.native_turn = None;
             state.turn_opened = false;
+            state.interrupt_requested = false;
+            state.interrupt_sent = false;
             state.items.clear();
             state.item_parents.clear();
             Ok((turn_id, interrupted))

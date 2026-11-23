@@ -320,7 +320,7 @@ export class HohHost {
       try {
         const own = (await this.engine.request('hoh/executor/access/get', { executor: 'codex', sessionId: session.id }))?.session;
         if (own?.executor === 'codex' || own?.executor === 'claude') executor = own.executor;
-        if (typeof own?.model === 'string' && own.model) model = own.model;
+        model = typeof own?.model === 'string' && own.model ? own.model : this.model(executor);
         mode = exactMode(own?.runtimeMode) ?? exactMode(own?.mode) ?? mode;
       } catch { /* a session without an external executor follows the current composer */ }
       this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model, mode, executor, projectId: this.homeOf(session.id) }));

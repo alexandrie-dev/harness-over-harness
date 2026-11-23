@@ -112,6 +112,24 @@ fn main() {
             }
             Some("turn/start") => {
                 turn_count += 1;
+                if scenario == "early-interrupt" {
+                    let spawned = Command::new("sh")
+                        .args(["-c", "sleep 120"])
+                        .spawn()
+                        .unwrap();
+                    log(&json!({"childPid":spawned.id()}));
+                    child = Some(spawned);
+                    // Keep turn/start in flight long enough for HoH to receive Stop before either
+                    // source of the native turn id reaches it.
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    send(
+                        json!({"id":id,"result":{"turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
+                    );
+                    send(
+                        json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
+                    );
+                    continue;
+                }
                 if scenario == "stale-resolved" || scenario == "cross-turn-request-id" {
                     let turn = if turn_count == 1 {
                         "resolved-first"

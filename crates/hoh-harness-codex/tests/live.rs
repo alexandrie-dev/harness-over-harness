@@ -143,17 +143,24 @@ async fn real_codex_streams_approves_resumes_and_stops() {
         "resumed Codex streamed no answer"
     );
 
-    resumed
-        .session
-        .prompt(PromptParams {
+    let prompt_session = resumed.session.clone();
+    let interrupt_session = resumed.session.clone();
+    let stopped_at = Instant::now();
+    let (prompted, interrupted) = tokio::join!(
+        prompt_session.prompt(PromptParams {
             session_id: "cx-live".into(),
             turn_id: "cx-live-stop".into(),
             text: "Run the shell command `sleep 30`, then answer DONE.".into(),
             images: Vec::new(),
-        })
-        .await
-        .expect("start the turn that will be stopped");
-    let stopped_at = Instant::now();
+        }),
+        async move {
+            // Let prompt install its HoH turn, but do not wait for app-server to reveal turn.id.
+            tokio::task::yield_now().await;
+            interrupt_session.interrupt().await
+        }
+    );
+    prompted.expect("start the turn that will be stopped");
+    interrupted.expect("interrupt the new Codex turn, including before turn/started");
     resumed.session.terminate(Duration::from_millis(500)).await;
     assert!(
         stopped_at.elapsed() < Duration::from_secs(5),

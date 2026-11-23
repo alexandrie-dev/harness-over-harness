@@ -93,6 +93,23 @@ test('the list: chats of the engine, newest first, with the completion marker', 
   await shell.until(value => value.kind === 'synchronized');
 });
 
+test('a closed Codex chat uses the Codex default model before resume', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-codex-closed', 'Codex saved chat', []);
+  engine.store.get('chat-codex-closed').executor = 'codex';
+  const { client } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  const chat = snapshot.snapshot.threads.find(thread => thread.id === 'chat-codex-closed');
+  assert.equal(chat.providerInstanceId, 'codex');
+  assert.deepEqual(chat.modelSelection, { instanceId: 'codex', model: 'gpt-6-sol' });
+  assert.equal(
+    engine.requests.some(request => request.method === 'session/resume'),
+    false,
+    'the shell model must be correct before opening the saved chat',
+  );
+});
+
 test('new chat with a first message, streamed answer, tool step, end of turn', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);
