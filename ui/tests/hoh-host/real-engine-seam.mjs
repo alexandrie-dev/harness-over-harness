@@ -14,7 +14,8 @@ class NativeEngine {
     this.pending = new Map();
     this.listeners = new Set();
     this.statusListeners = new Set();
-    createInterface({ input: process.stdin }).on('line', line => this.receive(JSON.parse(line)));
+    this.input = createInterface({ input: process.stdin });
+    this.input.on('line', line => this.receive(JSON.parse(line)));
   }
   receive(frame) {
     if (frame.type === 'response') {
@@ -36,15 +37,17 @@ class NativeEngine {
   decideApproval(approvalId, outcome) { return this.call('decide', { approvalId, outcome }); }
   async subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   async subscribeStatus(listener) { this.statusListeners.add(listener); return () => this.statusListeners.delete(listener); }
+  close() { this.input.close(); }
 }
 
 let built;
+let engine;
 try {
   built = await buildHost();
   const mod = {
     host: await built.load('host'), wire: await built.load('wire'), socket: await built.load('socket'),
   };
-  const engine = new NativeEngine();
+  engine = new NativeEngine();
   const host = new mod.host.HohHost({ engine, throttleMs: 0, loadRetryMs: 10, loadRetries: 6000, storage: null });
   const server = new mod.wire.WireServer(host.handlers());
   const client = new WireClient(mod.socket.HohWebSocket, server);
@@ -89,5 +92,6 @@ try {
   write({ type: 'result', ok: false, error: error?.stack ?? String(error) });
   process.exitCode = 1;
 } finally {
+  engine?.close();
   if (built) await rm(built.dir, { recursive: true, force: true });
 }
