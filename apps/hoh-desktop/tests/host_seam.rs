@@ -120,7 +120,11 @@ fn prepare_profile(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let bin = root.join("bin/claude");
     std::fs::create_dir_all(&work).unwrap();
     std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&profile).unwrap();
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&profile)
+        .unwrap();
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::write(&bin, FAKE_CLAUDE).unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -130,13 +134,22 @@ fn prepare_profile(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     ).unwrap();
     std::fs::write(
         profile.join("cordis.patch.yml"),
-        format!("- id: harness-claude\n  config:\n    executable: {}\n", bin.display()),
-    ).unwrap();
+        format!(
+            "- id: harness-claude\n  config:\n    executable: {}\n",
+            bin.display()
+        ),
+    )
+    .unwrap();
     (work, home, root.join("engine-stderr.log"))
 }
 
 fn respond(engine: &Arc<Engine>, resolution: Resolution) {
-    let Resolution::Engine { generation, id, decision } = resolution else {
+    let Resolution::Engine {
+        generation,
+        id,
+        decision,
+    } = resolution
+    else {
         panic!("unexpected preflight resolution")
     };
     let frame = match decision {
@@ -146,10 +159,20 @@ fn respond(engine: &Arc<Engine>, resolution: Resolution) {
     engine.respond(generation, frame).unwrap();
 }
 
-fn request_from_main(engine: &Arc<Engine>, broker: &Arc<Broker>, method: &str, params: Value) -> Result<Value, String> {
+fn request_from_main(
+    engine: &Arc<Engine>,
+    broker: &Arc<Broker>,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
     let sent = Arc::new(std::sync::Mutex::new(None::<(u64, String)>));
     let arm = if bridge::needs_approval(method, &params) {
-        let (broker, sent, method, params) = (broker.clone(), sent.clone(), method.to_owned(), params.clone());
+        let (broker, sent, method, params) = (
+            broker.clone(),
+            sent.clone(),
+            method.to_owned(),
+            params.clone(),
+        );
         Some(Box::new(move |generation: u64, id: &str| {
             broker.arm_in_flight(&method, &params, generation, id, now_ms());
             *sent.lock().unwrap() = Some((generation, id.to_owned()));
@@ -175,7 +198,8 @@ fn request_from_main(engine: &Arc<Engine>, broker: &Arc<Broker>, method: &str, p
 fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
     let root = root();
     let (work, home, stderr) = prepare_profile(&root.0);
-    let engine_bin = PathBuf::from(std::env::var_os("HOH_REAL_ENGINE").expect("set HOH_REAL_ENGINE"));
+    let engine_bin =
+        PathBuf::from(std::env::var_os("HOH_REAL_ENGINE").expect("set HOH_REAL_ENGINE"));
     let (events, event_rx) = mpsc::channel();
     let engine = Engine::start(
         Arc::new(ProcessConfig {
@@ -192,9 +216,15 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
             "capabilities": {"approvals": "host", "userQuestions": true},
             "hoh": {"protocolVersion": 1, "approvalKey": hoh_protocol::approval::hex(&KEY)}
         }),
-        Arc::new(move |event| { let _ = events.send(event); }),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
     );
-    let broker = Arc::new(Broker::new(KEY).unwrap().with_audit_file(root.0.join("approvals.log")));
+    let broker = Arc::new(
+        Broker::new(KEY)
+            .unwrap()
+            .with_audit_file(root.0.join("approvals.log")),
+    );
 
     let driver = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../ui/tests/hoh-host/real-engine-seam.mjs");
@@ -215,7 +245,10 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
     thread::spawn(move || {
         let mut input = node_in;
         while let Ok(frame) = from_native.recv() {
-            if writeln!(input, "{frame}").and_then(|()| input.flush()).is_err() {
+            if writeln!(input, "{frame}")
+                .and_then(|()| input.flush())
+                .is_err()
+            {
                 break;
             }
         }
@@ -232,10 +265,20 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
                     HostEvent::Status(status) => {
                         let _ = to_node.send(json!({"type":"status","status":status}));
                     }
-                    HostEvent::Request { generation, id, method, params } => {
-                        match broker.begin_engine_or_grant(generation, id, &method, params, now_ms()).unwrap() {
+                    HostEvent::Request {
+                        generation,
+                        id,
+                        method,
+                        params,
+                    } => {
+                        match broker
+                            .begin_engine_or_grant(generation, id, &method, params, now_ms())
+                            .unwrap()
+                        {
                             Begun::Signed(resolution) => respond(&engine, resolution),
-                            Begun::Window(open) => assert!(broker.show_in_chat(&open.label, Instant::now())),
+                            Begun::Window(open) => {
+                                assert!(broker.show_in_chat(&open.label, Instant::now()))
+                            }
                         }
                     }
                 }
@@ -268,7 +311,12 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
                     Some("rejected") => ApprovalOutcome::Rejected,
                     other => panic!("bad outcome: {other:?}"),
                 };
-                let answer = broker.decide_in_chat(frame["approvalId"].as_str().unwrap(), outcome, now_ms(), Instant::now());
+                let answer = broker.decide_in_chat(
+                    frame["approvalId"].as_str().unwrap(),
+                    outcome,
+                    now_ms(),
+                    Instant::now(),
+                );
                 let response = match answer {
                     Ok(decision) => {
                         respond(&engine, decision.resolution);
@@ -281,24 +329,61 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
                 };
                 to_node.send(response).unwrap();
             }
-            Some("result") => { result = Some(frame); break; }
+            Some("result") => {
+                result = Some(frame);
+                break;
+            }
             other => panic!("unknown node frame: {other:?} {frame}"),
         }
     }
 
     let status = child.wait_timeout(Duration::from_secs(20));
-    if status.is_none() { let _ = child.kill(); }
+    if status.is_none() {
+        let _ = child.kill();
+    }
     let status = status.or_else(|| child.wait().ok()).unwrap();
-    let stderr_text = BufReader::new(node_err).lines().map_while(Result::ok).collect::<Vec<_>>().join("\n");
-    let result = result.unwrap_or_else(|| panic!("node returned no result; status={status}; stderr={stderr_text}; engine={}", std::fs::read_to_string(stderr).unwrap_or_default()));
+    let stderr_text = BufReader::new(node_err)
+        .lines()
+        .map_while(Result::ok)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let result = result.unwrap_or_else(|| {
+        panic!(
+            "node returned no result; status={status}; stderr={stderr_text}; engine={}",
+            std::fs::read_to_string(stderr).unwrap_or_default()
+        )
+    });
     assert_eq!(result["ok"], true, "{result}; node stderr={stderr_text}");
     assert_eq!(result["mode"], "auto", "{result}");
-    assert!(result["approvalId"].as_str().is_some_and(|id| !id.is_empty()), "{result}");
-    assert!(result["humanText"].as_str().is_some_and(|text| !text.is_empty()), "{result}");
+    assert!(
+        result["approvalId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty()),
+        "{result}"
+    );
+    assert!(
+        result["humanText"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty()),
+        "{result}"
+    );
     let audit = broker.audit_log();
-    assert!(audit.iter().any(|entry| entry.via == "main-window" && entry.method == "hoh/executor/access/set"), "{audit:?}");
-    assert!(audit.iter().any(|entry| entry.via == "chat" && entry.human_text == result["humanText"]), "{audit:?}");
-    assert!(status.success(), "node status={status}; stderr={stderr_text}");
+    assert!(
+        audit
+            .iter()
+            .any(|entry| entry.via == "main-window" && entry.method == "hoh/executor/access/set"),
+        "{audit:?}"
+    );
+    assert!(
+        audit
+            .iter()
+            .any(|entry| entry.via == "chat" && entry.human_text == result["humanText"]),
+        "{audit:?}"
+    );
+    assert!(
+        status.success(),
+        "node status={status}; stderr={stderr_text}"
+    );
     engine.stop();
 }
 
@@ -309,8 +394,12 @@ impl WaitTimeout for std::process::Child {
     fn wait_timeout(&mut self, timeout: Duration) -> Option<std::process::ExitStatus> {
         let until = Instant::now() + timeout;
         loop {
-            if let Some(status) = self.try_wait().unwrap() { return Some(status); }
-            if Instant::now() >= until { return None; }
+            if let Some(status) = self.try_wait().unwrap() {
+                return Some(status);
+            }
+            if Instant::now() >= until {
+                return None;
+            }
             thread::sleep(Duration::from_millis(20));
         }
     }
