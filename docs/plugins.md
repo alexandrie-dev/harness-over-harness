@@ -42,7 +42,8 @@
 Допустимые виды исполнения исчерпываются `skill`, Rust/Go `process` и доверенным
 `rust-inproc`. Продукт не поставляет и не устанавливает Node и не использует
 Node человека во время работы. Автор TypeScript-плагина собирает `ui.entry`
-своим Node до упаковки. MD реализует только вклад `skills`.
+своим Node до упаковки. MD реализует только декларативные вклады `skills` и
+`workspaceInstructions`.
 Инструменты, хуки, динамический prompt и executor реализуются Rust/Go `process`
 либо trusted `rust-inproc`; если UI нужен инструмент, обе части входят в один
 плагин.
@@ -105,13 +106,37 @@ Node человека во время работы. Автор TypeScript-пла
   },
   "contributes": {
     "tools": [],
+    "toolExecutors": [],
     "skills": [],
+    "workspaceInstructions": [],
     "promptSections": [],
+    "promptAssemblers": [],
     "agentSteps": [],
+    "llmProviders": [],
+    "modelRoutes": [],
+    "externalExecutors": [],
+    "sessionStores": [],
+    "sessionProjections": [],
+    "compactors": [],
+    "subagentProviders": [],
+    "slashCommands": [],
+    "mcpServers": [],
+    "workspaceProviders": [],
+    "userQuestions": [],
+    "goalStores": [],
+    "todoStores": [],
+    "taskStores": [],
+    "schedules": [],
+    "artifactStores": [],
     "hooks": [],
     "approvals": [],
-    "executors": [],
-    "ui": { "panelItems": [], "pages": [], "paletteCommands": [], "buttons": [] }
+    "pluginRpcMethods": [],
+    "telemetryExporters": [],
+    "ui": {
+      "panelItems": [], "pages": [], "paletteCommands": [], "buttons": [],
+      "chatViews": [], "composers": [], "messageRenderers": [], "themes": [],
+      "settingsSurfaces": []
+    }
   },
   "requires": {
     "services": {
@@ -127,13 +152,13 @@ Node человека во время работы. Автор TypeScript-пла
 | Поле | Требование |
 |---|---|
 | `formatVersion` | Обязательно; целое `2` для этого договора |
-| `id` | Обязательно; `[a-z0-9]+(-[a-z0-9]+)*`; владелец вкладов/RPC только внутри закреплённой publisher identity |
+| `id` | Обязательно; `[a-z0-9]+(-[a-z0-9]+)*`; локальное имя только внутри закреплённой publisher identity |
 | `version` | Обязательно; SemVer |
 | `digest` | Обязательно; `sha256:` и 64 строчных hex; хеш готового авторского набора, который вычисляет `hoh plugin pack`, а не правит автор вручную |
 | `execution` | Необязательно только для чистого UI; если есть логика, ровно один вариант `skill`, `process` или `rust-inproc` из § 2.3 |
 | `ui` | Необязательно; только `entry` собранного JS-модуля интерфейса (§ 4) |
-| `settingsSchema` | Необязательно; JSON Schema настроек; значения хранятся под `id` |
-| `secrets` | Необязательно; массив уникальных `{name, description}`; значений в манифесте и настройках нет |
+| `settingsSchema` | Необязательно; JSON Schema настроек; значения хранятся только под полной `pluginIdentity` |
+| `secrets` | Необязательно; массив уникальных `{name, description}`; значения принадлежат полной `pluginIdentity`, а в манифесте и настройках их нет |
 | `requestedPermissions` | Обязательно, может быть пустым; верхняя граница того, что человек вообще может выдать |
 | `contributes` | Обязательно, может быть пустым; полный статический список вкладов |
 | `requires.services` | Обязательно, может быть пустым; сервисы ядра и допустимые версии их протоколов |
@@ -144,11 +169,20 @@ Node человека во время работы. Автор TypeScript-пла
 Установка также не запускает код, менеджер пакетов или компилятор: она повторно
 проверяет готовый снимок и оба digest, не преобразуя его. Человек одобряет,
 задача закрепляет, а исполнитель запускает
-именно `{publisherIdentity, id, version, snapshotDigest}`. Если преобразований нет, `digest`
+именно `{publisherKeyId, id, version, snapshotDigest}`. Если преобразований нет, `digest`
 и `snapshotDigest` могут совпасть; в любом случае алгоритмы обоих хешей закрыты
 версией формата. Пара `{id, version}` навсегда связана с одним
 авторским `digest` **внутри закреплённого publisher key**; другие байты требуют
 новой версии и отклоняются до включения.
+
+Ядро вычисляет `publisherKeyId = sha256(canonical public key)` из проверенного
+envelope и использует `pluginIdentity = {publisherKeyId, id}` как единственный
+ключ владельца. Строка `id` нигде отдельно не является ключом настроек, секретов,
+RPC, UI storage, журналов или обновлений. Для `local-unverified` роль
+`publisherKeyId` выполняет URL-safe значение `local-<snapshotDigestHex>` (§ 9.2).
+Одинаковый `id` у разных `publisherKeyId` допустим, но это два полностью разных
+плагина: UI всегда показывает издателя/fingerprint, а ключи хранения и маршруты
+не пересекаются даже после удаления одного из них.
 
 Канонизация хеша сохраняется из HOH-27: относительные NFC-пути UTF-8, `/` как
 разделитель, без пустых частей, `.`, `..`, `\` и NUL; сортировка по байтам пути;
@@ -162,8 +196,9 @@ Node человека во время работы. Автор TypeScript-пла
 `execution` — закрытое объединение по `kind`; оно может отсутствовать только у
 чистого UI-плагина с `ui.entry` и без серверных вкладов:
 
-- `skill`: `{kind, entry}`; `entry` указывает на `SKILL.md`. Машинный код не
-  запускается, допустимы только вклады `skills`, а в первой версии нет
+- `skill`: `{kind, entry}`; `entry` указывает на `SKILL.md` либо подтверждённый
+  workspace instruction. Машинный код не запускается, допустимы только вклады
+  `skills` и `workspaceInstructions`, а в первой версии нет
   `ui.entry`. Активный навык является отдельным субъектом прав: по умолчанию он
   вызывается только явно и без инструментов; действия модели, вызванные его
   инструкциями, наследуют ограничения навыка. Доступ к разговору и инструментам
@@ -187,35 +222,71 @@ Node человека во время работы. Автор TypeScript-пла
 
 ### 2.4. `contributes`
 
-Каждый вклад имеет уникальный внутри плагина `id`, человекочитаемое название и,
-если принимает или возвращает данные, закрытую JSON-схему. Полное имя строится
-ядром из `plugin id` и `contribution id`; совпадение имени не заменяет чужой
-вклад молча.
+`contributes` — закрытый объект: допустимы только ключи из следующей таблицы.
+Каждый элемент — также закрытый объект с обязательными `id` и `name`; `id`
+уникален внутри своего массива. `handler` — статическое имя обработчика своего
+`process`/`rust-inproc` либо экспорт собственного `ui.entry`, но не произвольный
+модуль. Все поля с суффиксом `?` необязательны; никакие иные поля не принимаются.
+Полное имя ядро строит из `pluginIdentity`, типа и `contribution id`.
 
-Поддерживаемые вклады:
+| Ключ `contributes` | Остальные допустимые поля | Создаваемый слот / правило |
+|---|---|---|
+| `tools` | `description`, `inputSchema`, `outputSchema`, `handler`, `timeoutMs?`, `replaces?` | `tool:<id>`; замена только другого `tool` |
+| `toolExecutors` | `handler`, `toolIds`, `inputSchema`, `outputSchema`, `replaces?` | `toolExecutor:<id>` |
+| `skills` | `path`, `resourcePaths?`, `replaces?` | `skill:<id>`; только для `execution: skill` |
+| `workspaceInstructions` | `path`, `scope:{root,relativePrefix}`, `order`, `replaces` запрещён | добавочный субъект § 6.1 только для `execution: skill`, не заменяет защиту |
+| `promptSections` | `position`, ровно одно из `text`/`handler`, `contextFields`, `replaces?` | `promptSection:<id>` |
+| `promptAssemblers` | `handler`, `sectionIds`, `contextFields`, `outputSchema`, `replaces?` | `promptAssembler:<id>` |
+| `agentSteps` | `position`, `handler`, `inputSchema`, `outputSchema`, `replaces?` | `agentStep:<id>` |
+| `llmProviders` | `handler`, `modelIds`, `requestSchema`, `responseSchema`, `credentialNames`, `replaces?` | `llmProvider:<id>` |
+| `modelRoutes` | `handler`, `providerIds`, `modelIds`, `inputSchema`, `outputSchema`, `replaces?` | `modelRoute:<id>` |
+| `externalExecutors` | `handler`, `capabilities`, `requestSchema`, `eventSchema`, `replaces?` | `externalExecutor:<id>` |
+| `sessionStores` | `handler`, `formatVersion`, `attachmentSupport`, `replaces?` | `sessionStore:<id>` |
+| `sessionProjections` | `handler`, `inputFormatVersion`, `outputSchema`, `replaces?` | `sessionProjection:<id>` |
+| `compactors` | `handler`, `inputSchema`, `outputSchema`, `replaces?` | `compactor:<id>` |
+| `subagentProviders` | `handler`, `modes`, `requestSchema`, `resultSchema`, `replaces?` | `subagentProvider:<id>` |
+| `slashCommands` | `command`, `argumentSchema`, `handler`, `replaces?` | `slashCommand:<id>` |
+| `mcpServers` | `transport`, `credentialNames`, `exposes`, `replaces` запрещён | добавочный `mcpServer:<id>`; `transport` — закрытый stdio/HTTPS descriptor § 6.3 |
+| `workspaceProviders` | `handler`, `rootKinds`, `outputSchema`, `replaces?` | `workspaceProvider:<id>` |
+| `userQuestions` | `handler`, `requestSchema`, `responseSchema`, `replaces?` | `userQuestion:<id>`; не системное подтверждение |
+| `goalStores` | `handler`, `formatVersion`, `replaces?` | `goalStore:<id>` |
+| `todoStores` | `handler`, `formatVersion`, `replaces?` | `todoStore:<id>` |
+| `taskStores` | `handler`, `formatVersion`, `replaces?` | `taskStore:<id>` |
+| `schedules` | `handler`, `requestSchema`, `eventSchema`, `replaces?` | `schedule:<id>` |
+| `artifactStores` | `handler`, `mediaTypes`, `replaces?` | `artifactStore:<id>` |
+| `hooks` | `event`, `handler`, `replaces` запрещён | только добавочный хук из закрытого списка ниже |
+| `approvals` | `actionClass`, `handler`, `replaces` запрещён | только добавочная защита; ответы `deny`, `request`, `noOpinion` |
+| `pluginRpcMethods` | `method`, `requestSchema`, `responseSchema`, `handler` | только namespace полной `pluginIdentity`, не заменяемый системный RPC |
+| `telemetryExporters` | `handler`, `eventNames`, `eventSchema`, `replaces?` | `telemetryExporter:<id>` |
+| `ui.panelItems` | `handler`, `stateSchema`, `replaces?` | `ui.panelItem:<id>` |
+| `ui.pages` | `handler`, `stateSchema`, `replaces?` | `ui.page:<id>` |
+| `ui.paletteCommands` | `handler`, `argumentSchema`, `replaces?` | `ui.paletteCommand:<id>` |
+| `ui.buttons` | `handler`, `actionSchema`, `replaces?` | `ui.button:<id>` |
+| `ui.chatViews` | `handler`, `inputSchema`, `replaces?` | `ui.chatView:<id>` |
+| `ui.composers` | `handler`, `draftSchema`, `attachmentSchema`, `replaces?` | `ui.composer:<id>` |
+| `ui.messageRenderers` | `handler`, `messageKinds`, `inputSchema`, `replaces?` | `ui.messageRenderer:<id>` |
+| `ui.themes` | `handler`, `tokenSchema`, `replaces?` | `ui.theme:<id>` |
+| `ui.settingsSurfaces` | `handler`, `stateSchema`, `replaces?` | `ui.settings:<id>` |
 
-- `tools`: имя, описание, `inputSchema`, `outputSchema`, необязательный предел
-  времени и необязательное явное `replaces`;
-- `skills`: имя, относительный путь к `SKILL.md` и необязательный явный
-  `replaces` слота типа `skill`;
-- `promptSections`: имя, место/порядок, статический текст или имя провайдера,
-  необязательное явное `replaces`;
-- `agentSteps`: именованный шаг конвейера агента, его позиция и необязательный
-  явный `replaces` слота типа `agentStep`;
-- `hooks`: только добавочная подписка на `agent/pre-step`, `agent/request`,
-  `tools/pre-execute`, `tools/execute`, `tools/post-execute` или `tools/result`.
-  Хук не является заменяемым слотом и не получает управление цепочкой. Схема
-  каждого типа перечисляет поля, а ядро выполняет field-level redaction до
-  отправки: сообщения требуют `conversation.read`, аргументы и результаты —
-  права на соответствующее действие и данные, пути — точного файлового grant,
-  секреты не передаются. Право подписаться само по себе не раскрывает эти поля;
-- `approvals`: защитный вклад для конкретного действия или класса действий.
-  Он только добавляется и никогда не заменяет политику ядра, сотрудника или
-  задачи. Его ответы — `deny`, `request` и `noOpinion`; `allow` отсутствует;
-- `executors`: исполнитель с именем, возможностями и явным `replaces` при замене;
-- `ui.panelItems`, `ui.pages`, `ui.paletteCommands`, `ui.buttons`: пункт панели,
-  страница, команда палитры и кнопка. Каждый указывает локальный обработчик и
-  только принадлежащие плагину RPC-схемы.
+`mcpServers.transport` — закрытый union: либо
+`{kind:"stdio", programDigest, argv}`, либо `{kind:"https", origin}`. `env`,
+произвольный `cwd`, HTTP и незакреплённая программа отсутствуют; credentials
+выдаются только брокером по перечисленным `credentialNames`.
+`workspaceInstructions.scope.root` — созданный хостом устойчивый
+`workspaceRootId` подтверждённого канонического корня; runtime отдельно связывает
+его с capability handle. `relativePrefix` — нормализованный относительный путь
+без `..` и ссылок.
+
+`replaces?`, где он разрешён, содержит ровно одну ссылку того же типа из
+последнего столбца. Любой тип § 8 имеет ровно один ключ этой таблицы; добавить
+слот в карту без одновременного добавления его закрытой схемы сюда запрещено.
+
+`hooks.event` принимает только `agent/pre-step`, `agent/request`,
+`tools/pre-execute`, `tools/execute`, `tools/post-execute` или `tools/result`.
+Хук не получает управление цепочкой. Ядро выполняет field-level redaction до
+отправки: сообщения требуют `conversation.read`, аргументы и результаты — права
+на соответствующее действие и данные, пути — точного файлового grant, секреты
+не передаются. Право подписаться само по себе не раскрывает эти поля.
 
 Для каждого события ядро владеет закрытой входной JSON Schema с
 `additionalProperties: false`. Без отдельного `requestedPermissions.eventFields`
@@ -296,7 +367,7 @@ Node человека во время работы. Автор TypeScript-пла
 initialize {
   protocolVersions: [2],
   host: {name, version},
-  plugin: {id, version, snapshotDigest},
+  plugin: {publisherKeyId, id, version, snapshotDigest},
   services: {<name>: <selected version>},
   settings,
   secrets: [<declared names>],
@@ -305,16 +376,22 @@ initialize {
 ```
 
 Ответ выбирает версию `2`, объявляет поддерживаемые возможности и открывает фазу
-регистрации. Плагин регистрирует только то, что уже есть в `contributes`, через
-типизированные мосты:
+регистрации. Для каждого элемента § 2.4 с полем `handler` процесс вызывает единый
+закрытый метод `contributions.register {type, contributionId, handlerId}`. `type`
+обязан точно совпасть с путём своего массива в таблице § 2.4; любой отсутствующий
+там тип отклоняется. Декларативные `skills`, `workspaceInstructions`, статические
+`promptSections` и `mcpServers` публикует само ядро из манифеста и не принимает
+для них runtime-регистрацию. Экспорты `ui.*` таким же образом связывает UI host с
+проверенным `ui.entry`.
 
-- `tools.register`, затем вызовы `tools/call`;
-- `skills.register`;
-- `prompt.section.register`, `prompt.context.provide`, `prompt.assemble`;
-- `hooks.subscribe`, события и `hooks.respond`;
-- `executor.register`, затем вызовы исполнителя по договору внешнего харнесса;
-- `ui.contributions` и события состояния окна;
-- `pluginRpc.register` для методов из пространства § 5.
+После атомарной регистрации вызовы идут через выбранные в `requires.services`
+типизированные мосты: `tools/call`, `prompt/*`, `hooks/event|respond`,
+`executor/*`, `sessions/*`, `agents/*`, `pluginRpc/*`, `telemetry/*` и `ui/*`.
+Каждый мост принимает только вклад соответствующего типа из § 2.4.
+
+`settings` и список имён `secrets` в `initialize` ядро выбирает только по
+`pluginIdentity` текущего транспорта; процесс не передаёт и не переопределяет
+`publisherKeyId` или `id` для доступа к чужому состоянию.
 
 Ядро завершает регистрацию атомарно: либо все объявления совпали с манифестом,
 схемами, правами и доступными сервисами, либо поколение процесса не публикует ни
@@ -379,9 +456,11 @@ initialize {
 `snapshotDigest` и набор прав берутся из таблицы, а не из параметров плагина.
 Чужой, завершённый или прежний идентификатор отклоняется без раскрытия данных.
 
-Секрет доступен только по имени из `secrets`, только своему `id`, только внутри
-разрешённой операции. Значение не попадает в `initialize`, окружение, журнал,
-события или чтение из окна. Интерфейс задаёт секрет write-only.
+Секрет доступен только по имени из `secrets`, только полной `pluginIdentity`
+текущего транспорта и только внутри разрешённой операции. Строка `id` из
+параметров запроса игнорируется. Значение не попадает в `initialize`, окружение,
+журнал, события или чтение из окна. Интерфейс задаёт секрет write-only в области
+той же `{publisherKeyId, id}`.
 
 ### 3.3. Отмена, поколения и завершение
 
@@ -443,8 +522,9 @@ TypeScript существует только на стороне автора. �
 собирает исходник в готовый JavaScript `ui.entry` до `pack`; HoH не поставляет,
 не устанавливает и не запускает Node пользователя. Установка и работа плагина не
 компилируют TypeScript. Инструменты, хуки, динамический промпт и исполнитель не
-могут быть JS: для них тот же пакет использует Rust/Go `process`, MD `skill` или
-trusted `rust-inproc`.
+могут быть JS или MD: для них тот же пакет использует только Rust/Go `process`
+либо trusted `rust-inproc`. MD реализует исключительно статический `skill` или
+`workspaceInstruction` и не регистрирует обработчики этих вкладов.
 
 `ui.entry` — готовый локальный JavaScript-модуль из точного `snapshotDigest`.
 **Будет:** внешний UI запускается только в отдельной webview,
@@ -453,7 +533,7 @@ trusted `rust-inproc`.
 другим плагинам или системному окну подтверждения. Tauri IPC/bootstrap и его
 глобальные объекты вообще не внедряются в дочернюю webview.
 
-Каждый `{publisherKey, id, snapshotDigest, instanceHandle}` получает уникальный
+Каждый `{publisherKeyId, id, snapshotDigest, instanceHandle}` получает уникальный
 opaque origin и отдельный storage partition; cookies, cache, IndexedDB,
 service-workers и local storage не разделяются между плагинами/версиями и
 удаляются при отзыве. Хост, а не плагин, задаёт CSP минимум:
@@ -476,8 +556,9 @@ screen capture, WebRTC, MIDI, Bluetooth, USB, serial и HID. WebSocket/WebTransp
 Главное окно рисует доверенную рамку, имя плагина и декларативные штатные места:
 пункт панели, страницу, команду палитры и кнопку. Внешняя webview рисует только
 содержимое выданной области и обменивается данными через проверенные по схеме
-сообщения `hoh/plugin/<id>/*`. При создании ядро выдаёт непредсказуемый
-`instanceHandle`, связанный с `id`, поколением процесса и `snapshotDigest`;
+сообщения `hoh/plugin/<publisherKeyId>/<id>/*`. При создании ядро выдаёт
+непредсказуемый `instanceHandle`, связанный с полной `pluginIdentity`, поколением
+процесса и `snapshotDigest`;
 старый экземпляр после обновления, выключения или падения сообщения не отправляет.
 Одно сообщение не больше 64 КиБ; на instance — не больше 30 сообщений/с с burst
 60 и не больше 1 МиБ outstanding. Превышение включает backpressure, затем
@@ -490,19 +571,21 @@ Bundled UI процесса использует ту же отдельную we
 конкретной платформе, вклад получает `blocked`, а не запускается слабее.
 **Поддержка такой изоляции на всех платформах не проверена.**
 
-## 5. Пространство `hoh/plugin/<id>/*`
+## 5. Пространство `hoh/plugin/<publisherKeyId>/<id>/*`
 
 **Будет:** единственное расширяемое пространство окно ↔ плагин —
-`hoh/plugin/<id>/*`. При регистрации ядро проверяет одновременно:
+`hoh/plugin/<publisherKeyId>/<id>/*`. При регистрации ядро проверяет одновременно:
 
-1. `<id>` точно совпадает с владельцем активного `snapshotDigest`;
+1. `{publisherKeyId, id}` точно совпадает с владельцем активного `snapshotDigest`;
 2. локальный метод объявлен в `contributes` и его сервис — в `requires.services`;
 3. схемы запроса, ответа и события закрыты и прошли проверку;
-4. вызывающая webview предъявила действующий `instanceHandle` того же плагина;
+4. вызывающая webview предъявила действующий `instanceHandle` той же полной
+   `pluginIdentity`;
 5. поколение процесса и `snapshotDigest` совпадают с активным экземпляром;
 6. действующие права разрешают операцию в этой сессии и задаче.
 
-Метод другого `id`, необъявленный суффикс, неизвестное поле и ответ вне схемы
+Метод другого `publisherKeyId` или `id`, необъявленный суффикс, неизвестное поле
+и ответ вне схемы
 отклоняются. Пространство не открывает произвольный `hoh/*`: системные методы
 окна остаются закрытым протоколом ядра. Плагинный UI не может переслать Tauri
 команду или `approval/request`. После обновления или выключения старые
@@ -526,6 +609,10 @@ Bundled UI процесса использует ту же отдельную we
 `requestedPermissions` включает базовые права `files.read`, `files.write`,
 `network.origins`, `programs` и отдельные права:
 
+- включение точного списка `contributes` является частью подписанного решения на
+  snapshot, но само не выдаёт доступ к данным или действиям; для каждого вклада
+  дополнительно действуют его неявные права § 8 и перечисленные ниже явные права;
+
 - `conversation.read` — получать текст только текущей сессии текущей задачи;
   другая сессия требует отдельного точного grant (выданного доступа), без
   шаблонов и права «все сессии сотрудника»;
@@ -540,7 +627,8 @@ Bundled UI процесса использует ту же отдельную we
   `assemble`; право добавить контекст не даёт права читать собранный контекст или
   переписку;
 - `executor.register` и более сильное `executor.replace`;
-- `ui` — точные виды `panelItem`, `page`, `paletteCommand`, `button`;
+- `ui` — точные виды `panelItem`, `page`, `paletteCommand`, `button`, `chatView`,
+  `composer`, `messageRenderer`, `theme`, `settingsSurface`;
 - `replace` — точный список слотов вида `<kind>:<slot>` без `*`; каждое
   `replaces` вклада обязано входить в этот список.
 
@@ -557,6 +645,40 @@ MD-навык образует область ограничений с моме
 конкретной строкой. Явная активация принадлежит человеку. Вызов через
 `tool-skill` самой моделью требует отдельного `skill.invokeByModel:<skillId>`;
 без него модель может только предложить человеку включить навык.
+
+#### Договор `workspaceInstruction`
+
+`AGENTS.md`, `CLAUDE.md` и любой будущий файл правил рабочей папки не читаются
+напрямую в prompt. Discovery создаёт лишь кандидата; импорт копирует точный файл
+в staging и создаёт синтетический снимок `execution: skill` с единственным
+вкладом `workspaceInstructions`. В снимок входят исходный путь, digest текста,
+нормализованный workspace root, `relativePrefix`, порядок применения и полный
+набор `requestedPermissions`. Сам текст не может назначить себе права: при
+импорте их выбирает человек, а без выбора набор пуст.
+
+Человек в системном окне подтверждает `{workspaceRoot, relativePrefix,
+snapshotDigest}`, текст/изменения, все запрошенные и выданные права. Только после
+этого запись с `pluginIdentity = {publisherKeyId:"local-<snapshotDigestHex>",
+id:"workspace-instruction"}`
+атомарно попадает в active-index. Другая рабочая папка, путь, область, порядок,
+текст или набор прав создают новый снимок и требуют нового подтверждения.
+Bootstrap для workspace instructions запрещён; прямой watcher никогда не меняет
+активный текст.
+
+Жизнь субъекта начинается, когда человек включает подтверждённую инструкцию для
+подходящей рабочей папки, и заканчивается только после полного удаления её текста
+и всех пересказов из истории. Переключение папки или выключение прекращает новые
+вставки, но не снимает ограничения с уже затронутого контекста. Пока текст или
+пересказ присутствует, каждое действие модели пересекается с правами инструкции,
+сотрудника, задачи, вызова и всех других активных навыков/instructions; несколько
+файлов могут только сузить итог.
+
+Компакция обязана переносить вместе с пересказом неизменяемую метку
+`{pluginIdentity, snapshotDigest, grants}`. Fork/субагент наследует метку и ещё
+более узкое пересечение прав; удалить метку можно только вместе со всем текстом и
+пересказом субъекта. Инструкция не получает неявного чтения разговора, не создаёт
+инструменты/хуки и не отвечает `allow`. Её корень и исходный файл защищены от
+записи агентом и плагинами по § 6.3.
 
 ### 6.2. Входы и неявные права заменяемых слотов
 
@@ -595,11 +717,12 @@ MD-навык образует область ограничений с моме
 плагина и прав не выдаёт. Staging физически находится
 вне всех plugin/skill roots, watchers, путей импорта и runtime lookup. До
 подтверждения запрещены регистрация вкладов, публикация RPC, импорт `ui.entry`
-или JS и обнаружение `SKILL.md`. **Будет:** включить плагин может только человек:
+или JS и обнаружение `SKILL.md`/workspace instructions. **Будет:** включить
+плагин может только человек:
 
 1. действие начинается в главном окне;
-2. окно показывает `id`, версию, источник, `snapshotDigest`, все вклады, замены,
-   запрошенные и выдаваемые права;
+2. окно показывает полную `pluginIdentity`, версию, источник, `snapshotDigest`,
+   все вклады, замены, запрошенные и выдаваемые права;
 3. отдельное системное окно подтверждает точное действие;
 4. ядро связывает решение MAC с действием и точным `snapshotDigest`;
 5. только после проверки MAC ядро атомарно связывает `snapshotDigest` с решением,
@@ -610,7 +733,8 @@ MD-навык образует область ограничений с моме
 `snapshotDigest` — новое подтверждение, даже при той же версии и правах. Пока
 обновление ждёт решения, работает прежний одобренный снимок. Откат — повторное
 включение старого снимка и тоже требует подтверждения. Версия сохранённой задачи
-не переключается молча: она закрепляет `{id, version, snapshotDigest}`.
+не переключается молча: она закрепляет
+`{publisherKeyId, id, version, snapshotDigest}`.
 
 При этом авторская пара `{id, version}` неизменяема: другой `digest` под ней
 отклоняется, а не предлагается человеку как обновление. Новый авторский набор
@@ -648,7 +772,7 @@ MD-навык образует область ограничений с моме
 | Launcher/env patch | закрытый список параметров, скомпилированный в подписанной сборке; окружение не может указать новый файл, модуль или каталог discovery |
 | ConfigEditor и Settings: модель/host, rules, executor/access, workspace, sandbox, custom dirs | изменение, способное добавить код/инструкцию/endpoint или расширить доступ, проходит системное подтверждение и подписанную запись состояния; секреты остаются в credentials broker |
 | Реестр внешних harness, их slash-команды и навыки | только harness из active-index; его runtime-объявления живут в области этой сессии, проходят схемы/права и не устанавливаются как глобальные вклады |
-| Native discovery внешнего harness: `.mcp.json`, hooks, plugins, commands/skills и аналогичные config roots | отключено host flags/sandbox; нужный server/command/skill импортируется в HoH staging. Рабочие `AGENTS.md`/`CLAUDE.md` считаются отдельным `workspaceInstruction` subject с областью прав навыка, а не доверенным core prompt |
+| Native discovery внешнего harness: `.mcp.json`, hooks, plugins, commands/skills и аналогичные config roots | отключено host flags/sandbox; нужный server/command/skill импортируется в HoH staging. Рабочие `AGENTS.md`/`CLAUDE.md` импортируются только как синтетический `workspaceInstructions` snapshot по полному договору § 6.1, а не как доверенный core prompt |
 | Slash-команды, команды, prompts и MCP resources | только манифест активного снимка или подписанный trusted core; текст ресурса считается недоверенным вводом, а не новым правом |
 | `rust-inproc`, compiled registry, shipped bundles | только точное соответствие подписанному bundled-index текущей product build |
 | Plugin RPC и UI messages | только объявленные методы активного поколения с действующим `instanceHandle`; сообщение не создаёт новый вклад |
@@ -663,7 +787,7 @@ MD-навык образует область ограничений с моме
 `files.write`, workspace-write, пути проекта и symlink/hardlink. Внешняя ручная
 правка обнаруживается как новый неподтверждённый кандидат и не активируется.
 
-Каждая запись active-index содержит `id`, publisher key, version, snapshot и
+Каждая запись active-index содержит полную `pluginIdentity`, version, snapshot и
 artifact digests, grants, implicit slot permissions, replacements, denylist
 sequence и системное решение; запись получает устойчивую подпись (локально
 допустим эквивалентный MAC с теми же свойствами). Ключ хранится в native approval
@@ -679,7 +803,7 @@ store без symlink, сверяет digest открытого файла и з�
 offline Revocation Key, авторизованным offline product-release root. Документ
 содержит монотонный `sequence`, `issuedAt`, `expiresAt`, `signingKeyId` и записи
 четырёх видов: `snapshotDigest`, digest отдельного artifact/бинарника, publisher
-key и диапазон `{publisherKey, id, version}`. Поэтому тот же опасный бинарник под
+key и диапазон `{publisherKeyId, id, version}`. Поэтому тот же опасный бинарник под
 новым манифестом или версией остаётся заблокирован.
 
 Ядро принимает только корректно подписанный список с `sequence` строго больше
@@ -743,6 +867,7 @@ HOH-42 сегодня нет даже для MD.
 | Инструмент и его схема | прикладная, `tool:<id>` | только закрытый input своего инструмента; данные/брокеры — лишь по явным правам |
 | Исполнитель инструментов | прикладная, `toolExecutor:<id>` | `toolId`, schema, arguments, result/error всех вызовов области; неявно `tool.arguments.read` и `tool.results.read` |
 | MD-навык | прикладная, `skill:<id>` | текст/resources навыка; неявного чтения разговора нет, но действует область ограничений § 6.1 |
+| Правило рабочей папки | добавочный `workspaceInstructions`, не `replaces` | точный текст, root/scope/digest и выбранные человеком grants; жизнь, компакция и fork по § 6.1 |
 | Раздел инструкции | прикладная, `promptSection:<id>` | статический текст — без данных; provider получает только объявленные context fields |
 | Сборщик инструкции | прикладная, `promptAssembler:<id>` | все prompt sections и runtime context; неявно `prompt.context.read`, но не conversation |
 | Шаг цикла агента | прикладная, `agentStep:<id>` | messages текущей сессии, step state, tool catalog/results; неявно `conversation.read:current` |
@@ -757,7 +882,7 @@ HOH-42 сегодня нет даже для MD.
 | MCP server/tools/resources/prompts | добавочный `mcpServer:<id>`, не замена защиты | server descriptor и вызовы; неявные program/HTTPS-origin/credential-use права точно выводятся из descriptor и показываются человеку |
 | Workspace/project provider | прикладная, `workspaceProvider:<id>` | identity и список подтверждённых roots, но не содержимое файлов |
 | Вопрос человеку | прикладная, `userQuestion:<id>` | текст вопроса/варианты и ответ; UI всегда показывает имя источника, системным approval не является |
-| Goals/todo/tasks/schedules/artifacts | прикладные `goalStore`, `taskStore`, `schedule`, `artifactStore` | только данные своего домена; доступ к разговору/файлам отдельно |
+| Goals/todo/tasks/schedules/artifacts | прикладные `goalStore`, `todoStore`, `taskStore`, `schedule`, `artifactStore` | только данные своего домена; доступ к разговору/файлам отдельно |
 | Hooks событий | только добавочные, не `replaces` | закрытые поля и ответы § 2.4; подписка не раскрывает данные и не управляет цепочкой |
 | Дополнительный защитный вклад | только добавочный, не `replaces` | `deny/request/noOpinion`; выполняется внутри TCB, не имеет `allow` |
 | Panel item/page/palette/button | прикладные `ui.panelItem/page/paletteCommand/button:<id>` | собственное состояние/RPC; пользовательские данные только по явному праву |
@@ -765,7 +890,7 @@ HOH-42 сегодня нет даже для MD.
 | Поле ввода/attachments | прикладная, `ui.composer:<id>` | текущий draft и выбранные attachments; неявно `draft.read`, отправка остаётся в TCB host |
 | Отрисовка сообщения | прикладная, `ui.messageRenderer:<id>` | одно redacted message; ссылки/navigation остаются под UI policy |
 | Тема | прикладная, `ui.theme:<id>` | theme tokens, без пользовательских данных |
-| Settings surface и plugin RPC | прикладные `ui.settings:<id>` и namespace владельца | только settings своего id и закрытые RPC schemas |
+| Settings surface и plugin RPC | прикладные `ui.settings:<id>` и `pluginRpcMethods` | только settings полной `{publisherKeyId,id}` и закрытые RPC schemas в её namespace |
 | Telemetry exporter | прикладная, `telemetryExporter:<id>` | только host-redacted events по отдельному egress grant; secrets/conversation по умолчанию исключены |
 | Загрузчик, bundled/active-index, staging, snapshot store | TCB | решает, какой код существует; обычная замена позволила бы внедрить неподтверждённый код |
 | Manifest/provenance/trust store/publisher pins | TCB | устанавливает identity и целостность; плагин не проверяет собственную подпись |
@@ -782,7 +907,10 @@ HOH-42 сегодня нет даже для MD.
 | Denylist, blocked, antirollback и key rotation | TCB | опасная версия не может разблокировать себя или откатить список |
 | Audit log защитных решений | TCB | append-only запись без секретов; плагин не стирает доказательства вызова защит |
 
-У всех заменяемых слотов действует одно правило: точный `replaces`, отдельный
+Каждая прикладная или добавочная строка выше обязана иметь одноимённый закрытый
+тип в `contributes` по § 2.4; строка без такого типа считается недоступной и не
+может войти в обещание «100 %». У всех заменяемых слотов действует одно правило:
+точный `replaces`, отдельный
 grant, показ человеку, один активный владелец, блокировка конфликта и атомарное
 восстановление прежнего владельца. Обычный плагин не заменяет TCB, потому что
 иначе сможет отменить проверку собственных прав, подтверждения или изоляции.
@@ -843,8 +971,9 @@ security/release review.
 
 Без корректного envelope UI показывает дословно: **«непроверенный локальный
 бинарник неизвестного происхождения»**. Такой снимок допускается только по пути
-`local-unverified`: человек подтверждает каждый snapshot отдельно, идентичность
-равна самому `snapshotDigest`, а не заявленному `id`; снимок не наследует секреты,
+`local-unverified`: человек подтверждает каждый snapshot отдельно,
+`publisherKeyId = local-<snapshotDigestHex>`, а заявленный `id` остаётся лишь второй
+частью этой одноразовой `pluginIdentity`; снимок не наследует секреты,
 настройки или publisher pin, не получает bootstrap/bundled-статус и не считается
 обновлением подписанного плагина. Digest доказывает лишь неизменность байтов, не
 автора и не соответствие исходникам.
@@ -887,7 +1016,8 @@ pins. Цепочка до store означает «проверенный изд
 окно показывает заявленные `publisher.id`, source и fingerprint как
 **непроверенные**; человек может отдельным системным решением закрепить fingerprint
 за `id` при первом включении. После pin владельцем настроек, секретов, RPC и
-истории обновлений является пара `{publisherKey, id}`, а не строка `id`.
+истории обновлений является `pluginIdentity = {publisherKeyId, id}`, а не строка
+`id`.
 Смена ключа создаёт новую identity; перенос настроек/секретов требует отдельного
 решения с перечислением каждого переносимого имени. Манифест сам по себе никогда
 не доказывает издателя.
@@ -974,7 +1104,7 @@ pins. Цепочка до store означает «проверенный изд
   Сегодня это отдельный канал исполнения; будущий хост обязан пропускать его
   через descriptor/staging/approval из § 6.3.
 - Loader умеет рекурсивно включать literal YAML/JSON config trees через
-  `cordis:include` — `crates/hoh-loader/src/runtime.rs:1031-1113`. Команда
+  `cordis:include` — `crates/hoh-loader/src/runtime.rs:970-1113`. Команда
   управления profile plugins всё ещё описана как pnpm passthrough —
   `apps/hoh/src/args.rs:159-164`, но этот build уже отвергает её до запуска —
   `apps/hoh/src/bin.rs:156-160`. Browser roster поставки содержит `dsh.client`,
@@ -1002,7 +1132,8 @@ pins. Цепочка до store означает «проверенный изд
 Сегодня пользовательский плагин из папки во время работы не загружается.
 `ShippedBundles` в `apps/hoh/src/profile_boot.rs` принимает только семь
 скомпилированных наборов — `apps/hoh/src/profile_boot.rs:29-49`. Текущая T3 build
-config фиксирует плагины/вход окна в `ui/src/t3-entry/vite.ts:298-313`, а
+config и весь build block находятся в `ui/src/t3-entry/vite.ts:298-332`, а сам
+вход `rolldownOptions.input.t3` задан на `ui/src/t3-entry/vite.ts:331`. Диапазон
 `ui/src/t3-entry/vite.ts:229-240` лишь переименовывает готовый `t3.html` в
 `index.html` и не доказывает будущую динамическую загрузку UI-плагина. Список
 страниц закрыт типом `learning | widgets` —
@@ -1197,7 +1328,7 @@ JavaScript, инструмент исполняется изолированны
 
 ## 14. Исправления по заключению критика
 
-Ниже сохранена история усилений исходного черновика cx-pol с учётом трёх ревью.
+Ниже сохранена история усилений исходного черновика cx-pol с учётом четырёх ревью.
 
 1. После решения основателя и CEO статус изменён на «принято»; D1–D11 закрыты,
    а `formatVersion: 2` явно отделён от проектного v1 HOH-27.
@@ -1260,3 +1391,7 @@ JavaScript, инструмент исполняется изолированны
 36. После Opus защитная цепочка и все пути расширения включены в TCB, права
     заменяемых слотов сделаны явными, брокеры/отзыв/provenance/UI усилены, а
     основной документ переписан без технического жаргона.
+37. При закрытии замечаний карта § 8 связана с полным закрытым каталогом
+    `contributes`, `pluginIdentity` проведена через всё состояние и RPC, а
+    workspace instructions получили staging, grants, lifecycle, compaction и
+    наследование субагентами.
