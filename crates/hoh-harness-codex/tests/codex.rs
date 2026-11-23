@@ -1151,9 +1151,8 @@ async fn early_interrupt_waits_for_turn_started_after_result_and_reaps_process_t
         "turn/start result alone must not make the native turn interruptible"
     );
     assert!(
-        !lines(&log)
-            .iter()
-            .any(|line| line.get("stubEvent") == Some(&Value::String("interrupt-before-turn-started".into()))),
+        !lines(&log).iter().any(|line| line.get("stubEvent")
+            == Some(&Value::String("interrupt-before-turn-started".into()))),
         "HoH sent Stop before the canonical turn/started notification"
     );
     fs::write(log.with_extension("release"), b"start native turn").unwrap();

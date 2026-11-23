@@ -224,11 +224,7 @@ struct State {
 }
 
 fn take_pending_interrupt(state: &mut State) -> Option<RequestContext> {
-    if state.closed
-        || !state.turn_opened
-        || !state.interrupt_requested
-        || state.interrupt_sent
-    {
+    if state.closed || !state.turn_opened || !state.interrupt_requested || state.interrupt_sent {
         return None;
     }
     let native_turn = state.native_turn.clone()?;

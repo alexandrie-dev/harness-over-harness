@@ -371,7 +371,9 @@ fn main() {
                     && !delayed_turn_active.load(Ordering::SeqCst)
                 {
                     log(&json!({"stubEvent":"interrupt-before-turn-started"}));
-                    send(json!({"id":id,"error":{"code":-32000,"message":"no active turn to interrupt"}}));
+                    send(
+                        json!({"id":id,"error":{"code":-32000,"message":"no active turn to interrupt"}}),
+                    );
                     continue;
                 }
                 if scenario == "late-interrupt-error" && turn_count == 1 {
