@@ -40,8 +40,8 @@ use tokio_util::sync::CancellationToken;
 use crate::contract::{
     AccessMode, ApprovalDecision, ApprovalMode, EndReason, FileChange, FileChangeKind,
     HarnessAction, HarnessEvent, HarnessFailure, HarnessPolicy, HarnessQuestion, HarnessResponse,
-    ItemOutcome, NativeSessionId, NetworkAccess, PromptImage, PromptParams, QuestionAnswer,
-    RespondParams, SandboxMode, StartParams, code,
+    HarnessTelemetryRecord, ItemOutcome, NativeSessionId, NetworkAccess, PromptImage, PromptParams,
+    QuestionAnswer, RespondParams, SandboxMode, StartParams, TELEMETRY_RECORD, code,
 };
 use crate::executor::{BINDING_RECORD, Launched, Shared};
 use crate::harness::HarnessSession;
@@ -327,6 +327,17 @@ impl ExternalAgent {
                 .ctx
                 .logger()
                 .warn(format_args!("cannot record native session id: {error}")),
+        }
+    }
+
+    /// Preserve raw provider telemetry as an ignorable session record. Redaction and field
+    /// selection happened at the concrete harness boundary; this layer adds only its route.
+    fn record_telemetry(&self, record: HarnessTelemetryRecord) {
+        let data = json!({"harness": self.shared.name, "record": record});
+        if let Err(error) = append_plugin_record(&self.session, TELEMETRY_RECORD, data) {
+            self.ctx
+                .logger()
+                .warn(format_args!("cannot record harness telemetry: {error}"));
         }
     }
 
@@ -640,6 +651,7 @@ impl ExternalAgent {
                     HarnessEvent::NativeSession { native_session_id } => {
                         self.record_native(&native_session_id, None)
                     }
+                    HarnessEvent::Telemetry { record } => self.record_telemetry(record),
                     // Outside a turn nobody can be asked: the request is withdrawn, not left
                     // waiting.
                     HarnessEvent::ApprovalRequested { request_id, .. }
@@ -1386,6 +1398,7 @@ impl TurnLog {
                 }
             }
             HarnessEvent::Status { .. } => {}
+            HarnessEvent::Telemetry { record } => self.agent.record_telemetry(record),
             // Sent before the harness took this turn's prompt: the request belongs to the time
             // between turns (after the last turn ended), even when it reaches HoH only now. It is
             // withdrawn like one found before the prompt, never put to the user as this turn's.

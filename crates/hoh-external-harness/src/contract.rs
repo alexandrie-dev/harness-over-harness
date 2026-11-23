@@ -385,6 +385,181 @@ pub struct EventParams {
     pub event: HarnessEvent,
 }
 
+/// Ignorable session-log record that carries one raw provider telemetry frame.
+pub const TELEMETRY_RECORD: &str = "plugin:hoh-external-harness/telemetry";
+
+/// Durable record written for raw provider telemetry. The session log supplies ordering; these
+/// fields preserve the provider identity needed to recognise a replay or a process/session reset
+/// without deriving totals in the harness adapter.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessTelemetryRecord {
+    pub provenance: HarnessTelemetryProvenance,
+    pub payload: HarnessTelemetry,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessTelemetryProvenance {
+    /// Unique for one native process launch, including when it resumes the same native session.
+    pub launch_id: String,
+    pub native_session_id: NativeSessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// The provider frame UUID or message id. It is absent rather than invented when the
+    /// provider supplied no stable id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_item_id: Option<String>,
+}
+
+/// Raw telemetry only. Conversation totals, ledger deltas, task reconciliation and
+/// deduplication belong to the session-stats projection that folds these durable records.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum HarnessTelemetry {
+    AssistantUsage {
+        usage: HarnessTokenUsage,
+    },
+    ResultUsage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<HarnessTokenUsage>,
+        /// `None` means the field was absent; `Some([])` preserves an explicitly empty ledger.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_usage: Option<Vec<HarnessModelUsage>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_cost_usd: Option<f64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        user_message_uuids: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<String>,
+    },
+    McpServers {
+        servers: Vec<HarnessMcpServer>,
+    },
+    BackgroundTask {
+        update: HarnessBackgroundTaskUpdate,
+    },
+    BackgroundTasksSnapshot {
+        tasks: Vec<HarnessBackgroundTask>,
+    },
+}
+
+/// Token counts exactly as Claude reported them. Missing is not zero.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessTokenUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessModelUsage {
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search_requests: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+}
+
+/// Only public identity/status from `system/init.mcp_servers`; command, args, env and transport
+/// configuration never enter the session log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessMcpServer {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessBackgroundTask {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessBackgroundTaskUpdate {
+    pub subtype: String,
+    pub task: HarnessBackgroundTask,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_backgrounded: Option<bool>,
+    /// Typed-safe subset of a workflow progress roster. Unknown item shapes are omitted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflow_progress: Vec<HarnessWorkflowProgress>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessWorkflowProgress {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_progress_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u64>,
+}
+
 /// One thing that happened in a native session.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -444,6 +619,11 @@ pub enum HarnessEvent {
     /// A progress line (not part of the answer).
     Status {
         text: String,
+    },
+    /// Provider accounting and background lifecycle that does not belong in the visible turn
+    /// stream. The external agent persists it as an ignorable plugin record.
+    Telemetry {
+        record: HarnessTelemetryRecord,
     },
     /// A step began: a command, a file change, another tool.
     ItemStarted {

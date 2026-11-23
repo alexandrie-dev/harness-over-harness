@@ -5,7 +5,7 @@
 //! Prompts: `hello`, `double final`, `run: <command>`, `delete: <path>`, `race`, `question`,
 //! `run in <folder>: <command>`, `long command`, `stubborn command`, `break stream`, `crash`, `garbage`, `flood`,
 //! `slow start`, `mute`, `huge frame`, `no final`, `only reasoning`, `fail secret`, `leak`,
-//! `bad event`, `split key`, `nested events`, `update: <path>`, `changes: <JSON list of changes>`,
+//! `bad event`, `split key`, `nested events`, `telemetry`, `update: <path>`, `changes: <JSON list of changes>`,
 //! `permission: <description>`, `tool: <name> <JSON input>`, `repeat request`, `late request`, `late request after prompt`, `late leak`, `swap`, `bypass: <command>` (runs it without asking),
 //! and any prompt containing `echo`.
 //!
@@ -348,6 +348,28 @@ impl Stub {
         self.event(json!({"type": "turn-started", "turnId": turn_id}));
         let native = self.native.clone().unwrap_or_default();
         match text {
+            "telemetry" => {
+                let provenance = |source: &str| {
+                    json!({
+                        "launchId": format!("stub-{}", std::process::id()),
+                        "nativeSessionId": native.clone(),
+                        "turnId": turn_id,
+                        "sourceId": source,
+                    })
+                };
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance("assistant-usage-1"),
+                    "payload": {"kind": "assistant-usage", "usage": {
+                        "inputTokens": 9, "outputTokens": 2
+                    }}
+                }}));
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance("empty-roster-1"),
+                    "payload": {"kind": "background-tasks-snapshot", "tasks": []}
+                }}));
+                self.text("m1", "telemetry stored");
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
             "double final" => {
                 self.event(json!({"type": "text-delta", "messageId": "m1", "text": "once"}));
                 self.text("m1", "once");

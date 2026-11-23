@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, ApprovalMode, AuthState, EndReason, ExternalHarness,
-    HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse, HarnessSession, ItemOutcome,
-    PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, Started, code,
+    HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse, HarnessSession, HarnessTelemetry,
+    ItemOutcome, PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams, Started,
+    code,
 };
 use hoh_harness_claude::{ClaudeConfig, ClaudeHarness, SettingSources};
 use tokio::sync::mpsc::Receiver;
@@ -416,6 +417,144 @@ async fn a_turn_streams_reasoning_and_text_and_completes() {
 }
 
 #[tokio::test]
+async fn telemetry_keeps_raw_usage_safe_mcp_and_background_provenance() {
+    let env = Env::new();
+    let Started {
+        result,
+        session,
+        mut events,
+    } = start(&env, None).await;
+    prompt(&session, "t-telemetry", "telemetry");
+    let seen = until(&mut events, turn_end).await;
+    let records: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            HarnessEvent::Telemetry { record } => Some(record),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(records.len(), 7, "{seen:#?}");
+    assert!(records.iter().all(|record| {
+        !String::from(record.provenance.native_session_id.clone()).is_empty()
+            && !record.provenance.launch_id.is_empty()
+    }));
+    for (index, record) in records.iter().enumerate() {
+        let expected_turn = matches!(index, 1 | 6).then_some("t-telemetry");
+        assert_eq!(
+            record.provenance.turn_id.as_deref(),
+            expected_turn,
+            "system/background telemetry must not be attributed to the active prompt"
+        );
+    }
+    assert!(
+        records
+            .iter()
+            .all(|record| record.provenance.launch_id == records[0].provenance.launch_id)
+    );
+
+    match &records[0].payload {
+        HarnessTelemetry::McpServers { servers } => {
+            assert_eq!(servers.len(), 2);
+            assert_eq!(servers[0].name, "codex");
+            assert_eq!(servers[0].status.as_deref(), Some("connected"));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        &records[1].payload,
+        HarnessTelemetry::AssistantUsage { usage }
+            if usage.input_tokens == Some(11)
+                && usage.output_tokens == Some(3)
+                && usage.cache_read_input_tokens == Some(5)
+                && usage.cache_creation_input_tokens.is_none()
+    ));
+    assert!(matches!(
+        &records[2].payload,
+        HarnessTelemetry::BackgroundTask { update }
+            if update.subtype == "task_started"
+                && update.task.task_id == "task-1"
+                && update.is_backgrounded == Some(true)
+    ));
+    assert!(matches!(
+        &records[3].payload,
+        HarnessTelemetry::BackgroundTask { update }
+            if update.subtype == "task_progress"
+                && update.workflow_progress.len() == 2
+                && update.workflow_progress[1].agent_id.as_deref() == Some("agent-1")
+    ));
+    assert!(matches!(
+        &records[4].payload,
+        HarnessTelemetry::BackgroundTask { update }
+            if update.subtype == "task_notification"
+                && update.status.as_deref() == Some("completed")
+    ));
+    assert!(matches!(
+        &records[5].payload,
+        HarnessTelemetry::BackgroundTasksSnapshot { tasks } if tasks.is_empty()
+    ));
+    match &records[6].payload {
+        HarnessTelemetry::ResultUsage {
+            usage,
+            model_usage,
+            total_cost_usd,
+            user_message_uuids,
+            ..
+        } => {
+            assert_eq!(
+                usage.as_ref().and_then(|usage| usage.input_tokens),
+                Some(13)
+            );
+            let ledger = model_usage.as_ref().expect("modelUsage field was present");
+            assert_eq!(ledger.len(), 1);
+            assert_eq!(ledger[0].model, "stub-model");
+            assert_eq!(ledger[0].input_tokens, Some(20));
+            assert_eq!(ledger[0].context_window, Some(200_000));
+            assert_eq!(ledger[0].cost_usd, Some(0.125));
+            assert_eq!(*total_cost_usd, Some(0.25));
+            assert_eq!(user_message_uuids.len(), 1);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let encoded = serde_json::to_string(&records).unwrap();
+    for secret in [
+        "secret-command",
+        "secret-token",
+        "secret-arg",
+        "secret-output",
+    ] {
+        assert!(
+            !encoded.contains(secret),
+            "unsafe MCP/task field leaked: {encoded}"
+        );
+    }
+    let first_launch = records[0].provenance.launch_id.clone();
+    let native = String::from(result.native_session_id);
+    session.terminate(Duration::from_millis(500)).await;
+
+    let Started {
+        result,
+        session,
+        mut events,
+    } = start(&env, Some(&native)).await;
+    assert!(result.resumed);
+    assert_eq!(String::from(result.native_session_id), native);
+    prompt(&session, "t-resumed-telemetry", "telemetry");
+    let resumed = until(&mut events, turn_end).await;
+    let resumed_record = resumed.iter().find_map(|event| match event {
+        HarnessEvent::Telemetry { record } => Some(record),
+        _ => None,
+    });
+    let resumed_record = resumed_record.expect("resumed telemetry");
+    assert_ne!(resumed_record.provenance.launch_id, first_launch);
+    assert_eq!(
+        String::from(resumed_record.provenance.native_session_id.clone()),
+        native
+    );
+    session.terminate(Duration::from_millis(500)).await;
+}
+
+#[tokio::test]
 async fn an_allowed_command_runs_and_a_denied_one_is_declined() {
     for allow in [true, false] {
         let env = Env::new();
@@ -602,6 +741,23 @@ async fn a_result_of_another_turn_does_not_end_the_prompts_turn() {
         assert!(
             answer,
             "{scenario}: the turn ended before its answer: {seen:?}"
+        );
+        let background_usage = seen.iter().find_map(|event| match event {
+            HarnessEvent::Telemetry { record }
+                if matches!(
+                    &record.payload,
+                    HarnessTelemetry::ResultUsage { origin, .. }
+                        if origin.as_deref() == Some("task-notification")
+                ) =>
+            {
+                Some(record)
+            }
+            _ => None,
+        });
+        assert_eq!(
+            background_usage.and_then(|record| record.provenance.turn_id.as_deref()),
+            None,
+            "{scenario}: a background result must not be attributed to t1"
         );
         // The next prompt is a turn of its own, answered and ended once.
         prompt(&session, "t2", "hello");

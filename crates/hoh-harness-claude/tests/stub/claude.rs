@@ -7,7 +7,7 @@
 //! `initialize` lists five commands and `reload_skills` two skills, some of them odd (HOH-41).
 //! `rename` makes `system/init` report a new session id; the session id of each user line is
 //! appended to `$STUB_STATE/prompt-sessions`.
-//! Prompts: `withdraw`, `toolfail`, `subagent`, `run-reason`, `hello`, `run: <command>`, `edit: <path>`, `question`, `long`, `garbage`, `stderr`,
+//! Prompts: `withdraw`, `toolfail`, `subagent`, `run-reason`, `hello`, `telemetry`, `run: <command>`, `edit: <path>`, `question`, `long`, `garbage`, `stderr`,
 //! `crash`, `failure`, `write: <path>`, `kill-self` (SIGABRT), `ask-abort`, `echo-decision`,
 //! `subagent-tool`, `parallel-subagents`, `unknown-request`, `withdraw-question`, `leave-open`, `subagent-stream`,
 //! `truncate`, `read: <path>`, `close-stdin`, `notebook: <path>`, `login-expired`, `forbidden`, `question-body`, `question-odd`, `question-bare`, `two-open`, `silent-interrupt`; STUB_MODE `version-fails`, `root-refusal`, `secret-start`; prompts `protected: <path>`, `dangerous-rm`, `secret-crash`.
@@ -302,7 +302,8 @@ impl Stub {
             write_line(&json!({
                 "type": "result", "subtype": "success", "is_error": false, "result": "",
                 "num_turns": 0, "origin": { "kind": "task-notification" },
-                "session_id": self.session,
+                "uuid": "wake-result-telemetry", "session_id": self.session,
+                "usage": { "input_tokens": 1 }, "modelUsage": {},
             }));
             self.system_init();
             let message_id = self.id("msg");
@@ -325,6 +326,8 @@ impl Stub {
                 "type": "result", "subtype": "success", "is_error": false,
                 "result": "The background command ended.", "num_turns": 1,
                 "origin": { "kind": "task-notification" }, "session_id": self.session,
+                "uuid": "wake-turn-result-telemetry", "usage": { "input_tokens": 2 },
+                "modelUsage": {},
             }));
             write_line(&json!({
                 "type": "result", "subtype": "success", "is_error": false, "result": "other",
@@ -356,6 +359,67 @@ impl Stub {
                 }
             }
             self.result("success", false, "done");
+            return;
+        }
+        if text == "telemetry" {
+            write_line(&json!({
+                "type": "system", "subtype": "init", "session_id": self.session,
+                "uuid": "init-telemetry", "model": "stub", "permissionMode": "default",
+                "mcp_servers": [
+                    { "name": "codex", "status": "connected", "command": "secret-command",
+                      "env": { "TOKEN": "secret-token" } },
+                    { "name": "offline", "status": "failed", "args": ["secret-arg"] }
+                ]
+            }));
+            write_line(&json!({
+                "type": "assistant", "uuid": "assistant-telemetry",
+                "session_id": self.session, "parent_tool_use_id": null,
+                "message": { "id": "msg-telemetry", "role": "assistant",
+                    "usage": { "input_tokens": 11, "output_tokens": 3,
+                        "cache_read_input_tokens": 5 },
+                    "content": [{ "type": "text", "text": "telemetry done" }] }
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "task_started", "session_id": self.session,
+                "uuid": "task-start-telemetry", "task_id": "task-1",
+                "tool_use_id": "toolu-background", "task_type": "local_bash",
+                "description": "Background build", "is_backgrounded": true
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "task_progress", "session_id": self.session,
+                "uuid": "task-progress-telemetry", "task_id": "task-1",
+                "tool_use_id": "toolu-background", "task_type": "local_workflow",
+                "description": "Build phase", "workflow_progress": [
+                    { "type": "workflow_phase", "index": 1, "title": "Build" },
+                    { "type": "workflow_agent", "index": 1, "label": "compile",
+                      "agentId": "agent-1", "state": "start", "phaseIndex": 1,
+                      "phaseTitle": "Build", "model": "stub-model", "startedAt": 7 }
+                ]
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "task_notification", "session_id": self.session,
+                "uuid": "task-end-telemetry", "task_id": "task-1",
+                "tool_use_id": "toolu-background", "task_type": "local_bash",
+                "status": "completed", "summary": "Build complete",
+                "output_file": "/tmp/secret-output"
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "background_tasks_changed",
+                "session_id": self.session, "uuid": "tasks-empty-telemetry", "tasks": []
+            }));
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false,
+                "uuid": "result-telemetry", "result": "telemetry done",
+                "session_id": self.session, "duration_ms": 1, "num_turns": 1,
+                "user_message_uuids": [self.prompt_uuid],
+                "usage": { "input_tokens": 13, "output_tokens": 4,
+                    "cache_creation_input_tokens": 2 },
+                "modelUsage": { "stub-model": { "inputTokens": 20, "outputTokens": 6,
+                    "cacheReadInputTokens": 5, "cacheCreationInputTokens": 2,
+                    "contextWindow": 200000, "maxOutputTokens": 32000,
+                    "webSearchRequests": 1, "costUSD": 0.125 } },
+                "total_cost_usd": 0.25
+            }));
             return;
         }
         self.system_init();

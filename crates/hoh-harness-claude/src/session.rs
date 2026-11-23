@@ -13,9 +13,12 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
-    ApprovalDecision, EndReason, FileChange, FileChangeKind, Frame, HarnessAction, HarnessEvent,
-    HarnessFailure, HarnessQuestion, HarnessResponse, HarnessSession, ItemOutcome, PromptParams,
-    QuestionAnswer, QuestionOption, RespondParams, Supervisor, code,
+    ApprovalDecision, EndReason, FileChange, FileChangeKind, Frame, HarnessAction,
+    HarnessBackgroundTask, HarnessBackgroundTaskUpdate, HarnessEvent, HarnessFailure,
+    HarnessMcpServer, HarnessModelUsage, HarnessQuestion, HarnessResponse, HarnessSession,
+    HarnessTelemetry, HarnessTelemetryProvenance, HarnessTelemetryRecord, HarnessTokenUsage,
+    HarnessWorkflowProgress, ItemOutcome, PromptParams, QuestionAnswer, QuestionOption,
+    RespondParams, Supervisor, code,
 };
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
@@ -28,6 +31,118 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
+}
+
+fn count(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(Value::as_u64)
+}
+
+fn non_negative(value: &Value, key: &str) -> Option<f64> {
+    value
+        .get(key)
+        .and_then(Value::as_f64)
+        .filter(|number| number.is_finite() && *number >= 0.0)
+}
+
+/// Presence of the object is meaningful even when this CLI version supplied none of the known
+/// counters: the later fold distinguishes an empty report from a missing report.
+fn token_usage(value: &Value) -> Option<HarnessTokenUsage> {
+    value.as_object()?;
+    Some(HarnessTokenUsage {
+        input_tokens: count(value, "input_tokens"),
+        output_tokens: count(value, "output_tokens"),
+        cache_read_input_tokens: count(value, "cache_read_input_tokens"),
+        cache_creation_input_tokens: count(value, "cache_creation_input_tokens"),
+    })
+}
+
+fn model_usage(value: &Value) -> Option<Vec<HarnessModelUsage>> {
+    let entries = value.as_object()?;
+    Some(
+        entries
+            .iter()
+            .map(|(model, entry)| HarnessModelUsage {
+                model: model.clone(),
+                input_tokens: count(entry, "inputTokens"),
+                output_tokens: count(entry, "outputTokens"),
+                cache_read_input_tokens: count(entry, "cacheReadInputTokens"),
+                cache_creation_input_tokens: count(entry, "cacheCreationInputTokens"),
+                context_window: count(entry, "contextWindow"),
+                max_output_tokens: count(entry, "maxOutputTokens"),
+                web_search_requests: count(entry, "webSearchRequests"),
+                cost_usd: non_negative(entry, "costUSD"),
+            })
+            .collect(),
+    )
+}
+
+fn background_task(value: &Value) -> Option<HarnessBackgroundTask> {
+    Some(HarnessBackgroundTask {
+        task_id: text(value, "task_id")?.to_owned(),
+        tool_use_id: text(value, "tool_use_id").map(str::to_owned),
+        parent_task_id: text(value, "parent_task_id").map(str::to_owned),
+        task_type: text(value, "task_type").map(str::to_owned),
+        description: text(value, "description").map(str::to_owned),
+    })
+}
+
+fn workflow_progress(value: &Value) -> Option<HarnessWorkflowProgress> {
+    Some(HarnessWorkflowProgress {
+        kind: text(value, "type")?.to_owned(),
+        index: count(value, "index"),
+        title: text(value, "title").map(str::to_owned),
+        label: text(value, "label").map(str::to_owned),
+        agent_id: text(value, "agentId").map(str::to_owned),
+        state: text(value, "state").map(str::to_owned),
+        phase_index: count(value, "phaseIndex"),
+        phase_title: text(value, "phaseTitle").map(str::to_owned),
+        model: text(value, "model").map(str::to_owned),
+        prompt_preview: text(value, "promptPreview").map(str::to_owned),
+        result_preview: text(value, "resultPreview").map(str::to_owned),
+        started_at: count(value, "startedAt"),
+        last_progress_at: count(value, "lastProgressAt"),
+        duration_ms: count(value, "durationMs"),
+        attempt: count(value, "attempt"),
+    })
+}
+
+fn provenance(
+    inner: &Inner,
+    message: &Value,
+    turn_id: Option<String>,
+    source_id: Option<String>,
+    parent_item_id: Option<String>,
+) -> HarnessTelemetryProvenance {
+    let state = lock(&inner.state);
+    HarnessTelemetryProvenance {
+        launch_id: inner.launch_id.clone(),
+        native_session_id: text(message, "session_id")
+            .unwrap_or(&state.native)
+            .to_owned()
+            .into(),
+        turn_id,
+        source_id,
+        parent_item_id,
+    }
+}
+
+async fn emit_telemetry(
+    inner: &Inner,
+    message: &Value,
+    turn_id: Option<String>,
+    source_id: Option<String>,
+    parent_item_id: Option<String>,
+    payload: HarnessTelemetry,
+) {
+    let provenance = provenance(inner, message, turn_id, source_id, parent_item_id);
+    inner
+        .emit(HarnessEvent::Telemetry {
+            record: HarnessTelemetryRecord {
+                provenance,
+                payload,
+            },
+        })
+        .await;
 }
 
 /// What a held `can_use_tool` request is, until HoH answers it.
@@ -91,6 +206,9 @@ struct Inner {
     sup: Supervisor,
     events: Mutex<Option<mpsc::Sender<HarnessEvent>>>,
     state: Mutex<State>,
+    /// One identity per spawned CLI process; a resume keeps the native session id but gets a new
+    /// launch id, so the later fold can reset its cumulative model ledger without guessing.
+    launch_id: String,
     cwd: PathBuf,
     next_request: AtomicU64,
     terminated: AtomicBool,
@@ -104,6 +222,16 @@ struct Inner {
 
 pub(crate) struct ClaudeSession {
     inner: Arc<Inner>,
+}
+
+static NEXT_LAUNCH_ID: AtomicU64 = AtomicU64::new(1);
+
+fn launch_id() -> String {
+    let ordinal = NEXT_LAUNCH_ID.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    format!("{}-{nanos}-{ordinal}", std::process::id())
 }
 
 /// The last handle gone without a stop kills the process group: a start the caller gave up on
@@ -160,6 +288,7 @@ impl ClaudeSession {
                 native,
                 ..State::default()
             }),
+            launch_id: launch_id(),
             cwd,
             next_request: AtomicU64::new(1),
             terminated: AtomicBool::new(false),
@@ -540,18 +669,86 @@ fn handle_control_response(inner: &Inner, message: &Value) {
 }
 
 async fn handle_system(inner: &Inner, message: &Value) {
-    if text(message, "subtype") != Some("init") {
-        return;
-    }
-    if let Some(id) = text(message, "session_id")
-        && id != lock(&inner.state).native
-    {
-        lock(&inner.state).native = id.to_owned();
-        inner
-            .emit(HarnessEvent::NativeSession {
-                native_session_id: id.into(),
-            })
+    let source_id = text(message, "uuid").map(str::to_owned);
+    match text(message, "subtype") {
+        Some("init") => {
+            if let Some(id) = text(message, "session_id")
+                && id != lock(&inner.state).native
+            {
+                lock(&inner.state).native = id.to_owned();
+                inner
+                    .emit(HarnessEvent::NativeSession {
+                        native_session_id: id.into(),
+                    })
+                    .await;
+            }
+            if let Some(servers) = message.get("mcp_servers").and_then(Value::as_array) {
+                let servers = servers
+                    .iter()
+                    .filter_map(|server| {
+                        let name = text(server, "name")?.trim();
+                        (!name.is_empty()).then(|| HarnessMcpServer {
+                            name: name.to_owned(),
+                            status: text(server, "status").map(str::to_owned),
+                        })
+                    })
+                    .collect();
+                emit_telemetry(
+                    inner,
+                    message,
+                    None,
+                    source_id,
+                    None,
+                    HarnessTelemetry::McpServers { servers },
+                )
+                .await;
+            }
+        }
+        Some(subtype @ ("task_started" | "task_progress" | "task_notification")) => {
+            let Some(task) = background_task(message) else {
+                return;
+            };
+            let workflow_progress = message
+                .get("workflow_progress")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(workflow_progress)
+                .collect();
+            let update = HarnessBackgroundTaskUpdate {
+                subtype: subtype.to_owned(),
+                task,
+                status: text(message, "status").map(str::to_owned),
+                summary: text(message, "summary").map(str::to_owned),
+                is_backgrounded: message.get("is_backgrounded").and_then(Value::as_bool),
+                workflow_progress,
+            };
+            emit_telemetry(
+                inner,
+                message,
+                None,
+                source_id,
+                text(message, "tool_use_id").map(str::to_owned),
+                HarnessTelemetry::BackgroundTask { update },
+            )
             .await;
+        }
+        Some("background_tasks_changed") => {
+            let Some(tasks) = message.get("tasks").and_then(Value::as_array) else {
+                return;
+            };
+            let tasks = tasks.iter().filter_map(background_task).collect();
+            emit_telemetry(
+                inner,
+                message,
+                None,
+                source_id,
+                None,
+                HarnessTelemetry::BackgroundTasksSnapshot { tasks },
+            )
+            .await;
+        }
+        _ => {}
     }
 }
 
@@ -636,6 +833,18 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
         return;
     };
     let message_id = text(body, "id").unwrap_or("message").to_owned();
+    if let Some(usage) = body.get("usage").and_then(token_usage) {
+        let turn_id = lock(&inner.state).turn.clone();
+        emit_telemetry(
+            inner,
+            message,
+            turn_id,
+            Some(message_id.clone()),
+            parent_item_id.clone(),
+            HarnessTelemetry::AssistantUsage { usage },
+        )
+        .await;
+    }
     let Some(blocks) = body.get("content").and_then(Value::as_array) else {
         return;
     };
@@ -936,11 +1145,44 @@ fn of_another_turn(state: &mut State, message: &Value) -> bool {
 }
 
 async fn handle_result(inner: &Inner, message: &Value) {
+    let (telemetry_turn, other_turn) = {
+        let mut state = lock(&inner.state);
+        let other = state.turn.is_some() && of_another_turn(&mut state, message);
+        (if other { None } else { state.turn.clone() }, other)
+    };
+    let usage = message.get("usage").and_then(token_usage);
+    let model_usage = message.get("modelUsage").and_then(model_usage);
+    let total_cost_usd = non_negative(message, "total_cost_usd");
+    if usage.is_some() || model_usage.is_some() || total_cost_usd.is_some() {
+        let user_message_uuids = echoed_uuids(message)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let origin = message
+            .get("origin")
+            .and_then(|value| text(value, "kind"))
+            .map(str::to_owned);
+        emit_telemetry(
+            inner,
+            message,
+            telemetry_turn,
+            text(message, "uuid").map(str::to_owned),
+            None,
+            HarnessTelemetry::ResultUsage {
+                usage,
+                model_usage,
+                total_cost_usd,
+                user_message_uuids,
+                origin,
+            },
+        )
+        .await;
+    }
+    if other_turn {
+        return;
+    }
     let (turn, interrupted, open, withdrawn, auth_failed) = {
         let mut state = lock(&inner.state);
-        if state.turn.is_some() && of_another_turn(&mut state, message) {
-            return;
-        }
         state.prompt_uuid = None;
         let parents = std::mem::take(&mut state.item_parents);
         let open: Vec<(String, Option<String>)> = state
@@ -1896,6 +2138,7 @@ mod round2_tests {
                 native: "n".into(),
                 ..State::default()
             }),
+            launch_id: "test-launch".into(),
             cwd: PathBuf::from("/w/proj"),
             next_request: AtomicU64::new(1),
             terminated: AtomicBool::new(false),

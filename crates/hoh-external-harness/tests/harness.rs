@@ -17,7 +17,7 @@ use hoh_destructive_classifier::{
 use hoh_error::SharedError;
 use hoh_external_harness::{
     BINDING_RECORD, Discovery, ExternalHarnessPlugin, ExternalHarnesses, ProcessSpec, StdioHarness,
-    StdioHarnessConfig,
+    StdioHarnessConfig, TELEMETRY_RECORD,
 };
 use hoh_kernel::{Context, Disposer, Kernel, Plugin, Service};
 use hoh_llm::{ContentBlock, MessageSource, NewUserMessage, UserMessage, create_user_message};
@@ -566,6 +566,59 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
     turn(&agent, "hello").await;
     assert_eq!(last_answer(&agent), "Hello from native-1 turn 2");
     assert_eq!(bindings(&agent).len(), 2);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn raw_telemetry_is_durable_and_keeps_provider_provenance() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let agent = env.create("s-telemetry").await;
+    turn(&agent, "telemetry").await;
+    turn(&agent, "telemetry").await;
+
+    let records = of_type(&agent, TELEMETRY_RECORD);
+    assert_eq!(records.len(), 4, "{:?}", events(&agent));
+    assert!(records.iter().all(|record| record["harness"] == HARNESS));
+    let source_ids: Vec<_> = records
+        .iter()
+        .map(|record| record["record"]["provenance"]["sourceId"].clone())
+        .collect();
+    assert_eq!(
+        source_ids,
+        [
+            json!("assistant-usage-1"),
+            json!("empty-roster-1"),
+            json!("assistant-usage-1"),
+            json!("empty-roster-1")
+        ]
+    );
+    let turn_ids: Vec<_> = records
+        .iter()
+        .map(|record| record["record"]["provenance"]["turnId"].clone())
+        .collect();
+    assert_eq!(turn_ids[0], turn_ids[1]);
+    assert_eq!(turn_ids[2], turn_ids[3]);
+    assert_ne!(turn_ids[0], turn_ids[2]);
+    assert!(
+        records
+            .iter()
+            .all(|record| { record["record"]["provenance"]["nativeSessionId"] == "native-1" })
+    );
+    let launch_ids: Vec<_> = records
+        .iter()
+        .map(|record| record["record"]["provenance"]["launchId"].clone())
+        .collect();
+    assert!(launch_ids.iter().all(|id| id == &launch_ids[0]));
+    assert!(
+        launch_ids[0]
+            .as_str()
+            .is_some_and(|id| id.starts_with("stub-"))
+    );
+    assert_eq!(
+        records[1]["record"]["payload"],
+        json!({"kind": "background-tasks-snapshot", "tasks": []})
+    );
     env.close().await;
 }
 
