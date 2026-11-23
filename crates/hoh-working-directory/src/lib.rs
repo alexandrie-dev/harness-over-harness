@@ -515,8 +515,8 @@ impl Inner {
         session: &Session,
         directory: &str,
     ) -> Option<WorkingDirectoryRootIdentity> {
-        let event = session
-            .snapshot_events(None, None)
+        let events = session.snapshot_events(None, None);
+        let event = events
             .iter()
             .rev()
             .find(|event| event.event_type() == WORKING_DIRECTORY_CHANGE)?;
