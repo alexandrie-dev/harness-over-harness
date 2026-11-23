@@ -49,13 +49,15 @@ try {
   const server = new mod.wire.WireServer(host.handlers());
   const client = new WireClient(mod.socket.HohWebSocket, server);
   const config = await client.stream('subscribeServerConfig', {});
-  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4, 0, 60_000);
+  const readyConfig = await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4, 0, 60_000);
+  const model = readyConfig.config.providers[0].models[0]?.slug;
+  assert(model, 'the real engine config must offer at least one Claude model');
 
   const threadId = 'real-seam';
   const thread = await client.stream('orchestration.subscribeThread', { threadId });
   const launched = await client.call('orchestration.launchThread', {
     commandId: 'launch-real-seam', threadId, projectId: 'hoh-project', title: 'Real seam',
-    modelSelection: { instanceId: 'claudeAgent', model: 'default' }, runtimeMode: 'auto',
+    modelSelection: { instanceId: 'claudeAgent', model }, runtimeMode: 'auto',
     interactionMode: 'default', workspaceStrategy: { type: 'root' },
     initialMessage: { messageId: 'message-real-seam', text: 'run', attachments: [] },
   });
