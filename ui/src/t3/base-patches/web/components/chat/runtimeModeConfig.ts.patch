@@ -1,9 +1,6 @@
 --- a/web/components/chat/runtimeModeConfig.ts
 +++ b/web/components/chat/runtimeModeConfig.ts
-@@ -39,14 +39,14 @@
- 
- export const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
- 
+@@ -42,11 +42,11 @@
 -/** The modes a provider supports (all when it reports none) and the mode a thread really runs in. */
 +/** Undefined keeps T3's legacy "all modes"; an explicit empty list means access is unknown. */
  export function resolveCompatibleRuntimeMode(
