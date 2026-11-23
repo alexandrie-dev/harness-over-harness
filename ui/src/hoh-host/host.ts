@@ -19,7 +19,7 @@
 import {
   accessModeOf, CLAUDE_INSTANCE_ID, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
-import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
+import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError } from './errors.ts';
 import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
@@ -81,6 +81,10 @@ type LocalImageFailure = { message: string; expiresAt: number };
 type LocalImageReservation = {
   threadId: string; reservedBytes: number; replacing: boolean; reservesIdentity: boolean;
 };
+type LocalImageContextWaiter = (thread: ThreadModel | undefined) => void;
+
+class PersistentLocalImageContextError extends Error {}
+class LocalImageContextCapacityError extends Error {}
 
 function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
   const value = map.get(key);
@@ -139,6 +143,9 @@ function dispatchError(command: Record<string, any>, message: string) {
   });
 }
 const errorText = (error: unknown) => englishError(error);
+const localImageContextUnknown = (error: unknown) =>
+  !(error instanceof PersistentLocalImageContextError)
+  && /conversation project folder is unknown/i.test(errorText(error));
 
 /** T3's answers (`{ [questionId]: value | values }`, values are option labels or typed text) in the engine's form. */
 export function questionAnswer(question: EngineQuestion | undefined, answers: Record<string, unknown>): EngineQuestionAnswer {
@@ -225,6 +232,13 @@ export class HohHost {
   /** Worst-case byte/entry reservations are installed before native I/O. */
   private readonly localImageReservations = new Map<string, LocalImageReservation>();
   private localImageBytes = 0;
+  /** Optimistic T3 drafts ask for their first image before createThread has installed the cwd. */
+  private readonly localImageContextWaiters = new Map<string, Set<LocalImageContextWaiter>>();
+  /** Context lookup is deduplicated by raw request and bounded before it can allocate a draft waiter. */
+  private readonly localImageContextInflight = new Map<string, Promise<ThreadModel | undefined>>();
+  /** A failed create is terminal until its draft subscription closes or creation is retried. */
+  private readonly failedLocalImageContexts = new Set<string>();
+  private readonly creatingThreads = new Set<string>();
   /** The skills Claude declared for each folder (its last workspace snapshot): `$name` in a message goes as `/name`. */
   private readonly skillsByFolder = new Map<string, Set<string>>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
@@ -483,6 +497,13 @@ export class HohHost {
     this.localImageGlobalAttempts = [];
     this.localImageReservations.clear();
     this.localImageBytes = 0;
+    for (const waiters of this.localImageContextWaiters.values()) {
+      for (const settle of waiters) settle(undefined);
+    }
+    this.localImageContextWaiters.clear();
+    this.localImageContextInflight.clear();
+    this.failedLocalImageContexts.clear();
+    this.creatingThreads.clear();
     this.sentPreviewIds.clear();
   }
 
@@ -496,6 +517,75 @@ export class HohHost {
     const url = URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));
     this.previewUrls.set(image.id, url);
     return url;
+  }
+
+  private settleLocalImageContext(threadId: string, thread: ThreadModel | undefined) {
+    const waiters = this.localImageContextWaiters.get(threadId);
+    if (!waiters) return;
+    this.localImageContextWaiters.delete(threadId);
+    for (const settle of waiters) settle(thread);
+  }
+
+  private waitForLocalImageContext(threadId: string, requireTransition = false): Promise<ThreadModel | undefined> {
+    const existing = this.threads.get(threadId);
+    if (!requireTransition && existing?.cwd) return Promise.resolve(existing);
+    if (this.stopped || this.failedLocalImageContexts.has(threadId)) return Promise.resolve(undefined);
+    return new Promise(resolve => {
+      let waiters = this.localImageContextWaiters.get(threadId);
+      if (!waiters) this.localImageContextWaiters.set(threadId, waiters = new Set());
+      waiters.add(resolve);
+    });
+  }
+
+  private async refreshLocalImageContext(threadId: string, waitForTransition: boolean) {
+    const thread = this.threads.get(threadId);
+    if (!thread || this.stopped) return undefined;
+    try {
+      const cwd = folderPath((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd);
+      if (cwd) {
+        thread.cwd = cwd;
+        this.placeByFolder(thread);
+        this.settleLocalImageContext(threadId, thread);
+        return thread;
+      }
+    } catch { /* a pending draft is completed by createThread or working-directory/change */ }
+    return waitForTransition && (this.threadSinks.has(threadId) || this.creatingThreads.has(threadId))
+      ? this.waitForLocalImageContext(threadId, true)
+      : undefined;
+  }
+
+  /** Resolve an optimistic media-file only after its stable thread id owns an authoritative cwd. */
+  private async localImageThreadContext(threadId: string) {
+    await this.start();
+    let thread = await this.loaded(threadId);
+    if (!thread) {
+      if (this.failedLocalImageContexts.has(threadId)
+        || (!this.threadSinks.has(threadId) && !this.creatingThreads.has(threadId))) return undefined;
+      thread = await this.waitForLocalImageContext(threadId);
+    }
+    if (!thread || this.stopped) return undefined;
+    return thread.cwd ? thread : this.refreshLocalImageContext(thread.id, true);
+  }
+
+  private localImageThreadContextForPath(threadId: string, path: string) {
+    const requestKey = `${threadId}\0${path}`;
+    const existing = this.localImageContextInflight.get(requestKey);
+    if (existing) return existing;
+    let threadInflight = 0;
+    for (const key of this.localImageContextInflight.keys()) {
+      if (key.startsWith(`${threadId}\0`)) threadInflight++;
+    }
+    if (this.localImageContextInflight.size >= LOCAL_IMAGE_MAX_INFLIGHT
+      || threadInflight >= LOCAL_IMAGE_THREAD_MAX_INFLIGHT) {
+      return Promise.reject(new LocalImageContextCapacityError(
+        'Image unavailable: too many project images are waiting for this conversation folder.',
+      ));
+    }
+    const pending = this.localImageThreadContext(threadId).finally(() => {
+      if (this.localImageContextInflight.get(requestKey) === pending) this.localImageContextInflight.delete(requestKey);
+    });
+    this.localImageContextInflight.set(requestKey, pending);
+    return pending;
   }
 
   private reserveLocalImage(requestKey: string, threadId: string) {
@@ -566,12 +656,41 @@ export class HohHost {
     attempts.push(now);
     this.localImageGlobalAttempts.push(now);
     lruSet(this.localImageAttempts, threadId, attempts, LOCAL_IMAGE_ATTEMPT_THREADS_MAX);
+    return now;
+  }
+
+  private refundLocalImageAttempt(threadId: string, timestamp: number) {
+    const attempts = this.localImageAttempts.get(threadId);
+    const threadIndex = attempts?.lastIndexOf(timestamp) ?? -1;
+    if (attempts && threadIndex >= 0) {
+      attempts.splice(threadIndex, 1);
+      if (!attempts.length) this.localImageAttempts.delete(threadId);
+    }
+    const globalIndex = this.localImageGlobalAttempts.lastIndexOf(timestamp);
+    if (globalIndex >= 0) this.localImageGlobalAttempts.splice(globalIndex, 1);
   }
 
   private async readLocalImage(threadId: string, path: string, requestKey: string) {
     if (!this.engine.readImageAsset) throw new Error('Image unavailable: this window cannot read project images.');
-    this.consumeLocalImageAttempt(threadId);
-    const image = await this.engine.readImageAsset({ sessionId: threadId, path });
+    let image: LocalImageAsset;
+    let refundedContextFailure = false;
+    for (;;) {
+      const attempt = this.consumeLocalImageAttempt(threadId);
+      try {
+        image = await this.engine.readImageAsset({ sessionId: threadId, path });
+        break;
+      } catch (error) {
+        if (!localImageContextUnknown(error)) throw error;
+        if (refundedContextFailure) throw new PersistentLocalImageContextError(errorText(error));
+        refundedContextFailure = true;
+        // Refund only after a fresh authoritative cwd is available. An established conversation
+        // whose engine still reports no folder is a persistent failure: count and cache it.
+        if (!await this.refreshLocalImageContext(threadId, false)) {
+          throw new PersistentLocalImageContextError(errorText(error));
+        }
+        this.refundLocalImageAttempt(threadId, attempt);
+      }
+    }
     if (this.stopped) throw new Error('Image unavailable: this window has closed.');
     if (!LOCAL_IMAGE_TYPES.has(image?.mimeType) || !Number.isSafeInteger(image?.sizeBytes) || image.sizeBytes < 1 || image.sizeBytes > LOCAL_IMAGE_BYTES)
       throw new Error('Image unavailable: the native image response is invalid.');
@@ -639,7 +758,7 @@ export class HohHost {
     }
     const read = this.readLocalImage(threadId, path, requestKey)
       .catch(error => {
-        if (!this.stopped) lruSet(this.localImageFailures, requestKey, {
+        if (!this.stopped && !localImageContextUnknown(error)) lruSet(this.localImageFailures, requestKey, {
           message: errorText(error).slice(0, 512), expiresAt: this.now() + LOCAL_IMAGE_FAILURE_TTL_MS,
         }, LOCAL_IMAGE_REQUEST_CACHE_MAX);
         throw error;
@@ -885,7 +1004,10 @@ export class HohHost {
         thread.loaded = true;
         // The list row learns what the history knows (a title from the first message, the last answer).
         this.changed(threadId);
-        if (thread.cwd) this.placeByFolder(thread);
+        if (thread.cwd) {
+          this.placeByFolder(thread);
+          this.settleLocalImageContext(threadId, thread);
+        }
         else if (!this.workspaceKnown && thread.projectId === HOH_PROJECT_ID) {
           try { this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }
         }
@@ -917,7 +1039,10 @@ export class HohHost {
         if (thread?.applyEvent(params.event)) this.changed(thread.id);
         // The end of a turn reaches the thread list at once: the sidebar's "Working" must not wait for the next change.
         if (thread && params.event?.type === 'turn/end') this.flush();
-        if (thread && params.event?.type === 'working-directory/change') this.placeByFolder(thread);
+        if (thread && params.event?.type === 'working-directory/change') {
+          this.placeByFolder(thread);
+          if (thread.cwd) this.settleLocalImageContext(thread.id, thread);
+        }
         return;
       }
       case 'session.assistant-stream': {
@@ -1035,31 +1160,42 @@ export class HohHost {
    * may ask the person to allow it. Claude then runs in that folder.
    */
   private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown) {
-    const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
-    if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
-    await this.applyMode(mode);
-    await this.applyModel(model);
-    const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
-    this.setWorkspaceRoot(directory?.cwd);
-    if (folder) {
-      const set = await this.engine.request('session/working-directory/set', { sessionId: threadId, path: folder.workspaceRoot });
-      // A typed `~/…` root becomes the folder the engine resolved, so chats' recorded folders match it.
-      const resolved = folderPath(set?.cwd);
-      if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
-        folder.workspaceRoot = resolved;
-        folder.updatedAt = this.now();
-        this.emitProject(folderProject(folder));
+    this.creatingThreads.add(threadId);
+    this.failedLocalImageContexts.delete(threadId);
+    try {
+      const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
+      if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
+      await this.applyMode(mode);
+      await this.applyModel(model);
+      const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
+      this.setWorkspaceRoot(directory?.cwd);
+      if (folder) {
+        const set = await this.engine.request('session/working-directory/set', { sessionId: threadId, path: folder.workspaceRoot });
+        // A typed `~/…` root becomes the folder the engine resolved, so chats' recorded folders match it.
+        const resolved = folderPath(set?.cwd);
+        if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
+          folder.workspaceRoot = resolved;
+          folder.updatedAt = this.now();
+          this.emitProject(folderProject(folder));
+        }
       }
+      const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode, projectId: folder?.id ?? HOH_PROJECT_ID });
+      thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
+      thread.loaded = true;
+      this.threads.set(threadId, thread);
+      this.homes.set(threadId, thread.projectId);
+      this.save();
+      if (!folder) this.showProject();
+      this.changed(threadId);
+      if (thread.cwd) this.settleLocalImageContext(threadId, thread);
+      return thread;
+    } catch (error) {
+      if (this.threadSinks.has(threadId)) this.failedLocalImageContexts.add(threadId);
+      this.settleLocalImageContext(threadId, undefined);
+      throw error;
+    } finally {
+      this.creatingThreads.delete(threadId);
     }
-    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode, projectId: folder?.id ?? HOH_PROJECT_ID });
-    thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
-    thread.loaded = true;
-    this.threads.set(threadId, thread);
-    this.homes.set(threadId, thread.projectId);
-    this.save();
-    if (!folder) this.showProject();
-    this.changed(threadId);
-    return thread;
   }
 
   // ---- folder projects ("Add project") ----
@@ -1496,9 +1632,22 @@ export class HohHost {
           if (resource?._tag !== 'media-file') throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:read' });
           const threadId = typeof resource.threadId === 'string' ? resource.threadId : '';
           const path = typeof resource.path === 'string' ? resource.path : '';
-          if (!threadId || !path || !this.threads.has(threadId)) throw new RpcFailure({ _tag: 'AssetWorkspaceContextNotFoundError', resource });
+          if (!threadId || !path) throw new RpcFailure({ _tag: 'AssetWorkspaceContextNotFoundError', resource });
+          if (path.length > 4096) throw new RpcFailure({
+            _tag: 'AssetWorkspaceAssetNotFoundError', resource,
+            detail: 'Image unavailable: the image path is too long.',
+          });
+          let thread: ThreadModel | undefined;
+          try { thread = await this.localImageThreadContextForPath(threadId, path); }
+          catch (error) {
+            if (error instanceof LocalImageContextCapacityError) throw new RpcFailure({
+              _tag: 'AssetWorkspaceAssetNotFoundError', resource, detail: error.message,
+            });
+            thread = undefined;
+          }
+          if (!thread) throw new RpcFailure({ _tag: 'AssetWorkspaceContextNotFoundError', resource });
           try {
-            const image = await this.localImageUrl(threadId, path);
+            const image = await this.localImageUrl(thread.id, path);
             return {
               relativeUrl: image.url,
               expiresAt: this.now() + UPLOAD_TTL_MS,
@@ -1628,7 +1777,16 @@ export class HohHost {
             if (thread && payload?.requestCompletionMarker) sink.emit({ kind: 'synchronized' });
             own.add(sink);
           }, error => { if (open) sink.fail(new RpcFailure({ _tag: 'OrchestrationV2GetThreadProjectionError', threadId, message: errorText(error) })); });
-          return () => { open = false; own.delete(sink); };
+          return () => {
+            open = false;
+            own.delete(sink);
+            if (own.size) return;
+            this.threadSinks.delete(threadId);
+            const thread = this.threads.get(threadId);
+            if (!thread?.cwd) this.settleLocalImageContext(threadId, undefined);
+            if (thread) return;
+            this.failedLocalImageContexts.delete(threadId);
+          };
         },
       },
     };

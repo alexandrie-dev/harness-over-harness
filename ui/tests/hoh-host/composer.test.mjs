@@ -29,11 +29,12 @@ const upload = (overrides = {}) => ({ type: 'image', id: 'img-1', name: 'red.png
 const dispatch = (threadId, messageId, text, attachments = []) => ({
   type: 'message.dispatch', commandId: 'c-' + messageId, threadId, messageId, text, attachments, createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
 });
-async function newThread(client, threadId, projectId = 'hoh-project') {
-  await client.call('orchestration.dispatchCommand', {
+const createThread = (threadId, projectId = 'hoh-project') => ({
     type: 'thread.create', commandId: 'c0-' + threadId, threadId, projectId, title: 'T', createdBy: 'user', creationSource: 'web',
     modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
-  });
+});
+async function newThread(client, threadId, projectId = 'hoh-project') {
+  await client.call('orchestration.dispatchCommand', createThread(threadId, projectId));
 }
 async function siteProject(client) {
   await client.call('projects.mutate', { type: 'project.create', commandId: 'cp', projectId: 'p-site', title: 'site', workspaceRoot: SITE, createWorkspaceRootIfMissing: false, defaultModelSelection: null });
@@ -278,6 +279,220 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
   assert.equal(Buffer.from(await (await fetch(reminted.relativeUrl)).arrayBuffer()).toString('base64'), PNG);
   host.stop();
   await assert.rejects(fetch(reminted.relativeUrl));
+});
+
+test('a new conversation first-turn image waits for its project folder without caching or spending a read', async () => {
+  const engine = new FakeEngine();
+  const originalRequest = engine.request.bind(engine);
+  let announceDirectory;
+  const directoryStarted = new Promise(resolve => { announceDirectory = resolve; });
+  let releaseDirectory;
+  const directoryGate = new Promise(resolve => { releaseDirectory = resolve; });
+  const threadId = 'chat-first-local-image';
+  engine.request = async (method, params) => {
+    if (method === 'session/working-directory/get' && params.sessionId === threadId) {
+      announceDirectory();
+      await directoryGate;
+    }
+    return originalRequest(method, params);
+  };
+  const reads = [];
+  engine.readImageAsset = async input => {
+    reads.push(input);
+    return {
+      dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+      sourcePath: `${SITE}/shots/test-image.png`, fileRevision: 'first-turn',
+    };
+  };
+  const { host, client } = connect(engine);
+  await siteProject(client);
+  const thread = await client.stream('orchestration.subscribeThread', { threadId });
+  const creating = client.call('orchestration.dispatchCommand', createThread(threadId, 'p-site'));
+  await directoryStarted;
+  let imageSettled = false;
+  const image = client.call('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId, path: `${SITE}/shots/test-image.png`, hostOnly: true,
+  } }).finally(() => { imageSettled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(imageSettled, false, 'the optimistic render remains loading while the folder is provisional');
+  assert.equal(reads.length, 0, 'no native image read starts before the authoritative folder exists');
+  assert.equal(host.localImageAttempts.has(threadId), false);
+  assert.equal(host.localImageReservations.size, 0);
+  assert.equal(host.localImageFailures.size, 0);
+
+  releaseDirectory();
+  await creating;
+  await client.call('orchestration.dispatchCommand', dispatch(
+    threadId, 'm-first-local-image', '![alt](shots/test-image.png)',
+  ));
+  const minted = await image;
+  assert.match(minted.relativeUrl, /^blob:/);
+  assert.deepEqual(reads, [{ sessionId: threadId, path: `${SITE}/shots/test-image.png` }]);
+  assert.equal(host.localImageAttempts.get(threadId).length, 1);
+  assert.equal(host.localImageFailures.size, 0);
+  client.interrupt(thread);
+  host.stop();
+});
+
+test('draft image waiters end on create failure, last unsubscribe, and host stop without native reads', async () => {
+  const within = promise => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('draft image request did not settle')), 250)),
+  ]);
+  const engine = new FakeEngine();
+  let reads = 0;
+  engine.readImageAsset = async () => { reads++; throw new Error('must not read'); };
+  const originalRequest = engine.request.bind(engine);
+  let releaseFailure;
+  const failureGate = new Promise(resolve => { releaseFailure = resolve; });
+  let announceFailure;
+  const failureStarted = new Promise(resolve => { announceFailure = resolve; });
+  engine.request = async (method, params) => {
+    if (method === 'session/working-directory/get' && params.sessionId === 'chat-create-fails') {
+      announceFailure();
+      await failureGate;
+      throw new Error('folder creation failed');
+    }
+    if (method === 'session/working-directory/get' && params.sessionId === 'chat-created-without-folder') {
+      return { cwd: null };
+    }
+    return originalRequest(method, params);
+  };
+  const { host, client } = connect(engine);
+  const failedStream = await client.stream('orchestration.subscribeThread', { threadId: 'chat-create-fails' });
+  const creation = client.request('orchestration.dispatchCommand', createThread('chat-create-fails'));
+  await failureStarted;
+  const waiting = client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-create-fails', path: 'shots/test-image.png', hostOnly: true,
+  } });
+  releaseFailure();
+  assert.equal((await creation)._tag, 'Failure');
+  assert.equal(failureOf(await within(waiting))._tag, 'AssetWorkspaceContextNotFoundError');
+  assert.equal(host.localImageContextWaiters.size, 0);
+  assert.equal(host.failedLocalImageContexts.has('chat-create-fails'), true);
+  const late = await within(client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-create-fails', path: 'shots/late.png', hostOnly: true,
+  } }));
+  assert.equal(failureOf(late)._tag, 'AssetWorkspaceContextNotFoundError');
+  assert.equal(reads, 0);
+  client.interrupt(failedStream);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.failedLocalImageContexts.has('chat-create-fails'), false);
+
+  const unsubscribed = await client.stream('orchestration.subscribeThread', { threadId: 'chat-draft-closes' });
+  const closes = client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-draft-closes', path: 'shots/test-image.png', hostOnly: true,
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.localImageContextWaiters.has('chat-draft-closes'), true);
+  client.interrupt(unsubscribed);
+  assert.equal(failureOf(await within(closes))._tag, 'AssetWorkspaceContextNotFoundError');
+  assert.equal(host.localImageContextWaiters.has('chat-draft-closes'), false);
+
+  const noFolderStream = await client.stream('orchestration.subscribeThread', { threadId: 'chat-created-without-folder' });
+  await client.call('orchestration.dispatchCommand', createThread('chat-created-without-folder'));
+  const noFolder = client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-created-without-folder', path: 'shots/test-image.png', hostOnly: true,
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.localImageContextWaiters.has('chat-created-without-folder'), true);
+  client.interrupt(noFolderStream);
+  assert.equal(failureOf(await within(noFolder))._tag, 'AssetWorkspaceContextNotFoundError');
+  assert.equal(host.localImageContextWaiters.has('chat-created-without-folder'), false);
+  assert.equal(host.threadSinks.has('chat-created-without-folder'), false);
+  const noFolderLate = await within(client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-created-without-folder', path: 'shots/late.png', hostOnly: true,
+  } }));
+  assert.equal(failureOf(noFolderLate)._tag, 'AssetWorkspaceContextNotFoundError');
+
+  await client.stream('orchestration.subscribeThread', { threadId: 'chat-window-closes' });
+  const stops = client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-window-closes', path: 'shots/test-image.png', hostOnly: true,
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.localImageContextWaiters.has('chat-window-closes'), true);
+  host.stop();
+  assert.equal(failureOf(await within(stops))._tag, 'AssetWorkspaceContextNotFoundError');
+  assert.equal(host.localImageContextWaiters.size, 0);
+  assert.equal(reads, 0);
+});
+
+test('draft image context lookups deduplicate identical paths and bound distinct waiters', async () => {
+  const engine = new FakeEngine();
+  let reads = 0;
+  engine.readImageAsset = async () => { reads++; throw new Error('must not read'); };
+  const { host, client } = connect(engine);
+  const threadId = 'chat-bounded-draft-images';
+  const stream = await client.stream('orchestration.subscribeThread', { threadId });
+  const request = path => client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId, path, hostOnly: true,
+  } });
+  const first = request('shots/one.png');
+  const duplicate = request('shots/one.png');
+  const second = request('shots/two.png');
+  const third = request('shots/three.png');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.localImageContextInflight.size, 3);
+  assert.equal(host.localImageContextWaiters.get(threadId).size, 3);
+  const overflow = await request('shots/four.png');
+  assert.equal(failureOf(overflow)._tag, 'AssetWorkspaceAssetNotFoundError');
+  assert.match(failureOf(overflow).detail, /too many project images are waiting/i);
+  assert.equal(host.localImageContextInflight.size, 3);
+  client.interrupt(stream);
+  for (const result of await Promise.all([first, duplicate, second, third])) {
+    assert.equal(failureOf(result)._tag, 'AssetWorkspaceContextNotFoundError');
+  }
+  assert.equal(host.localImageContextWaiters.size, 0);
+  assert.equal(host.localImageContextInflight.size, 0);
+  assert.equal(reads, 0);
+  host.stop();
+});
+
+test('one transient unknown-folder read is refunded; a persistent one is counted and cached', async () => {
+  const engine = new FakeEngine();
+  const reads = new Map();
+  let emptyFolder = false;
+  const originalRequest = engine.request.bind(engine);
+  engine.request = async (method, params) => method === 'session/working-directory/get'
+    && params.sessionId === 'chat-folder-transient' && emptyFolder
+    ? { cwd: null }
+    : originalRequest(method, params);
+  engine.readImageAsset = async ({ path }) => {
+    const count = (reads.get(path) ?? 0) + 1;
+    reads.set(path, count);
+    if (path === 'shots/once.png' && count > 1) return {
+      dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+      sourcePath: `${DEFAULT_FOLDER}/${path}`, fileRevision: 'ready',
+    };
+    if (path === 'shots/no-folder.png') emptyFolder = true;
+    throw new Error('Image unavailable: the conversation project folder is unknown.');
+  };
+  const { host, client } = connect(engine);
+  const threadId = 'chat-folder-transient';
+  await newThread(client, threadId);
+  const resource = path => ({ _tag: 'media-file', threadId, path, hostOnly: true });
+  const once = await client.call('assets.createUrl', { resource: resource('shots/once.png') });
+  assert.match(once.relativeUrl, /^blob:/);
+  assert.equal(reads.get('shots/once.png'), 2);
+  assert.equal(host.localImageAttempts.get(threadId).length, 1, 'only the successful retry is charged');
+  assert.equal(host.localImageFailures.size, 0);
+
+  const persistent = await client.request('assets.createUrl', { resource: resource('shots/persistent.png') });
+  assert.match(failureOf(persistent).detail, /project folder is unknown/i);
+  assert.equal(reads.get('shots/persistent.png'), 2);
+  assert.equal(host.localImageAttempts.get(threadId).length, 2, 'the second consecutive transient is charged');
+  assert.equal(host.localImageFailures.size, 1);
+  await client.request('assets.createUrl', { resource: resource('shots/persistent.png') });
+  assert.equal(reads.get('shots/persistent.png'), 2, 'the persistent error uses the bounded negative cache');
+  assert.equal(host.localImageAttempts.get(threadId).length, 2);
+
+  const noFolder = await client.request('assets.createUrl', { resource: resource('shots/no-folder.png') });
+  assert.match(failureOf(noFolder).detail, /project folder is unknown/i);
+  assert.equal(reads.get('shots/no-folder.png'), 1, 'an absent refreshed cwd does not enter an unbounded retry');
+  assert.equal(host.localImageAttempts.get(threadId).length, 3, 'the failed native read remains charged');
+  await client.request('assets.createUrl', { resource: resource('shots/no-folder.png') });
+  assert.equal(reads.get('shots/no-folder.png'), 1, 'the persistent error is cached negatively');
+  host.stop();
 });
 
 test('a local reply image is minted only for its conversation and native failures keep a visible reason', async () => {

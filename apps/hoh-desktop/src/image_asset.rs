@@ -1055,7 +1055,16 @@ mod tests {
 
     impl Scratch {
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
+            // Keep security-path tests off TMPDIR: CI may point it at /dev/shm (correctly
+            // rejected as a device tree) or through a symlink. The running Cargo test binary
+            // already lives under the selected target directory; canonicalizing it gives the
+            // same ordinary, symlink-free filesystem the build uses.
+            let executable = std::env::current_exe().unwrap().canonicalize().unwrap();
+            let target_profile = executable.parent().unwrap().parent().unwrap();
+            let base = target_profile.join("hoh-image-test-scratch");
+            std::fs::create_dir_all(&base).unwrap();
+            let base = base.canonicalize().unwrap();
+            let path = base.join(format!(
                 "hoh-image-{name}-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
