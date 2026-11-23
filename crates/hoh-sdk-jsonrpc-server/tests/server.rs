@@ -809,16 +809,20 @@ async fn changes_effective_directories_through_rpc_while_preserving_session_orig
     );
     h.initialize().await;
     h.open("a").await;
-    assert_eq!(
-        h.server
-            .handle_request(
-                "session/working-directory/set",
-                json!({"sessionId":"a","path":"child"})
-            )
-            .await
-            .unwrap(),
-        json!({"cwd":child})
-    );
+    let selected = h
+        .server
+        .handle_request(
+            "session/working-directory/set",
+            json!({"sessionId":"a","path":"child"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(selected["cwd"], json!(child));
+    for field in ["device", "inode"] {
+        assert!(selected["rootIdentity"][field].as_str().is_some_and(
+            |value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+        ));
+    }
     assert_eq!(
         h.agent("a").session().header()["cwd"],
         h.dir.path().to_str().unwrap()

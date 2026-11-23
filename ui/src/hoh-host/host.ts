@@ -69,6 +69,12 @@ const LOCAL_IMAGE_MAX_RETAINED_BYTES = 128 * 1024 * 1024;
 const LOCAL_IMAGE_MAX_RETAINED_ENTRIES = 64;
 const LOCAL_IMAGE_THREAD_MAX_RETAINED_BYTES = 64 * 1024 * 1024;
 const LOCAL_IMAGE_THREAD_MAX_RETAINED_ENTRIES = 32;
+const LOCAL_IMAGE_MAX_CANVAS_PIXELS = 160_000_000;
+const LOCAL_IMAGE_THREAD_MAX_CANVAS_PIXELS = 80_000_000;
+const LOCAL_IMAGE_MAX_DECODED_FRAME_PIXELS = 400_000_000;
+const LOCAL_IMAGE_THREAD_MAX_DECODED_FRAME_PIXELS = 200_000_000;
+const LOCAL_IMAGE_MAX_ANIMATION_PIXELS_PER_SECOND = 400_000_000;
+const LOCAL_IMAGE_THREAD_MAX_ANIMATION_PIXELS_PER_SECOND = 200_000_000;
 const LOCAL_IMAGE_REQUEST_CACHE_MAX = 128;
 const LOCAL_IMAGE_FAILURE_TTL_MS = 5_000;
 const LOCAL_IMAGE_MAX_INFLIGHT = 6;
@@ -81,7 +87,12 @@ const LOCAL_IMAGE_THREAD_MAX_IDENTITIES = 256;
 
 type LocalImageUrl = {
   url: string; revision: string; sourcePath: string; sizeBytes: number; threadId: string;
+  decodeProfile: LocalImageDecodeProfile;
   requestKeys: Set<string>;
+};
+export type LocalImageDecodeProfile = {
+  canvasPixels: number; decodedFramePixels: number;
+  animationPixelsPerSecond: number; frameCount: number;
 };
 type LocalImageFailure = { message: string; expiresAt: number };
 type LocalImageReservation = {
@@ -112,6 +123,29 @@ export function localImageRetentionFits(input: {
     && input.globalBytes - input.replacedBytes + input.sizeBytes <= LOCAL_IMAGE_MAX_RETAINED_BYTES
     && input.threadEntries + addedEntries <= LOCAL_IMAGE_THREAD_MAX_RETAINED_ENTRIES
     && input.threadBytes - input.replacedBytes + input.sizeBytes <= LOCAL_IMAGE_THREAD_MAX_RETAINED_BYTES;
+}
+
+export function localImageDecodeRetentionFits(input: {
+  readonly global: LocalImageDecodeProfile;
+  readonly thread: LocalImageDecodeProfile;
+  readonly replaced: LocalImageDecodeProfile;
+  readonly incoming: LocalImageDecodeProfile;
+}) {
+  const after = (scope: LocalImageDecodeProfile, maximum: LocalImageDecodeProfile) =>
+    scope.canvasPixels - input.replaced.canvasPixels + input.incoming.canvasPixels <= maximum.canvasPixels
+    && scope.decodedFramePixels - input.replaced.decodedFramePixels + input.incoming.decodedFramePixels <= maximum.decodedFramePixels
+    && scope.animationPixelsPerSecond - input.replaced.animationPixelsPerSecond + input.incoming.animationPixelsPerSecond <= maximum.animationPixelsPerSecond;
+  return after(input.global, {
+    canvasPixels: LOCAL_IMAGE_MAX_CANVAS_PIXELS,
+    decodedFramePixels: LOCAL_IMAGE_MAX_DECODED_FRAME_PIXELS,
+    animationPixelsPerSecond: LOCAL_IMAGE_MAX_ANIMATION_PIXELS_PER_SECOND,
+    frameCount: Number.MAX_SAFE_INTEGER,
+  }) && after(input.thread, {
+    canvasPixels: LOCAL_IMAGE_THREAD_MAX_CANVAS_PIXELS,
+    decodedFramePixels: LOCAL_IMAGE_THREAD_MAX_DECODED_FRAME_PIXELS,
+    animationPixelsPerSecond: LOCAL_IMAGE_THREAD_MAX_ANIMATION_PIXELS_PER_SECOND,
+    frameCount: Number.MAX_SAFE_INTEGER,
+  });
 }
 
 function windowStorage(): HohStorage | null {
@@ -209,6 +243,8 @@ export class HohHost {
   private accessGeneration = 0;
   /** A reply from an access/set sent to a process that has since gone away is never authoritative. */
   private accessProcessGeneration = 0;
+  /** Engine writes are ordered through publication; response reordering cannot split UI and engine state. */
+  private accessWriteTail: Promise<void> = Promise.resolve();
   private settingsOverrides: Record<string, unknown> = {};
   private workspaceRoot: string;
   private workspaceKnown = false;
@@ -614,6 +650,14 @@ export class HohHost {
       throw new Error('Image unavailable: the native image response is invalid.');
     if (typeof image.sourcePath !== 'string' || !image.sourcePath || typeof image.fileRevision !== 'string' || !image.fileRevision)
       throw new Error('Image unavailable: the native image identity is invalid.');
+    const decodeProfile = image.decodeProfile;
+    if (!decodeProfile
+      || !Number.isSafeInteger(decodeProfile.canvasPixels) || decodeProfile.canvasPixels < 1 || decodeProfile.canvasPixels > 40_000_000
+      || !Number.isSafeInteger(decodeProfile.decodedFramePixels) || decodeProfile.decodedFramePixels < 1 || decodeProfile.decodedFramePixels > 100_000_000
+      || !Number.isSafeInteger(decodeProfile.animationPixelsPerSecond) || decodeProfile.animationPixelsPerSecond < 0 || decodeProfile.animationPixelsPerSecond > 200_000_000
+      || !Number.isSafeInteger(decodeProfile.frameCount) || decodeProfile.frameCount < 1 || decodeProfile.frameCount > 300
+      || (decodeProfile.frameCount > 1 && decodeProfile.animationPixelsPerSecond === 0))
+      throw new Error('Image unavailable: the native image decode profile is invalid.');
     const key = `${threadId}\0${image.sourcePath}`;
     const existing = this.localImageUrls.get(key);
     if (existing?.revision === image.fileRevision && existing.sizeBytes === image.sizeBytes) {
@@ -623,10 +667,20 @@ export class HohHost {
     }
     let threadBytes = 0;
     let threadEntries = 0;
+    const globalDecode: LocalImageDecodeProfile = { canvasPixels: 0, decodedFramePixels: 0, animationPixelsPerSecond: 0, frameCount: 0 };
+    const threadDecode: LocalImageDecodeProfile = { canvasPixels: 0, decodedFramePixels: 0, animationPixelsPerSecond: 0, frameCount: 0 };
     for (const retained of this.localImageUrls.values()) {
+      globalDecode.canvasPixels += retained.decodeProfile.canvasPixels;
+      globalDecode.decodedFramePixels += retained.decodeProfile.decodedFramePixels;
+      globalDecode.animationPixelsPerSecond += retained.decodeProfile.animationPixelsPerSecond;
+      globalDecode.frameCount += retained.decodeProfile.frameCount;
       if (retained.threadId !== threadId) continue;
       threadBytes += retained.sizeBytes;
       threadEntries++;
+      threadDecode.canvasPixels += retained.decodeProfile.canvasPixels;
+      threadDecode.decodedFramePixels += retained.decodeProfile.decodedFramePixels;
+      threadDecode.animationPixelsPerSecond += retained.decodeProfile.animationPixelsPerSecond;
+      threadDecode.frameCount += retained.decodeProfile.frameCount;
     }
     const replacedBytes = existing?.sizeBytes ?? 0;
     if (!localImageRetentionFits({
@@ -634,6 +688,13 @@ export class HohHost {
       threadBytes, threadEntries, replacedBytes, replacing: !!existing, sizeBytes: image.sizeBytes,
     }))
       throw new Error('Image unavailable: too many project images are already open in this window.');
+    const emptyDecode: LocalImageDecodeProfile = { canvasPixels: 0, decodedFramePixels: 0, animationPixelsPerSecond: 0, frameCount: 0 };
+    if (!localImageDecodeRetentionFits({
+      global: globalDecode, thread: threadDecode,
+      replaced: existing?.decodeProfile ?? emptyDecode,
+      incoming: decodeProfile,
+    }))
+      throw new Error('Image unavailable: project images exceed the safe decoded-image or animation budget for this window.');
     let binary: string;
     try { binary = atob(image.dataBase64); }
     catch { throw new Error('Image unavailable: the native image payload is invalid.'); }
@@ -647,7 +708,8 @@ export class HohHost {
     }
     const minted = {
       url, revision: image.fileRevision, sourcePath: image.sourcePath,
-      sizeBytes: image.sizeBytes, threadId, requestKeys: existing?.requestKeys ?? new Set<string>(),
+      sizeBytes: image.sizeBytes, decodeProfile, threadId,
+      requestKeys: existing?.requestKeys ?? new Set<string>(),
     };
     this.localImageUrls.set(key, minted);
     this.bindLocalImageRequest(requestKey, key);
@@ -1319,7 +1381,13 @@ export class HohHost {
    * else the default setting this host reports; useComposerSend.ts). The engine's mode is one for all
    * chats, so every thread shows the mode in effect.
    */
-  private async applyMode(mode: T3RuntimeMode | undefined) {
+  private applyMode(mode: T3RuntimeMode | undefined): Promise<void> {
+    const operation = this.accessWriteTail.then(() => this.applyModeSerialized(mode));
+    this.accessWriteTail = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async applyModeSerialized(mode: T3RuntimeMode | undefined) {
     const current = await this.requireAccess();
     if (!mode) return;
     const wanted = accessModeOf(mode);

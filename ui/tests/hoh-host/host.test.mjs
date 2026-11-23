@@ -1661,6 +1661,63 @@ test('a delayed access/set success from an unavailable process stays fail-closed
   host.stop();
 });
 
+test('concurrent full then confirm access writes are serialized through engine state and the next prompt', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-serialized-access', 'Serialized access', []);
+  const request = engine.request.bind(engine);
+  let releaseFull;
+  const fullGate = new Promise(resolve => { releaseFull = resolve; });
+  let fullApplied;
+  const fullStarted = new Promise(resolve => { fullApplied = resolve; });
+  let modeAtPrompt;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/set' && params.mode === 'full') {
+      const answer = await request(method, params);
+      fullApplied();
+      await fullGate;
+      return answer;
+    }
+    if (method === 'session/prompt') modeAtPrompt = engine.access.mode;
+    return request(method, params);
+  };
+  const { client, host } = connect(engine);
+  const widen = client.call('orchestration.dispatchCommand', {
+    type: 'thread.runtime-mode.set', commandId: 'set-full-delayed',
+    threadId: 'chat-serialized-access', runtimeMode: 'full-access',
+  });
+  await fullStarted;
+  const narrow = client.call('orchestration.dispatchCommand', {
+    type: 'thread.runtime-mode.set', commandId: 'set-confirm-after-full',
+    threadId: 'chat-serialized-access', runtimeMode: 'approval-required',
+  });
+  await tick(5);
+  assert.deepEqual(
+    engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').map(entry => entry.params.mode),
+    ['full'],
+    'the later confirm write cannot overtake a delayed full response',
+  );
+  releaseFull();
+  await Promise.all([widen, narrow]);
+  assert.equal(engine.access.mode, 'confirm');
+  assert.equal(
+    (await client.call('orchestration.getThreadProjection', { threadId: 'chat-serialized-access' })).thread.runtimeMode,
+    'approval-required',
+  );
+  await client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'prompt-after-serialized-confirm',
+    threadId: 'chat-serialized-access', messageId: 'message-after-serialized-confirm',
+    text: 'must still ask', attachments: [], createdBy: 'user', creationSource: 'web',
+    dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(modeAtPrompt, 'confirm', 'the next prompt cannot run under the previously applied full mode');
+  assert.deepEqual(
+    engine.requests.filter(entry => entry.method === 'hoh/executor/access/set' || entry.method === 'session/prompt')
+      .map(entry => entry.method === 'session/prompt' ? 'prompt' : entry.params.mode),
+    ['full', 'confirm', 'prompt'],
+  );
+  host.stop();
+});
+
 test('a newer successful access read cannot be erased by an older read failing later', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-new-access', 'New access', []);

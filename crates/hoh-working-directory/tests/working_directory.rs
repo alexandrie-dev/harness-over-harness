@@ -196,6 +196,32 @@ async fn returns_to_the_original_project_when_the_selected_directory_disappears_
 }
 
 #[tokio::test]
+async fn refuses_an_ordinary_directory_replacement_after_selection() {
+    let f = Fixture::new().await;
+    let selected = f.path(&["selected"]);
+    let held = f.path(&["held"]);
+    let replacement = f.path(&["replacement"]);
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::create_dir(&replacement).unwrap();
+    f.service
+        .set(&f.agent.agent, &selected, None)
+        .await
+        .unwrap();
+    let identity = f
+        .service
+        .root_identity(&f.agent.session())
+        .expect("local selection identity");
+
+    std::fs::rename(&selected, &held).unwrap();
+    std::fs::rename(&replacement, &selected).unwrap();
+    let error = f.service.ensure(&f.agent.agent, None).await.unwrap_err();
+    assert_eq!(harness(&error).code(), "WORKING_DIRECTORY_UNAVAILABLE");
+    assert!(message(&error).contains("selected directory was replaced"));
+    assert_eq!(f.service.root_identity(&f.agent.session()), Some(identity));
+    f.shutdown().await;
+}
+
+#[tokio::test]
 async fn reports_a_missing_original_project_and_permits_an_explicit_directory_change_to_recover() {
     let f = Fixture::new().await;
     let origin = f.path(&["original"]);

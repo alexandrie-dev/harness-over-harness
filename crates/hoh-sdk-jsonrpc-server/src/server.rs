@@ -40,7 +40,7 @@ use hoh_protocol::{
     SessionAssistantStreamNotification, SessionAssistantStreamOutcome, SessionPromptParams,
     SessionPromptResult, SessionQueryParams, SessionQueryResult, SessionResumeParams,
     SessionWaitParams, SessionWorkingDirectoryParams, SessionWorkingDirectoryResult,
-    SessionWorkingDirectorySetParams,
+    SessionWorkingDirectorySetParams, WorkingDirectoryRootIdentity,
 };
 use hoh_session::{SessionCreated, SessionEventEmitted, SessionId, SessionLogOffset};
 use hoh_session_persistence::SessionPersistenceService;
@@ -890,9 +890,17 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<WorkingDirectoryKey>()
             .ok_or_else(|| error("workingDirectory service is unavailable"))?;
-        Ok(SessionWorkingDirectoryResult {
-            cwd: directory.ensure(&directory_agent(agent), None).await?,
-        })
+        let cwd = directory
+            .ensure(&directory_agent(agent.clone()), None)
+            .await?;
+        let root_identity =
+            directory
+                .root_identity(agent.session())
+                .map(|identity| WorkingDirectoryRootIdentity {
+                    device: identity.device,
+                    inode: identity.inode,
+                });
+        Ok(SessionWorkingDirectoryResult { cwd, root_identity })
     }
     pub async fn set_working_directory(
         &self,
@@ -906,11 +914,17 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<WorkingDirectoryKey>()
             .ok_or_else(|| error("workingDirectory service is unavailable"))?;
-        Ok(SessionWorkingDirectoryResult {
-            cwd: directory
-                .set(&directory_agent(agent), &params.path, None)
-                .await?,
-        })
+        let cwd = directory
+            .set(&directory_agent(agent.clone()), &params.path, None)
+            .await?;
+        let root_identity =
+            directory
+                .root_identity(agent.session())
+                .map(|identity| WorkingDirectoryRootIdentity {
+                    device: identity.device,
+                    inode: identity.inode,
+                });
+        Ok(SessionWorkingDirectoryResult { cwd, root_identity })
     }
     async fn working_directory_agent(&self, id: SessionId) -> Result<Arc<dyn Agent>, BoxError> {
         self.assert_initialized()?;

@@ -355,9 +355,9 @@ export type Version = "2.0";
 
 export type ViewSettings = { "theme": Theme; "fontSize": number; };
 
-export type WorkingDirectoryGetResult = { "cwd": string; };
+export type WorkingDirectoryGetResult = { "cwd": string; "rootIdentity"?: { "device": string; "inode": string; }; };
 
-export type WorkingDirectorySetResult = { "cwd": string; };
+export type WorkingDirectorySetResult = { "cwd": string; "rootIdentity"?: { "device": string; "inode": string; }; };
 
 export type WorkspaceAddParams = { "cwd": string; };
 

@@ -83,7 +83,16 @@ object!(SessionWorkingDirectorySetParams {
     session_id: String,
     path: String
 });
-object!(SessionWorkingDirectoryResult { cwd: String });
+object!(WorkingDirectoryRootIdentity {
+    device: String,
+    inode: String
+});
+optional!(SessionWorkingDirectoryResult {
+    cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    #[schemars(required)]
+    root_identity: Option<WorkingDirectoryRootIdentity>
+});
 
 choices!(ImageMediaType { Png => "image/png", Jpeg => "image/jpeg", Webp => "image/webp", Gif => "image/gif" });
 object!(Dimensions {

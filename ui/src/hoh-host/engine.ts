@@ -46,6 +46,12 @@ export interface LocalImageAsset {
   readonly sizeBytes: number;
   readonly sourcePath: string;
   readonly fileRevision: string;
+  readonly decodeProfile: {
+    readonly canvasPixels: number;
+    readonly decodedFramePixels: number;
+    readonly animationPixelsPerSecond: number;
+    readonly frameCount: number;
+  };
 }
 
 export interface FolderBrowseInput { readonly partialPath: string; readonly cwd?: string }

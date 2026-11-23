@@ -1072,10 +1072,49 @@ pub async fn read_image_asset(
             .ok_or_else(|| {
                 "Image unavailable: the conversation project folder is unknown.".to_owned()
             })?;
+        let identity = answer
+            .get("rootIdentity")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| {
+                "Image unavailable: the conversation project folder identity is unknown.".to_owned()
+            })?;
+        let parse_identity = |field: &str| -> Result<u64, String> {
+            let value = identity
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| {
+                    !value.is_empty()
+                        && value.len() <= 20
+                        && value.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .ok_or_else(|| {
+                    "Image unavailable: the conversation project folder identity is invalid."
+                        .to_owned()
+                })?;
+            let parsed = value.parse::<u64>().map_err(|_| {
+                "Image unavailable: the conversation project folder identity is invalid.".to_owned()
+            })?;
+            if parsed.to_string() != value {
+                return Err(
+                    "Image unavailable: the conversation project folder identity is invalid."
+                        .to_owned(),
+                );
+            }
+            Ok(parsed)
+        };
+        let expected_root = crate::image_asset::ProjectRootIdentity {
+            device: parse_identity("device")?,
+            inode: parse_identity("inode")?,
+        };
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| "Image unavailable: the home folder is unknown.".to_owned())?;
-        crate::image_asset::read_project_image(std::path::Path::new(root), &path, &home)
+        crate::image_asset::read_project_image(
+            std::path::Path::new(root),
+            expected_root,
+            &path,
+            &home,
+        )
     })
     .await
     .map_err(|_| "Image unavailable: the read was interrupted.".to_owned())?
