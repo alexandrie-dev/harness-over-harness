@@ -80,7 +80,7 @@
 - Передача режима исполнителю. Трейт `ExternalHarness` получил три метода со значением по
   умолчанию, поэтому `hoh-harness-claude` (s4) собирается без правок:
   - `start_with_access(params: StartParams, access: AccessMode)` — так гнездо запускает каждый
-    процесс. По умолчанию `Confirm` идёт в `start_or_resume`, а `Full` получает отказ
+    процесс. По умолчанию `Confirm`, `AcceptEdits` и `Auto` идут в `start_or_resume`, а `Full` получает отказ
     `policy-unavailable` («this harness has no full-access launch»);
   - `launch_flags(policy: &HarnessPolicy, access: AccessMode) -> Vec<String>` — флаги CLI для
     окна, по умолчанию пусто;
@@ -88,7 +88,7 @@
 
   По stdio режим уходит полем `access` в `harness/start`. `StdioHarnessConfig.full_access_args`
   — аргументы программы для `full`; `None` означает отказ в `full`.
-- `confirm`: `policy` конфигурации понижается до безопасной (`full-access` → `workspace-write`,
+- `confirm`, `acceptEdits`, `auto`: `policy` конфигурации понижается до безопасной (`full-access` → `workspace-write`,
   сеть закрыта, `read-only` остаётся). Понижение явное: строка `warn` в журнале ядра, вопроса
   нет. Тест `a_configured_wider_policy_is_capped_to_the_chosen_mode`. В `full` настроенный
   `read-only` тоже остаётся (ревью 232500 №4, ниже).
@@ -121,7 +121,7 @@
   `never_is_refused_before_the_harness_starts`.
 
   Вопрос-согласие (`ask_escalation`) остался только для `never` в сборке с `never-mode` и
-  только в `confirm`. При `full` правило `never` не действует (`TurnLog.never` выключено): CLI
+  во всех режимах, кроме `full`. При `full` правило `never` не действует (`TurnLog.never` выключено): CLI
   ничего не спрашивает.
 - Код (б) сохранён за флагом: правило путей и сети (`within_workspace`, `command_reach`), фраза
   окна согласия, проверка исполнителя, выполнившего шаг без запроса. Его тесты помечены

@@ -554,6 +554,9 @@ export class HohHost {
   private onEngineLost() {
     this.mode = null;
     this.accessError = 'Claude access mode is unknown while the engine is unavailable.';
+    // Fail closed immediately: T3 must stop showing or sending a stale mode while the
+    // replacement engine has not answered access/get yet.
+    this.configChanged();
     for (const thread of this.threads.values()) {
       if (thread.running || thread.activeRunId()) { thread.engineRunning = false; thread.running = false; thread.settleUnfinished(this.now()); this.changed(thread.id); }
     }
@@ -1093,15 +1096,17 @@ export class HohHost {
         'agentSessions.scan': () => ({ candidates: [], scannedAt: this.iso() }),
         'server.refreshProviders': async (payload: any) => {
           await this.start();
+          const provider = () => claudeProvider(this.discovery, this.iso(), this.mode !== null);
           // The composer's folder (T3's workspace snapshot): `/` and `$` from Claude, without asking for discovery again.
           const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
           if (cwd && (payload?.instanceId === undefined || payload.instanceId === CLAUDE_INSTANCE_ID)) {
             if (this.discovery === null) await this.readDiscovery();
-            return { providers: [{ ...claudeProvider(this.discovery, this.iso()), workspaceSnapshots: [await this.workspaceSnapshot(cwd)] }] };
+            const workspaceSnapshots = [await this.workspaceSnapshot(cwd)];
+            return { providers: [{ ...provider(), workspaceSnapshots }] };
           }
           await this.readDiscovery();
           this.configChanged();
-          return { providers: [claudeProvider(this.discovery, this.iso())] };
+          return { providers: [provider()] };
         },
         'orchestration.dispatchCommand': (command: any) => this.dispatch(command ?? {}),
         'orchestration.launchThread': (input: any) => this.launch(input ?? {}),

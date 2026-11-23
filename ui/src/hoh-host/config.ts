@@ -153,14 +153,14 @@ function claudeMessage(discovery: ClaudeDiscovery | null): string | undefined {
 }
 
 /** What T3's welcome page and provider settings show: found or not, signed in or not, as the engine says. */
-export function claudeProvider(discovery: ClaudeDiscovery | null, now: string) {
+export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, accessKnown = true) {
   const ready = discovery !== null && discovery.installed && discovery.auth !== 'unauthenticated';
   return {
     instanceId: CLAUDE_INSTANCE_ID,
     driver: CLAUDE_INSTANCE_ID,
     displayName: 'Claude',
     showInteractionModeToggle: false,
-    supportedRuntimeModes: RUNTIME_MODES,
+    supportedRuntimeModes: accessKnown ? RUNTIME_MODES : [],
     supportsConversationRollback: false,
     supportsTextGeneration: false,
     enabled: true,
@@ -242,10 +242,7 @@ export function serverConfig(input: ConfigInput) {
     keybindingsConfigPath: input.cwd.replace(/\/$/, '') + '/.hoh-keybindings.json',
     keybindings: [],
     issues: [],
-    providers: [{
-      ...claudeProvider(input.discovery, input.now),
-      supportedRuntimeModes: input.accessKnown === false ? [] : RUNTIME_MODES,
-    }],
+    providers: [claudeProvider(input.discovery, input.now, input.accessKnown !== false)],
     availableEditors: [],
     observability: {
       logsDirectoryPath: '/hoh/logs',

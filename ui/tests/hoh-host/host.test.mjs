@@ -279,6 +279,30 @@ test('access mode stays unknown until ready, sends no mode or prompt, then rerea
   assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-late' })).thread.runtimeMode, 'auto');
 });
 
+test('engine loss immediately hides modes from config and refreshProviders until ready rereads access', async () => {
+  const engine = new FakeEngine({ access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } } });
+  const { client } = connect(engine);
+  const config = await client.stream('subscribeServerConfig', {});
+  const known = await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4);
+  assert.equal(known.config.settings.defaultRuntimeMode, 'approval-required');
+
+  const afterKnown = config.values.length;
+  engine.setStatus('restarting');
+  const lost = await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 0, afterKnown);
+  assert.equal('defaultRuntimeMode' in lost.config.settings, false);
+  assert.deepEqual((await client.call('server.refreshProviders', {})).providers[0].supportedRuntimeModes, []);
+  const workspaceRefresh = await client.call('server.refreshProviders', { instanceId: 'claudeAgent', cwd: '/home/person/Documents/HoH' });
+  assert.deepEqual(workspaceRefresh.providers[0].supportedRuntimeModes, []);
+  assert.equal(workspaceRefresh.providers[0].workspaceSnapshots.length, 1);
+
+  engine.access = { ...engine.access, mode: 'auto' };
+  const beforeReady = config.values.length;
+  engine.setStatus('ready');
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4, beforeReady);
+  assert.deepEqual((await client.call('server.refreshProviders', {})).providers[0].supportedRuntimeModes,
+    ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
+});
+
 test('after a restart the chat comes back from the engine\'s history; an unfinished turn ends as stopped', async () => {
   const store = new Map();
   const before = new FakeEngine({ store });
