@@ -123,6 +123,9 @@
     - id: harness-claude
       name: 'hoh:harness-claude'
 
+    - id: harness-codex
+      name: 'hoh:harness-codex'
+
     - id: external-harness-window
       name: 'hoh:external-harness-window'
 

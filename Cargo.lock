@@ -764,6 +764,7 @@ dependencies = [
  "hoh-goal",
  "hoh-goal-round-driver",
  "hoh-harness-claude",
+ "hoh-harness-codex",
  "hoh-headless",
  "hoh-home-paths",
  "hoh-http-proxy",
@@ -1757,6 +1758,22 @@ dependencies = [
  "hoh-user-questions",
  "hoh-util-values",
  "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "hoh-harness-codex"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hoh-error",
+ "hoh-external-harness",
+ "hoh-harness-codex",
+ "hoh-kernel",
  "schemars",
  "serde",
  "serde_json",

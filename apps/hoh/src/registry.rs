@@ -106,6 +106,7 @@ pub fn registry() -> PluginRegistry {
         )
         .add::<hoh_external_harness::ExternalHarnessPlugin>("hoh:external-harness")
         .add::<hoh_harness_claude::HarnessClaudePlugin>("hoh:harness-claude")
+        .add::<hoh_harness_codex::HarnessCodexPlugin>("hoh:harness-codex")
         .add::<hoh_external_harness::ExternalHarnessWindowPlugin>("hoh:external-harness-window");
     crate::v1_registry::add(&mut registry);
     #[cfg(debug_assertions)]
