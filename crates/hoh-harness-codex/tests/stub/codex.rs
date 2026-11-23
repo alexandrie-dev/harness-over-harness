@@ -192,9 +192,15 @@ fn main() {
                 send(
                     json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
                 );
-                send(
-                    json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"commandExecution","id":"cmd-1","command":"printf hello","cwd":"/work","status":"inProgress","aggregatedOutput":""}}}),
-                );
+                if scenario == "nested-parent" {
+                    send(
+                        json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","parentItemId":"collab-parent","item":{"type":"commandExecution","id":"cmd-1","command":"printf hello","cwd":"/work","status":"inProgress","aggregatedOutput":""}}}),
+                    );
+                } else {
+                    send(
+                        json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"commandExecution","id":"cmd-1","command":"printf hello","cwd":"/work","status":"inProgress","aggregatedOutput":""}}}),
+                    );
+                }
                 if scenario == "interrupt" {
                     let spawned = Command::new("sh")
                         .args(["-c", "sleep 120"])
@@ -298,6 +304,34 @@ fn main() {
                     );
                     send(
                         json!({"id":71,"method":"item/fileChange/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"file-1","reason":"edit it"}}),
+                    );
+                } else if scenario == "nested-parent" {
+                    send(
+                        json!({"method":"item/commandExecution/outputDelta","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","delta":"nested output"}}),
+                    );
+                    send(
+                        json!({"method":"item/completed","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"commandExecution","id":"cmd-1","command":"printf hello","cwd":"/work","status":"completed","aggregatedOutput":"nested output","exitCode":0}}}),
+                    );
+                    send(
+                        json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","parentItemId":"collab-parent","item":{"type":"agentMessage","id":"nested-message","text":"","phase":"final_answer"}}}),
+                    );
+                    send(
+                        json!({"method":"item/agentMessage/delta","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"nested-message","delta":"nested text"}}),
+                    );
+                    send(
+                        json!({"method":"item/completed","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"agentMessage","id":"nested-message","text":"nested text","phase":"final_answer"}}}),
+                    );
+                    send(
+                        json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","parentItemId":"collab-parent","item":{"type":"reasoning","id":"nested-reasoning","summary":[],"content":[]}}}),
+                    );
+                    send(
+                        json!({"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"nested-reasoning","delta":"nested thought"}}),
+                    );
+                    send(
+                        json!({"method":"item/completed","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"reasoning","id":"nested-reasoning","summary":["nested thought"],"content":[]}}}),
+                    );
+                    send(
+                        json!({"method":"turn/completed","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"completed"}}}),
                     );
                 } else {
                     finish_turn("completed");

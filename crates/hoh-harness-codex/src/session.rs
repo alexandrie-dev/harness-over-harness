@@ -24,6 +24,14 @@ fn string(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
+fn parent_item_id(value: &Value) -> Option<String> {
+    string(value, "parentItemId").or_else(|| string(value, "parent_item_id"))
+}
+
+fn event_parent_item_id(params: &Value) -> Option<String> {
+    parent_item_id(params).or_else(|| params.get("item").and_then(parent_item_id))
+}
+
 fn rpc_key(id: &Value) -> String {
     serde_json::to_string(id).unwrap_or_else(|_| "null".to_owned())
 }
@@ -200,6 +208,9 @@ struct State {
     /// Their ids remain reserved for the lifetime of this app-server process too.
     server_standalone_seen: HashSet<String>,
     items: HashMap<String, HarnessAction>,
+    /// Parent tool call carried by a nested item. Later output, approvals and completion often
+    /// name only the item id, so retain the relationship for the whole item lifecycle.
+    item_parents: HashMap<String, String>,
     items_seen: HashSet<String>,
     thread_id: String,
     hoh_turn: Option<String>,
@@ -516,6 +527,7 @@ impl HarnessSession for CodexSession {
                 state.native_turn = None;
                 state.turn_opened = false;
                 state.items.clear();
+                state.item_parents.clear();
                 state.items_seen.clear();
             }
             let result = session
@@ -868,6 +880,10 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                 state.server_standalone_seen.insert(request_id.clone());
                 return Ok(Registration::CancelStandalone);
             };
+            let request_parent = item_id
+                .as_deref()
+                .and_then(|item| state.item_parents.get(item).cloned())
+                .or_else(|| parent_item_id(&params));
             let (kind, event) = match method {
                 "item/commandExecution/requestApproval" => {
                     let item = item_id
@@ -896,6 +912,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                             item_id: item_id.clone(),
                             action,
                             reason: reason.clone(),
+                            parent_item_id: request_parent.clone(),
                         },
                     )
                 }
@@ -924,6 +941,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                             item_id: item_id.clone(),
                             action,
                             reason: reason.clone(),
+                            parent_item_id: request_parent.clone(),
                         },
                     )
                 }
@@ -945,6 +963,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                                     .unwrap_or_else(|| requested.to_string()),
                             },
                             reason: reason.clone(),
+                            parent_item_id: request_parent.clone(),
                         },
                     )
                 }
@@ -959,6 +978,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                         HarnessEvent::QuestionAsked {
                             request_id: request_id.clone(),
                             questions,
+                            parent_item_id: request_parent.clone(),
                         },
                     )
                 }
@@ -972,6 +992,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                             input: params.clone(),
                         },
                         reason: reason.clone(),
+                        parent_item_id: request_parent,
                     },
                 ),
                 _ => unreachable!("supported method checked above"),
@@ -1087,14 +1108,34 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
             if let (Some(message_id), Some(text)) =
                 (string(&params, "itemId"), string(&params, "delta"))
             {
-                emit_event(inner, HarnessEvent::TextDelta { message_id, text }).await;
+                let parent_item_id = event_parent_item_id(&params)
+                    .or_else(|| lock(&inner.state).item_parents.get(&message_id).cloned());
+                emit_event(
+                    inner,
+                    HarnessEvent::TextDelta {
+                        message_id,
+                        text,
+                        parent_item_id,
+                    },
+                )
+                .await;
             }
         }
         "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
             if let (Some(message_id), Some(text)) =
                 (string(&params, "itemId"), string(&params, "delta"))
             {
-                emit_event(inner, HarnessEvent::ReasoningDelta { message_id, text }).await;
+                let parent_item_id = event_parent_item_id(&params)
+                    .or_else(|| lock(&inner.state).item_parents.get(&message_id).cloned());
+                emit_event(
+                    inner,
+                    HarnessEvent::ReasoningDelta {
+                        message_id,
+                        text,
+                        parent_item_id,
+                    },
+                )
+                .await;
             }
         }
         "item/commandExecution/outputDelta"
@@ -1104,13 +1145,32 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
             if let (Some(item_id), Some(text)) =
                 (string(&params, "itemId"), string(&params, "delta"))
             {
-                emit_event(inner, HarnessEvent::ItemOutput { item_id, text }).await;
+                let parent_item_id = event_parent_item_id(&params)
+                    .or_else(|| lock(&inner.state).item_parents.get(&item_id).cloned());
+                emit_event(
+                    inner,
+                    HarnessEvent::ItemOutput {
+                        item_id,
+                        text,
+                        parent_item_id,
+                    },
+                )
+                .await;
             }
         }
         "item/started" => {
-            if let Some(item) = params.get("item")
-                && let Some((item_id, action)) = action_of(item)
-            {
+            if let Some(item) = params.get("item") {
+                let parent_item_id = event_parent_item_id(&params);
+                if let (Some(item_id), Some(parent_item_id)) =
+                    (string(item, "id"), parent_item_id.as_ref())
+                {
+                    lock(&inner.state)
+                        .item_parents
+                        .insert(item_id, parent_item_id.clone());
+                }
+                let Some((item_id, action)) = action_of(item) else {
+                    return;
+                };
                 let inserted = {
                     let mut state = lock(&inner.state);
                     if !state.items_seen.insert(item_id.clone()) {
@@ -1128,12 +1188,20 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                     .await;
                     return;
                 }
-                emit_event(inner, HarnessEvent::ItemStarted { item_id, action }).await;
+                emit_event(
+                    inner,
+                    HarnessEvent::ItemStarted {
+                        item_id,
+                        action,
+                        parent_item_id,
+                    },
+                )
+                .await;
             }
         }
         "item/completed" => {
             if let Some(item) = params.get("item") {
-                complete_item(inner, item).await;
+                complete_item(inner, item, event_parent_item_id(&params)).await;
             }
         }
         "turn/completed" => complete_turn(inner, &params).await,
@@ -1224,6 +1292,7 @@ async fn complete_turn(inner: &Arc<Inner>, params: &Value) {
             state.native_turn = None;
             state.turn_opened = false;
             state.items.clear();
+            state.item_parents.clear();
             Ok((turn_id, interrupted))
         }
     };
@@ -1260,20 +1329,25 @@ async fn complete_turn(inner: &Arc<Inner>, params: &Value) {
     emit_event(inner, event).await;
 }
 
-async fn complete_item(inner: &Arc<Inner>, item: &Value) {
+async fn complete_item(inner: &Arc<Inner>, item: &Value, carried_parent: Option<String>) {
     let Some(item_id) = string(item, "id") else {
         return;
     };
+    let parent_item_id = carried_parent
+        .or_else(|| parent_item_id(item))
+        .or_else(|| lock(&inner.state).item_parents.get(&item_id).cloned());
     match item.get("type").and_then(Value::as_str).unwrap_or("") {
         "agentMessage" => {
             emit_event(
                 inner,
                 HarnessEvent::TextFinal {
-                    message_id: item_id,
+                    message_id: item_id.clone(),
                     text: string(item, "text").unwrap_or_default(),
+                    parent_item_id: parent_item_id.clone(),
                 },
             )
             .await;
+            lock(&inner.state).item_parents.remove(&item_id);
         }
         "reasoning" => {
             let text = text_parts(item.get("summary"))
@@ -1284,11 +1358,13 @@ async fn complete_item(inner: &Arc<Inner>, item: &Value) {
             emit_event(
                 inner,
                 HarnessEvent::ReasoningFinal {
-                    message_id: item_id,
+                    message_id: item_id.clone(),
                     text,
+                    parent_item_id: parent_item_id.clone(),
                 },
             )
             .await;
+            lock(&inner.state).item_parents.remove(&item_id);
         }
         kind if is_step(kind) => {
             let started = {
@@ -1300,6 +1376,11 @@ async fn complete_item(inner: &Arc<Inner>, item: &Value) {
                         "Codex reused completed itemId {item_id:?} in one turn"
                     ))
                 } else if let Some((_, action)) = action_of(item) {
+                    if let Some(parent_item_id) = parent_item_id.as_ref() {
+                        state
+                            .item_parents
+                            .insert(item_id.clone(), parent_item_id.clone());
+                    }
                     state.items.insert(item_id.clone(), action.clone());
                     Ok(Some(action))
                 } else {
@@ -1319,6 +1400,7 @@ async fn complete_item(inner: &Arc<Inner>, item: &Value) {
                     HarnessEvent::ItemStarted {
                         item_id: item_id.clone(),
                         action,
+                        parent_item_id: parent_item_id.clone(),
                     },
                 )
                 .await;
@@ -1340,10 +1422,13 @@ async fn complete_item(inner: &Arc<Inner>, item: &Value) {
                     outcome,
                     output: string(item, "aggregatedOutput").or_else(|| string(item, "output")),
                     exit_code: item.get("exitCode").and_then(Value::as_i64),
+                    parent_item_id,
                 },
             )
             .await;
-            lock(&inner.state).items.remove(&item_id);
+            let mut state = lock(&inner.state);
+            state.items.remove(&item_id);
+            state.item_parents.remove(&item_id);
         }
         _ => {}
     }

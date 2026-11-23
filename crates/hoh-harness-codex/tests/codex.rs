@@ -299,13 +299,15 @@ async fn stream_steps_and_exact_approval_ids_round_trip() {
             HarnessEvent::TextDelta { text, .. } => deltas.push_str(&text),
             HarnessEvent::ReasoningDelta { text, .. } => reasoning.push_str(&text),
             HarnessEvent::ReasoningFinal { text, .. } => reasoning_final = Some(text),
-            HarnessEvent::ItemStarted { item_id, action }
+            HarnessEvent::ItemStarted {
+                item_id, action, ..
+            }
                 if item_id == "tool-1"
                     && matches!(action, hoh_external_harness::HarnessAction::Tool { .. }) =>
             {
                 tool_started = true;
             }
-            HarnessEvent::ItemOutput { item_id, text } if item_id == "tool-1" => {
+            HarnessEvent::ItemOutput { item_id, text, .. } if item_id == "tool-1" => {
                 tool_output = Some(text);
             }
             HarnessEvent::ItemCompleted { item_id, .. } if item_id == "tool-1" => {
@@ -331,6 +333,111 @@ async fn stream_steps_and_exact_approval_ids_round_trip() {
             .any(|line| line.get("id").and_then(Value::as_u64) == Some(71)
                 && line.pointer("/result/decision").and_then(Value::as_str) == Some("decline"))
     );
+}
+
+#[tokio::test]
+async fn nested_codex_events_keep_their_parent_through_the_item_lifecycle() {
+    let temp = TempDir::new().unwrap();
+    let (harness, _) = harness(&temp, "nested-parent");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-hoh".into(),
+            text: "nested".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let mut command_started = false;
+    let mut command_approval = false;
+    let mut command_output = false;
+    let mut command_completed = false;
+    let mut text_delta = false;
+    let mut text_final = false;
+    let mut reasoning_delta = false;
+    let mut reasoning_final = false;
+    loop {
+        match event(&mut started.events).await {
+            HarnessEvent::ItemStarted {
+                item_id,
+                parent_item_id,
+                ..
+            } if item_id == "cmd-1" => {
+                assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
+                command_started = true;
+            }
+            HarnessEvent::ApprovalRequested {
+                request_id,
+                item_id,
+                parent_item_id,
+                ..
+            } if item_id.as_deref() == Some("cmd-1") => {
+                assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
+                command_approval = true;
+                started
+                    .session
+                    .respond(RespondParams {
+                        session_id: "hoh-session".into(),
+                        request_id,
+                        response: HarnessResponse::Approval {
+                            decision: ApprovalDecision::Allow,
+                        },
+                    })
+                    .await
+                    .unwrap();
+            }
+            HarnessEvent::ItemOutput {
+                item_id,
+                parent_item_id,
+                ..
+            } if item_id == "cmd-1" => {
+                assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
+                command_output = true;
+            }
+            HarnessEvent::ItemCompleted {
+                item_id,
+                parent_item_id,
+                ..
+            } if item_id == "cmd-1" => {
+                assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
+                command_completed = true;
+            }
+            HarnessEvent::TextDelta {
+                parent_item_id, ..
+            } => {
+                assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
+                text_delta = true;
+            }
+            HarnessEvent::TextFinal {
+                parent_item_id, ..
+            } => {
+                assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
+                text_final = true;
+            }
+            HarnessEvent::ReasoningDelta {
+                parent_item_id, ..
+            } => {
+                assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
+                reasoning_delta = true;
+            }
+            HarnessEvent::ReasoningFinal {
+                parent_item_id, ..
+            } => {
+                assert_eq!(parent_item_id.as_deref(), Some("collab-parent"));
+                reasoning_final = true;
+            }
+            HarnessEvent::TurnCompleted { .. } => break,
+            _ => {}
+        }
+    }
+    assert!(command_started && command_approval && command_output && command_completed);
+    assert!(text_delta && text_final && reasoning_delta && reasoning_final);
 }
 
 #[tokio::test]
