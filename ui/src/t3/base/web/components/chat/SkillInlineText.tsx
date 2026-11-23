@@ -115,7 +115,7 @@ export function skillInstructionsOpener(
   threadRef: ScopedThreadRef | null | undefined,
   skill: Pick<ServerProviderSkill, "path"> | undefined,
 ) {
-  if (!threadRef || !skill?.path) return undefined;
+  if (!threadRef || !skill?.path || skill.path.startsWith("hoh-skill:")) return undefined;
   return () => useRightPanelStore.getState().openFile(threadRef, skill.path);
 }
 

@@ -427,7 +427,9 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
         label={skillLabel}
         description={skill ? skillPopoverDescription(skill) : skillDescription}
         onViewInstructions={
-          skill?.path && actions.environmentId ? () => actions.openMention(skill.path) : undefined
+          skill?.path && !skill.path.startsWith("hoh-skill:") && actions.environmentId
+            ? () => actions.openMention(skill.path)
+            : undefined
         }
       />
     </NodeViewWrapper>

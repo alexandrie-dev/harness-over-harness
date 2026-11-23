@@ -56,3 +56,18 @@ test('paperclip uses T3 attachment intake with an image-only human picker', asyn
   assert(patched['web/components/chat/ComposerAttachmentStrip.tsx']);
   assert.match(map, /ComposerAttachmentStrip\.tsx\.patch[^\n]*GIF, JPEG, PNG/);
 });
+
+test('Claude skills do not offer an unsafe file instruction opener', async () => {
+  const [inlinePatch, editorPatch, manifestText, map] = await Promise.all([
+    readFile(new URL('src/t3/base-patches/web/components/chat/SkillInlineText.tsx.patch', root), 'utf8'),
+    readFile(new URL('src/t3/base-patches/web/components/ComposerPromptEditorTiptap.tsx.patch', root), 'utf8'),
+    readFile(new URL('src/t3/manifest.json', root), 'utf8'),
+    readFile(new URL('T3-MAP.md', root), 'utf8'),
+  ]);
+  assert.match(inlinePatch, /startsWith\("hoh-skill:"\)/);
+  assert.match(editorPatch, /startsWith\("hoh-skill:"\)/);
+  const patched = JSON.parse(manifestText).base.patched;
+  assert(patched['web/components/chat/SkillInlineText.tsx']);
+  assert(patched['web/components/ComposerPromptEditorTiptap.tsx']);
+  assert.match(map, /SkillInlineText\.tsx\.patch[^\n]*View instructions/);
+});
