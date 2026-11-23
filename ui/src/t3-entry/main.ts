@@ -12,11 +12,19 @@ import { startEmblemFit } from './emblem-fit';
 
 declare global {
   // Только снимки и проверки в браузере без Tauri (scripts/snapshot-t3.mjs): подделка движка.
-  interface Window { __HOH_T3_TEST_ENGINE__?: HohEngineLike; __TAURI_INTERNALS__?: unknown }
+  interface Window {
+    __HOH_T3_TEST_ENGINE__?: HohEngineLike;
+    __HOH_T3_TEST_REQUESTS__?: { method: string; payload: unknown }[];
+    __TAURI_INTERNALS__?: unknown;
+  }
 }
 
-const engine = !window.__TAURI_INTERNALS__ && window.__HOH_T3_TEST_ENGINE__ ? window.__HOH_T3_TEST_ENGINE__ : tauriEngine();
-installHohHost({ engine });
+const testEngine = !window.__TAURI_INTERNALS__ ? window.__HOH_T3_TEST_ENGINE__ : undefined;
+const engine = testEngine ?? tauriEngine();
+installHohHost({
+  engine,
+  ...(testEngine ? { onRequest: (method: string, payload: unknown) => window.__HOH_T3_TEST_REQUESTS__?.push({ method, payload }) } : {}),
+});
 // Элементы, которые T3 рисует без условия (features.ts, HIDDEN_SELECTORS), скрываются стилем входа.
 const hidden = document.createElement('style');
 hidden.textContent = HIDDEN_SELECTORS.map((selector) => `${selector} { display: none !important; }`).join('\n');

@@ -17,6 +17,9 @@ const ENTRY = join(UI, 'src/t3-entry');
 const DIST = join(UI, 'dist');
 const errors = [];
 const fail = (message) => errors.push(message);
+const fixtureDate = new Date();
+fixtureDate.setHours(12, 0, 0, 0);
+const FIXTURE_NOW = fixtureDate.getTime();
 
 // ---- 1. Исходники ----
 const tokens = await readFile(join(ENTRY, 'grid/tokens.css'), 'utf8');
@@ -70,9 +73,9 @@ const SIZES = [[2560, 1440], [2000, 1137], [1920, 1080], [1440, 900], [1280, 720
   .filter(([width, height]) => !process.env.HOH_GRID_SIZE || process.env.HOH_GRID_SIZE === `${width}x${height}`);
 function engineWith(busy) {
   const engine = new FakeEngine();
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
-  engine.clock = today.getTime();
+  // Keep every synthetic event and the page's "now" on one local calendar day,
+  // even when the real check starts or finishes across midnight.
+  engine.clock = FIXTURE_NOW - 60 * 60_000;
   engine.access = 'confirm';
   engine.claude = { installed: true, version: '2.1.0', auth: 'authenticated', models: [{ id: 'opus', displayName: 'Claude Opus', isDefault: true }] };
   if (!busy) return engine;
@@ -103,7 +106,8 @@ async function open(browser, engine, size) {
     catch { return route.fulfill({ status: 404, body: '' }); }
   });
   await page.exposeBinding('__hohT3Request', (_, method, params) => engine.request(method, params).catch((error) => ({ __hohError: String(error?.message ?? error) })));
-  await page.addInitScript(() => {
+  await page.addInitScript(({ fixtureNow }) => {
+    Date.now = () => fixtureNow;
     const listeners = new Set();
     let clipboardText = '';
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
@@ -117,7 +121,7 @@ async function open(browser, engine, size) {
       subscribeStatus: async (listener) => { setTimeout(() => listener({ state: 'ready' }), 0); return () => {}; },
       subscribeQuestions: async () => () => {}, answerQuestion: async () => {}, decideApproval: async () => {},
     };
-  });
+  }, { fixtureNow: FIXTURE_NOW });
   const off = engine.subscribe((notification) => { page.evaluate((value) => window.__hohT3Notify?.(value), notification).catch(() => {}); });
   await page.goto(ORIGIN + '/');
   return { context, page, off };

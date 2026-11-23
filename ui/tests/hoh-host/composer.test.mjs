@@ -281,7 +281,7 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
   await assert.rejects(fetch(reminted.relativeUrl));
 });
 
-test('a new conversation first-turn image waits for its project folder without caching or spending a read', async () => {
+test('a new conversation accepts its first-turn image before subscribe/create, then rebases it to the project folder', async () => {
   const engine = new FakeEngine();
   const originalRequest = engine.request.bind(engine);
   let announceDirectory;
@@ -306,14 +306,17 @@ test('a new conversation first-turn image waits for its project folder without c
   };
   const { host, client } = connect(engine);
   await siteProject(client);
+  let imageSettled = false;
+  const image = client.call('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId, path: '~/Documents/HoH/shots/test-image.png', hostOnly: true,
+  } }).finally(() => { imageSettled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.threadSinks.has(threadId), false, 'the media query really precedes draft subscription');
+  assert.equal(host.creatingThreads.has(threadId), false, 'the media query really precedes thread.create');
+  assert.equal(host.localImageContextWaiters.has(threadId), true);
   const thread = await client.stream('orchestration.subscribeThread', { threadId });
   const creating = client.call('orchestration.dispatchCommand', createThread(threadId, 'p-site'));
   await directoryStarted;
-  let imageSettled = false;
-  const image = client.call('assets.createUrl', { resource: {
-    _tag: 'media-file', threadId, path: `${SITE}/shots/test-image.png`, hostOnly: true,
-  } }).finally(() => { imageSettled = true; });
-  await new Promise(resolve => setImmediate(resolve));
   assert.equal(imageSettled, false, 'the optimistic render remains loading while the folder is provisional');
   assert.equal(reads.length, 0, 'no native image read starts before the authoritative folder exists');
   assert.equal(host.localImageAttempts.has(threadId), false);
@@ -331,6 +334,90 @@ test('a new conversation first-turn image waits for its project folder without c
   assert.equal(host.localImageAttempts.get(threadId).length, 1);
   assert.equal(host.localImageFailures.size, 0);
   client.interrupt(thread);
+  host.stop();
+});
+
+test('an unregistered image context expires without native reads, cache, or budget use', async () => {
+  const engine = new FakeEngine();
+  let reads = 0;
+  engine.readImageAsset = async () => { reads++; throw new Error('must not read'); };
+  const { host, client } = connect(engine, { localImageContextGraceMs: 10 });
+  const refused = await client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'not-a-draft', path: 'shots/test-image.png', hostOnly: true,
+  } });
+  assert.equal(failureOf(refused)._tag, 'AssetWorkspaceContextNotFoundError');
+  assert.equal(reads, 0);
+  assert.equal(host.localImageContextWaiters.size, 0);
+  assert.equal(host.localImageContextInflight.size, 0);
+  assert.equal(host.localImageAttempts.size, 0);
+  assert.equal(host.localImageFailures.size, 0);
+  host.stop();
+});
+
+test('a first image keeps its pre-registration identity while slow startup admits subscribe/create', async () => {
+  const engine = new FakeEngine();
+  const originalRequest = engine.request.bind(engine);
+  let announceList;
+  const listStarted = new Promise(resolve => { announceList = resolve; });
+  let releaseList;
+  const listGate = new Promise(resolve => { releaseList = resolve; });
+  engine.request = async (method, params) => {
+    if (method === 'session/list') {
+      announceList();
+      await listGate;
+    }
+    return originalRequest(method, params);
+  };
+  const reads = [];
+  engine.readImageAsset = async input => {
+    reads.push(input);
+    return {
+      dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+      sourcePath: `${DEFAULT_FOLDER}/shots/test-image.png`, fileRevision: 'slow-start',
+    };
+  };
+  const { host, client } = connect(engine);
+  const threadId = 'chat-slow-start-image';
+  const image = client.call('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId, path: '~/Documents/HoH/shots/test-image.png', hostOnly: true,
+  } });
+  await listStarted;
+  const stream = await client.stream('orchestration.subscribeThread', { threadId });
+  const creating = client.call('orchestration.dispatchCommand', createThread(threadId));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.threadSinks.has(threadId), true);
+  assert.equal(reads.length, 0);
+  releaseList();
+  await creating;
+  assert.match((await image).relativeUrl, /^blob:/);
+  assert.deepEqual(reads, [{ sessionId: threadId, path: `${DEFAULT_FOLDER}/shots/test-image.png` }]);
+  client.interrupt(stream);
+  host.stop();
+});
+
+test('an existing nested project thread keeps its already-authoritative hostOnly path', async () => {
+  const engine = new FakeEngine();
+  engine.cwd = SITE;
+  const reads = [];
+  engine.readImageAsset = async input => {
+    reads.push(input);
+    return {
+      dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+      sourcePath: input.path, fileRevision: 'nested-project',
+    };
+  };
+  const { host, client } = connect(engine);
+  await newThread(client, 'chat-default-root');
+  engine.folders.add(`${SITE}/nested`);
+  await client.call('projects.mutate', {
+    type: 'project.create', commandId: 'cp-nested', projectId: 'p-nested', title: 'nested',
+    workspaceRoot: `${SITE}/nested`, createWorkspaceRootIfMissing: false, defaultModelSelection: null,
+  });
+  await newThread(client, 'chat-nested', 'p-nested');
+  await client.call('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-nested', path: `${SITE}/nested/shots/test-image.png`, hostOnly: true,
+  } });
+  assert.deepEqual(reads, [{ sessionId: 'chat-nested', path: `${SITE}/nested/shots/test-image.png` }]);
   host.stop();
 });
 
