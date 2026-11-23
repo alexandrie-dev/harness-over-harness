@@ -23,6 +23,7 @@ fn main() {
             hoh_desktop::native::engine_request,
             hoh_desktop::native::pick_folder,
             hoh_desktop::native::browse_folders,
+            hoh_desktop::native::read_image_asset,
             hoh_desktop::native::open_link,
             hoh_desktop::native::question_answer,
             hoh_desktop::native::approval_history,

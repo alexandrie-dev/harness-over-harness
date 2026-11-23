@@ -242,6 +242,8 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
     resource: AssetResource,
     // Absolute path after home/workspace resolution; absent on older servers.
     checkedPath: Schema.optionalKey(Schema.String),
+    // HoH (ui/T3-MAP.md): a bounded, non-sensitive reason from the native image policy.
+    detail: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
   },
 ) {
   override get message(): string {

@@ -1,0 +1,13 @@
+--- a/web/components/chat/ChatMarkdownMedia.tsx
++++ b/web/components/chat/ChatMarkdownMedia.tsx
+@@ -429,7 +429,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
+     fallbackSrc === undefined;
+   const unavailableDetail = missingFileAccess
+     ? gt("This connection cannot read host files. Pair again with a new link to view it.")
+-    : undefined;
++    : assetUrl._tag === "Failure"
++      ? assetUrl.detail
++      : undefined;
+   const src =
+     assetUrl._tag === "Success"
+       ? assetUrl.url + (props.srcFragment ?? "")

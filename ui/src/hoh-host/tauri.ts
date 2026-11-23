@@ -8,6 +8,7 @@ import type { EngineNotification, EngineQuestion, EngineStatus, FolderListing, H
 export function tauriEngine(): HohEngine {
   return {
     request: (method, params) => invoke('engine_request', { method, params }),
+    readImageAsset: input => invoke('read_image_asset', { sessionId: input.sessionId, path: input.path }),
     subscribe: listener => listen<EngineNotification>('engine-notification', event => listener(event.payload)),
     subscribeStatus: listener => listen<EngineStatus>('engine-status', event => listener(event.payload)),
     subscribeQuestions: listener => listen<EngineQuestion>('engine-question', event => listener(event.payload)),

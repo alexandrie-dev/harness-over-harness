@@ -3,6 +3,7 @@ pub mod bridge;
 pub mod engine;
 pub mod errors;
 pub mod folders;
+pub mod image_asset;
 #[cfg(feature = "desktop")]
 pub mod native;
 pub mod opener;
