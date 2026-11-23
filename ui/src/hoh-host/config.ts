@@ -36,6 +36,7 @@ export function runtimeModeOf(mode: HohAccessMode): T3RuntimeMode {
 export interface HarnessDiscovery {
   readonly installed: boolean;
   readonly version: string | null;
+  readonly versionStatus: 'supported' | 'unsupported' | 'unknown';
   readonly auth: 'authenticated' | 'unauthenticated' | 'unknown';
   readonly models: ReadonlyArray<{
     readonly id: string;
@@ -194,13 +195,16 @@ export function codexEffortOf(selection: unknown): string | null {
 function codexMessage(discovery: CodexDiscovery | null): string | undefined {
   if (discovery === null) return 'Failed to execute Codex CLI health check.';
   if (!discovery.installed) return 'Codex CLI (`codex`) was not found on PATH.';
+  if (discovery.versionStatus !== 'supported') return 'This Codex CLI version is not supported by HoH.';
   if (discovery.auth === 'unauthenticated') return 'Codex CLI is not authenticated. Run `codex login` and try again.';
   const detail = discovery.detail?.trim();
   return detail ? englishError(detail, 'Codex CLI is installed but failed to run.') : undefined;
 }
 
 export function codexProvider(discovery: CodexDiscovery | null, now: string) {
-  const ready = discovery !== null && discovery.installed && discovery.auth !== 'unauthenticated';
+  const message = codexMessage(discovery);
+  const ready = discovery !== null && discovery.installed && discovery.versionStatus === 'supported'
+    && discovery.auth !== 'unauthenticated' && message === undefined && discovery.models.length > 0;
   return {
     instanceId: CODEX_INSTANCE_ID,
     driver: CODEX_INSTANCE_ID,
@@ -215,7 +219,7 @@ export function codexProvider(discovery: CodexDiscovery | null, now: string) {
     status: ready ? 'ready' : 'error',
     auth: { status: discovery?.auth ?? 'unknown' },
     checkedAt: now,
-    ...(codexMessage(discovery) === undefined ? {} : { message: codexMessage(discovery) }),
+    ...(message === undefined ? {} : { message }),
     models: codexModels(discovery),
     slashCommands: [],
     skills: [],

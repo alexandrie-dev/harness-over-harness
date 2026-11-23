@@ -269,6 +269,15 @@ test('Codex: app-server models and effort are offered; executor and exact mode a
   assert.equal(prompt.params.effort, 'high');
   assert(engine.requests.indexOf(access) < engine.requests.indexOf(prompt));
   assert.equal(host.home.entries()[0].providerInstanceId, 'codex');
+
+  const unsupported = new FakeEngine({ codexDiscovery: {
+    executor: 'codex', installed: true, version: '0.200.0', versionStatus: 'unsupported',
+    auth: 'authenticated', detail: null, models: [{ id: 'future-model', isDefault: true }],
+  } });
+  const unsupportedConfig = await connect(unsupported).client.call('server.getConfig', {});
+  const unsupportedCodex = unsupportedConfig.providers.find(provider => provider.instanceId === 'codex');
+  assert.equal(unsupportedCodex.status, 'error');
+  assert.match(unsupportedCodex.message, /not supported/);
 });
 
 test('Codex: two conversations keep independent modes instead of racing through a provider global', async () => {
