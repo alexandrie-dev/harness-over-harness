@@ -325,9 +325,7 @@ export type SessionListParams = { "employeeId"?: string; };
 
 export type SessionListResult = { "sessions": Array<SessionSummary>; };
 
-export type SessionInteractionMode = "default" | "plan";
-
-export type SessionPromptParams = { "sessionId": string; "contentBlocks": Array<SdkPromptContentBlock>; "interactionMode"?: SessionInteractionMode; };
+export type SessionPromptParams = { "sessionId": string; "contentBlocks": Array<SdkPromptContentBlock>; "interactionMode"?: "default" | "plan"; };
 
 export type SessionPromptResult = { "messageId": string; };
 
