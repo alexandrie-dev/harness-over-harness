@@ -16,7 +16,7 @@ export function environmentDescriptor() {
     platform: { os: 'linux', arch: 'x64' },
     serverVersion: '0.0.0-hoh',
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-    capabilities: { repositoryIdentity: false, connectionProbe: true, threadForceStop: true, inlineMessageContext: true },
+    capabilities: { repositoryIdentity: false, connectionProbe: true, threadForceStop: true, inlineMessageContext: true, providerWorkspaceSnapshotsOnDemand: true },
   };
 }
 
