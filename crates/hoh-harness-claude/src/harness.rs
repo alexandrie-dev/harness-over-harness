@@ -4,8 +4,10 @@
 //! `ClaudeAdapterV2.ts` (`permissionModeForClaudeRuntimePolicy`, `claudeRuntimeQueryPolicy…`);
 //! discovery follows `ClaudeProvider.ts` (`claudeAuthStatus`, capabilities probe).
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -167,11 +169,45 @@ impl ClaudeConfig {
 
 pub struct ClaudeHarness {
     config: ClaudeConfig,
+    command_snapshots: Arc<CommandSnapshots>,
+}
+
+#[derive(Clone)]
+struct CommandSnapshot {
+    revision: u64,
+    commands: HarnessCommands,
+}
+
+#[derive(Default)]
+struct CommandSnapshots {
+    next_revision: AtomicU64,
+    by_folder: Mutex<HashMap<PathBuf, CommandSnapshot>>,
+}
+
+impl CommandSnapshots {
+    fn get(&self, cwd: &Path) -> Option<CommandSnapshot> {
+        self.by_folder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(cwd)
+            .cloned()
+    }
+
+    fn replace(&self, cwd: PathBuf, commands: HarnessCommands) {
+        let revision = self.next_revision.fetch_add(1, Ordering::Relaxed) + 1;
+        self.by_folder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(cwd, CommandSnapshot { revision, commands });
+    }
 }
 
 impl ClaudeHarness {
     pub fn new(config: ClaudeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            command_snapshots: Arc::default(),
+        }
     }
 
     /// [`ClaudeConfig::argv`] of this harness.
@@ -347,12 +383,19 @@ fn probe_args() -> Vec<String> {
 }
 
 /// The probe of the slash commands and skills of a folder (HOH-41), T3
-/// `buildClaudeCapabilitiesProbeQueryOptions` with the folder as its cwd: user settings but never
-/// the untrusted folder's project/local settings, no hooks, no MCP server, no stored session, and
-/// nothing allowed without a question. Project commands and skills are discovered by the CLI's
-/// `initialize` and `reload_skills` independently of setting-file sources. It runs no turn.
-fn commands_probe_args() -> Vec<String> {
+/// `buildClaudeCapabilitiesProbeQueryOptions` with the folder as its cwd: before the person's
+/// first message it uses user settings but never the untrusted folder's project/local settings,
+/// no hooks, no MCP server, no stored session, and nothing allowed without a question. Once a
+/// real session starts for that message, its `initialize` and `reload_skills` snapshot replaces
+/// this probe. The probe itself runs no turn.
+fn commands_probe_args(sources: SettingSources) -> Vec<String> {
     let mut args = base_args();
+    // Before a turn Personal may see the person's own commands, while Isolated must stay as
+    // empty as the real session. Neither profile reads project/local sources in this probe.
+    let sources = match sources {
+        SettingSources::Personal => "user",
+        SettingSources::Isolated => "",
+    };
     args.extend(
         [
             "--permission-mode",
@@ -360,7 +403,7 @@ fn commands_probe_args() -> Vec<String> {
             "--permission-prompt-tool",
             "stdio",
             "--setting-sources",
-            "user",
+            sources,
         ]
         .map(str::to_owned),
     );
@@ -436,7 +479,7 @@ async fn commands_of(config: &ClaudeConfig, cwd: PathBuf) -> HarnessResult<Harne
             return Err(HarnessFailure::new(code::UNSUPPORTED_VERSION, message));
         }
     };
-    let args = commands_probe_args();
+    let args = commands_probe_args(config.setting_sources);
     let sup = spawn(&spec(config, args, cwd.clone(), true)).await?;
     let (session, _events, init) = ClaudeSession::start(
         sup,
@@ -795,8 +838,17 @@ impl ExternalHarness for ClaudeHarness {
     }
 
     fn commands(&self, cwd: PathBuf) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
+        if let Some(snapshot) = self.command_snapshots.get(&cwd) {
+            return Box::pin(std::future::ready(Ok(snapshot.commands)));
+        }
         let config = self.config.clone();
         Box::pin(async move { commands_of(&config, cwd).await })
+    }
+
+    fn commands_revision(&self, cwd: &Path) -> u64 {
+        self.command_snapshots
+            .get(cwd)
+            .map_or(0, |snapshot| snapshot.revision)
     }
 
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).
@@ -813,6 +865,7 @@ impl ExternalHarness for ClaudeHarness {
         access: AccessMode,
     ) -> BoxFuture<'static, HarnessResult<Started>> {
         let config = self.config.clone();
+        let command_snapshots = self.command_snapshots.clone();
         Box::pin(async move {
             // In full access nothing is asked by definition, so `never` changes nothing there.
             if params.policy.approval == ApprovalMode::Never && access == AccessMode::Confirm {
@@ -863,15 +916,31 @@ impl ExternalHarness for ClaudeHarness {
                 &native,
             );
             let cwd = PathBuf::from(&params.cwd);
+            // The window keys command snapshots by its canonical known folder. A session may
+            // have been started through another spelling of the same folder (for example a
+            // symlink), so store the real-session replacement under that same canonical key.
+            let command_key = tokio::fs::canonicalize(&cwd)
+                .await
+                .unwrap_or_else(|_| cwd.clone());
             let sup = spawn(&spec(&config, args, cwd.clone(), false)).await?;
-            let (session, events, _init) = ClaudeSession::start(
+            let (session, events, init) = ClaudeSession::start(
                 sup,
                 native.clone(),
-                cwd,
+                cwd.clone(),
                 &version,
                 settings_of(&config, launch.bypass),
             )
             .await?;
+            let skills = session.control("reload_skills", config.init_timeout).await;
+            command_snapshots.replace(
+                command_key,
+                HarnessCommands {
+                    commands: commands_from(init.response.get("commands")),
+                    skills: skills
+                        .map(|answer| commands_from(answer.get("skills")))
+                        .unwrap_or_default(),
+                },
+            );
             Ok(Started {
                 result: StartResult {
                     native_session_id: native.into(),

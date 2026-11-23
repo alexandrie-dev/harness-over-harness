@@ -37,6 +37,9 @@ struct Stub {
     no_callback: bool,
     /// The uuid the last prompt came with.
     prompt_uuid: Value,
+    /// The real personal-profile session sees project commands and skills; the safe pre-turn
+    /// probe (`user`) and the isolated profile do not.
+    project_sources: bool,
 }
 
 fn main() {
@@ -113,6 +116,8 @@ fn main() {
         next: 0,
         no_callback: value_of("--permission-mode").as_deref() == Some("bypassPermissions"),
         prompt_uuid: Value::Null,
+        project_sources: value_of("--setting-sources")
+            .is_some_and(|sources| sources.split(',').any(|source| source == "project")),
     };
     while let Ok(message) = stub.rx.recv() {
         stub.handle(&message);
@@ -148,13 +153,16 @@ impl Stub {
                             "response": { "subtype": "error", "request_id": id, "error": "Unknown subtype: reload_skills" },
                         }));
                     }
-                    Some("reload_skills") => self.ok(
-                        &id,
-                        json!({ "skills": [
-                            { "name": "release-notes", "description": "Write the release notes", "argumentHint": "" },
-                            { "name": "  ", "description": "nameless" },
-                        ] }),
-                    ),
+                    Some("reload_skills") => {
+                        let mut skills = vec![
+                            json!({ "name": "release-notes", "description": "Write the release notes", "argumentHint": "" }),
+                            json!({ "name": "  ", "description": "nameless" }),
+                        ];
+                        if self.project_sources {
+                            skills.push(json!({ "name": "project-skill", "description": "From .claude/skills" }));
+                        }
+                        self.ok(&id, json!({ "skills": skills }));
+                    }
                     _ => {}
                 }
             }
@@ -195,16 +203,20 @@ impl Stub {
                 } else {
                     json!({ "email": "user@example.com", "subscriptionType": "max", "tokenSource": "claude.ai" })
                 };
+                let mut commands = vec![
+                    json!({ "name": "review", "description": "Review a pull request", "argumentHint": "[pr]" }),
+                    json!({ "name": "Review", "description": "again", "argumentHint": "[other]" }),
+                    json!({ "name": "init", "description": " " }),
+                    json!({ "name": "", "description": "nameless" }),
+                    json!({ "name": "release-notes", "description": "Write the release notes" }),
+                ];
+                if self.project_sources {
+                    commands.push(json!({ "name": "project-command", "description": "From .claude/commands" }));
+                }
                 self.ok(
                     id,
                     json!({
-                        "commands": [
-                            { "name": "review", "description": "Review a pull request", "argumentHint": "[pr]" },
-                            { "name": "Review", "description": "again", "argumentHint": "[other]" },
-                            { "name": "init", "description": " " },
-                            { "name": "", "description": "nameless" },
-                            { "name": "release-notes", "description": "Write the release notes" },
-                        ],
+                        "commands": commands,
                         "output_style": "default",
                         "models": [
                             { "value": "default", "displayName": "Default", "description": "x" },

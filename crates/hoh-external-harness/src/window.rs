@@ -172,6 +172,7 @@ struct FolderCalls {
 
 struct Cached<T> {
     at: Instant,
+    revision: u64,
     value: T,
 }
 
@@ -182,6 +183,10 @@ impl<T: Clone> Cached<T> {
 
     fn fresh(&self) -> Option<T> {
         self.is_fresh().then(|| self.value.clone())
+    }
+
+    fn fresh_at(&self, revision: u64) -> Option<T> {
+        (self.revision == revision).then(|| self.fresh()).flatten()
     }
 }
 
@@ -244,19 +249,25 @@ impl Window {
         }
         // A composition without working directories knows no folder.
         let directories = self.ctx.get::<WorkingDirectoryKey>().ok_or_else(unknown)?;
-        let mut known = vec![directories.default_directory().to_owned()];
-        known.extend(
+        // Check registrations before active conversations. Otherwise a conversation that still
+        // names the registered spelling could make the new target of a replaced symlink pass as
+        // an active folder before the stale registration is examined.
+        let saved: Vec<PathBuf> = lock_folders(&self.folders).iter().cloned().collect();
+        for folder in saved {
+            match saved_folder_match(&folder, &wanted).await {
+                Some(true) => return Ok(wanted),
+                Some(false) => return Err(unknown()),
+                None => {}
+            }
+        }
+        let mut active = vec![directories.default_directory().to_owned()];
+        active.extend(
             self.agents
                 .list()
                 .iter()
                 .map(|agent| directories.get(agent.session())),
         );
-        known.extend(
-            lock_folders(&self.folders)
-                .iter()
-                .map(|folder| folder.to_string_lossy().into_owned()),
-        );
-        for folder in known {
+        for folder in active {
             if tokio::fs::canonicalize(&folder)
                 .await
                 .is_ok_and(|folder| folder == wanted)
@@ -290,15 +301,32 @@ impl Window {
         let folder = self.known_folder(&cwd).await?;
         let calls = self.folder_calls(&folder);
         let mut calls = calls.lock().await;
-        let found = match calls.commands.get(&params.executor).and_then(Cached::fresh) {
+        let revision = harness.commands_revision(&folder);
+        let found = match calls
+            .commands
+            .get(&params.executor)
+            .and_then(|cached| cached.fresh_at(revision))
+        {
             Some(found) => found,
             None => {
-                let found = harness.commands(folder).await?;
+                // A real session may finish initialization while the safe probe is in flight.
+                // Retry against its in-memory snapshot until the revision around the answer is
+                // stable, so a probe can never be cached under the real snapshot's revision.
+                let mut answer_revision = revision;
+                let found = loop {
+                    let found = harness.commands(folder.clone()).await?;
+                    let current = harness.commands_revision(&folder);
+                    if current == answer_revision {
+                        break found;
+                    }
+                    answer_revision = current;
+                };
                 calls.commands.retain(|_, cached| cached.is_fresh());
                 calls.commands.insert(
                     params.executor.clone(),
                     Cached {
                         at: Instant::now(),
+                        revision: answer_revision,
                         value: found.clone(),
                     },
                 );
@@ -357,6 +385,7 @@ impl Window {
             key,
             Cached {
                 at: Instant::now(),
+                revision: 0,
                 value: found.clone(),
             },
         );
@@ -732,6 +761,17 @@ fn lock_folder_calls(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// `Some(true)`: this registration still names `wanted`; `Some(false)`: it resolves to `wanted`
+/// only because the saved canonical path was replaced (for example by a symlink); `None`: this
+/// registration names another folder or no longer resolves.
+async fn saved_folder_match(saved: &Path, wanted: &Path) -> Option<bool> {
+    tokio::fs::canonicalize(saved)
+        .await
+        .ok()
+        .filter(|current| current == wanted)
+        .map(|current| current == saved)
+}
+
 /// Folders whose names alone may disclose credentials or host configuration. Both arguments are
 /// canonical: callers resolve links before this policy is evaluated.
 fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
@@ -739,7 +779,9 @@ fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
         return true;
     }
     if let Some(home) = user_home {
-        if folder == home {
+        // The home itself and its ancestors (for example `/home`) disclose every protected
+        // child at once and are never projects.
+        if home.starts_with(folder) {
             return true;
         }
         if folder
@@ -753,6 +795,10 @@ fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
         {
             return true;
         }
+    } else if folder.starts_with("/home") {
+        // Tauri can still have a passwd-derived home when HOME is absent. Fail closed for all
+        // conventional homes instead of losing the home-specific rules entirely.
+        return true;
     }
     const SYSTEM: &[&str] = &[
         "/etc", "/proc", "/sys", "/dev", "/run", "/boot", "/root", "/var", "/usr", "/bin", "/sbin",
@@ -796,7 +842,7 @@ async fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::protected_folder;
+    use super::{protected_folder, saved_folder_match};
     use std::path::Path;
 
     #[test]
@@ -804,6 +850,7 @@ mod tests {
         let home = Path::new("/home/person");
         for path in [
             "/",
+            "/home",
             "/home/person",
             "/home/person/.ssh",
             "/home/person/.ssh/keys",
@@ -852,5 +899,46 @@ mod tests {
                 "{path} is not in a protected class"
             );
         }
+    }
+
+    #[test]
+    fn missing_home_protects_conventional_home_tree_and_root_home() {
+        for path in [
+            "/home",
+            "/home/person",
+            "/home/person/project",
+            "/root/work",
+        ] {
+            assert!(
+                protected_folder(Path::new(path), None),
+                "{path} must be protected without HOME"
+            );
+        }
+        for path in ["/homeward/project", "/mnt/project", "/opt/project"] {
+            assert!(
+                !protected_folder(Path::new(path), None),
+                "{path} is not a conventional home"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_saved_canonical_folder_replaced_by_a_link_no_longer_matches() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let saved = dir.path().join("project");
+        let other = dir.path().join("other");
+        std::fs::create_dir(&saved).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let saved = saved.canonicalize().unwrap();
+        assert_eq!(saved_folder_match(&saved, &saved).await, Some(true));
+
+        let moved = dir.path().join("project-moved");
+        std::fs::rename(&saved, &moved).unwrap();
+        symlink(&other, &saved).unwrap();
+        let wanted = other.canonicalize().unwrap();
+        assert_eq!(saved_folder_match(&saved, &wanted).await, Some(false));
     }
 }

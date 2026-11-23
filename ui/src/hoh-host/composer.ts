@@ -120,7 +120,12 @@ const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i;
 /** T3's `projects.searchEntries` filters (`kind`, `imageOnly`) over the engine's answer. */
 export function searchAnswer(found: any, kind: unknown, imageOnly: unknown) {
   const entries = (Array.isArray(found?.entries) ? found.entries : [])
-    .filter((entry: any) => typeof entry?.path === 'string' && entry.path.trim() && (entry.kind === 'file' || entry.kind === 'directory'))
+    .filter((entry: any) => typeof entry?.path === 'string'
+      && entry.path.trim()
+      && !entry.path.startsWith('/')
+      && !entry.path.includes('\\')
+      && !entry.path.split('/').includes('..')
+      && (entry.kind === 'file' || entry.kind === 'directory'))
     .filter((entry: any) => kind !== 'file' && kind !== 'directory' ? true : entry.kind === kind)
     .filter((entry: any) => imageOnly !== true || (entry.kind === 'file' && IMAGE_EXTENSIONS.test(entry.path)))
     .map((entry: any) => ({ path: entry.path, kind: entry.kind }));

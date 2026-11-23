@@ -186,7 +186,8 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
     let env = Env::new();
     let folder = env.dir.path().join("project");
     std::fs::create_dir(&folder).unwrap();
-    let found = env.harness().commands(folder.clone()).await.unwrap();
+    let harness = env.harness();
+    let found = harness.commands(folder.clone()).await.unwrap();
     let commands: Vec<_> = found
         .commands
         .iter()
@@ -232,6 +233,45 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
     // No prompt was sent: nothing reached the stub's prompt log.
     assert!(!env.dir.path().join("prompt-sessions").exists());
 
+    // A real personal-profile session is started only for the person's turn. Its project/local
+    // sources then add the folder's commands and skills, and its snapshot replaces the safe
+    // pre-turn probe without waiting for the window's short cache to expire.
+    assert_eq!(harness.commands_revision(&folder), 0);
+    assert!(
+        !found
+            .commands
+            .iter()
+            .any(|command| command.name == "project-command")
+    );
+    assert!(
+        !found
+            .skills
+            .iter()
+            .any(|skill| skill.name == "project-skill")
+    );
+    let started = harness
+        .start_with_access(
+            params(&folder, None, HarnessPolicy::default()),
+            AccessMode::Confirm,
+        )
+        .await
+        .unwrap();
+    let after = harness.commands(folder.clone()).await.unwrap();
+    assert!(harness.commands_revision(&folder) > 0);
+    assert!(
+        after
+            .commands
+            .iter()
+            .any(|command| command.name == "project-command")
+    );
+    assert!(
+        after
+            .skills
+            .iter()
+            .any(|skill| skill.name == "project-skill")
+    );
+    started.session.terminate(Duration::from_millis(500)).await;
+
     // A CLI without `reload_skills` still gives its commands; a missing folder, nothing.
     let mut env = Env::new();
     env.mode = Some("no-skills");
@@ -246,8 +286,8 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
         .unwrap();
     assert_eq!(
         args[at + 1],
-        "user",
-        "the probe is independent of the profile"
+        "",
+        "the isolated probe uses the isolated profile's empty sources"
     );
     let missing = env.harness().commands(env.dir.path().join("gone")).await;
     assert_eq!(missing.unwrap_err().code, hoh_external_harness::code::IO);

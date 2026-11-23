@@ -96,7 +96,15 @@ test('a picture too big, of another type, or not what it says is refused with T3
 
 test('@ lists a folder project\'s files by relative path from the engine; "No project" and a folder the engine refuses give T3\'s empty menu', async () => {
   const engine = new FakeEngine();
-  engine.files = [{ path: 'src', kind: 'directory' }, { path: 'src/main.ts', kind: 'file' }, { path: 'logo.png', kind: 'file' }];
+  engine.files = [
+    { path: 'src', kind: 'directory' },
+    { path: 'src/main.ts', kind: 'file' },
+    { path: 'logo.png', kind: 'file' },
+    { path: '../.env', kind: 'file' },
+    { path: 'src/../.env', kind: 'file' },
+    { path: '/etc/passwd', kind: 'file' },
+    { path: '\\etc\\passwd', kind: 'file' },
+  ];
   const { client } = connect(engine);
   // No project: nothing is asked of the engine.
   assert.deepEqual(await client.call('projects.searchEntries', { cwd: DEFAULT_FOLDER, query: '', limit: 80 }), { entries: [], truncated: false });
@@ -114,6 +122,9 @@ test('@ lists a folder project\'s files by relative path from the engine; "No pr
   assert.deepEqual(sent(engine, 'hoh/workspace/entries').at(-1).params, { cwd: SITE, query: 'src', limit: 80 });
   assert.deepEqual((await client.call('projects.searchEntries', { cwd: SITE, query: '', limit: 80, kind: 'directory' })).entries, [{ path: 'src', kind: 'directory' }]);
   assert.deepEqual((await client.call('projects.searchEntries', { cwd: SITE, query: '', limit: 80, imageOnly: true })).entries, [{ path: 'logo.png', kind: 'file' }]);
+  assert.deepEqual((await client.call('projects.searchEntries', { cwd: SITE, query: '', limit: 80 })).entries, [
+    { path: 'src', kind: 'directory' }, { path: 'src/main.ts', kind: 'file' }, { path: 'logo.png', kind: 'file' },
+  ]);
   // A folder that is not a project is not passed on.
   const before = sent(engine, 'hoh/workspace/entries').length;
   assert.deepEqual(await client.call('projects.searchEntries', { cwd: '/home/person/.config', query: '', limit: 80 }), { entries: [], truncated: false });
