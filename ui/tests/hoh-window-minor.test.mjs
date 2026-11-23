@@ -41,8 +41,35 @@ test('assistant data images are blocked and T3 image URL history is bounded', as
 });
 
 test('thread details card stays visible (CEO: it becomes the HOH-43 stats panel)', async () => {
-  const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
+  const [features, homeCss, quickView] = await Promise.all([
+    readFile(new URL('src/t3-entry/features.ts', root), 'utf8'),
+    readFile(new URL('src/t3-entry/hoh-screens/home.css', root), 'utf8'),
+    readFile(new URL('src/t3-entry/hoh-screens/QuickViewDialog.tsx', root), 'utf8'),
+  ]);
   assert.doesNotMatch(features, /\[data-thread-details-card\]/);
+  assert.doesNotMatch(homeCss, /\[data-thread-details-card\][^{]*\{[^}]*display:\s*none/s);
+  assert.match(quickView, /data-side-chat-pane/);
+  assert.match(quickView, /<ChatView/);
+});
+
+test('ThreadDetails does not add a second inset to the T3 conversation axis', async () => {
+  const css = await readFile(new URL('src/t3-entry/brand.css', root), 'utf8');
+  assert.doesNotMatch(css, /\[data-thread-details-panel="inline"\][^{]*\{[^}]*--chat-lane-inset-(?:start|end)/s);
+});
+
+test('Agent and Task inspector output uses T3 Markdown without an inner raw-output scroller', async () => {
+  const [patch, manifestText, map, css] = await Promise.all([
+    readFile(new URL('src/t3/base-patches/web/components/chat/V2ItemInspector.tsx.patch', root), 'utf8'),
+    readFile(new URL('src/t3/manifest.json', root), 'utf8'),
+    readFile(new URL('T3-MAP.md', root), 'utf8'),
+    readFile(new URL('src/t3-entry/brand.css', root), 'utf8'),
+  ]);
+  assert.match(patch, /\^\(agent\|task\)\$/i);
+  assert.match(patch, /<ChatMarkdown/);
+  assert.match(patch, /data-hoh-agent-markdown/);
+  assert(JSON.parse(manifestText).base.patched['web/components/chat/V2ItemInspector.tsx']);
+  assert.match(map, /V2ItemInspector\.tsx\.patch[^\n]*Markdown\/code renderer/);
+  assert.match(css, /\[data-hoh-agent-markdown\][^{]*\{[^}]*scroll-margin-bottom:\s*10rem/s);
 });
 
 test('HoH home identity keeps empty-home product copy stable while workspace discovery settles', async () => {

@@ -577,13 +577,18 @@ fn window_may_call_exactly_the_five_executor_methods_and_no_new_ones() {
             "hoh/executor/access/set",
             "hoh/executor/commands",
             "hoh/executor/discover",
-            "hoh/executor/select"
+            "hoh/executor/select",
+            "hoh/executor/title/generate"
         ]
     );
-    // 47 methods before the executor ones, the five executor ones, `hoh/workspace/entries` and
+    // 47 methods before the executor ones, the six executor ones, `hoh/workspace/entries` and
     // `hoh/workspace/add` (HOH-41); a new window method must be a deliberate change of this number.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 5 + 2);
-    for method in ["hoh/executor/access/get", "hoh/executor/discover"] {
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 6 + 2);
+    for method in [
+        "hoh/executor/access/get",
+        "hoh/executor/discover",
+        "hoh/executor/title/generate",
+    ] {
         assert!(!bridge::needs_approval(
             method,
             &json!({"executor":"claude"})
@@ -613,8 +618,7 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
     );
     wait_memory_ready(&event_rx);
     let broker = Arc::new(Broker::new([0x21; 32]).unwrap());
-    let params = json!({"executor":"claude","mode":"full"});
-    let send = |label: &str| {
+    let send = |label: &str, params: &Value| {
         let arm = {
             let (broker, params) = (broker.clone(), params.clone());
             Box::new(move |generation: u64, id: &str| {
@@ -632,28 +636,42 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
             Some(arm),
         )
     };
-    for label in ["approval-1", "executor", "claude"] {
-        assert!(send(label).is_err(), "{label}");
+    let sent = |expected: &Value| {
+        frames.lock().unwrap().iter().any(|frame| {
+            frame["method"] == "hoh/executor/access/set" && frame["params"] == *expected
+        })
+    };
+    // The four exact T3 modes take the same protected path. Intermediate modes are scoped to a
+    // concrete conversation and retain the downgrade-safe `mode: confirm` projection.
+    let cases = [
+        json!({"executor":"claude","mode":"full","runtimeMode":"full"}),
+        json!({"executor":"claude","sessionId":"chat-edits","mode":"confirm","runtimeMode":"auto-accept-edits"}),
+        json!({"executor":"claude","sessionId":"chat-auto","mode":"confirm","runtimeMode":"auto"}),
+        json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}),
+    ];
+    let mut params = json!({});
+    for (n, case) in cases.into_iter().enumerate() {
+        params = case;
+        let mode = params["runtimeMode"].as_str().unwrap();
+        for label in ["approval-1", "executor", "claude"] {
+            assert!(send(label, &params).is_err(), "{mode} from {label}");
+        }
+        assert_eq!(
+            broker.audit_log().len(),
+            n,
+            "{mode}: nothing journaled for a refusal"
+        );
+        assert!(
+            !sent(&params),
+            "{mode} reached the engine from another window"
+        );
+        send("main", &params).unwrap();
+        assert!(sent(&params), "{mode} from the main window");
+        let log = broker.audit_log();
+        assert_eq!(log.len(), n + 1, "{mode}");
+        assert_eq!((log[n].who, log[n].via), ("human", "main-window"), "{mode}");
+        assert_eq!(log[n].method, "hoh/executor/access/set", "{mode}");
     }
-    assert!(broker.audit_log().is_empty());
-    assert!(
-        !frames
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|frame| frame["method"] == "hoh/executor/access/set")
-    );
-    send("main").unwrap();
-    assert!(
-        frames
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|frame| frame["method"] == "hoh/executor/access/set")
-    );
-    let log = broker.audit_log();
-    assert_eq!(log.len(), 1);
-    assert_eq!((log[0].who, log[0].via), ("human", "main-window"));
     // The plain path without the host's confirmation step stays closed.
     assert!(bridge::request(&engine, "main", "hoh/executor/access/set", params.clone()).is_err());
     // Lead 22.11 20:43: choosing Claude and the folder of its conversation — the same rule; from
@@ -702,7 +720,7 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
                 .any(|frame| frame["method"] == method)
         );
     }
-    assert_eq!(broker.audit_log().len(), 1);
+    assert_eq!(broker.audit_log().len(), 4, "the four modes, nothing more");
     // HOH-41: "Add project" in the main window is the person's confirmation of that folder.
     let add = json!({"cwd":"/home/u/work"});
     assert!(bridge::needs_approval("hoh/workspace/add", &add));
@@ -723,10 +741,10 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
             .any(|frame| frame["method"] == "hoh/workspace/add")
     );
     let log = broker.audit_log();
-    assert_eq!(log.len(), 2);
-    assert_eq!((log[1].who, log[1].via), ("human", "main-window"));
+    assert_eq!(log.len(), 5);
+    assert_eq!((log[4].who, log[4].via), ("human", "main-window"));
     assert_eq!(
-        log[1].human_text,
+        log[4].human_text,
         "Добавить папку «/home/u/work» как проект?"
     );
     engine.stop();

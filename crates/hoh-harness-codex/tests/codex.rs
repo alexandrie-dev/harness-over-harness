@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, AuthState, ExternalHarness, HarnessEvent, HarnessPolicy,
-    HarnessResponse, PromptParams, RespondParams, StartParams, VersionStatus,
+    HarnessResponse, InteractionMode, PromptParams, RespondParams, StartParams, VersionStatus,
 };
 use hoh_harness_codex::{CodexConfig, CodexHarness};
 use serde_json::Value;
@@ -39,6 +39,7 @@ fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
         cwd: temp.path().to_string_lossy().into_owned(),
         model: Some("gpt-stub".into()),
         effort: Some("high".into()),
+        interaction_mode: InteractionMode::Default,
         policy: HarnessPolicy::default(),
         resume: resume.map(Into::into),
     }

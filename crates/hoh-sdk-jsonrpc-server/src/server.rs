@@ -40,7 +40,7 @@ use hoh_protocol::{
     SessionAssistantStreamNotification, SessionAssistantStreamOutcome, SessionPromptParams,
     SessionPromptResult, SessionQueryParams, SessionQueryResult, SessionResumeParams,
     SessionWaitParams, SessionWorkingDirectoryParams, SessionWorkingDirectoryResult,
-    SessionWorkingDirectorySetParams,
+    SessionWorkingDirectorySetParams, WorkingDirectoryRootIdentity,
 };
 use hoh_session::{SessionCreated, SessionEventEmitted, SessionId, SessionLogOffset};
 use hoh_session_persistence::SessionPersistenceService;
@@ -896,9 +896,17 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<WorkingDirectoryKey>()
             .ok_or_else(|| error("workingDirectory service is unavailable"))?;
-        Ok(SessionWorkingDirectoryResult {
-            cwd: directory.ensure(&directory_agent(agent), None).await?,
-        })
+        let cwd = directory
+            .ensure(&directory_agent(agent.clone()), None)
+            .await?;
+        let root_identity =
+            directory
+                .root_identity(agent.session())
+                .map(|identity| WorkingDirectoryRootIdentity {
+                    device: identity.device,
+                    inode: identity.inode,
+                });
+        Ok(SessionWorkingDirectoryResult { cwd, root_identity })
     }
     pub async fn set_working_directory(
         &self,
@@ -912,11 +920,17 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<WorkingDirectoryKey>()
             .ok_or_else(|| error("workingDirectory service is unavailable"))?;
-        Ok(SessionWorkingDirectoryResult {
-            cwd: directory
-                .set(&directory_agent(agent), &params.path, None)
-                .await?,
-        })
+        let cwd = directory
+            .set(&directory_agent(agent.clone()), &params.path, None)
+            .await?;
+        let root_identity =
+            directory
+                .root_identity(agent.session())
+                .map(|identity| WorkingDirectoryRootIdentity {
+                    device: identity.device,
+                    inode: identity.inode,
+                });
+        Ok(SessionWorkingDirectoryResult { cwd, root_identity })
     }
     async fn working_directory_agent(&self, id: SessionId) -> Result<Arc<dyn Agent>, BoxError> {
         self.assert_initialized()?;
@@ -1238,18 +1252,33 @@ impl HarnessSdkJsonRpcServer {
             }
             "session/prompt" => {
                 self.assert_initialized()?;
-                let id = string_field(
+                // Preserve the SDK-compatible diagnostics for the two required fields while the
+                // typed decode below enforces the rest of the closed request contract.
+                string_field(
                     &params,
                     "sessionId",
                     "session/prompt requires a sessionId string",
                 )?;
-                let blocks = params
+                params
                     .get("contentBlocks")
                     .and_then(Value::as_array)
-                    .cloned()
                     .ok_or_else(|| type_error("session/prompt requires contentBlocks"))?;
+                // `effort` is private glue consumed by the prompt listener, not the public SDK
+                // struct. Everything else crosses the typed protocol boundary before a session,
+                // message, mode choice, or followup can be created.
+                let mut typed = params.clone();
+                if let Some(object) = typed.as_object_mut() {
+                    object.remove("effort");
+                }
+                let typed: SessionPromptParams =
+                    serde_json::from_value(typed).map_err(|error| type_error(error.to_string()))?;
+                let blocks = typed
+                    .content_blocks
+                    .iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()?;
                 serde_json::to_value(
-                    self.prompt_blocks(SessionId::from(id), blocks, Some(&params))
+                    self.prompt_blocks(SessionId::from(typed.session_id), blocks, Some(&params))
                         .await?,
                 )
                 .map_err(Into::into)

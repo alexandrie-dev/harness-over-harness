@@ -25,7 +25,9 @@ function useFrame(band: React.RefObject<HTMLDivElement | null>): { band: number;
       if (candidate.closest('.hoh-quick-view')) return false;
       const rect = candidate.getBoundingClientRect();
       const style = getComputedStyle(candidate);
-      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+      // Quick View suppresses the underlying composer paint with visibility:hidden, but that T3 lane still owns
+      // the window axis (including an inline ThreadDetails inset). Keep following its stable geometry.
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none';
     });
     const update = () => setFrame((was) => {
       const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')?.getBoundingClientRect();

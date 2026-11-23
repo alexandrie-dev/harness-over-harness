@@ -54,7 +54,21 @@ object!(HohInitializeResult {
     protocol_version: u32,
     approvals: ApprovalHost
 });
-object!(SessionPromptParams { session_id: String, content_blocks: Vec<SdkPromptContentBlock> });
+choices!(SessionInteractionMode { Default => "default", Plan => "plan" });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionPromptParams {
+    pub session_id: String,
+    pub content_blocks: Vec<SdkPromptContentBlock>,
+    /// T3's per-turn interaction mode. Missing is the ordinary chat mode.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::present"
+    )]
+    #[schemars(required)]
+    pub interaction_mode: Option<SessionInteractionMode>,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionQueryParams {
@@ -69,7 +83,16 @@ object!(SessionWorkingDirectorySetParams {
     session_id: String,
     path: String
 });
-object!(SessionWorkingDirectoryResult { cwd: String });
+object!(WorkingDirectoryRootIdentity {
+    device: String,
+    inode: String
+});
+optional!(SessionWorkingDirectoryResult {
+    cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    #[schemars(required)]
+    root_identity: Option<WorkingDirectoryRootIdentity>
+});
 
 choices!(ImageMediaType { Png => "image/png", Jpeg => "image/jpeg", Webp => "image/webp", Gif => "image/gif" });
 object!(Dimensions {

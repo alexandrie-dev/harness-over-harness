@@ -885,6 +885,8 @@ fn access_switches(words: &[String]) -> Vec<Vec<String>> {
 fn mode_of(start: &Start) -> &'static str {
     match start.value_of("--permission-mode") {
         Some("default") => "confirm",
+        Some("acceptEdits") => "acceptEdits",
+        Some("auto") => "auto",
         Some("bypassPermissions" | "dontAsk") => "full",
         other => panic!("unexpected permission mode {other:?}: {start:?}"),
     }
@@ -952,6 +954,70 @@ fn assert_full(start: &Start) {
     assert_clean_environment(start);
 }
 
+/// The two modes between confirm and full (CEO 23.11 00:07, as T3): Claude's own mode
+/// (`acceptEdits`, `auto`) with confirm's question channel and closed network, never a bypass.
+fn assert_asking(start: &Start, permission_mode: &str) {
+    assert_eq!(
+        start.value_of("--permission-mode"),
+        Some(permission_mode),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--permission-prompt-tool"),
+        Some("stdio"),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--disallowedTools"),
+        Some("WebFetch,WebSearch"),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--setting-sources"),
+        Some("user,project,local"),
+        "{start:?}"
+    );
+    for wide in [
+        "--allow-dangerously-skip-permissions",
+        "--dangerously-skip-permissions",
+        "--tools",
+    ] {
+        assert!(
+            !start.has(wide),
+            "{wide} under {permission_mode}: {start:?}"
+        );
+    }
+    assert_clean_environment(start);
+}
+
+/// The command line of `mode` (the window's name for it).
+fn assert_mode(start: &Start, mode: &str) {
+    match mode {
+        "confirm" => assert_confirm(start),
+        "acceptEdits" => assert_asking(start, "acceptEdits"),
+        "auto" => assert_asking(start, "auto"),
+        "full" => assert_full(start),
+        other => panic!("no mode {other}"),
+    }
+    assert_eq!(mode_of(start), mode, "{start:?}");
+}
+
+fn runtime_mode(mode: &str) -> &str {
+    if mode == "acceptEdits" {
+        "auto-accept-edits"
+    } else {
+        mode
+    }
+}
+
+fn legacy_mode(mode: &str) -> &str {
+    if matches!(mode, "confirm" | "acceptEdits" | "auto") {
+        "confirm"
+    } else {
+        "full"
+    }
+}
+
 /// What `hoh/executor/access/get` shows is what Claude runs with: the mode and the switches of
 /// the recorded command line.
 async fn assert_effective_is_the_launch(host: &mut Host, start: &Start) {
@@ -984,18 +1050,46 @@ fn assert_session(access: &Value, mode: &str, running: &str, context: &str) {
     let session = &access["session"];
     assert_eq!(session["executor"], "claude", "{context}: {access}");
     assert_eq!(session["privacy"], "remote", "{context}: {access}");
-    assert_eq!(session["mode"], mode, "{context}: {access}");
-    assert_eq!(session["running"], running, "{context}: {access}");
+    assert_eq!(session["mode"], legacy_mode(mode), "{context}: {access}");
+    assert_eq!(
+        session["running"],
+        legacy_mode(running),
+        "{context}: {access}"
+    );
+    assert_eq!(
+        session["runtimeMode"],
+        runtime_mode(mode),
+        "{context}: {access}"
+    );
+    assert_eq!(
+        session["runningRuntimeMode"],
+        runtime_mode(running),
+        "{context}: {access}"
+    );
     assert_eq!(session["pending"], mode != running, "{context}: {access}");
 }
 
 /// The chat's idle process ended with the choice of `mode`: nothing runs, nothing waits.
 fn assert_no_process(access: &Value, mode: &str, context: &str) {
     let session = &access["session"];
-    assert_eq!(session["mode"], mode, "{context}: {access}");
+    assert_eq!(session["mode"], legacy_mode(mode), "{context}: {access}");
+    assert_eq!(
+        session["runtimeMode"],
+        runtime_mode(mode),
+        "{context}: {access}"
+    );
     assert_eq!(session["running"], Value::Null, "{context}: {access}");
+    assert_eq!(
+        session["runningRuntimeMode"],
+        Value::Null,
+        "{context}: {access}"
+    );
     assert_eq!(session["pending"], false, "{context}: {access}");
-    assert_eq!(access["effective"]["mode"], mode, "{context}: {access}");
+    assert_eq!(
+        access["effective"]["mode"],
+        legacy_mode(mode),
+        "{context}: {access}"
+    );
 }
 
 /// The switches and mode `effective` shows are those of `start`, the process of this conversation.
@@ -1009,7 +1103,7 @@ fn assert_effective_of(access: &Value, start: &Start, context: &str) {
     );
     assert_eq!(
         access["effective"]["mode"],
-        mode_of(start),
+        legacy_mode(mode_of(start)),
         "{context}: {access}"
     );
 }
@@ -2918,8 +3012,8 @@ async fn p15_a_picture_reaches_claude_as_a_base64_block_before_the_text() {
     host.shutdown().await;
 }
 
-/// 15 (refusals). A picture over T3's 10 MiB, of a type the store does not take, or whose bytes are
-/// not the type it names is refused with the store's reason; Claude is not started for it.
+/// 15 (refusals). A picture over T3's 10 MiB or whose bytes do not match its type is refused by the
+/// store; an unsupported SVG is rejected earlier by the strict SDK wire. Claude is never started.
 #[tokio::test]
 async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing() {
     let workspace = Workspace::new();
@@ -2929,7 +3023,11 @@ async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing
     for (data, mime, reason) in [
         (big.as_str(), "image/png", "byte limit"),
         (RED_PNG, "image/jpeg", "does not match"),
-        (RED_PNG, "image/svg+xml", "image/svg+xml"),
+        (
+            RED_PNG,
+            "image/svg+xml",
+            "data did not match any variant of untagged enum SdkPromptContentBlock",
+        ),
     ] {
         let blocks = json!([
             {"type": "image", "data": data, "mimeType": mime, "name": "x"},
@@ -3083,6 +3181,159 @@ async fn p16_only_a_folder_the_engine_knows_is_searched_or_probed() {
         found["entries"],
         json!([{"path": "secret.txt", "kind": "file"}])
     );
+
+    // An active-only session path is a canonical identity accepted by working-directory/set.
+    // Replacing that spelling with a link must not authorize the link's new target.
+    let active_moved = workspace.root.path().join("elsewhere-moved");
+    let active_swapped = workspace.root.path().join("active-swapped");
+    std::fs::create_dir(&active_swapped).expect("replacement active target");
+    std::fs::write(active_swapped.join("must-not-leak.txt"), "x").expect("secret");
+    std::fs::rename(&other, &active_moved).expect("move active folder");
+    std::os::unix::fs::symlink(&active_swapped, &other).expect("replace active folder");
+    let id = host
+        .send(
+            "hoh/workspace/entries",
+            json!({"cwd": other, "query": "leak", "limit": 80}),
+        )
+        .await;
+    let (frame, _) = host.response(&id, None).await;
+    assert!(
+        frame.get("error").is_some(),
+        "active symlink swap passed: {frame}"
+    );
+
+    // The default identity is frozen when the window plugin starts. A later replacement of the
+    // configured spelling likewise cannot silently register a different target.
+    let default_moved = workspace.root.path().join("work-moved");
+    let default_swapped = workspace.root.path().join("default-swapped");
+    std::fs::create_dir(&default_swapped).expect("replacement default target");
+    std::fs::write(default_swapped.join("must-not-leak.txt"), "x").expect("secret");
+    std::fs::rename(&workspace.folder, &default_moved).expect("move default folder");
+    std::os::unix::fs::symlink(&default_swapped, &workspace.folder)
+        .expect("replace default folder");
+    let id = host
+        .send(
+            "hoh/workspace/entries",
+            json!({"cwd": workspace.folder, "query": "leak", "limit": 80}),
+        )
+        .await;
+    let (frame, _) = host.response(&id, None).await;
+    assert!(
+        frame.get("error").is_some(),
+        "default symlink swap passed: {frame}"
+    );
+    host.shutdown().await;
+}
+
+// ---------------------------------------------------------------- four modes (CEO 23.11 00:07)
+
+/// The four modes from the narrowest; every switch between two of them, each once, in one walk
+/// (each mode is left for each other mode exactly once).
+const MODES: [&str; 4] = ["confirm", "acceptEdits", "auto", "full"];
+const EVERY_SWITCH: [&str; 13] = [
+    "confirm",
+    "acceptEdits",
+    "confirm",
+    "auto",
+    "confirm",
+    "full",
+    "acceptEdits",
+    "auto",
+    "acceptEdits",
+    "full",
+    "auto",
+    "full",
+    "confirm",
+];
+
+/// m1. From every mode to every other one: the first message after the switch starts Claude with
+/// that mode's command line (`default`, `acceptEdits`, `auto`, `bypassPermissions`), the live
+/// process of the old mode having ended at the switch; `access/get` says the same.
+#[tokio::test]
+async fn m1_every_switch_between_the_four_modes_reaches_the_first_message_after_it() {
+    let switches: std::collections::BTreeSet<(&str, &str)> = EVERY_SWITCH
+        .windows(2)
+        .map(|pair| (pair[0], pair[1]))
+        .collect();
+    assert_eq!(switches.len(), 12, "every ordered pair once");
+    assert!(
+        switches
+            .iter()
+            .all(|(from, to)| from != to && MODES.contains(to))
+    );
+
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+    host.turn("chat-m", "hello", None).await;
+    assert_mode(&only_session(&workspace, &host), "confirm");
+
+    for (n, pair) in EVERY_SWITCH.windows(2).enumerate() {
+        let (from, to) = (pair[0], pair[1]);
+        let before = workspace.sessions();
+        let chosen = host
+            .set_session_access("chat-m", runtime_mode(to), "allowed-once")
+            .await;
+        assert_eq!(
+            chosen["result"]["runtimeMode"],
+            runtime_mode(to),
+            "{from} → {to}: {chosen}"
+        );
+        let last = before.last().expect("a start");
+        assert!(
+            until_dead(last.pid).await,
+            "{from} → {to}: {last:?} still runs"
+        );
+        let waiting = host.access_of("chat-m").await;
+        assert_no_process(&waiting, to, &format!("{from} → {to}, not yet sent"));
+
+        host.turn("chat-m", &format!("message {n}"), None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), before.len() + 1, "{from} → {to}: {starts:?}");
+        let start = starts.last().expect("the new start");
+        assert_mode(start, to);
+        assert!(start.has("--resume"), "{from} → {to}: {start:?}");
+        let access = host.access_of("chat-m").await;
+        assert_session(&access, to, to, &format!("{from} → {to}"));
+        assert_effective_of(&access, start, &format!("{from} → {to}"));
+    }
+    host.shutdown().await;
+}
+
+/// m2. Creating a conversation changes no mode: a new chat starts in the mode in effect (not a
+/// wider one) and the mode stays; a mode in the composition widens nothing. Under the two new
+/// modes what Claude asks still reaches the human: the engine allows nothing by itself.
+#[tokio::test]
+async fn m2_a_new_chat_starts_in_the_mode_in_effect_and_the_new_modes_still_ask_the_human() {
+    let workspace = Workspace::with("    access: full\n", "");
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+    for mode in ["acceptEdits", "auto"] {
+        let chat = format!("chat-{mode}");
+        host.set_session_access(&chat, runtime_mode(mode), "allowed-once")
+            .await;
+        host.turn(&chat, "hello", None).await;
+        assert_mode(workspace.sessions().last().expect("a start"), mode);
+        assert_eq!(
+            host.access_of(&chat).await["session"]["runtimeMode"],
+            runtime_mode(mode),
+            "a new chat changed the mode"
+        );
+        let asked = host.turn(&chat, "edit", Some("allowed-once")).await;
+        assert_eq!(asked.len(), 1, "{mode}: {asked:?}");
+        assert_eq!(asked[0].tool_name, "edit_file", "{mode}: {asked:?}");
+    }
+    let answers = workspace.answers();
+    assert_eq!(
+        answers
+            .iter()
+            .map(|answer| (answer.tool.as_str(), answer.behavior.as_str()))
+            .collect::<Vec<_>>(),
+        [("Edit", "allow"), ("Edit", "allow")],
+        "{answers:?}"
+    );
     host.shutdown().await;
 }
 
@@ -3232,6 +3483,26 @@ async fn p17_a_project_folder_the_person_adds_is_known_before_its_first_conversa
             "{method}: {frame}"
         );
     }
+    host.shutdown().await;
+}
+
+/// 17 (HOME). A configured but unusable HOME is unknown, not a trusted protection root. The
+/// conventional home tree remains fail-closed exactly as when HOME is absent.
+#[tokio::test]
+async fn p17_an_unusable_home_still_protects_the_conventional_home_tree() {
+    let workspace = Workspace::new();
+    let missing = workspace.root.path().join("missing-home");
+    let mut host = Host::start_with_env(&workspace, &[("HOME", missing.to_str().unwrap())]);
+    host.initialize(&workspace).await;
+    let frame = host
+        .privileged("hoh/workspace/add", json!({"cwd": "/home"}), "allowed-once")
+        .await;
+    assert!(
+        frame["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("protected")),
+        "an unusable HOME allowed /home: {frame}"
+    );
     host.shutdown().await;
 }
 
@@ -3395,7 +3666,7 @@ async fn cx1_session_access_is_bound_to_the_message_without_a_cross_chat_race() 
 
     let starts = workspace.sessions();
     assert_eq!(starts.len(), 1, "{starts:?}");
-    assert_confirm(&starts[0]);
+    assert_asking(&starts[0], "auto");
     let access = host.access_of("chat-a").await;
     assert_eq!(access["session"]["runtimeMode"], "full", "{access}");
     assert_eq!(access["session"]["runningRuntimeMode"], "auto", "{access}");
@@ -3439,7 +3710,7 @@ async fn cx2_session_access_is_isolated_persistent_and_downgrade_safe() {
         .expect("session access JSON");
     assert_eq!(document["version"], 1, "{document}");
     assert_eq!(
-        document["sessions"]["chat-a"]["mode"], "auto-accept-edits",
+        document["sessions"]["chat-a"]["mode"], "acceptEdits",
         "{document}"
     );
     assert_eq!(document["sessions"]["chat-b"]["mode"], "auto", "{document}");
@@ -3459,4 +3730,44 @@ async fn cx2_session_access_is_isolated_persistent_and_downgrade_safe() {
     assert_eq!(a["session"]["runtimeMode"], "confirm", "{a}");
     assert_eq!(a["selected"]["executor"], "claude", "{a}");
     host.shutdown().await;
+}
+
+/// m3. The two new modes outlive «Стоп» and a restart of the engine: the message after a Stop and
+/// the first message after the restart start Claude in the same mode, on the same conversation.
+#[tokio::test]
+async fn m3_the_new_modes_outlive_stop_and_a_restart() {
+    for (runtime_mode, native_mode) in [("auto-accept-edits", "acceptEdits"), ("auto", "auto")] {
+        let workspace = Workspace::new();
+        let mut host = Host::start(&workspace);
+        host.initialize(&workspace).await;
+        host.select_claude().await;
+        host.set_session_access("chat-s", runtime_mode, "allowed-once")
+            .await;
+        hang_turn(&mut host, "chat-s", "hang").await;
+        stop_turn(&mut host, "chat-s").await;
+        host.turn("chat-s", "after the stop", None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), 2, "{runtime_mode}: {starts:?}");
+        for start in &starts {
+            assert_mode(start, native_mode);
+        }
+        assert!(starts[1].has("--resume"), "{runtime_mode}: {:?}", starts[1]);
+        host.shutdown().await;
+
+        let mut host = Host::start(&workspace);
+        host.initialize(&workspace).await;
+        assert_eq!(
+            host.access_of("chat-s").await["session"]["runtimeMode"],
+            runtime_mode,
+            "{runtime_mode} after the restart"
+        );
+        host.ok("session/resume", json!({"sessionId": "chat-s"}))
+            .await;
+        host.turn("chat-s", "after the restart", None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), 3, "{runtime_mode}: {starts:?}");
+        assert_mode(&starts[2], native_mode);
+        assert!(starts[2].has("--resume"), "{runtime_mode}: {:?}", starts[2]);
+        host.shutdown().await;
+    }
 }

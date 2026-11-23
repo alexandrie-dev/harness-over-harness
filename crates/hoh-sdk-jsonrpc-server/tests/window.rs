@@ -557,6 +557,44 @@ async fn a_prompt_listener_hears_the_params_of_every_prompt() {
     env.close().await;
 }
 
+#[tokio::test]
+async fn invalid_interaction_mode_is_rejected_before_session_message_and_listener() {
+    let env = Env::new().await;
+    let registry = registry(&env).await;
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let _guard = registry
+        .on_prompt(&env.ctx, move |session, message, _| {
+            log.lock()
+                .unwrap()
+                .push((session.to_owned(), message.to_owned()));
+        })
+        .unwrap();
+    env.initialize().await;
+    for interaction_mode in [json!("future-mode"), Value::Null] {
+        let result = env
+            .server
+            .handle_request(
+                "session/prompt",
+                json!({
+                    "sessionId":"invalid-mode-session",
+                    "contentBlocks":[{"type":"text","text":"must not be stored"}],
+                    "interactionMode":interaction_mode,
+                }),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+    assert!(heard.lock().unwrap().is_empty());
+    let listed = env
+        .server
+        .handle_request("session/list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(listed["sessions"], json!([]));
+    env.close().await;
+}
+
 struct Approver(Mutex<Vec<String>>, bool);
 impl PrivilegedApprover for Approver {
     fn approve(&self, method: &str, _: &Value) -> BoxFuture<'static, Result<(), BoxError>> {

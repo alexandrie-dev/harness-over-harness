@@ -339,17 +339,21 @@ impl Harness {
         let from = seen.notifications.len().saturating_sub(40);
         serde_json::to_string_pretty(&seen.notifications[from..]).unwrap()
     }
-    fn idle_count(&self) -> usize {
+    fn turn_end_count(&self) -> usize {
         self.seen
             .lock()
             .unwrap()
             .notifications
             .iter()
-            .filter(|n| n["method"] == "session.status" && n["params"]["status"] == "idle")
+            .filter(|n| {
+                n["method"] == "session.event"
+                    && n["params"]["sessionId"] == "window-main"
+                    && n["params"]["event"]["type"] == "turn/end"
+            })
             .count()
     }
     fn prompt_and_wait(&self, text: &str) {
-        let before = self.idle_count();
+        let before = self.turn_end_count();
         let prompt = self.request(
             "session/prompt",
             json!({"sessionId":"window-main","contentBlocks":[{"type":"text","text":text}]}),
@@ -358,7 +362,11 @@ impl Harness {
         wait_for(&self.seen, "turn to finish", |s| {
             s.notifications
                 .iter()
-                .filter(|n| n["method"] == "session.status" && n["params"]["status"] == "idle")
+                .filter(|n| {
+                    n["method"] == "session.event"
+                        && n["params"]["sessionId"] == "window-main"
+                        && n["params"]["event"]["type"] == "turn/end"
+                })
                 .count()
                 > before
         });
@@ -372,6 +380,7 @@ fn launch(scenario: &str, tag: &str) -> Harness {
     let root = std::env::temp_dir().join(format!("hoh-desktop-real-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let home = root.join("engine");
+    let runtime = root.join("runtime");
     let work = root.join("work");
     std::fs::create_dir_all(&work).unwrap();
     std::fs::write(work.join("notes.txt"), "заметка\n").unwrap();
@@ -382,6 +391,11 @@ fn launch(scenario: &str, tag: &str) -> Harness {
         .create(&home)
         .unwrap();
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&runtime)
+        .unwrap();
     let journal = root.join("model-journal.jsonl");
     let mock = start_mock(scenario, &journal);
 
@@ -390,7 +404,10 @@ fn launch(scenario: &str, tag: &str) -> Harness {
         Arc::new(ProcessConfig {
             path: engine_bin,
             args: vec!["--profile".into(), "window".into()],
-            env: vec![("DSH_HOME".into(), home.to_str().unwrap().into())],
+            env: vec![
+                ("DSH_HOME".into(), home.to_str().unwrap().into()),
+                ("XDG_RUNTIME_DIR".into(), runtime.to_str().unwrap().into()),
+            ],
             stderr_file: Some(root.join("engine-stderr.log")),
             cwd: work.clone(),
             provider: "openai-compatible".into(),
@@ -554,14 +571,16 @@ fn first_run_destructive_action_inside_the_folder_waits_for_the_person() {
 
     h.seen.lock().unwrap().reject = false;
     h.prompt_and_wait("удали generated ещё раз");
-    assert!(
-        !target.exists(),
-        "files stayed although the person allowed once"
-    );
+    if target.exists() {
+        panic!(
+            "files stayed although the person allowed once: {}",
+            h.tail(),
+        );
+    }
 }
 
 #[test]
-fn the_session_is_rooted_in_the_chosen_folder_and_follows_a_new_choice() {
+fn an_existing_session_keeps_its_folder_identity_and_a_new_session_uses_the_new_choice() {
     let h = launch(WINDOW_SCENARIO, "folder");
     let first = h.request(
         "session/working-directory/get",
@@ -574,6 +593,8 @@ fn the_session_is_rooted_in_the_chosen_folder_and_follows_a_new_choice() {
     );
 
     // What the core does after the person's rules were allowed: reopen in the chosen folder.
+    // A conversation already bound to the previous folder must fail closed instead of silently
+    // changing identity; a new conversation is rooted in the newly selected folder.
     let chosen = h.root.join("chosen");
     std::fs::create_dir_all(&chosen).unwrap();
     h.engine.restart_in(&chosen).unwrap();
@@ -583,9 +604,27 @@ fn the_session_is_rooted_in_the_chosen_folder_and_follows_a_new_choice() {
             "session/working-directory/get",
             json!({"sessionId":"window-main"}),
         ) {
+            Err(error) if error.contains("подключается") && Instant::now() < until => {
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => {
+                assert!(
+                    error.contains("отклонил"),
+                    "unexpected identity refusal: {error}"
+                );
+                break;
+            }
+            other => panic!("the existing conversation changed folder identity: {other:?}"),
+        }
+    }
+    loop {
+        match h.engine.request(
+            "session/working-directory/get",
+            json!({"sessionId":"window-chosen"}),
+        ) {
             Ok(value) if value["cwd"] == json!(chosen) => break,
             _ if Instant::now() < until => thread::sleep(Duration::from_millis(100)),
-            other => panic!("engine did not reopen in the chosen folder: {other:?}"),
+            other => panic!("a new conversation did not use the chosen folder: {other:?}"),
         }
     }
 }

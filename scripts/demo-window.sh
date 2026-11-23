@@ -87,7 +87,7 @@ else
 fi
 
 # Дисплей и шина — настоящие (WAYLAND_DISPLAY/DISPLAY/XDG_RUNTIME_DIR/DBUS), всё остальное — в папке показа (HOME — см. выше).
-env "${APP_ENV[@]}" XDG_CONFIG_HOME="$D/config" XDG_CACHE_HOME="$D/cache" XDG_DATA_HOME="$D/data" \
+env "${APP_ENV[@]}" HOH_WINDOW_HOME="$D/home" XDG_CONFIG_HOME="$D/config" XDG_CACHE_HOME="$D/cache" XDG_DATA_HOME="$D/data" \
     LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
     "$DESKTOP" >"$D/window.log" 2>&1
 rc=$?

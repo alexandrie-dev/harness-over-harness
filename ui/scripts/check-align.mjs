@@ -304,9 +304,9 @@ function measure(label, scenario, size, sidebar, r) {
     withinViewport(label, name, rect, r.viewport);
   add(label, scenario.name, size, sidebar, 'notch', r.notch, r.chatLane ?? r.content);
   if (scenario.blocks.includes('home')) {
-    add(label, scenario.name, size, sidebar, 'home-column', r.home, r.content);
+    add(label, scenario.name, size, sidebar, 'home-column', r.home, r.chatLane ?? r.content);
     add(label, scenario.name, size, sidebar, 'greeting', r.greeting, r.home);
-    add(label, scenario.name, size, sidebar, 'composer', r.composer, r.content);
+    add(label, scenario.name, size, sidebar, 'composer', r.composer, r.chatLane ?? r.content);
     if (r.headline) add(label, scenario.name, size, sidebar, 'headline', r.headline, r.composer);
     if (r.composer && r.home && r.composer.width > r.home.width + TOL) fail(label, `composer ${round(r.composer.width)}px is wider than home ${round(r.home.width)}px`);
     if (r.greeting && r.home && r.greeting.top > r.home.top + 40) fail(label, `greeting starts ${round(r.greeting.top - r.home.top)}px below the column top`);
@@ -429,8 +429,10 @@ const compareToConversation = (observation, name, rect, reference, { width = tru
 
 for (const observation of observations) {
   const { screen, size, sidebar, rects } = observation;
-  if (screen.startsWith('home-')) compareToConversation(observation, 'home column', rects.home, rects.content);
-  if (screen === 'plugins') compareToConversation(observation, 'plugins column', rects.plugins, rects.content);
+  if (screen.startsWith('home-'))
+    compareToConversation(observation, 'home column', rects.home, rects.chatLane ?? rects.content);
+  if (screen === 'plugins' || screen.startsWith('plugins-'))
+    compareToConversation(observation, 'plugins column', rects.plugins, rects.content);
   if (screen === 'quick-view') {
     const canonical = observations.find(item => item.screen === 'conversation' && item.size === size && item.sidebar === sidebar);
     // The T3 dialog owns a wider local viewport than a constrained expanded thread. Compare the exact 46rem lane

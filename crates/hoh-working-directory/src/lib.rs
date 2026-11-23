@@ -62,6 +62,15 @@ hoh_kernel::event!(
 /// directory-based operations.
 pub const WORKING_DIRECTORY_CHANGE: &str = "working-directory/change";
 
+/// Stable identity of the directory selected for a Session. Decimal strings keep the full
+/// platform `dev_t`/inode precision across the JSON and TypeScript wire.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingDirectoryRootIdentity {
+    pub device: String,
+    pub inode: String,
+}
+
 /// Message source kind of committed working-directory transition notices.
 pub const WORKING_DIRECTORY_SOURCE: &str = "working-directory";
 
@@ -204,6 +213,11 @@ struct Inner {
     lifecycle: AbortController,
     queues: Mutex<Queues>,
     operations: Arc<Operations>,
+}
+
+struct DirectorySelection {
+    path: String,
+    root_identity: Option<WorkingDirectoryRootIdentity>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -359,6 +373,13 @@ impl WorkingDirectoryService {
         self.inner.recorded(session)
     }
 
+    /// Identity captured by the most recent committed selection of the effective directory.
+    /// Older histories without an identity return `None` and image reads fail closed.
+    pub fn root_identity(&self, session: &Session) -> Option<WorkingDirectoryRootIdentity> {
+        let directory = self.inner.get(session);
+        self.inner.recorded_root_identity(session, &directory)
+    }
+
     /// Validate the current directory and restore the original project when it disappeared.
     ///
     /// `agent` is the live or unpublished Agent owning the Session; `signal` cancels filesystem
@@ -489,6 +510,46 @@ impl Inner {
             .unwrap_or_else(|| self.default_directory().to_owned())
     }
 
+    fn recorded_root_identity(
+        &self,
+        session: &Session,
+        directory: &str,
+    ) -> Option<WorkingDirectoryRootIdentity> {
+        let events = session.snapshot_events(None, None);
+        let event = events
+            .iter()
+            .rev()
+            .find(|event| event.event_type() == WORKING_DIRECTORY_CHANGE)?;
+        if event.data().get("cwd").and_then(Value::as_str) != Some(directory) {
+            return None;
+        }
+        serde_json::from_value(event.data().get("rootIdentity")?.clone()).ok()
+    }
+
+    fn root_identity_from_version(
+        version: &hoh_fs::FsVersion,
+    ) -> Option<WorkingDirectoryRootIdentity> {
+        // LocalFileSystem versions begin with `dev:ino:`. Parsing and re-serializing as u64
+        // rejects alternate spellings and bounds both wire fields without exposing timestamps.
+        let mut fields = version.as_str().split(':');
+        let device = fields.next()?.parse::<u64>().ok()?.to_string();
+        let inode = fields.next()?.parse::<u64>().ok()?.to_string();
+        fields.next()?; // size
+        fields.next()?; // mtime
+        fields.next()?; // ctime
+        if fields.next().is_some() {
+            return None;
+        }
+        Some(WorkingDirectoryRootIdentity { device, inode })
+    }
+
+    fn change_data(directory: &str, identity: Option<&WorkingDirectoryRootIdentity>) -> Value {
+        match identity {
+            Some(identity) => json!({ "cwd": directory, "rootIdentity": identity }),
+            None => json!({ "cwd": directory }),
+        }
+    }
+
     fn context_text(&self, session: &Session) -> String {
         format!(
             "Current working directory: {}.",
@@ -497,14 +558,14 @@ impl Inner {
     }
 
     /// Resolve `path` against `cwd` and require an existing directory; `missing` builds the
-    /// refusal. Returns the process path of the directory.
+    /// refusal. Returns the process path and the identity from the same validation stat.
     async fn directory(
         &self,
         path: &str,
         cwd: &str,
         signal: &AbortSignal,
         missing: impl FnOnce() -> HarnessError,
-    ) -> Result<String, BoxError> {
+    ) -> Result<DirectorySelection, BoxError> {
         let target = self
             .fs
             .resolve(
@@ -517,10 +578,13 @@ impl Inner {
             .await?;
         let info = self.fs.stat(&target, Some(signal.clone())).await?;
         signal.throw_if_aborted()?;
-        if !info.is_some_and(|info| info.r#type == FsType::Directory) {
+        let Some(info) = info.filter(|info| info.r#type == FsType::Directory) else {
             return Err(missing().into());
-        }
-        Ok(self.fs.process_path(&target))
+        };
+        Ok(DirectorySelection {
+            path: self.fs.process_path(&target),
+            root_identity: Self::root_identity_from_version(&info.version),
+        })
     }
 
     async fn ensure_now(
@@ -543,9 +607,25 @@ impl Inner {
         let info = self.fs.stat(&target, Some(control.clone())).await?;
         control.throw_if_aborted()?;
         agent.ctx().ensure_active()?;
-        if info.is_some_and(|info| info.r#type == FsType::Directory) {
-            if self.recorded(session).is_none() {
-                session.append(WORKING_DIRECTORY_CHANGE, json!({ "cwd": current }), None)?;
+        if let Some(info) = info.filter(|info| info.r#type == FsType::Directory) {
+            let identity = Self::root_identity_from_version(&info.version);
+            let recorded_identity = self.recorded_root_identity(session, &current);
+            if let (Some(recorded), Some(observed)) =
+                (recorded_identity.as_ref(), identity.as_ref())
+                && recorded != observed
+            {
+                return Err(WorkingDirectoryError::new(
+                    "working-directory: the selected directory was replaced",
+                    WorkingDirectoryErrorCode::Unavailable,
+                )
+                .into());
+            }
+            if recorded_identity.is_none() {
+                session.append(
+                    WORKING_DIRECTORY_CHANGE,
+                    Self::change_data(&current, identity.as_ref()),
+                    None,
+                )?;
             }
             return Ok(current);
         }
@@ -567,7 +647,7 @@ impl Inner {
             })
             .await?;
         self.commit(agent, &restored, true, control)?;
-        Ok(restored)
+        Ok(restored.path)
     }
 
     async fn set_now(
@@ -595,13 +675,13 @@ impl Inner {
             })
             .await?;
         self.commit(agent, &directory, false, control)?;
-        Ok(directory)
+        Ok(directory.path)
     }
 
     fn commit(
         &self,
         agent: &Arc<dyn Agent>,
-        directory: &str,
+        directory: &DirectorySelection,
         recovered: bool,
         signal: &AbortSignal,
     ) -> Result<(), BoxError> {
@@ -609,21 +689,34 @@ impl Inner {
         agent.ctx().ensure_active()?;
         let session = agent.session();
         let previous = self.get(session);
-        if previous == directory {
+        let path_changed = previous != directory.path;
+        if !path_changed
+            && self
+                .recorded_root_identity(session, &directory.path)
+                .as_ref()
+                == directory.root_identity.as_ref()
+        {
             return Ok(());
         }
-        session.append(WORKING_DIRECTORY_CHANGE, json!({ "cwd": directory }), None)?;
+        session.append(
+            WORKING_DIRECTORY_CHANGE,
+            Self::change_data(&directory.path, directory.root_identity.as_ref()),
+            None,
+        )?;
+        if !path_changed {
+            return Ok(());
+        }
         let text = if recovered {
             format!(
                 "The working directory {} is unavailable. The working directory is now {}.",
                 json_string(&previous),
-                json_string(directory),
+                json_string(&directory.path),
             )
         } else {
             format!(
                 "The working directory changed from {} to {}.",
                 json_string(&previous),
-                json_string(directory),
+                json_string(&directory.path),
             )
         };
         let notice = create_user_message(NewUserMessage {
@@ -633,7 +726,7 @@ impl Inner {
         if let Err(error) = agent.inject(notice) {
             self.ctx.logger().warn(format_args!(
                 "working-directory: committed {}, but could not queue its notice: {}",
-                json_string(directory),
+                json_string(&directory.path),
                 error_string(&error),
             ));
         }

@@ -4,19 +4,26 @@
 //! `ClaudeAdapterV2.ts` (`permissionModeForClaudeRuntimePolicy`, `claudeRuntimeQueryPolicy…`);
 //! discovery follows `ClaudeProvider.ts` (`claudeAuthStatus`, capabilities probe).
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::fs::DirBuilder;
+#[cfg(unix)]
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, DiscoveryFailure,
-    DiscoveryOperation, ExternalHarness, HarnessCommand, HarnessCommands, HarnessFailure,
-    HarnessModel, HarnessPolicy, HarnessResult, NetworkAccess, ProcessSpec, SandboxMode,
-    StartParams, StartResult, Started, Supervisor, SupervisorLimits, VersionStatus, code,
+    DiscoveryOperation, ExitInfo, ExternalHarness, Frame, HarnessCommand, HarnessCommands,
+    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, InteractionMode, NetworkAccess,
+    ProcessSpec, SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits,
+    VersionStatus, code,
 };
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
+use tokio::sync::Semaphore;
 
 use crate::session::{ClaudeSession, SessionSettings};
 use crate::version;
@@ -167,11 +174,45 @@ impl ClaudeConfig {
 
 pub struct ClaudeHarness {
     config: ClaudeConfig,
+    command_snapshots: Arc<CommandSnapshots>,
+}
+
+#[derive(Clone)]
+struct CommandSnapshot {
+    revision: u64,
+    commands: HarnessCommands,
+}
+
+#[derive(Default)]
+struct CommandSnapshots {
+    next_revision: AtomicU64,
+    by_folder: Mutex<HashMap<PathBuf, CommandSnapshot>>,
+}
+
+impl CommandSnapshots {
+    fn get(&self, cwd: &Path) -> Option<CommandSnapshot> {
+        self.by_folder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(cwd)
+            .cloned()
+    }
+
+    fn replace(&self, cwd: PathBuf, commands: HarnessCommands) {
+        let revision = self.next_revision.fetch_add(1, Ordering::Relaxed) + 1;
+        self.by_folder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(cwd, CommandSnapshot { revision, commands });
+    }
 }
 
 impl ClaudeHarness {
     pub fn new(config: ClaudeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            command_snapshots: Arc::default(),
+        }
     }
 
     /// [`ClaudeConfig::argv`] of this harness.
@@ -216,9 +257,33 @@ pub(crate) struct Launch {
 /// network call the CLI does not settle itself is a question to the slot, which has no automatic
 /// "yes" here; read-only is `default` too, with `--tools` limited to the read tools and no
 /// `--allowedTools`. Full: `bypassPermissions` when it widens the policy, `dontAsk` with the read
-/// tools when the session is read-only. `approval: never` under confirm is refused before this
-/// point ([`NEVER_REFUSED`]).
+/// tools when the session is read-only. The two modes between them (CEO 23.11 00:07, T3
+/// `ClaudeAdapterV2.ts:3395-3404`): accept-edits → `acceptEdits`, auto → `auto`, each with
+/// confirm's callback and network limit; a read-only session stays confirm's read-only launch.
+/// `approval: never` under an asking mode is refused before this point ([`NEVER_REFUSED`]).
 pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
+    launch_for_interaction(policy, access, InteractionMode::Default)
+}
+
+fn launch_for_interaction(
+    policy: &HarnessPolicy,
+    access: AccessMode,
+    interaction_mode: InteractionMode,
+) -> Launch {
+    if interaction_mode == InteractionMode::Plan {
+        let read_only = policy.sandbox == SandboxMode::ReadOnly;
+        return Launch {
+            permission_mode: "plan",
+            permission_prompt: true,
+            bypass: false,
+            // Plan mode changes Claude's interaction policy, not the session sandbox. T3 keeps
+            // its read-only allow-list here too, so a reviewer cannot acquire Bash/Write merely
+            // by asking Claude to plan.
+            tools: read_only.then_some(READ_ONLY_TOOLS),
+            disallowed_tools: (!read_only && policy.network == NetworkAccess::Denied)
+                .then_some("WebFetch,WebSearch"),
+        };
+    }
     if access == AccessMode::Full && policy.sandbox == SandboxMode::ReadOnly {
         // Full access does not widen a read-only session (a reviewer stays one): the read tools
         // only, as T3 does for read-only (`ClaudeAdapterV2.ts:3380-3386`, `dontAsk` + tools), and
@@ -248,8 +313,15 @@ pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
         };
     }
     let read_only = policy.sandbox == SandboxMode::ReadOnly;
+    let permission_mode = match access {
+        _ if read_only => "default",
+        AccessMode::AutoAcceptEdits | AccessMode::AcceptEdits => "acceptEdits",
+        AccessMode::Auto => "auto",
+        // Full that does not widen is read-only, handled above.
+        AccessMode::Confirm | AccessMode::Full => "default",
+    };
     Launch {
-        permission_mode: "default",
+        permission_mode,
         permission_prompt: true,
         bypass: false,
         tools: read_only.then_some(READ_ONLY_TOOLS),
@@ -347,12 +419,19 @@ fn probe_args() -> Vec<String> {
 }
 
 /// The probe of the slash commands and skills of a folder (HOH-41), T3
-/// `buildClaudeCapabilitiesProbeQueryOptions` with the folder as its cwd: user settings but never
-/// the untrusted folder's project/local settings, no hooks, no MCP server, no stored session, and
-/// nothing allowed without a question. Project commands and skills are discovered by the CLI's
-/// `initialize` and `reload_skills` independently of setting-file sources. It runs no turn.
-fn commands_probe_args() -> Vec<String> {
+/// `buildClaudeCapabilitiesProbeQueryOptions` with the folder as its cwd: before the person's
+/// first message it uses user settings but never the untrusted folder's project/local settings,
+/// no hooks, no MCP server, no stored session, and nothing allowed without a question. Once a
+/// real session starts for that message, its `initialize` and `reload_skills` snapshot replaces
+/// this probe. The probe itself runs no turn.
+fn commands_probe_args(sources: SettingSources) -> Vec<String> {
     let mut args = base_args();
+    // Before a turn Personal may see the person's own commands, while Isolated must stay as
+    // empty as the real session. Neither profile reads project/local sources in this probe.
+    let sources = match sources {
+        SettingSources::Personal => "user",
+        SettingSources::Isolated => "",
+    };
     args.extend(
         [
             "--permission-mode",
@@ -360,7 +439,7 @@ fn commands_probe_args() -> Vec<String> {
             "--permission-prompt-tool",
             "stdio",
             "--setting-sources",
-            "user",
+            sources,
         ]
         .map(str::to_owned),
     );
@@ -436,7 +515,7 @@ async fn commands_of(config: &ClaudeConfig, cwd: PathBuf) -> HarnessResult<Harne
             return Err(HarnessFailure::new(code::UNSUPPORTED_VERSION, message));
         }
     };
-    let args = commands_probe_args();
+    let args = commands_probe_args(config.setting_sources);
     let sup = spawn(&spec(config, args, cwd.clone(), true)).await?;
     let (session, _events, init) = ClaudeSession::start(
         sup,
@@ -454,6 +533,323 @@ async fn commands_of(config: &ClaudeConfig, cwd: PathBuf) -> HarnessResult<Harne
             .map(|answer| commands_from(answer.get("skills")))
             .unwrap_or_default(),
     })
+}
+
+const TITLE_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string"}},"required":["title"],"additionalProperties":false}"#;
+
+fn managed_mcp_config_path() -> &'static Path {
+    if cfg!(target_os = "macos") {
+        Path::new("/Library/Application Support/ClaudeCode/managed-mcp.json")
+    } else if cfg!(target_os = "windows") {
+        Path::new(r"C:\Program Files\ClaudeCode\managed-mcp.json")
+    } else {
+        Path::new("/etc/claude-code/managed-mcp.json")
+    }
+}
+
+const TITLE_INPUT_MAX_BYTES: usize = 64 * 1024;
+const TITLE_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+const TITLE_TIMEOUT: Duration = Duration::from_secs(45);
+static TITLE_SLOT: Semaphore = Semaphore::const_new(1);
+
+fn title_args(
+    setting_sources: SettingSources,
+    no_session_persistence: bool,
+    managed_mcp_config: bool,
+) -> Vec<String> {
+    let mut args = [
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        TITLE_SCHEMA,
+        "--model",
+        "claude-haiku-5-5",
+        "--effort",
+        "low",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+        "--tools",
+        "",
+        "--disable-slash-commands",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    if no_session_persistence {
+        args.push("--no-session-persistence".into());
+    }
+    args.extend(
+        [
+            "--setting-sources",
+            match setting_sources {
+                SettingSources::Personal => PERSONAL_SETTING_SOURCES,
+                SettingSources::Isolated => "",
+            },
+        ]
+        .map(str::to_owned),
+    );
+    // Claude rejects strict MCP mode when the administrator has installed managed-mcp.json;
+    // that file already excludes every other MCP source. This is T3's exact conditional.
+    if !managed_mcp_config {
+        args.push("--strict-mcp-config".into());
+    }
+    args.extend(["--permission-mode".into(), "dontAsk".into()]);
+    args
+}
+
+#[derive(Debug)]
+struct TitleCommandOutput {
+    status: ExitInfo,
+    response: Option<Value>,
+    stderr: String,
+}
+
+/// A cancelled title future must not detach its CLI or any descendant. Successful/explicitly
+/// terminated supervisors make this a cheap idempotent no-op.
+struct AbandonTitleOnDrop<'a>(&'a Supervisor);
+
+impl Drop for AbandonTitleOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.abandon();
+    }
+}
+
+/// Private, cancellation-safe storage for the one-shot cwd and fallback Claude config. Drop is
+/// synchronous deliberately: cancelling the future must remove persisted prompt/session data
+/// before control returns to its caller.
+struct TitleTempRoot {
+    path: PathBuf,
+    closed: bool,
+}
+
+impl TitleTempRoot {
+    fn create() -> HarnessResult<Self> {
+        let path = std::env::temp_dir().join(format!("hoh-claude-title-{}", random_uuid()?));
+        let mut builder = DirBuilder::new();
+        #[cfg(unix)]
+        builder.mode(0o700);
+        builder.create(&path).map_err(|error| {
+            HarnessFailure::new(
+                code::IO,
+                format!("cannot create private title storage: {error}"),
+            )
+        })?;
+        Ok(Self {
+            path,
+            closed: false,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn close(mut self) -> HarnessResult<()> {
+        std::fs::remove_dir_all(&self.path).map_err(|error| {
+            HarnessFailure::new(
+                code::IO,
+                format!("cannot remove private title storage: {error}"),
+            )
+        })?;
+        self.closed = true;
+        Ok(())
+    }
+
+    /// Remove storage before returning either a successful title response or its failure. This
+    /// keeps ordinary errors and timeouts on the same explicit, fallible cleanup path.
+    fn finish<T>(self, outcome: HarnessResult<T>) -> HarnessResult<T> {
+        self.close()?;
+        outcome
+    }
+}
+
+impl Drop for TitleTempRoot {
+    fn drop(&mut self) {
+        if !self.closed
+            && let Err(error) = std::fs::remove_dir_all(&self.path)
+        {
+            // Drop cannot return the cleanup failure, but it must not be silent: this means
+            // cancellation may have left isolated Claude persistence behind. Do not print the
+            // path because it can identify a sensitive title request.
+            eprintln!("cannot remove cancelled Claude title storage: {error}");
+        }
+    }
+}
+
+fn title_spec(
+    config: &ClaudeConfig,
+    cwd: &Path,
+    no_session_persistence: bool,
+    fallback_config_dir: Option<&Path>,
+) -> ProcessSpec {
+    let mut env: Vec<_> = config
+        .extra_env
+        .iter()
+        .filter(|(name, _)| fallback_config_dir.is_none() || name != "CLAUDE_CONFIG_DIR")
+        .cloned()
+        .collect();
+    if let Some(directory) = fallback_config_dir {
+        env.push((
+            "CLAUDE_CONFIG_DIR".to_owned(),
+            directory.to_string_lossy().into_owned(),
+        ));
+    }
+    ProcessSpec {
+        program: config.executable.clone(),
+        args: title_args(
+            config.setting_sources,
+            no_session_persistence,
+            managed_mcp_config_path().exists(),
+        ),
+        cwd: Some(cwd.to_owned()),
+        env,
+        env_remove: Vec::new(),
+    }
+}
+
+fn title_limits() -> SupervisorLimits {
+    SupervisorLimits {
+        max_frame_bytes: TITLE_OUTPUT_MAX_BYTES,
+        frame_queue: 2,
+        stdin_queue: 1,
+        stderr_lines: 20,
+        stderr_line_bytes: 2048,
+    }
+}
+
+async fn run_title_command(
+    config: &ClaudeConfig,
+    cwd: &Path,
+    prompt: &str,
+    no_session_persistence: bool,
+    fallback_config_dir: Option<&Path>,
+) -> Result<TitleCommandOutput, HarnessFailure> {
+    let spec = title_spec(config, cwd, no_session_persistence, fallback_config_dir);
+    run_title_process(&spec, prompt, TITLE_TIMEOUT).await
+}
+
+async fn run_title_process(
+    spec: &ProcessSpec,
+    prompt: &str,
+    deadline: Duration,
+) -> Result<TitleCommandOutput, HarnessFailure> {
+    let supervisor = Supervisor::spawn(spec, title_limits(), None)?;
+    let _abandon_on_drop = AbandonTitleOnDrop(&supervisor);
+    let Some(mut frames) = supervisor.take_frames() else {
+        supervisor.terminate(Duration::from_millis(200)).await;
+        return Err(HarnessFailure::new(
+            code::CLOSED,
+            "Claude title output is unavailable",
+        ));
+    };
+    let outcome = tokio::time::timeout(deadline, async {
+        supervisor
+            .send_input_and_close(prompt.as_bytes(), TITLE_INPUT_MAX_BYTES)
+            .await?;
+        let mut response = None;
+        loop {
+            match frames.recv().await {
+                Some(Frame::Message(value)) if response.is_none() => response = Some(value),
+                Some(Frame::Message(_)) => {
+                    return Err(HarnessFailure::new(
+                        code::PROTOCOL,
+                        "Claude returned more than one title response",
+                    ));
+                }
+                Some(Frame::Violation(detail)) => {
+                    return Err(HarnessFailure::new(code::PROTOCOL, detail));
+                }
+                Some(Frame::Closed { truncated: true }) => {
+                    return Err(HarnessFailure::new(
+                        code::PROTOCOL,
+                        "Claude returned a truncated title response",
+                    ));
+                }
+                Some(Frame::Closed { truncated: false }) | None => break,
+            }
+        }
+        Ok((supervisor.wait().await, response))
+    })
+    .await;
+    let (status, response) = match outcome {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            supervisor.terminate(Duration::from_millis(200)).await;
+            return Err(error);
+        }
+        Err(_) => {
+            supervisor.terminate(Duration::from_millis(200)).await;
+            return Err(HarnessFailure::new(
+                code::HARNESS,
+                "Claude title request timed out",
+            ));
+        }
+    };
+    supervisor.stderr_drained(Duration::from_millis(200)).await;
+    Ok(TitleCommandOutput {
+        status,
+        response,
+        stderr: supervisor.stderr_tail(),
+    })
+}
+
+async fn generate_title(config: ClaudeConfig, prompt: String) -> HarnessResult<String> {
+    let _slot = TITLE_SLOT.acquire().await.map_err(|_| {
+        HarnessFailure::new(code::CLOSED, "Claude title request slot is unavailable")
+    })?;
+    let root = TitleTempRoot::create()?;
+    let directory = root.path().join("cwd");
+    let fallback_config = root.path().join("config");
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .map_err(|error| {
+            HarnessFailure::new(
+                code::HARNESS,
+                format!("cannot create title directory: {error}"),
+            )
+        })?;
+    let outcome = async {
+        let first = run_title_command(&config, &directory, &prompt, true, None).await;
+        match first {
+            Ok(output)
+                if !output.status.success()
+                    && output.stderr.contains("--no-session-persistence") =>
+            {
+                tokio::fs::create_dir_all(&fallback_config)
+                    .await
+                    .map_err(|error| {
+                        HarnessFailure::new(
+                            code::HARNESS,
+                            format!("cannot create isolated title configuration: {error}"),
+                        )
+                    })?;
+                run_title_command(&config, &directory, &prompt, false, Some(&fallback_config)).await
+            }
+            output => output,
+        }
+    }
+    .await;
+    let output = root.finish(outcome)?;
+    if !output.status.success() {
+        return Err(HarnessFailure::new(
+            code::HARNESS,
+            format!(
+                "Claude title request exited unsuccessfully: {}",
+                output.stderr.trim()
+            ),
+        ));
+    }
+    let envelope = output
+        .response
+        .ok_or_else(|| HarnessFailure::new(code::PROTOCOL, "Claude returned no title response"))?;
+    let title = envelope
+        .get("structured_output")
+        .and_then(|value| value.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty() && title.len() <= 120)
+        .ok_or_else(|| HarnessFailure::new(code::PROTOCOL, "Claude returned an invalid title"))?;
+    Ok(title.to_owned())
 }
 
 fn settings_of(config: &ClaudeConfig, bypass: bool) -> SessionSettings {
@@ -824,8 +1220,22 @@ impl ExternalHarness for ClaudeHarness {
     }
 
     fn commands(&self, cwd: PathBuf) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
+        if let Some(snapshot) = self.command_snapshots.get(&cwd) {
+            return Box::pin(std::future::ready(Ok(snapshot.commands)));
+        }
         let config = self.config.clone();
         Box::pin(async move { commands_of(&config, cwd).await })
+    }
+
+    fn commands_revision(&self, cwd: &Path) -> u64 {
+        self.command_snapshots
+            .get(cwd)
+            .map_or(0, |snapshot| snapshot.revision)
+    }
+
+    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+        let config = self.config.clone();
+        Box::pin(async move { generate_title(config, prompt).await })
     }
 
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).
@@ -842,9 +1252,10 @@ impl ExternalHarness for ClaudeHarness {
         access: AccessMode,
     ) -> BoxFuture<'static, HarnessResult<Started>> {
         let config = self.config.clone();
+        let command_snapshots = self.command_snapshots.clone();
         Box::pin(async move {
             // In full access nothing is asked by definition, so `never` changes nothing there.
-            if params.policy.approval == ApprovalMode::Never && access != AccessMode::Full {
+            if params.policy.approval == ApprovalMode::Never && access.asks() {
                 return Err(HarnessFailure::new(code::ESCALATION_DENIED, NEVER_REFUSED));
             }
             // Only a level of the list follows `--effort` (the slot passes no other).
@@ -882,7 +1293,7 @@ impl ExternalHarness for ClaudeHarness {
                 Some(id) => id.clone(),
                 None => random_uuid()?,
             };
-            let launch = launch_for(&params.policy, access);
+            let launch = launch_for_interaction(&params.policy, access, params.interaction_mode);
             let args = session_args(
                 &launch,
                 config.setting_sources,
@@ -892,15 +1303,31 @@ impl ExternalHarness for ClaudeHarness {
                 &native,
             );
             let cwd = PathBuf::from(&params.cwd);
+            // The window keys command snapshots by its canonical known folder. A session may
+            // have been started through another spelling of the same folder (for example a
+            // symlink), so store the real-session replacement under that same canonical key.
+            let command_key = tokio::fs::canonicalize(&cwd)
+                .await
+                .unwrap_or_else(|_| cwd.clone());
             let sup = spawn(&spec(&config, args, cwd.clone(), false)).await?;
-            let (session, events, _init) = ClaudeSession::start(
+            let (session, events, init) = ClaudeSession::start(
                 sup,
                 native.clone(),
-                cwd,
+                cwd.clone(),
                 &version,
                 settings_of(&config, launch.bypass),
             )
             .await?;
+            let skills = session.control("reload_skills", config.init_timeout).await;
+            command_snapshots.replace(
+                command_key,
+                HarnessCommands {
+                    commands: commands_from(init.response.get("commands")),
+                    skills: skills
+                        .map(|answer| commands_from(answer.get("skills")))
+                        .unwrap_or_default(),
+                },
+            );
             Ok(Started {
                 result: StartResult {
                     native_session_id: native.into(),
@@ -922,6 +1349,8 @@ impl ExternalHarness for ClaudeHarness {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn only_a_missing_token_without_other_proof_is_signed_out() {
@@ -1031,6 +1460,168 @@ mod tests {
     }
 
     #[test]
+    fn plan_interaction_is_claudes_plan_permission_mode_even_under_full_access() {
+        let harness = ClaudeHarness::new(ClaudeConfig::default());
+        let argv = permission_args(
+            &launch_for_interaction(
+                &HarnessPolicy::default(),
+                AccessMode::Full,
+                InteractionMode::Plan,
+            ),
+            harness.config.setting_sources,
+        );
+        let at = argv
+            .iter()
+            .position(|arg| arg == "--permission-mode")
+            .unwrap();
+        assert_eq!(argv[at + 1], "plan");
+        assert!(argv.contains(&"--permission-prompt-tool".to_owned()));
+        assert!(!argv.contains(&"--allow-dangerously-skip-permissions".to_owned()));
+
+        let read_only = HarnessPolicy {
+            sandbox: SandboxMode::ReadOnly,
+            ..HarnessPolicy::default()
+        };
+        let read_only_argv = permission_args(
+            &launch_for_interaction(&read_only, AccessMode::Full, InteractionMode::Plan),
+            harness.config.setting_sources,
+        );
+        let tools = read_only_argv
+            .iter()
+            .position(|arg| arg == "--tools")
+            .unwrap();
+        assert_eq!(read_only_argv[tools + 1], READ_ONLY_TOOLS);
+    }
+
+    #[test]
+    fn title_attempts_are_bounded_isolated_and_have_no_tools() {
+        for (sources, expected) in [
+            (SettingSources::Personal, PERSONAL_SETTING_SOURCES),
+            (SettingSources::Isolated, ""),
+        ] {
+            for no_session_persistence in [true, false] {
+                let args = title_args(sources, no_session_persistence, false);
+                let value = |flag: &str| {
+                    let at = args.iter().position(|arg| arg == flag).unwrap();
+                    args[at + 1].as_str()
+                };
+                assert_eq!(value("--model"), "claude-haiku-5-5");
+                assert_eq!(value("--effort"), "low");
+                assert_eq!(value("--tools"), "");
+                assert_eq!(value("--permission-mode"), "dontAsk");
+                assert_eq!(value("--setting-sources"), expected);
+                assert_eq!(
+                    args.contains(&"--no-session-persistence".to_owned()),
+                    no_session_persistence
+                );
+                assert!(args.contains(&"--strict-mcp-config".to_owned()));
+                assert!(args.contains(&"--disable-slash-commands".to_owned()));
+                assert_eq!(value("--settings"), r#"{"disableAllHooks":true}"#);
+            }
+        }
+
+        let managed_args = title_args(SettingSources::Isolated, true, true);
+        assert!(!managed_args.contains(&"--strict-mcp-config".to_owned()));
+        assert!(managed_args.contains(&"--no-session-persistence".to_owned()));
+        assert_eq!(TITLE_INPUT_MAX_BYTES, 64 * 1024);
+        assert_eq!(TITLE_OUTPUT_MAX_BYTES, 64 * 1024);
+        assert_eq!(TITLE_SLOT.available_permits(), 1);
+        let limits = title_limits();
+        assert_eq!(limits.max_frame_bytes, TITLE_OUTPUT_MAX_BYTES);
+        assert_eq!(limits.frame_queue, 2);
+        assert_eq!(limits.stdin_queue, 1);
+
+        let mut config = ClaudeConfig {
+            setting_sources: SettingSources::Isolated,
+            ..ClaudeConfig::default()
+        };
+        config.extra_env.push((
+            "CLAUDE_CONFIG_DIR".to_owned(),
+            "/human/claude-state".to_owned(),
+        ));
+        let fallback = title_spec(
+            &config,
+            Path::new("/isolated/title-cwd"),
+            false,
+            Some(Path::new("/isolated/title-config")),
+        );
+        assert_eq!(
+            fallback.cwd.as_deref(),
+            Some(Path::new("/isolated/title-cwd"))
+        );
+        assert!(
+            !fallback
+                .args
+                .contains(&"--no-session-persistence".to_owned())
+        );
+        assert_eq!(
+            fallback.env,
+            vec![(
+                "CLAUDE_CONFIG_DIR".to_owned(),
+                "/isolated/title-config".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn title_temp_storage_cleans_on_normal_error_and_drop() {
+        let dropped_path = {
+            let root = TitleTempRoot::create().unwrap();
+            let path = root.path().to_owned();
+            #[cfg(unix)]
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            std::fs::create_dir(path.join("config")).unwrap();
+            std::fs::write(path.join("config/session.json"), b"persisted prompt").unwrap();
+            path
+        };
+        assert!(!dropped_path.exists());
+
+        let root = TitleTempRoot::create().unwrap();
+        let closed_path = root.path().to_owned();
+        std::fs::create_dir(closed_path.join("cwd")).unwrap();
+        root.close().unwrap();
+        assert!(!closed_path.exists());
+
+        let root = TitleTempRoot::create().unwrap();
+        let failed_path = root.path().to_owned();
+        std::fs::create_dir(failed_path.join("config")).unwrap();
+        std::fs::write(failed_path.join("config/session.json"), b"persisted prompt").unwrap();
+        let failed: HarnessResult<()> = Err(HarnessFailure::new(code::HARNESS, "title timed out"));
+        assert!(root.finish(failed).is_err());
+        assert!(!failed_path.exists());
+    }
+
+    #[tokio::test]
+    async fn title_deadline_includes_stdin_and_cancelled_storage_is_removed() {
+        let spec = ProcessSpec {
+            program: PathBuf::from("sh"),
+            args: vec!["-c".to_owned(), "exec sleep 30".to_owned()],
+            ..ProcessSpec::default()
+        };
+        let prompt = "x".repeat(TITLE_INPUT_MAX_BYTES);
+        let error = run_title_process(&spec, &prompt, Duration::from_millis(20))
+            .await
+            .expect_err("one deadline covers stdin and process wait");
+        assert!(error.message.contains("timed out"), "{error}");
+
+        let root = TitleTempRoot::create().unwrap();
+        let path = root.path().to_owned();
+        std::fs::create_dir(path.join("config")).unwrap();
+        std::fs::write(path.join("config/session.json"), b"persisted prompt").unwrap();
+        let pending = tokio::spawn(async move {
+            let _root = root;
+            std::future::pending::<()>().await;
+        });
+        tokio::task::yield_now().await;
+        pending.abort();
+        let _ = pending.await;
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn the_launch_flags_are_the_slice_of_the_argv_between_the_stream_flags_and_the_ids() {
         let read_only = HarnessPolicy {
             sandbox: SandboxMode::ReadOnly,
@@ -1132,6 +1723,39 @@ mod tests {
         assert_eq!(args[at + 1], "");
     }
 
+    /// CEO 23.11 00:07, T3 `ClaudeAdapterV2.ts:3395-3404`: the CLI's own mode for each of the
+    /// window's four, the two in between with confirm's question channel and closed network; a
+    /// read-only session stays confirm's read-only launch under them.
+    #[test]
+    fn each_mode_of_the_window_is_its_permission_mode() {
+        let policy = HarnessPolicy::default();
+        for (access, mode) in [
+            (AccessMode::Confirm, "default"),
+            (AccessMode::AcceptEdits, "acceptEdits"),
+            (AccessMode::Auto, "auto"),
+            (AccessMode::Full, "bypassPermissions"),
+        ] {
+            let launch = launch_for(&policy, access);
+            assert_eq!(launch.permission_mode, mode);
+            assert!(launch.permission_prompt);
+            assert_eq!(launch.bypass, access == AccessMode::Full);
+            assert_eq!(
+                launch.disallowed_tools,
+                access.asks().then_some("WebFetch,WebSearch")
+            );
+        }
+        let read_only = HarnessPolicy {
+            sandbox: SandboxMode::ReadOnly,
+            ..HarnessPolicy::default()
+        };
+        for between in [AccessMode::AcceptEdits, AccessMode::Auto] {
+            assert_eq!(
+                launch_for(&read_only, between),
+                launch_for(&read_only, AccessMode::Confirm)
+            );
+        }
+    }
+
     #[test]
     fn default_model_adds_no_model_flag() {
         let launch = launch_for(&HarnessPolicy::default(), AccessMode::Confirm);
@@ -1175,6 +1799,7 @@ mod tests {
             cwd: "/".into(),
             model: None,
             effort: Some("--dangerously-skip-permissions".into()),
+            interaction_mode: InteractionMode::Default,
             policy: HarnessPolicy::default(),
             resume: None,
         };

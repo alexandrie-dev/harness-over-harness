@@ -7,12 +7,12 @@
 //! `initialize` lists five commands and `reload_skills` two skills, some of them odd (HOH-41).
 //! `rename` makes `system/init` report a new session id; the session id of each user line is
 //! appended to `$STUB_STATE/prompt-sessions`.
-//! Prompts: `withdraw`, `toolfail`, `subagent`, `run-reason`, `hello`, `run: <command>`, `edit: <path>`, `question`, `long`, `garbage`, `stderr`,
+//! Prompts: `withdraw`, `toolfail`, `subagent`, `run-reason`, `hello`, `telemetry`, `telemetry-parent`, `telemetry-late-parent`, `telemetry-tasks`, `run: <command>`, `edit: <path>`, `question`, `long`, `garbage`, `stderr`,
 //! `crash`, `failure`, `write: <path>`, `kill-self` (SIGABRT), `ask-abort`, `echo-decision`,
 //! `subagent-tool`, `parallel-subagents`, `unknown-request`, `withdraw-question`, `leave-open`, `subagent-stream`,
 //! `truncate`, `read: <path>`, `close-stdin`, `notebook: <path>`, `login-expired`, `forbidden`, `question-body`, `question-odd`, `question-bare`, `two-open`, `silent-interrupt`; STUB_MODE `version-fails`, `root-refusal`, `secret-start`; prompts `protected: <path>`, `dangerous-rm`, `secret-crash`.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 
@@ -37,6 +37,9 @@ struct Stub {
     no_callback: bool,
     /// The uuid the last prompt came with.
     prompt_uuid: Value,
+    /// The real personal-profile session sees project commands and skills; the safe pre-turn
+    /// probe (`user`) and the isolated profile do not.
+    project_sources: bool,
 }
 
 fn main() {
@@ -53,6 +56,26 @@ fn main() {
     }
     if let Some(file) = env("STUB_ARGS_FILE") {
         let _ = std::fs::write(file, args.join("\n"));
+    }
+    if args
+        .windows(2)
+        .any(|pair| pair == ["--output-format", "json"])
+        && !args.iter().any(|arg| arg == "--input-format")
+    {
+        let mut prompt = String::new();
+        let _ = std::io::stdin().read_to_string(&mut prompt);
+        if let Some(dir) = env("STUB_STATE") {
+            let cwd = std::env::current_dir().unwrap();
+            let _ = std::fs::write(
+                PathBuf::from(dir).join("title-cwd"),
+                cwd.to_string_lossy().as_bytes(),
+            );
+        }
+        println!(
+            "{}",
+            json!({ "structured_output": { "title": "Context Window Indicator" } })
+        );
+        return;
     }
     let value_of = |flag: &str| {
         args.iter()
@@ -113,6 +136,8 @@ fn main() {
         next: 0,
         no_callback: value_of("--permission-mode").as_deref() == Some("bypassPermissions"),
         prompt_uuid: Value::Null,
+        project_sources: value_of("--setting-sources")
+            .is_some_and(|sources| sources.split(',').any(|source| source == "project")),
     };
     while let Ok(message) = stub.rx.recv() {
         stub.handle(&message);
@@ -148,13 +173,16 @@ impl Stub {
                             "response": { "subtype": "error", "request_id": id, "error": "Unknown subtype: reload_skills" },
                         }));
                     }
-                    Some("reload_skills") => self.ok(
-                        &id,
-                        json!({ "skills": [
-                            { "name": "release-notes", "description": "Write the release notes", "argumentHint": "" },
-                            { "name": "  ", "description": "nameless" },
-                        ] }),
-                    ),
+                    Some("reload_skills") => {
+                        let mut skills = vec![
+                            json!({ "name": "release-notes", "description": "Write the release notes", "argumentHint": "" }),
+                            json!({ "name": "  ", "description": "nameless" }),
+                        ];
+                        if self.project_sources {
+                            skills.push(json!({ "name": "project-skill", "description": "From .claude/skills" }));
+                        }
+                        self.ok(&id, json!({ "skills": skills }));
+                    }
                     _ => {}
                 }
             }
@@ -195,16 +223,20 @@ impl Stub {
                 } else {
                     json!({ "email": "user@example.com", "subscriptionType": "max", "tokenSource": "claude.ai" })
                 };
+                let mut commands = vec![
+                    json!({ "name": "review", "description": "Review a pull request", "argumentHint": "[pr]" }),
+                    json!({ "name": "Review", "description": "again", "argumentHint": "[other]" }),
+                    json!({ "name": "init", "description": " " }),
+                    json!({ "name": "", "description": "nameless" }),
+                    json!({ "name": "release-notes", "description": "Write the release notes" }),
+                ];
+                if self.project_sources {
+                    commands.push(json!({ "name": "project-command", "description": "From .claude/commands" }));
+                }
                 self.ok(
                     id,
                     json!({
-                        "commands": [
-                            { "name": "review", "description": "Review a pull request", "argumentHint": "[pr]" },
-                            { "name": "Review", "description": "again", "argumentHint": "[other]" },
-                            { "name": "init", "description": " " },
-                            { "name": "", "description": "nameless" },
-                            { "name": "release-notes", "description": "Write the release notes" },
-                        ],
+                        "commands": commands,
                         "output_style": "default",
                         "models": [
                             { "value": "default", "displayName": "Default", "description": "x" },
@@ -275,6 +307,10 @@ impl Stub {
         self.stream(json!({ "type": "message_start", "message": { "id": message_id, "role": "assistant" } }));
     }
 
+    fn start_message_with_usage(&self, message_id: &str, usage: Value) {
+        self.stream(json!({ "type": "message_start", "message": { "id": message_id, "role": "assistant", "usage": usage } }));
+    }
+
     /// Ask for permission and wait for the answer; `true` when allowed.
     fn ask(&mut self, tool: &str, tool_id: &str, input: &Value) -> Option<Value> {
         if self.no_callback {
@@ -302,7 +338,8 @@ impl Stub {
             write_line(&json!({
                 "type": "result", "subtype": "success", "is_error": false, "result": "",
                 "num_turns": 0, "origin": { "kind": "task-notification" },
-                "session_id": self.session,
+                "uuid": "wake-result-telemetry", "session_id": self.session,
+                "usage": { "input_tokens": 1 }, "modelUsage": {},
             }));
             self.system_init();
             let message_id = self.id("msg");
@@ -325,6 +362,8 @@ impl Stub {
                 "type": "result", "subtype": "success", "is_error": false,
                 "result": "The background command ended.", "num_turns": 1,
                 "origin": { "kind": "task-notification" }, "session_id": self.session,
+                "uuid": "wake-turn-result-telemetry", "usage": { "input_tokens": 2 },
+                "modelUsage": {},
             }));
             write_line(&json!({
                 "type": "result", "subtype": "success", "is_error": false, "result": "other",
@@ -358,8 +397,171 @@ impl Stub {
             self.result("success", false, "done");
             return;
         }
+        if text == "telemetry-parent" {
+            write_line(&json!({
+                "type": "assistant", "session_id": self.session, "parent_tool_use_id": null,
+                "message": { "id": "parent-message", "role": "assistant",
+                    "usage": { "input_tokens": 3 }, "content": [{
+                        "type": "tool_use", "id": "toolu-old-parent", "name": "Agent",
+                        "input": { "description": "background child" }
+                    }] }
+            }));
+            self.result("success", false, "parent started");
+            return;
+        }
+        if text == "telemetry-late-parent" {
+            for (id, parent, tokens) in [
+                ("late-known", "toolu-old-parent", 4),
+                ("late-unknown", "toolu-never-seen", 5),
+            ] {
+                write_line(&json!({
+                    "type": "assistant", "session_id": self.session,
+                    "parent_tool_use_id": parent,
+                    "message": { "id": id, "role": "assistant",
+                        "usage": { "input_tokens": tokens }, "content": [] }
+                }));
+            }
+            self.result("success", false, "late child settled");
+            return;
+        }
+        if text == "telemetry-tasks" {
+            for frame in [
+                json!({ "type": "system", "subtype": "task_started",
+                    "session_id": self.session, "uuid": "run-1-start", "task_id": "same-task",
+                    "run_id": "run-1", "description": "first run" }),
+                json!({ "type": "system", "subtype": "task_notification",
+                    "session_id": self.session, "uuid": "run-1-end", "task_id": "same-task",
+                    "run_id": "run-1", "status": "completed" }),
+                json!({ "type": "system", "subtype": "task_started",
+                    "session_id": self.session, "uuid": "run-2-start", "task_id": "same-task",
+                    "run_id": "run-2", "description": "resumed run" }),
+                // A late frame of the old run remains distinguishable, not reconciled here.
+                json!({ "type": "system", "subtype": "task_updated",
+                    "session_id": self.session, "uuid": "run-1-late", "task_id": "same-task",
+                    "run_id": "run-1", "patch": { "status": "completed", "end_time": 17 } }),
+                json!({ "type": "system", "subtype": "task_updated",
+                    "session_id": self.session, "uuid": "run-2-foreground", "task_id": "same-task",
+                    "run_id": "run-2", "patch": { "status": "running", "is_backgrounded": false } }),
+                json!({ "type": "system", "subtype": "task_updated",
+                    "session_id": self.session, "uuid": "run-2-background", "task_id": "same-task",
+                    "run_id": "run-2", "patch": { "background": true } }),
+            ] {
+                write_line(&frame);
+            }
+            self.result("success", false, "tasks recorded");
+            return;
+        }
+        if text == "telemetry" {
+            write_line(&json!({
+                "type": "system", "subtype": "init", "session_id": self.session,
+                "uuid": "init-telemetry", "model": "stub", "permissionMode": "default",
+                "mcp_servers": [
+                    { "name": "codex", "status": "connected", "command": "secret-command",
+                      "env": { "TOKEN": "secret-token" } },
+                    { "name": "offline", "status": "failed", "args": ["secret-arg"] }
+                ]
+            }));
+            write_line(&json!({
+                "type": "assistant", "uuid": "assistant-telemetry",
+                "session_id": self.session, "parent_tool_use_id": null,
+                "message": { "id": "msg-telemetry", "role": "assistant",
+                    "usage": { "input_tokens": 11, "output_tokens": 3,
+                        "cache_read_input_tokens": 5 },
+                    "content": [{ "type": "text", "text": "telemetry done" }] }
+            }));
+            for tokens in [1, 2] {
+                write_line(&json!({
+                    "type": "assistant", "session_id": self.session, "parent_tool_use_id": null,
+                    "message": { "role": "assistant", "usage": { "input_tokens": tokens },
+                        "content": [] }
+                }));
+            }
+            write_line(&json!({
+                "type": "system", "subtype": "task_started", "session_id": self.session,
+                "uuid": "task-start-telemetry", "task_id": "task-1", "run_id": "run-main",
+                "tool_use_id": "toolu-background", "task_type": "local_bash",
+                "description": "Background build", "is_backgrounded": true
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "task_progress", "session_id": self.session,
+                "uuid": "task-progress-telemetry", "task_id": "task-1", "run_id": "run-main",
+                "tool_use_id": "toolu-background", "task_type": "local_workflow",
+                "description": "Build phase", "workflow_progress": [
+                    { "type": "workflow_phase", "index": 1, "title": "Build" },
+                    { "type": "workflow_agent", "index": 1, "label": "compile",
+                      "agentId": "agent-1", "state": "start", "phaseIndex": 1,
+                      "phaseTitle": "Build", "model": "stub-model", "startedAt": 7 }
+                ]
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "task_notification", "session_id": self.session,
+                "uuid": "task-end-telemetry", "task_id": "task-1", "run_id": "run-main",
+                "tool_use_id": "toolu-background", "task_type": "local_bash",
+                "status": "completed", "summary": "Build complete",
+                "output_file": "/tmp/secret-output"
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "background_tasks_changed",
+                "session_id": self.session, "uuid": "tasks-mixed-telemetry", "tasks": [
+                    { "task_id": "valid-task", "description": "valid" },
+                    { "description": "missing id" }
+                ]
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "background_tasks_changed",
+                "session_id": self.session, "uuid": "tasks-malformed-telemetry",
+                "tasks": [{ "not_a_task": true }]
+            }));
+            write_line(&json!({
+                "type": "system", "subtype": "background_tasks_changed",
+                "session_id": self.session, "uuid": "tasks-empty-telemetry", "tasks": []
+            }));
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false,
+                "uuid": "result-telemetry", "result": "telemetry done",
+                "session_id": self.session, "duration_ms": 1, "num_turns": 1,
+                "user_message_uuids": [self.prompt_uuid],
+                "usage": { "input_tokens": 13, "output_tokens": 4,
+                    "cache_creation_input_tokens": 2 },
+                "modelUsage": { "stub-model": { "inputTokens": 20, "outputTokens": 6,
+                    "cacheReadInputTokens": 5, "cacheCreationInputTokens": 2,
+                    "contextWindow": 200000, "maxOutputTokens": 32000,
+                    "webSearchRequests": 1, "costUSD": 0.125 } },
+                "total_cost_usd": 0.25
+            }));
+            return;
+        }
         self.system_init();
         let message_id = self.id("msg");
+        if text == "usage" {
+            self.start_message_with_usage(
+                &message_id,
+                json!({
+                    "input_tokens": 100, "cache_creation_input_tokens": 20,
+                    "cache_read_input_tokens": 30, "output_tokens": 1
+                }),
+            );
+            self.stream(json!({ "type": "message_delta", "usage": { "output_tokens": 7 } }));
+            let final_message = self.id("msg");
+            self.start_message_with_usage(
+                &final_message,
+                json!({
+                    "input_tokens": 200, "cache_creation_input_tokens": 40,
+                    "cache_read_input_tokens": 60, "output_tokens": 2
+                }),
+            );
+            self.stream(json!({ "type": "message_delta", "usage": {
+                "input_tokens": null, "cache_creation_input_tokens": null,
+                "cache_read_input_tokens": null, "output_tokens": 9
+            } }));
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false, "result": "done",
+                "session_id": self.session, "duration_ms": 1, "num_turns": 2,
+                "usage": { "input_tokens": 9999, "output_tokens": 9999 },
+                "modelUsage": { "stub": { "contextWindow": 200000 } }
+            }));
+            return;
+        }
         self.start_message(&message_id);
         if text == "hello" {
             self.stream(json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }));
@@ -370,6 +572,13 @@ impl Stub {
             );
             self.say(&message_id, 1, &["Hel", "lo"]);
             self.result("success", false, "Hello");
+        } else if text == "plan" {
+            self.forced_turn(
+                &message_id,
+                "ExitPlanMode",
+                &json!({ "plan": "# Plan\n\n1. Inspect\n2. Implement" }),
+                "",
+            );
         } else if let Some(command) = text.strip_prefix("run: ") {
             self.tool_turn(&message_id, "Bash", &json!({ "command": command }), command);
         } else if let Some(path) = text.strip_prefix("edit: ") {

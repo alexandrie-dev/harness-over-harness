@@ -59,3 +59,10 @@ a[href="/"] > span.inline-flex {
 [data-composer-command-drawer="true"] {
   --glass-opacity: 100%;
 }
+
+/* Agent/Task Markdown не получает внутренний max-height сырого <pre>: прокручивается вся лента.
+   Scroll margin оставляет последнюю строку выше плавающего composer при фокусе/поиске. */
+[data-v2-item-inspector="dynamic_tool"] [data-hoh-agent-markdown] {
+  scroll-margin-bottom: 10rem;
+  padding-bottom: 0.5rem;
+}

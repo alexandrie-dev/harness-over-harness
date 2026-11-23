@@ -50,7 +50,7 @@ const dateLabel = (date: Date) => date.toLocaleDateString(undefined, { weekday: 
 /** Title of the home without projects (NoProjectsHero.tsx, vite.ts): greeting and the date. */
 export function Greeting() {
   const date = new Date();
-  return <>{greeting(date.getHours())}<span className="mt-1 block text-sm font-normal text-muted-foreground">{dateLabel(date)}</span></>;
+  return <span className="hoh-home__greeting">{greeting(date.getHours())}<span className="mt-1 block text-sm font-normal text-muted-foreground">{dateLabel(date)}</span></span>;
 }
 export function sameDay(a: number, b: number): boolean { return new Date(a).toDateString() === new Date(b).toDateString(); }
 export function elapsed(from: number, to: number): string {

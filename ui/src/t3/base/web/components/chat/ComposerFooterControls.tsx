@@ -36,6 +36,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const composerFloatingLayerProps = useComposerMenuProps();
   const [open, setOpen] = useComposerMenuState(props.hidden);
   const permissionsChipRef = useRef<HTMLButtonElement>(null);
+  if (props.runtimeModeOptions.length === 0) return null;
   const runtimeModeOption =
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
     resolveRuntimeModeOption("approval-required", messages);
@@ -118,6 +119,7 @@ export function ComposerPermissionsSection(props: {
     props.runtimeModeOptions.find((option) => option.mode === shownMode) ??
     resolveRuntimeModeOption("approval-required", messages);
   const descriptionId = useId();
+  if (props.runtimeModeOptions.length === 0) return null;
   return (
     <div data-composer-permissions className="grid w-72 gap-1.5 px-2 py-1.5">
       <div className="font-medium text-muted-foreground text-xs">

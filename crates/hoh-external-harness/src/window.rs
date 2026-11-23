@@ -26,8 +26,8 @@ use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
     ExecutorEffectiveAccess, ExecutorParams, ExecutorRuntimeMode, ExecutorSelectParams,
-    ExecutorSessionAccess, WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams,
-    WorkspaceEntriesResult,
+    ExecutorSessionAccess, ExecutorTitleGenerateParams, SessionInteractionMode, WorkspaceAddParams,
+    WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -37,7 +37,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::agent::access_text;
-use crate::contract::{AccessMode, Discovery, HarnessCommand, HarnessCommands, VersionStatus};
+use crate::contract::{
+    AccessMode, Discovery, HarnessCommand, HarnessCommands, InteractionMode, VersionStatus,
+};
 use crate::redact::{redact, redact_value};
 use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
 
@@ -60,8 +62,16 @@ const COMMANDS: &str = "hoh/executor/commands";
 const ENTRIES: &str = "hoh/workspace/entries";
 const ADD: &str = "hoh/workspace/add";
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(30);
-const METHODS: [&str; 7] = [
-    DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, COMMANDS, ENTRIES, ADD,
+const TITLE_GENERATE: &str = "hoh/executor/title/generate";
+const METHODS: [&str; 8] = [
+    DISCOVER,
+    SELECT,
+    ACCESS_GET,
+    ACCESS_SET,
+    COMMANDS,
+    ENTRIES,
+    ADD,
+    TITLE_GENERATE,
 ];
 
 /// The saved choices.
@@ -124,6 +134,14 @@ impl Plugin for ExternalHarnessWindowPlugin {
             }),
             Err(_) => Vec::new(),
         };
+        // The default spelling may itself be a symlink. Remember the target accepted at plugin
+        // start; resolving the spelling again on every request would authorize a later swap.
+        let default_folder = match ctx.get::<WorkingDirectoryKey>() {
+            Some(directories) => tokio::fs::canonicalize(directories.default_directory())
+                .await
+                .ok(),
+            None => None,
+        };
         let window = Arc::new(Window {
             ctx: ctx.clone(),
             harnesses: deps.harnesses,
@@ -134,6 +152,7 @@ impl Plugin for ExternalHarnessWindowPlugin {
             folders_path,
             folders: std::sync::Mutex::new(folders.into_iter().collect()),
             engine_home: deps.profile.home.clone(),
+            default_folder,
             saving: tokio::sync::Mutex::new(()),
             folder_calls: std::sync::Mutex::new(BTreeMap::new()),
         });
@@ -161,6 +180,27 @@ impl Plugin for ExternalHarnessWindowPlugin {
                     }
                 };
                 choices.note_prompt(session, message, effort);
+                let interaction = match params.get("interactionMode") {
+                    None | Some(Value::Null) => Some(InteractionMode::Default),
+                    Some(value) => {
+                        match serde_json::from_value::<SessionInteractionMode>(value.clone()) {
+                            Ok(SessionInteractionMode::Default) => Some(InteractionMode::Default),
+                            Ok(SessionInteractionMode::Plan) => Some(InteractionMode::Plan),
+                            Err(error) => {
+                                // RPC admission normally rejects this before creating the message.
+                                // Keep the listener fail-closed too: an unknown restricted mode must
+                                // never become an ordinary (possibly full-access) prompt choice.
+                                log.error(format_args!(
+                                    "rejected invalid session/prompt interactionMode: {error}"
+                                ));
+                                None
+                            }
+                        }
+                    }
+                };
+                if let Some(interaction) = interaction {
+                    choices.note_interaction(session, message, interaction);
+                }
             })?;
         Ok(())
     }
@@ -189,6 +229,8 @@ struct Window {
     folders: std::sync::Mutex<std::collections::BTreeSet<PathBuf>>,
     /// The engine's own data (keys, sessions): never a project folder.
     engine_home: PathBuf,
+    /// Canonical identity of the deployment default accepted when this plugin started.
+    default_folder: Option<PathBuf>,
     /// One save at a time, so the file holds the last choice.
     saving: tokio::sync::Mutex<()>,
     /// Expensive composer calls, serialized and briefly cached by canonical folder.
@@ -203,6 +245,7 @@ struct FolderCalls {
 
 struct Cached<T> {
     at: Instant,
+    revision: u64,
     value: T,
 }
 
@@ -213,6 +256,10 @@ impl<T: Clone> Cached<T> {
 
     fn fresh(&self) -> Option<T> {
         self.is_fresh().then(|| self.value.clone())
+    }
+
+    fn fresh_at(&self, revision: u64) -> Option<T> {
+        (self.revision == revision).then(|| self.fresh()).flatten()
     }
 }
 
@@ -249,6 +296,14 @@ impl Window {
             ADD => Ok(serde_json::to_value(
                 self.add_folder(parse(method, params)?).await?,
             )?),
+            TITLE_GENERATE => {
+                let params: ExecutorTitleGenerateParams = parse(method, params)?;
+                let harness = self
+                    .service()
+                    .get(&params.executor)
+                    .ok_or_else(|| format!("no external harness named {:?}", params.executor))?;
+                Ok(json!({ "title": harness.generate_title(params.prompt).await? }))
+            }
             _ => Err(format!("external harness window does not serve {method}").into()),
         }
     }
@@ -275,24 +330,37 @@ impl Window {
         }
         // A composition without working directories knows no folder.
         let directories = self.ctx.get::<WorkingDirectoryKey>().ok_or_else(unknown)?;
-        let mut known = vec![directories.default_directory().to_owned()];
-        known.extend(
-            self.agents
-                .list()
-                .iter()
-                .map(|agent| directories.get(agent.session())),
-        );
-        known.extend(
-            lock_folders(&self.folders)
-                .iter()
-                .map(|folder| folder.to_string_lossy().into_owned()),
-        );
-        for folder in known {
-            if tokio::fs::canonicalize(&folder)
-                .await
-                .is_ok_and(|folder| folder == wanted)
-            {
-                return Ok(wanted);
+        // Check registrations before active conversations. Otherwise a conversation that still
+        // names the registered spelling could make the new target of a replaced symlink pass as
+        // an active folder before the stale registration is examined.
+        let saved: Vec<PathBuf> = lock_folders(&self.folders).iter().cloned().collect();
+        for folder in saved {
+            match saved_folder_match(&folder, &wanted).await {
+                Some(true) => return Ok(wanted),
+                Some(false) => return Err(unknown()),
+                None => {}
+            }
+        }
+        // Unlike the request spelling, accepted identities never follow a newly introduced link.
+        // The default target was frozen at startup; WorkingDirectoryService stores canonical paths
+        // for session changes, so the same saved-identity check covers active-only conversations.
+        if let Some(default) = &self.default_folder {
+            match saved_folder_match(default, &wanted).await {
+                Some(true) => return Ok(wanted),
+                Some(false) => return Err(unknown()),
+                None => {}
+            }
+        }
+        for folder in self
+            .agents
+            .list()
+            .iter()
+            .map(|agent| directories.get(agent.session()))
+        {
+            match saved_folder_match(Path::new(&folder), &wanted).await {
+                Some(true) => return Ok(wanted),
+                Some(false) => return Err(unknown()),
+                None => {}
             }
         }
         Err(unknown())
@@ -321,15 +389,32 @@ impl Window {
         let folder = self.known_folder(&cwd).await?;
         let calls = self.folder_calls(&folder);
         let mut calls = calls.lock().await;
-        let found = match calls.commands.get(&params.executor).and_then(Cached::fresh) {
+        let revision = harness.commands_revision(&folder);
+        let found = match calls
+            .commands
+            .get(&params.executor)
+            .and_then(|cached| cached.fresh_at(revision))
+        {
             Some(found) => found,
             None => {
-                let found = harness.commands(folder).await?;
+                // A real session may finish initialization while the safe probe is in flight.
+                // Retry against its in-memory snapshot until the revision around the answer is
+                // stable, so a probe can never be cached under the real snapshot's revision.
+                let mut answer_revision = revision;
+                let found = loop {
+                    let found = harness.commands(folder.clone()).await?;
+                    let current = harness.commands_revision(&folder);
+                    if current == answer_revision {
+                        break found;
+                    }
+                    answer_revision = current;
+                };
                 calls.commands.retain(|_, cached| cached.is_fresh());
                 calls.commands.insert(
                     params.executor.clone(),
                     Cached {
                         at: Instant::now(),
+                        revision: answer_revision,
                         value: found.clone(),
                     },
                 );
@@ -388,6 +473,7 @@ impl Window {
             key,
             Cached {
                 at: Instant::now(),
+                revision: 0,
                 value: found.clone(),
             },
         );
@@ -454,8 +540,10 @@ impl Window {
             return Some("holds the data of HoH");
         }
         let user_home = std::env::var_os("HOME").map(PathBuf::from);
+        // An unusable HOME is not a trusted path. Treat it like a missing HOME so the policy
+        // fails closed for the conventional /home tree instead of protecting a fictitious path.
         let user_home = match user_home {
-            Some(home) => Some(tokio::fs::canonicalize(&home).await.unwrap_or(home)),
+            Some(home) => tokio::fs::canonicalize(home).await.ok(),
             None => None,
         };
         protected_folder(folder, user_home.as_deref())
@@ -650,6 +738,9 @@ impl Window {
         self.known(&params.executor)?;
         let mode = match params.runtime_mode.as_ref() {
             Some(ExecutorRuntimeMode::Confirm) => AccessMode::Confirm,
+            Some(ExecutorRuntimeMode::AutoAcceptEdits) if params.executor == "claude" => {
+                AccessMode::AcceptEdits
+            }
             Some(ExecutorRuntimeMode::AutoAcceptEdits) => AccessMode::AutoAcceptEdits,
             Some(ExecutorRuntimeMode::Auto) => AccessMode::Auto,
             Some(ExecutorRuntimeMode::Full) => AccessMode::Full,
@@ -662,7 +753,10 @@ impl Window {
             return Err("runtimeMode does not match its downgrade-safe mode projection".into());
         }
         if params.session_id.is_none()
-            && matches!(mode, AccessMode::AutoAcceptEdits | AccessMode::Auto)
+            && matches!(
+                mode,
+                AccessMode::AutoAcceptEdits | AccessMode::AcceptEdits | AccessMode::Auto
+            )
         {
             return Err("auto access modes require a concrete sessionId".into());
         }
@@ -995,6 +1089,17 @@ fn lock_folder_calls(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// `Some(true)`: this registration still names `wanted`; `Some(false)`: it resolves to `wanted`
+/// only because the saved canonical path was replaced (for example by a symlink); `None`: this
+/// registration names another folder or no longer resolves.
+async fn saved_folder_match(saved: &Path, wanted: &Path) -> Option<bool> {
+    tokio::fs::canonicalize(saved)
+        .await
+        .ok()
+        .filter(|current| current == wanted)
+        .map(|current| current == saved)
+}
+
 /// Folders whose names alone may disclose credentials or host configuration. Both arguments are
 /// canonical: callers resolve links before this policy is evaluated.
 fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
@@ -1002,7 +1107,9 @@ fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
         return true;
     }
     if let Some(home) = user_home {
-        if folder == home {
+        // The home itself and its ancestors (for example `/home`) disclose every protected
+        // child at once and are never projects.
+        if home.starts_with(folder) {
             return true;
         }
         if folder
@@ -1016,6 +1123,10 @@ fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
         {
             return true;
         }
+    } else if folder.starts_with("/home") {
+        // Tauri can still have a passwd-derived home when HOME is absent. Fail closed for all
+        // conventional homes instead of losing the home-specific rules entirely.
+        return true;
     }
     const SYSTEM: &[&str] = &[
         "/etc", "/proc", "/sys", "/dev", "/run", "/boot", "/root", "/var", "/usr", "/bin", "/sbin",
@@ -1037,7 +1148,9 @@ fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
 fn wire(mode: AccessMode) -> ExecutorAccessMode {
     match mode {
         AccessMode::Confirm => ExecutorAccessMode::Confirm,
-        AccessMode::AutoAcceptEdits | AccessMode::Auto => ExecutorAccessMode::Confirm,
+        AccessMode::AutoAcceptEdits | AccessMode::AcceptEdits | AccessMode::Auto => {
+            ExecutorAccessMode::Confirm
+        }
         AccessMode::Full => ExecutorAccessMode::Full,
     }
 }
@@ -1045,7 +1158,9 @@ fn wire(mode: AccessMode) -> ExecutorAccessMode {
 fn runtime_wire(mode: AccessMode) -> ExecutorRuntimeMode {
     match mode {
         AccessMode::Confirm => ExecutorRuntimeMode::Confirm,
-        AccessMode::AutoAcceptEdits => ExecutorRuntimeMode::AutoAcceptEdits,
+        AccessMode::AutoAcceptEdits | AccessMode::AcceptEdits => {
+            ExecutorRuntimeMode::AutoAcceptEdits
+        }
         AccessMode::Auto => ExecutorRuntimeMode::Auto,
         AccessMode::Full => ExecutorRuntimeMode::Full,
     }
@@ -1069,7 +1184,7 @@ async fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Window, protected_folder};
+    use super::{Window, protected_folder, saved_folder_match};
     use crate::contract::{
         AuthState, Discovery, DiscoveryFailure, DiscoveryOperation, VersionStatus,
     };
@@ -1127,6 +1242,7 @@ mod tests {
         let home = Path::new("/home/person");
         for path in [
             "/",
+            "/home",
             "/home/person",
             "/home/person/.ssh",
             "/home/person/.ssh/keys",
@@ -1175,5 +1291,46 @@ mod tests {
                 "{path} is not in a protected class"
             );
         }
+    }
+
+    #[test]
+    fn missing_home_protects_conventional_home_tree_and_root_home() {
+        for path in [
+            "/home",
+            "/home/person",
+            "/home/person/project",
+            "/root/work",
+        ] {
+            assert!(
+                protected_folder(Path::new(path), None),
+                "{path} must be protected without HOME"
+            );
+        }
+        for path in ["/homeward/project", "/mnt/project", "/opt/project"] {
+            assert!(
+                !protected_folder(Path::new(path), None),
+                "{path} is not a conventional home"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_saved_canonical_folder_replaced_by_a_link_no_longer_matches() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let saved = dir.path().join("project");
+        let other = dir.path().join("other");
+        std::fs::create_dir(&saved).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let saved = saved.canonicalize().unwrap();
+        assert_eq!(saved_folder_match(&saved, &saved).await, Some(true));
+
+        let moved = dir.path().join("project-moved");
+        std::fs::rename(&saved, &moved).unwrap();
+        symlink(&other, &saved).unwrap();
+        let wanted = other.canonicalize().unwrap();
+        assert_eq!(saved_folder_match(&saved, &wanted).await, Some(false));
     }
 }
