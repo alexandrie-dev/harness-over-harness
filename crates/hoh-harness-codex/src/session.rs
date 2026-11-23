@@ -28,6 +28,14 @@ fn rpc_key(id: &Value) -> String {
     serde_json::to_string(id).unwrap_or_else(|_| "null".to_owned())
 }
 
+fn is_typed_request_id(id: &Value) -> bool {
+    match id {
+        Value::String(_) => true,
+        Value::Number(number) => number.as_i64().is_some(),
+        _ => false,
+    }
+}
+
 fn native_turn_of(params: &Value) -> Option<String> {
     string(params, "turnId").or_else(|| {
         params
@@ -37,7 +45,7 @@ fn native_turn_of(params: &Value) -> Option<String> {
     })
 }
 
-fn active_context(state: &State, params: &Value) -> Result<RequestContext, String> {
+fn current_thread_context(state: &State, params: &Value) -> Result<RequestContext, String> {
     if state.closed {
         return Err("Codex sent a turn-scoped message after the session closed".to_owned());
     }
@@ -52,19 +60,57 @@ fn active_context(state: &State, params: &Value) -> Result<RequestContext, Strin
         .ok_or_else(|| "Codex sent a turn-scoped message before the native turn opened".to_owned())?;
     let thread_id = string(params, "threadId")
         .ok_or_else(|| "Codex turn-scoped message has no threadId".to_owned())?;
-    let message_turn = native_turn_of(params)
-        .ok_or_else(|| "Codex turn-scoped message has no turnId".to_owned())?;
     if thread_id != state.thread_id {
         return Err("Codex turn-scoped message belongs to another thread".to_owned());
-    }
-    if message_turn != native_turn {
-        return Err("Codex turn-scoped message belongs to another turn".to_owned());
     }
     Ok(RequestContext {
         thread_id,
         native_turn,
         hoh_turn,
     })
+}
+
+fn active_context(state: &State, params: &Value) -> Result<RequestContext, String> {
+    let context = current_thread_context(state, params)?;
+    let message_turn = native_turn_of(params)
+        .ok_or_else(|| "Codex turn-scoped message has no turnId".to_owned())?;
+    if message_turn != context.native_turn {
+        return Err("Codex turn-scoped message belongs to another turn".to_owned());
+    }
+    Ok(context)
+}
+
+fn elicitation_context(state: &State, params: &Value) -> Result<Option<RequestContext>, String> {
+    if state.closed {
+        return Err("Codex sent an MCP elicitation after the session closed".to_owned());
+    }
+    let thread_id = string(params, "threadId")
+        .ok_or_else(|| "Codex MCP elicitation has no threadId".to_owned())?;
+    if thread_id != state.thread_id {
+        return Err("Codex MCP elicitation belongs to another thread".to_owned());
+    }
+    let Some(turn_id) = params.get("turnId") else {
+        return if state.turn_opened && state.hoh_turn.is_some() && state.native_turn.is_some() {
+            current_thread_context(state, params).map(Some)
+        } else {
+            Ok(None)
+        };
+    };
+    if turn_id.is_null() {
+        return if state.turn_opened && state.hoh_turn.is_some() && state.native_turn.is_some() {
+            current_thread_context(state, params).map(Some)
+        } else {
+            Ok(None)
+        };
+    }
+    let Some(message_turn) = turn_id.as_str() else {
+        return Err("Codex MCP elicitation has an invalid turnId".to_owned());
+    };
+    let context = current_thread_context(state, params)?;
+    if message_turn != context.native_turn {
+        return Err("Codex MCP elicitation belongs to another turn".to_owned());
+    }
+    Ok(Some(context))
 }
 
 fn context_is_current(state: &State, context: &RequestContext) -> bool {
@@ -147,9 +193,13 @@ struct RequestContext {
 struct State {
     host: HashMap<u64, HostReply>,
     server: HashMap<String, ServerRequest>,
-    /// Native ids accepted during this turn, including requests the human already answered. This
-    /// closes the race where a repeated id arrives while the first answer is being sent.
-    server_seen: HashSet<String>,
+    /// Native ids accepted during this app-server process, including requests the human already
+    /// answered. `serverRequest/resolved` has no turn id, so reuse across turns is ambiguous and
+    /// must fail closed rather than letting a late notification resolve a newer request.
+    server_seen: HashMap<String, RequestContext>,
+    /// Standalone MCP elicitations without an active turn are cancelled on their exact native id.
+    /// Their ids remain reserved for the lifetime of this app-server process too.
+    server_standalone_seen: HashSet<String>,
     items: HashMap<String, HarnessAction>,
     items_seen: HashSet<String>,
     thread_id: String,
@@ -468,7 +518,6 @@ impl HarnessSession for CodexSession {
                 state.turn_opened = false;
                 state.items.clear();
                 state.items_seen.clear();
-                state.server_seen.clear();
             }
             let result = session
                 .request("turn/start", session.turn_params(&params.text))
@@ -760,6 +809,11 @@ async fn handle_message(inner: &Arc<Inner>, message: Value) {
 }
 
 async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, params: Value) {
+    enum Registration {
+        Event(HarnessEvent),
+        CancelStandalone,
+    }
+
     if !matches!(
         method,
         "item/commandExecution/requestApproval"
@@ -774,13 +828,34 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
             .await;
         return;
     }
+    if !is_typed_request_id(&id) {
+        protocol_violation(inner, "Codex server request has a non-string/non-int64 id").await;
+        return;
+    }
     let request_id = format!("codex:{}", rpc_key(&id));
     let item_id = string(&params, "itemId");
     let reason = string(&params, "reason");
     let registered = {
         let mut state = lock(&inner.state);
-        let context = active_context(&state, &params);
+        let context = if method == "mcpServer/elicitation/request" {
+            elicitation_context(&state, &params)
+        } else {
+            active_context(&state, &params).map(Some)
+        };
         context.and_then(|context| {
+            let Some(context) = context else {
+                if state.server_seen.contains_key(&request_id)
+                    || state.server_standalone_seen.contains(&request_id)
+                    || state.server.contains_key(&request_id)
+                {
+                    return Err(format!(
+                        "Codex app-server reused standalone JSON-RPC request id: {}",
+                        rpc_key(&id)
+                    ));
+                }
+                state.server_standalone_seen.insert(request_id.clone());
+                return Ok(Registration::CancelStandalone);
+            };
             let (kind, event) = match method {
                 "item/commandExecution/requestApproval" => {
                     let item = item_id
@@ -889,12 +964,17 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                 ),
                 _ => unreachable!("supported method checked above"),
             };
-            if !state.server_seen.insert(request_id.clone()) {
+            if state.server_seen.contains_key(&request_id)
+                || state.server_standalone_seen.contains(&request_id)
+            {
                 return Err(format!(
-                    "Codex app-server reused JSON-RPC request id in one turn: {}",
+                    "Codex app-server reused JSON-RPC request id in one process: {}",
                     rpc_key(&id)
                 ));
             }
+            state
+                .server_seen
+                .insert(request_id.clone(), context.clone());
             match state.server.entry(request_id.clone()) {
                 Entry::Vacant(entry) => {
                     entry.insert(ServerRequest {
@@ -902,7 +982,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                         kind,
                         context,
                     });
-                    Ok(event)
+                    Ok(Registration::Event(event))
                 }
                 Entry::Occupied(_) => Err(format!(
                     "Codex app-server reused pending JSON-RPC request id: {}",
@@ -912,7 +992,13 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
         })
     };
     match registered {
-        Ok(event) => emit_event(inner, event).await,
+        Ok(Registration::Event(event)) => emit_event(inner, event).await,
+        Ok(Registration::CancelStandalone) => {
+            let _ = inner
+                .supervisor
+                .send(&json!({"id":id,"result":{"action":"cancel"}}))
+                .await;
+        }
         Err(message) => protocol_violation(inner, message).await,
     }
 }
@@ -930,7 +1016,6 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
             | "item/started"
             | "item/completed"
             | "turn/completed"
-            | "serverRequest/resolved"
     ) {
         let checked = active_context(&lock(&inner.state), &params);
         if let Err(message) = checked {
@@ -1037,31 +1122,58 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
         }
         "turn/completed" => complete_turn(inner, &params).await,
         "serverRequest/resolved" => {
-            let raw = params
-                .get("requestId")
-                .or_else(|| params.get("id"))
-                .cloned();
+            let raw = params.get("requestId").cloned();
             let Some(raw) = raw else {
                 protocol_violation(inner, "Codex serverRequest/resolved has no request id").await;
                 return;
             };
+            if !is_typed_request_id(&raw) {
+                protocol_violation(
+                    inner,
+                    "Codex serverRequest/resolved has a non-string/non-int64 request id",
+                )
+                .await;
+                return;
+            }
             let request_id = format!("codex:{}", rpc_key(&raw));
             let resolved = {
                 let mut state = lock(&inner.state);
-                let context = active_context(&state, &params);
-                match context {
+                if state.closed {
+                    return;
+                }
+                let thread_id = string(&params, "threadId")
+                    .ok_or_else(|| "Codex serverRequest/resolved has no threadId".to_owned());
+                match thread_id {
                     Err(message) => Err(message),
-                    Ok(context) => match state.server.get(&request_id) {
-                        Some(pending) if pending.context == context => {
-                            state.server.remove(&request_id);
-                            Ok(true)
+                    Ok(thread_id) if thread_id != state.thread_id => {
+                        Err("Codex serverRequest/resolved belongs to another thread".to_owned())
+                    }
+                    Ok(_) if state.server_standalone_seen.contains(&request_id) => Ok(false),
+                    Ok(_) => current_thread_context(&state, &params).and_then(|context| {
+                        match state.server.get(&request_id) {
+                            Some(pending)
+                                if pending.context == context
+                                    && context_is_current(&state, &pending.context) =>
+                            {
+                                state.server.remove(&request_id);
+                                Ok(true)
+                            }
+                            Some(_) => Err(
+                                "Codex resolved a request belonging to another turn".to_owned(),
+                            ),
+                            None => match state.server_seen.get(&request_id) {
+                                Some(seen)
+                                    if seen == &context && context_is_current(&state, seen) =>
+                                {
+                                    Ok(false)
+                                }
+                                Some(_) => Err(
+                                    "Codex resolved a request belonging to a prior turn".to_owned(),
+                                ),
+                                None => Err("Codex resolved an unknown request id".to_owned()),
+                            },
                         }
-                        Some(_) => Err(
-                            "Codex resolved a request belonging to another turn".to_owned(),
-                        ),
-                        None if state.server_seen.contains(&request_id) => Ok(false),
-                        None => Err("Codex resolved an unknown request id".to_owned()),
-                    },
+                    }),
                 }
             };
             match resolved {

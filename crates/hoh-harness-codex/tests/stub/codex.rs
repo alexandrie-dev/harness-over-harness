@@ -112,6 +112,28 @@ fn main() {
             }
             Some("turn/start") => {
                 turn_count += 1;
+                if scenario == "stale-resolved" || scenario == "cross-turn-request-id" {
+                    let turn = if turn_count == 1 {
+                        "resolved-first"
+                    } else {
+                        "resolved-second"
+                    };
+                    send(json!({"id":id,"result":{"turn":{"id":turn,"status":"inProgress","startedAt":1}}}));
+                    send(json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":turn,"status":"inProgress","startedAt":1}}}));
+                    if turn_count == 1 {
+                        send(json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"resolved-first","item":{"type":"commandExecution","id":"cmd-resolved","command":"printf resolved","cwd":"/work","status":"inProgress","aggregatedOutput":""}}}));
+                        send(json!({"id":"resolved-old","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"resolved-first","itemId":"cmd-resolved","command":"printf resolved","cwd":"/work","reason":"old request"}}));
+                        send(json!({"method":"serverRequest/resolved","params":{"threadId":"thread-stub","requestId":"resolved-old"}}));
+                        send(json!({"method":"item/completed","params":{"threadId":"thread-stub","turnId":"resolved-first","item":{"type":"commandExecution","id":"cmd-resolved","command":"printf resolved","cwd":"/work","status":"completed","aggregatedOutput":"resolved","exitCode":0}}}));
+                        send(json!({"method":"turn/completed","params":{"threadId":"thread-stub","turn":{"id":"resolved-first","status":"completed"}}}));
+                    } else if scenario == "stale-resolved" {
+                        send(json!({"method":"serverRequest/resolved","params":{"threadId":"thread-stub","requestId":"resolved-old"}}));
+                    } else {
+                        send(json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"resolved-second","item":{"type":"commandExecution","id":"cmd-current","command":"printf current","cwd":"/work","status":"inProgress","aggregatedOutput":""}}}));
+                        send(json!({"id":"resolved-old","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"resolved-second","itemId":"cmd-current","command":"printf current","cwd":"/work","reason":"reused native id"}}));
+                    }
+                    continue;
+                }
                 if scenario == "stale-prior-turn" {
                     let turn = if turn_count == 1 { "turn-first" } else { "turn-second" };
                     send(json!({"id":id,"result":{"turn":{"id":turn,"status":"inProgress","startedAt":1}}}));
@@ -160,7 +182,25 @@ fn main() {
                     child = Some(spawned);
                     send(json!({"id":"foreign-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-foreign","turnId":"turn-stub","itemId":"cmd-1","command":"printf foreign","cwd":"/work","reason":"foreign thread"}}));
                 } else if scenario == "foreign-resolved" {
-                    send(json!({"method":"serverRequest/resolved","params":{"threadId":"thread-foreign","turnId":"turn-stub","requestId":"ghost"}}));
+                    send(json!({"method":"serverRequest/resolved","params":{"threadId":"thread-foreign","requestId":"ghost"}}));
+                } else if scenario == "unknown-resolved" {
+                    send(json!({"method":"serverRequest/resolved","params":{"threadId":"thread-stub","requestId":"ghost"}}));
+                } else if scenario == "untyped-resolved" {
+                    send(json!({"method":"serverRequest/resolved","params":{"threadId":"thread-stub","requestId":{"not":"an id"}}}));
+                } else if scenario == "canonical-resolved" {
+                    send(json!({"id":"canonical-resolved","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","command":"printf hello","cwd":"/work","reason":"canonical resolved"}}));
+                    send(json!({"method":"serverRequest/resolved","params":{"threadId":"thread-stub","requestId":"canonical-resolved"}}));
+                } else if scenario == "mcp-no-active" {
+                    finish_turn("completed");
+                    send(json!({"id":"mcp-no-active","method":"mcpServer/elicitation/request","params":{"serverName":"fixture","threadId":"thread-stub","message":"No active turn","mode":"form","requestedSchema":{"type":"object","properties":{}}}}));
+                } else if scenario == "mcp-omitted" {
+                    send(json!({"id":"mcp-omitted","method":"mcpServer/elicitation/request","params":{"serverName":"fixture","threadId":"thread-stub","message":"Allow fixture?","mode":"form","requestedSchema":{"type":"object","properties":{}}}}));
+                } else if scenario == "mcp-null" {
+                    send(json!({"id":909,"method":"mcpServer/elicitation/request","params":{"serverName":"fixture","threadId":"thread-stub","turnId":null,"message":"Allow fixture?","mode":"form","requestedSchema":{"type":"object","properties":{}}}}));
+                } else if scenario == "mcp-foreign" {
+                    send(json!({"id":"mcp-foreign","method":"mcpServer/elicitation/request","params":{"serverName":"fixture","threadId":"thread-foreign","message":"Foreign fixture?","mode":"form","requestedSchema":{"type":"object","properties":{}}}}));
+                } else if scenario == "mcp-stale-turn" {
+                    send(json!({"id":"mcp-stale","method":"mcpServer/elicitation/request","params":{"serverName":"fixture","threadId":"thread-stub","turnId":"turn-old","message":"Old fixture?","mode":"form","requestedSchema":{"type":"object","properties":{}}}}));
                 } else if scenario == "reused-item" {
                     send(json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"commandExecution","id":"cmd-1","command":"printf replacement","cwd":"/other","status":"inProgress","aggregatedOutput":""}}}));
                 } else {
@@ -201,6 +241,12 @@ fn main() {
                 send(
                     json!({"method":"item/completed","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"fileChange","id":"file-1","status":"declined","changes":[{"path":"src/lib.rs","kind":"update","diff":"+ok"}]}}}),
                 );
+                finish_turn("completed");
+            }
+            None
+                if message.get("id") == Some(&json!("mcp-omitted"))
+                    || message.get("id") == Some(&json!(909)) =>
+            {
                 finish_turn("completed");
             }
             _ => {}

@@ -493,8 +493,10 @@ async fn duplicate_native_request_ids_close_fail_closed_without_answering_anothe
 #[tokio::test]
 async fn foreign_thread_requests_and_resolutions_fail_before_showing_a_card() {
     for (scenario, forbidden_id) in [
-        ("foreign-thread-request", "foreign-approval"),
-        ("foreign-resolved", "ghost"),
+        ("foreign-thread-request", Some("foreign-approval")),
+        ("foreign-resolved", Some("ghost")),
+        ("unknown-resolved", Some("ghost")),
+        ("untyped-resolved", None),
     ] {
         let temp = TempDir::new().unwrap();
         let (harness, log) = harness(&temp, scenario);
@@ -513,13 +515,15 @@ async fn foreign_thread_requests_and_resolutions_fail_before_showing_a_card() {
             .await
             .unwrap();
         protocol_end_without_a_request_card(&mut started.events, scenario).await;
-        assert!(
-            !lines(&log).iter().any(|line| {
-                line.get("id") == Some(&Value::String(forbidden_id.into()))
-                    && line.get("result").is_some()
-            }),
-            "{scenario}: a result escaped for a foreign request"
-        );
+        if let Some(forbidden_id) = forbidden_id {
+            assert!(
+                !lines(&log).iter().any(|line| {
+                    line.get("id") == Some(&Value::String(forbidden_id.into()))
+                        && line.get("result").is_some()
+                }),
+                "{scenario}: a result escaped for an invalid request"
+            );
+        }
         if scenario == "foreign-thread-request" {
             let child = lines(&log)
                 .iter()
@@ -536,6 +540,211 @@ async fn foreign_thread_requests_and_resolutions_fail_before_showing_a_card() {
                 "foreign request protocol failure left owned child {child} running"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn canonical_resolved_without_a_turn_id_removes_the_exact_pending_request() {
+    let temp = TempDir::new().unwrap();
+    let (harness, _) = harness(&temp, "canonical-resolved");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-hoh".into(),
+            text: "resolve canonically".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let request_id = loop {
+        if let HarnessEvent::ApprovalRequested { request_id, .. } = event(&mut started.events).await
+        {
+            break request_id;
+        }
+    };
+    assert_eq!(request_id, "codex:\"canonical-resolved\"");
+    loop {
+        match event(&mut started.events).await {
+            HarnessEvent::RequestResolved { request_id: resolved } => {
+                assert_eq!(resolved, request_id);
+                break;
+            }
+            HarnessEvent::SessionEnded { reason, message, .. } => {
+                panic!("canonical resolved failed: {reason:?} {message:?}")
+            }
+            _ => {}
+        }
+    }
+    started.session.terminate(Duration::from_millis(100)).await;
+}
+
+#[tokio::test]
+async fn resolved_ids_are_unambiguous_for_the_lifetime_of_the_app_server_process() {
+    for scenario in ["stale-resolved", "cross-turn-request-id"] {
+        let temp = TempDir::new().unwrap();
+        let (harness, log) = harness(&temp, scenario);
+        let mut started = harness
+            .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+            .await
+            .unwrap();
+        started
+            .session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "hoh-first".into(),
+                text: "first".into(),
+                images: Vec::new(),
+            })
+            .await
+            .unwrap();
+        loop {
+            if matches!(event(&mut started.events).await, HarnessEvent::TurnCompleted { .. }) {
+                break;
+            }
+        }
+        started
+            .session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "hoh-second".into(),
+                text: "second".into(),
+                images: Vec::new(),
+            })
+            .await
+            .unwrap();
+        protocol_end_without_a_request_card(&mut started.events, scenario).await;
+        assert!(!lines(&log).iter().any(|line| {
+            line.get("id") == Some(&Value::String("resolved-old".into()))
+                && line.get("result").is_some()
+        }));
+    }
+}
+
+#[tokio::test]
+async fn mcp_elicitation_accepts_schema_exact_omitted_and_null_turn_ids() {
+    for (scenario, native_id) in [
+        ("mcp-omitted", Value::String("mcp-omitted".into())),
+        ("mcp-null", Value::from(909)),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let (harness, log) = harness(&temp, scenario);
+        let mut started = harness
+            .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+            .await
+            .unwrap();
+        started
+            .session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-hoh".into(),
+                text: scenario.into(),
+                images: Vec::new(),
+            })
+            .await
+            .unwrap();
+        let request_id = loop {
+            if let HarnessEvent::ApprovalRequested {
+                request_id,
+                action: hoh_external_harness::HarnessAction::Tool { name, .. },
+                ..
+            } = event(&mut started.events).await
+            {
+                assert_eq!(name, "mcp-elicitation");
+                break request_id;
+            }
+        };
+        started
+            .session
+            .respond(RespondParams {
+                session_id: "hoh-session".into(),
+                request_id,
+                response: HarnessResponse::Approval {
+                    decision: ApprovalDecision::Allow,
+                },
+            })
+            .await
+            .unwrap();
+        loop {
+            if matches!(event(&mut started.events).await, HarnessEvent::TurnCompleted { .. }) {
+                break;
+            }
+        }
+        assert!(lines(&log).iter().any(|line| {
+            line.get("id") == Some(&native_id)
+                && line.pointer("/result/action").and_then(Value::as_str) == Some("accept")
+        }));
+    }
+}
+
+#[tokio::test]
+async fn standalone_mcp_elicitation_without_an_active_turn_is_cancelled_on_its_exact_id() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "mcp-no-active");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-hoh".into(),
+            text: "finish before standalone elicitation".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    loop {
+        match event(&mut started.events).await {
+            HarnessEvent::ApprovalRequested { request_id, .. }
+                if request_id == "codex:\"mcp-no-active\"" =>
+            {
+                panic!("standalone elicitation without a turn was shown as a turn approval")
+            }
+            HarnessEvent::TurnCompleted { .. } => break,
+            _ => {}
+        }
+    }
+    let start = Instant::now();
+    while !lines(&log).iter().any(|line| {
+        line.get("id") == Some(&Value::String("mcp-no-active".into()))
+            && line.pointer("/result/action").and_then(Value::as_str) == Some("cancel")
+    }) && start.elapsed() < Duration::from_secs(3)
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(lines(&log).iter().any(|line| {
+        line.get("id") == Some(&Value::String("mcp-no-active".into()))
+            && line.pointer("/result/action").and_then(Value::as_str) == Some("cancel")
+    }));
+}
+
+#[tokio::test]
+async fn standalone_mcp_elicitation_rejects_foreign_thread_and_stale_supplied_turn() {
+    for scenario in ["mcp-foreign", "mcp-stale-turn"] {
+        let temp = TempDir::new().unwrap();
+        let (harness, log) = harness(&temp, scenario);
+        let mut started = harness
+            .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+            .await
+            .unwrap();
+        started
+            .session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-hoh".into(),
+                text: scenario.into(),
+                images: Vec::new(),
+            })
+            .await
+            .unwrap();
+        protocol_end_without_a_request_card(&mut started.events, scenario).await;
+        assert!(!lines(&log).iter().any(|line| line.get("result").is_some()));
     }
 }
 
