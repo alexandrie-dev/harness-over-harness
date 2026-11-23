@@ -11,27 +11,38 @@ import s1 from '../../assets/emblem-notchs-1x.png';
 import s15 from '../../assets/emblem-notchs-15x.png';
 import s2 from '../../assets/emblem-notchs-2x.png';
 import s3 from '../../assets/emblem-notchs-3x.png';
-import { BLOCKS, GRID_FROM_WIDTH, lineShare } from '../grid/blocks';
 import { notchOutline, notchSize } from './shapes';
 
 export const NOTCH_NAME = 'Alexandrie';
 const GAP = 8;
-const NOTCH_LINES = BLOCKS.find((block) => block.name === 'notch')!.x.open;
-/** The band's height (CSS px, = grid line g4) and the window's width: the notch is drawn from them. */
-function useFrame(band: React.RefObject<HTMLDivElement | null>): { band: number; width: number } {
-  const [frame, setFrame] = useState({ band: 36, width: window.innerWidth });
+/** The notch follows T3's live content inset, including sidebar collapse and drag-resize. */
+function useFrame(band: React.RefObject<HTMLDivElement | null>): { band: number; left: number; width: number } {
+  const [frame, setFrame] = useState({ band: 36, left: 0, width: window.innerWidth });
   useLayoutEffect(() => {
     const element = band.current;
     if (!element) return;
     const update = () => setFrame((was) => {
-      const next = { band: element.getBoundingClientRect().height || was.band, width: window.innerWidth };
-      return next.band === was.band && next.width === was.width ? was : next;
+      const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')?.getBoundingClientRect();
+      const next = {
+        band: element.getBoundingClientRect().height || was.band,
+        left: inset?.left ?? 0,
+        width: inset?.width ?? window.innerWidth,
+      };
+      return next.band === was.band && next.left === was.left && next.width === was.width ? was : next;
     });
     update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
+    const resize = new ResizeObserver(update);
+    resize.observe(element);
+    const observeInset = () => {
+      const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]');
+      if (inset) resize.observe(inset);
+      update();
+    };
+    observeInset();
+    const mutations = new MutationObserver(observeInset);
+    mutations.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-sidebar-state', 'style'] });
     window.addEventListener('resize', update);
-    return () => { observer.disconnect(); window.removeEventListener('resize', update); };
+    return () => { resize.disconnect(); mutations.disconnect(); window.removeEventListener('resize', update); };
   }, [band]);
   return frame;
 }
@@ -40,7 +51,6 @@ export function HohNotch() {
   const bandRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(bandRef);
   const size = notchSize(frame.band);
-  const lineWidth = frame.width >= GRID_FROM_WIDTH ? (lineShare(NOTCH_LINES[1]!) - lineShare(NOTCH_LINES[0])) * frame.width : undefined;
   const label = useRef<HTMLSpanElement>(null);
   const [text, setText] = useState(size.font * 5.4);
   useLayoutEffect(() => {
@@ -53,8 +63,8 @@ export function HohNotch() {
   const small = size.emblem < 30;
   const [one, onefive, two, three] = small ? [s1, s15, s2, s3] : [e1, e15, e2, e3];
   return (
-    <div className="hoh-notch-band" ref={bandRef}>
-      <div className="hoh-notch" style={{ width: lineWidth ?? outline.width, height: frame.band }}>
+    <div className="hoh-notch-band" ref={bandRef} style={{ left: frame.left, width: frame.width }}>
+      <div className="hoh-notch" style={{ width: outline.width, height: frame.band }}>
         <div className="hoh-notch-shape" style={{ width: outline.width, height: outline.height }}>
           <svg className="hoh-notch-outline" width={outline.width} height={outline.height} viewBox={`0 0 ${outline.width} ${outline.height}`} aria-hidden="true">
             <path className="hoh-notch-fill" d={outline.fill} />
