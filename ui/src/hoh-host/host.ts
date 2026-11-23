@@ -109,6 +109,10 @@ export class HohHost {
   private readonly loadRetries: number;
   private stopped = false;
   private readonly threads = new Map<string, ThreadModel>();
+  /** Rows restored before the engine answers; its list/history replaces their cached metadata once available. */
+  private readonly restored = new Set<string>();
+  /** Histories already peeked successfully during startup; a cached row is retried until its log is readable. */
+  private readonly peeked = new Set<string>();
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
   private readonly questions = new Map<string, EngineQuestion>();
   private readonly shellSinks = new Set<StreamSink>();
@@ -203,15 +207,42 @@ export class HohHost {
     }
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
+    // Last-known-good list metadata makes the first post-restart snapshot lossless even when the
+    // engine's first disk scan is temporarily incomplete. History still comes only from the engine.
+    for (const entry of Array.isArray(saved?.sessions) ? saved.sessions : []) {
+      const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+      const title = typeof entry?.title === 'string' ? entry.title.trim() : '';
+      const createdAt = timeOf(entry?.createdAt);
+      const updatedAt = timeOf(entry?.updatedAt);
+      if (!id || !title || createdAt === null || updatedAt === null || this.threads.has(id)) continue;
+      const projectId = entry?.projectId === HOH_PROJECT_ID || (typeof entry?.projectId === 'string' && this.folders.has(entry.projectId))
+        ? entry.projectId : this.homeOf(id);
+      const model = typeof entry?.model === 'string' && entry.model.trim() ? entry.model.trim() : this.model();
+      const thread = new ThreadModel({ id, title, createdAt, updatedAt, model, mode: this.mode, projectId });
+      thread.options = this.levels.get(id);
+      thread.archivedAt = entry?.archivedAt === null ? null : timeOf(entry?.archivedAt);
+      this.threads.set(id, thread);
+      this.restored.add(id);
+    }
+    if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.projectShown = true;
   }
 
   private save() {
     if (!this.storage) return;
+    const sessions = [...this.threads.values()].flatMap(thread => {
+      const shell = thread.shell();
+      // A local empty draft has not reached the engine and must not become a ghost after restart.
+      if (thread.loaded && shell.latestUserMessageAt === null) return [];
+      return [{
+        id: thread.id, title: shell.title, projectId: thread.projectId, model: thread.model,
+        createdAt: thread.createdAt, updatedAt: thread.updatedAt, archivedAt: thread.archivedAt,
+      }];
+    });
     const value = {
       version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
       defaultMode: this.defaultMode, options: Object.fromEntries(this.levels), homeDispositions: Object.fromEntries(this.homeDispositions),
-      homeObservedAt: Object.fromEntries(this.homeObservedAt),
+      homeObservedAt: Object.fromEntries(this.homeObservedAt), sessions,
     };
     try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
   }
@@ -371,14 +402,17 @@ export class HohHost {
 
   /** Session metadata retries do not sit behind Claude discovery. */
   private async loadSessions() {
-    if (!await this.readSessions()) void this.retrySessions();
+    await this.readSessions();
+    // A successful first disk scan can still be incomplete while the previous process releases
+    // resources. Keep reconciling for the same bounded window used while the engine is starting.
+    if (!this.stopped) void this.retrySessions();
   }
 
   private async retrySessions() {
     for (let attempt = 0; attempt < this.loadRetries && !this.stopped; attempt++) {
       await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
       if (this.stopped) return;
-      if (await this.readSessions()) return;
+      await this.readSessions();
     }
   }
 
@@ -405,19 +439,31 @@ export class HohHost {
   private async readSessions(): Promise<boolean> {
     let sessions: any[] = [];
     try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return false; }
+    let inventoryChanged = false;
     for (const session of sessions) {
-      if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
+      if (typeof session?.id !== 'string' || !session.id) continue;
       const at = Number(session.updatedAt) || this.startedAt;
+      const existing = this.threads.get(session.id);
+      if (existing) {
+        if (this.restored.delete(session.id)) {
+          // The cache is only continuity for the first snapshot. Once this session is visible on
+          // disk, let its current list entry and history replace stale presentation metadata.
+          existing.title = typeof session.title === 'string' ? session.title : '';
+          existing.updatedAt = Math.max(existing.updatedAt, at);
+          inventoryChanged = true;
+          if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
+        }
+        continue;
+      }
       this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
+      inventoryChanged = true;
       // During the first load the metadata is already in the forthcoming snapshot. A retry happens after that
       // snapshot, so it needs an update for each conversation that arrived late.
       if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
     }
-    let pruned = false;
-    const sessionIds = new Set(sessions.map(session => session?.id).filter((id): id is string => typeof id === 'string'));
-    for (const threadId of this.homeDispositions.keys()) if (!sessionIds.has(threadId)) { this.homeDispositions.delete(threadId); pruned = true; }
-    for (const threadId of this.homeObservedAt.keys()) if (!sessionIds.has(threadId)) { this.homeObservedAt.delete(threadId); pruned = true; }
-    if (pruned) this.save();
+    // Reconciliation is deliberately merge-only: an immediately restarted engine may return a
+    // temporarily incomplete list, so neither cached rows nor their Waiting/Done state is pruned.
+    if (inventoryChanged) this.save();
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
     this.sessionsReady();
     // History enriches Home and list rows, but metadata is enough to render and select a conversation. Start it
@@ -446,7 +492,7 @@ export class HohHost {
   private async peekToday() {
     const today = new Date(this.now()).toDateString();
     const waiting = new Set([...this.homeDispositions].filter(([, value]) => value.state === 'waiting').map(([threadId]) => threadId));
-    const candidates = [...this.threads.values()].filter(thread => !thread.loaded);
+    const candidates = [...this.threads.values()].filter(thread => !thread.loaded && !this.peeked.has(thread.id));
     const todayThreads = candidates.filter(thread => new Date(thread.updatedAt).toDateString() === today)
       .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
     const changedWhileAway = candidates.filter(thread => (this.homeObservedAt.get(thread.id) ?? 0) < thread.updatedAt);
@@ -470,6 +516,7 @@ export class HohHost {
         try { if ((await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
         if (this.stopped) return;
         thread.settleUnfinished(this.now());
+        this.peeked.add(thread.id);
         if (this.syncHomeDisposition(thread)) dispositionChanged = true;
         if (this.homeObservedAt.get(thread.id) !== thread.updatedAt) { this.homeObservedAt.set(thread.id, thread.updatedAt); dispositionChanged = true; }
         // Startup classification may discover an old arbitrary folder, but it must not race a person's Add project
@@ -616,7 +663,7 @@ export class HohHost {
     const ids = [...this.dirty]; this.dirty.clear();
     let dispositionChanged = false;
     for (const id of ids) { const thread = this.threads.get(id); if (thread && this.syncHomeDisposition(thread)) dispositionChanged = true; }
-    if (dispositionChanged) this.save();
+    if (ids.length || dispositionChanged) this.save();
     if (this.homeDirty) { this.homeDirty = false; this.homeVersion++; for (const listener of this.homeListeners) listener(); }
     for (const id of ids) {
       const thread = this.threads.get(id);

@@ -6,6 +6,7 @@ use hoh_protocol::InitializeParams;
 use hoh_sdk_jsonrpc_server::{
     HohPrivilegedApprover, HohRpcMethodRegistry, HohRpcMethods, PrivilegedApprover,
 };
+use hoh_session_persistence::SessionPersistenceService;
 use hoh_user_approval::{Approval, ApprovalService};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -335,6 +336,62 @@ async fn session_list_covers_live_and_stored_sessions_with_titles_and_filter() {
             .any(|e| e["type"] == "user/message")
     );
     again.close().await;
+}
+
+#[tokio::test]
+async fn session_list_and_events_read_the_saved_log_while_another_process_holds_its_write_lease() {
+    let root = tempfile::tempdir().unwrap();
+    let holder = Env::persistent(root.path()).await;
+    holder.initialize().await;
+    chat(&holder, "stopped", "Count from 1 to 500").await;
+    holder
+        .ctx
+        .get::<SessionPersistenceService>()
+        .unwrap()
+        .flush()
+        .await
+        .unwrap();
+
+    let observer = Env::persistent(root.path()).await;
+    observer.initialize().await;
+    let resume = observer
+        .server
+        .handle_request("session/resume", json!({"sessionId": "stopped"}))
+        .await
+        .unwrap_err();
+    assert!(resume.to_string().contains("already owned"), "{resume}");
+
+    let list = observer
+        .server
+        .handle_request("session/list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(list["sessions"][0]["id"], "stopped");
+    assert_eq!(list["sessions"][0]["title"], "Count from 1 to 500");
+    let page = observer
+        .server
+        .handle_request(
+            "session/events",
+            json!({"sessionId": "stopped", "limit": 1000}),
+        )
+        .await
+        .unwrap();
+    assert!(
+        page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["type"] == "user/message")
+    );
+
+    holder.close().await;
+    observer
+        .server
+        .handle_request("session/resume", json!({"sessionId": "stopped"}))
+        .await
+        .unwrap();
+    observer.close().await;
 }
 
 #[tokio::test]
