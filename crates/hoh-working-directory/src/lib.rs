@@ -8,7 +8,7 @@ pub mod shim;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use hoh_error::{BoxError, HarnessError};
 use hoh_fs::{Fs, FsResolveOptions, FsType};
@@ -199,6 +199,7 @@ struct Inner {
     ctx: Context,
     fs: Service<Fs>,
     default_directory: String,
+    initialized_default_directory: OnceLock<String>,
     handle: ProjectionHandle<Option<String>>,
     lifecycle: AbortController,
     queues: Mutex<Queues>,
@@ -240,6 +241,7 @@ impl WorkingDirectoryService {
             ctx: ctx.clone(),
             fs: deps.fs,
             default_directory: directory,
+            initialized_default_directory: OnceLock::new(),
             handle,
             lifecycle: AbortController::new(),
             queues: Mutex::new(Queues::default()),
@@ -334,7 +336,13 @@ impl WorkingDirectoryService {
 
     /// Absolute deployment fallback for Sessions with no recorded original directory.
     pub fn default_directory(&self) -> &str {
-        &self.inner.default_directory
+        self.inner.default_directory()
+    }
+
+    /// Set the launch fallback once the SDK initialization route has been validated.
+    pub fn set_initial_default_directory(&self, directory: String) {
+        debug_assert!(is_absolute(&directory));
+        let _ = self.inner.initialized_default_directory.set(directory);
     }
 
     /// Read the committed directory without filesystem I/O.
@@ -455,6 +463,12 @@ impl Drop for OperationGuard {
 }
 
 impl Inner {
+    fn default_directory(&self) -> &str {
+        self.initialized_default_directory
+            .get()
+            .unwrap_or(&self.default_directory)
+    }
+
     /// The directory the projection records for `session`; a projection that cannot be read is
     /// warned about and treated as unrecorded.
     fn recorded(&self, session: &Session) -> Option<String> {
@@ -472,7 +486,7 @@ impl Inner {
 
     fn get(&self, session: &Session) -> String {
         self.recorded(session)
-            .unwrap_or_else(|| self.default_directory.clone())
+            .unwrap_or_else(|| self.default_directory().to_owned())
     }
 
     fn context_text(&self, session: &Session) -> String {
@@ -539,7 +553,7 @@ impl Inner {
             .header()
             .get("cwd")
             .and_then(Value::as_str)
-            .map_or_else(|| self.default_directory.clone(), str::to_owned);
+            .map_or_else(|| self.default_directory().to_owned(), str::to_owned);
         let restored = self
             .directory(&original, &original, control, || {
                 WorkingDirectoryError::new(
