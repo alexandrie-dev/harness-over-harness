@@ -292,6 +292,8 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `gt.config.json` | правка (`ui/src/t3/base-patches/gt.config.json.patch`) | языки интерфейса: английский и русский (остальные переводы не переносятся); gt.config.json T3 читает web/i18n/locales.ts |
 | `web/branding.ts` | правка (`ui/src/t3/base-patches/web/branding.ts.patch`) | имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет |
 | `web/components/chat/turnDetailAnnouncement.ts` | правка (`ui/src/t3/base-patches/web/components/chat/turnDetailAnnouncement.ts.patch`) | имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code» |
+| `web/components/ChatView.logic.ts` | правка (`ui/src/t3/base-patches/web/components/ChatView.logic.ts.patch`) | видимый заголовок нового черновика — «New chat» вместо «New thread» |
+| `web/components/CommandPalette.tsx` | правка (`ui/src/t3/base-patches/web/components/CommandPalette.tsx.patch`) | видимые действия создания разговора в палитре — «New chat» вместо «New thread» |
 
 Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
 `desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 136 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).

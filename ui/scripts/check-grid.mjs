@@ -76,7 +76,7 @@ function engineWith(busy) {
     const session = engine.open(id, title);
     engine.append(session, 'turn/start', { turn: 1 });
     engine.append(session, 'user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: title }] });
-    engine.append(session, 'tool/call', { callId: `${id}-c`, turn: 1, name: 'Bash', arguments: { command: 'ls' } });
+    engine.append(session, 'tool/call', { callId: `${id}-c`, turn: 1, name: 'Bash', arguments: { command: id === 'w2' ? 'printf "prepare report, verify every source, and save the complete result to the requested destination"' : 'ls' } });
   }
   const done = engine.open('d1', 'Summarize the invoices');
   engine.append(done, 'turn/start', { turn: 1 });
@@ -121,17 +121,23 @@ try {
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache') },
     args: ['--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--no-first-run'],
   });
-  for (const [width, height] of [[1440, 900], [1280, 720], [1100, 700], [1000, 625]]) {
+  for (const [width, height] of [[1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]) {
     for (const busy of [false, true]) {
       const label = `${width}×${height} ${busy ? 'с агентами' : 'пустая главная'}`;
       const engine = engineWith(busy);
       const { context, page, off } = await open(browser, engine, { width, height });
       try {
-        if (!busy) await page.getByRole('button', { name: 'Start', exact: true }).click();
-        await page.getByText(/Good (morning|afternoon|evening)/).first().waitFor({ state: 'attached' });
+        if (!busy) {
+          await page.getByRole('button', { name: 'Start', exact: true }).click();
+          await page.getByRole('button', { name: 'Start without a project', exact: true }).click();
+        }
+        await page.getByText(/Good (night|morning|afternoon|evening)/).first().waitFor({ state: 'attached' });
         if (busy) {
           for (const sessionId of ['w1', 'w2']) engine.emit('session.status', { sessionId, status: 'running' });
-          engine.emit('approval.pending', { approvalId: 'appr-1', sessionId: 'w2', risk: 'unassessed', humanText: 'Claude asks to run: ls', expiresAt: Date.now() + 600_000 });
+          const waitingSession = engine.sessions.get('w2');
+          engine.emit('session.event', { sessionId: 'w2', event: engine.append(waitingSession, 'turn/start', { turn: 2 }) });
+          engine.emit('session.event', { sessionId: 'w2', event: engine.append(waitingSession, 'tool/call', { callId: 'w2-live-c', turn: 2, name: 'Bash', arguments: { command: 'printf "prepare the weekly report, verify every source twice, compare the totals with the previous period, explain every discrepancy, and save the complete reviewed result to the requested destination"' } }) });
+          engine.emit('approval.pending', { approvalId: 'appr-1', sessionId: 'w2', risk: 'unassessed', humanText: 'Claude asks to run a deliberately long command that wraps over several lines: printf "prepare report, verify every source, and save the complete result"', expiresAt: Date.now() + 600_000 });
           await page.locator('.hoh-card').first().waitFor({ state: 'attached' });
           await page.locator('.hoh-ask').first().waitFor({ state: 'attached' });
         }
@@ -144,6 +150,36 @@ try {
           return body && stack && body.bottom > stack.top + 0.5 ? Math.round((body.bottom - stack.top) * 10) / 10 : 0;
         });
         if (overlap > 0) fail(`${label}: тело главной заходит на поле ввода на ${overlap} px`);
+        if (!busy) {
+          const emptyGap = await page.evaluate(() => {
+            const greeting = document.querySelector('.hoh-home__head')?.getBoundingClientRect();
+            const prompt = document.querySelector('[data-chat-composer-stack] h1')?.getBoundingClientRect();
+            return greeting && prompt ? Math.round((prompt.top - greeting.bottom) * 10) / 10 : null;
+          });
+          if (emptyGap === null) fail(`${label}: не найдены приветствие и заголовок пустой главной`);
+          else if (emptyGap > 64) fail(`${label}: между приветствием и вопросом пустой главной ${emptyGap} px (нужно не больше 64 px)`);
+        }
+        if (busy && width === 800 && height === 550) {
+          const detail = page.locator('.hoh-ask__detail').first();
+          const collapsed = await detail.evaluate((button) => {
+            const text = button.querySelector('.hoh-ask__text');
+            const style = getComputedStyle(text);
+            return { expanded: button.getAttribute('aria-expanded'), height: text.getBoundingClientRect().height, line: parseFloat(style.lineHeight), scroll: text.scrollHeight, text: text.textContent };
+          });
+          if (collapsed.expanded !== 'false') fail(`${label}: запрос изначально раскрыт`);
+          if (collapsed.height > collapsed.line * 2 + 1) fail(`${label}: запрос занимает больше двух строк (${collapsed.height}px)`);
+          await detail.click();
+          const expanded = await detail.evaluate((button) => ({ expanded: button.getAttribute('aria-expanded'), height: button.querySelector('.hoh-ask__text').getBoundingClientRect().height }));
+          if (expanded.expanded !== 'true' || expanded.height <= collapsed.height) fail(`${label}: запрос не раскрывается по нажатию (${JSON.stringify({ collapsed, expanded })})`);
+          await detail.press('Space');
+          if (await detail.getAttribute('aria-expanded') !== 'false') fail(`${label}: запрос не сворачивается клавиатурой`);
+          const nowVisible = await page.evaluate(() => {
+            const heading = [...document.querySelectorAll('.hoh-home__label')].find((node) => node.textContent?.trim().startsWith('Now'))?.getBoundingClientRect();
+            const composer = document.querySelector('[data-chat-composer-stack]')?.getBoundingClientRect();
+            return Boolean(heading && composer && heading.top >= 0 && heading.bottom <= composer.top);
+          });
+          if (!nowVisible) fail(`${label}: шапка карточек «Now» не видна над полем ввода`);
+        }
         const found = await page.evaluate(() => (window.hohGridCheck ? window.hohGridCheck() : null));
         if (found === null) fail(`${label}: в окне нет window.hohGridCheck`);
         else for (const miss of found) fail(`${label}: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected} (ближайшая ${miss.nearest || '—'})`);
@@ -159,6 +195,15 @@ try {
           }
           await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();
           if (await page.locator('.hoh-page').count() !== 0) fail(`${label}: «New chat» не закрыл страницу`);
+          if (width === 1440 && height === 900) {
+            await page.keyboard.press('Control+K');
+            const palette = page.locator('[aria-label="Command palette"]').last();
+            await palette.waitFor({ state: 'visible' });
+            const paletteText = (await palette.innerText()).replace(/\s+/g, ' ');
+            if (!paletteText.includes('New chat')) fail(`${label}: в палитре нет видимого «New chat»`);
+            if (paletteText.includes('New thread')) fail(`${label}: в палитре ещё видно «New thread»`);
+            await page.keyboard.press('Escape');
+          }
         }
       } catch (error) {
         fail(`${label}: ${String(error.message).split('\n')[0]}`);
@@ -170,4 +215,4 @@ try {
 } finally { await browser?.close(); await rm(home, { recursive: true, force: true }); }
 
 if (errors.length) { for (const message of errors) console.error('grid: ' + message); process.exit(1); }
-console.log('grid: все блоки на линиях g1..g21 (1440×900, 1280×720, 1100×700, 1000×625; допуск 2 px)');
+console.log('grid: все блоки на линиях g1..g21 (1440×900, 1280×720, 1100×700, 1000×625, 800×550; допуск 2 px)');
