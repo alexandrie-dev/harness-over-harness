@@ -59,3 +59,18 @@ a[href="/"] > span.inline-flex {
 [data-composer-command-drawer="true"] {
   --glass-opacity: 100%;
 }
+
+/* ThreadDetails остаётся штатной карточкой T3. На широком разговоре резервируем ей правую
+   колонку; когда T3 переключает карточку в popover (или окно уже), резерв исчезает. */
+@media (min-width: 1100px) {
+  [data-chat-canvas]:has([data-thread-details-panel="inline"]) {
+    --chat-lane-inset-end: 20rem !important;
+  }
+}
+
+/* Agent/Task Markdown не получает внутренний max-height сырого <pre>: прокручивается вся лента.
+   Scroll margin оставляет последнюю строку выше плавающего composer при фокусе/поиске. */
+[data-v2-item-inspector="dynamic_tool"] [data-hoh-agent-markdown] {
+  scroll-margin-bottom: 10rem;
+  padding-bottom: 0.5rem;
+}

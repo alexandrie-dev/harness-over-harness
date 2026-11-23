@@ -198,6 +198,7 @@
       "web/terminalUiStateStore.ts": "выключатель: терминал — ящик терминала не открывается (normalizeThreadTerminalUiState держит terminalOpen: false), клавиши и действия ничего не открывают",
       "web/components/chat/PanelLayoutControls.tsx": "выключатель: терминал — кнопки ящика терминала нет (showTerminalControl по умолчанию false)",
       "web/components/chat/ThreadDetailsPanel.tsx": "HOH-43: содержимое панели разговора — цель и план, токены и контекст, все субагенты, навыки, фоновые работы, модель и MCP; каркас ThreadDetailsCard и кнопка T3 без изменений",
+      "web/components/chat/V2ItemInspector.tsx": "вывод Agent и Task использует штатный Markdown/code renderer T3 вместо сырого текста и растёт в прокручиваемой ленте",
       "web/components/chat/ChatComposer.tsx": "Plan mode: переключатель в composer пишет interactionMode в черновик T3 и остаётся видимым для провайдера, который объявил showInteractionModeToggle",
       "web/components/chat/useComposerSend.ts": "Plan mode: composer передаёт выбранный interactionMode при создании разговора и следующих ходах вместо жёсткого default",
       "web/components/settings/ThemeSettings.tsx": "выключатель: импорт тем VS Code / Open VSX — кнопки «Add theme» нет, диалог импорта не открывается",

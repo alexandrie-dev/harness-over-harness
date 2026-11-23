@@ -881,6 +881,32 @@ export class HohHost {
     return thread;
   }
 
+  /** A draft can be created before T3's project picker settles. Honour the explicit project on
+   * launch as the authoritative choice, before the first prompt reaches Claude. */
+  private async selectLaunchProject(thread: ThreadModel, projectId: unknown) {
+    if (typeof projectId !== 'string' || projectId === thread.projectId) return;
+    if (projectId === HOH_PROJECT_ID) {
+      // Moving an existing engine session back to its implicit startup folder has no safe typed
+      // operation. T3 creates scratch drafts in scratch already, so never guess a broader path.
+      if (thread.projectId !== HOH_PROJECT_ID) throw new Error('An existing project chat cannot be moved to No project.');
+      return;
+    }
+    const folder = this.folders.get(projectId);
+    if (!folder) throw new Error('This project does not exist.');
+    const set = await this.engine.request('session/working-directory/set', { sessionId: thread.id, path: folder.workspaceRoot });
+    const resolved = folderPath(set?.cwd);
+    if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
+      folder.workspaceRoot = resolved;
+      folder.updatedAt = this.now();
+      this.emitProject(folderProject(folder));
+    }
+    thread.cwd = resolved || folder.workspaceRoot;
+    thread.projectId = folder.id;
+    this.homes.set(thread.id, folder.id);
+    this.save();
+    this.changed(thread.id);
+  }
+
   // ---- folder projects ("Add project") ----
 
   private emitProject(project: Record<string, unknown>) {
@@ -1311,6 +1337,7 @@ ${message.slice(0, 8000)}`;
     try {
       const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, interactionMode);
       if (existing) await this.applyMode(input.runtimeMode);
+      if (existing) await this.selectLaunchProject(thread, input.projectId);
       if (existing && interactionMode !== undefined) {
         thread.setInteractionMode(interactionMode);
         this.interactions.set(thread.id, thread.interactionMode); this.save();

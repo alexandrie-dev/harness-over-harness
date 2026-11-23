@@ -31,12 +31,13 @@
 }
 .hoh-home h1 { font-size: 1.75rem; line-height: 2.25rem; font-weight: 600; margin: 0; }
 .hoh-home__date { color: var(--muted-foreground); font-size: 0.875rem; margin-top: 4px; }
-.hoh-home__head { position: relative; width: fit-content; margin-top: 8px; }
+.hoh-home__head { position: relative; width: 100%; margin-top: 8px; text-align: center; }
+.hoh-home__greeting { display: block; width: 100%; text-align: center; }
 /* Эмблема над приветствием (правило u2: emblem-fit.ts ставит data-hoh-emblem, только если она помещается без прокрутки; на узком окне скрыта). */
 .hoh-home__head[data-hoh-emblem] { margin-top: 134px; }
 .hoh-home__head[data-hoh-emblem]::before {
-  content: ""; position: absolute; left: 0; bottom: 100%; width: 96px; height: 104px; margin-bottom: 22px; pointer-events: none;
-  background: url("../../assets/emblem-chat-1x.png") left center / 96px 104px no-repeat;
+  content: ""; position: absolute; left: 50%; bottom: 100%; width: 96px; height: 104px; margin: 0 0 22px -48px; pointer-events: none;
+  background: url("../../assets/emblem-chat-1x.png") center / 96px 104px no-repeat;
   background-image: -webkit-image-set(url("../../assets/emblem-chat-1x.png") 1x, url("../../assets/emblem-chat-15x.png") 1.5x, url("../../assets/emblem-chat-2x.png") 2x, url("../../assets/emblem-chat-3x.png") 3x);
   background-image: image-set(url("../../assets/emblem-chat-1x.png") 1x, url("../../assets/emblem-chat-15x.png") 1.5x, url("../../assets/emblem-chat-2x.png") 2x, url("../../assets/emblem-chat-3x.png") 3x);
 }

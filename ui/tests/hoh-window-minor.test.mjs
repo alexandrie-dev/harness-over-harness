@@ -26,6 +26,26 @@ test('thread details card stays visible (CEO: it becomes the HOH-43 stats panel)
   assert.doesNotMatch(features, /\[data-thread-details-card\]/);
 });
 
+test('wide conversations reserve the ThreadDetails column and narrow ones release it', async () => {
+  const css = await readFile(new URL('src/t3-entry/brand.css', root), 'utf8');
+  assert.match(css, /@media \(min-width: 1100px\)[\s\S]*\[data-chat-canvas\]:has\(\[data-thread-details-panel="inline"\]\)[\s\S]*--chat-lane-inset-end:\s*20rem/);
+});
+
+test('Agent and Task inspector output uses T3 Markdown without an inner raw-output scroller', async () => {
+  const [patch, manifestText, map, css] = await Promise.all([
+    readFile(new URL('src/t3/base-patches/web/components/chat/V2ItemInspector.tsx.patch', root), 'utf8'),
+    readFile(new URL('src/t3/manifest.json', root), 'utf8'),
+    readFile(new URL('T3-MAP.md', root), 'utf8'),
+    readFile(new URL('src/t3-entry/brand.css', root), 'utf8'),
+  ]);
+  assert.match(patch, /\^\(agent\|task\)\$/i);
+  assert.match(patch, /<ChatMarkdown/);
+  assert.match(patch, /data-hoh-agent-markdown/);
+  assert(JSON.parse(manifestText).base.patched['web/components/chat/V2ItemInspector.tsx']);
+  assert.match(map, /V2ItemInspector\.tsx\.patch[^\n]*Markdown\/code renderer/);
+  assert.match(css, /\[data-hoh-agent-markdown\][^{]*\{[^}]*scroll-margin-bottom:\s*10rem/s);
+});
+
 test('the timeline minimap strips that look like an equals sign are hidden', async () => {
   const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
   assert.match(features, /['"]\[data-testid="timeline-minimap"\]['"]/);

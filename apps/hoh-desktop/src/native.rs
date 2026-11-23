@@ -1007,14 +1007,44 @@ pub async fn browse_folders_for(
     if label != "main" {
         return Err("Folder browsing is available to the main window only.".into());
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or("The home folder is unknown.")?;
+    let home = folder_browser_home(
+        std::env::var_os("HOH_WINDOW_HOME"),
+        std::env::var_os("HOME"),
+    )?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::folders::list_folders(&partial_path, cwd.as_deref(), &home)
     })
     .await
     .map_err(|_| "Request interrupted.".to_owned())?
+}
+
+/// Resolve `~` for the folder browser. Isolated window launches can give Claude the person's real
+/// HOME while pinning browser discovery to the demo root. An explicit root is a security boundary:
+/// malformed or missing roots fail closed instead of silently falling back to ambient HOME.
+pub fn folder_browser_home(
+    explicit: Option<OsString>,
+    ambient: Option<OsString>,
+) -> Result<PathBuf, String> {
+    if let Some(value) = explicit {
+        if value.is_empty() {
+            return Err("The window home folder is empty.".into());
+        }
+        let root = PathBuf::from(value);
+        if !root.is_absolute() {
+            return Err("The window home folder must be an absolute path.".into());
+        }
+        let root = root
+            .canonicalize()
+            .map_err(|_| "The window home folder does not exist or cannot be read.".to_owned())?;
+        if !root.is_dir() {
+            return Err("The window home folder is not a directory.".into());
+        }
+        return Ok(root);
+    }
+    ambient
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "The home folder is unknown.".to_owned())
 }
 
 #[tauri::command]
