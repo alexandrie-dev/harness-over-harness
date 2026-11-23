@@ -103,6 +103,10 @@ export class HohHost {
   private readonly loadRetries: number;
   private stopped = false;
   private readonly threads = new Map<string, ThreadModel>();
+  /** Rows restored before the engine answers; its list/history replaces their cached metadata once available. */
+  private readonly restored = new Set<string>();
+  /** Histories already peeked successfully during startup; a cached row is retried until its log is readable. */
+  private readonly peeked = new Set<string>();
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
   private readonly questions = new Map<string, EngineQuestion>();
   private readonly shellSinks = new Set<StreamSink>();
@@ -173,14 +177,41 @@ export class HohHost {
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
+    // Last-known-good list metadata makes the first post-restart snapshot lossless even when the
+    // engine's first disk scan is temporarily incomplete. History still comes only from the engine.
+    for (const entry of Array.isArray(saved?.sessions) ? saved.sessions : []) {
+      const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+      const title = typeof entry?.title === 'string' ? entry.title.trim() : '';
+      const createdAt = timeOf(entry?.createdAt);
+      const updatedAt = timeOf(entry?.updatedAt);
+      if (!id || !title || createdAt === null || updatedAt === null || this.threads.has(id)) continue;
+      const projectId = entry?.projectId === HOH_PROJECT_ID || (typeof entry?.projectId === 'string' && this.folders.has(entry.projectId))
+        ? entry.projectId : this.homeOf(id);
+      const model = typeof entry?.model === 'string' && entry.model.trim() ? entry.model.trim() : this.model();
+      const thread = new ThreadModel({ id, title, createdAt, updatedAt, model, mode: this.mode, projectId });
+      thread.options = this.levels.get(id);
+      thread.archivedAt = entry?.archivedAt === null ? null : timeOf(entry?.archivedAt);
+      this.threads.set(id, thread);
+      this.restored.add(id);
+    }
+    if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.projectShown = true;
   }
 
   private save() {
     if (!this.storage) return;
+    const sessions = [...this.threads.values()].flatMap(thread => {
+      const shell = thread.shell();
+      // A local empty draft has not reached the engine and must not become a ghost after restart.
+      if (thread.loaded && shell.latestUserMessageAt === null) return [];
+      return [{
+        id: thread.id, title: shell.title, projectId: thread.projectId, model: thread.model,
+        createdAt: thread.createdAt, updatedAt: thread.updatedAt, archivedAt: thread.archivedAt,
+      }];
+    });
     const value = {
       version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
-      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels),
+      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels), sessions,
     };
     try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
   }
@@ -267,18 +298,22 @@ export class HohHost {
     if (this.engine.subscribeStatus) this.unsubscribers.push(await this.engine.subscribeStatus(status => {
       if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
     }));
-    const [, , sessionsRead] = await Promise.all([this.readDiscovery(), this.readAccess(), this.readSessions()]);
-    // The engine that was still starting answers nothing at first (and the window never asks again): go on asking in the background.
-    if (this.discovery === null || !sessionsRead) void this.retryLoad(this.discovery !== null, sessionsRead);
+    await Promise.all([this.readDiscovery(), this.readAccess(), this.readSessions()]);
+    // A successful first disk scan can still be incomplete while the previous process releases
+    // resources. Reconcile for the same bounded startup window used for an engine still starting.
+    void this.retryLoad(this.discovery !== null);
   }
 
   /** The reads of `load` that failed, repeated until the engine answers; what arrives late is announced to the window. */
-  private async retryLoad(discovered: boolean, sessionsRead: boolean) {
-    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && !(discovered && sessionsRead); attempt++) {
+  private async retryLoad(discovered: boolean) {
+    for (let attempt = 0; attempt < this.loadRetries && !this.stopped; attempt++) {
       await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
       if (this.stopped) return;
       if (!discovered) { await this.readDiscovery(); discovered = this.discovery !== null; if (discovered) { await this.readAccess(); this.configChanged(); } }
-      if (!sessionsRead) { sessionsRead = await this.readSessions(); if (sessionsRead) for (const id of this.threads.keys()) this.changed(id); }
+      const added = await this.readSessions();
+      if (added !== null) {
+        for (const id of added) this.changed(id);
+      }
     }
   }
 
@@ -294,17 +329,31 @@ export class HohHost {
     } catch { /* the engine has no Claude access setting: the default mode stays */ }
   }
 
-  private async readSessions(): Promise<boolean> {
+  private async readSessions(): Promise<string[] | null> {
     let sessions: any[] = [];
-    try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return false; }
+    try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return null; }
+    const added: string[] = [];
     for (const session of sessions) {
-      if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
+      if (typeof session?.id !== 'string' || !session.id) continue;
       const at = Number(session.updatedAt) || this.startedAt;
+      const existing = this.threads.get(session.id);
+      if (existing) {
+        if (this.restored.delete(session.id)) {
+          // The cache is only continuity for the first snapshot. Once this session is visible on
+          // disk, let its current list entry and history replace stale presentation metadata.
+          existing.title = typeof session.title === 'string' ? session.title : '';
+          existing.updatedAt = Math.max(existing.updatedAt, at);
+          added.push(session.id);
+        }
+        continue;
+      }
       this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
+      added.push(session.id);
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
-    await this.peekToday();
-    return true;
+    const peeked = await this.peekToday();
+    if (added.length || peeked) this.save();
+    return added;
   }
 
   /**
@@ -313,7 +362,8 @@ export class HohHost {
    */
   private async peekToday() {
     const today = new Date(this.now()).toDateString();
-    const recent = [...this.threads.values()].filter(thread => !thread.loaded && new Date(thread.updatedAt).toDateString() === today)
+    let changed = false;
+    const recent = [...this.threads.values()].filter(thread => !thread.loaded && !this.peeked.has(thread.id) && new Date(thread.updatedAt).toDateString() === today)
       .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
     await Promise.all(recent.map(async thread => {
       try {
@@ -328,10 +378,13 @@ export class HohHost {
         // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
         try { if ((await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
         thread.settleUnfinished(this.now());
+        this.peeked.add(thread.id);
+        changed = true;
         this.homeDirty = true;
       } catch { /* the chat is not on the home screen */ }
     }));
-    this.homeVersion++;
+    if (changed) this.homeVersion++;
+    return changed;
   }
 
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
@@ -451,6 +504,7 @@ export class HohHost {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
     const ids = [...this.dirty]; this.dirty.clear();
+    if (ids.length) this.save();
     if (this.homeDirty) { this.homeDirty = false; this.homeVersion++; for (const listener of this.homeListeners) listener(); }
     for (const id of ids) {
       const thread = this.threads.get(id);
