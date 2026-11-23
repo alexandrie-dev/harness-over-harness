@@ -132,7 +132,9 @@ export function ComposerControlsBar(props: {
     modelPickerIconClassName,
     getModelDisabledReason,
   } = props;
-  const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
+  const runtimeModesAvailable = compatibleRuntimeModeOptions.length > 0;
+  const accessMatchesDefault =
+    !runtimeModesAvailable || compatibleRuntimeMode === defaultRuntimeMode;
   const {
     accessDisplay,
     showModeBlock,
@@ -222,16 +224,20 @@ export function ComposerControlsBar(props: {
       triggerSuffix={effort.suffix}
       triggerDetail={effort.detail}
       triggerShortcuts={
-        pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
+        runtimeModesAvailable && pickerOwnsModeShortcut
+          ? "composer.effort composer.mode"
+          : "composer.effort"
       }
       effortColumn={<ComposerEffortColumn traits={traitsInput} />}
       footer={
-        <ComposerPickerFooter
-          traits={traitsInput}
-          runtimeMode={compatibleRuntimeMode}
-          runtimeModeOptions={compatibleRuntimeModeOptions}
-          onRuntimeModeChange={handleRuntimeModeChange}
-        />
+        traitsInput || runtimeModesAvailable ? (
+          <ComposerPickerFooter
+            traits={traitsInput}
+            runtimeMode={compatibleRuntimeMode}
+            runtimeModeOptions={compatibleRuntimeModeOptions}
+            onRuntimeModeChange={handleRuntimeModeChange}
+          />
+        ) : null
       }
       terminalOpen={terminalOpen}
       open={modelPickerOpen}
