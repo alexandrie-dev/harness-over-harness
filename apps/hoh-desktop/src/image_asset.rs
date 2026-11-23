@@ -1197,7 +1197,7 @@ mod tests {
         assert_refused(
             inspect_image(
                 ImageKind::Webp,
-                &webp_animation_with_bitstream(10, 11, 1, Some((10_000, 5_000))),
+                &webp_animation_with_bitstream(10, 11, 1, Some((20, 22))),
             )
             .map(|_| unreachable!()),
             "header is invalid",
