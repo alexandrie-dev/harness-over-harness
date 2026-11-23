@@ -183,6 +183,11 @@
       "web/components/T3AppIcon.tsx": "значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src"
     },
     "patched": {
+      "contracts/assets.ts": "превью отправленных изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP",
+      "web/components/chat/ChatComposer.tsx": "скрепка в поле ввода доступна для поддерживаемых Claude изображений без объявления generic file attachments",
+      "web/components/chat/ComposerAttachmentStrip.tsx": "диалог скрепки принимает только GIF, JPEG, PNG и WebP, показывает лимит 10 МиБ и использует общий путь addComposerAttachments",
+      "web/components/chat/SkillInlineText.tsx": "скрывает View instructions у навыка Claude: движок даёт имя, но не безопасный путь к файлу",
+      "web/components/ComposerPromptEditorTiptap.tsx": "скрывает открытие файла для навыка Claude с внутренним hoh-skill идентификатором",
       "web/routeTree.gen.ts": "выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются",
       "web/components/settings/settingsSearch.ts": "выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS)",
       "web/components/sidebar/SidebarChrome.tsx": "имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3",

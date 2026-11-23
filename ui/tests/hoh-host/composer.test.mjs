@@ -68,6 +68,21 @@ test('a picture: T3 gives the bytes, the host keeps them, the message carries th
   assert.match(failureOf(again).message, /no longer here/);
 });
 
+test('an attached image context link stays in the conversation but is not duplicated in Claude text', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  await client.call('assets.persistChatAttachments', { threadId: 'chat-ref', messageId: 'm-ref', attachments: [upload()] });
+  await newThread(client, 'chat-ref');
+  const text = 'Describe this\n![red.png](t3-context://v1/image/image_img-1)';
+  await client.call('orchestration.dispatchCommand', dispatch('chat-ref', 'm-ref', text, [{ type: 'image', id: 'img-1', name: 'red.png', mimeType: 'image/png', sizeBytes: PNG_BYTES }]));
+  assert.deepEqual(sent(engine, 'session/prompt').at(-1).params.contentBlocks, [
+    { type: 'image', data: PNG, mimeType: 'image/png', name: 'red.png' },
+    { type: 'text', text: 'Describe this' },
+  ]);
+  const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-ref' });
+  assert.equal(projection.messages.find(message => message.role === 'user').text, text);
+});
+
 test('a picture too big, of another type, or not what it says is refused with T3\'s words; nothing reaches the engine', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);
@@ -132,7 +147,7 @@ test('/ and $ before the first turn: the folder\'s snapshot is what Claude decla
   assert.equal(snapshot.cwd, DEFAULT_FOLDER);
   assert.equal(snapshot.slashCommandsPending, undefined);
   assert.deepEqual(snapshot.slashCommands, [{ name: 'review', description: 'Review a pull request', input: { hint: '[pr]' } }, { name: 'init' }]);
-  assert.deepEqual(snapshot.skills, [{ name: 'release-notes', path: 'release-notes', enabled: true, description: 'Write the release notes' }]);
+  assert.deepEqual(snapshot.skills, [{ name: 'release-notes', path: 'hoh-skill:release-notes', enabled: true, description: 'Write the release notes' }]);
   assert.equal(sent(engine, 'session/prompt').length, 0);
   assert.deepEqual(sent(engine, 'hoh/executor/commands').at(-1).params, { executor: 'claude', cwd: DEFAULT_FOLDER });
 
@@ -230,9 +245,8 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
   assert.equal((await host.receiveUpload(minted.relativeUrl, 'image/png', new Blob([png]))).status, 404);
   // T3 checks an uploaded picture before sending: held here, or T3's "not found" (it uploads again).
   const verified = await client.call('assets.createUrl', { resource: { _tag: 'attachment', attachmentId: minted.attachmentId } });
-  assert.equal(verified.relativeUrl, `/api/assets/attachment/${minted.attachmentId}`);
-  // contracts/assets.ts AssetCreateUrlResult.relativeUrl
-  assert.match(verified.relativeUrl, /^\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+$/u);
+  assert.match(verified.relativeUrl, /^blob:/);
+  assert.equal(Buffer.from(await (await fetch(verified.relativeUrl)).arrayBuffer()).toString('base64'), PNG);
   const lost = await client.request('assets.createUrl', { resource: { _tag: 'attachment', attachmentId: wrongType.attachmentId } });
   assert.equal(failureOf(lost)._tag, 'AssetAttachmentNotFoundError');
   // T3's server refusals for what cannot be a picture for Claude.
@@ -256,6 +270,14 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
     { type: 'image', data: PNG, mimeType: 'image/png', name: 'red.png' },
     { type: 'text', text: 'What is this?' },
   ]);
+  // T3 normally deletes the completed upload slot after send. The sent message, not that slot,
+  // owns the preview; a later/reminted asset lookup must still return readable bytes.
+  await client.call('attachments.delete', { attachmentId: minted.attachmentId });
+  const reminted = await client.call('assets.createUrl', { resource: { _tag: 'attachment', attachmentId: minted.attachmentId } });
+  assert.equal(reminted.relativeUrl, verified.relativeUrl);
+  assert.equal(Buffer.from(await (await fetch(reminted.relativeUrl)).arrayBuffer()).toString('base64'), PNG);
+  host.stop();
+  await assert.rejects(fetch(reminted.relativeUrl));
 });
 
 test('T3\'s XMLHttpRequest to the HoH address is answered in the window; any other goes to the platform', async () => {

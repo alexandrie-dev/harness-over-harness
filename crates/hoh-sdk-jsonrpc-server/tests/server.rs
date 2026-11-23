@@ -638,6 +638,33 @@ async fn rejects_an_unsupported_reasoning_effort_during_initialize() {
     );
     h.close().await;
 }
+
+#[tokio::test]
+async fn uses_the_initialized_cwd_as_the_fallback_for_sessions_without_an_origin() {
+    let h = Env::new().await;
+    let child = h.dir.path().join("initialized-project");
+    tokio::fs::create_dir(&child).await.unwrap();
+    let mut params = h.params();
+    params.cwd = child.to_string_lossy().into_owned();
+    h.server.initialize(params).await.unwrap();
+    assert_eq!(
+        h.ctx
+            .get::<hoh_working_directory::WorkingDirectoryKey>()
+            .unwrap()
+            .default_directory(),
+        child.to_string_lossy()
+    );
+    h.open("no-origin").await;
+    assert_eq!(
+        h.ctx
+            .get::<hoh_working_directory::WorkingDirectoryKey>()
+            .unwrap()
+            .get(h.agent("no-origin").session()),
+        child.to_string_lossy()
+    );
+    h.close().await;
+}
+
 #[tokio::test]
 async fn reports_no_adapter_when_the_llm_service_is_absent() {
     let k = hoh_kernel::Kernel::start();

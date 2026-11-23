@@ -283,6 +283,11 @@ Tailwind прежней оболочки её не сканирует (`@source 
 |---|---|---|
 | `web/components/T3Wordmark.tsx` | замена (наш файл) | знак T3 не берём: на его месте эмблема HoH (прозрачные растры src/assets/emblem-brand-*.png из emblem-a.webp, srcset 1×/1.5×/2×/3×) |
 | `web/components/T3AppIcon.tsx` | замена (наш файл) | значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src |
+| `contracts/assets.ts` | правка (`ui/src/t3/base-patches/contracts/assets.ts.patch`) | превью отправленных изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP |
+| `web/components/chat/ChatComposer.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ChatComposer.tsx.patch`) | скрепка доступна для изображений Claude и без возможности generic file attachments |
+| `web/components/chat/ComposerAttachmentStrip.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ComposerAttachmentStrip.tsx.patch`) | системный выбор файла ограничен GIF, JPEG, PNG и WebP; подсказка сообщает лимит изображения 10 МиБ; выбранные File идут в общий addComposerAttachments |
+| `web/components/chat/SkillInlineText.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/SkillInlineText.tsx.patch`) | View instructions скрыт для навыков Claude: движок сообщает имя, но не раскрывает безопасный путь к файлу |
+| `web/components/ComposerPromptEditorTiptap.tsx` | правка (`ui/src/t3/base-patches/web/components/ComposerPromptEditorTiptap.tsx.patch`) | редактор не предлагает открыть фиктивный hoh-skill путь навыка Claude |
 | `web/routeTree.gen.ts` | правка (`ui/src/t3/base-patches/web/routeTree.gen.ts.patch`) | выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются |
 | `web/components/settings/settingsSearch.ts` | правка (`ui/src/t3/base-patches/web/components/settings/settingsSearch.ts.patch`) | выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS) |
 | `web/components/sidebar/SidebarChrome.tsx` | правка (`ui/src/t3/base-patches/web/components/sidebar/SidebarChrome.tsx.patch`) | имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3 |

@@ -575,6 +575,9 @@ impl HarnessSdkJsonRpcServer {
                 Arc::new(TransportApprovalPeer(self.inner.transport.clone())),
             )?;
         }
+        if let Some(working_directory) = self.inner.ctx.get::<WorkingDirectoryKey>() {
+            working_directory.set_initial_default_directory(cwd.clone());
+        }
         {
             let mut state = lock(&self.inner.state);
             state.route = Route {
