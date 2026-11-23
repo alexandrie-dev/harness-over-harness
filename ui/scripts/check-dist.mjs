@@ -96,10 +96,12 @@ const GZIP_LIMIT = 430188;
 assert(compressed < GZIP_LIMIT, `window compressed text assets unexpectedly large: ${compressed} bytes`);
 // CSP окна (apps/hoh-desktop/tauri.conf.json; решение CEO 22.11 20:00): наружу закрыто всё. У каждой директивы — только
 // перечисленные источники; адрес сети, схема http(s)/ws(s), `*`, 'unsafe-eval' или директива не из списка роняют проверку.
+// T3 использует локальный WASM-подсветчик @pierre/highlights. WebKitGTK блокирует WebAssembly.Instance без узкого
+// 'wasm-unsafe-eval'; он разрешает компиляцию WASM, но не строковый JavaScript eval и не добавляет внешний источник.
 // Директивы без строки (media-src, worker-src, manifest-src …) берут default-src 'self'.
 const CSP_ALLOWED = {
   'default-src': ["'self'"],
-  'script-src': ["'self'"],
+  'script-src': ["'self'", "'wasm-unsafe-eval'"],
   // T3 пишет style="" в разметке и <style> тем оформления (Appearance).
   'style-src': ["'self'", "'unsafe-inline'"],
   // data: — шрифты, которые просмотр PDF в T3 (pdf.js) вшивает в страницу как data:font/opentype.
@@ -123,6 +125,8 @@ const csp = Object.fromEntries(security.csp.split(';').map(part => part.trim()).
   .map(part => { const [name, ...sources] = part.split(/\s+/); return [name, sources]; }));
 assert.deepEqual(csp['default-src'], ["'self'"], "CSP окна: default-src не 'self'");
 for (const name of CSP_REQUIRED) assert(name in csp, `CSP окна: нет ${name}`);
+assert.deepEqual(csp['script-src'], ["'self'", "'wasm-unsafe-eval'"],
+  "CSP окна: script-src должен разрешать только self и локальную компиляцию WASM");
 for (const [name, sources] of Object.entries(csp)) {
   assert(name in CSP_ALLOWED, `CSP окна: директива ${name} не из списка`);
   for (const source of sources) assert(CSP_ALLOWED[name].includes(source), `CSP окна: ${name} ${source} — источник не из списка`);
