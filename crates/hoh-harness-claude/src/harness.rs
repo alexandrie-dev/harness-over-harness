@@ -1345,6 +1345,8 @@ impl ExternalHarness for ClaudeHarness {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use serde_json::json;
 
     #[test]
