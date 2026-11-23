@@ -216,7 +216,7 @@ fn main() {
                     };
                     log(&json!({"stubEvent":"first-duplicate-action","id":duplicate_id.clone()}));
                     send(
-                        json!({"id":duplicate_id.clone(),"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","approvalId":"first","command":"printf first","cwd":"/work","reason":"first action"}}),
+                        json!({"id":duplicate_id.clone(),"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","approvalId":"first","command":"printf hello","cwd":"/work","reason":"first action"}}),
                     );
                     duplicate_after_answer = Some(duplicate_id);
                 } else if scenario == "foreign-thread-request" {
