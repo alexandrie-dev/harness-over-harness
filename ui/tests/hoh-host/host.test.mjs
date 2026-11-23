@@ -1187,6 +1187,12 @@ test('Add project immediately rehomes a conversation already classified in the b
   const moved = await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'background-folder' && value.thread.projectId === 'p-background', beforeCreate);
   assert.equal(moved.thread.projectId, 'p-background');
   assert.equal(host.home.entries().find(entry => entry.id === 'background-folder').projectId, 'p-background');
+  assert.equal(host.home.projectKey('p-background'), '/home/person/Projects/tools');
+  await client.call('projects.mutate', {
+    type: 'project.update', commandId: 'rename-background-project', projectId: 'p-background', title: 'Renamed tools',
+  });
+  assert.equal(host.home.projectTitle('p-background'), 'Renamed tools');
+  assert.equal(host.home.projectKey('p-background'), '/home/person/Projects/tools', 'renaming keeps the path-derived color key');
   host.stop();
 });
 

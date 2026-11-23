@@ -5,14 +5,23 @@
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
 import { useNavigate } from '@tanstack/react-router';
 import { CheckIcon, XIcon } from 'lucide-react';
-import { useEffect, useId, useState, useSyncExternalStore } from 'react';
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 
-import { ClaudeAI } from '~/components/Icons';
+import { ClaudeAI, OpenAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
+import {
+  getGroupAgentsByProject,
+  groupEntriesByProject,
+  subscribeGroupAgentsByProject,
+  type ProjectGroup,
+  updateProjectDisclosure,
+} from './grouping';
 import './home.css';
 
 interface Entry {
   id: string; title: string; projectId: string; state: 'working' | 'waiting' | 'done' | 'ended';
+  runner?: 'claude' | 'codex';
   turnOrdinal: number; canComplete?: boolean; interrupted?: boolean;
   startedAt: number; doneAt: number | null; steps: { done: number; total: number };
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
@@ -23,7 +32,7 @@ interface Agent {
   startedAt: number; doneAt: number | null; currentStep: string | null;
 }
 interface Home {
-  version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectTitle(id: string): string;
+  version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectTitle(id: string): string; projectKey(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
   complete(threadId: string): Promise<void>;
 }
@@ -60,7 +69,7 @@ export function requestLabel(request: { kind: string; requestKind: string | null
 const clock = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 
 
-interface View { host: Home | undefined; now: number; open(threadId: string): void; where(entry: Entry): string }
+interface View { host: Home | undefined; now: number; open(threadId: string): void; where(entry: Entry): string; projectKey(projectId: string): string }
 
 /** The executor's mark: Claude's logo from T3's set (the host runs only Claude). */
 const Mark = () => <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
@@ -141,11 +150,28 @@ function Card({ entry, view, children }: { entry: Entry; view: View; children: R
     </article>
   );
 }
+function EntryCard({ entry, view }: { entry: Entry; view: View }) {
+  if (entry.state === 'done') {
+    return <Card entry={entry} view={view}><span className="hoh-card__state"><b>Done</b><span>{clock(entry.doneAt ?? 0)}</span></span></Card>;
+  }
+  return (
+    <Card entry={entry} view={view}>
+      <span className="hoh-card__state">
+        <b>{stateLabel(entry)}</b>
+        <span className="hoh-card__state-actions">
+          {entry.canComplete ? <Button className="hoh-card__complete" variant="ghost-muted" size="micro" onClick={() => void view.host?.complete(entry.id)}><CheckIcon aria-hidden />Mark done</Button> : null}
+          <span>{elapsed(entry.startedAt, view.now)}</span>
+        </span>
+      </span>
+      <Steps entry={entry} />
+    </Card>
+  );
+}
 const DoneCards = ({ done, view }: { done: Entry[]; view: View }) => done.length === 0 ? null : (
   <section>
     <h2 className="hoh-home__label">Done <span className="hoh-home__count">{done.length}</span></h2>
     <div className="hoh-home__cards">
-      {done.map((entry) => <Card key={entry.id} entry={entry} view={view}><span className="hoh-card__state"><b>Done</b><span>{clock(entry.doneAt ?? 0)}</span></span></Card>)}
+      {done.map((entry) => <EntryCard key={entry.id} entry={entry} view={view} />)}
     </div>
   </section>
 );
@@ -161,22 +187,224 @@ function Cards({ working, done, asking, view }: Lists) {
           <section>
             <h2 className="hoh-home__label">Now <Count list={working} /></h2>
             <div className="hoh-home__cards">
-              {working.slice(0, 6).map((entry) => (
-                <Card key={entry.id} entry={entry} view={view}>
-                  <span className="hoh-card__state">
-                    <b>{stateLabel(entry)}</b>
-                    <span className="hoh-card__state-actions">
-                      {entry.canComplete ? <Button className="hoh-card__complete" variant="ghost-muted" size="micro" onClick={() => void view.host?.complete(entry.id)}><CheckIcon aria-hidden />Mark done</Button> : null}
-                      <span>{elapsed(entry.startedAt, view.now)}</span>
-                    </span>
-                  </span>
-                  <Steps entry={entry} />
-                </Card>
-              ))}
+              {working.slice(0, 6).map((entry) => <EntryCard key={entry.id} entry={entry} view={view} />)}
             </div>
           </section>
         ) : null}
         <DoneCards done={done} view={view} />
+      </div>
+      {asking.length > 0 ? (
+        <aside className="hoh-home__side">
+          <div className="hoh-ask">
+            <div className="hoh-ask__head"><span>Needs your answer</span><span className="hoh-ask__count">{asking.length}</span></div>
+            {asking.map((entry) => (
+              <div key={entry.request!.id} className="hoh-ask__block">
+                <div className="hoh-ask__where"><span><Mark />{entry.title}</span><span>{elapsed(entry.startedAt, view.now)}</span></div>
+                <Ask entry={entry} view={view} />
+              </div>
+            ))}
+          </div>
+        </aside>
+      ) : null}
+    </div>
+  );
+}
+
+interface FolderPanelPosition {
+  left: number;
+  top?: number;
+  bottom?: number;
+  width: number;
+  maxHeight: number;
+}
+
+export function folderPanelPosition(rect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>, width: number, height: number): FolderPanelPosition {
+  const margin = 16;
+  const gap = 8;
+  const panelWidth = Math.max(280, Math.min(752, width - margin * 2));
+  const left = Math.max(margin, Math.min(rect.left, width - panelWidth - margin));
+  const below = height - rect.bottom - gap - margin;
+  const above = rect.top - gap - margin;
+  return below >= Math.min(240, above)
+    ? { left, top: rect.bottom + gap, width: panelWidth, maxHeight: Math.max(144, below) }
+    : { left, bottom: height - rect.top + gap, width: panelWidth, maxHeight: Math.max(144, above) };
+}
+
+function Runners({ runners }: { runners: ProjectGroup<Entry>['runners'] }) {
+  const visible = runners.slice(0, 3);
+  return (
+    <span className="hoh-project__runners" aria-label={`Runners: ${runners.join(', ')}`}>
+      {visible.map((runner, index) => (
+        <span key={`${runner}-${index}`} className="hoh-project__runner" title={runner === 'codex' ? 'Codex' : 'Claude'}>
+          {runner === 'codex' ? <OpenAI aria-hidden /> : <ClaudeAI aria-hidden />}
+        </span>
+      ))}
+      {runners.length > visible.length ? <span className="hoh-project__runner-more">+{runners.length - visible.length}</span> : null}
+    </span>
+  );
+}
+
+function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: {
+  group: ProjectGroup<Entry>;
+  expanded: boolean;
+  setButton(node: HTMLButtonElement | null): void;
+  onEnter(): void;
+  onLeave(): void;
+  onToggle(): void;
+}) {
+  const panelId = `hoh-project-agents-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+  const style = { '--hoh-project-color': `var(--hoh-project-color-${group.color})` } as CSSProperties;
+  const agentLabel = `${group.entries.length} agent${group.entries.length === 1 ? '' : 's'}`;
+  const waitingLabel = `${group.waiting} waiting`;
+  return (
+    <button
+      ref={setButton}
+      type="button"
+      className="hoh-project"
+      data-waiting={group.waiting > 0 || undefined}
+      data-expanded={expanded || undefined}
+      aria-expanded={expanded}
+      aria-controls={panelId}
+      onClick={onToggle}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      style={style}
+    >
+      <span className="hoh-project__top">
+        <span className="hoh-project__icon" aria-hidden><i /><b /><em /></span>
+        <span className="hoh-project__heading">
+          <span className="hoh-project__counts"><span>{agentLabel}</span><i /><span>{waitingLabel}</span></span>
+          <span className="hoh-project__title">{group.title}</span>
+        </span>
+      </span>
+      <span className="hoh-project__actions">
+        <span className="hoh-project__chip"><i />{group.waiting > 0 ? 'Needs answer' : 'Active'}</span>
+        <span className="hoh-project__more" aria-hidden>⋯</span>
+      </span>
+      <span className="hoh-project__footer">
+        <span className="hoh-project__metric">
+          <small>Agents</small>
+          <span className="hoh-project__segments" aria-label={`${group.states.working} working, ${group.states.waiting} waiting, ${group.states.done} done`}>
+            {group.states.working > 0 ? <i data-state="working" style={{ flexGrow: group.states.working }} /> : null}
+            {group.states.waiting > 0 ? <i data-state="waiting" style={{ flexGrow: group.states.waiting }} /> : null}
+            {group.states.done > 0 ? <i data-state="done" style={{ flexGrow: group.states.done }} /> : null}
+          </span>
+        </span>
+        <span className="hoh-project__metric hoh-project__metric--runners"><small>Runners</small><Runners runners={group.runners} /></span>
+      </span>
+    </button>
+  );
+}
+
+function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view: View }) {
+  const [disclosure, setDisclosure] = useState({ hovered: null as string | null, pinned: null as string | null });
+  const [position, setPosition] = useState<FolderPanelPosition | null>(null);
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  const panel = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openId = disclosure.pinned ?? disclosure.hovered;
+  const openGroup = groups.find((group) => group.id === openId) ?? null;
+  const openGroupId = openGroup?.id ?? null;
+  const groupLayoutKey = groups.map((group) => group.id).join('\u0000');
+
+  const cancelClose = () => { if (closeTimer.current) clearTimeout(closeTimer.current); closeTimer.current = null; };
+  const enter = (id: string) => { cancelClose(); setDisclosure((state) => updateProjectDisclosure(state, { type: 'hover', id })); };
+  const leave = () => {
+    cancelClose();
+    if (disclosure.pinned === null) closeTimer.current = setTimeout(() => setDisclosure((state) => updateProjectDisclosure(state, { type: 'leave' })), 180);
+  };
+
+  useEffect(() => () => cancelClose(), []);
+  useEffect(() => {
+    if (!openId || !openGroupId) {
+      setPosition(null);
+      if (openId) setDisclosure((state) => updateProjectDisclosure(state, { type: 'close' }));
+      return;
+    }
+    const update = () => {
+      const trigger = buttons.current.get(openId);
+      if (trigger) setPosition(folderPanelPosition(trigger.getBoundingClientRect(), window.innerWidth, window.innerHeight));
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+  }, [openId, groupLayoutKey, openGroupId]);
+  useEffect(() => {
+    if (!openId) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || panel.current?.contains(target) || buttons.current.get(openId)?.contains(target)) return;
+      setDisclosure((state) => updateProjectDisclosure(state, { type: 'close' }));
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const trigger = buttons.current.get(openId);
+      setDisclosure((state) => updateProjectDisclosure(state, { type: 'close' })); trigger?.focus();
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', escape); };
+  }, [openId]);
+
+  return (
+    <>
+      <div className="hoh-projects">
+        {groups.map((group) => (
+          <FolderCard
+            key={group.id}
+            group={group}
+            expanded={openId === group.id}
+            setButton={(node) => { if (node) buttons.current.set(group.id, node); else buttons.current.delete(group.id); }}
+            onEnter={() => enter(group.id)}
+            onLeave={leave}
+            onToggle={() => {
+              cancelClose();
+              setDisclosure((state) => updateProjectDisclosure(state, { type: 'toggle', id: group.id }));
+            }}
+          />
+        ))}
+      </div>
+      {openGroup && position ? createPortal(
+        <div
+          ref={panel}
+          id={`hoh-project-agents-${openGroup.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
+          className="hoh-project-popover"
+          data-project={openGroup.id}
+          onMouseEnter={cancelClose}
+          onMouseLeave={leave}
+          style={{ left: position.left, top: position.top, bottom: position.bottom, width: position.width, maxHeight: position.maxHeight }}
+        >
+          <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.entries.length} agents</small></div>
+          <div className="hoh-project-popover__cards">
+            {openGroup.entries.map((entry, index) => (
+              <div key={entry.id} className="hoh-project-popover__agent" style={{ '--hoh-agent-index': index } as CSSProperties}>
+                <EntryCard entry={entry} view={view} />
+              </div>
+            ))}
+          </div>
+        </div>, document.body,
+      ) : null}
+    </>
+  );
+}
+
+function GroupedCards({ working, done, asking, view }: Lists) {
+  const groups = groupEntriesByProject(
+    [...working, ...done],
+    (projectId) => view.host?.projectTitle(projectId) ?? 'No project',
+    view.projectKey,
+  );
+  return (
+    <div className="hoh-home__inner">
+      <div className="hoh-home__main">
+        <Head now={view.now} />
+        {groups.length > 0 ? (
+          <section>
+            <h2 className="hoh-home__label">Projects <span className="hoh-home__count">{groups.length}</span></h2>
+            <ProjectFolders groups={groups} view={view} />
+          </section>
+        ) : null}
       </div>
       {asking.length > 0 ? (
         <aside className="hoh-home__side">
@@ -210,6 +438,7 @@ export function HomeBody() {
   const host = home();
   // One snapshot per change of any chat; entries are read after it.
   useSyncExternalStore(host?.subscribe ?? (() => () => {}), host?.version ?? (() => 0));
+  const grouped = useSyncExternalStore(subscribeGroupAgentsByProject, getGroupAgentsByProject, () => false);
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(timer); }, []);
   const navigate = useNavigate();
@@ -222,11 +451,12 @@ export function HomeBody() {
     host, now,
     open: (threadId) => void navigate({ to: '/$environmentId/$threadId', params: { environmentId: ENVIRONMENT_ID, threadId } }),
     where: (entry) => host?.projectTitle(entry.projectId) ?? '',
+    projectKey: (projectId) => host?.projectKey(projectId) ?? projectId,
   };
   const lists = { working, done, asking, view };
   return (
     <div className="hoh-home" data-hoh-home-body="" data-busy={working.length + done.length + asking.length > 0 || undefined}>
-      <Cards {...lists} />
+      {grouped ? <GroupedCards {...lists} /> : <Cards {...lists} />}
     </div>
   );
 }
