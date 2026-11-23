@@ -38,8 +38,10 @@ test('handshake: config snapshot, probe, settings, ping; only Claude is offered'
   assert.equal(first.config.providers[0].status, 'ready');
   assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'full-access']);
   assert.equal(first.config.providers[0].showInteractionModeToggle, true);
+  assert.equal(first.config.providers[0].reportsContextWindow, true);
   assert.deepEqual(first.config.settings.defaultModelSelection, { instanceId: 'claudeAgent', model: 'claude-sonnet' });
   assert.equal(first.config.settings.defaultRuntimeMode, 'approval-required');
+  assert.deepEqual(first.config.settings.threadDetailsItems, { context: true });
   // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
   assert.deepEqual(Object.keys(first.config.environment.capabilities).sort(), ['connectionProbe', 'inlineMessageContext', 'repositoryIdentity', 'threadForceStop']);
   assert.deepEqual(await client.call('server.probe', {}), {});
@@ -171,6 +173,36 @@ test('Plan mode follows the T3 composer command and ExitPlanMode becomes its pro
   await client.call('orchestration.dispatchCommand', { type: 'thread.interaction-mode.set', commandId: 'p2', threadId: 'thread-plan', interactionMode: 'default' });
   const ordinary = await thread.until(value => value.kind === 'snapshot' && value.projection.thread.interactionMode === 'default');
   assert.equal(ordinary.projection.thread.interactionMode, 'default');
+});
+
+test('Claude stream usage reaches T3 providerTurns with its exact context fill', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  await client.call('orchestration.launchThread', {
+    commandId: 'u0', threadId: 'thread-usage', projectId: 'hoh-project', title: 'Usage',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    initialMessage: { messageId: 'm-usage', text: 'Покажи контекст', attachments: [] },
+  });
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'thread-usage' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitEvent('thread-usage', 'turn/usage', {
+    usage: { inputTokens: 200, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, outputTokens: 9 },
+  });
+  const live = await stream.until(value => value.kind === 'snapshot' && value.projection.providerTurns.length === 1);
+  assert.equal(live.projection.providerTurns[0].status, 'running');
+  assert.equal(live.projection.providerTurns[0].tokenUsage.usedTokens, 309);
+  assert.equal(live.projection.providerTurns[0].tokenUsage.maxTokens, undefined);
+  engine.emitEvent('thread-usage', 'turn/usage', {
+    usage: { inputTokens: 200, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, outputTokens: 9, maxTokens: 200_000 },
+  });
+  engine.emitEvent('thread-usage', 'turn/end', {
+    reason: { kind: 'completed' },
+    usage: { inputTokens: 200, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, outputTokens: 9, maxTokens: 200_000 },
+  });
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.providerTurns[0]?.status === 'completed' && value.projection.providerTurns[0]?.tokenUsage.maxTokens === 200_000);
+  const usage = snapshot.projection.providerTurns[0].tokenUsage;
+  assert.deepEqual(usage, { usedTokens: 309, maxTokens: 200_000, inputTokens: 300, cachedInputTokens: 60, outputTokens: 9, reasoningOutputTokens: 0, updatedAt: usage.updatedAt });
+  assert.equal((usage.usedTokens / usage.maxTokens) * 100, 0.1545);
 });
 
 test('a follow-up message goes to the same chat; Stop is the engine\'s cancel and the run ends interrupted', async () => {

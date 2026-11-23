@@ -420,6 +420,16 @@ pub enum HarnessEvent {
     Status {
         text: String,
     },
+    /// The latest root model-message context snapshot. These are per-message counts, not the
+    /// aggregate usage of every model call in a turn.
+    Usage {
+        input_tokens: u64,
+        cache_creation_input_tokens: u64,
+        cache_read_input_tokens: u64,
+        output_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_tokens: Option<u64>,
+    },
     /// A step began: a command, a file change, another tool.
     ItemStarted {
         item_id: String,

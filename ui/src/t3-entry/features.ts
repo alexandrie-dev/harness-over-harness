@@ -96,8 +96,7 @@ export const HIDDEN_SELECTORS: readonly string[] = [
   '[data-testid="sidebar-settled-header"]',
   '[data-thread-item] button[aria-label="Settle thread"]',
   '[data-thread-item] button[aria-label="Snooze thread"]',
-  // Две кнопки справа в шапке разговора (HOH-41, основатель: «это нам не нужно»); на главной (пустой черновик) шапки с «No project / New thread» нет.
-  '[aria-label="Toggle thread details panel"]',
+  // Правая общая панель остаётся скрытой. Thread details теперь нужна: в ней штатный компонент T3 показывает контекст Claude.
   '[aria-label="Toggle right panel"]',
   'body:has([data-hoh-home-body]) header:has(nav[aria-label="Thread breadcrumb"])',
 ];

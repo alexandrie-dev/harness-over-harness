@@ -145,6 +145,51 @@ async fn plan_mode_captures_exit_plan_without_asking_for_permission() {
     assert_eq!(args[at + 1], "plan");
 }
 
+#[tokio::test]
+async fn context_usage_is_the_last_root_message_snapshot_not_aggregate_result_usage() {
+    let env = Env::new();
+    let mut started = start(&env, None).await;
+    prompt(&started.session, "turn-usage", "usage");
+    let events = until(&mut started.events, |event| {
+        matches!(event, HarnessEvent::TurnCompleted { .. })
+    })
+    .await;
+    let usage_events: Vec<&HarnessEvent> = events
+        .iter()
+        .filter(|event| matches!(event, HarnessEvent::Usage { .. }))
+        .collect();
+    assert_eq!(usage_events.len(), 5, "{usage_events:?}");
+    assert!(matches!(
+        usage_events[0],
+        HarnessEvent::Usage {
+            input_tokens: 100,
+            output_tokens: 1,
+            max_tokens: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        usage_events[3],
+        HarnessEvent::Usage {
+            input_tokens: 200,
+            cache_creation_input_tokens: 40,
+            cache_read_input_tokens: 60,
+            output_tokens: 9,
+            max_tokens: None,
+        }
+    ));
+    assert!(matches!(
+        usage_events[4],
+        HarnessEvent::Usage {
+            input_tokens: 200,
+            cache_creation_input_tokens: 40,
+            cache_read_input_tokens: 60,
+            output_tokens: 9,
+            max_tokens: Some(200_000),
+        }
+    ));
+}
+
 fn prompt(session: &Arc<dyn HarnessSession>, turn: &str, text: &str) {
     let fut = session.prompt(PromptParams {
         session_id: "hoh-1".into(),

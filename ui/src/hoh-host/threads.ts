@@ -22,7 +22,8 @@ function argumentsOf(value: unknown): Record<string, any> {
 
 type Status = 'idle' | 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 type RunStatus = 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'cancelled';
-interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null }
+interface TokenUsage { usedTokens: number; maxTokens?: number; inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; updatedAt: string }
+interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; tokenUsage?: TokenUsage }
 type Item = Record<string, any> & { id: string; type: string; status: Status; runId: string | null; ordinal: number };
 interface Message { id: string; runId: string | null; role: 'user' | 'assistant' | 'system'; text: string; streaming: boolean; createdAt: number; updatedAt: number }
 interface Request {
@@ -305,12 +306,26 @@ export class ThreadModel {
     this.settleItem(item, failed ? 'failed' : 'completed', at);
   }
 
-  private endTurn(reason: string, at: number, error?: unknown) {
+  private updateUsage(rawUsage: unknown, at: number) {
+    const run = this.currentRun();
+    const usage = record(rawUsage);
+    const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    const input = count(usage.inputTokens); const created = count(usage.cacheCreationInputTokens); const cached = count(usage.cacheReadInputTokens); const output = count(usage.outputTokens);
+    const max = count(usage.maxTokens);
+    if (run && input !== null && created !== null && cached !== null && output !== null) {
+      const inputTokens = input + created + cached;
+      const maxTokens = max !== null && max > 0 ? max : run.tokenUsage?.maxTokens;
+      run.tokenUsage = { usedTokens: inputTokens + output, ...(maxTokens ? { maxTokens } : {}), inputTokens, cachedInputTokens: cached, outputTokens: output, reasoningOutputTokens: 0, updatedAt: iso(at) };
+    }
+  }
+
+  private endTurn(reason: string, at: number, error?: unknown, rawUsage?: unknown) {
     this.reopened = null;
     const run = this.currentRun();
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
     this.stopRequested = false;
     if (run && (run.status === 'running' || run.status === 'waiting')) { run.status = status; run.completedAt = at; }
+    this.updateUsage(rawUsage, at);
     for (const item of this.items) {
       if (item.status === 'running' || item.status === 'waiting' || item.status === 'pending')
         this.settleItem(item, item.type === 'assistant_message' ? 'completed' : status === 'completed' ? 'completed' : 'interrupted', at);
@@ -354,7 +369,8 @@ export class ThreadModel {
         this.running = true; this.settledByGuess = false;
         break;
       }
-      case 'turn/end': this.endTurn(text(record(data.reason).kind), at, record(data.reason).error); this.engineRunning = false; this.settledByGuess = false; break;
+      case 'turn/usage': this.updateUsage(data.usage, at); break;
+      case 'turn/end': this.endTurn(text(record(data.reason).kind), at, record(data.reason).error, data.usage); this.engineRunning = false; this.settledByGuess = false; break;
       case 'assistant/message': {
         const message = record(data.message);
         if (!text(message.id)) return false;
@@ -553,7 +569,12 @@ export class ThreadModel {
         startedAt: run.startedAt === null ? null : iso(run.startedAt), completedAt: run.completedAt === null ? null : iso(run.completedAt),
         checkpointId: null, contextHandoffId: null,
       })),
-      attempts: [], nodes: [], subagents: [], providerSessions: [], providerThreads: [], providerTurns: [],
+      attempts: [], nodes: [], subagents: [], providerSessions: [], providerThreads: [],
+      providerTurns: this.runs.filter(run => run.tokenUsage).map(run => ({
+        id: 'provider-turn-' + run.id, providerThreadId: 'hoh-' + this.id, nodeId: NODE_ID, runAttemptId: null,
+        nativeTurnRef: null, ordinal: run.ordinal, status: run.status, startedAt: run.startedAt === null ? null : iso(run.startedAt),
+        completedAt: run.completedAt === null ? null : iso(run.completedAt), tokenUsage: { ...run.tokenUsage! }, model: run.model,
+      })),
       runtimeRequests: this.requests.map(request => ({
         id: request.id, nodeId: NODE_ID, providerTurnId: null, nativeRequestRef: null, kind: request.kind, status: request.status,
         responseCapability: { type: 'live', providerSessionId: 'hoh-' + this.id },

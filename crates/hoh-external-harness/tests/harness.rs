@@ -570,6 +570,23 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
 }
 
 #[tokio::test]
+async fn context_usage_is_broadcast_while_the_turn_is_running_and_kept_at_the_end() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let agent = env.create("s-usage").await;
+    turn(&agent, "usage").await;
+    let updates = of_type(&agent, "turn/usage");
+    assert_eq!(updates.len(), 2, "{updates:?}");
+    assert_eq!(updates[0]["usage"]["inputTokens"], 100);
+    assert_eq!(updates[0]["usage"]["maxTokens"], Value::Null);
+    assert_eq!(updates[1]["usage"]["inputTokens"], 200);
+    assert_eq!(updates[1]["usage"]["maxTokens"], 200_000);
+    let end = of_type(&agent, "turn/end").pop().expect("turn end");
+    assert_eq!(end["usage"], updates[1]["usage"]);
+    env.close().await;
+}
+
+#[tokio::test]
 async fn restart_resumes_the_saved_native_session() {
     let dirs = dirs();
     let env = env(&dirs).await;

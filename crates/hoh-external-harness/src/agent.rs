@@ -494,13 +494,14 @@ impl ExternalAgent {
                 json!({"kind": "error", "error": {"message": failure.message, "code": failure.code}})
             }
         };
+        let mut end = json!({"turn": turn, "reason": reason});
+        if let Some(usage) = log.usage {
+            end["usage"] = json!(usage);
+        }
         let closed = self
             .session
             .append("step/end", json!({"turn": turn, "step": step}), None)
-            .and_then(|_| {
-                self.session
-                    .append("turn/end", json!({"turn": turn, "reason": reason}), None)
-            });
+            .and_then(|_| self.session.append("turn/end", end, None));
         if let Err(error) = closed {
             self.ctx
                 .logger()
@@ -1249,6 +1250,17 @@ struct TurnLog {
     /// The harness opened this turn (`turn-started` with its id). A request before that was made
     /// between turns, whenever it reaches HoH: it is withdrawn, nobody is asked.
     opened: bool,
+    usage: Option<HarnessUsage>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessUsage {
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    output_tokens: u64,
+    max_tokens: Option<u64>,
 }
 
 impl TurnLog {
@@ -1272,6 +1284,7 @@ impl TurnLog {
             allowed: Arc::default(),
             broken: false,
             opened: false,
+            usage: None,
         }
     }
 
@@ -1356,6 +1369,32 @@ impl TurnLog {
                 }
             }
             HarnessEvent::Status { .. } => {}
+            HarnessEvent::Usage {
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                output_tokens,
+                max_tokens,
+            } => {
+                let usage = HarnessUsage {
+                    input_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens,
+                    output_tokens,
+                    max_tokens,
+                };
+                // Usage is a live projection, not merely turn-end accounting. Persisting the
+                // snapshot also broadcasts it through session.event so T3 can repaint its native
+                // context component while Claude is still streaming.
+                if let Err(error) = self.agent.session.append(
+                    "turn/usage",
+                    json!({"turn": self.turn, "usage": usage}),
+                    None,
+                ) {
+                    self.warn("cannot record context usage", error);
+                }
+                self.usage = Some(usage);
+            }
             // Sent before the harness took this turn's prompt: the request belongs to the time
             // between turns (after the last turn ended), even when it reaches HoH only now. It is
             // withdrawn like one found before the prompt, never put to the user as this turn's.

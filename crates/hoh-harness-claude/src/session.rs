@@ -30,6 +30,34 @@ fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
+fn token(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(Value::as_u64)
+}
+
+fn stream_usage(value: &Value) -> StreamUsage {
+    StreamUsage {
+        input_tokens: token(value, "input_tokens").unwrap_or(0),
+        cache_creation_input_tokens: token(value, "cache_creation_input_tokens").unwrap_or(0),
+        cache_read_input_tokens: token(value, "cache_read_input_tokens").unwrap_or(0),
+        output_tokens: token(value, "output_tokens").unwrap_or(0),
+    }
+}
+
+fn context_window(result: &Value, model: Option<&str>) -> Option<u64> {
+    let usage = result.get("modelUsage")?.as_object()?;
+    let of = |entry: &Value| token(entry, "contextWindow").filter(|value| *value > 0);
+    model
+        .and_then(|model| usage.get(model))
+        .and_then(of)
+        .or_else(|| {
+            (usage.len() == 1)
+                .then(|| usage.values().next())
+                .flatten()
+                .and_then(of)
+        })
+        .or_else(|| usage.values().filter_map(of).max())
+}
+
 /// What a held `can_use_tool` request is, until HoH answers it.
 #[derive(Clone)]
 enum Pending {
@@ -84,6 +112,34 @@ struct State {
     /// This CLI has named a prompt of this session by its uuid (an echo in a `result`, or a
     /// `command_lifecycle`): T3 `promptEchoMode` other than `unknown`.
     echoes: bool,
+    /// The model named by system/init, used to select its context window from result.modelUsage.
+    model: Option<String>,
+    /// The latest root assistant message's per-message usage (never result.usage, which aggregates
+    /// multiple model calls in a turn).
+    stream_usage: Option<StreamUsage>,
+    /// The last model context window Claude reported. The CLI supplies this on a result, so the
+    /// first turn gains it at completion and later streaming snapshots can reuse it immediately.
+    context_window: Option<u64>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct StreamUsage {
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    output_tokens: u64,
+}
+
+async fn emit_usage(inner: &Inner, usage: StreamUsage, max_tokens: Option<u64>) {
+    inner
+        .emit(HarnessEvent::Usage {
+            input_tokens: usage.input_tokens,
+            cache_creation_input_tokens: usage.cache_creation_input_tokens,
+            cache_read_input_tokens: usage.cache_read_input_tokens,
+            output_tokens: usage.output_tokens,
+            max_tokens,
+        })
+        .await;
 }
 
 struct Inner {
@@ -506,6 +562,9 @@ async fn handle_system(inner: &Inner, message: &Value) {
     if text(message, "subtype") != Some("init") {
         return;
     }
+    if let Some(model) = text(message, "model") {
+        lock(&inner.state).model = Some(model.to_owned());
+    }
     if let Some(id) = text(message, "session_id")
         && id != lock(&inner.state).native
     {
@@ -534,7 +593,48 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                 .get("message")
                 .and_then(|m| text(m, "id"))
                 .map(str::to_owned);
-            lock(&inner.state).message_id = id;
+            let usage = event
+                .get("message")
+                .and_then(|message| message.get("usage"))
+                .map(stream_usage);
+            let max_tokens = {
+                let mut state = lock(&inner.state);
+                state.message_id = id;
+                state.stream_usage = usage;
+                state.context_window
+            };
+            if let Some(usage) = usage {
+                emit_usage(inner, usage, max_tokens).await;
+            }
+        }
+        Some("message_delta") => {
+            let Some(delta) = event.get("usage") else {
+                return;
+            };
+            let snapshot = {
+                let mut state = lock(&inner.state);
+                let max_tokens = state.context_window;
+                if let Some(usage) = state.stream_usage.as_mut() {
+                    if let Some(value) = token(delta, "input_tokens") {
+                        usage.input_tokens = value;
+                    }
+                    if let Some(value) = token(delta, "cache_creation_input_tokens") {
+                        usage.cache_creation_input_tokens = value;
+                    }
+                    if let Some(value) = token(delta, "cache_read_input_tokens") {
+                        usage.cache_read_input_tokens = value;
+                    }
+                    if let Some(value) = token(delta, "output_tokens") {
+                        usage.output_tokens = value;
+                    }
+                    Some((*usage, max_tokens))
+                } else {
+                    None
+                }
+            };
+            if let Some((usage, max_tokens)) = snapshot {
+                emit_usage(inner, usage, max_tokens).await;
+            }
         }
         Some("content_block_delta") => {
             let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
@@ -865,7 +965,11 @@ fn of_another_turn(state: &mut State, message: &Value) -> bool {
 }
 
 async fn handle_result(inner: &Inner, message: &Value) {
-    let (turn, interrupted, open, withdrawn, auth_failed) = {
+    let reported_context_window = {
+        let model = lock(&inner.state).model.clone();
+        context_window(message, model.as_deref())
+    };
+    let (turn, interrupted, open, withdrawn, auth_failed, usage, max_tokens) = {
         let mut state = lock(&inner.state);
         if state.turn.is_some() && of_another_turn(&mut state, message) {
             return;
@@ -875,6 +979,9 @@ async fn handle_result(inner: &Inner, message: &Value) {
         state.declined.clear();
         state.subagent_tools.clear();
         state.consumed.clear();
+        if reported_context_window.is_some() {
+            state.context_window = reported_context_window;
+        }
         let withdrawn: Vec<String> = state.pending.drain().map(|(id, _)| id).collect();
         (
             state.turn.take(),
@@ -882,6 +989,8 @@ async fn handle_result(inner: &Inner, message: &Value) {
             open,
             withdrawn,
             std::mem::take(&mut state.auth_failed),
+            state.stream_usage.take(),
+            state.context_window,
         )
     };
     for request_id in withdrawn {
@@ -902,6 +1011,9 @@ async fn handle_result(inner: &Inner, message: &Value) {
     let Some(turn_id) = turn else {
         return;
     };
+    if let Some(usage) = usage {
+        emit_usage(inner, usage, max_tokens).await;
+    }
     let failed = message.get("is_error").and_then(Value::as_bool) == Some(true)
         || text(message, "subtype").is_some_and(|subtype| subtype != "success");
     let event = if interrupted {

@@ -255,6 +255,10 @@ impl Stub {
         self.stream(json!({ "type": "message_start", "message": { "id": message_id, "role": "assistant" } }));
     }
 
+    fn start_message_with_usage(&self, message_id: &str, usage: Value) {
+        self.stream(json!({ "type": "message_start", "message": { "id": message_id, "role": "assistant", "usage": usage } }));
+    }
+
     /// Ask for permission and wait for the answer; `true` when allowed.
     fn ask(&mut self, tool: &str, tool_id: &str, input: &Value) -> Option<Value> {
         if self.no_callback {
@@ -340,6 +344,35 @@ impl Stub {
         }
         self.system_init();
         let message_id = self.id("msg");
+        if text == "usage" {
+            self.start_message_with_usage(
+                &message_id,
+                json!({
+                    "input_tokens": 100, "cache_creation_input_tokens": 20,
+                    "cache_read_input_tokens": 30, "output_tokens": 1
+                }),
+            );
+            self.stream(json!({ "type": "message_delta", "usage": { "output_tokens": 7 } }));
+            let final_message = self.id("msg");
+            self.start_message_with_usage(
+                &final_message,
+                json!({
+                    "input_tokens": 200, "cache_creation_input_tokens": 40,
+                    "cache_read_input_tokens": 60, "output_tokens": 2
+                }),
+            );
+            self.stream(json!({ "type": "message_delta", "usage": {
+                "input_tokens": null, "cache_creation_input_tokens": null,
+                "cache_read_input_tokens": null, "output_tokens": 9
+            } }));
+            write_line(&json!({
+                "type": "result", "subtype": "success", "is_error": false, "result": "done",
+                "session_id": self.session, "duration_ms": 1, "num_turns": 2,
+                "usage": { "input_tokens": 9999, "output_tokens": 9999 },
+                "modelUsage": { "stub": { "contextWindow": 200000 } }
+            }));
+            return;
+        }
         self.start_message(&message_id);
         if text == "hello" {
             self.stream(json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }));
