@@ -150,6 +150,8 @@ export class HohHost {
   /** Only the newest global access/get may publish either success or failure. Lost engines and
    * an explicit access/set invalidate every read begun against the older state. */
   private accessGeneration = 0;
+  /** A reply from an access/set sent to a process that has since gone away is never authoritative. */
+  private accessProcessGeneration = 0;
   private settingsOverrides: Record<string, unknown> = {};
   private workspaceRoot: string;
   private workspaceKnown = false;
@@ -773,6 +775,7 @@ export class HohHost {
   /** The engine process ended: no turn of it is still running. History is read again when shown. */
   private onEngineLost() {
     this.accessGeneration++;
+    this.accessProcessGeneration++;
     this.mode = null;
     this.accessError = 'Claude access mode is unknown while the engine is unavailable.';
     // Fail closed immediately: T3 must stop showing or sending a stale mode while the
@@ -1049,8 +1052,11 @@ export class HohHost {
     const wanted = accessModeOf(mode);
     this.modeRevision++;
     if (wanted === current) return;
+    const processGeneration = this.accessProcessGeneration;
     this.accessGeneration++;
     await this.engine.request('hoh/executor/access/set', { executor: 'claude', mode: wanted });
+    if (processGeneration !== this.accessProcessGeneration)
+      throw new Error(this.accessError ?? 'Claude access mode is unknown while the engine is unavailable.');
     this.mode = wanted; this.accessError = null;
     for (const thread of this.threads.values()) { thread.mode = wanted; this.changed(thread.id); }
     this.configChanged();

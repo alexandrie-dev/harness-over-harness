@@ -1439,6 +1439,65 @@ test('a delayed access error cannot erase a successful user access/set', async (
   host.stop();
 });
 
+test('a delayed access/set success from an unavailable process stays fail-closed until ready', async () => {
+  const engine = new FakeEngine();
+  engine.seed('chat-delayed-set', 'Delayed set', []);
+  const { client, host } = connect(engine);
+  const config = await client.stream('subscribeServerConfig', {});
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4);
+
+  let releaseSet;
+  const setGate = new Promise(resolve => { releaseSet = resolve; });
+  let setStarted;
+  const started = new Promise(resolve => { setStarted = resolve; });
+  const request = engine.request.bind(engine);
+  let delaySet = true;
+  let unavailable = false;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/set' && delaySet) {
+      delaySet = false;
+      const answer = await request(method, params);
+      setStarted();
+      await setGate;
+      return answer;
+    }
+    if (method === 'hoh/executor/access/get' && !params.sessionId && unavailable) throw new Error('engine unavailable');
+    return request(method, params);
+  };
+
+  const setting = client.call('orchestration.dispatchCommand', {
+    type: 'thread.runtime-mode.set', commandId: 'delayed-set', threadId: 'chat-delayed-set', runtimeMode: 'full-access',
+  });
+  await started;
+  unavailable = true;
+  const beforeLost = config.values.length;
+  engine.setStatus('unavailable');
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 0, beforeLost);
+  releaseSet();
+  await assert.rejects(setting, /unknown while the engine is unavailable/i);
+  await tick(5);
+  assert.deepEqual((await client.call('server.getConfig', {})).providers[0].supportedRuntimeModes, []);
+  assert.equal('defaultRuntimeMode' in (await client.call('server.getSettings', {})), false);
+
+  const blocked = await client.request('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'blocked-after-set', threadId: 'chat-delayed-set', messageId: 'blocked-after-set-message',
+    text: 'must stay blocked', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(blocked._tag, 'Failure');
+  assert.equal(engine.requests.some(entry => entry.method === 'session/prompt'), false);
+
+  unavailable = false;
+  const beforeReady = config.values.length;
+  engine.setStatus('ready');
+  await config.until(value => value.type === 'snapshot' && value.config.providers[0].supportedRuntimeModes.length === 4, beforeReady);
+  await client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'allowed-after-ready', threadId: 'chat-delayed-set', messageId: 'allowed-after-ready-message',
+    text: 'ready again', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(engine.requests.filter(entry => entry.method === 'session/prompt').length, 1);
+  host.stop();
+});
+
 test('a newer successful access read cannot be erased by an older read failing later', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-new-access', 'New access', []);
