@@ -1,10 +1,11 @@
-// Слой пустой страницы «Learning» / «Widgets» над областью справа от боковой панели: заголовок и одна строка «Coming soon».
+// Слой страниц боковой панели над областью справа от панели: «Learning» и дизайн-раунд «Plugins».
 // Закрывается, когда человек открывает что-то другое: «New chat», разговор из «Recent chats», другой маршрут.
 import { useRouterState } from '@tanstack/react-router';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 
 import { PAGE_TITLES, pages } from './pages';
+import { PluginsPage } from './PluginsPage';
 
 export function usePage() { return useSyncExternalStore(pages.subscribe, pages.current, () => null); }
 
@@ -22,10 +23,12 @@ export function PageLayer() {
   if (!page || !host) return null;
   return createPortal(
     <div className="hoh-page" data-hoh-page={page}>
-      <div className="hoh-page__column">
-        <h1>{PAGE_TITLES[page]}</h1>
-        <p>Coming soon</p>
-      </div>
+      {page === 'plugins' ? <PluginsPage /> : (
+        <div className="hoh-page__column">
+          <h1>{PAGE_TITLES[page]}</h1>
+          <p>Coming soon</p>
+        </div>
+      )}
     </div>,
     host,
   );
