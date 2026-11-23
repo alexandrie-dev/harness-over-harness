@@ -73,6 +73,8 @@ export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
   'components/GitActionsControl.tsx': ['default'],
   // Микрофон в поле ввода (голосовой ввод) и полоска записи.
   'components/chat/ComposerSpeechButton.tsx': ['ComposerSpeechButton', 'ComposerSpeechRecordingPill'],
+  // T3 рисует несохранённый composer draft отдельной карточкой; Recent chats начинается только с первого сообщения.
+  'components/sidebar/SidebarDraftBlock.tsx': ['SidebarDraftBlock'],
 };
 
 /** Поставщики моделей, которые показывает Providers (HoH исполняет только Claude). T3 рисует строку Codex и «Add provider»
