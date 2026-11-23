@@ -257,7 +257,8 @@ test('after a restart the chat comes back from the engine\'s history; an unfinis
   const { client } = connect(engine);
   const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-r' });
   assert.equal(projection.thread.modelSelection.model, 'claude-opus', 'the chat keeps the model it was bound to');
-  assert.equal(engine.requests.findIndex(r => r.method === 'session/resume') < engine.requests.findIndex(r => r.method === 'session/events'), true, 'resumed before reading');
+  const resumeAt = engine.requests.findIndex(r => r.method === 'session/resume');
+  assert(resumeAt >= 0 && engine.requests.findIndex((r, index) => index > resumeAt && r.method === 'session/events') > resumeAt, 'opened chat is resumed before its full read');
   assert.deepEqual(projection.runs.map(run => run.status), ['completed', 'interrupted']);
   assert.deepEqual(projection.turnItems.map(item => [item.type, item.status]), [
     ['user_message', 'completed'], ['assistant_message', 'completed'], ['user_message', 'completed'], ['dynamic_tool', 'interrupted'],
@@ -553,9 +554,12 @@ test('home screen data: working chats with real steps, a chat waiting for the pe
   for (const id of ['d1', 'd2']) { turn(id, 1, 'Done ' + id); engine.emitEvent(id, 'assistant/message', { turn: 1, step: 1, message: { id: 'a' + id, content: [{ type: 'text', text: 'ok' }] } }); engine.emitEvent(id, 'turn/end', { turn: 1, reason: { kind: 'completed' } }); }
   host.flush();
   const by = Object.fromEntries(host.home.entries().map(entry => [entry.id, entry]));
-  assert.deepEqual([by.w1.state, by.w1.steps, by.w2.state, by.p1.state, by.d1.state, by.d2.state], ['working', { done: 1, total: 2 }, 'working', 'waiting', 'done', 'done']);
+  assert.deepEqual([by.w1.state, by.w1.steps, by.w2.state, by.p1.state, by.d1.state, by.d2.state], ['working', { done: 1, total: 2 }, 'working', 'waiting', 'waiting', 'waiting']);
+  assert.deepEqual([by.d1.canComplete, by.d2.canComplete], [true, true]);
   assert.deepEqual(by.p1.request, { id: 'appr-h', kind: 'approval', requestKind: 'command', text: 'rm -rf tmp' });
   assert(by.d1.doneAt > 0 && by.w1.doneAt === null);
+  await host.home.complete('d1');
+  assert.deepEqual([host.home.entries().find(entry => entry.id === 'd1').state, host.home.entries().find(entry => entry.id === 'd2').state], ['done', 'waiting']);
   // The card's buttons are the chat's own answer.
   let changes = 0; host.home.subscribe(() => { changes++; });
   await host.home.answer('p1', 'appr-h', 'accept');
@@ -566,6 +570,145 @@ test('home screen data: working chats with real steps, a chat waiting for the pe
   const id = await host.home.start('Plan the week');
   assert.equal(host.home.entries().find(entry => entry.id === id).state, 'working');
   assert.equal(host.home.projectTitle('hoh-project'), 'No project');
+});
+
+test('home turn lifecycle: Claude reply waits for the person, Mark done survives replay, the next human turn waits again, and old waiting turns are restored', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const store = new Map();
+  const engine = new FakeEngine({ store });
+  const first = connect(engine, { storage, now: () => engine.clock });
+  await first.client.call('orchestration.launchThread', {
+    commandId: 'c-live', threadId: 'live-home', projectId: 'hoh-project', title: 'Live home',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'local-message-1', text: 'first', attachments: [] },
+  });
+  await tick(5);
+  engine.emitEvent('live-home', 'assistant/message', { turn: 1, step: 1, message: { id: 'answer-1', content: [{ type: 'text', text: 'ready' }] } });
+  engine.emitEvent('live-home', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  first.host.flush();
+  const waiting = first.host.home.entries().find(entry => entry.id === 'live-home');
+  assert.deepEqual([waiting.state, waiting.turnOrdinal, waiting.canComplete], ['waiting', 1, true]);
+
+  // Answering directly from Waiting starts a new turn and removes the old human disposition without Mark done.
+  engine.counter = 1;
+  await first.client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'c-next', threadId: 'live-home', messageId: 'local-message-2', text: 'next', attachments: [],
+    createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(first.host.home.entries().find(entry => entry.id === 'live-home').state, 'working');
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['live-home'], undefined);
+  await tick(5);
+  engine.emitEvent('live-home', 'assistant/message', { turn: 2, step: 1, message: { id: 'answer-2', content: [{ type: 'text', text: 'ready again' }] } });
+  engine.emitEvent('live-home', 'turn/end', { turn: 2, reason: { kind: 'completed' } });
+  first.host.flush();
+  assert.deepEqual(
+    [first.host.home.entries().find(entry => entry.id === 'live-home').state, JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['live-home']],
+    ['waiting', { turnOrdinal: 2, state: 'waiting' }],
+  );
+
+  await first.host.home.complete('live-home');
+  assert.equal(first.host.home.entries().find(entry => entry.id === 'live-home').state, 'done');
+  const saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
+  assert.deepEqual(saved.homeDispositions['live-home'], { turnOrdinal: 2, state: 'done' });
+
+  // Replay uses the engine's message id instead of T3's local id, but ordinal 1 still identifies this exact turn.
+  const second = new FakeEngine({ store });
+  second.clock = engine.clock;
+  const again = connect(second, { storage, now: () => second.clock });
+  await again.host.start();
+  const replayed = again.host.home.entries().find(entry => entry.id === 'live-home');
+  const projection = await again.client.call('orchestration.getThreadProjection', { threadId: 'live-home' });
+  assert.notEqual(projection.runs[0].id, 'run-local-message-1');
+  assert.deepEqual([replayed.state, replayed.turnOrdinal], ['done', 2]);
+
+  second.counter = 2;
+  await again.client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'c-third', threadId: 'live-home', messageId: 'local-message-3', text: 'one more', attachments: [],
+    createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  });
+  assert.equal(again.host.home.entries().find(entry => entry.id === 'live-home').state, 'working');
+  await tick(5);
+  second.emitEvent('live-home', 'assistant/message', { turn: 3, step: 1, message: { id: 'answer-3', content: [{ type: 'text', text: 'ready once more' }] } });
+  second.emitEvent('live-home', 'turn/end', { turn: 3, reason: { kind: 'completed' } });
+  again.host.flush();
+  assert.deepEqual(
+    [again.host.home.entries().find(entry => entry.id === 'live-home').state, JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['live-home']],
+    ['waiting', { turnOrdinal: 3, state: 'waiting' }],
+  );
+
+  // The ordinary "today" peek no longer includes this chat, but a persisted human wait must still load it.
+  const later = new FakeEngine({ store });
+  later.clock = second.clock + 2 * 24 * 60 * 60 * 1000;
+  const restored = connect(later, { storage, now: () => later.clock });
+  await restored.host.start();
+  const oldWaiting = restored.host.home.entries().find(entry => entry.id === 'live-home');
+  assert.deepEqual([oldWaiting.state, oldWaiting.turnOrdinal, oldWaiting.canComplete], ['waiting', 3, true]);
+});
+
+test('home disposition migration classifies a completed reply older than today even without prior metadata', async () => {
+  const items = new Map([[mod.host.STORAGE_KEY, JSON.stringify({ version: 1 })]]);
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('before-upgrade', 'Before upgrade', [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'old-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'old request' }] }],
+    ['assistant/message', { turn: 1, message: { id: 'old-a', content: [{ type: 'text', text: 'old answer' }] } }],
+    ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+  ]);
+  engine.clock += 2 * 24 * 60 * 60 * 1000;
+  const { host } = connect(engine, { storage, now: () => engine.clock });
+  await host.start();
+  const migrated = host.home.entries().find(entry => entry.id === 'before-upgrade');
+  assert.deepEqual([migrated.state, migrated.turnOrdinal, migrated.canComplete], ['waiting', 1, true]);
+  let saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
+  assert.equal(saved.homeObservedAt['before-upgrade'] > 0, true);
+  assert.deepEqual(saved.homeDispositions['before-upgrade'], { turnOrdinal: 1, state: 'waiting' });
+
+  // Once classified and marked Done, a newer completion written while this window is away is still discovered by timestamp.
+  await host.home.complete('before-upgrade');
+  const away = new FakeEngine({ store: engine.store });
+  away.clock = engine.clock + 2 * 24 * 60 * 60 * 1000;
+  away.emitEvent('before-upgrade', 'user/message', { id: 'new-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'new request' }] });
+  away.emitEvent('before-upgrade', 'turn/start', { turn: 2 });
+  away.emitEvent('before-upgrade', 'assistant/message', { turn: 2, message: { id: 'new-a', content: [{ type: 'text', text: 'new answer' }] } });
+  away.emitEvent('before-upgrade', 'turn/end', { turn: 2, reason: { kind: 'completed' } });
+  const reopened = connect(away, { storage, now: () => away.clock });
+  await reopened.host.start();
+  const changedWhileAway = reopened.host.home.entries().find(entry => entry.id === 'before-upgrade');
+  assert.deepEqual([changedWhileAway.state, changedWhileAway.turnOrdinal, changedWhileAway.canComplete], ['waiting', 2, true]);
+  saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
+  assert.deepEqual(saved.homeDispositions['before-upgrade'], { turnOrdinal: 2, state: 'waiting' });
+});
+
+test('a rejected human send does not clear the completed answer that still waits for the person', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine, { storage, now: () => engine.clock });
+  await client.call('orchestration.launchThread', {
+    commandId: 'c-fail-live', threadId: 'failed-human-reply', projectId: 'hoh-project', title: 'Failed human reply',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'first-local', text: 'first', attachments: [] },
+  });
+  await tick(5);
+  engine.emitEvent('failed-human-reply', 'assistant/message', { turn: 1, message: { id: 'first-answer', content: [{ type: 'text', text: 'ready' }] } });
+  engine.emitEvent('failed-human-reply', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  host.flush();
+  assert.equal(host.home.entries().find(entry => entry.id === 'failed-human-reply').state, 'waiting');
+
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'session/prompt' ? Promise.reject(new Error('transport down')) : request(method, params);
+  await assert.rejects(client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'c-failed-answer', threadId: 'failed-human-reply', messageId: 'failed-local', text: 'my answer', attachments: [],
+    createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' },
+  }));
+  host.flush();
+  const stillWaiting = host.home.entries().find(entry => entry.id === 'failed-human-reply');
+  assert.deepEqual([stillWaiting.state, stillWaiting.turnOrdinal, stillWaiting.canComplete], ['waiting', 1, true]);
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['failed-human-reply'], { turnOrdinal: 1, state: 'waiting' });
+  await host.home.complete('failed-human-reply');
+  assert.equal(host.home.entries().find(entry => entry.id === 'failed-human-reply').state, 'done');
 });
 
 test('home screen = the chat\'s own data: the request text and kind are the chat\'s approval item, the steps are the chat\'s tool items, the answer is the chat\'s answer', async () => {

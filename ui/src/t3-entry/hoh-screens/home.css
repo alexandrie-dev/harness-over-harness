@@ -1,5 +1,5 @@
 /* Главная HoH (HOH-41 В2): только раскладка; цвета — токены темы T3/HoH, шрифт и радиусы — T3 (var(--radius-*)). */
-.hoh-home { display: flex; flex: 1 1 0; min-height: 0; overflow-y: auto; pointer-events: auto; scrollbar-width: none; } /* без полосы прокрутки: она сдвигала колонку с линий сетки на 3 px; прокрутка колесом и клавишами работает */
+.hoh-home { display: flex; flex: 1 1 0; width: 100%; min-height: 0; overflow-y: auto; pointer-events: auto; scrollbar-width: none; } /* без полосы прокрутки: она сдвигала колонку с линий сетки на 3 px; прокрутка колесом и клавишами работает */
 .hoh-home::-webkit-scrollbar { display: none; }
 /* Заголовок черновика T3 («What should we work on?») T3 кладёт над полем ввода вне потока (absolute, bottom-full): тело главной уходило под него.
    Он становится строкой потока в колонке поля ввода — тело (flex: 1, прокручивается внутри себя) занимает то, что осталось над ним, и не может его перекрыть. */
@@ -14,9 +14,20 @@
 .hoh-home__main > section:last-child { order: 3; }
 .hoh-home__head { order: -2; }
 .hoh-home__side { order: -1; width: 100%; }
-/* С ширины 1100 px столбец — колонка сетки (g8–g16 / g7–g15, grid/frame.css): края без боковых отступов, карточки по одной в ряд. */
+/* С ширины 1100 px начало главной совпадает с колонкой разговора (g8 / g7), а правый край расширяется до g20:
+   карточки добавляются в ряд, но каждая остаётся уже половины колонки разговора и никогда не растёт шире 360 px. */
 @media (min-width: 1100px) {
-  .hoh-home__inner { max-width: 50vw; padding-inline: 0; }
+  .hoh-home__inner {
+    --hoh-home-left: calc((100% - 50vw) / 2);
+    --hoh-home-right: calc(100vw - var(--gc-x20));
+    flex: 0 0 calc(100% - var(--hoh-home-left) - var(--hoh-home-right));
+    width: calc(100% - var(--hoh-home-left) - var(--hoh-home-right));
+    max-width: none;
+    margin-left: var(--hoh-home-left);
+    margin-right: var(--hoh-home-right);
+    padding-inline: 0;
+  }
+  .hoh-home__side { width: 50vw; }
 }
 .hoh-home h1 { font-size: 1.75rem; line-height: 2.25rem; font-weight: 600; margin: 0; }
 .hoh-home__date { color: var(--muted-foreground); font-size: 0.875rem; margin-top: 4px; }
@@ -32,7 +43,9 @@
 .hoh-home__label { display: flex; align-items: baseline; gap: 8px; font-size: 0.875rem; font-weight: 600; margin: 0 0 10px; }
 .hoh-home__count { color: var(--muted-foreground); font-weight: 400; }
 .hoh-home__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
-@media (min-width: 1100px) { .hoh-home__cards { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 1100px) {
+  .hoh-home__cards { --hoh-card-width: min(360px, calc((50vw - 14px) / 2)); grid-template-columns: repeat(auto-fill, var(--hoh-card-width)); }
+}
 /* Карточка агента: тёмная, скруглённая, граница-градиент и мягкое свечение цвета состояния (палитра окна: синий — работает,
    красный — ждёт ответа, нейтральный — готово). Свечение — статичная тень вне карточки (текст не размывает), без анимации. */
 .hoh-card { --glow: var(--muted-foreground); text-align: left; position: relative; border: 1px solid transparent; border-radius: calc(var(--radius-xl) + 4px); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 124px; cursor: pointer; color: inherit; font: inherit;
@@ -41,11 +54,15 @@
 .hoh-card[data-state="working"] { --glow: var(--primary); }
 .hoh-card[data-state="waiting"] { --glow: var(--warning); }
 .hoh-card:hover { box-shadow: 0 0 24px color-mix(in srgb, var(--glow) 48%, transparent), 0 0 64px color-mix(in srgb, var(--glow) 22%, transparent); }
-.hoh-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.hoh-card:has(.hoh-card__open:focus-visible) { outline: 2px solid var(--ring); outline-offset: 3px; }
+.hoh-card__open { position: absolute; z-index: 1; inset: 0; width: 100%; border: 0; border-radius: inherit; padding: 0; background: none; cursor: pointer; }
+.hoh-card > :not(.hoh-card__open) { position: relative; z-index: 2; pointer-events: none; }
 .hoh-card .hoh-mark { width: 22px; height: 22px; margin-bottom: 6px; }
 .hoh-card__title { font-size: 1rem; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .hoh-card__where { color: var(--muted-foreground); font-size: 0.75rem; }
-.hoh-card__state { margin-top: auto; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--muted-foreground); }
+.hoh-card__state { margin-top: auto; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 8px; font-size: 0.75rem; color: var(--muted-foreground); }
+.hoh-card__state-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.hoh-card__complete { pointer-events: auto; }
 .hoh-card__state b { font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
 .hoh-card[data-state="working"] .hoh-card__state b { color: var(--primary); }
 .hoh-card[data-state="waiting"] .hoh-card__state b { color: var(--warning-foreground); }

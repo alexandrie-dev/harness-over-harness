@@ -44,6 +44,12 @@ export interface HohStorage {
   setItem(key: string, value: string): void;
 }
 
+interface HomeDisposition {
+  /** Run ordinal is stable when the engine history is replayed after a restart. */
+  turnOrdinal: number;
+  state: 'waiting' | 'done';
+}
+
 /** The reasoning level goes to the engine as `effort` of `session/prompt` (agreed with the engine's writer). */
 const effortParam = (effort: string | null) => effort ? { effort } : {};
 
@@ -138,6 +144,13 @@ export class HohHost {
   private readonly skillsByFolder = new Map<string, Set<string>>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
   private readonly levels = new Map<string, { id: string; value: unknown }[]>();
+  /** A completed Claude turn waits for the person until they explicitly mark that exact turn done. */
+  private readonly homeDispositions = new Map<string, HomeDisposition>();
+  /** Last engine-history timestamp classified for Home; a session changed while the window was away is read next start. */
+  private readonly homeObservedAt = new Map<string, number>();
+  /** Local prompt attempts must not erase the preceding wait before the engine accepts the person's answer. */
+  private readonly homePrompts = new Set<string>();
+  private readonly failedHomePrompts = new Set<string>();
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
@@ -171,6 +184,16 @@ export class HohHost {
     const threads = saved?.threads && typeof saved.threads === 'object' ? saved.threads : {};
     for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
+    for (const [threadId, value] of Object.entries(saved?.homeDispositions && typeof saved.homeDispositions === 'object' ? saved.homeDispositions : {})) {
+      const entry = value as Record<string, unknown> | null;
+      const turnOrdinal = Number(entry?.turnOrdinal);
+      if (Number.isInteger(turnOrdinal) && turnOrdinal > 0 && (entry?.state === 'waiting' || entry?.state === 'done'))
+        this.homeDispositions.set(threadId, { turnOrdinal, state: entry.state });
+    }
+    for (const [threadId, value] of Object.entries(saved?.homeObservedAt && typeof saved.homeObservedAt === 'object' ? saved.homeObservedAt : {})) {
+      const observedAt = Number(value);
+      if (Number.isFinite(observedAt) && observedAt > 0) this.homeObservedAt.set(threadId, observedAt);
+    }
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
   }
@@ -180,7 +203,8 @@ export class HohHost {
     const value = {
       version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
-      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels),
+      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels), homeDispositions: Object.fromEntries(this.homeDispositions),
+      homeObservedAt: Object.fromEntries(this.homeObservedAt),
     };
     try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
   }
@@ -221,18 +245,63 @@ export class HohHost {
 
   /**
    * The home screen's window into the host (HOH-41 В2; not T3's wire): what the chats are doing, who waits for the person,
-   * and the two actions of that card. Read with `useSyncExternalStore`: `version` changes with every change of any chat.
+   * and the actions of that card. Read with `useSyncExternalStore`: `version` changes with every change of any chat.
    */
+  private homeEntry(thread: ThreadModel): HomeEntry | null {
+    const disposition = this.homeDispositions.get(thread.id);
+    const latest = thread.home();
+    const entry = latest && disposition && latest.turnOrdinal !== disposition.turnOrdinal && this.failedHomePrompts.has(thread.id)
+      ? thread.home(disposition.turnOrdinal)
+      : latest;
+    if (!entry || entry.state !== 'done') return entry;
+    return disposition?.turnOrdinal === entry.turnOrdinal && disposition.state === 'done'
+      ? entry
+      : { ...entry, state: 'waiting', canComplete: true };
+  }
+
+  /** Follow the latest turn without changing T3's completed run: only Home waits for human sign-off. */
+  private syncHomeDisposition(thread: ThreadModel): boolean {
+    const entry = thread.home();
+    if (!entry) return false;
+    const current = this.homeDispositions.get(thread.id);
+    if (current && current.turnOrdinal !== entry.turnOrdinal) {
+      if (this.homePrompts.has(thread.id) || (this.failedHomePrompts.has(thread.id) && entry.state === 'ended')) return false;
+      this.homeDispositions.delete(thread.id);
+      this.failedHomePrompts.delete(thread.id);
+      if (entry.state !== 'done') return true;
+    }
+    const matched = this.homeDispositions.get(thread.id);
+    if (entry.state === 'done' && (!matched || matched.turnOrdinal !== entry.turnOrdinal)) {
+      this.homeDispositions.set(thread.id, { turnOrdinal: entry.turnOrdinal, state: 'waiting' });
+      return true;
+    }
+    return false;
+  }
+
   readonly home = {
     version: () => this.homeVersion,
     subscribe: (listener: () => void) => { this.homeListeners.add(listener); return () => { this.homeListeners.delete(listener); }; },
-    entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => thread.home()).filter((entry): entry is HomeEntry => entry !== null),
+    entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => this.homeEntry(thread)).filter((entry): entry is HomeEntry => entry !== null),
     projectTitle: (projectId: string) => projectId === HOH_PROJECT_ID ? 'No project' : this.folders.get(projectId)?.title ?? 'No project',
     /** Approve or decline a waiting permission request, as the chat's buttons do. */
     answer: async (threadId: string, requestId: string, decision: 'accept' | 'decline') => {
       const thread = await this.loaded(threadId);
       if (!thread) return;
       await this.respond(thread, { requestId, decision });
+      this.flush();
+    },
+    /** A completed answer becomes Done only by the person's explicit action on that exact turn. */
+    complete: async (threadId: string) => {
+      const thread = await this.loaded(threadId);
+      const disposition = this.homeDispositions.get(threadId);
+      const latest = thread?.home();
+      const entry = latest && disposition && latest.turnOrdinal !== disposition.turnOrdinal && this.failedHomePrompts.has(threadId)
+        ? thread?.home(disposition.turnOrdinal)
+        : latest;
+      if (!thread || !entry || entry.state !== 'done') return;
+      this.homeDispositions.set(threadId, { turnOrdinal: entry.turnOrdinal, state: 'done' });
+      this.save();
+      this.changed(threadId);
       this.flush();
     },
     /** A new chat with this first message, in the project (or "No project"); returns its id. */
@@ -302,20 +371,33 @@ export class HohHost {
       const at = Number(session.updatedAt) || this.startedAt;
       this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
     }
+    let pruned = false;
+    const sessionIds = new Set(sessions.map(session => session?.id).filter((id): id is string => typeof id === 'string'));
+    for (const threadId of this.homeDispositions.keys()) if (!sessionIds.has(threadId)) { this.homeDispositions.delete(threadId); pruned = true; }
+    for (const threadId of this.homeObservedAt.keys()) if (!sessionIds.has(threadId)) { this.homeObservedAt.delete(threadId); pruned = true; }
+    if (pruned) this.save();
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
     await this.peekToday();
     return true;
   }
 
   /**
-   * The home screen lists today's chats, so their history is read at start: events only, the chat is not opened (no
-   * `session/resume`) and not marked loaded. A turn the history leaves open ends as stopped until the engine says otherwise.
+   * The home screen lists today's chats, persisted human waits, and every session whose engine timestamp changed since its
+   * last classification. Thus both old histories at upgrade and replies completed while the window was away are recovered.
+   * Histories are read as events only: the chat is not opened (`session/resume`) or marked loaded.
    */
   private async peekToday() {
     const today = new Date(this.now()).toDateString();
-    const recent = [...this.threads.values()].filter(thread => !thread.loaded && new Date(thread.updatedAt).toDateString() === today)
+    const waiting = new Set([...this.homeDispositions].filter(([, value]) => value.state === 'waiting').map(([threadId]) => threadId));
+    const candidates = [...this.threads.values()].filter(thread => !thread.loaded);
+    const todayThreads = candidates.filter(thread => new Date(thread.updatedAt).toDateString() === today)
       .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
-    await Promise.all(recent.map(async thread => {
+    const changedWhileAway = candidates.filter(thread => (this.homeObservedAt.get(thread.id) ?? 0) < thread.updatedAt);
+    const recent = [...new Map([...changedWhileAway, ...candidates.filter(thread => waiting.has(thread.id)), ...todayThreads].map(thread => [thread.id, thread])).values()]
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    let dispositionChanged = false;
+    let cursor = 0;
+    const inspect = async (thread: ThreadModel) => {
       try {
         let afterSeq: number | undefined;
         for (;;) {
@@ -328,9 +410,15 @@ export class HohHost {
         // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
         try { if ((await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
         thread.settleUnfinished(this.now());
+        if (this.syncHomeDisposition(thread)) dispositionChanged = true;
+        if (this.homeObservedAt.get(thread.id) !== thread.updatedAt) { this.homeObservedAt.set(thread.id, thread.updatedAt); dispositionChanged = true; }
         this.homeDirty = true;
-      } catch { /* the chat is not on the home screen */ }
+      } catch { /* no observed timestamp is recorded: a deleted/unavailable chat is retried on the next start */ }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, recent.length) }, async () => {
+      while (cursor < recent.length) await inspect(recent[cursor++]);
     }));
+    if (dispositionChanged) this.save();
     this.homeVersion++;
   }
 
@@ -451,6 +539,9 @@ export class HohHost {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
     const ids = [...this.dirty]; this.dirty.clear();
+    let dispositionChanged = false;
+    for (const id of ids) { const thread = this.threads.get(id); if (thread && this.syncHomeDisposition(thread)) dispositionChanged = true; }
+    if (dispositionChanged) this.save();
     if (this.homeDirty) { this.homeDirty = false; this.homeVersion++; for (const listener of this.homeListeners) listener(); }
     for (const id of ids) {
       const thread = this.threads.get(id);
@@ -672,6 +763,7 @@ export class HohHost {
   private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = []) {
     const images = this.keptImages(attachments);
     const prompt = skillsAsCommands(text, this.skillsByFolder.get(folderPath(thread.cwd)) ?? new Set());
+    this.homePrompts.add(thread.id);
     thread.sendLocal(messageId, text, this.now(), images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
     this.changed(thread.id);
     const contentBlocks = [
@@ -680,9 +772,14 @@ export class HohHost {
     ];
     try {
       const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks, ...effortParam(effortOf(thread.model, thread.options)) });
+      this.homePrompts.delete(thread.id);
+      this.failedHomePrompts.delete(thread.id);
+      if (this.homeDispositions.delete(thread.id)) this.save();
       for (const image of images) this.uploads.delete(image.id);
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
     } catch (error) {
+      this.homePrompts.delete(thread.id);
+      if (this.homeDispositions.has(thread.id)) this.failedHomePrompts.add(thread.id);
       thread.sendFailed(messageId, this.now(), error);
       this.changed(thread.id);
       throw error;
