@@ -101,6 +101,11 @@ async function open(browser, engine, size) {
   await page.exposeBinding('__hohT3Request', (_, method, params) => engine.request(method, params).catch((error) => ({ __hohError: String(error?.message ?? error) })));
   await page.addInitScript(() => {
     const listeners = new Set();
+    let clipboardText = '';
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value) => { clipboardText = String(value); },
+      readText: async () => clipboardText,
+    } });
     window.__hohT3Notify = (notification) => { for (const listener of listeners) listener(notification); };
     window.__HOH_T3_TEST_ENGINE__ = {
       request: async (method, params) => { const result = await window.__hohT3Request(method, params); if (result && result.__hohError) throw new Error(result.__hohError); return result; },
@@ -204,15 +209,59 @@ try {
             if (firstRow !== expected) fail(`${label}: в первом ряду ${firstRow} карточек, нужно ${expected}`);
           }
         }
-        if (busy) { // Learning / Widgets: пустая страница с заголовком и «Coming soon», пункт подсвечен, блок на линиях; «New chat» её закрывает
-          for (const title of ['Learning', 'Widgets']) {
-            await page.locator(`[data-hoh-page-item="${title.toLowerCase()}"]`).click();
-            await page.locator('.hoh-page').waitFor({ state: 'visible' });
-            const text = await page.locator('.hoh-page').innerText();
-            if (text.replace(/\s+/g, ' ').trim() !== `${title} Coming soon`) fail(`${label}: страница ${title}: «${text.trim()}»`);
-            if (await page.locator(`[data-hoh-page-item="${title.toLowerCase()}"][aria-current="page"]`).count() !== 1) fail(`${label}: пункт ${title} не подсвечен`);
-            const pageMiss = await page.evaluate(() => window.hohGridCheck());
-            for (const miss of pageMiss) fail(`${label}: страница ${title}: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
+        if (busy) { // Learning и живая страница Plugins; «New chat» закрывает обе.
+          await page.locator('[data-hoh-page-item="learning"]').click();
+          await page.locator('.hoh-page').waitFor({ state: 'visible' });
+          const learningText = await page.locator('.hoh-page').innerText();
+          if (learningText.replace(/\s+/g, ' ').trim() !== 'Learning Coming soon') fail(`${label}: страница Learning: «${learningText.trim()}»`);
+          if (await page.locator('[data-hoh-page-item="learning"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Learning не подсвечен`);
+          const pageMiss = await page.evaluate(() => window.hohGridCheck());
+          for (const miss of pageMiss) fail(`${label}: страница Learning: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
+
+          await page.locator('[data-hoh-page-item="plugins"]').click();
+          await page.locator('.hoh-plugins').waitFor({ state: 'visible' });
+          if (await page.locator('[data-hoh-page-item="plugins"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Plugins не подсвечен`);
+          if (await page.locator('[data-plugin-list] [data-plugin-id]').count() !== 7) fail(`${label}: страница Plugins показывает не 7 образцов`);
+          if (!/Sample data\s*— not connected to the engine yet\./.test((await page.locator('.hoh-plugins__sample').innerText()).replace(/\s+/g, ' '))) fail(`${label}: нет заметной пометки об образцовых данных`);
+          if (await page.getByRole('heading', { name: 'Built-in plugins' }).count() !== 1) fail(`${label}: нет отдельного раздела встроенных плагинов`);
+          const overflow = await page.locator('.hoh-plugins').evaluate((node) => node.scrollWidth > node.clientWidth + 1);
+          if (overflow) fail(`${label}: страница Plugins имеет горизонтальное переполнение`);
+
+          if (width === 1440 && height === 900) {
+            await page.locator('[data-add-plugin-folder]').click();
+            await page.getByRole('heading', { name: 'Add plugin from folder' }).waitFor();
+            await page.locator('[data-slot="dialog-footer"]').getByRole('button', { name: 'Close' }).click();
+
+            await page.getByRole('button', { name: 'Orbit Tools' }).click();
+            await page.locator('[data-plugin-detail="alexandrie-orbit-tools"]').waitFor();
+            await page.getByRole('button', { name: 'Disable' }).click();
+            if (await page.locator('[data-plugin-status="approval-pending"]').count() < 1) fail(`${label}: Disable не переводит образец в Approval pending`);
+            await page.getByRole('button', { name: 'More plugin actions' }).click();
+            await page.getByRole('menuitem', { name: 'Copy plugin ID' }).click();
+            await page.getByText('Plugin ID copied').waitFor();
+            if (await page.evaluate(() => navigator.clipboard.readText()) !== 'alexandrie-orbit-tools') fail(`${label}: меню не скопировало настоящий plugin ID`);
+            await page.getByRole('button', { name: 'Copy SHA-256 fingerprint' }).click();
+            await page.getByText('Fingerprint copied').waitFor();
+            if (await page.evaluate(() => navigator.clipboard.readText()) !== 'sha256:3d7f6bf47d824da418d43fbba0628dce3f7825688b364a9a292485cab13ed02b') fail(`${label}: кнопка не скопировала полный SHA-256`);
+            await page.getByRole('button', { name: 'All plugins' }).click();
+
+            await page.getByRole('button', { name: 'Variant B' }).click();
+            const firstRow = page.locator('.hoh-plugin-row__trigger').first();
+            await firstRow.focus(); await page.keyboard.press('Enter');
+            if (await firstRow.getAttribute('aria-expanded') !== 'true') fail(`${label}: строка варианта B не раскрывается клавиатурой`);
+            await page.getByRole('button', { name: 'Open plugin page' }).first().click();
+            await page.locator('[data-plugin-detail]').waitFor();
+            await page.getByRole('button', { name: 'All plugins' }).click();
+
+            await page.getByRole('button', { name: 'Variant C' }).click();
+            if (await page.locator('.hoh-plugin-split').count() !== 1) fail(`${label}: вариант C не показывает две колонки`);
+            await page.getByRole('button', { name: 'Open full page' }).click();
+            await page.locator('[data-plugin-detail]').waitFor();
+            if (await page.evaluate(() => localStorage.getItem('hoh:plugins-design-variant')) !== 'C') fail(`${label}: выбранный вариант C не запомнен`);
+            await page.getByRole('button', { name: 'All plugins' }).click();
+            await page.reload();
+            await page.locator('[data-hoh-page-item="plugins"]').click();
+            await page.locator('.hoh-plugins[data-plugin-variant="C"]').waitFor();
           }
           await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();
           if (await page.locator('.hoh-page').count() !== 0) fail(`${label}: «New chat» не закрыл страницу`);
