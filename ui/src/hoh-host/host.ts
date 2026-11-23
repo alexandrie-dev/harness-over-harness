@@ -48,6 +48,8 @@ interface HomeDisposition {
   /** Run ordinal is stable when the engine history is replayed after a restart. */
   turnOrdinal: number;
   state: 'waiting' | 'done';
+  /** This exact turn entered Home because its durable history ended mid-run, not because the person pressed Stop. */
+  interrupted?: boolean;
 }
 
 /** The reasoning level goes to the engine as `effort` of `session/prompt` (agreed with the engine's writer). */
@@ -203,7 +205,7 @@ export class HohHost {
       const entry = value as Record<string, unknown> | null;
       const turnOrdinal = Number(entry?.turnOrdinal);
       if (Number.isInteger(turnOrdinal) && turnOrdinal > 0 && (entry?.state === 'waiting' || entry?.state === 'done'))
-        this.homeDispositions.set(threadId, { turnOrdinal, state: entry.state });
+        this.homeDispositions.set(threadId, { turnOrdinal, state: entry.state, ...(entry.interrupted === true ? { interrupted: true } : {}) });
     }
     for (const [threadId, value] of Object.entries(saved?.homeObservedAt && typeof saved.homeObservedAt === 'object' ? saved.homeObservedAt : {})) {
       const observedAt = Number(value);
@@ -295,10 +297,12 @@ export class HohHost {
     const entry = latest && disposition && latest.turnOrdinal !== disposition.turnOrdinal && this.failedHomePrompts.has(thread.id)
       ? thread.home(disposition.turnOrdinal)
       : latest;
-    if (!entry || entry.state !== 'done') return entry;
+    const interrupted = entry?.interrupted === true || (disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.interrupted === true);
+    const completable = entry?.state === 'done' || (entry?.state === 'ended' && interrupted);
+    if (!entry || !completable) return entry;
     return disposition?.turnOrdinal === entry.turnOrdinal && disposition.state === 'done'
-      ? entry
-      : { ...entry, state: 'waiting', canComplete: true };
+      ? { ...entry, state: 'done', ...(interrupted ? { interrupted: true } : {}) }
+      : { ...entry, state: 'waiting', canComplete: true, ...(interrupted ? { interrupted: true } : {}) };
   }
 
   /** Follow the latest turn without changing T3's completed run: only Home waits for human sign-off. */
@@ -306,15 +310,29 @@ export class HohHost {
     const entry = thread.home();
     if (!entry) return false;
     const current = this.homeDispositions.get(thread.id);
+    const interrupted = entry.interrupted === true || (current?.turnOrdinal === entry.turnOrdinal && current.interrupted === true);
+    const completable = entry.state === 'done' || (entry.state === 'ended' && interrupted);
+    if (current?.turnOrdinal === entry.turnOrdinal && current.interrupted === true) {
+      // The same turn really resumed: it is no longer a crash placeholder. If it already completed before
+      // this flush, keep the person's waiting/done choice but drop the stale interruption label.
+      if (entry.state === 'working' || entry.state === 'waiting') {
+        this.homeDispositions.delete(thread.id);
+        return true;
+      }
+      if (entry.state === 'done') {
+        this.homeDispositions.set(thread.id, { turnOrdinal: entry.turnOrdinal, state: current.state });
+        return true;
+      }
+    }
     if (current && current.turnOrdinal !== entry.turnOrdinal) {
       if (this.homePrompts.has(thread.id) || (this.failedHomePrompts.has(thread.id) && entry.state === 'ended')) return false;
       this.homeDispositions.delete(thread.id);
       this.failedHomePrompts.delete(thread.id);
-      if (entry.state !== 'done') return true;
+      if (!completable) return true;
     }
     const matched = this.homeDispositions.get(thread.id);
-    if (entry.state === 'done' && (!matched || matched.turnOrdinal !== entry.turnOrdinal)) {
-      this.homeDispositions.set(thread.id, { turnOrdinal: entry.turnOrdinal, state: 'waiting' });
+    if (completable && (!matched || matched.turnOrdinal !== entry.turnOrdinal)) {
+      this.homeDispositions.set(thread.id, { turnOrdinal: entry.turnOrdinal, state: 'waiting', ...(interrupted ? { interrupted: true } : {}) });
       return true;
     }
     return false;
@@ -340,8 +358,9 @@ export class HohHost {
       const entry = latest && disposition && latest.turnOrdinal !== disposition.turnOrdinal && this.failedHomePrompts.has(threadId)
         ? thread?.home(disposition.turnOrdinal)
         : latest;
-      if (!thread || !entry || entry.state !== 'done') return;
-      this.homeDispositions.set(threadId, { turnOrdinal: entry.turnOrdinal, state: 'done' });
+      const interrupted = entry?.interrupted === true || (disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.interrupted === true);
+      if (!thread || !entry || (entry.state !== 'done' && !(entry.state === 'ended' && interrupted))) return;
+      this.homeDispositions.set(threadId, { turnOrdinal: entry.turnOrdinal, state: 'done', ...(interrupted ? { interrupted: true } : {}) });
       this.save();
       this.changed(threadId);
       this.flush();
@@ -1033,10 +1052,17 @@ export class HohHost {
 
   /** «Стоп»: the same cancel as the current window; the engine ends Claude and its commands. */
   private async cancel(thread: ThreadModel) {
-    if (thread.activeRunId()) thread.stopRequested = true;
+    const stoppedOrdinal = thread.activeRunId() ? thread.home()?.turnOrdinal : undefined;
+    if (stoppedOrdinal !== undefined) thread.stopRequested = true;
     await this.engine.request('session/cancel', { sessionId: thread.id });
+    const disposition = this.homeDispositions.get(thread.id);
+    const clearedCrashDisposition = stoppedOrdinal !== undefined && disposition?.turnOrdinal === stoppedOrdinal && disposition.interrupted === true;
+    if (clearedCrashDisposition) {
+      this.homeDispositions.delete(thread.id);
+      this.save();
+    }
     // The turn is stopped now: its run closes and the thread list stops saying "Working" without waiting for the engine's closing event.
-    if (thread.interrupt(this.now())) { this.changed(thread.id); this.flush(); }
+    if (thread.interrupt(this.now()) || clearedCrashDisposition) { this.changed(thread.id); this.flush(); }
   }
 
   private async respond(thread: ThreadModel, command: Record<string, any>) {

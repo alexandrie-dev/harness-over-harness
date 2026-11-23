@@ -13,7 +13,7 @@ import './home.css';
 
 interface Entry {
   id: string; title: string; projectId: string; state: 'working' | 'waiting' | 'done' | 'ended';
-  turnOrdinal: number; canComplete?: boolean;
+  turnOrdinal: number; canComplete?: boolean; interrupted?: boolean;
   startedAt: number; doneAt: number | null; steps: { done: number; total: number };
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
   agents: Agent[];
@@ -123,7 +123,9 @@ function Ask({ entry, view }: { entry: Entry; view: View }) {
     </div>
   );
 }
-const stateLabel = (entry: Entry) => entry.state === 'working' ? <><span className="hoh-orbit" aria-hidden />Working</> : 'Waiting for your answer';
+const stateLabel = (entry: Entry) => entry.state === 'working'
+  ? <><span className="hoh-orbit" aria-hidden />Working</>
+  : entry.interrupted ? 'Interrupted' : 'Waiting for your answer';
 /** An agent as a card (HOH-41): the executor's mark top-left, the title, where it works, its subagents inside, the state at the bottom.
  *  The glow of the border follows the state (home.css: blue — working, red — waits for the person, neutral — done). */
 function Card({ entry, view, children }: { entry: Entry; view: View; children: React.ReactNode }) {

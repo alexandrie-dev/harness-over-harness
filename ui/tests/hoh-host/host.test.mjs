@@ -147,7 +147,7 @@ test('new chat with a first message, streamed answer, tool step, end of turn', a
 
 test('a follow-up message goes to the same chat; Stop is the engine\'s cancel and the run ends interrupted', async () => {
   const engine = new FakeEngine();
-  const { client } = connect(engine);
+  const { client, host } = connect(engine);
   await client.call('orchestration.dispatchCommand', {
     type: 'thread.create', commandId: 'c0', threadId: 'thread-2', projectId: 'hoh-project', title: 'Second', createdBy: 'user', creationSource: 'web',
     modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
@@ -164,6 +164,12 @@ test('a follow-up message goes to the same chat; Stop is the engine\'s cancel an
   assert.equal(engine.cancelled, 1);
   engine.emitEvent('thread-2', 'turn/end', { reason: { kind: 'aborted' } });
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
+  const stopped = host.home.entries().find(entry => entry.id === 'thread-2');
+  assert.deepEqual(
+    [stopped.state, stopped.interrupted, stopped.canComplete],
+    ['ended', undefined, undefined],
+    'the person\'s explicit Stop is not a crash-only waiting card',
+  );
   assert.deepEqual(await client.call('orchestration.forceStopThread', { threadId: 'thread-2' }), { outcome: 'killed', sharedWithThreadIds: [] });
   assert.equal(engine.cancelled, 2);
 });
@@ -240,7 +246,7 @@ test('access mode: T3\'s switch goes to the engine at once and every thread show
   assert.equal(engine.access.mode, 'confirm');
 });
 
-test('after a restart the chat comes back from the engine\'s history; an unfinished turn ends as stopped', async () => {
+test('after a restart the chat comes back from the engine\'s history; an unfinished turn waits on Home as interrupted', async () => {
   const store = new Map();
   const before = new FakeEngine({ store });
   before.seed('chat-r', 'Restart me', [
@@ -254,7 +260,7 @@ test('after a restart the chat comes back from the engine\'s history; an unfinis
   ]);
   store.get('chat-r').model = 'claude-opus';
   const engine = new FakeEngine({ store });
-  const { client } = connect(engine);
+  const { client, host } = connect(engine);
   const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-r' });
   assert.equal(projection.thread.modelSelection.model, 'claude-opus', 'the chat keeps the model it was bound to');
   const resumeAt = engine.requests.findIndex(r => r.method === 'session/resume');
@@ -264,6 +270,13 @@ test('after a restart the chat comes back from the engine\'s history; an unfinis
     ['user_message', 'completed'], ['assistant_message', 'completed'], ['user_message', 'completed'], ['dynamic_tool', 'interrupted'],
   ]);
   assert.equal(projection.thread.title, 'Restart me');
+  const interrupted = host.home.entries().find(entry => entry.id === 'chat-r');
+  assert.deepEqual(
+    [interrupted.state, interrupted.interrupted, interrupted.canComplete, interrupted.turnOrdinal],
+    ['waiting', true, true, 2],
+  );
+  await host.home.complete('chat-r');
+  assert.equal(host.home.entries().find(entry => entry.id === 'chat-r').state, 'done');
   const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-r' });
   const snapshot = await thread.until(value => value.kind === 'snapshot');
   assert.equal(snapshot.projection.messages.length, 3);
@@ -273,9 +286,12 @@ test('after a restart the chat comes back from the engine\'s history; an unfinis
 });
 
 test('engine lost mid-turn: the running turn ends as stopped', async () => {
-  const engine = new FakeEngine();
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const store = new Map();
+  const engine = new FakeEngine({ store });
   engine.seed('chat-l', 'L', []);
-  const { client } = connect(engine);
+  const { client, host } = connect(engine, { storage });
   const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-l' });
   await thread.until(value => value.kind === 'snapshot');
   engine.emitEvent('chat-l', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'x' }] });
@@ -283,6 +299,105 @@ test('engine lost mid-turn: the running turn ends as stopped', async () => {
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'running');
   engine.setStatus('restarting');
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
+  host.flush();
+  let interrupted = host.home.entries().find(entry => entry.id === 'chat-l');
+  assert.deepEqual([interrupted.state, interrupted.interrupted, interrupted.canComplete], ['waiting', true, true]);
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-l'], { turnOrdinal: 1, state: 'waiting', interrupted: true });
+
+  // A late terminal event from the dying engine cannot erase the exact turn already placed in the person's queue.
+  engine.emitEvent('chat-l', 'turn/end', { turn: 1, reason: { kind: 'aborted' } });
+  host.flush();
+  interrupted = host.home.entries().find(entry => entry.id === 'chat-l');
+  assert.deepEqual([interrupted.state, interrupted.interrupted, interrupted.canComplete], ['waiting', true, true]);
+  await host.home.complete('chat-l');
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-l'], { turnOrdinal: 1, state: 'done', interrupted: true });
+
+  // Replay now contains durable `aborted`, so only the persisted Home cause can keep the human decision visible.
+  const afterRestart = connect(new FakeEngine({ store }), { storage });
+  await afterRestart.host.start();
+  const done = afterRestart.host.home.entries().find(entry => entry.id === 'chat-l');
+  assert.deepEqual([done.state, done.interrupted, done.canComplete], ['done', true, undefined]);
+});
+
+test('a crash placeholder is reconciled when the same turn resumes and completes', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('chat-recovered', 'Recovered', []);
+  const { client, host } = connect(engine, { storage, throttleMs: 600000 });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-recovered' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-recovered', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'recover' }] });
+  engine.emitEvent('chat-recovered', 'turn/start', { turn: 1 });
+  engine.setStatus('restarting');
+  host.flush();
+  assert.deepEqual(
+    [host.home.entries().find(entry => entry.id === 'chat-recovered').state, JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-recovered'].interrupted],
+    ['waiting', true],
+  );
+
+  engine.emitStatus('chat-recovered', 'running');
+  host.flush();
+  assert.equal(host.home.entries().find(entry => entry.id === 'chat-recovered').state, 'working');
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-recovered'], undefined);
+  engine.emitEvent('chat-recovered', 'assistant/message', { turn: 1, message: { id: 'a1', content: [{ type: 'text', text: 'finished after recovery' }] } });
+  engine.emitEvent('chat-recovered', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  host.flush();
+  const completed = host.home.entries().find(entry => entry.id === 'chat-recovered');
+  assert.deepEqual([completed.state, completed.interrupted, completed.canComplete], ['waiting', undefined, true]);
+});
+
+test('a late completed event directly reconciles an inferred engine loss', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const store = new Map();
+  const engine = new FakeEngine({ store });
+  engine.seed('chat-late-completed', 'Late completed', []);
+  const { client, host } = connect(engine, { storage, throttleMs: 600000 });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-late-completed' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-late-completed', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'finish late' }] });
+  engine.emitEvent('chat-late-completed', 'turn/start', { turn: 1 });
+  engine.setStatus('restarting');
+  host.flush();
+  assert.equal(host.home.entries().find(entry => entry.id === 'chat-late-completed').interrupted, true);
+
+  // Some engines deliver the durable terminal event without first reporting that the same turn resumed.
+  engine.emitEvent('chat-late-completed', 'assistant/message', { turn: 1, message: { id: 'a1', content: [{ type: 'text', text: 'finished after all' }] } });
+  engine.emitEvent('chat-late-completed', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  host.flush();
+  const completed = host.home.entries().find(entry => entry.id === 'chat-late-completed');
+  assert.deepEqual([completed.state, completed.interrupted, completed.canComplete], ['waiting', undefined, true]);
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-late-completed'], { turnOrdinal: 1, state: 'waiting' });
+
+  const afterRestart = connect(new FakeEngine({ store }), { storage });
+  await afterRestart.host.start();
+  const restored = afterRestart.host.home.entries().find(entry => entry.id === 'chat-late-completed');
+  assert.deepEqual([restored.state, restored.interrupted, restored.canComplete], ['waiting', undefined, true]);
+});
+
+test('an explicit Stop after recovery cannot be reclassified as a crash interruption', async () => {
+  const items = new Map();
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('chat-stop-recovered', 'Stop recovered', []);
+  const { client, host } = connect(engine, { storage, throttleMs: 600000 });
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'chat-stop-recovered' });
+  await thread.until(value => value.kind === 'snapshot');
+  engine.emitEvent('chat-stop-recovered', 'user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'recover then stop' }] });
+  engine.emitEvent('chat-stop-recovered', 'turn/start', { turn: 1 });
+  engine.setStatus('restarting');
+  host.flush();
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-recovered'].interrupted, true);
+
+  // Do not flush the recovery before Stop: cancel itself must clear even a not-yet-reconciled crash disposition.
+  engine.emitStatus('chat-stop-recovered', 'running');
+  await client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stop-recovered', threadId: 'chat-stop-recovered' });
+  engine.emitEvent('chat-stop-recovered', 'turn/end', { turn: 1, reason: { kind: 'aborted' } });
+  host.flush();
+  const stopped = host.home.entries().find(entry => entry.id === 'chat-stop-recovered');
+  assert.deepEqual([stopped.state, stopped.interrupted, stopped.canComplete], ['ended', undefined, undefined]);
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-stop-recovered'], undefined);
 });
 
 test('socket: interrupt and close end the subscriptions; other addresses are refused', async () => {
