@@ -98,6 +98,8 @@ export interface HomeEntry {
   steps: { done: number; total: number };
   /** Home-only action: a completed executor turn still needs the person's sign-off. */
   canComplete?: boolean;
+  /** The last turn has no durable ending because the window or engine disappeared, rather than the person pressing Stop. */
+  interrupted?: boolean;
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
   /** Subagents of the run: Claude's Task (Agent) calls — name and kind from the call, state from its result. */
   agents: HomeAgent[];
@@ -365,7 +367,9 @@ export class ThreadModel {
     const run = this.currentRun();
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
     this.stopRequested = false;
-    if (run && (run.status === 'running' || run.status === 'waiting')) { run.status = status; run.completedAt = at; }
+    const open = run?.status === 'running' || run?.status === 'waiting';
+    const lateCompletedGuess = run?.status === 'interrupted' && this.settledByGuess && status === 'completed';
+    if (run && (open || lateCompletedGuess)) { run.status = status; run.completedAt = at; }
     for (const item of this.items) {
       if (item.status === 'running' || item.status === 'waiting' || item.status === 'pending')
         this.settleItem(item, item.type === 'assistant_message' ? 'completed' : status === 'completed' ? 'completed' : 'interrupted', at);
@@ -672,12 +676,14 @@ export class ThreadModel {
     const waitingItem = pending && this.items.find(item => item.requestId === pending.id);
     const open = run.status === 'running' || run.status === 'waiting';
     const question = waitingItem?.type === 'user_input_request' ? text(waitingItem.questions?.[0]?.question) : '';
+    const interrupted = run === this.currentRun() && run.status === 'interrupted' && this.settledByGuess;
     return {
       id: this.id, title: this.titleText(), projectId: this.projectId,
       state: open ? (pending ? 'waiting' : 'working') : run.status === 'completed' ? 'done' : 'ended',
       turnOrdinal: run.ordinal,
       startedAt: run.startedAt ?? run.requestedAt, doneAt: run.completedAt,
       steps: { done: steps.filter(item => item.status !== 'running' && item.status !== 'waiting').length, total: steps.length }, agents,
+      ...(interrupted ? { interrupted: true } : {}),
       ...(pending && waitingItem ? { request: { id: pending.id, kind: waitingItem.type === 'user_input_request' ? 'question' : 'approval', requestKind: waitingItem.requestKind ?? null, text: waitingItem.type === 'user_input_request' ? question : text(waitingItem.prompt) } } : {}),
     };
   }

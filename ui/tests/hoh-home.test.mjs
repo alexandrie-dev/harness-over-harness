@@ -55,6 +55,7 @@ test('agent cards have a separate accessible open target and an explicit human c
   assert.match(homeSource, /className="hoh-card__open" aria-label=\{`Open \$\{entry\.title\}`\}/);
   assert.match(homeSource, /className="hoh-card__complete"[^>]*onClick=\{\(\) => void view\.host\?\.complete\(entry\.id\)\}/);
   assert.match(homeSource, />Mark done<\/Button>/);
+  assert.match(homeSource, /entry\.interrupted \? 'Interrupted' : 'Waiting for your answer'/);
   assert.match(css, /--hoh-card-width:\s*min\(360px, calc\(\(50vw - 14px\) \/ 2\)\)/);
   assert.match(css, /grid-template-columns:\s*repeat\(auto-fill, var\(--hoh-card-width\)\)/);
   assert.match(css, /\.hoh-card__complete\s*\{[^}]*pointer-events:\s*auto/);
