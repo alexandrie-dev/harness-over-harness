@@ -13,7 +13,7 @@
                onPointerDown={(event) => event.preventDefault()}
                onClick={() => inputRef.current?.click()}
 -              aria-label={gt("Attach files")}
-+              aria-label={gt("Attach images")}
++              aria-label={gt("Attach images (up to 10 MiB each)")}
              />
            }
          >
@@ -21,7 +21,7 @@
          </TooltipTrigger>
          <TooltipPopup>
 -          <T>Attach files</T>
-+          <T>Attach images</T>
++          <T>Attach images (up to 10 MiB each)</T>
          </TooltipPopup>
        </Tooltip>
      </>
