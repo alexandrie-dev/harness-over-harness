@@ -21,10 +21,9 @@ test('T3 asset contract admits only its server paths and process-local blob prev
   assert.match(map, /contracts\/assets\.ts\.patch[^\n]*Blob URL/);
 });
 
-test('thread details card is hidden in every conversation, not only on Home', async () => {
+test('thread details card stays visible (CEO: it becomes the HOH-43 stats panel)', async () => {
   const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
-  assert.match(features, /['"]\[data-thread-details-card\]['"]/);
-  assert.doesNotMatch(features, /body:has\([^\n]+\) \[data-thread-details-card\]/);
+  assert.doesNotMatch(features, /\[data-thread-details-card\]/);
 });
 
 test('the timeline minimap strips that look like an equals sign are hidden', async () => {
