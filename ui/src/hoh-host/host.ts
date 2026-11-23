@@ -37,6 +37,8 @@ export interface HohHostOptions {
   /** The engine may still be starting when the window asks (its handshake takes seconds): the first reads are repeated this often, and this many times, until it answers. */
   readonly loadRetryMs?: number;
   readonly loadRetries?: number;
+  /** Test seam for the bounded race between optimistic media rendering and draft registration. */
+  readonly localImageContextGraceMs?: number;
 }
 
 export interface HohStorage {
@@ -67,6 +69,7 @@ const LOCAL_IMAGE_REQUEST_CACHE_MAX = 128;
 const LOCAL_IMAGE_FAILURE_TTL_MS = 5_000;
 const LOCAL_IMAGE_MAX_INFLIGHT = 6;
 const LOCAL_IMAGE_THREAD_MAX_INFLIGHT = 3;
+const LOCAL_IMAGE_CONTEXT_GRACE_MS = 2_000;
 const LOCAL_IMAGE_ATTEMPT_MAX = 64;
 const LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX = 512;
 const LOCAL_IMAGE_ATTEMPT_WINDOW_MS = 10 * 60_000;
@@ -81,7 +84,15 @@ type LocalImageFailure = { message: string; expiresAt: number };
 type LocalImageReservation = {
   threadId: string; reservedBytes: number; replacing: boolean; reservesIdentity: boolean;
 };
-type LocalImageContextWaiter = (thread: ThreadModel | undefined) => void;
+type LocalImageContextWaiter = {
+  resolve: (thread: ThreadModel | undefined) => void;
+  graceTimer?: ReturnType<typeof setTimeout>;
+};
+type LocalImageThreadContext = {
+  thread: ThreadModel;
+  /** The media RPC won the race with both draft lifecycle RPCs. */
+  admittedBeforeRegistration: boolean;
+};
 
 class PersistentLocalImageContextError extends Error {}
 class LocalImageContextCapacityError extends Error {}
@@ -120,6 +131,15 @@ function folderPath(value: unknown): string {
   if (typeof value !== 'string') return '';
   const trimmed = value.trim();
   return trimmed.length > 1 ? trimmed.replace(/\/+$/, '') || '/' : trimmed;
+}
+/** Rebase T3's eagerly joined relative Markdown path once the draft's real cwd replaces its placeholder. */
+function localImagePathAtRoot(path: string, requestedRoot: string, authoritativeRoot: string): string {
+  const from = folderPath(requestedRoot);
+  const to = folderPath(authoritativeRoot);
+  if (!from || !to || from === to) return path;
+  if (path === from) return to;
+  if (path.startsWith(`${from}/`) || path.startsWith(`${from}\\`)) return to + path.slice(from.length);
+  return path;
 }
 const titleOf = (root: string) => root.split('/').filter(Boolean).at(-1) ?? root;
 const timeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
@@ -166,6 +186,7 @@ export class HohHost {
   private readonly throttleMs: number;
   private readonly loadRetryMs: number;
   private readonly loadRetries: number;
+  private readonly localImageContextGraceMs: number;
   private stopped = false;
   private readonly threads = new Map<string, ThreadModel>();
   /** Rows restored before the engine answers; its list/history replaces their cached metadata once available. */
@@ -228,7 +249,7 @@ export class HohHost {
   /** Optimistic T3 drafts ask for their first image before createThread has installed the cwd. */
   private readonly localImageContextWaiters = new Map<string, Set<LocalImageContextWaiter>>();
   /** Context lookup is deduplicated by raw request and bounded before it can allocate a draft waiter. */
-  private readonly localImageContextInflight = new Map<string, Promise<ThreadModel | undefined>>();
+  private readonly localImageContextInflight = new Map<string, Promise<LocalImageThreadContext | undefined>>();
   /** A failed create is terminal until its draft subscription closes or creation is retried. */
   private readonly failedLocalImageContexts = new Set<string>();
   private readonly creatingThreads = new Set<string>();
@@ -253,6 +274,7 @@ export class HohHost {
     this.throttleMs = options.throttleMs ?? 40;
     this.loadRetryMs = options.loadRetryMs ?? 500;
     this.loadRetries = options.loadRetries ?? 60;
+    this.localImageContextGraceMs = options.localImageContextGraceMs ?? LOCAL_IMAGE_CONTEXT_GRACE_MS;
     this.workspaceRoot = options.workspaceRoot ?? PLACEHOLDER_ROOT;
     this.startedAt = this.now();
     this.storage = options.storage === undefined ? windowStorage() : options.storage;
@@ -490,7 +512,10 @@ export class HohHost {
     this.localImageReservations.clear();
     this.localImageBytes = 0;
     for (const waiters of this.localImageContextWaiters.values()) {
-      for (const settle of waiters) settle(undefined);
+      for (const waiter of waiters) {
+        if (waiter.graceTimer) clearTimeout(waiter.graceTimer);
+        waiter.resolve(undefined);
+      }
     }
     this.localImageContextWaiters.clear();
     this.localImageContextInflight.clear();
@@ -515,17 +540,38 @@ export class HohHost {
     const waiters = this.localImageContextWaiters.get(threadId);
     if (!waiters) return;
     this.localImageContextWaiters.delete(threadId);
-    for (const settle of waiters) settle(thread);
+    for (const waiter of waiters) {
+      if (waiter.graceTimer) clearTimeout(waiter.graceTimer);
+      waiter.resolve(thread);
+    }
   }
 
-  private waitForLocalImageContext(threadId: string, requireTransition = false): Promise<ThreadModel | undefined> {
+  /** A real draft lifecycle event promotes an early media lookup beyond its registration grace. */
+  private registerLocalImageContext(threadId: string) {
+    for (const waiter of this.localImageContextWaiters.get(threadId) ?? []) {
+      if (waiter.graceTimer) clearTimeout(waiter.graceTimer);
+      waiter.graceTimer = undefined;
+    }
+  }
+
+  private waitForLocalImageContext(threadId: string, requireTransition = false, allowRegistrationGrace = false): Promise<ThreadModel | undefined> {
     const existing = this.threads.get(threadId);
     if (!requireTransition && existing?.cwd) return Promise.resolve(existing);
     if (this.stopped || this.failedLocalImageContexts.has(threadId)) return Promise.resolve(undefined);
     return new Promise(resolve => {
       let waiters = this.localImageContextWaiters.get(threadId);
       if (!waiters) this.localImageContextWaiters.set(threadId, waiters = new Set());
-      waiters.add(resolve);
+      const waiter: LocalImageContextWaiter = { resolve };
+      if (allowRegistrationGrace && !this.threadSinks.has(threadId) && !this.creatingThreads.has(threadId)) {
+        waiter.graceTimer = setTimeout(() => {
+          const current = this.localImageContextWaiters.get(threadId);
+          if (!current?.delete(waiter)) return;
+          if (!current.size) this.localImageContextWaiters.delete(threadId);
+          waiter.graceTimer = undefined;
+          resolve(undefined);
+        }, this.localImageContextGraceMs);
+      }
+      waiters.add(waiter);
     });
   }
 
@@ -547,19 +593,22 @@ export class HohHost {
   }
 
   /** Resolve an optimistic media-file only after its stable thread id owns an authoritative cwd. */
-  private async localImageThreadContext(threadId: string) {
+  private async localImageThreadContext(threadId: string, admittedBeforeRegistration: boolean) {
     await this.start();
     let thread = await this.loaded(threadId);
     if (!thread) {
-      if (this.failedLocalImageContexts.has(threadId)
-        || (!this.threadSinks.has(threadId) && !this.creatingThreads.has(threadId))) return undefined;
-      thread = await this.waitForLocalImageContext(threadId);
+      if (this.failedLocalImageContexts.has(threadId)) return undefined;
+      // The built client can render its optimistic first message before either subscribeThread
+      // or thread.create reaches the host. The resource lookup becomes the first draft event,
+      // bounded until one of those authoritative lifecycle events registers the same id.
+      thread = await this.waitForLocalImageContext(threadId, false, true);
     }
     if (!thread || this.stopped) return undefined;
-    return thread.cwd ? thread : this.refreshLocalImageContext(thread.id, true);
+    const ready = thread.cwd ? thread : await this.refreshLocalImageContext(thread.id, true);
+    return ready ? { thread: ready, admittedBeforeRegistration } : undefined;
   }
 
-  private localImageThreadContextForPath(threadId: string, path: string) {
+  private localImageThreadContextForPath(threadId: string, path: string, admittedBeforeRegistration: boolean) {
     const requestKey = `${threadId}\0${path}`;
     const existing = this.localImageContextInflight.get(requestKey);
     if (existing) return existing;
@@ -573,7 +622,7 @@ export class HohHost {
         'Image unavailable: too many project images are waiting for this conversation folder.',
       ));
     }
-    const pending = this.localImageThreadContext(threadId).finally(() => {
+    const pending = this.localImageThreadContext(threadId, admittedBeforeRegistration).finally(() => {
       if (this.localImageContextInflight.get(requestKey) === pending) this.localImageContextInflight.delete(requestKey);
     });
     this.localImageContextInflight.set(requestKey, pending);
@@ -1118,6 +1167,7 @@ export class HohHost {
    */
   private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown) {
     this.creatingThreads.add(threadId);
+    this.registerLocalImageContext(threadId);
     this.failedLocalImageContexts.delete(threadId);
     try {
       const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
@@ -1589,22 +1639,37 @@ export class HohHost {
           if (resource?._tag !== 'media-file') throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:read' });
           const threadId = typeof resource.threadId === 'string' ? resource.threadId : '';
           const path = typeof resource.path === 'string' ? resource.path : '';
+          // A relative Markdown image is joined by T3 before the optimistic draft owns its
+          // authoritative cwd. Remember that root before awaiting createThread, then rebase
+          // only hostOnly (originally relative) paths after the folder becomes known.
+          const requestedWorkspaceRoot = this.workspaceRoot;
+          // Snapshot the live RPC order before start()/loaded() can yield to the later
+          // subscribe/launch calls. A restored conversation has a durable home and is
+          // never treated as an unregistered draft merely because startup is still slow.
+          const admittedBeforeRegistration = !this.threads.has(threadId)
+            && !this.homes.has(threadId)
+            && !this.threadSinks.has(threadId)
+            && !this.creatingThreads.has(threadId);
           if (!threadId || !path) throw new RpcFailure({ _tag: 'AssetWorkspaceContextNotFoundError', resource });
           if (path.length > 4096) throw new RpcFailure({
             _tag: 'AssetWorkspaceAssetNotFoundError', resource,
             detail: 'Image unavailable: the image path is too long.',
           });
-          let thread: ThreadModel | undefined;
-          try { thread = await this.localImageThreadContextForPath(threadId, path); }
+          let context: LocalImageThreadContext | undefined;
+          try { context = await this.localImageThreadContextForPath(threadId, path, admittedBeforeRegistration); }
           catch (error) {
             if (error instanceof LocalImageContextCapacityError) throw new RpcFailure({
               _tag: 'AssetWorkspaceAssetNotFoundError', resource, detail: error.message,
             });
-            thread = undefined;
+            context = undefined;
           }
-          if (!thread) throw new RpcFailure({ _tag: 'AssetWorkspaceContextNotFoundError', resource });
+          if (!context) throw new RpcFailure({ _tag: 'AssetWorkspaceContextNotFoundError', resource });
+          const { thread } = context;
           try {
-            const image = await this.localImageUrl(thread.id, path);
+            const imagePath = context.admittedBeforeRegistration && resource.hostOnly === true
+              ? localImagePathAtRoot(path, requestedWorkspaceRoot, thread.cwd ?? '')
+              : path;
+            const image = await this.localImageUrl(thread.id, imagePath);
             return {
               relativeUrl: image.url,
               expiresAt: this.now() + UPLOAD_TTL_MS,
@@ -1713,6 +1778,7 @@ export class HohHost {
           let open = true;
           let sinks = this.threadSinks.get(threadId);
           if (!sinks) this.threadSinks.set(threadId, sinks = new Set());
+          this.registerLocalImageContext(threadId);
           const own = sinks;
           void this.start().then(() => this.loaded(threadId)).then(thread => {
             if (!open) return;
