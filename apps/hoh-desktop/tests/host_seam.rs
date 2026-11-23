@@ -215,8 +215,9 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
     thread::spawn(move || {
         let mut input = node_in;
         while let Ok(frame) = from_native.recv() {
-            writeln!(input, "{frame}").unwrap();
-            input.flush().unwrap();
+            if writeln!(input, "{frame}").and_then(|()| input.flush()).is_err() {
+                break;
+            }
         }
     });
 
