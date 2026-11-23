@@ -1,12 +1,12 @@
 # T3 window locator contract
 
-The release window is WebKitGTK inside Tauri. The test runner addresses the
+The current-head window is WebKitGTK inside Tauri. The test runner addresses the
 rendered accessibility tree by role, accessible name, text, state and geometry;
 it never selects a CSS class. `ui/scripts/qa-window-formula.sh` established the
 project's real-window path (`Xvfb` + `xdotool` + screenshot). Official Tauri
 WebDriver would additionally require `tauri-driver` and `WebKitWebDriver`; neither
-is installed on this QA host, the supplied release has no embedded WebDriver
-plugin, and this task forbids installing or rebuilding anything.
+is installed on this QA host, the supplied desktop has no embedded WebDriver
+plugin, and this task forbids installing anything.
 
 ## Runtime locators
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Live T3-window QA for an already-built HoH release.
+"""Live T3-window QA for explicitly selected current-head HoH binaries.
 
 The parent process owns Xvfb.  The child process owns a private session bus,
 AT-SPI bus, the demo script and every process it launches.  No dependency is
-installed and no release artifact is rebuilt.
+installed and no release directory is read or written.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterable
 
 
 REPO = Path(__file__).resolve().parents[3]
-RELEASE = Path("/mnt/toshiba/alexandrie/hoh/release")
+OWNED_DISPLAYS = range(100, 110)
 KNOWN_SIDEBAR = {
     "New chat",
     "Learning",
@@ -36,10 +36,54 @@ KNOWN_SIDEBAR = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qa-dir", type=Path, required=True)
-    parser.add_argument("--display", default=":84")
-    parser.add_argument("--commit", default="b0f350af")
+    parser.add_argument("--display", required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--desktop", type=Path, required=True)
+    parser.add_argument("--engine", type=Path, required=True)
+    parser.add_argument("--mock", type=Path, required=True)
     parser.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
+
+
+def validate_inputs(args: argparse.Namespace) -> None:
+    match = re.fullmatch(r":([0-9]+)", args.display)
+    if match is None or int(match.group(1)) not in OWNED_DISPLAYS:
+        allowed = f":{OWNED_DISPLAYS.start}–:{OWNED_DISPLAYS.stop - 1}"
+        raise SystemExit(f"Display must be explicitly assigned from {allowed}: {args.display!r}")
+    if re.fullmatch(r"[0-9a-f]{7,40}", args.commit) is None:
+        raise SystemExit(f"Commit must be a 7–40 character lowercase Git SHA: {args.commit!r}")
+
+    missing: list[str] = []
+    for name in ("desktop", "engine", "mock"):
+        supplied = getattr(args, name)
+        try:
+            resolved = supplied.resolve(strict=True)
+        except FileNotFoundError:
+            missing.append(f"{name}={supplied} (missing)")
+            continue
+        if not resolved.is_file():
+            missing.append(f"{name}={resolved} (not a file)")
+        elif not os.access(resolved, os.X_OK):
+            missing.append(f"{name}={resolved} (not executable)")
+        else:
+            setattr(args, name, resolved)
+    if missing:
+        raise SystemExit("Invalid current-head artifacts: " + ", ".join(missing))
+
+
+def stage_artifacts(args: argparse.Namespace, qa: Path) -> Path:
+    staged = qa / "artifacts"
+    if staged.exists():
+        raise SystemExit(f"Fresh-run artifact directory already exists: {staged}")
+    staged.mkdir(mode=0o700)
+    targets = {
+        f"hoh-desktop-{args.commit}": args.desktop,
+        f"hoh-{args.commit}": args.engine,
+        f"hoh-llm-openai-mock-{args.commit}": args.mock,
+    }
+    for name, target in targets.items():
+        (staged / name).symlink_to(target)
+    return staged
 
 
 def wait_until(
@@ -74,8 +118,7 @@ def terminate_owned(process: subprocess.Popen[Any] | None, timeout: float = 8) -
 
 
 def parent(args: argparse.Namespace) -> int:
-    if args.display != ":84":
-        raise SystemExit("This QA assignment owns Xvfb :84 only")
+    validate_inputs(args)
     qa = args.qa_dir.resolve()
     qa.mkdir(parents=True, exist_ok=True)
     (qa / "shots").mkdir(exist_ok=True)
@@ -83,19 +126,11 @@ def parent(args: argparse.Namespace) -> int:
     data = qa / "data"
     if data.exists():
         raise SystemExit(f"Fresh-run data already exists: {data}")
-
-    expected = [
-        RELEASE / f"hoh-desktop-{args.commit}",
-        RELEASE / f"hoh-{args.commit}",
-        RELEASE / f"hoh-llm-openai-mock-{args.commit}",
-    ]
-    missing = [str(path) for path in expected if not path.is_file()]
-    if missing:
-        raise SystemExit("Missing release artifacts: " + ", ".join(missing))
+    stage_artifacts(args, qa)
 
     xvfb_log = (qa / "logs" / "xvfb.log").open("w", encoding="utf-8")
     xvfb = subprocess.Popen(
-        ["Xvfb", args.display, "-screen", "0", "1200x800x24", "-nolisten", "tcp", "-extension", "GLX"],
+        ["Xvfb", args.display, "-screen", "0", "1440x900x24", "-nolisten", "tcp", "-extension", "GLX"],
         stdout=xvfb_log,
         stderr=subprocess.STDOUT,
     )
@@ -123,6 +158,12 @@ def parent(args: argparse.Namespace) -> int:
             args.display,
             "--commit",
             args.commit,
+            "--desktop",
+            str(args.desktop),
+            "--engine",
+            str(args.engine),
+            "--mock",
+            str(args.mock),
         ]
         run_log = (qa / "logs" / "runner.log").open("w", encoding="utf-8")
         try:
@@ -143,6 +184,7 @@ class Harness:
         self.logs = self.qa / "logs"
         self.shots = self.qa / "shots"
         self.data = self.qa / "data"
+        self.artifacts = self.qa / "artifacts"
         self.demo: subprocess.Popen[Any] | None = None
         self.demo_stream: Any = None
         self.app: Any = None
@@ -356,6 +398,8 @@ class Harness:
             NO_AT_BRIDGE="0",
             GTK_MODULES="gail:atk-bridge",
             HOH_DEMO_COMMIT=self.args.commit,
+            HOH_DEMO_RELEASE=str(self.artifacts),
+            HOH_ENGINE_PATH=str(self.args.engine),
         )
         self.demo = subprocess.Popen(
             ["bash", str(REPO / "scripts" / "demo-window.sh"), "--claude", str(self.data)],
@@ -366,6 +410,16 @@ class Harness:
         )
         wait_until(lambda: self._discover_app(), 60, "HoH accessibility application", 0.5)
         wait_until(lambda: self.find(role="document web") is not None, 30, "loaded WebKit document")
+        subprocess.run(
+            ["xdotool", "windowsize", "--sync", self.window_id(), "1440", "900"],
+            check=True,
+        )
+        wait_until(
+            lambda: (self.extent(self.require("current frame", role="frame", name="HoH")) or (0, 0, 0, 0))[2:]
+            == (1440, 900),
+            15,
+            "1440x900 AT-SPI frame geometry",
+        )
 
     def _discover_app(self) -> bool:
         desktop = self.Atspi.get_desktop(0)
@@ -841,6 +895,11 @@ class Harness:
             "commit": self.args.commit,
             "display": self.args.display,
             "qa_dir": str(self.qa),
+            "artifacts": {
+                "desktop": str(self.args.desktop),
+                "engine": str(self.args.engine),
+                "mock": str(self.args.mock),
+            },
             "request_count": self.request_count,
             "results": self.results,
         }
