@@ -17,6 +17,7 @@ export const T3_BASE = resolve(UI, 'src/t3/base');
 const T3_WEB = resolve(T3_BASE, 'web');
 const HOST = resolve(UI, 'src/hoh-host');
 const HOST_STUB = resolve(import.meta.dirname, 'host-stub.ts');
+const PROJECT_GROUPING_SETTING = resolve(UI, 'src/t3-entry/hoh-screens/ProjectGroupingSetting.tsx');
 const HOST_MODULE = '\0hoh-host';
 export const T3_PAGE = 't3.html';
 export const T3_ASSETS = 't3-assets';
@@ -94,7 +95,8 @@ export function themeCards(code: string): string {
 export function themeSettings(code: string): string {
   return anchorPatch('ThemeSettings.tsx', code, [
     ['const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n', 'const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n'],
-  ], 'import { HOH_THEME } from "@t3tools/shared/themePalettes";\n');
+    ['    <div className="space-y-3">\n', '    <div className="space-y-3">\n      <HohProjectGroupingSetting />\n'],
+  ], 'import { HOH_THEME } from "@t3tools/shared/themePalettes";\nimport { ProjectGroupingSetting as HohProjectGroupingSetting } from ' + JSON.stringify(PROJECT_GROUPING_SETTING) + ';\n');
 }
 export function themePalettes(code: string): string {
   const theme = `export const HOH_THEME: ThemeDefinition = { id: "hoh", label: "HoH", appearance: "dark", colors: ${JSON.stringify(HOH_THEME_COLORS)} };\n`;

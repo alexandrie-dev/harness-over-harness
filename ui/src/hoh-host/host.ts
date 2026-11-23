@@ -356,6 +356,8 @@ export class HohHost {
     subscribe: (listener: () => void) => { this.homeListeners.add(listener); return () => { this.homeListeners.delete(listener); }; },
     entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => this.homeEntry(thread)).filter((entry): entry is HomeEntry => entry !== null),
     projectTitle: (projectId: string) => projectId === HOH_PROJECT_ID ? 'No project' : this.folders.get(projectId)?.title ?? 'No project',
+    /** Stable private color key for Home folders: a title can change, the workspace path does not. */
+    projectKey: (projectId: string) => projectId === HOH_PROJECT_ID ? this.workspaceRoot : this.folders.get(projectId)?.workspaceRoot ?? projectId,
     /** Approve or decline a waiting permission request, as the chat's buttons do. */
     answer: async (threadId: string, requestId: string, decision: 'accept' | 'decline') => {
       const thread = await this.loaded(threadId);
