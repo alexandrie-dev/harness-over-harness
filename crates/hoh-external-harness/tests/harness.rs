@@ -538,30 +538,44 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
             .collect::<Vec<_>>(),
         [Value::Null, json!("native-1")]
     );
-    // Deltas went to the live stream and ended committed as that assistant/message. The last
-    // word waits for the next chunk or the end (it may be the start of a key): one chunk.
+    // Reasoning and text deltas went to distinct live attempts and both ended committed as that
+    // assistant/message. Each last word waits for the next chunk or the end (it may start a key).
     let frames = lock(&frames).clone();
     assert!(matches!(
         frames.first(),
         Some(AssistantStreamFrame::Start { .. })
     ));
+    let chunks: Vec<Value> = frames
+        .iter()
+        .filter_map(|frame| match frame {
+            AssistantStreamFrame::Chunk { chunk, .. } => serde_json::to_value(chunk).ok(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chunks,
+        [
+            json!({"type": "reasoning-delta", "index": 0, "text": ""}),
+            json!({"type": "text-delta", "index": 0, "text": "Hello"}),
+            json!({"type": "reasoning-delta", "index": 0, "text": "thinking"}),
+        ]
+    );
     assert_eq!(
         frames
             .iter()
-            .filter(|frame| matches!(frame, AssistantStreamFrame::Chunk { .. }))
+            .filter(|frame| matches!(
+                frame,
+                AssistantStreamFrame::End {
+                    outcome: AssistantStreamOutcome::Committed {
+                        event_type: "assistant/message",
+                        ..
+                    },
+                    ..
+                }
+            ))
             .count(),
-        1
+        2
     );
-    assert!(matches!(
-        frames.last(),
-        Some(AssistantStreamFrame::End {
-            outcome: AssistantStreamOutcome::Committed {
-                event_type: "assistant/message",
-                ..
-            },
-            ..
-        })
-    ));
     // The same process serves the next turn.
     turn(&agent, "hello").await;
     assert_eq!(last_answer(&agent), "Hello from native-1 turn 2");
@@ -703,6 +717,34 @@ async fn context_usage_is_broadcast_while_the_turn_is_running_and_kept_at_the_en
     assert_eq!(updates[1]["usage"]["maxTokens"], 200_000);
     let end = of_type(&agent, "turn/end").pop().expect("turn end");
     assert_eq!(end["usage"], updates[1]["usage"]);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn an_empty_first_reasoning_delta_opens_the_live_thinking_item() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let agent = env.create("s-empty-reasoning").await;
+    let frames = frames(&env, &agent);
+    turn(&agent, "empty reasoning").await;
+    let chunks: Vec<Value> = lock(&frames)
+        .iter()
+        .filter_map(|frame| match frame {
+            AssistantStreamFrame::Chunk { chunk, .. } => serde_json::to_value(chunk).ok(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chunks,
+        [json!({"type": "reasoning-delta", "index": 0, "text": ""})]
+    );
+    assert!(lock(&frames).iter().any(|frame| matches!(
+        frame,
+        AssistantStreamFrame::End {
+            outcome: AssistantStreamOutcome::Abandoned,
+            ..
+        }
+    )));
     env.close().await;
 }
 
@@ -1275,7 +1317,13 @@ async fn parented_harness_events_extend_existing_session_events() {
     let dirs = dirs();
     let env = env(&dirs).await;
     let agent = env.create("s-nested-events").await;
+    let frames = frames(&env, &agent);
     turn(&agent, "nested events").await;
+
+    assert!(
+        lock(&frames).is_empty(),
+        "child reasoning or text was flattened into the root live stream"
+    );
 
     let messages = of_type(&agent, "assistant/message");
     let child_text = messages

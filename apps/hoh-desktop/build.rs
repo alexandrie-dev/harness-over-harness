@@ -7,6 +7,7 @@ fn main() {
             "engine_request",
             "pick_folder",
             "browse_folders",
+            "read_image_asset",
             "open_link",
             "question_answer",
             "approval_history",

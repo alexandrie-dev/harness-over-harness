@@ -151,7 +151,9 @@ export type ExecutorCommandsResult = { "executor": string; "cwd": string; "comma
 
 export type ExecutorDiscoverParams = { "executor": string; };
 
-export type ExecutorDiscoverResult = { "executor": string; "installed": boolean; "version"?: (string | null); "versionStatus": ExecutorVersionStatus; "auth": ExecutorAuth; "models": Array<ExecutorModel>; "detail"?: (string | null); };
+export type ExecutorDiscoverResult = { "executor": string; "installed": boolean; "version"?: (string | null); "versionStatus": ExecutorVersionStatus; "auth": ExecutorAuth; "models": Array<ExecutorModel>; "detail"?: (string | null); "failure"?: ({ "kind": "timeout"; "operation": ExecutorDiscoveryOperation; "timeoutSeconds": number; } | { "kind": "exit"; "operation": ExecutorDiscoveryOperation; "exitCode"?: (number | null); }); };
+
+export type ExecutorDiscoveryOperation = "version" | "initialize";
 
 export type ExecutorEffectiveAccess = { "mode": ExecutorAccessMode; "flags": Array<string>; "text": string; };
 
@@ -301,7 +303,7 @@ export type SecuritySummaryResult = { "model": SecurityModel; "egress": Array<Eg
 
 export type ServerInfo = { "name": string; "version": string; };
 
-export type SessionAssistantStreamChunk = ({ "type": "text-delta"; "text": string; });
+export type SessionAssistantStreamChunk = ({ "type": "text-delta"; "text": string; } | { "type": "reasoning-delta"; "text": string; });
 
 export type SessionAssistantStreamFrame = ({ "type": "start"; "attemptId": string; "revision": number; "turn": number; "step": number; } | { "type": "chunk"; "attemptId": string; "revision": number; "index": number; "time": number; "chunk": SessionAssistantStreamChunk; } | { "type": "gap"; "attemptId": string; "revision": number; "index": number; } | { "type": "end"; "attemptId": string; "revision": number; "index": number; "outcome": SessionAssistantStreamOutcome; });
 

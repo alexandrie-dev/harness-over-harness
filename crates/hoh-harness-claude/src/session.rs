@@ -381,7 +381,7 @@ impl ClaudeSession {
             _ = tokio::time::sleep(init_timeout) => {
                 session.inner.sup.terminate(Duration::from_millis(500)).await;
                 return Err(HarnessFailure::new(
-                    code::PROTOCOL,
+                    code::TIMEOUT,
                     version::protocol_message(version, "нет ответа на initialize"),
                 ));
             }

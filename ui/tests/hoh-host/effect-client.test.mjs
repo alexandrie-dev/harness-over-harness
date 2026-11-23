@@ -321,13 +321,14 @@ test('T3 first run: an engine with a chat opens the app; Claude not found, or no
     assert.deepEqual([agents.readyCount, agents.checking, welcomeAgentState(config.providers[0], config.settings)], [0, false, 'install']);
     await shell.stop();
   });
-  const unchecked = new FakeEngine();
-  const request = unchecked.request.bind(unchecked);
-  unchecked.request = (method, params) => method === 'hoh/executor/discover' ? Promise.reject(new Error('engine is busy')) : request(method, params);
+  const unchecked = new FakeEngine({ discovery: {
+    executor: 'claude', installed: true, version: null, auth: 'unknown', models: [],
+    failure: { kind: 'timeout', operation: 'version', timeoutSeconds: 20 },
+  } });
   await withClient(unchecked, async client => {
     const { config, shell } = await firstRunInput(client);
     const agents = await welcomeAgents(config);
-    assert.deepEqual([agents.readyCount, agents.checking, config.providers[0].installed, config.providers[0].message], [0, false, false, 'Failed to execute Claude Agent CLI health check.']);
+    assert.deepEqual([agents.readyCount, agents.checking, config.providers[0].installed, config.providers[0].message], [0, false, true, 'Claude Agent CLI health check timed out after 20 seconds while running `claude --version`.']);
     await shell.stop();
   });
 });

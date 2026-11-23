@@ -155,6 +155,24 @@ test('a malformed stream falls back to the authoritative text without reasoning'
   assert.deepEqual(assistantChunks({ data: { message: { content: [{ type: 'text', text: 'Ответ' }] }, stream: [{ type: 'text-chunks', texts: ['Неправильно'] }] } }), ['Ответ']);
 });
 
+test('reasoning attempts never replace the legacy projection text in either start order', () => {
+  for (const reasoningFirst of [true, false]) {
+    const p = new ChatProjection();
+    const startReasoning = () => {
+      p.liveFrame({ type: 'start', attemptId: 'reasoning', revision: 1, turn: 1, step: 1 });
+      p.liveFrame({ type: 'chunk', attemptId: 'reasoning', revision: 2, index: 0, time: 1, chunk: { type: 'reasoning-delta', text: 'hidden thought' } });
+    };
+    const startText = () => {
+      p.liveFrame({ type: 'start', attemptId: 'text', revision: 1, turn: 1, step: 1 });
+      p.liveFrame({ type: 'chunk', attemptId: 'text', revision: 2, index: 0, time: 1, chunk: { type: 'text-delta', text: 'Visible ' } });
+    };
+    if (reasoningFirst) { startReasoning(); startText(); }
+    else { startText(); startReasoning(); }
+    p.liveFrame({ type: 'chunk', attemptId: 'text', revision: 3, index: 1, time: 2, chunk: { type: 'text-delta', text: 'answer' } });
+    assert.deepEqual(p.entries.map(entry => [entry.kind, entry.text, entry.streaming]), [['assistant', 'Visible answer', true]]);
+  }
+});
+
 test('an idle/error ending gives unfinished work a terminal human result', () => {
   const p = new ChatProjection();
   p.event(event('tool/call', 0, { name: 'read', callId: 'r', arguments: '{"file_path":"note.txt"}' }));

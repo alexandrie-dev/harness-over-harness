@@ -1,37 +1,39 @@
 /* Главная HoH (HOH-41 В2): только раскладка; цвета — токены темы T3/HoH, шрифт и радиусы — T3 (var(--radius-*)). */
-.hoh-home { display: flex; flex: 1 1 0; width: 100%; min-height: 0; overflow-y: auto; pointer-events: auto; scrollbar-width: none; } /* без полосы прокрутки: она сдвигала колонку с линий сетки на 3 px; прокрутка колесом и клавишами работает */
+.hoh-home {
+  display: flex; flex: 1 1 0; width: 100%; min-height: 0; overflow-y: auto; pointer-events: auto; scrollbar-width: none;
+  padding-inline-start: calc(env(safe-area-inset-left) + .75rem + var(--chat-lane-inset-start, 0px));
+  padding-inline-end: calc(env(safe-area-inset-right) + .75rem + var(--chat-lane-inset-end, 0px));
+} /* T3's .chat-composer-lane gutter contract; scrolling stays visually centred without a scrollbar. */
 .hoh-home::-webkit-scrollbar { display: none; }
 /* Заголовок черновика T3 («What should we work on?») T3 кладёт над полем ввода вне потока (absolute, bottom-full): тело главной уходило под него.
    Он становится строкой потока в колонке поля ввода — тело (flex: 1, прокручивается внутри себя) занимает то, что осталось над ним, и не может его перекрыть. */
 [data-chat-composer-stack] > .absolute.inset-x-0.bottom-full { position: static; }
-.hoh-home__inner { display: flex; flex-direction: column; gap: 28px; width: 100%; max-width: 1120px; margin: 0 auto; padding: 28px 28px 24px; }
-/* Пустая главная — единая компактная группа: приветствие, вопрос T3 и composer. Тело не растягивается и не раздвигает их по высоте. */
-.hoh-home:not([data-busy]) { flex: 0 0 auto; overflow: visible; margin-bottom: 0; -webkit-mask-image: none; mask-image: none; }
-.hoh-home:not([data-busy]) .hoh-home__inner { padding-block: 0 18px; gap: 0; }
-.hoh-home:not([data-busy]) .hoh-home__head { margin-top: 0; }
+/* Quick View is a portaled T3 Dialog. Do not let the underlying home composer paint a blurred silhouette through its
+   backdrop; the adjacent selector deliberately leaves the dialog's own ChatView/composer untouched. */
+body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat-composer-lane { visibility: hidden; }
+.hoh-home__inner { display: flex; flex-direction: column; gap: 28px; width: 100%; max-width: var(--chat-content-max-width); margin: 0 auto; padding: 28px 0 24px; }
+/* T3 centres its one-item empty draft hero vertically. HoH inserts the greeting as a preceding sibling, so the two
+   compact children form one centred column; occupied Home keeps the existing bottom-docked, scrolling layout. */
+.hoh-draft-hero:has(> .hoh-home:not([data-busy])) { justify-content: center; }
+.hoh-home:not([data-busy]) { flex: 0 0 auto; overflow: visible; margin-bottom: 28px; -webkit-mask-image: none; mask-image: none; }
+.hoh-home:not([data-busy]) .hoh-home__inner { padding-block: 0; gap: 0; }
+@media (max-height: 34rem) {
+  .hoh-draft-hero:has(> .hoh-home:not([data-busy])) { justify-content: flex-end; }
+}
 /* Один столбец: приветствие, затем «Needs your answer», карточки, «Done» (запрос, который ждёт человека, выше карточек). */
 .hoh-home__main { display: contents; }
 .hoh-home__main > section:last-child { order: 3; }
 .hoh-home__head { order: -2; }
 .hoh-home__side { order: -1; width: 100%; }
-/* С ширины 1100 px начало главной совпадает с колонкой разговора (g8 / g7), а правый край расширяется до g20:
-   карточки добавляются в ряд, но каждая остаётся уже половины колонки разговора и никогда не растёт шире 360 px. */
-@media (min-width: 1100px) {
-  .hoh-home__inner {
-    --hoh-home-left: calc((100% - 50vw) / 2);
-    --hoh-home-right: calc(100vw - var(--gc-x20));
-    flex: 0 0 calc(100% - var(--hoh-home-left) - var(--hoh-home-right));
-    width: calc(100% - var(--hoh-home-left) - var(--hoh-home-right));
-    max-width: none;
-    margin-left: var(--hoh-home-left);
-    margin-right: var(--hoh-home-right);
-    padding-inline: 0;
+@media (min-width: 640px) {
+  .hoh-home {
+    padding-inline-start: calc(env(safe-area-inset-left) + 3rem + var(--chat-lane-inset-start, 0px));
+    padding-inline-end: calc(env(safe-area-inset-right) + 3rem + var(--chat-lane-inset-end, 0px));
   }
-  .hoh-home__side { width: 50vw; }
 }
 .hoh-home h1 { font-size: 1.75rem; line-height: 2.25rem; font-weight: 600; margin: 0; }
 .hoh-home__date { color: var(--muted-foreground); font-size: 0.875rem; margin-top: 4px; }
-.hoh-home__head { position: relative; width: 100%; margin-top: 8px; text-align: center; }
+.hoh-home__head { position: relative; width: 100%; margin-top: 0; text-align: center; }
 .hoh-home__greeting { display: block; width: 100%; text-align: center; }
 /* Эмблема над приветствием (правило u2: emblem-fit.ts ставит data-hoh-emblem, только если она помещается без прокрутки; на узком окне скрыта). */
 .hoh-home__head[data-hoh-emblem] { margin-top: 134px; }
@@ -43,9 +45,9 @@
 }
 .hoh-home__label { display: flex; align-items: baseline; gap: 8px; font-size: 0.875rem; font-weight: 600; margin: 0 0 10px; }
 .hoh-home__count { color: var(--muted-foreground); font-weight: 400; }
-.hoh-home__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
-@media (min-width: 1100px) {
-  .hoh-home__cards { --hoh-card-width: min(360px, calc((50vw - 14px) / 2)); grid-template-columns: repeat(auto-fill, var(--hoh-card-width)); }
+.hoh-home__cards {
+  --hoh-card-width: min(360px, calc((50vw - 14px) / 2));
+  display: grid; grid-template-columns: repeat(auto-fill, var(--hoh-card-width)); justify-content: center; gap: 14px;
 }
 /* Карточка агента: тёмная, скруглённая, граница-градиент и мягкое свечение цвета состояния (палитра окна: синий — работает,
    красный — ждёт ответа, нейтральный — готово). Свечение — статичная тень вне карточки (текст не размывает), без анимации. */
@@ -113,8 +115,7 @@
   .hoh-ask { gap: 8px; padding: 10px; }
   .hoh-ask__where { display: none; }
   .hoh-ask__text[data-expanded] { max-height: 7.5rem; }
-  .hoh-home[data-busy] .hoh-home__head { display: none; }
-  .hoh-home[data-busy] .hoh-home__inner { padding-top: 12px; gap: 16px; }
+  .hoh-home[data-busy] .hoh-home__inner { gap: 16px; }
 }
 /* Занятая главная (есть агенты, запросы или готовое): приветствие сверху уже есть, заголовок черновика T3 («What should we work on?» / «No project») не показывается — место отдано списку.
    На пустой главной он остаётся. Список прокручивается внутри себя; его нижний край — поле ввода, отступ 24 px — у .hoh-home__inner. */
@@ -122,20 +123,23 @@ body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute
 /* Край прокрутки у поля ввода: зазор 12 px и затухание последних 36 px — карточка уходит под край плавно, а не срезается. */
 .hoh-home { margin-bottom: 12px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent); }
 
-/* HOH-44B: project folders reuse the home grid and reveal the existing agent cards in a portal above it. */
-:root { --hoh-project-color-0: #4f7cff; --hoh-project-color-1: #8b6cff; --hoh-project-color-2: #28a99a; --hoh-project-color-3: #d97757; --hoh-project-color-4: #d2a53a; --hoh-project-color-5: #d25f91; }
-.hoh-projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 16px; }
-@media (min-width: 1100px) { .hoh-projects { --hoh-folder-width: min(360px, calc((50vw - 16px) / 2)); grid-template-columns: repeat(auto-fill, var(--hoh-folder-width)); } }
-.hoh-project { position: relative; display: flex; min-width: 0; min-height: 216px; flex-direction: column; gap: 12px; padding: 16px; overflow: hidden; text-align: left; color: inherit; font: inherit; cursor: pointer; border: 1px solid color-mix(in srgb, var(--border) 84%, var(--hoh-project-color)); border-radius: calc(var(--radius-xl) + 4px); background: linear-gradient(145deg, color-mix(in srgb, var(--card) 93%, var(--hoh-project-color) 7%), var(--background)); box-shadow: 0 12px 32px color-mix(in srgb, var(--hoh-project-color) 10%, transparent), inset 0 1px 0 color-mix(in srgb, white 5%, transparent); transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
-.hoh-project:hover, .hoh-project[data-expanded] { border-color: color-mix(in srgb, var(--hoh-project-color) 70%, var(--border)); box-shadow: 0 14px 38px color-mix(in srgb, var(--hoh-project-color) 18%, transparent), inset 0 1px 0 color-mix(in srgb, white 7%, transparent); transform: translateY(-2px); }
+/* HOH-44B: project folders reuse the home grid; the active row expands in-flow so it cannot cover the composer. */
+:root { --hoh-project-color-0: #4f7cff; --hoh-project-color-1: #8b6cff; --hoh-project-color-2: #22b8a7; --hoh-project-color-3: #5fb86a; --hoh-project-color-4: #d6a33f; --hoh-project-color-5: #d9689f; --hoh-project-color-6: #c87552; --hoh-project-color-7: #369ac7; }
+.hoh-projects { display: grid; grid-template-columns: [g1] repeat(auto-fit, minmax(min(100%, 280px), 360px)) [g21]; justify-content: center; gap: 16px; }
+.hoh-project { position: relative; display: flex; min-width: 0; min-height: 216px; flex-direction: column; gap: 12px; padding: 16px; overflow: hidden; text-align: left; color: inherit; font: inherit; cursor: pointer; border: 1px solid var(--border); border-radius: calc(var(--radius-xl) + 4px); background: linear-gradient(145deg, color-mix(in srgb, var(--card) 93%, var(--hoh-project-color) 7%), var(--background)); box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent); transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
+.hoh-project:hover, .hoh-project[data-expanded] { transform: translateY(-2px); }
 .hoh-project:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
-.hoh-project[data-waiting] { border-color: color-mix(in srgb, var(--warning) 88%, var(--border)); box-shadow: 0 10px 34px color-mix(in srgb, var(--warning) 18%, transparent), inset 0 1px 0 color-mix(in srgb, white 5%, transparent); }
+.hoh-project[data-working] { border-color: color-mix(in srgb, var(--primary) 64%, var(--border)); box-shadow: 0 10px 34px color-mix(in srgb, var(--primary) 18%, transparent), inset 0 1px 0 color-mix(in srgb, white 5%, transparent); }
+.hoh-project[data-waiting] { border-color: color-mix(in srgb, var(--destructive) 88%, var(--border)); box-shadow: 0 10px 34px color-mix(in srgb, var(--destructive) 22%, transparent), inset 0 1px 0 color-mix(in srgb, white 5%, transparent); }
+.hoh-project[data-working]:hover, .hoh-project[data-working][data-expanded] { box-shadow: 0 14px 40px color-mix(in srgb, var(--primary) 26%, transparent), inset 0 1px 0 color-mix(in srgb, white 7%, transparent); }
+.hoh-project[data-waiting]:hover, .hoh-project[data-waiting][data-expanded] { box-shadow: 0 14px 40px color-mix(in srgb, var(--destructive) 28%, transparent), inset 0 1px 0 color-mix(in srgb, white 7%, transparent); }
 .hoh-project__top { display: grid; min-width: 0; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 12px; }
-.hoh-project__icon { position: relative; display: block; width: 56px; height: 56px; flex: none; overflow: hidden; border-radius: 16px; background: radial-gradient(circle at 26% 16%, color-mix(in srgb, white 44%, transparent), transparent 38%), linear-gradient(145deg, color-mix(in srgb, var(--hoh-project-color) 72%, white), color-mix(in srgb, var(--hoh-project-color) 64%, black)); box-shadow: inset 0 1px 0 color-mix(in srgb, white 30%, transparent), 0 8px 20px color-mix(in srgb, var(--hoh-project-color) 24%, transparent); }
-.hoh-project__icon i, .hoh-project__icon b { position: absolute; left: 11px; right: 11px; display: block; border-radius: 6px 7px 9px 9px; background: color-mix(in srgb, white 84%, var(--hoh-project-color)); box-shadow: 0 3px 8px color-mix(in srgb, black 18%, transparent); }
-.hoh-project__icon i { top: 17px; height: 20px; opacity: .62; transform: translateY(-5px) scale(.9); }
-.hoh-project__icon b { top: 23px; height: 22px; }
-.hoh-project__icon em { position: absolute; left: 17px; right: 15px; top: 28px; height: 11px; border: solid color-mix(in srgb, white 62%, transparent); border-width: 0 0 1px; border-radius: 50%; transform: rotate(-7deg); }
+.hoh-project__icon { position: relative; display: block; width: 56px; height: 56px; flex: none; overflow: hidden; border-radius: 16px; background: radial-gradient(circle at 26% 16%, color-mix(in srgb, white 24%, transparent), transparent 38%), linear-gradient(145deg, color-mix(in srgb, var(--hoh-project-color) 78%, white), color-mix(in srgb, var(--hoh-project-color) 68%, black)); box-shadow: inset 0 1px 0 color-mix(in srgb, white 24%, transparent), 0 8px 20px color-mix(in srgb, var(--hoh-project-color) 24%, transparent); }
+.hoh-project__icon i, .hoh-project__icon b { position: absolute; left: 10px; right: 10px; display: block; border-radius: 7px 8px 10px 10px; box-shadow: 0 3px 8px color-mix(in srgb, black 20%, transparent); }
+.hoh-project__icon i { top: 14px; height: 25px; background: color-mix(in srgb, var(--hoh-project-color) 76%, white); opacity: .82; transform: scale(.9); }
+.hoh-project__icon b { top: 24px; height: 23px; background: color-mix(in srgb, var(--hoh-project-color) 66%, white); }
+.hoh-project__icon b::before { content: ""; position: absolute; left: 3px; top: -6px; width: 15px; height: 10px; border-radius: 5px 6px 0 0; background: inherit; }
+.hoh-project__icon em { position: absolute; z-index: 1; left: 16px; right: 14px; top: 28px; height: 12px; border: solid color-mix(in srgb, white 58%, transparent); border-width: 0 0 1px; border-radius: 50%; transform: rotate(-7deg); }
 .hoh-project__heading { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .hoh-project__counts { display: flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: .6875rem; line-height: 1rem; white-space: nowrap; }
 .hoh-project__counts i { width: 1px; height: 10px; background: var(--border); }
@@ -143,8 +147,8 @@ body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute
 .hoh-project__actions { display: flex; align-items: center; gap: 8px; }
 .hoh-project__chip, .hoh-project__more { display: inline-flex; height: 28px; align-items: center; justify-content: center; border: 1px solid color-mix(in srgb, var(--border) 82%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--muted) 64%, transparent); }
 .hoh-project__chip { gap: 7px; padding: 0 9px; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; }
-.hoh-project__chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--hoh-project-color); box-shadow: 0 0 10px color-mix(in srgb, var(--hoh-project-color) 70%, transparent); }
-.hoh-project[data-waiting] .hoh-project__chip i { background: var(--warning); box-shadow: 0 0 10px color-mix(in srgb, var(--warning) 70%, transparent); }
+.hoh-project__chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 70%, transparent); }
+.hoh-project[data-waiting] .hoh-project__chip i { background: var(--destructive); box-shadow: 0 0 10px color-mix(in srgb, var(--destructive) 70%, transparent); }
 .hoh-project__more { width: 28px; color: var(--muted-foreground); font-size: 1rem; letter-spacing: 1px; }
 .hoh-project__footer { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(88px, 1fr); gap: 16px; margin: auto -8px -8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--border) 65%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--card) 72%, var(--background)); }
 .hoh-project__metric { display: flex; min-width: 0; flex-direction: column; justify-content: space-between; gap: 8px; }
@@ -158,7 +162,7 @@ body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute
 .hoh-project__runner { display: grid; width: 22px; height: 22px; margin-left: -6px; place-items: center; border: 2px solid var(--card); border-radius: 50%; background: var(--background); }
 .hoh-project__runner svg { width: 12px; height: 12px; }
 .hoh-project__runner-more { display: grid; height: 22px; min-width: 24px; margin-left: -4px; padding: 0 5px; place-items: center; border: 2px solid var(--card); border-radius: 999px; background: var(--muted); color: var(--muted-foreground); font-size: .5625rem; }
-.hoh-project-popover { position: fixed; z-index: 90; overflow: auto; overscroll-behavior: contain; padding: 12px; border: 1px solid color-mix(in srgb, var(--border) 80%, var(--primary) 20%); border-radius: calc(var(--radius-xl) + 6px); background: color-mix(in srgb, var(--background) 96%, transparent); box-shadow: 0 24px 72px color-mix(in srgb, black 48%, transparent), 0 0 0 1px color-mix(in srgb, white 4%, transparent); backdrop-filter: blur(18px); }
+.hoh-project-popover { position: relative; grid-column: g1 / g21; width: 100%; max-height: min(560px, calc(100dvh - 240px)); overflow: auto; overscroll-behavior: contain; padding: 12px; border: 1px solid color-mix(in srgb, var(--border) 80%, var(--primary) 20%); border-radius: calc(var(--radius-xl) + 6px); background: color-mix(in srgb, var(--background) 96%, transparent); box-shadow: 0 18px 56px color-mix(in srgb, black 38%, transparent), 0 0 0 1px color-mix(in srgb, white 4%, transparent); }
 .hoh-project-popover__head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 4px 10px; }
 .hoh-project-popover__head span { overflow: hidden; font-size: .8125rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .hoh-project-popover__head small { flex: none; color: var(--muted-foreground); font-size: .6875rem; }
@@ -166,5 +170,6 @@ body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute
 .hoh-project-popover__agent { min-width: 0; opacity: 0; transform: translateY(-28px) scale(.97); animation: hoh-agent-unfold 240ms cubic-bezier(.2, .8, .2, 1) forwards; animation-delay: calc(var(--hoh-agent-index) * 30ms); }
 .hoh-project-popover .hoh-card { width: 100%; height: 100%; min-height: 136px; }
 @keyframes hoh-agent-unfold { to { opacity: 1; transform: translateY(0) scale(1); } }
-@media (max-width: 760px) { .hoh-projects { grid-template-columns: 1fr; } .hoh-project { min-height: 208px; } .hoh-project-popover { padding: 8px; } .hoh-project-popover__cards { grid-template-columns: 1fr; } }
+@media (min-width: 761px) and (max-width: 900px) { .hoh-project-popover__cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .hoh-project-popover .hoh-card { min-height: 112px; gap: 5px; padding: 10px; } .hoh-project-popover .hoh-card .hoh-mark { width: 18px; height: 18px; margin-bottom: 2px; } }
+@media (max-width: 760px) { .hoh-projects { grid-template-columns: [g1] 1fr [g21]; } .hoh-project { min-height: 208px; } .hoh-project-popover { padding: 8px; } .hoh-project-popover__cards { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .hoh-project, .hoh-project-popover__agent { transition: none; animation: none; opacity: 1; transform: none; } }

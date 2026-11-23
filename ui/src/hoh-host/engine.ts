@@ -24,6 +24,8 @@ export type ApprovalDecision = 'allowed-once' | 'rejected';
 
 export interface HohEngine {
   request(method: string, params: unknown): Promise<any>;
+  /** Native-only bounded read of a raster, rooted by the native host in this conversation's cwd. */
+  readImageAsset?(input: { readonly sessionId: string; readonly path: string }): Promise<LocalImageAsset>;
   subscribe(listener: (notification: EngineNotification) => void): Promise<Unsubscribe>;
   subscribeStatus?(listener: (status: EngineStatus) => void): Promise<Unsubscribe>;
   subscribeQuestions?(listener: (question: EngineQuestion) => void): Promise<Unsubscribe>;
@@ -36,6 +38,14 @@ export interface HohEngine {
    * "Pro". Only folder names; the window sees no files. Without it, a project is added by its full path.
    */
   browseFolders?(input: FolderBrowseInput): Promise<FolderListing>;
+}
+
+export interface LocalImageAsset {
+  readonly dataBase64: string;
+  readonly mimeType: 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp';
+  readonly sizeBytes: number;
+  readonly sourcePath: string;
+  readonly fileRevision: string;
 }
 
 export interface FolderBrowseInput { readonly partialPath: string; readonly cwd?: string }

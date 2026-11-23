@@ -1,7 +1,7 @@
-// Пустые страницы «Learning» и «Widgets» (HOH-41, ответ основателя: «пустыми да, позже доделаем»): какая открыта сейчас.
+// Страницы боковой панели: пустая «Learning» и живой раунд дизайна «Plugins» (HOH-42).
 // Это не маршруты T3 (дерево маршрутов не трогаем): страница — слой поверх области справа от боковой панели (SidebarPages.tsx).
-export type PageKey = 'learning' | 'widgets';
-export const PAGE_TITLES: Readonly<Record<PageKey, string>> = { learning: 'Learning', widgets: 'Widgets' };
+export type PageKey = 'learning' | 'plugins';
+export const PAGE_TITLES: Readonly<Record<PageKey, string>> = { learning: 'Learning', plugins: 'Plugins' };
 
 export interface PageStore {
   current(): PageKey | null;

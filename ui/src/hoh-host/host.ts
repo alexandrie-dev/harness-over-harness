@@ -63,6 +63,56 @@ const interactionModeOf = (value: unknown): T3InteractionMode => {
 
 export const STORAGE_KEY = 'hoh-host.projects.v1';
 const PLACEHOLDER_ROOT = '~/Documents/HoH';
+const LOCAL_IMAGE_BYTES = 20 * 1024 * 1024;
+const LOCAL_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
+const LOCAL_IMAGE_MAX_RETAINED_BYTES = 128 * 1024 * 1024;
+const LOCAL_IMAGE_MAX_RETAINED_ENTRIES = 64;
+const LOCAL_IMAGE_THREAD_MAX_RETAINED_BYTES = 64 * 1024 * 1024;
+const LOCAL_IMAGE_THREAD_MAX_RETAINED_ENTRIES = 32;
+const LOCAL_IMAGE_REQUEST_CACHE_MAX = 128;
+const LOCAL_IMAGE_FAILURE_TTL_MS = 5_000;
+const LOCAL_IMAGE_MAX_INFLIGHT = 6;
+const LOCAL_IMAGE_THREAD_MAX_INFLIGHT = 3;
+const LOCAL_IMAGE_ATTEMPT_MAX = 64;
+const LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX = 512;
+const LOCAL_IMAGE_ATTEMPT_WINDOW_MS = 10 * 60_000;
+const LOCAL_IMAGE_ATTEMPT_THREADS_MAX = LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX;
+const LOCAL_IMAGE_THREAD_MAX_IDENTITIES = 256;
+
+type LocalImageUrl = {
+  url: string; revision: string; sourcePath: string; sizeBytes: number; threadId: string;
+  requestKeys: Set<string>;
+};
+type LocalImageFailure = { message: string; expiresAt: number };
+type LocalImageReservation = {
+  threadId: string; reservedBytes: number; replacing: boolean; reservesIdentity: boolean;
+};
+
+function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  const value = map.get(key);
+  if (value === undefined) return undefined;
+  map.delete(key);
+  map.set(key, value);
+  return value;
+}
+
+function lruSet<K, V>(map: Map<K, V>, key: K, value: V, maximum: number) {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > maximum) map.delete(map.keys().next().value!);
+}
+
+export function localImageRetentionFits(input: {
+  readonly globalBytes: number; readonly globalEntries: number;
+  readonly threadBytes: number; readonly threadEntries: number;
+  readonly replacedBytes: number; readonly replacing: boolean; readonly sizeBytes: number;
+}) {
+  const addedEntries = input.replacing ? 0 : 1;
+  return input.globalEntries + addedEntries <= LOCAL_IMAGE_MAX_RETAINED_ENTRIES
+    && input.globalBytes - input.replacedBytes + input.sizeBytes <= LOCAL_IMAGE_MAX_RETAINED_BYTES
+    && input.threadEntries + addedEntries <= LOCAL_IMAGE_THREAD_MAX_RETAINED_ENTRIES
+    && input.threadBytes - input.replacedBytes + input.sizeBytes <= LOCAL_IMAGE_THREAD_MAX_RETAINED_BYTES;
+}
 
 function windowStorage(): HohStorage | null {
   try { return (globalThis as { localStorage?: HohStorage }).localStorage ?? null; } catch { return null; }
@@ -137,6 +187,13 @@ export class HohHost {
   private sessionsKnown = false;
   private readonly homeListeners = new Set<() => void>();
   private discovery: ClaudeDiscovery | null = null;
+  /** Undefined while the startup probe is pending; set only when its bounded retry lane ends. */
+  private discoveryFailure: unknown | undefined;
+  private discoveryPending = true;
+  private discoveryStartedAt: number;
+  /** A person's Refresh supersedes the startup lane; incidental workspace reads share its in-flight probe. */
+  private discoveryGeneration = 0;
+  private discoveryInFlight: { generation: number; promise: Promise<boolean> } | undefined;
   /** Null until the engine has answered `access/get`; never aliases the fail-closed state to confirm. */
   private mode: HohAccessMode | null = null;
   private accessError: string | null = 'Claude access mode has not been read yet.';
@@ -170,6 +227,17 @@ export class HohHost {
   private readonly previewUrls = new Map<string, string>();
   /** Upload ids already adopted by a local message: their preview is kept until this window closes. */
   private readonly sentPreviewIds = new Set<string>();
+  /** One process-local URL per conversation/canonical path, bounded globally and per conversation. */
+  private readonly localImageUrls = new Map<string, LocalImageUrl>();
+  /** Repeated broken markdown must not repeatedly cross the native bridge. */
+  private readonly localImageFailures = new Map<string, LocalImageFailure>();
+  private readonly localImageInflight = new Map<string, Promise<LocalImageUrl>>();
+  /** Actual bridge calls, successful or not, in a per-conversation sliding window. */
+  private readonly localImageAttempts = new Map<string, number[]>();
+  private localImageGlobalAttempts: number[] = [];
+  /** Worst-case byte/entry reservations are installed before native I/O. */
+  private readonly localImageReservations = new Map<string, LocalImageReservation>();
+  private localImageBytes = 0;
   /** The skills Claude declared for each folder (its last workspace snapshot): `$name` in a message goes as `/name`. */
   private readonly skillsByFolder = new Map<string, Set<string>>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
@@ -196,6 +264,7 @@ export class HohHost {
     this.throttleMs = options.throttleMs ?? 40;
     this.loadRetryMs = options.loadRetryMs ?? 500;
     this.loadRetries = options.loadRetries ?? 60;
+    this.discoveryStartedAt = this.now();
     this.workspaceRoot = options.workspaceRoot ?? PLACEHOLDER_ROOT;
     this.startedAt = this.now();
     this.storage = options.storage === undefined ? windowStorage() : options.storage;
@@ -443,6 +512,14 @@ export class HohHost {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     for (const url of this.previewUrls.values()) URL.revokeObjectURL(url);
     this.previewUrls.clear();
+    for (const image of this.localImageUrls.values()) URL.revokeObjectURL(image.url);
+    this.localImageUrls.clear();
+    this.localImageFailures.clear();
+    this.localImageInflight.clear();
+    this.localImageAttempts.clear();
+    this.localImageGlobalAttempts = [];
+    this.localImageReservations.clear();
+    this.localImageBytes = 0;
     this.sentPreviewIds.clear();
   }
 
@@ -458,6 +535,160 @@ export class HohHost {
     return url;
   }
 
+  private reserveLocalImage(requestKey: string, threadId: string) {
+    let reservedGlobalBytes = 0;
+    let reservedGlobalEntries = 0;
+    let reservedThreadBytes = 0;
+    let reservedThreadEntries = 0;
+    let reservedThreadIdentities = 0;
+    let threadInflight = 0;
+    for (const reservation of this.localImageReservations.values()) {
+      reservedGlobalBytes += reservation.reservedBytes;
+      if (!reservation.replacing) reservedGlobalEntries++;
+      if (reservation.threadId !== threadId) continue;
+      threadInflight++;
+      reservedThreadBytes += reservation.reservedBytes;
+      if (!reservation.replacing) reservedThreadEntries++;
+      if (reservation.reservesIdentity) reservedThreadIdentities++;
+    }
+    if (this.localImageReservations.size >= LOCAL_IMAGE_MAX_INFLIGHT || threadInflight >= LOCAL_IMAGE_THREAD_MAX_INFLIGHT)
+      throw new Error('Image unavailable: too many project images are already being opened in this window.');
+    let threadBytes = 0;
+    let threadEntries = 0;
+    let threadIdentities = 0;
+    let existing: LocalImageUrl | undefined;
+    for (const retained of this.localImageUrls.values()) {
+      if (retained.threadId !== threadId) continue;
+      threadBytes += retained.sizeBytes;
+      threadEntries++;
+      threadIdentities += retained.requestKeys.size;
+      if (retained.requestKeys.has(requestKey)) existing = retained;
+    }
+    if (!existing && threadIdentities + reservedThreadIdentities >= LOCAL_IMAGE_THREAD_MAX_IDENTITIES)
+      throw new Error('Image unavailable: too many project image paths are already retained for this conversation.');
+    const replacedBytes = existing?.sizeBytes ?? 0;
+    // A known retained key is a replacement reservation: it cannot grow retention until the
+    // canonical post-read size check succeeds, so refreshing it needs no speculative byte slot.
+    const reservedSize = existing?.sizeBytes ?? LOCAL_IMAGE_BYTES;
+    if (!localImageRetentionFits({
+      globalBytes: this.localImageBytes + reservedGlobalBytes,
+      globalEntries: this.localImageUrls.size + reservedGlobalEntries,
+      threadBytes: threadBytes + reservedThreadBytes,
+      threadEntries: threadEntries + reservedThreadEntries,
+      replacedBytes, replacing: !!existing, sizeBytes: reservedSize,
+    })) throw new Error('Image unavailable: too many project images are already open in this window.');
+    this.localImageReservations.set(requestKey, {
+      threadId, reservedBytes: reservedSize - replacedBytes,
+      replacing: !!existing, reservesIdentity: !existing,
+    });
+  }
+
+  private bindLocalImageRequest(requestKey: string, key: string) {
+    const retained = this.localImageUrls.get(key);
+    if (!retained) return;
+    for (const [otherKey, other] of this.localImageUrls) {
+      if (otherKey !== key && other.threadId === retained.threadId) other.requestKeys.delete(requestKey);
+    }
+    retained.requestKeys.add(requestKey);
+  }
+
+  private consumeLocalImageAttempt(threadId: string) {
+    const now = this.now();
+    this.localImageGlobalAttempts = this.localImageGlobalAttempts
+      .filter(timestamp => timestamp > now - LOCAL_IMAGE_ATTEMPT_WINDOW_MS);
+    const previous = lruGet(this.localImageAttempts, threadId) ?? [];
+    const attempts = previous.filter(timestamp => timestamp > now - LOCAL_IMAGE_ATTEMPT_WINDOW_MS);
+    if (attempts.length >= LOCAL_IMAGE_ATTEMPT_MAX || this.localImageGlobalAttempts.length >= LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX)
+      throw new Error('Image unavailable: too many project image reads were attempted for this conversation; try again later.');
+    attempts.push(now);
+    this.localImageGlobalAttempts.push(now);
+    lruSet(this.localImageAttempts, threadId, attempts, LOCAL_IMAGE_ATTEMPT_THREADS_MAX);
+  }
+
+  private async readLocalImage(threadId: string, path: string, requestKey: string) {
+    if (!this.engine.readImageAsset) throw new Error('Image unavailable: this window cannot read project images.');
+    this.consumeLocalImageAttempt(threadId);
+    const image = await this.engine.readImageAsset({ sessionId: threadId, path });
+    if (this.stopped) throw new Error('Image unavailable: this window has closed.');
+    if (!LOCAL_IMAGE_TYPES.has(image?.mimeType) || !Number.isSafeInteger(image?.sizeBytes) || image.sizeBytes < 1 || image.sizeBytes > LOCAL_IMAGE_BYTES)
+      throw new Error('Image unavailable: the native image response is invalid.');
+    if (typeof image.sourcePath !== 'string' || !image.sourcePath || typeof image.fileRevision !== 'string' || !image.fileRevision)
+      throw new Error('Image unavailable: the native image identity is invalid.');
+    const key = `${threadId}\0${image.sourcePath}`;
+    const existing = this.localImageUrls.get(key);
+    if (existing?.revision === image.fileRevision && existing.sizeBytes === image.sizeBytes) {
+      this.bindLocalImageRequest(requestKey, key);
+      this.localImageFailures.delete(requestKey);
+      return existing;
+    }
+    let threadBytes = 0;
+    let threadEntries = 0;
+    for (const retained of this.localImageUrls.values()) {
+      if (retained.threadId !== threadId) continue;
+      threadBytes += retained.sizeBytes;
+      threadEntries++;
+    }
+    const replacedBytes = existing?.sizeBytes ?? 0;
+    if (!localImageRetentionFits({
+      globalBytes: this.localImageBytes, globalEntries: this.localImageUrls.size,
+      threadBytes, threadEntries, replacedBytes, replacing: !!existing, sizeBytes: image.sizeBytes,
+    }))
+      throw new Error('Image unavailable: too many project images are already open in this window.');
+    let binary: string;
+    try { binary = atob(image.dataBase64); }
+    catch { throw new Error('Image unavailable: the native image payload is invalid.'); }
+    if (binary.length !== image.sizeBytes) throw new Error('Image unavailable: the native image size is invalid.');
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    const url = URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));
+    if (existing) {
+      URL.revokeObjectURL(existing.url);
+      this.localImageBytes -= existing.sizeBytes;
+    }
+    const minted = {
+      url, revision: image.fileRevision, sourcePath: image.sourcePath,
+      sizeBytes: image.sizeBytes, threadId, requestKeys: existing?.requestKeys ?? new Set<string>(),
+    };
+    this.localImageUrls.set(key, minted);
+    this.bindLocalImageRequest(requestKey, key);
+    this.localImageBytes += image.sizeBytes;
+    this.localImageFailures.delete(requestKey);
+    return minted;
+  }
+
+  /** A conversation-bound Blob URL for a native image that passed the single Rust file policy. */
+  private localImageUrl(threadId: string, path: string): Promise<LocalImageUrl> {
+    if (this.stopped) return Promise.reject(new Error('Image unavailable: this window has closed.'));
+    if (path.length > 4096) return Promise.reject(new Error('Image unavailable: the image path is too long.'));
+    const requestKey = `${threadId}\0${path}`;
+    const failure = lruGet(this.localImageFailures, requestKey);
+    if (failure && failure.expiresAt > this.now()) return Promise.reject(new Error(failure.message));
+    const pending = this.localImageInflight.get(requestKey);
+    if (pending) return pending;
+    try {
+      this.reserveLocalImage(requestKey, threadId);
+    } catch (error) {
+      const message = errorText(error).slice(0, 512);
+      lruSet(this.localImageFailures, requestKey, {
+        message, expiresAt: this.now() + LOCAL_IMAGE_FAILURE_TTL_MS,
+      }, LOCAL_IMAGE_REQUEST_CACHE_MAX);
+      return Promise.reject(error);
+    }
+    const read = this.readLocalImage(threadId, path, requestKey)
+      .catch(error => {
+        if (!this.stopped) lruSet(this.localImageFailures, requestKey, {
+          message: errorText(error).slice(0, 512), expiresAt: this.now() + LOCAL_IMAGE_FAILURE_TTL_MS,
+        }, LOCAL_IMAGE_REQUEST_CACHE_MAX);
+        throw error;
+      })
+      .finally(() => {
+        this.localImageReservations.delete(requestKey);
+        if (this.localImageInflight.get(requestKey) === read) this.localImageInflight.delete(requestKey);
+      });
+    this.localImageInflight.set(requestKey, read);
+    return read;
+  }
+
   private async load() {
     this.unsubscribers.push(await this.engine.subscribe(notification => this.onNotification(notification)));
     if (this.engine.subscribeQuestions) this.unsubscribers.push(await this.engine.subscribeQuestions(question => this.onQuestion(question)));
@@ -465,15 +696,16 @@ export class HohHost {
       if (status.state === 'ready') void this.onEngineReady();
       else if (status.state === 'restarting' || status.state === 'unavailable' || status.state === 'stopped') this.onEngineLost();
     }));
-    // Claude discovery is independent of the shell. Access is not: fail closed until the engine supplies the
-    // real mode, but keep the immediate access + session/list fast path in the first authoritative snapshot.
-    void this.readDiscovery().then(() => {
-      this.configChanged();
-      if (this.discovery === null) void this.retryConfiguration();
+    // Claude discovery and access are independent startup lanes. Discovery has a bounded structured-health
+    // retry; access remains fail-closed and alone gates the authoritative session inventory.
+    this.discoveryStartedAt = this.now();
+    const discoveryGeneration = this.discoveryGeneration;
+    void this.loadConfiguration(discoveryGeneration).then(discovered => {
+      if (!discovered && discoveryGeneration === this.discoveryGeneration) void this.retryConfiguration(discoveryGeneration);
     });
     const sessions = this.readAccess().then(async accessRead => {
       this.configChanged();
-      if (!accessRead) { void this.retryConfiguration(); return; }
+      if (!accessRead) { void this.retryAccessConfiguration(); return; }
       await this.loadSessions();
     });
     // Preserve the single-snapshot fast path when session/list answers immediately, without letting a slow or
@@ -484,20 +716,34 @@ export class HohHost {
   }
 
   /** Claude's probe and access settings, announced whenever that independent startup lane completes. */
-  private async loadConfiguration(): Promise<boolean> {
-    await Promise.all([this.readDiscovery(), this.readAccess()]);
+  private async loadConfiguration(generation: number): Promise<boolean> {
+    const discovered = await this.readDiscovery(generation);
     this.configChanged();
-    return this.discovery !== null && this.mode !== null;
+    return discovered;
   }
 
-  private async retryConfiguration() {
-    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && (this.discovery === null || this.mode === null); attempt++) {
+  private async retryConfiguration(generation: number) {
+    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && generation === this.discoveryGeneration && this.discoveryPending && this.discovery === null; attempt++) {
+      await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
+      if (this.stopped || generation !== this.discoveryGeneration) return;
+      await this.loadConfiguration(generation);
+    }
+    if (!this.stopped && generation === this.discoveryGeneration && this.discoveryPending && this.discovery === null) {
+      this.finishDiscoveryFailure(this.discoveryStartedAt);
+      this.configChanged();
+    }
+  }
+
+  private async retryAccessConfiguration() {
+    for (let attempt = 0; attempt < this.loadRetries && !this.stopped && this.mode === null; attempt++) {
       await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
       if (this.stopped) return;
-      if (await this.loadConfiguration()) {
-        await this.readSessions();
+      if (await this.readAccess()) {
+        this.configChanged();
+        await this.loadSessions();
         return;
       }
+      this.configChanged();
     }
   }
 
@@ -517,8 +763,35 @@ export class HohHost {
     }
   }
 
-  private async readDiscovery() {
-    try { this.discovery = await this.engine.request('hoh/executor/discover', { executor: 'claude' }); } catch { this.discovery = null; }
+  private readDiscovery(generation = this.discoveryGeneration): Promise<boolean> {
+    if (this.discoveryInFlight?.generation === generation) return this.discoveryInFlight.promise;
+    const request = this.performDiscovery(generation);
+    const promise = request.finally(() => {
+      if (this.discoveryInFlight?.promise === promise) this.discoveryInFlight = undefined;
+    });
+    this.discoveryInFlight = { generation, promise };
+    return promise;
+  }
+
+  private async performDiscovery(generation: number): Promise<boolean> {
+    try {
+      const discovery = await this.engine.request('hoh/executor/discover', { executor: 'claude' });
+      if (generation !== this.discoveryGeneration) return this.discovery !== null;
+      this.discovery = discovery;
+      this.discoveryFailure = undefined;
+      this.discoveryPending = false;
+      return true;
+    } catch {
+      if (generation !== this.discoveryGeneration) return this.discovery !== null;
+      this.discovery = null;
+      return false;
+    }
+  }
+
+  private finishDiscoveryFailure(startedAt: number) {
+    const seconds = Math.max(1, Math.ceil((this.now() - startedAt) / 1000));
+    this.discoveryPending = false;
+    this.discoveryFailure = `HoH could not run the Claude health check after waiting ${seconds} ${seconds === 1 ? 'second' : 'seconds'} for the engine. Press Refresh to try again.`;
   }
 
   private async readAccess(): Promise<boolean> {
@@ -824,7 +1097,7 @@ export class HohHost {
   }
 
   private config() {
-    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, defaultMode: this.defaultMode, accessKnown: this.mode !== null, settingsOverrides: this.settingsOverrides, now: this.iso() });
+    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, discoveryFailure: this.discoveryFailure, defaultMode: this.defaultMode, accessKnown: this.mode !== null, settingsOverrides: this.settingsOverrides, now: this.iso() });
   }
 
   private settings() { return serverSettings(this.model(), this.defaultMode, this.settingsOverrides, this.mode !== null); }
@@ -1413,14 +1686,33 @@ ${message.slice(0, 8000)}`;
         'assets.persistChatAttachments': (payload: any) => this.persistAttachments(payload ?? {}),
         'attachments.createUploadUrl': (payload: any) => this.createUploadUrl(payload ?? {}),
         // T3 checks a picture it uploaded before it sends it: held here — an address; gone — T3 uploads it again.
-        'assets.createUrl': (payload: any) => {
+        'assets.createUrl': async (payload: any) => {
           const resource = payload?.resource;
-          if (resource?._tag !== 'attachment') throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:read' });
-          const id = String(resource.attachmentId ?? '');
-          const image = this.uploads.get(id);
-          const relativeUrl = this.previewUrls.get(id) ?? (image ? this.previewUrl(image) : undefined);
-          if (!relativeUrl || !UPLOAD_PATH.test(`/api/attachments/upload/${id}`)) throw new RpcFailure({ _tag: 'AssetAttachmentNotFoundError', resource });
-          return { relativeUrl, expiresAt: this.now() + UPLOAD_TTL_MS };
+          if (resource?._tag === 'attachment') {
+            const id = String(resource.attachmentId ?? '');
+            const image = this.uploads.get(id);
+            const relativeUrl = this.previewUrls.get(id) ?? (image ? this.previewUrl(image) : undefined);
+            if (!relativeUrl || !UPLOAD_PATH.test(`/api/attachments/upload/${id}`)) throw new RpcFailure({ _tag: 'AssetAttachmentNotFoundError', resource });
+            return { relativeUrl, expiresAt: this.now() + UPLOAD_TTL_MS };
+          }
+          if (resource?._tag !== 'media-file') throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: 'Not available in HoH.', requiredScope: 'orchestration:read' });
+          const threadId = typeof resource.threadId === 'string' ? resource.threadId : '';
+          const path = typeof resource.path === 'string' ? resource.path : '';
+          if (!threadId || !path || !this.threads.has(threadId)) throw new RpcFailure({ _tag: 'AssetWorkspaceContextNotFoundError', resource });
+          try {
+            const image = await this.localImageUrl(threadId, path);
+            return {
+              relativeUrl: image.url,
+              expiresAt: this.now() + UPLOAD_TTL_MS,
+              ...(image.sourcePath.length <= 1024 ? { sourcePath: image.sourcePath } : {}),
+              fileRevision: image.revision,
+            };
+          } catch (error) {
+            throw new RpcFailure({
+              _tag: 'AssetWorkspaceAssetNotFoundError', resource,
+              detail: englishError(error, 'Image unavailable: the file could not be read safely.').slice(0, 512),
+            });
+          }
         },
         'attachments.delete': (payload: any) => {
           const id = String(payload?.attachmentId ?? '');
@@ -1440,7 +1732,7 @@ ${message.slice(0, 8000)}`;
         'agentSessions.scan': () => ({ candidates: [], scannedAt: this.iso() }),
         'server.refreshProviders': async (payload: any) => {
           await this.start();
-          const provider = () => claudeProvider(this.discovery, this.iso(), this.mode !== null);
+          const provider = () => claudeProvider(this.discovery, this.iso(), this.mode !== null, this.discoveryFailure);
           // The composer's folder (T3's workspace snapshot): `/` and `$` from Claude, without asking for discovery again.
           const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
           if (cwd && (payload?.instanceId === undefined || payload.instanceId === CLAUDE_INSTANCE_ID)) {
@@ -1448,7 +1740,20 @@ ${message.slice(0, 8000)}`;
             const workspaceSnapshots = [await this.workspaceSnapshot(cwd)];
             return { providers: [{ ...provider(), workspaceSnapshots }] };
           }
-          await this.readDiscovery();
+          // Welcome mounts with an automatic empty refresh. While startup is pending it is an
+          // observer of that same bounded lane, not a user's request to replace it or fail early.
+          const targeted = payload?.instanceId !== undefined || payload?.refreshModels === true || payload?.reloadSecrets === true;
+          if (!targeted && this.discoveryPending) {
+            const generation = this.discoveryGeneration;
+            await this.readDiscovery(generation);
+            this.configChanged();
+            return { providers: [provider()] };
+          }
+          const generation = ++this.discoveryGeneration;
+          const startedAt = this.now();
+          this.discoveryPending = true;
+          this.discoveryFailure = undefined;
+          if (!await this.readDiscovery(generation) && generation === this.discoveryGeneration) this.finishDiscoveryFailure(startedAt);
           this.configChanged();
           return { providers: [provider()] };
         },

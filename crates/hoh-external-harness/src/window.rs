@@ -38,7 +38,7 @@ use serde_json::{Value, json};
 
 use crate::agent::access_text;
 use crate::contract::{
-    AccessMode, HarnessCommand, HarnessCommands, InteractionMode, VersionStatus,
+    AccessMode, Discovery, HarnessCommand, HarnessCommands, InteractionMode, VersionStatus,
 };
 use crate::redact::{redact, redact_value};
 use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
@@ -544,6 +544,10 @@ impl Window {
             .get(executor)
             .ok_or_else(|| format!("no external harness named \"{executor}\""))?;
         let (found, status) = harness.discover_with_status().await?;
+        Ok(Self::discovery_value(executor, found, status))
+    }
+
+    fn discovery_value(executor: &str, found: Discovery, status: VersionStatus) -> Value {
         let status = match &found.version {
             Some(_) if found.installed => status,
             _ => VersionStatus::Unknown,
@@ -561,7 +565,7 @@ impl Window {
             (Some(detail), Some(warning)) => Some(format!("{detail}\n{warning}")),
             (detail, warning) => detail.or(warning),
         };
-        Ok(json!({
+        let mut value = json!({
             "executor": executor,
             "installed": found.installed,
             "version": found.version.as_deref().map(redact),
@@ -569,7 +573,11 @@ impl Window {
             "auth": found.auth,
             "models": redact_value(&json!(found.models)),
             "detail": detail.as_deref().map(redact),
-        }))
+        });
+        if let Some(failure) = found.failure {
+            value["failure"] = json!(failure);
+        }
+        value
     }
 
     async fn select(&self, params: ExecutorSelectParams) -> Result<Value, BoxError> {
@@ -904,8 +912,58 @@ async fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{protected_folder, saved_folder_match};
+    use super::{Window, protected_folder, saved_folder_match};
+    use crate::contract::{
+        AuthState, Discovery, DiscoveryFailure, DiscoveryOperation, VersionStatus,
+    };
+    use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn discovery_json_keeps_the_structured_probe_failure_for_the_window() {
+        let value = Window::discovery_value(
+            "claude",
+            Discovery {
+                installed: true,
+                version: None,
+                auth: AuthState::Unknown,
+                models: Vec::new(),
+                detail: Some("localized detail".into()),
+                failure: Some(DiscoveryFailure::Timeout {
+                    operation: DiscoveryOperation::Version,
+                    timeout_seconds: 20,
+                }),
+            },
+            VersionStatus::Unknown,
+        );
+        assert_eq!(
+            value["failure"],
+            json!({"kind":"timeout", "operation":"version", "timeoutSeconds":20})
+        );
+    }
+
+    #[test]
+    fn discovery_json_keeps_initialize_timeout_for_the_window() {
+        let value = Window::discovery_value(
+            "claude",
+            Discovery {
+                installed: true,
+                version: Some("2.1.329".into()),
+                auth: AuthState::Unknown,
+                models: Vec::new(),
+                detail: Some("localized detail".into()),
+                failure: Some(DiscoveryFailure::Timeout {
+                    operation: DiscoveryOperation::Initialize,
+                    timeout_seconds: 45,
+                }),
+            },
+            VersionStatus::Supported,
+        );
+        assert_eq!(
+            value["failure"],
+            json!({"kind":"timeout", "operation":"initialize", "timeoutSeconds":45})
+        );
+    }
 
     #[test]
     fn protected_folders_cover_root_home_hidden_home_and_system_classes() {

@@ -11,27 +11,51 @@ import s1 from '../../assets/emblem-notchs-1x.png';
 import s15 from '../../assets/emblem-notchs-15x.png';
 import s2 from '../../assets/emblem-notchs-2x.png';
 import s3 from '../../assets/emblem-notchs-3x.png';
-import { BLOCKS, GRID_FROM_WIDTH, lineShare } from '../grid/blocks';
 import { notchOutline, notchSize } from './shapes';
 
 export const NOTCH_NAME = 'Alexandrie';
 const GAP = 8;
-const NOTCH_LINES = BLOCKS.find((block) => block.name === 'notch')!.x.open;
-/** The band's height (CSS px, = grid line g4) and the window's width: the notch is drawn from them. */
-function useFrame(band: React.RefObject<HTMLDivElement | null>): { band: number; width: number } {
-  const [frame, setFrame] = useState({ band: 36, width: window.innerWidth });
+/** The notch follows T3's live composer content box; pages without a composer fall back to the sidebar inset. */
+function useFrame(band: React.RefObject<HTMLDivElement | null>): { band: number; left: number; width: number } {
+  const [frame, setFrame] = useState({ band: 36, left: 0, width: window.innerWidth });
   useLayoutEffect(() => {
     const element = band.current;
     if (!element) return;
+    const mainComposerLane = () => [...document.querySelectorAll<HTMLElement>('.chat-composer-lane')].find((candidate) => {
+      if (candidate.closest('.hoh-quick-view')) return false;
+      const rect = candidate.getBoundingClientRect();
+      const style = getComputedStyle(candidate);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    });
     const update = () => setFrame((was) => {
-      const next = { band: element.getBoundingClientRect().height || was.band, width: window.innerWidth };
-      return next.band === was.band && next.width === was.width ? was : next;
+      const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')?.getBoundingClientRect();
+      const lane = mainComposerLane();
+      const laneRect = lane?.getBoundingClientRect();
+      const laneStyle = lane ? getComputedStyle(lane) : null;
+      const paddingLeft = Number.parseFloat(laneStyle?.paddingLeft ?? '') || 0;
+      const paddingRight = Number.parseFloat(laneStyle?.paddingRight ?? '') || 0;
+      const next = {
+        band: element.getBoundingClientRect().height || was.band,
+        left: laneRect ? laneRect.left + paddingLeft : (inset?.left ?? 0),
+        width: laneRect ? Math.max(0, laneRect.width - paddingLeft - paddingRight) : (inset?.width ?? window.innerWidth),
+      };
+      return next.band === was.band && next.left === was.left && next.width === was.width ? was : next;
     });
     update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
+    const resize = new ResizeObserver(update);
+    resize.observe(element);
+    const observeFrame = () => {
+      const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]');
+      if (inset) resize.observe(inset);
+      const lane = mainComposerLane();
+      if (lane) resize.observe(lane);
+      update();
+    };
+    observeFrame();
+    const mutations = new MutationObserver(observeFrame);
+    mutations.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-sidebar-state', 'style'] });
     window.addEventListener('resize', update);
-    return () => { observer.disconnect(); window.removeEventListener('resize', update); };
+    return () => { resize.disconnect(); mutations.disconnect(); window.removeEventListener('resize', update); };
   }, [band]);
   return frame;
 }
@@ -40,7 +64,6 @@ export function HohNotch() {
   const bandRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(bandRef);
   const size = notchSize(frame.band);
-  const lineWidth = frame.width >= GRID_FROM_WIDTH ? (lineShare(NOTCH_LINES[1]!) - lineShare(NOTCH_LINES[0])) * frame.width : undefined;
   const label = useRef<HTMLSpanElement>(null);
   const [text, setText] = useState(size.font * 5.4);
   useLayoutEffect(() => {
@@ -53,8 +76,8 @@ export function HohNotch() {
   const small = size.emblem < 30;
   const [one, onefive, two, three] = small ? [s1, s15, s2, s3] : [e1, e15, e2, e3];
   return (
-    <div className="hoh-notch-band" ref={bandRef}>
-      <div className="hoh-notch" style={{ width: lineWidth ?? outline.width, height: frame.band }}>
+    <div className="hoh-notch-band" ref={bandRef} style={{ left: frame.left, width: frame.width }}>
+      <div className="hoh-notch" style={{ width: outline.width, height: frame.band }}>
         <div className="hoh-notch-shape" style={{ width: outline.width, height: outline.height }}>
           <svg className="hoh-notch-outline" width={outline.width} height={outline.height} viewBox={`0 0 ${outline.width} ${outline.height}`} aria-hidden="true">
             <path className="hoh-notch-fill" d={outline.fill} />

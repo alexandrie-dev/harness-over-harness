@@ -116,7 +116,7 @@ const HOME_BODY = resolve(UI, 'src/t3-entry/hoh-screens/HomeBody.tsx');
 const SIDEBAR_TOP = resolve(UI, 'src/t3-entry/hoh-screens/SidebarTop.tsx');
 export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [
-    ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
+    ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
     ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
   ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
 }

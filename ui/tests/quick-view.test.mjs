@@ -4,6 +4,8 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const source = await readFile(new URL('../src/t3-entry/hoh-screens/quick-view-store.ts', import.meta.url), 'utf8');
+const dialogSource = await readFile(new URL('../src/t3-entry/hoh-screens/QuickViewDialog.tsx', import.meta.url), 'utf8');
+const styles = await readFile(new URL('../src/t3-entry/hoh-screens/quick-view.css', import.meta.url), 'utf8');
 
 function loadStore() {
   const output = ts.transpileModule(source, {
@@ -68,4 +70,34 @@ test('empty ids do not open quick view or notify subscribers', () => {
   store.openQuickView('');
   assert.equal(store.quickViewStore.getSnapshot().threadId, null);
   assert.equal(changes, 0);
+});
+
+test('quick view keeps T3 DialogPopup and ChatView while exposing state and frame variants', () => {
+  assert.match(dialogSource, /<DialogPopup/);
+  assert.match(dialogSource, /<ChatView/);
+  assert.match(dialogSource, /data-frame-state=\{frameState\}/);
+  assert.match(dialogSource, /data-frame-variant=\{frameVariant\}/);
+  assert.match(dialogSource, /FRAME_VARIANT_KEY = 'hoh\.quick-view-frame'/);
+  assert.match(dialogSource, /=== '2' \? '2' : '1'/, 'variant 1 remains the default');
+  assert.match(dialogSource, /homeState === 'waiting'/);
+  assert.match(dialogSource, /\['preparing', 'queued', 'starting', 'running'\]/);
+  assert.doesNotMatch(dialogSource, /\[data-slot="sidebar-gap"\]/);
+  assert.doesNotMatch(dialogSource, /--quick-view-content-inset/);
+});
+
+test('quick view restores upstream T3 lane width and gutters inside a bounded modal viewport', () => {
+  assert.match(styles, /var\(--chat-content-max-width\) \+ 6rem/);
+  assert.match(styles, /\.hoh-quick-view \.chat-composer-lane/);
+  assert.match(styles, /\.hoh-quick-view \[data-chat-canvas\] \.messages-timeline-scroll/);
+  assert.match(styles, /env\(safe-area-inset-left\) \+ 3rem/);
+  assert.match(styles, /inset-block-start: var\(--hoh-notch-height, 0px\)/);
+  assert.doesNotMatch(styles, /inset-inline-start/);
+  assert.match(styles, /body:has\(\.hoh-quick-view\) \.hoh-notch-band \{ z-index: 40; \}/);
+  assert.match(styles, /padding: 24px/);
+  assert.match(styles, /padding: 8px/);
+  assert.match(styles, /width: calc\(100% \+ 18px\); margin-inline: -9px/);
+  assert.match(styles, /data-frame-variant="1"/);
+  assert.match(styles, /data-frame-variant="2"/);
+  assert.match(styles, /data-frame-state="working"/);
+  assert.match(styles, /data-frame-state="waiting"/);
 });

@@ -15,10 +15,11 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
-    AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, ExitInfo, ExternalHarness, Frame,
-    HarnessCommand, HarnessCommands, HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult,
-    InteractionMode, NetworkAccess, ProcessSpec, SandboxMode, StartParams, StartResult, Started,
-    Supervisor, SupervisorLimits, VersionStatus, code,
+    AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, DiscoveryFailure,
+    DiscoveryOperation, ExitInfo, ExternalHarness, Frame, HarnessCommand, HarnessCommands,
+    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, InteractionMode, NetworkAccess,
+    ProcessSpec, SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits,
+    VersionStatus, code,
 };
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
@@ -905,6 +906,7 @@ enum VersionCheck {
     Refused {
         version: Option<String>,
         message: String,
+        failure: Option<DiscoveryFailure>,
     },
 }
 
@@ -945,6 +947,7 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
             return VersionCheck::Refused {
                 version: None,
                 message: version::unrecognized_version_message(&error.to_string()),
+                failure: None,
             };
         }
     };
@@ -966,6 +969,10 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
         return VersionCheck::Refused {
             version: None,
             message: version::unrecognized_version_message("нет ответа на --version"),
+            failure: Some(DiscoveryFailure::Timeout {
+                operation: DiscoveryOperation::Version,
+                timeout_seconds: config.version_timeout.as_secs().max(1),
+            }),
         };
     }
     if let Some(status) = status.filter(|status| !status.success()) {
@@ -977,12 +984,17 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
         return VersionCheck::Refused {
             version: None,
             message: version::unrecognized_version_message(&shown),
+            failure: Some(DiscoveryFailure::Exit {
+                operation: DiscoveryOperation::Version,
+                exit_code: status.code(),
+            }),
         };
     }
     match version::parse_version(&output) {
         None => VersionCheck::Refused {
             version: None,
             message: version::unrecognized_version_message(&output),
+            failure: None,
         },
         Some(parsed) if version::is_supported(parsed) => {
             VersionCheck::Supported(version::format_version(parsed))
@@ -992,6 +1004,7 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
             VersionCheck::Refused {
                 message: version::unsupported_version_message(&shown),
                 version: Some(shown),
+                failure: None,
             }
         }
     }
@@ -1115,16 +1128,22 @@ async fn discover_claude(config: &ClaudeConfig) -> (Discovery, VersionStatus) {
                 auth: AuthState::Unknown,
                 models: Vec::new(),
                 detail: Some(version::not_installed_message()),
+                failure: None,
             };
             return (discovery, status);
         }
-        VersionCheck::Refused { version, message } => {
+        VersionCheck::Refused {
+            version,
+            message,
+            failure,
+        } => {
             let discovery = Discovery {
                 installed: true,
                 version,
                 auth: AuthState::Unknown,
                 models: Vec::new(),
                 detail: Some(hoh_external_harness::redact::redact(&message)),
+                failure,
             };
             return (discovery, status);
         }
@@ -1152,6 +1171,10 @@ async fn discover_claude(config: &ClaudeConfig) -> (Discovery, VersionStatus) {
                 auth: AuthState::Unknown,
                 models: Vec::new(),
                 detail: Some(hoh_external_harness::redact::redact(&failure.message)),
+                failure: (failure.code == code::TIMEOUT).then_some(DiscoveryFailure::Timeout {
+                    operation: DiscoveryOperation::Initialize,
+                    timeout_seconds: config.init_timeout.as_secs().max(1),
+                }),
             };
             return (discovery, status);
         }
@@ -1166,6 +1189,7 @@ async fn discover_claude(config: &ClaudeConfig) -> (Discovery, VersionStatus) {
         detail: (auth == AuthState::Unauthenticated).then(|| {
             "Вход в Claude Code не выполнен: запустите `claude` в терминале и войдите.".to_owned()
         }),
+        failure: None,
     };
     (discovery, status)
 }

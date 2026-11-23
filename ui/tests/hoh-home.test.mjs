@@ -32,7 +32,7 @@ function loadModule(source, fileName = 'module.ts') {
   return exports;
 }
 
-const { greeting, projectLabel, folderPanelPosition } = loadFunctions(homeSource, ['greeting', 'projectLabel', 'folderPanelPosition']);
+const { greeting, projectLabel, projectPanelInsertAfter } = loadFunctions(homeSource, ['greeting', 'projectLabel', 'projectPanelInsertAfter']);
 const grouping = loadModule(groupingSource, 'grouping.ts');
 
 test('greeting uses the four requested hour ranges at every boundary', () => {
@@ -74,6 +74,29 @@ test('project grouping derives counts, warning priority, runners and rename-stab
   ]), ['claude', 'codex', 'claude', 'claude'], 'runner marks retain participants so the fourth becomes +N');
   const renamed = grouping.groupEntriesByProject(entries, id => id === 'alpha' ? 'Renamed' : 'No project', id => paths[id]);
   assert.equal(renamed.find(group => group.id === 'alpha').color, alpha.color, 'title changes do not alter path-derived color');
+  assert.equal(grouping.PROJECT_COLOR_COUNT, 8, 'the folder palette has eight distinct slots');
+  assert.notEqual(first[0].color, first[1].color, 'neighboring projects never share a palette slot');
+  const fixtureColors = ['/work/alexandrie', '/work/hoh', '/work/no-project'].map(path => grouping.projectColor(path));
+  assert.equal(new Set(fixtureColors).size, fixtureColors.length, 'the screenshot projects receive visibly different stable colors');
+
+  const pathByColor = new Map();
+  let collision;
+  for (let index = 0; index < 100 && !collision; index += 1) {
+    const path = `/work/collision-${index}`;
+    const color = grouping.projectColor(path);
+    if (pathByColor.has(color)) collision = [pathByColor.get(color), path]; else pathByColor.set(color, path);
+  }
+  assert(collision, 'the collision fixture finds two paths in the finite palette');
+  const collidingEntries = [
+    { id: 'left', projectId: 'left', state: 'working', startedAt: 2, agents: [] },
+    { id: 'right', projectId: 'right', state: 'working', startedAt: 1, agents: [] },
+  ];
+  const collisionPaths = { left: collision[0], right: collision[1] };
+  const colorsBeforeRename = grouping.groupEntriesByProject(collidingEntries, id => id === 'left' ? 'A' : 'B', id => collisionPaths[id]);
+  const colorsAfterRename = grouping.groupEntriesByProject(collidingEntries, id => id === 'left' ? 'Z' : 'A', id => collisionPaths[id]);
+  const colorsById = groups => Object.fromEntries(groups.map(group => [group.id, group.color]));
+  assert.deepEqual(colorsById(colorsAfterRename), colorsById(colorsBeforeRename), 'collision resolution is stable across presentation reordering');
+  assert.notEqual(colorsBeforeRename[0].color, colorsBeforeRename[1].color, 'colliding paths still receive adjacent distinct colors');
 });
 
 test('project disclosure supports hover, pinned click/keyboard semantics, leave and Escape/outside close', () => {
@@ -89,16 +112,33 @@ test('project disclosure supports hover, pinned click/keyboard semantics, leave 
   assert.match(homeSource, /closeTimer\.current = setTimeout\([\s\S]{0,220}, 180\)/, 'hover close has a bridge delay');
   assert.match(homeSource, /event\.key !== 'Escape'/);
   assert.match(homeSource, /document\.addEventListener\('pointerdown', close\)/);
+  assert.match(homeSource, /if \(openId && !openGroupId\) setDisclosure/, 'a removed open group cannot leave stale pinned state');
 });
 
-test('folder overlay stays inside wide and short viewports and chooses the roomier vertical side', () => {
-  const below = folderPanelPosition({ left: 1200, right: 1500, top: 100, bottom: 316 }, 1440, 900);
-  assert(below.left >= 16 && below.left + below.width <= 1424);
-  assert.equal(below.top, 324);
-  const above = folderPanelPosition({ left: 280, right: 560, top: 330, bottom: 538 }, 800, 550);
-  assert(above.left >= 16 && above.left + above.width <= 784);
-  assert(above.bottom >= 20, 'short viewport opens upward');
-  assert(above.maxHeight >= 144);
+test('folder disclosure is inserted after its rendered grid row instead of escaping into a viewport portal', async () => {
+  assert.equal(projectPanelInsertAfter(0, 3, 2), 1);
+  assert.equal(projectPanelInsertAfter(1, 3, 2), 1);
+  assert.equal(projectPanelInsertAfter(2, 3, 2), 2);
+  assert.equal(projectPanelInsertAfter(1, 3, 1), 1);
+  assert.equal(projectPanelInsertAfter(2, 3, 3), 2);
+  assert.equal(projectPanelInsertAfter(-1, 3, 2), -1);
+  assert.doesNotMatch(homeSource, /createPortal|folderPanelPosition/);
+  const css = await readFile(new URL('../src/t3-entry/hoh-screens/home.css', import.meta.url), 'utf8');
+  assert.match(css, /\.hoh-project-popover\s*\{[^}]*position:\s*relative[^}]*grid-column:\s*g1\s*\/\s*g21[^}]*overflow:\s*auto/);
+  assert.doesNotMatch(css, /\.hoh-project-popover\s*\{[^}]*position:\s*fixed/);
+});
+
+test('folder art and project state styling use the project hue, blue active state and red waiting state', async () => {
+  const css = await readFile(new URL('../src/t3-entry/hoh-screens/home.css', import.meta.url), 'utf8');
+  assert.match(homeSource, /data-working=\{\(group\.waiting === 0 && group\.states\.working > 0\)/);
+  assert.match(css, /\.hoh-project\[data-working\][^{]*\{[^}]*var\(--primary\)/);
+  assert.match(css, /\.hoh-project\[data-waiting\][^{]*\{[^}]*var\(--destructive\)/);
+  assert.match(css, /\.hoh-project__chip i\s*\{[^}]*background:\s*var\(--primary\)/);
+  assert.match(css, /\.hoh-project\[data-waiting\] \.hoh-project__chip i\s*\{[^}]*background:\s*var\(--destructive\)/);
+  assert.match(css, /\.hoh-project__icon i[^}]*var\(--hoh-project-color\)/);
+  assert.match(css, /\.hoh-project__icon b[^}]*var\(--hoh-project-color\)/);
+  assert.match(css, /\.hoh-project__icon b::before/);
+  assert.match(css, /\.hoh-project__icon em[^}]*border-radius:\s*50%/);
 });
 
 test('grouping preference persists and notifies the home in the same window', () => {
@@ -140,6 +180,17 @@ test('agent cards open the shared quick-view host while Mark done keeps its dire
   assert.match(homeSource, /<QuickViewDialog \/>/);
   assert.doesNotMatch(homeSource, /open:\s*\(threadId\).*navigate/);
   assert.match(homeSource, /view\.host\?\.complete\(entry\.id\)/);
+});
+
+test('empty Home joins the greeting and native T3 draft composer into one centred hero group', async () => {
+  const [css, vite] = await Promise.all([
+    readFile(new URL('../src/t3-entry/hoh-screens/home.css', import.meta.url), 'utf8'),
+    readFile(new URL('../src/t3-entry/vite.ts', import.meta.url), 'utf8'),
+  ]);
+  assert.match(vite, /hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end/);
+  assert.match(css, /\.hoh-draft-hero:has\(> \.hoh-home:not\(\[data-busy\]\)\)\s*\{\s*justify-content:\s*center/);
+  assert.match(css, /\.hoh-home:not\(\[data-busy\]\)\s*\{[^}]*flex:\s*0 0 auto[^}]*margin-bottom:\s*28px/);
+  assert.match(css, /@media \(max-height: 34rem\)[\s\S]*justify-content:\s*flex-end/);
 });
 
 test('visible T3 draft and palette copy is patched to New chat and documented', async () => {

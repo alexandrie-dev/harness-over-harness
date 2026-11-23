@@ -46,6 +46,8 @@ pub mod code {
     pub const SESSION_NOT_FOUND: &str = "session-not-found";
     /// The peer broke the contract (bad frame, unknown version, unexpected answer).
     pub const PROTOCOL: &str = "protocol-error";
+    /// A bounded harness operation did not answer before its deadline.
+    pub const TIMEOUT: &str = "timeout";
     /// No common contract version.
     pub const UNSUPPORTED_VERSION: &str = "unsupported-version";
     /// The harness session or its process is gone.
@@ -189,6 +191,31 @@ pub enum VersionStatus {
     Unknown,
 }
 
+/// The fixed, non-secret stage of a harness discovery probe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiscoveryOperation {
+    Version,
+    Initialize,
+}
+
+/// Machine-readable probe failures for a window that must explain the cause without parsing
+/// localized diagnostics. Raw stdout/stderr, paths and account data never belong here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum DiscoveryFailure {
+    Timeout {
+        operation: DiscoveryOperation,
+        #[serde(rename = "timeoutSeconds")]
+        timeout_seconds: u64,
+    },
+    Exit {
+        operation: DiscoveryOperation,
+        #[serde(rename = "exitCode")]
+        exit_code: Option<i32>,
+    },
+}
+
 /// What the window may know about a harness: installed, signed in, models. Never a secret: a
 /// harness reports the sign-in state its CLI reports and does not read token files.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -203,6 +230,9 @@ pub struct Discovery {
     /// Why it is not usable, in words (missing program, unsupported version).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// A stable safe reason for failures whose useful facts cannot be recovered from `detail`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<DiscoveryFailure>,
 }
 
 /// What the harness itself declares for a folder (HOH-41): its slash commands and its skills, as

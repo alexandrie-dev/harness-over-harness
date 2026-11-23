@@ -361,12 +361,14 @@ impl ExternalAgent {
         }
     }
 
-    /// The next chunk of a live text; nothing for an empty piece.
+    /// The next chunk of visible live content. Claude can report a thinking block before it is
+    /// allowed to reveal its text; the first empty reasoning chunk still opens T3's live
+    /// `Thinking` item, matching ClaudeAdapterV2's `content_block_start` handling.
     fn emit_frame_of(&self, live: &mut LiveText, piece: &str) {
-        if piece.is_empty() {
+        if piece.is_empty() && (live.kind == LiveKind::Text || live.chunks > 0) {
             return;
         }
-        let Some(chunk) = text_delta(piece) else {
+        let Some(chunk) = visible_delta(live.kind, piece) else {
             return;
         };
         self.emit_frame(AssistantStreamFrame::Chunk {
@@ -1347,8 +1349,12 @@ fn now_ms() -> i64 {
         })
 }
 
-fn text_delta(text: &str) -> Option<StreamChunk> {
-    serde_json::from_value(json!({"type": "text-delta", "index": 0, "text": text})).ok()
+fn visible_delta(kind: LiveKind, text: &str) -> Option<StreamChunk> {
+    let kind = match kind {
+        LiveKind::Text => "text-delta",
+        LiveKind::Reasoning => "reasoning-delta",
+    };
+    serde_json::from_value(json!({"type": kind, "index": 0, "text": text})).ok()
 }
 
 pub(crate) struct LiveSession {
@@ -1370,7 +1376,14 @@ enum TurnOutcome {
     Failed(HarnessFailure),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LiveKind {
+    Text,
+    Reasoning,
+}
+
 struct LiveText {
+    kind: LiveKind,
     message_id: String,
     attempt_id: LlmAttemptId,
     revision: u64,
@@ -1609,7 +1622,7 @@ impl TurnLog {
                 message_id,
                 text,
                 parent_item_id,
-            } => self.delta(message_id, &text, parent_item_id.as_deref()),
+            } => self.delta(LiveKind::Text, message_id, &text, parent_item_id.as_deref()),
             HarnessEvent::TextFinal {
                 message_id,
                 text,
@@ -1620,6 +1633,12 @@ impl TurnLog {
                 text,
                 parent_item_id,
             } => {
+                self.delta(
+                    LiveKind::Reasoning,
+                    message_id.clone(),
+                    &text,
+                    parent_item_id.as_deref(),
+                );
                 match self.reasoning.iter_mut().find(|(id, _, parent)| {
                     *id == message_id && parent.as_deref() == parent_item_id.as_deref()
                 }) {
@@ -1635,6 +1654,9 @@ impl TurnLog {
                 text,
                 parent_item_id,
             } => {
+                if !self.settled.insert(format!("reasoning:{message_id}")) {
+                    return None;
+                }
                 self.reasoning.retain(|(id, _, parent)| {
                     *id != message_id || parent.as_deref() != parent_item_id.as_deref()
                 });
@@ -1724,8 +1746,18 @@ impl TurnLog {
         None
     }
 
-    fn delta(&mut self, message_id: String, text: &str, parent_item_id: Option<&str>) {
-        if self.settled.contains(&format!("text:{message_id}")) {
+    fn delta(
+        &mut self,
+        kind: LiveKind,
+        message_id: String,
+        text: &str,
+        parent_item_id: Option<&str>,
+    ) {
+        let settled = match kind {
+            LiveKind::Text => "text",
+            LiveKind::Reasoning => "reasoning",
+        };
+        if self.settled.contains(&format!("{settled}:{message_id}")) {
             return;
         }
         // The window-only live stream has no parent field. Never flatten a subagent delta into
@@ -1736,12 +1768,14 @@ impl TurnLog {
         let index = match self
             .live
             .iter()
-            .position(|live| live.message_id == message_id)
+            .position(|live| live.kind == kind && live.message_id == message_id)
         {
             Some(index) => index,
             None => {
-                let attempt_id =
-                    LlmAttemptId::from(format!("{}:{}:{}", self.agent.id, self.turn, message_id));
+                let attempt_id = LlmAttemptId::from(format!(
+                    "{}:{}:{}:{}",
+                    self.agent.id, self.turn, settled, message_id
+                ));
                 let revision = self.agent.revision.fetch_add(1, Ordering::Relaxed) + 1;
                 self.agent.emit_frame(AssistantStreamFrame::Start {
                     attempt_id: attempt_id.clone(),
@@ -1750,6 +1784,7 @@ impl TurnLog {
                     step: self.step,
                 });
                 self.live.push(LiveText {
+                    kind,
                     message_id,
                     attempt_id,
                     revision,
@@ -1778,7 +1813,7 @@ impl TurnLog {
             .then(|| {
                 self.live
                     .iter()
-                    .position(|live| live.message_id == message_id)
+                    .position(|live| live.kind == LiveKind::Text && live.message_id == message_id)
                     .map(|index| self.live.remove(index))
                     .map(|live| self.shown_whole(live))
             })
@@ -1800,9 +1835,11 @@ impl TurnLog {
     ) -> Option<SessionSeq> {
         let mut content = Vec::new();
         let mut reasoning = Vec::new();
+        let mut reasoning_ids = Vec::new();
         let mut other_reasoning = Vec::new();
         for (message_id, text, parent) in self.reasoning.drain(..) {
             if parent.as_deref() == parent_item_id {
+                reasoning_ids.push(message_id);
                 if !text.is_empty() {
                     reasoning.push(text);
                 }
@@ -1819,6 +1856,11 @@ impl TurnLog {
         }
         content.extend(calls);
         if content.is_empty() {
+            if parent_item_id.is_none() {
+                for message_id in reasoning_ids {
+                    self.finish_live(LiveKind::Reasoning, &message_id, None);
+                }
+            }
             return None;
         }
         let message = create_assistant_message(NewAssistantMessage {
@@ -1848,17 +1890,36 @@ impl TurnLog {
         if let Some(parent_item_id) = parent_item_id {
             data["parentCallId"] = json!(parent_item_id);
         }
-        match self
-            .agent
-            .session
-            .append("assistant/message", data, Some(SurfaceIntent::append()))
-        {
+        let seq = match self.agent.session.append(
+            "assistant/message",
+            data,
+            Some(SurfaceIntent::append()),
+        ) {
             Ok(event) => Some(event.seq()),
             Err(error) => {
                 self.warn("cannot record the answer", error);
                 None
             }
+        };
+        if parent_item_id.is_none() {
+            for message_id in reasoning_ids {
+                self.finish_live(LiveKind::Reasoning, &message_id, seq);
+            }
         }
+        seq
+    }
+
+    fn finish_live(&mut self, kind: LiveKind, message_id: &str, seq: Option<SessionSeq>) {
+        let Some(index) = self
+            .live
+            .iter()
+            .position(|live| live.kind == kind && live.message_id == message_id)
+        else {
+            return;
+        };
+        let live = self.live.remove(index);
+        let live = self.shown_whole(live);
+        self.end_live(live, seq);
     }
 
     /// The rest of a live text the wait for a whole word held back, shown before the answer is
@@ -2218,7 +2279,12 @@ impl TurnLog {
             );
         }
         drop(open);
-        for live in std::mem::take(&mut self.live) {
+        while let Some(index) = self
+            .live
+            .iter()
+            .position(|live| live.kind == LiveKind::Text)
+        {
+            let live = self.live.remove(index);
             self.settled.insert(format!("text:{}", live.message_id));
             let live = self.shown_whole(live);
             let seq = self.write_assistant(live.text.clone(), !completed, Vec::new(), None);

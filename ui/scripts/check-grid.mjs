@@ -1,10 +1,9 @@
-// Проверка сетки окна (HOH-41, Golden Canon Grid): падает, если блок окна стоит не на линиях. Запускается в сборке после check-dist
-// (scripts/build.sh). Две части.
+// Проверка внутренней сетки HoH (HOH-41, Golden Canon Grid). Внешнюю геометрию задаёт T3 и проверяет check-align.mjs.
+// Запускается в сборке после check-dist (scripts/build.sh). Две части.
 // 1) Исходники: grid/tokens.css — 20 дорожек ровно в сумме 64, линии g1..g21 и числа --gc-x/--gc-y совпадают с blocks.ts; в CSS окна
 //    положение блока (grid-column/-row/-area) задано только линиями g1..g21 (как check_design.py эталона); все линии карты блоков в 1..21.
-// 2) Собранное окно (dist/index.html, headless Chrome, подделка движка): window.hohGridCheck() (src/t3-entry/grid/check.ts, допуск 2 px
-//    как у gc-debug.js эталона) на пустой главной и на главной с агентами при 2560×1440, 1920×1080, 1440×900, 1280×720 и 1100×700, а также при 1000×625
-//    (сетка отступает: блоки не выходят за край). Любой блок вне линии — ошибка с именем блока, стороной и числом px.
+// 2) Собранное окно (dist/index.html, headless Chrome, подделка движка): window.hohGridCheck() проверяет containment
+//    HoH-карточек/папок внутри ближайшей T3/HoH lane; отдельные assertions проверяют внутренний ритм и поведение.
 import { chromium } from 'playwright-core';
 import { readdir, readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -101,6 +100,11 @@ async function open(browser, engine, size) {
   await page.exposeBinding('__hohT3Request', (_, method, params) => engine.request(method, params).catch((error) => ({ __hohError: String(error?.message ?? error) })));
   await page.addInitScript(() => {
     const listeners = new Set();
+    let clipboardText = '';
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value) => { clipboardText = String(value); },
+      readText: async () => clipboardText,
+    } });
     window.__hohT3Notify = (notification) => { for (const listener of listeners) listener(notification); };
     window.__HOH_T3_TEST_ENGINE__ = {
       request: async (method, params) => { const result = await window.__hohT3Request(method, params); if (result && result.__hohError) throw new Error(result.__hohError); return result; },
@@ -123,7 +127,7 @@ try {
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache') },
     args: ['--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--no-first-run'],
   });
-  for (const [width, height] of [[2560, 1440], [1920, 1080], [1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]) {
+  for (const [width, height] of [[2560, 1440], [2000, 1137], [1920, 1080], [1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]) {
     for (const busy of [false, true]) {
       const label = `${width}×${height} ${busy ? 'с агентами' : 'пустая главная'}`;
       const engine = engineWith(busy);
@@ -161,7 +165,7 @@ try {
             return greeting && prompt ? Math.round((prompt.top - greeting.bottom) * 10) / 10 : null;
           });
           if (emptyGap === null) fail(`${label}: не найдены приветствие и заголовок пустой главной`);
-          else if (emptyGap > 64) fail(`${label}: между приветствием и вопросом пустой главной ${emptyGap} px (нужно не больше 64 px)`);
+          else if (emptyGap < 24) fail(`${label}: приветствие не отделено сверху от вопроса пустой главной (${emptyGap} px)`);
         }
         if (busy && width === 800 && height === 550) {
           const detail = page.locator('.hoh-ask__detail').first();
@@ -200,19 +204,63 @@ try {
             if (cards.some(card => card.width > 360.5)) fail(`${label}: карточка шире 360 px: ${cards.map(card => card.width.toFixed(1)).join(', ')}`);
             const firstY = Math.min(...cards.map(card => card.y));
             const firstRow = cards.filter(card => Math.abs(card.y - firstY) < 1).length;
-            const expected = width === 1440 ? 2 : width === 1920 ? 3 : width === 2560 ? 4 : 2;
+            const expected = 2;
             if (firstRow !== expected) fail(`${label}: в первом ряду ${firstRow} карточек, нужно ${expected}`);
           }
         }
-        if (busy) { // Learning / Widgets: пустая страница с заголовком и «Coming soon», пункт подсвечен, блок на линиях; «New chat» её закрывает
-          for (const title of ['Learning', 'Widgets']) {
-            await page.locator(`[data-hoh-page-item="${title.toLowerCase()}"]`).click();
-            await page.locator('.hoh-page').waitFor({ state: 'visible' });
-            const text = await page.locator('.hoh-page').innerText();
-            if (text.replace(/\s+/g, ' ').trim() !== `${title} Coming soon`) fail(`${label}: страница ${title}: «${text.trim()}»`);
-            if (await page.locator(`[data-hoh-page-item="${title.toLowerCase()}"][aria-current="page"]`).count() !== 1) fail(`${label}: пункт ${title} не подсвечен`);
-            const pageMiss = await page.evaluate(() => window.hohGridCheck());
-            for (const miss of pageMiss) fail(`${label}: страница ${title}: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
+        if (busy) { // Learning и живая страница Plugins; «New chat» закрывает обе.
+          await page.locator('[data-hoh-page-item="learning"]').click();
+          await page.locator('.hoh-page').waitFor({ state: 'visible' });
+          const learningText = await page.locator('.hoh-page').innerText();
+          if (learningText.replace(/\s+/g, ' ').trim() !== 'Learning Coming soon') fail(`${label}: страница Learning: «${learningText.trim()}»`);
+          if (await page.locator('[data-hoh-page-item="learning"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Learning не подсвечен`);
+          const pageMiss = await page.evaluate(() => window.hohGridCheck());
+          for (const miss of pageMiss) fail(`${label}: страница Learning: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
+
+          await page.locator('[data-hoh-page-item="plugins"]').click();
+          await page.locator('.hoh-plugins').waitFor({ state: 'visible' });
+          if (await page.locator('[data-hoh-page-item="plugins"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Plugins не подсвечен`);
+          if (await page.locator('[data-plugin-list] [data-plugin-id]').count() !== 7) fail(`${label}: страница Plugins показывает не 7 образцов`);
+          if (!/Sample data\s*— not connected to the engine yet\./.test((await page.locator('.hoh-plugins__sample').innerText()).replace(/\s+/g, ' '))) fail(`${label}: нет заметной пометки об образцовых данных`);
+          if (await page.getByRole('heading', { name: 'Built-in plugins' }).count() !== 1) fail(`${label}: нет отдельного раздела встроенных плагинов`);
+          const overflow = await page.locator('.hoh-plugins').evaluate((node) => node.scrollWidth > node.clientWidth + 1);
+          if (overflow) fail(`${label}: страница Plugins имеет горизонтальное переполнение`);
+
+          if (width === 1440 && height === 900) {
+            await page.locator('[data-add-plugin-folder]').click();
+            await page.getByRole('heading', { name: 'Add plugin from folder' }).waitFor();
+            await page.locator('[data-slot="dialog-footer"]').getByRole('button', { name: 'Close' }).click();
+
+            await page.getByRole('button', { name: 'Orbit Tools' }).click();
+            await page.locator('[data-plugin-detail="alexandrie-orbit-tools"]').waitFor();
+            await page.getByRole('button', { name: 'Disable' }).click();
+            if (await page.locator('[data-plugin-status="approval-pending"]').count() < 1) fail(`${label}: Disable не переводит образец в Approval pending`);
+            await page.getByRole('button', { name: 'More plugin actions' }).click();
+            await page.getByRole('menuitem', { name: 'Copy plugin ID' }).click();
+            await page.getByText('Plugin ID copied').waitFor();
+            if (await page.evaluate(() => navigator.clipboard.readText()) !== 'alexandrie-orbit-tools') fail(`${label}: меню не скопировало настоящий plugin ID`);
+            await page.getByRole('button', { name: 'Copy SHA-256 fingerprint' }).click();
+            await page.getByText('Fingerprint copied').waitFor();
+            if (await page.evaluate(() => navigator.clipboard.readText()) !== 'sha256:3d7f6bf47d824da418d43fbba0628dce3f7825688b364a9a292485cab13ed02b') fail(`${label}: кнопка не скопировала полный SHA-256`);
+            await page.getByRole('button', { name: 'All plugins' }).click();
+
+            await page.getByRole('button', { name: 'Variant B' }).click();
+            const firstRow = page.locator('.hoh-plugin-row__trigger').first();
+            await firstRow.focus(); await page.keyboard.press('Enter');
+            if (await firstRow.getAttribute('aria-expanded') !== 'true') fail(`${label}: строка варианта B не раскрывается клавиатурой`);
+            await page.getByRole('button', { name: 'Open plugin page' }).first().click();
+            await page.locator('[data-plugin-detail]').waitFor();
+            await page.getByRole('button', { name: 'All plugins' }).click();
+
+            await page.getByRole('button', { name: 'Variant C' }).click();
+            if (await page.locator('.hoh-plugin-split').count() !== 1) fail(`${label}: вариант C не показывает две колонки`);
+            await page.getByRole('button', { name: 'Open full page' }).click();
+            await page.locator('[data-plugin-detail]').waitFor();
+            if (await page.evaluate(() => localStorage.getItem('hoh:plugins-design-variant')) !== 'C') fail(`${label}: выбранный вариант C не запомнен`);
+            await page.getByRole('button', { name: 'All plugins' }).click();
+            await page.reload();
+            await page.locator('[data-hoh-page-item="plugins"]').click();
+            await page.locator('.hoh-plugins[data-plugin-variant="C"]').waitFor();
           }
           await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();
           if (await page.locator('.hoh-page').count() !== 0) fail(`${label}: «New chat» не закрыл страницу`);
@@ -236,4 +284,4 @@ try {
 } finally { await browser?.close(); await rm(home, { recursive: true, force: true }); }
 
 if (errors.length) { for (const message of errors) console.error('grid: ' + message); process.exit(1); }
-console.log('grid: все блоки на линиях g1..g21; карточки 2/3/4 в ряд при 1440/1920/2560 и не шире 360 px (также 1280×720, 1100×700, 1000×625, 800×550; допуск 2 px)');
+console.log('grid: внутренний ритм HoH остаётся на g1..g21; карточки не шире 360 px и по 2 в ряд в полной T3-колонке (также 2000×1137, 1920×1080, 1440×900, 800×550; допуск 2 px)');
