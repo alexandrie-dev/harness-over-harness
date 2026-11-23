@@ -280,6 +280,15 @@ test('Codex: app-server models and effort are offered; executor and exact mode a
   assert.match(unsupportedCodex.message, /not supported/);
 });
 
+test('a restored global Codex selection remains the default provider and model', async () => {
+  const engine = new FakeEngine({
+    access: { mode: 'confirm', selected: { executor: 'codex', model: 'gpt-6-sol' } },
+  });
+  const { client } = connect(engine);
+  const config = await client.call('server.getConfig', {});
+  assert.deepEqual(config.settings.defaultModelSelection, { instanceId: 'codex', model: 'gpt-6-sol' });
+});
+
 test('Codex: two conversations keep independent modes instead of racing through a provider global', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);
@@ -291,6 +300,40 @@ test('Codex: two conversations keep independent modes instead of racing through 
   const [a, b] = await Promise.all([create('cx-a', 'auto-accept-edits'), create('cx-b', 'full-access')]);
   assert.deepEqual([a.projection.thread.runtimeMode, b.projection.thread.runtimeMode], ['auto-accept-edits', 'full-access']);
   assert.deepEqual([...engine.sessionAccess.entries()].sort(), [['cx-a', 'auto-accept-edits'], ['cx-b', 'full']]);
+});
+
+test('concurrent Claude and Codex launches atomically bind their requested executor, model, and mode', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  const launch = (threadId, instanceId, model, runtimeMode) => client.call('orchestration.launchThread', {
+    commandId: 'parallel-' + threadId, threadId, projectId: 'hoh-project', title: threadId,
+    modelSelection: { instanceId, model }, runtimeMode,
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'message-' + threadId, text: 'hello', attachments: [] },
+  });
+  const [claude, codex] = await Promise.all([
+    launch('parallel-claude', 'claudeAgent', 'claude-opus', 'approval-required'),
+    launch('parallel-codex', 'codex', 'gpt-6-sol', 'auto-accept-edits'),
+  ]);
+  assert.deepEqual(
+    [claude.projection.thread.providerInstanceId, codex.projection.thread.providerInstanceId],
+    ['claudeAgent', 'codex'],
+  );
+  assert.deepEqual(
+    ['parallel-claude', 'parallel-codex'].map(id => {
+      const session = engine.store.get(id);
+      return [id, session.executor, session.model, session.runtimeMode];
+    }),
+    [
+      ['parallel-claude', 'claude', 'claude-opus', 'confirm'],
+      ['parallel-codex', 'codex', 'gpt-6-sol', 'auto-accept-edits'],
+    ],
+  );
+  for (const id of ['parallel-claude', 'parallel-codex']) {
+    const access = engine.requests.find(request => request.method === 'hoh/executor/access/set' && request.params.sessionId === id);
+    const prompt = engine.requests.find(request => request.method === 'session/prompt' && request.params.sessionId === id);
+    assert(engine.requests.indexOf(access) < engine.requests.indexOf(prompt));
+  }
 });
 
 test('after a restart the chat comes back from the engine\'s history; an unfinished turn ends as stopped', async () => {

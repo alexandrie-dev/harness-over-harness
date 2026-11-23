@@ -77,6 +77,7 @@ fn main() {
     let stdin = std::io::stdin();
     let mut approval = 0_u8;
     let mut child: Option<Child> = None;
+    let mut duplicate_after_answer: Option<Value> = None;
     for line in BufReader::new(stdin.lock()).lines() {
         let line = line.unwrap();
         let message: Value = serde_json::from_str(&line).unwrap();
@@ -101,7 +102,12 @@ fn main() {
                     .pointer("/params/threadId")
                     .and_then(Value::as_str)
                     .unwrap();
-                send(json!({"id":id,"result":{"thread":{"id":thread}}}));
+                let returned = if scenario == "resume-mismatch" {
+                    "different-thread"
+                } else {
+                    thread
+                };
+                send(json!({"id":id,"result":{"thread":{"id":returned}}}));
             }
             Some("turn/start") => {
                 send(
@@ -120,6 +126,15 @@ fn main() {
                         .unwrap();
                     log(&json!({"childPid":spawned.id()}));
                     child = Some(spawned);
+                } else if scenario == "duplicate-string" || scenario == "duplicate-number" {
+                    let duplicate_id = if scenario == "duplicate-string" {
+                        json!("duplicate-approval")
+                    } else {
+                        json!(404)
+                    };
+                    log(&json!({"stubEvent":"first-duplicate-action","id":duplicate_id.clone()}));
+                    send(json!({"id":duplicate_id.clone(),"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","approvalId":"first","command":"printf first","cwd":"/work","reason":"first action"}}));
+                    duplicate_after_answer = Some(duplicate_id);
                 } else {
                     send(
                         json!({"id":"approval-command","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"cmd-1","approvalId":"approval-command","command":"printf hello","cwd":"/work","reason":"run it"}}),
@@ -129,6 +144,16 @@ fn main() {
             Some("turn/interrupt") => {
                 send(json!({"id":id,"result":{}}));
                 finish_turn("interrupted");
+            }
+            None
+                if duplicate_after_answer
+                    .as_ref()
+                    .is_some_and(|duplicate| message.get("id") == Some(duplicate)) =>
+            {
+                let duplicate_id = duplicate_after_answer.take().unwrap();
+                log(&json!({"stubEvent":"second-duplicate-action","id":duplicate_id.clone()}));
+                send(json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"fileChange","id":"file-duplicate","status":"inProgress","changes":[{"path":"second.txt","kind":"update","diff":"+second"}]}}}));
+                send(json!({"id":duplicate_id,"method":"item/fileChange/requestApproval","params":{"threadId":"thread-stub","turnId":"turn-stub","itemId":"file-duplicate","reason":"second action"}}));
             }
             None if message.get("id") == Some(&json!("approval-command")) => {
                 approval = 1;

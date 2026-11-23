@@ -394,6 +394,82 @@ async fn resume_uses_the_same_native_thread() {
 }
 
 #[tokio::test]
+async fn resume_rejects_a_different_returned_thread_without_rebinding() {
+    let temp = TempDir::new().unwrap();
+    let (harness, _) = harness(&temp, "resume-mismatch");
+    let error = harness
+        .start_with_access(
+            start_params(&temp, Some("thread-stub".into())),
+            AccessMode::Confirm,
+        )
+        .await
+        .err()
+        .expect("a mismatched resume id must fail");
+    assert_eq!(error.code, hoh_external_harness::code::PROTOCOL);
+    assert!(error.message.contains("different thread.id"), "{error:?}");
+}
+
+#[tokio::test]
+async fn duplicate_native_request_ids_close_fail_closed_without_answering_another_action() {
+    for scenario in ["duplicate-string", "duplicate-number"] {
+        let temp = TempDir::new().unwrap();
+        let (harness, log) = harness(&temp, scenario);
+        let mut started = harness
+            .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+            .await
+            .unwrap();
+        started
+            .session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-hoh".into(),
+                text: "duplicate".into(),
+                images: Vec::new(),
+            })
+            .await
+            .unwrap();
+        let first = loop {
+            match event(&mut started.events).await {
+                HarnessEvent::ApprovalRequested { request_id, action, .. } => {
+                    assert!(matches!(action, hoh_external_harness::HarnessAction::Command { .. }));
+                    break request_id;
+                }
+                HarnessEvent::SessionEnded { reason, message, .. } => {
+                    panic!("duplicate closed before first request was observable: {reason:?} {message:?}")
+                }
+                _ => {}
+            }
+        };
+        let response = started
+            .session
+            .respond(RespondParams {
+                session_id: "hoh-session".into(),
+                request_id: first,
+                response: HarnessResponse::Approval {
+                    decision: ApprovalDecision::Allow,
+                },
+            })
+            .await;
+        assert!(response.is_ok(), "{scenario}: the first action's answer should win its race");
+        let ended = loop {
+            if let HarnessEvent::SessionEnded { reason, message, .. } = event(&mut started.events).await {
+                break (reason, message);
+            }
+        };
+        assert_eq!(ended.0, hoh_external_harness::EndReason::ProtocolError);
+        assert!(ended.1.as_deref().is_some_and(|text| text.contains("reused JSON-RPC")));
+        let duplicate = if scenario == "duplicate-string" { Value::String("duplicate-approval".into()) } else { Value::from(404) };
+        let wire = lines(&log);
+        assert_eq!(
+            wire.iter().filter(|line| line.get("id") == Some(&duplicate) && line.get("result").is_some()).count(),
+            1,
+            "{scenario}: a second action received the first action's approval"
+        );
+        assert!(wire.iter().any(|line| line["stubEvent"] == "second-duplicate-action"));
+    }
+}
+
+#[tokio::test]
 async fn parallel_sessions_keep_their_first_turn_access_isolated() {
     let temp = TempDir::new().unwrap();
     let (harness_a, log_a) = harness(&temp, "parallel-auto-accept");
@@ -488,7 +564,7 @@ async fn parallel_sessions_keep_their_first_turn_access_isolated() {
 }
 
 #[tokio::test]
-async fn interrupt_then_terminate_removes_the_process_tree() {
+async fn terminate_removes_the_process_tree_without_a_native_interrupt() {
     let temp = TempDir::new().unwrap();
     let (harness, log) = harness(&temp, "interrupt");
     let mut started = harness
@@ -516,7 +592,6 @@ async fn interrupt_then_terminate_removes_the_process_tree() {
         .find_map(|line| line.get("childPid").and_then(Value::as_u64))
         .unwrap();
     let start = Instant::now();
-    started.session.interrupt().await.unwrap();
     started.session.terminate(Duration::from_millis(200)).await;
     while Path::new(&format!("/proc/{child}")).exists() && start.elapsed() < Duration::from_secs(3)
     {

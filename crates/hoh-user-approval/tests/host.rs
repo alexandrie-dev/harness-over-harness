@@ -547,6 +547,16 @@ async fn executor_choices_are_asked_in_words_that_name_the_executor_and_the_righ
             "Вернуть режим «Спрашивать разрешение» для Claude?",
         ),
         (
+            "hoh/executor/access/set",
+            json!({"executor":"codex","mode":"confirm","runtimeMode":"auto-accept-edits"}),
+            "Включить режим «Принимать правки» для Codex? Помощник сам принимает изменения файлов в рабочей папке, но спрашивает перед другими действиями.",
+        ),
+        (
+            "hoh/executor/access/set",
+            json!({"executor":"codex","mode":"confirm","runtimeMode":"auto"}),
+            "Включить режим «Авто» для Codex? Помощник сам принимает изменения файлов в рабочей папке и автоматически проверяет остальные запросы разрешений.",
+        ),
+        (
             "hoh/executor/select",
             json!({"executor":"claude","model":"claude-sonnet-4-5"}),
             "Отвечать будет Claude (модель claude-sonnet-4-5)?",
@@ -582,6 +592,15 @@ async fn executor_choices_are_asked_in_words_that_name_the_executor_and_the_righ
             .approve_privileged(
                 "hoh/executor/access/set",
                 &json!({"executor":"claude","mode":"everything"})
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        h.service()
+            .approve_privileged(
+                "hoh/executor/access/set",
+                &json!({"executor":"codex","mode":"full","runtimeMode":"auto"})
             )
             .await
             .is_err()

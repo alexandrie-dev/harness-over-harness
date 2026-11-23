@@ -46,6 +46,9 @@ pub const CHOICES_FILE: &str = "external-harness.json";
 /// Exact per-conversation modes. Kept separate so older HoH versions ignore it instead of
 /// rejecting their legacy choices file when it contains a newer four-mode value.
 pub const SESSION_ACCESS_FILE: &str = "external-harness-session-access.json";
+/// Codex selection for new conversations. Kept in a versioned sidecar so an older HoH ignores
+/// an executor it does not know instead of rejecting or restoring it from the legacy file.
+pub const CODEX_SELECTION_FILE: &str = "external-harness-codex-selection.json";
 /// The file in the engine's profile folder that keeps the project folders the person added.
 pub const FOLDERS_FILE: &str = "workspace-folders.json";
 
@@ -85,6 +88,14 @@ struct SavedSessionAccess {
     sessions: BTreeMap<String, crate::SessionAccessChoice>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SavedCodexSelection {
+    version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selected: Option<SavedSelection>,
+}
+
 #[derive(Inject)]
 pub struct WindowDeps {
     harnesses: Service<ExternalHarnesses>,
@@ -119,6 +130,7 @@ impl Plugin for ExternalHarnessWindowPlugin {
             agents: deps.agents,
             path: deps.profile.dir.join(CHOICES_FILE),
             session_access_path: deps.profile.dir.join(SESSION_ACCESS_FILE),
+            codex_selection_path: deps.profile.dir.join(CODEX_SELECTION_FILE),
             folders_path,
             folders: std::sync::Mutex::new(folders.into_iter().collect()),
             engine_home: deps.profile.home.clone(),
@@ -171,6 +183,7 @@ struct Window {
     agents: Service<Agents>,
     path: PathBuf,
     session_access_path: PathBuf,
+    codex_selection_path: PathBuf,
     folders_path: PathBuf,
     /// The project folders the person added, resolved (HOH-41).
     folders: std::sync::Mutex<std::collections::BTreeSet<PathBuf>>,
@@ -761,24 +774,71 @@ impl Window {
         let saved = Saved {
             access,
             // Codex did not exist in the legacy choices format. Keeping its global selection in
-            // that file makes an older HoH restore an executor it cannot register. T3 reapplies
-            // the provider before a new thread; existing threads keep their own binding record.
+            // that file makes an older HoH restore an executor it cannot register; the versioned
+            // sidecar below is ignored by old versions and restored by this one.
             selected: selected
+                .as_ref()
                 .filter(|chosen| chosen.executor != "codex")
                 .map(|chosen| SavedSelection {
-                    executor: chosen.executor,
-                    model: chosen.model,
+                    executor: chosen.executor.clone(),
+                    model: chosen.model.clone(),
                 }),
         };
-        write(&self.path, &serde_json::to_vec_pretty(&saved)?)
-            .await
-            .map_err(|error| -> BoxError {
-                format!(
-                    "the choice could not be saved to {}: {error}",
-                    self.path.display()
-                )
-                .into()
-            })?;
+        let codex = SavedCodexSelection {
+            version: 1,
+            selected: selected
+                .as_ref()
+                .filter(|chosen| chosen.executor == "codex")
+                .map(|chosen| SavedSelection {
+                    executor: chosen.executor.clone(),
+                    model: chosen.model.clone(),
+                }),
+        };
+        let legacy_bytes = serde_json::to_vec_pretty(&saved)?;
+        let codex_bytes = serde_json::to_vec_pretty(&codex)?;
+        // Selecting Codex clears it from the downgrade-safe legacy file before publishing the
+        // sidecar. Leaving Codex clears the sidecar before publishing the legacy selection. A
+        // crash between the two writes therefore falls back safely instead of restoring Codex
+        // with an older engine or claiming a newer choice that was not fully committed.
+        if codex.selected.is_some() {
+            write(&self.path, &legacy_bytes)
+                .await
+                .map_err(|error| -> BoxError {
+                    format!(
+                        "the choice could not be saved to {}: {error}",
+                        self.path.display()
+                    )
+                    .into()
+                })?;
+            write(&self.codex_selection_path, &codex_bytes)
+                .await
+                .map_err(|error| -> BoxError {
+                    format!(
+                        "the Codex choice could not be saved to {}: {error}",
+                        self.codex_selection_path.display()
+                    )
+                    .into()
+                })?;
+        } else {
+            write(&self.codex_selection_path, &codex_bytes)
+                .await
+                .map_err(|error| -> BoxError {
+                    format!(
+                        "the Codex choice could not be saved to {}: {error}",
+                        self.codex_selection_path.display()
+                    )
+                    .into()
+                })?;
+            write(&self.path, &legacy_bytes)
+                .await
+                .map_err(|error| -> BoxError {
+                    format!(
+                        "the choice could not be saved to {}: {error}",
+                        self.path.display()
+                    )
+                    .into()
+                })?;
+        }
         match change {
             Change::Select(selection) => self.agents.select_executor(selection),
             Change::Access(executor, mode) => self.service().choices().set_access(&executor, mode),
@@ -801,6 +861,10 @@ pub(crate) async fn restore_choices(ctx: &Context, choices: &Choices, agents: &A
         return;
     };
     let path = profile.dir.join(CHOICES_FILE);
+    let legacy_modified = tokio::fs::metadata(&path)
+        .await
+        .and_then(|metadata| metadata.modified())
+        .ok();
     match tokio::fs::read(&path).await {
         Ok(bytes) => match serde_json::from_slice::<Saved>(&bytes) {
             Ok(saved) => {
@@ -827,6 +891,57 @@ pub(crate) async fn restore_choices(ctx: &Context, choices: &Choices, agents: &A
         Err(error) => logger.warn(format_args!(
             "saved external harness choices {} could not be read: {error}",
             path.display()
+        )),
+    }
+
+    let codex_path = profile.dir.join(CODEX_SELECTION_FILE);
+    let codex_modified = tokio::fs::metadata(&codex_path)
+        .await
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let codex_is_current = match (codex_modified, legacy_modified) {
+        (Some(codex), Some(legacy)) => codex >= legacy,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    match tokio::fs::read(&codex_path).await {
+        Ok(bytes) => match serde_json::from_slice::<SavedCodexSelection>(&bytes) {
+            Ok(saved) if saved.version == 1 => {
+                if let Some(chosen) = saved.selected.as_ref()
+                    && codex_is_current
+                {
+                    if chosen.executor == "codex" {
+                        agents.select_executor(Some(ExecutorSelection {
+                            executor: chosen.executor.clone(),
+                            model: chosen.model.clone(),
+                        }));
+                    } else {
+                        logger.warn(format_args!(
+                            "saved Codex choice {} names an unexpected executor",
+                            codex_path.display()
+                        ));
+                    }
+                } else if saved.selected.is_some() && !codex_is_current {
+                    logger.warn(format_args!(
+                        "saved Codex choice {} is older than the legacy choice and was ignored",
+                        codex_path.display()
+                    ));
+                }
+            }
+            Ok(saved) => logger.warn(format_args!(
+                "saved Codex choice {} has unsupported version {}",
+                codex_path.display(),
+                saved.version
+            )),
+            Err(error) => logger.warn(format_args!(
+                "saved Codex choice {} is unusable: {error}",
+                codex_path.display()
+            )),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => logger.warn(format_args!(
+            "saved Codex choice {} could not be read: {error}",
+            codex_path.display()
         )),
     }
 
