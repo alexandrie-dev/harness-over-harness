@@ -16,8 +16,8 @@ use hoh_destructive_classifier::{
 };
 use hoh_error::SharedError;
 use hoh_external_harness::{
-    BINDING_RECORD, Discovery, ExternalHarness, ExternalHarnessPlugin, ExternalHarnesses,
-    ProcessSpec, StdioHarness, StdioHarnessConfig,
+    BINDING_RECORD, Discovery, ExternalHarnessPlugin, ExternalHarnesses, ProcessSpec, StdioHarness,
+    StdioHarnessConfig,
 };
 use hoh_kernel::{Context, Disposer, Kernel, Plugin, Service};
 use hoh_llm::{ContentBlock, MessageSource, NewUserMessage, UserMessage, create_user_message};
@@ -2978,25 +2978,25 @@ async fn the_saved_choice_is_where_a_new_run_starts() {
 #[tokio::test]
 async fn a_codex_selection_and_model_survive_restart_in_a_downgrade_safe_sidecar() {
     let dirs = dirs();
-    let window = window(&dirs, quick(), Host::Allows, |_| {}).await;
+    let initial = window(&dirs, quick(), Host::Allows, |_| {}).await;
     let codex = StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
         program: PathBuf::from(STUB),
         args: vec!["--state".into(), dirs.state.to_str().expect("utf-8").into()],
         ..ProcessSpec::default()
     }));
-    let _codex_registration = window
+    let _codex_registration = initial
         .base
         .harnesses
-        .register(&window.base.ctx, "codex", Arc::new(codex))
+        .register(&initial.base.ctx, "codex", Arc::new(codex))
         .expect("Codex test harness registers");
-    window
+    initial
         .call(
             "hoh/executor/select",
             json!({"executor":"codex","model":"gpt-test"}),
         )
         .await
         .expect("select Codex");
-    window.close().await;
+    initial.close().await;
 
     let legacy: Value = serde_json::from_str(
         &std::fs::read_to_string(dirs.profile.join(hoh_external_harness::CHOICES_FILE))
