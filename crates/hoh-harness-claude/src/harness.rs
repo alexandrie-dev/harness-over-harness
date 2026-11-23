@@ -5,6 +5,9 @@
 //! discovery follows `ClaudeProvider.ts` (`claudeAuthStatus`, capabilities probe).
 
 use std::collections::HashMap;
+use std::fs::DirBuilder;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -593,6 +596,7 @@ fn title_args(
     args
 }
 
+#[derive(Debug)]
 struct TitleCommandOutput {
     status: ExitInfo,
     response: Option<Value>,
@@ -606,6 +610,68 @@ struct AbandonTitleOnDrop<'a>(&'a Supervisor);
 impl Drop for AbandonTitleOnDrop<'_> {
     fn drop(&mut self) {
         self.0.abandon();
+    }
+}
+
+/// Private, cancellation-safe storage for the one-shot cwd and fallback Claude config. Drop is
+/// synchronous deliberately: cancelling the future must remove persisted prompt/session data
+/// before control returns to its caller.
+struct TitleTempRoot {
+    path: PathBuf,
+    closed: bool,
+}
+
+impl TitleTempRoot {
+    fn create() -> HarnessResult<Self> {
+        let path = std::env::temp_dir().join(format!("hoh-claude-title-{}", random_uuid()?));
+        let mut builder = DirBuilder::new();
+        #[cfg(unix)]
+        builder.mode(0o700);
+        builder.create(&path).map_err(|error| {
+            HarnessFailure::new(
+                code::IO,
+                format!("cannot create private title storage: {error}"),
+            )
+        })?;
+        Ok(Self {
+            path,
+            closed: false,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn close(mut self) -> HarnessResult<()> {
+        std::fs::remove_dir_all(&self.path).map_err(|error| {
+            HarnessFailure::new(
+                code::IO,
+                format!("cannot remove private title storage: {error}"),
+            )
+        })?;
+        self.closed = true;
+        Ok(())
+    }
+
+    /// Remove storage before returning either a successful title response or its failure. This
+    /// keeps ordinary errors and timeouts on the same explicit, fallible cleanup path.
+    fn finish<T>(self, outcome: HarnessResult<T>) -> HarnessResult<T> {
+        self.close()?;
+        outcome
+    }
+}
+
+impl Drop for TitleTempRoot {
+    fn drop(&mut self) {
+        if !self.closed {
+            if let Err(error) = std::fs::remove_dir_all(&self.path) {
+                // Drop cannot return the cleanup failure, but it must not be silent: this means
+                // cancellation may have left isolated Claude persistence behind. Do not print the
+                // path because it can identify a sensitive title request.
+                eprintln!("cannot remove cancelled Claude title storage: {error}");
+            }
+        }
     }
 }
 
@@ -658,7 +724,15 @@ async fn run_title_command(
     fallback_config_dir: Option<&Path>,
 ) -> Result<TitleCommandOutput, HarnessFailure> {
     let spec = title_spec(config, cwd, no_session_persistence, fallback_config_dir);
-    let supervisor = Supervisor::spawn(&spec, title_limits(), None)?;
+    run_title_process(&spec, prompt, TITLE_TIMEOUT).await
+}
+
+async fn run_title_process(
+    spec: &ProcessSpec,
+    prompt: &str,
+    deadline: Duration,
+) -> Result<TitleCommandOutput, HarnessFailure> {
+    let supervisor = Supervisor::spawn(spec, title_limits(), None)?;
     let _abandon_on_drop = AbandonTitleOnDrop(&supervisor);
     let Some(mut frames) = supervisor.take_frames() else {
         supervisor.terminate(Duration::from_millis(200)).await;
@@ -667,14 +741,10 @@ async fn run_title_command(
             "Claude title output is unavailable",
         ));
     };
-    if let Err(error) = supervisor
-        .send_input_and_close(prompt.as_bytes(), TITLE_INPUT_MAX_BYTES)
-        .await
-    {
-        supervisor.terminate(Duration::from_millis(200)).await;
-        return Err(error);
-    }
-    let outcome = tokio::time::timeout(TITLE_TIMEOUT, async {
+    let outcome = tokio::time::timeout(deadline, async {
+        supervisor
+            .send_input_and_close(prompt.as_bytes(), TITLE_INPUT_MAX_BYTES)
+            .await?;
         let mut response = None;
         loop {
             match frames.recv().await {
@@ -726,9 +796,9 @@ async fn generate_title(config: ClaudeConfig, prompt: String) -> HarnessResult<S
     let _slot = TITLE_SLOT.acquire().await.map_err(|_| {
         HarnessFailure::new(code::CLOSED, "Claude title request slot is unavailable")
     })?;
-    let root = std::env::temp_dir().join(format!("hoh-claude-title-{}", random_uuid()?));
-    let directory = root.join("cwd");
-    let fallback_config = root.join("config");
+    let root = TitleTempRoot::create()?;
+    let directory = root.path().join("cwd");
+    let fallback_config = root.path().join("config");
     tokio::fs::create_dir_all(&directory).await.map_err(|error| {
         HarnessFailure::new(
             code::HARNESS,
@@ -763,8 +833,7 @@ async fn generate_title(config: ClaudeConfig, prompt: String) -> HarnessResult<S
         }
     }
     .await;
-    let _ = tokio::fs::remove_dir_all(&root).await;
-    let output = outcome?;
+    let output = root.finish(outcome)?;
     if !output.status.success() {
         return Err(HarnessFailure::new(
             code::HARNESS,
@@ -1456,6 +1525,61 @@ mod tests {
                 "/isolated/title-config".to_owned()
             )]
         );
+    }
+
+    #[test]
+    fn title_temp_storage_cleans_on_normal_error_and_drop() {
+        let dropped_path = {
+            let root = TitleTempRoot::create().unwrap();
+            let path = root.path().to_owned();
+            #[cfg(unix)]
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o700);
+            std::fs::create_dir(path.join("config")).unwrap();
+            std::fs::write(path.join("config/session.json"), b"persisted prompt").unwrap();
+            path
+        };
+        assert!(!dropped_path.exists());
+
+        let root = TitleTempRoot::create().unwrap();
+        let closed_path = root.path().to_owned();
+        std::fs::create_dir(closed_path.join("cwd")).unwrap();
+        root.close().unwrap();
+        assert!(!closed_path.exists());
+
+        let root = TitleTempRoot::create().unwrap();
+        let failed_path = root.path().to_owned();
+        std::fs::create_dir(failed_path.join("config")).unwrap();
+        std::fs::write(failed_path.join("config/session.json"), b"persisted prompt").unwrap();
+        let failed: HarnessResult<()> = Err(HarnessFailure::new(code::HARNESS, "title timed out"));
+        assert!(root.finish(failed).is_err());
+        assert!(!failed_path.exists());
+    }
+
+    #[tokio::test]
+    async fn title_deadline_includes_stdin_and_cancelled_storage_is_removed() {
+        let spec = ProcessSpec {
+            program: PathBuf::from("sh"),
+            args: vec!["-c".to_owned(), "exec sleep 30".to_owned()],
+            ..ProcessSpec::default()
+        };
+        let prompt = "x".repeat(TITLE_INPUT_MAX_BYTES);
+        let error = run_title_process(&spec, &prompt, Duration::from_millis(20))
+            .await
+            .expect_err("one deadline covers stdin and process wait");
+        assert!(error.message.contains("timed out"), "{error}");
+
+        let root = TitleTempRoot::create().unwrap();
+        let path = root.path().to_owned();
+        std::fs::create_dir(path.join("config")).unwrap();
+        std::fs::write(path.join("config/session.json"), b"persisted prompt").unwrap();
+        let pending = tokio::spawn(async move {
+            let _root = root;
+            std::future::pending::<()>().await;
+        });
+        tokio::task::yield_now().await;
+        pending.abort();
+        let _ = pending.await;
+        assert!(!path.exists());
     }
 
     #[test]

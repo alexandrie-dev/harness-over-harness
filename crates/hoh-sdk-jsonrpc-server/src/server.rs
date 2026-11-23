@@ -1219,18 +1219,33 @@ impl HarnessSdkJsonRpcServer {
             }
             "session/prompt" => {
                 self.assert_initialized()?;
-                let id = string_field(
+                // Preserve the SDK-compatible diagnostics for the two required fields while the
+                // typed decode below enforces the rest of the closed request contract.
+                string_field(
                     &params,
                     "sessionId",
                     "session/prompt requires a sessionId string",
                 )?;
-                let blocks = params
+                params
                     .get("contentBlocks")
                     .and_then(Value::as_array)
-                    .cloned()
                     .ok_or_else(|| type_error("session/prompt requires contentBlocks"))?;
+                // `effort` is private glue consumed by the prompt listener, not the public SDK
+                // struct. Everything else crosses the typed protocol boundary before a session,
+                // message, mode choice, or followup can be created.
+                let mut typed = params.clone();
+                if let Some(object) = typed.as_object_mut() {
+                    object.remove("effort");
+                }
+                let typed: SessionPromptParams =
+                    serde_json::from_value(typed).map_err(|error| type_error(error.to_string()))?;
+                let blocks = typed
+                    .content_blocks
+                    .iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()?;
                 serde_json::to_value(
-                    self.prompt_blocks(SessionId::from(id), blocks, Some(&params))
+                    self.prompt_blocks(SessionId::from(typed.session_id), blocks, Some(&params))
                         .await?,
                 )
                 .map_err(Into::into)

@@ -194,6 +194,19 @@ test('unknown interaction modes are rejected instead of becoming an ordinary pro
   }), /Unknown interaction mode/);
   const projection = await client.call('orchestration.getThreadProjection', { threadId: 'thread-known-mode' });
   assert.equal(projection.thread.interactionMode, 'plan');
+
+  const accessSets = engine.requests.filter(request => request.method === 'hoh/executor/access/set').length;
+  const prompts = engine.requests.filter(request => request.method === 'session/prompt').length;
+  await assert.rejects(() => client.call('orchestration.launchThread', {
+    commandId: 'bad-resume', threadId: 'thread-known-mode', projectId: 'hoh-project',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'full-access', interactionMode: 'future-mode',
+    initialMessage: { messageId: 'bad-message', text: 'must not run', attachments: [] },
+  }), /Unknown interaction mode/);
+  assert.equal(engine.requests.filter(request => request.method === 'hoh/executor/access/set').length, accessSets);
+  assert.equal(engine.requests.filter(request => request.method === 'session/prompt').length, prompts);
+  const unchanged = await client.call('orchestration.getThreadProjection', { threadId: 'thread-known-mode' });
+  assert.equal(unchanged.thread.interactionMode, 'plan');
+  assert.equal(unchanged.thread.runtimeMode, 'approval-required');
 });
 
 test('Claude stream usage reaches T3 providerTurns with its exact context fill', async () => {

@@ -1089,14 +1089,17 @@ ${message.slice(0, 8000)}`;
   }
 
   private async launch(input: Record<string, any>) {
+    // Validate the restrictive interaction choice before startup/loading can read or mutate the
+    // engine. In particular, an invalid mode must not widen global access on an existing thread.
+    const interactionMode = input.interactionMode === undefined ? undefined : interactionModeOf(input.interactionMode);
     await this.start();
     const threadId = typeof input.threadId === 'string' && input.threadId ? input.threadId : 'thread-' + (globalThis.crypto?.randomUUID?.() ?? this.now().toString(36));
     const existing = await this.loaded(threadId);
     try {
-      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.interactionMode);
+      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, interactionMode);
       if (existing) await this.applyMode(input.runtimeMode);
-      if (existing && input.interactionMode !== undefined) {
-        thread.setInteractionMode(interactionModeOf(input.interactionMode));
+      if (existing && interactionMode !== undefined) {
+        thread.setInteractionMode(interactionMode);
         this.interactions.set(thread.id, thread.interactionMode); this.save();
       }
       const message = input.initialMessage;
