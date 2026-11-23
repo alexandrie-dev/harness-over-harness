@@ -158,23 +158,45 @@ impl Choices {
     /// An external agent serves `session`: the levels its prompts name are kept from now on.
     /// Conversations of the engine's own model keep nothing.
     pub(crate) fn serve_prompts(&self, session: &str, executor: &str) {
-        lock(&self.prompts).insert(
-            session.to_owned(),
-            ServedPrompts {
-                executor: executor.to_owned(),
-                pending: VecDeque::new(),
-            },
-        );
+        let mut prompts = lock(&self.prompts);
+        match prompts.entry(session.to_owned()) {
+            std::collections::hash_map::Entry::Occupied(mut served) => {
+                // `session/prompt` can be accepted before the external agent is constructed.
+                // Keep those already snapshotted messages and bind later ones to the executor
+                // the engine actually selected for the session.
+                served.get_mut().executor = executor.to_owned();
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(ServedPrompts {
+                    executor: executor.to_owned(),
+                    pending: VecDeque::new(),
+                });
+            }
+        }
     }
 
     /// The level and privileged per-session access in force when this prompt was accepted.
     pub(crate) fn note_prompt(&self, session: &str, message: &str, effort: Option<String>) {
-        if let Some(served) = lock(&self.prompts).get_mut(session) {
-            let access = self.access_for(&served.executor, session);
-            served
-                .pending
-                .push_back((message.to_owned(), effort, Some(access)));
+        let mut prompts = lock(&self.prompts);
+        if !prompts.contains_key(session) {
+            // The main window sets the session-specific executor/mode before it sends the first
+            // prompt. The prompt hook can run before agent construction, so seed its queue from
+            // that privileged choice instead of losing the first message's snapshot.
+            let choice = lock(&self.session_access).get(session).cloned();
+            let Some(choice) = choice else { return };
+            prompts.insert(
+                session.to_owned(),
+                ServedPrompts {
+                    executor: choice.executor,
+                    pending: VecDeque::new(),
+                },
+            );
         }
+        let served = prompts.get_mut(session).expect("inserted above");
+        let access = self.access_for(&served.executor, session);
+        served
+            .pending
+            .push_back((message.to_owned(), effort, Some(access)));
     }
 
     /// The prompt settings for `message`, with older abandoned prompts dropped.
@@ -202,12 +224,12 @@ mod access_snapshot_tests {
         let choices = Choices::default();
         choices.set_session_access("chat-a", "codex", AccessMode::AutoAcceptEdits);
         choices.set_session_access("chat-b", "codex", AccessMode::Auto);
-        choices.serve_prompts("chat-a", "codex");
-        choices.serve_prompts("chat-b", "codex");
-
+        // The window prompt hook wins the race against agent construction.
         choices.note_prompt("chat-a", "message-a1", Some("high".into()));
         choices.note_prompt("chat-b", "message-b1", Some("low".into()));
         choices.set_session_access("chat-a", "codex", AccessMode::Full);
+        choices.serve_prompts("chat-a", "codex");
+        choices.serve_prompts("chat-b", "codex");
 
         assert_eq!(
             choices.take_prompt("chat-b", "message-b1"),
