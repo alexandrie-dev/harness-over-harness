@@ -68,6 +68,21 @@ test('a picture: T3 gives the bytes, the host keeps them, the message carries th
   assert.match(failureOf(again).message, /no longer here/);
 });
 
+test('an attached image context link stays in the conversation but is not duplicated in Claude text', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  await client.call('assets.persistChatAttachments', { threadId: 'chat-ref', messageId: 'm-ref', attachments: [upload()] });
+  await newThread(client, 'chat-ref');
+  const text = 'Describe this\n![red.png](t3-context://v1/image/image_img-1)';
+  await client.call('orchestration.dispatchCommand', dispatch('chat-ref', 'm-ref', text, [{ type: 'image', id: 'img-1', name: 'red.png', mimeType: 'image/png', sizeBytes: PNG_BYTES }]));
+  assert.deepEqual(sent(engine, 'session/prompt').at(-1).params.contentBlocks, [
+    { type: 'image', data: PNG, mimeType: 'image/png', name: 'red.png' },
+    { type: 'text', text: 'Describe this' },
+  ]);
+  const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-ref' });
+  assert.equal(projection.messages.find(message => message.role === 'user').text, text);
+});
+
 test('a picture too big, of another type, or not what it says is refused with T3\'s words; nothing reaches the engine', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);
