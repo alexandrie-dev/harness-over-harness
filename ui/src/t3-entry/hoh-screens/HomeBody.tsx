@@ -7,12 +7,13 @@ import { useNavigate } from '@tanstack/react-router';
 import { CheckIcon, XIcon } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import { ClaudeAI } from '~/components/Icons';
+import { ClaudeAI, OpenAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
 import './home.css';
 
 interface Entry {
   id: string; title: string; projectId: string; state: 'working' | 'waiting' | 'done' | 'ended';
+  providerInstanceId: string;
   startedAt: number; doneAt: number | null; steps: { done: number; total: number };
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
   agents: Agent[];
@@ -52,8 +53,10 @@ const clock = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour:
 
 interface View { host: Home | undefined; now: number; open(threadId: string): void; where(entry: Entry): string }
 
-/** The executor's mark: Claude's logo from T3's set (the host runs only Claude). */
-const Mark = () => <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
+/** The executor's mark from T3's own provider set. */
+const Mark = ({ entry }: { entry: Entry }) => entry.providerInstanceId === 'codex'
+  ? <OpenAI className="hoh-mark" role="img" aria-label="Codex" />
+  : <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
 
 function Steps({ entry }: { entry: Entry }) {
   if (entry.steps.total === 0) return null;
@@ -101,7 +104,7 @@ const stateLabel = (entry: Entry) => entry.state === 'working' ? <><span classNa
 function Card({ entry, view, children }: { entry: Entry; view: View; children: React.ReactNode }) {
   return (
     <div className="hoh-card" data-state={entry.state} {...press(() => view.open(entry.id))}>
-      <Mark />
+      <Mark entry={entry} />
       <span className="hoh-card__title">{entry.title}</span>
       <span className="hoh-card__where">{view.where(entry)}</span>
       {entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
@@ -146,7 +149,7 @@ function Cards({ working, done, asking, view }: Lists) {
             <div className="hoh-ask__head"><span>Needs your answer</span><span className="hoh-ask__count">{asking.length}</span></div>
             {asking.map((entry) => (
               <div key={entry.request!.id} className="hoh-ask__block">
-                <div className="hoh-ask__where"><span><Mark />{entry.title}</span><span>{elapsed(entry.startedAt, view.now)}</span></div>
+                <div className="hoh-ask__where"><span><Mark entry={entry} />{entry.title}</span><span>{elapsed(entry.startedAt, view.now)}</span></div>
                 <Ask entry={entry} view={view} />
               </div>
             ))}

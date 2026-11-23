@@ -17,7 +17,7 @@
 // (`projects.searchEntries` → `hoh/workspace/entries`, nothing for "No project"); pictures are checked and kept
 // (`assets.persistChatAttachments`) until their message goes to the engine with them (`session/prompt`).
 import {
-  accessModeOf, CLAUDE_INSTANCE_ID, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
+  accessModeOf, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, claudeProvider, codexEffortOf, codexProvider, defaultClaudeModel, defaultCodexModel, effortOf, listedClaudeModel, listedCodexModel, runtimeModeOf, serverConfig, serverSettings, type ClaudeDiscovery, type CodexDiscovery, type HohAccessMode, type HohExecutor, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
@@ -61,6 +61,9 @@ function folderPath(value: unknown): string {
 }
 const titleOf = (root: string) => root.split('/').filter(Boolean).at(-1) ?? root;
 const timeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+const executorOf = (instanceId: unknown): HohExecutor => instanceId === CODEX_INSTANCE_ID ? 'codex' : 'claude';
+const instanceOf = (executor: HohExecutor) => executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID;
+const exactMode = (value: unknown): HohAccessMode | null => ['confirm', 'auto-accept-edits', 'auto', 'full'].includes(String(value)) ? value as HohAccessMode : null;
 
 const PAGE = 1000;
 const NO_OP_COMMANDS = new Set([
@@ -114,10 +117,11 @@ export class HohHost {
   private homeDirty = false;
   private homeVersion = 0;
   private readonly homeListeners = new Set<() => void>();
-  private discovery: ClaudeDiscovery | null = null;
-  private mode: HohAccessMode = 'confirm';
+  private claudeDiscovery: ClaudeDiscovery | null = null;
+  private codexDiscovery: CodexDiscovery | null = null;
   /** T3's "default permissions" setting: the mode a new thread starts in. Claude asks first until the person changes it. */
   private defaultMode: HohAccessMode = 'confirm';
+  private selectedExecutor: HohExecutor = 'claude';
   /** The model the engine runs new chats with (`hoh/executor/select`), once known. */
   private selectedModel: string | null = null;
   private settingsOverrides: Record<string, unknown> = {};
@@ -172,7 +176,7 @@ export class HohHost {
     for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
-    if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
+    if (exactMode(saved?.defaultMode)) this.defaultMode = saved.defaultMode;
   }
 
   private save() {
@@ -245,8 +249,11 @@ export class HohHost {
   };
 
   private iso() { return new Date(this.now()).toISOString(); }
-  /** The engine's choice for new chats when T3 lists it; otherwise (Claude Code's `default`) T3's default model. */
-  private model() { return listedClaudeModel(this.discovery, this.selectedModel) ?? defaultClaudeModel(this.discovery); }
+  private model(executor: HohExecutor = this.selectedExecutor) {
+    return executor === 'codex'
+      ? listedCodexModel(this.codexDiscovery, this.selectedModel) ?? defaultCodexModel(this.codexDiscovery)
+      : listedClaudeModel(this.claudeDiscovery, this.selectedModel) ?? defaultClaudeModel(this.claudeDiscovery);
+  }
 
   /** Listen to the engine and read what it already has. Safe to call more than once. */
   start(): Promise<void> {
@@ -269,7 +276,7 @@ export class HohHost {
     }));
     const [, , sessionsRead] = await Promise.all([this.readDiscovery(), this.readAccess(), this.readSessions()]);
     // The engine that was still starting answers nothing at first (and the window never asks again): go on asking in the background.
-    if (this.discovery === null || !sessionsRead) void this.retryLoad(this.discovery !== null, sessionsRead);
+    if (this.claudeDiscovery === null || this.codexDiscovery === null || !sessionsRead) void this.retryLoad(this.claudeDiscovery !== null && this.codexDiscovery !== null, sessionsRead);
   }
 
   /** The reads of `load` that failed, repeated until the engine answers; what arrives late is announced to the window. */
@@ -277,21 +284,26 @@ export class HohHost {
     for (let attempt = 0; attempt < this.loadRetries && !this.stopped && !(discovered && sessionsRead); attempt++) {
       await new Promise<void>(resolve => { const timer: any = setTimeout(resolve, this.loadRetryMs); timer?.unref?.(); });
       if (this.stopped) return;
-      if (!discovered) { await this.readDiscovery(); discovered = this.discovery !== null; if (discovered) { await this.readAccess(); this.configChanged(); } }
+      if (!discovered) { await this.readDiscovery(); discovered = this.claudeDiscovery !== null && this.codexDiscovery !== null; if (discovered) { await this.readAccess(); this.configChanged(); } }
       if (!sessionsRead) { sessionsRead = await this.readSessions(); if (sessionsRead) for (const id of this.threads.keys()) this.changed(id); }
     }
   }
 
   private async readDiscovery() {
-    try { this.discovery = await this.engine.request('hoh/executor/discover', { executor: 'claude' }); } catch { this.discovery = null; }
+    const [claude, codex] = await Promise.all([
+      this.engine.request('hoh/executor/discover', { executor: 'claude' }).catch(() => null),
+      this.engine.request('hoh/executor/discover', { executor: 'codex' }).catch(() => null),
+    ]);
+    this.claudeDiscovery = claude;
+    this.codexDiscovery = codex;
   }
 
   private async readAccess() {
     try {
-      const access = await this.engine.request('hoh/executor/access/get', { executor: 'claude' });
-      if (access?.mode === 'full' || access?.mode === 'confirm') this.mode = access.mode;
+      const access = await this.engine.request('hoh/executor/access/get', { executor: 'codex' });
+      if (access?.selected?.executor === 'codex' || access?.selected?.executor === 'claude') this.selectedExecutor = access.selected.executor;
       if (typeof access?.selected?.model === 'string' && access.selected.model) this.selectedModel = access.selected.model;
-    } catch { /* the engine has no Claude access setting: the default mode stays */ }
+    } catch { /* the engine has no external-harness selection yet */ }
   }
 
   private async readSessions(): Promise<boolean> {
@@ -300,7 +312,16 @@ export class HohHost {
     for (const session of sessions) {
       if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
       const at = Number(session.updatedAt) || this.startedAt;
-      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, projectId: this.homeOf(session.id) }));
+      let executor = this.selectedExecutor;
+      let model = this.model(executor);
+      let mode = this.defaultMode;
+      try {
+        const own = (await this.engine.request('hoh/executor/access/get', { executor: 'codex', sessionId: session.id }))?.session;
+        if (own?.executor === 'codex' || own?.executor === 'claude') executor = own.executor;
+        if (typeof own?.model === 'string' && own.model) model = own.model;
+        mode = exactMode(own?.runtimeMode) ?? exactMode(own?.mode) ?? mode;
+      } catch { /* a session without an external executor follows the current composer */ }
+      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model, mode, executor, projectId: this.homeOf(session.id) }));
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
     await this.peekToday();
@@ -326,7 +347,7 @@ export class HohHost {
           afterSeq = page.nextSeq;
         }
         // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
-        try { if ((await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
+        try { if ((await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
         thread.settleUnfinished(this.now());
         this.homeDirty = true;
       } catch { /* the chat is not on the home screen */ }
@@ -356,8 +377,10 @@ export class HohHost {
         thread.settleUnfinished(this.now());
         // The model this chat is bound to (a chat that has had a turn keeps its own).
         try {
-          const own = (await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: threadId }))?.session;
-          if (own?.executor === 'claude' && typeof own.model === 'string' && own.model) thread.model = own.model;
+          const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: threadId }))?.session;
+          if (own?.executor === 'codex' || own?.executor === 'claude') thread.executor = own.executor;
+          if (typeof own?.model === 'string' && own.model) thread.model = own.model;
+          thread.mode = exactMode(own?.runtimeMode) ?? exactMode(own?.mode) ?? thread.mode;
         } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
         // The list row learns what the history knows (a title from the first message, the last answer).
@@ -378,7 +401,7 @@ export class HohHost {
     let thread = this.threads.get(sessionId);
     if (!thread) {
       // A chat started elsewhere (another window, a schedule): it joins the list.
-      thread = new ThreadModel({ id: sessionId, createdAt: this.now(), model: this.model(), mode: this.mode });
+      thread = new ThreadModel({ id: sessionId, createdAt: this.now(), model: this.model(), mode: this.defaultMode, executor: this.selectedExecutor });
       thread.loaded = true;
       this.threads.set(sessionId, thread);
       this.showProject();
@@ -466,10 +489,10 @@ export class HohHost {
   }
 
   private config() {
-    return serverConfig({ cwd: this.workspaceRoot, discovery: this.discovery, defaultMode: this.defaultMode, settingsOverrides: this.settingsOverrides, now: this.iso() });
+    return serverConfig({ cwd: this.workspaceRoot, claudeDiscovery: this.claudeDiscovery, codexDiscovery: this.codexDiscovery, defaultMode: this.defaultMode, defaultInstanceId: instanceOf(this.selectedExecutor), defaultModel: this.model(), settingsOverrides: this.settingsOverrides, now: this.iso() });
   }
 
-  private settings() { return serverSettings(this.model(), this.defaultMode, this.settingsOverrides); }
+  private settings() { return serverSettings(this.model(), this.defaultMode, this.settingsOverrides, instanceOf(this.selectedExecutor)); }
 
   private configChanged() {
     for (const sink of this.configSinks) sink.emit({ version: 1, type: 'snapshot', config: this.config() });
@@ -497,11 +520,14 @@ export class HohHost {
    * first message, by the request the current window uses for the person's folder choice; the Tauri host
    * may ask the person to allow it. Claude then runs in that folder.
    */
-  private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown) {
+  private async createThread(threadId: string, title: string | undefined, model: string | undefined, mode: T3RuntimeMode | undefined, projectId?: unknown, providerInstanceId?: unknown) {
     const folder = typeof projectId === 'string' && projectId !== HOH_PROJECT_ID ? this.folders.get(projectId) : undefined;
     if (typeof projectId === 'string' && projectId !== HOH_PROJECT_ID && !folder) throw new Error('This project does not exist.');
-    await this.applyMode(mode);
-    await this.applyModel(model);
+    const executor = executorOf(providerInstanceId ?? instanceOf(this.selectedExecutor));
+    const chosenModel = model ?? this.model(executor);
+    await this.applyModel(executor, chosenModel);
+    // This creates the engine session. Its access choice is written only after the concrete id
+    // exists, and before the first `session/prompt`, so two new chats cannot race through globals.
     const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
     this.setWorkspaceRoot(directory?.cwd);
     if (folder) {
@@ -514,10 +540,11 @@ export class HohHost {
         this.emitProject(folderProject(folder));
       }
     }
-    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: model ?? this.model(), mode: this.mode, projectId: folder?.id ?? HOH_PROJECT_ID });
+    const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor, projectId: folder?.id ?? HOH_PROJECT_ID });
     thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
     thread.loaded = true;
     this.threads.set(threadId, thread);
+    await this.applyMode(thread, mode ?? runtimeModeOf(this.defaultMode), true);
     this.homes.set(threadId, thread.projectId);
     this.save();
     if (!folder) this.showProject();
@@ -645,23 +672,29 @@ export class HohHost {
    * what a model may do) before the turn it was chosen for starts. T3 sends the choice with the send:
    * `thread.runtime-mode.set` before the message of a started thread (ChatView.tsx
    * `persistThreadSettingsForNextTurn`), the launch's `runtimeMode` for a new one (the composer's choice,
-   * else the default setting this host reports; useComposerSend.ts). The engine's mode is one for all
-   * chats, so every thread shows the mode in effect.
+   * else the default setting this host reports; useComposerSend.ts). The privileged call names the
+   * concrete session and carries the exact four-state mode as well as its downgrade-safe projection.
    */
-  private async applyMode(mode: T3RuntimeMode | undefined) {
+  private async applyMode(thread: ThreadModel, mode: T3RuntimeMode | undefined, force = false) {
     if (!mode) return;
     const wanted = accessModeOf(mode);
-    if (wanted === this.mode) return;
-    await this.engine.request('hoh/executor/access/set', { executor: 'claude', mode: wanted });
-    this.mode = wanted;
-    for (const thread of this.threads.values()) { thread.mode = wanted; this.changed(thread.id); }
-    this.configChanged();
+    if (!force && wanted === thread.mode) return;
+    await this.engine.request('hoh/executor/access/set', {
+      executor: thread.executor,
+      sessionId: thread.id,
+      mode: wanted === 'full' ? 'full' : 'confirm',
+      runtimeMode: wanted,
+    });
+    thread.mode = wanted;
+    this.changed(thread.id);
   }
 
-  private async applyModel(model: string | undefined) {
-    if (!model || model === this.selectedModel) return;
-    await this.engine.request('hoh/executor/select', { executor: 'claude', model });
+  private async applyModel(executor: HohExecutor, model: string | undefined) {
+    if (!model || (executor === this.selectedExecutor && model === this.selectedModel)) return;
+    await this.engine.request('hoh/executor/select', { executor, model });
+    this.selectedExecutor = executor;
     this.selectedModel = model;
+    this.configChanged();
   }
 
   /**
@@ -671,7 +704,7 @@ export class HohHost {
    */
   private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = []) {
     const images = this.keptImages(attachments);
-    const prompt = skillsAsCommands(text, this.skillsByFolder.get(folderPath(thread.cwd)) ?? new Set());
+    const prompt = skillsAsCommands(text, this.skillsByFolder.get(`${thread.executor}\0${folderPath(thread.cwd)}`) ?? new Set());
     thread.sendLocal(messageId, text, this.now(), images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
     this.changed(thread.id);
     const contentBlocks = [
@@ -679,7 +712,8 @@ export class HohHost {
       ...(prompt || !images.length ? [{ type: 'text', text: prompt }] : []),
     ];
     try {
-      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks, ...effortParam(effortOf(thread.model, thread.options)) });
+      const effort = thread.executor === 'codex' ? codexEffortOf(thread.options) : effortOf(thread.model, thread.options);
+      const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks, ...effortParam(effort) });
       for (const image of images) this.uploads.delete(image.id);
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
     } catch (error) {
@@ -763,17 +797,17 @@ export class HohHost {
    * "No project" whose folder is not known here yet is asked without a folder: the engine answers for its default one,
    * unless that is its own data (the desktop) — then Claude is asked once a chat names the folder.
    */
-  private async workspaceSnapshot(cwd: string) {
+  private async workspaceSnapshot(cwd: string, executor: HohExecutor) {
     try {
       const noProject = !this.folderAt(cwd) && folderPath(cwd) === this.workspaceRoot && !this.workspaceKnown;
-      const found = await this.engine.request('hoh/executor/commands', noProject ? { executor: 'claude' } : { executor: 'claude', cwd });
+      const found = await this.engine.request('hoh/executor/commands', noProject ? { executor } : { executor, cwd });
       const snapshot = workspaceSnapshot(cwd, this.iso(), found);
       const skills = new Set(snapshot.skills.map(skill => skill.name));
-      for (const folder of [folderPath(cwd), folderPath(found?.cwd)]) if (folder) this.skillsByFolder.set(folder, skills);
+      for (const folder of [folderPath(cwd), folderPath(found?.cwd)]) if (folder) this.skillsByFolder.set(`${executor}\0${folder}`, skills);
       if (noProject) this.setWorkspaceRoot(found?.cwd);
       return snapshot;
     } catch {
-      // Claude could not be asked here (not installed, signed out, a folder with no conversation yet): T3 asks again later.
+      // The executor could not be asked here (not installed, signed out, a folder with no conversation yet): T3 asks again later.
       return { cwd, checkedAt: this.iso(), slashCommands: [], skills: [], slashCommandsPending: true };
     }
   }
@@ -815,11 +849,12 @@ export class HohHost {
     try {
       switch (type) {
         case 'thread.create':
-          if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId);
+          if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId, command.modelSelection?.instanceId);
           break;
         case 'message.dispatch': {
           const target = needThread();
-          if (command.modelSelection?.model) { await this.applyModel(command.modelSelection.model); target.model = command.modelSelection.model; }
+          if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new thread.');
+          if (command.modelSelection?.model) { await this.applyModel(target.executor, command.modelSelection.model); target.model = command.modelSelection.model; }
           this.setLevel(target, command.modelSelection?.options);
           await this.send(target, String(command.messageId), String(command.text ?? ''), command.attachments);
           break;
@@ -836,10 +871,11 @@ export class HohHost {
           }
           break;
         }
-        case 'thread.runtime-mode.set': needThread(); await this.applyMode(command.runtimeMode); break;
+        case 'thread.runtime-mode.set': { const target = needThread(); await this.applyMode(target, command.runtimeMode); break; }
         case 'thread.model-selection.set': {
           const target = needThread();
-          await this.applyModel(command.modelSelection?.model);
+          if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new thread.');
+          await this.applyModel(target.executor, command.modelSelection?.model);
           if (command.modelSelection?.model) target.model = command.modelSelection.model;
           // The reasoning level of T3's model menu: kept for the chat, shown by the chip, sent with each message.
           if (command.modelSelection) this.setLevel(target, command.modelSelection.options, true);
@@ -873,8 +909,10 @@ export class HohHost {
     const threadId = typeof input.threadId === 'string' && input.threadId ? input.threadId : 'thread-' + (globalThis.crypto?.randomUUID?.() ?? this.now().toString(36));
     const existing = await this.loaded(threadId);
     try {
-      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId);
-      if (existing) await this.applyMode(input.runtimeMode);
+      const requestedExecutor = executorOf(input.modelSelection?.instanceId ?? instanceOf(this.selectedExecutor));
+      if (existing && requestedExecutor !== existing.executor) throw new Error('A conversation cannot change its executor. Start a new thread.');
+      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.modelSelection?.instanceId);
+      if (existing) await this.applyMode(existing, input.runtimeMode);
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
@@ -903,7 +941,7 @@ export class HohHost {
           const patch = payload?.patch && typeof payload.patch === 'object' ? { ...payload.patch } : {};
           // The default mode is where new threads start; the model is the engine's choice for new chats.
           if (typeof patch.defaultRuntimeMode === 'string') { this.defaultMode = accessModeOf(patch.defaultRuntimeMode); this.save(); }
-          if (patch.defaultModelSelection?.model) await this.applyModel(patch.defaultModelSelection.model);
+          if (patch.defaultModelSelection?.model) await this.applyModel(executorOf(patch.defaultModelSelection.instanceId), patch.defaultModelSelection.model);
           delete patch.defaultRuntimeMode; delete patch.defaultModelSelection;
           // Only whole values are kept: a nested patch is partial and would not decode as a setting.
           const primitive = (value: unknown) => value === null || ['string', 'number', 'boolean'].includes(typeof value);
@@ -942,15 +980,26 @@ export class HohHost {
         'agentSessions.scan': () => ({ candidates: [], scannedAt: this.iso() }),
         'server.refreshProviders': async (payload: any) => {
           await this.start();
-          // The composer's folder (T3's workspace snapshot): `/` and `$` from Claude, without asking for discovery again.
+          // The composer's folder (T3's workspace snapshot): `/` and `$` from its selected executor.
           const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
-          if (cwd && (payload?.instanceId === undefined || payload.instanceId === CLAUDE_INSTANCE_ID)) {
-            if (this.discovery === null) await this.readDiscovery();
-            return { providers: [{ ...claudeProvider(this.discovery, this.iso()), workspaceSnapshots: [await this.workspaceSnapshot(cwd)] }] };
+          if (cwd && payload?.instanceId === CODEX_INSTANCE_ID) {
+            if (this.codexDiscovery === null) await this.readDiscovery();
+            return { providers: [{ ...codexProvider(this.codexDiscovery, this.iso()), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'codex')] }] };
+          }
+          if (cwd && payload?.instanceId === CLAUDE_INSTANCE_ID) {
+            if (this.claudeDiscovery === null) await this.readDiscovery();
+            return { providers: [{ ...claudeProvider(this.claudeDiscovery, this.iso()), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'claude')] }] };
+          }
+          if (cwd && payload?.instanceId === undefined) {
+            if (this.claudeDiscovery === null || this.codexDiscovery === null) await this.readDiscovery();
+            return { providers: [
+              { ...claudeProvider(this.claudeDiscovery, this.iso()), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'claude')] },
+              { ...codexProvider(this.codexDiscovery, this.iso()), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'codex')] },
+            ] };
           }
           await this.readDiscovery();
           this.configChanged();
-          return { providers: [claudeProvider(this.discovery, this.iso())] };
+          return { providers: [claudeProvider(this.claudeDiscovery, this.iso()), codexProvider(this.codexDiscovery, this.iso())] };
         },
         'orchestration.dispatchCommand': (command: any) => this.dispatch(command ?? {}),
         'orchestration.launchThread': (input: any) => this.launch(input ?? {}),

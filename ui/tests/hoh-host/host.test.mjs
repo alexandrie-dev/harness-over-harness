@@ -25,7 +25,7 @@ function connect(engine, options = {}) {
 const lastSnapshot = stream => stream.values.filter(value => value.kind === 'snapshot').at(-1);
 const itemsOf = snapshot => snapshot.projection.turnItems;
 
-test('handshake: config snapshot, probe, settings, ping; only Claude is offered', async () => {
+test('handshake: config snapshot, probe, settings, ping; Claude and Codex are offered', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);
   const config = await client.stream('subscribeServerConfig', { environmentThemes: true, workspaceSnapshotsOnDemand: true });
@@ -33,10 +33,12 @@ test('handshake: config snapshot, probe, settings, ping; only Claude is offered'
   assert.equal(first.version, 1);
   assert.equal(first.config.environment.environmentId, 'hoh-local');
   assert.equal(first.config.environment.orchestrationProtocolVersion, 2);
-  assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent']);
+  assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent', 'codex']);
   assert.deepEqual(first.config.providers[0].models.map(model => model.slug), ['claude-sonnet', 'claude-opus']);
   assert.equal(first.config.providers[0].status, 'ready');
   assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'full-access']);
+  assert.deepEqual(first.config.providers[1].models.map(model => model.slug), ['gpt-6-sol']);
+  assert.deepEqual(first.config.providers[1].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
   assert.deepEqual(first.config.settings.defaultModelSelection, { instanceId: 'claudeAgent', model: 'claude-sonnet' });
   assert.equal(first.config.settings.defaultRuntimeMode, 'approval-required');
   // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
@@ -224,20 +226,62 @@ test('question of Claude: T3 question card, answers in the engine\'s form', asyn
   assert.deepEqual(engine.answers.at(-1).answer, { answers: [{ id: 'name', selected: [], custom: 'Вася' }] });
 });
 
-test('access mode: T3\'s switch goes to the engine at once and every thread shows it; the default setting stays where new threads start', async () => {
+test('access mode: T3\'s exact switch is scoped to the thread; the default setting stays where new threads start', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-m', 'M', []);
   const { client } = connect(engine);
   const config = await client.stream('subscribeServerConfig', {});
   await config.until(value => value.type === 'snapshot');
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'chat-m', runtimeMode: 'full-access' });
-  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', mode: 'full' }]);
+  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', sessionId: 'chat-m', mode: 'full', runtimeMode: 'full' }]);
   assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-m' })).thread.runtimeMode, 'full-access');
   // T3 shows the mode chip under the composer of a started thread while its mode differs from this setting.
   assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'approval-required');
-  // T3's in-between modes ask first.
+  // T3's in-between modes keep their exact Codex meaning (the legacy field stays confirm).
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c2', threadId: 'chat-m', runtimeMode: 'auto-accept-edits' });
-  assert.equal(engine.access.mode, 'confirm');
+  assert.equal(engine.sessionAccess.get('chat-m'), 'auto-accept-edits');
+});
+
+test('Codex: app-server models and effort are offered; executor and exact mode apply before the first message', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine);
+  const config = await client.call('server.getConfig', {});
+  const codex = config.providers.find(provider => provider.instanceId === 'codex');
+  assert.equal(codex.driver, 'codex');
+  assert.deepEqual(codex.models.map(model => model.slug), ['gpt-6-sol']);
+  assert.deepEqual(codex.models[0].capabilities.optionDescriptors[0].options.map(option => [option.id, !!option.isDefault]), [
+    ['low', false], ['medium', true], ['high', false],
+  ]);
+
+  const launched = await client.call('orchestration.launchThread', {
+    commandId: 'cx-launch', threadId: 'cx-chat', projectId: 'hoh-project', title: 'Codex task',
+    modelSelection: { instanceId: 'codex', model: 'gpt-6-sol', options: [{ id: 'reasoningEffort', value: 'high' }] },
+    runtimeMode: 'auto', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'cx-message', text: 'work', attachments: [] },
+  });
+  assert.equal(launched.projection.thread.providerInstanceId, 'codex');
+  assert.equal(launched.projection.thread.runtimeMode, 'auto');
+  const selected = engine.requests.find(request => request.method === 'hoh/executor/select' && request.params.executor === 'codex');
+  const access = engine.requests.find(request => request.method === 'hoh/executor/access/set' && request.params.sessionId === 'cx-chat');
+  const prompt = engine.requests.find(request => request.method === 'session/prompt' && request.params.sessionId === 'cx-chat');
+  assert.deepEqual(selected.params, { executor: 'codex', model: 'gpt-6-sol' });
+  assert.deepEqual(access.params, { executor: 'codex', sessionId: 'cx-chat', mode: 'confirm', runtimeMode: 'auto' });
+  assert.equal(prompt.params.effort, 'high');
+  assert(engine.requests.indexOf(access) < engine.requests.indexOf(prompt));
+  assert.equal(host.home.entries()[0].providerInstanceId, 'codex');
+});
+
+test('Codex: two conversations keep independent modes instead of racing through a provider global', async () => {
+  const engine = new FakeEngine();
+  const { client } = connect(engine);
+  const create = (threadId, runtimeMode) => client.call('orchestration.launchThread', {
+    commandId: 'create-' + threadId, threadId, projectId: 'hoh-project', title: threadId,
+    modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode,
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+  });
+  const [a, b] = await Promise.all([create('cx-a', 'auto-accept-edits'), create('cx-b', 'full-access')]);
+  assert.deepEqual([a.projection.thread.runtimeMode, b.projection.thread.runtimeMode], ['auto-accept-edits', 'full-access']);
+  assert.deepEqual([...engine.sessionAccess.entries()].sort(), [['cx-a', 'auto-accept-edits'], ['cx-b', 'full']]);
 });
 
 test('after a restart the chat comes back from the engine\'s history; an unfinished turn ends as stopped', async () => {
@@ -343,7 +387,7 @@ test('settings: whole values are kept, partial nested patches are not; the folde
   });
   const project = await shell.until(value => value.kind === 'project.updated');
   assert.equal(project.project.workspaceRoot, '/home/person/Documents/HoH');
-  assert.equal(engine.access.mode, 'full');
+  assert.equal(engine.sessionAccess.get('thread-f'), 'full');
 });
 
 test('Stop answered only by the engine going idle still ends the turn as stopped', async () => {
@@ -369,7 +413,7 @@ test('the mode chosen for a new thread is in effect for its first message: acces
     initialMessage: { messageId: 'm-w', text: 'hi', attachments: [] },
   });
   const order = engine.requests.map(r => r.method);
-  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', mode: 'full' }]);
+  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', sessionId: 'thread-w', mode: 'full', runtimeMode: 'full' }]);
   assert(order.indexOf('hoh/executor/access/set') < order.indexOf('session/prompt'), 'the engine has the mode before Claude starts');
   assert.equal(launched.projection.thread.runtimeMode, 'full-access');
   // A started thread: T3 sends the switch right before the next message (ChatView `persistThreadSettingsForNextTurn`).
@@ -378,14 +422,14 @@ test('the mode chosen for a new thread is in effect for its first message: acces
   await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'c2', threadId: 'thread-w', messageId: 'm-2', text: 'again', attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
   assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set' || r.method === 'session/prompt').map(r => [r.method, r.params.mode ?? r.params.contentBlocks?.[0]?.text]),
     [['hoh/executor/access/set', 'confirm'], ['session/prompt', 'again']]);
-  assert.equal(engine.access.mode, 'confirm');
+  assert.equal(engine.sessionAccess.get('thread-w'), 'confirm');
   // A thread created with the default mode starts in it.
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c3', threadId: 'thread-w', runtimeMode: 'full-access' });
   await client.call('orchestration.dispatchCommand', {
     type: 'thread.create', commandId: 'c4', threadId: 'thread-n', projectId: 'hoh-project', title: 'N', createdBy: 'user', creationSource: 'web',
     modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', branch: null, worktreePath: null,
   });
-  assert.equal(engine.access.mode, 'confirm');
+  assert.equal(engine.sessionAccess.get('thread-n'), 'confirm');
 });
 
 test('after a restart a finished history has no open turn, and the next answer closes its turn (the engine starts a turn before its message)', async () => {

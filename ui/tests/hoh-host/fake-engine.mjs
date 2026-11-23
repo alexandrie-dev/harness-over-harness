@@ -7,7 +7,7 @@ export const DEFAULT_FOLDER = '/home/person/Documents/HoH';
 const FOLDERS = [HOME, '/home/person/Documents', DEFAULT_FOLDER, '/home/person/Projects', '/home/person/Projects/site', '/home/person/Projects/tools', '/home/person/.config'];
 
 export class FakeEngine {
-  constructor({ store = new Map(), discovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } }, folders = FOLDERS } = {}) {
+  constructor({ store = new Map(), discovery, codexDiscovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } }, folders = FOLDERS } = {}) {
     /** Folders on the fake disk; `refuseFolder` makes the person press «Отклонить» in the protection window. */
     this.folders = new Set(folders); this.refuseFolder = false;
     /** Folders added as projects (`hoh/workspace/add`). */
@@ -18,7 +18,10 @@ export class FakeEngine {
     this.open = new Set();
     this.discovery = discovery ?? { executor: 'claude', installed: true, version: '2.1.0', versionStatus: 'supported', auth: 'authenticated',
       models: [{ id: 'claude-sonnet', displayName: 'Claude Sonnet', isDefault: true }, { id: 'claude-opus', displayName: 'Claude Opus' }], detail: null };
+    this.codexDiscovery = codexDiscovery ?? { executor: 'codex', installed: true, version: '0.166.0', versionStatus: 'supported', auth: 'authenticated',
+      models: [{ id: 'gpt-6-sol', displayName: 'GPT-6 Sol', isDefault: true, defaultEffort: 'medium', effortLevels: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }] }], detail: null };
     this.access = access;
+    this.sessionAccess = new Map();
   }
   tick() { return this.clock += 1000; }
   seed(id, title, events) {
@@ -69,13 +72,21 @@ export class FakeEngine {
   async request(method, params) {
     this.requests.push({ method, params });
     switch (method) {
-      case 'hoh/executor/discover': return this.discovery;
+      case 'hoh/executor/discover': return params.executor === 'codex' ? this.codexDiscovery : this.discovery;
       case 'hoh/executor/access/get': {
-        const answer = { executor: 'claude', mode: this.access.mode, effective: { mode: this.access.mode, flags: [] }, selected: this.access.selected };
-        const bound = params.sessionId ? this.store.get(params.sessionId)?.model : undefined;
-        return bound ? { ...answer, session: { executor: 'claude', model: bound, privacy: 'remote', mode: this.access.mode, running: null, pending: false } } : answer;
+        const answer = { executor: params.executor, mode: this.access.mode, runtimeMode: this.access.mode, effective: { mode: this.access.mode, flags: [] }, selected: this.access.selected };
+        const session = params.sessionId ? this.store.get(params.sessionId) : undefined;
+        const chosen = params.sessionId ? (this.sessionAccess.get(params.sessionId) ?? session?.runtimeMode) : undefined;
+        return session?.executor || session?.model ? { ...answer, session: { executor: session.executor ?? 'claude', model: session.model, privacy: 'remote', mode: chosen === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? 'confirm', running: null, runningRuntimeMode: null, pending: false } } : answer;
       }
-      case 'hoh/executor/access/set': this.access = { ...this.access, mode: params.mode }; return {};
+      case 'hoh/executor/access/set':
+        if (params.sessionId) {
+          const chosen = params.runtimeMode ?? params.mode;
+          this.sessionAccess.set(params.sessionId, chosen);
+          if (this.store.has(params.sessionId)) this.store.get(params.sessionId).runtimeMode = chosen;
+        }
+        else this.access = { ...this.access, mode: params.runtimeMode ?? params.mode };
+        return {};
       case 'hoh/executor/select': this.access = { ...this.access, selected: { executor: params.executor, model: params.model } }; return {};
       case 'session/list': return { sessions: [...this.store.entries()].map(([id, s]) => ({ id, title: s.title, employeeId: 'employee-1', updatedAt: s.updatedAt })) };
       case 'session/resume': if (!this.store.has(params.sessionId)) throw new Error('session not found'); this.open.add(params.sessionId); return {};
@@ -102,6 +113,9 @@ export class FakeEngine {
       }
       case 'session/prompt': {
         if (!this.store.has(params.sessionId)) throw new Error('unknown SDK session');
+        const session = this.store.get(params.sessionId);
+        session.executor ??= this.access.selected.executor;
+        session.model ??= this.access.selected.model;
         const text = params.contentBlocks.map(block => block.text ?? '').join('');
         const messageId = `engine-m-${++this.counter}`;
         // After answering, the engine starts the turn and then records its message (session.v4 order).
