@@ -1,6 +1,7 @@
 // What T3's composer offers beyond text (HOH-41 package 1): `/` and `$` (the commands and skills Claude
 // itself declares for the folder, `hoh/executor/commands`), `@` (the folder's files, `hoh/workspace/entries`)
-// and pictures (`assets.persistChatAttachments`, then the bytes go to the engine with `session/prompt`).
+// and pictures (T3 uploads them: `attachments.createUploadUrl`, then the bytes to that address; the older
+// `assets.persistChatAttachments` with data URLs too; then the bytes go to the engine with `session/prompt`).
 
 /** T3's send-turn limits (packages/contracts/src/chatAttachment.ts). */
 export const MAX_ATTACHMENTS = 100;
@@ -52,6 +53,39 @@ export function readUploads(attachments: unknown, newId: () => string): { images
     images.push({ id, name, mimeType, sizeBytes, data });
   }
   return { images };
+}
+
+/** T3's upload address for a minted picture (contracts/assets.ts `AttachmentCreateUploadUrlResult`). */
+export const UPLOAD_PATH = /^\/api\/attachments\/upload\/([\w.-]{1,256})$/;
+/** How long a minted address takes the bytes (T3 `ATTACHMENT_UPLOAD_URL_TTL_MS`). */
+export const UPLOAD_TTL_MS = 10 * 60_000;
+
+/** A picture T3 announced with `attachments.createUploadUrl`, waiting for its bytes. */
+export interface UploadSlot { readonly name: string; readonly mimeType: string; readonly sizeBytes: number; readonly expiresAt: number }
+
+/**
+ * The picture T3 wants to upload (`attachments.createUploadUrl`), as T3's server takes it: an image of a type Claude
+ * takes, 1 byte to 10 MiB, and the host keeps at most 100 pictures and 80 MiB not yet sent (`kept`: count and bytes).
+ * The answer is the slot, or T3's words for the refusal.
+ */
+export function uploadSlot(input: any, kept: { count: number; bytes: number }, expiresAt: number): { slot: UploadSlot } | { error: string } {
+  const name = typeof input?.name === 'string' && input.name.trim() ? input.name.trim().slice(0, 255) : 'image';
+  const mimeType = typeof input?.mimeType === 'string' ? input.mimeType.trim().toLowerCase() : '';
+  const sizeBytes = input?.sizeBytes;
+  if (input?.type === 'file') return { error: 'This server does not support file attachments.' };
+  if (!IMAGE_TYPES.has(mimeType)) return { error: `'${name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.` };
+  if (typeof sizeBytes !== 'number' || !Number.isInteger(sizeBytes) || sizeBytes < 1) return { error: `Attachment ${name} has an invalid image payload.` };
+  if (sizeBytes > MAX_IMAGE_BYTES) return { error: `'${name}' is too large to attach: a picture can be up to 10 MiB.` };
+  if (kept.count >= MAX_ATTACHMENTS) return { error: `You can attach up to ${MAX_ATTACHMENTS} files per message or question response.` };
+  if (kept.bytes + sizeBytes > MAX_TOTAL_IMAGE_BYTES) return { error: 'Images can total up to 80 MiB per message or question response. Use smaller images or send fewer at once.' };
+  return { slot: { name, mimeType, sizeBytes, expiresAt } };
+}
+
+/** The bytes of a picture as the engine takes them (`session/prompt` image blocks): base64. */
+export function base64Of(bytes: Uint8Array): string {
+  let text = '';
+  for (let at = 0; at < bytes.length; at += 0x8000) text += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  return btoa(text);
 }
 
 /** The engine's answer to `hoh/executor/commands` as T3's workspace snapshot of that folder (contracts/server.ts). */

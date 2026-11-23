@@ -20,7 +20,7 @@ import {
   accessModeOf, CLAUDE_INSTANCE_ID, claudeProvider, defaultClaudeModel, effortOf, listedClaudeModel, serverConfig, serverSettings, type ClaudeDiscovery, type HohAccessMode, type T3RuntimeMode,
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine } from './engine.ts';
-import { readUploads, searchAnswer, skillsAsCommands, workspaceSnapshot, type KeptImage } from './composer.ts';
+import { base64Of, readUploads, searchAnswer, skillsAsCommands, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError } from './errors.ts';
 import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
@@ -130,8 +130,10 @@ export class HohHost {
   private readonly folders = new Map<string, FolderProject>();
   /** The project of each chat the host placed (thread id → project id). */
   private readonly homes = new Map<string, string>();
-  /** Pictures the window gave (`assets.persistChatAttachments`), by id, until their message goes to the engine. */
+  /** Pictures the window gave (uploaded, or `assets.persistChatAttachments`), by id, until their message goes to the engine. */
   private readonly uploads = new Map<string, KeptImage>();
+  /** Pictures T3 announced (`attachments.createUploadUrl`) whose bytes have not come yet. */
+  private readonly slots = new Map<string, UploadSlot>();
   /** The skills Claude declared for each folder (its last workspace snapshot): `$name` in a message goes as `/name`. */
   private readonly skillsByFolder = new Map<string, Set<string>>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
@@ -663,7 +665,7 @@ export class HohHost {
   }
 
   /**
-   * One message to the engine: its pictures first (the bytes kept from `assets.persistChatAttachments`; the engine's
+   * One message to the engine: its pictures first (the bytes kept from T3's upload or `assets.persistChatAttachments`; the engine's
    * attachment store checks and copies them), then its text, with the skills Claude declared for the chat's folder
    * written as Claude runs them (`$name` → `/name`, T3's `planClaudeSkillDispatch`).
    */
@@ -694,6 +696,43 @@ export class HohHost {
       if (kept) return kept;
       throw new Error(attachment?.type === 'image' ? `The picture ${String(attachment?.name ?? '')} is no longer here. Attach it again.` : 'This server does not support file attachments.');
     });
+  }
+
+  /** The pictures kept here and not yet sent (announced or with their bytes): their count and bytes. */
+  private keptSize() {
+    let bytes = 0;
+    for (const image of this.uploads.values()) bytes += image.sizeBytes;
+    for (const slot of this.slots.values()) bytes += slot.sizeBytes;
+    return { count: this.uploads.size + this.slots.size, bytes };
+  }
+
+  /** T3's `attachments.createUploadUrl`: an address for one picture's bytes, checked as T3's server checks it. */
+  private createUploadUrl(payload: Record<string, any>) {
+    const now = this.now();
+    for (const [id, slot] of this.slots) if (slot.expiresAt <= now) this.slots.delete(id);
+    const minted = uploadSlot(payload, this.keptSize(), now + UPLOAD_TTL_MS);
+    if ('error' in minted) throw new RpcFailure({ _tag: 'EnvironmentAuthorizationError', message: minted.error, requiredScope: 'orchestration:operate' });
+    const attachmentId = 'img-' + (globalThis.crypto?.randomUUID?.() ?? `${now.toString(36)}-${this.slots.size}`);
+    this.slots.set(attachmentId, minted.slot);
+    return { attachmentId, relativeUrl: `/api/attachments/upload/${attachmentId}`, expiresAt: minted.slot.expiresAt };
+  }
+
+  /**
+   * The bytes T3 sends to an upload address (its XMLHttpRequest, answered in the window, `installHohXhr`): kept until
+   * the message goes when they are the picture announced there — its type and its size; an address is used once.
+   */
+  async receiveUpload(pathname: string, contentType: string, body: unknown): Promise<{ status: number }> {
+    const id = UPLOAD_PATH.exec(pathname)?.[1];
+    const slot = id ? this.slots.get(id) : undefined;
+    if (!id || !slot || slot.expiresAt <= this.now()) return { status: 404 };
+    this.slots.delete(id);
+    if (contentType.split(';')[0].trim().toLowerCase() !== slot.mimeType) return { status: 415 };
+    const blob = body instanceof Blob ? body : null;
+    if (!blob || blob.size !== slot.sizeBytes) return { status: 400 };
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    if (bytes.length !== slot.sizeBytes) return { status: 400 };
+    this.uploads.set(id, { id, name: slot.name, mimeType: slot.mimeType, sizeBytes: slot.sizeBytes, data: base64Of(bytes) });
+    return { status: 204 };
   }
 
   /** T3's `assets.persistChatAttachments`: pictures checked as T3's server checks them, kept here until sent. */
@@ -883,6 +922,12 @@ export class HohHost {
         'projects.mutate': (mutation: any) => this.mutateProject(mutation ?? {}),
         'projects.searchEntries': (payload: any) => this.searchEntries(payload ?? {}),
         'assets.persistChatAttachments': (payload: any) => this.persistAttachments(payload ?? {}),
+        'attachments.createUploadUrl': (payload: any) => this.createUploadUrl(payload ?? {}),
+        'attachments.delete': (payload: any) => {
+          const id = String(payload?.attachmentId ?? '');
+          this.slots.delete(id); this.uploads.delete(id);
+          return null;
+        },
         'filesystem.browse': (payload: any) => this.browse(payload ?? {}),
         // The welcome page looks for other agents' history to import; HoH imports none, and T3 then
         // leaves its Projects section out.

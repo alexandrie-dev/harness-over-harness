@@ -211,3 +211,75 @@ test('Add project: the engine is told the folder and names it as it resolved it;
   const shell = await client.stream('orchestration.subscribeShell', {});
   assert.deepEqual((await shell.until(value => value.kind === 'snapshot')).snapshot.projects.map(p => p.id), ['p-docs']);
 });
+
+test('a picture T3 uploads: an address for it, its bytes there, the message carries them; another type, size or address is refused', async () => {
+  const engine = new FakeEngine();
+  const { host, client } = connect(engine);
+  const png = Buffer.from(PNG, 'base64');
+  const announce = (fields = {}) => client.call('attachments.createUploadUrl', { name: 'red.png', mimeType: 'image/png', sizeBytes: PNG_BYTES, ...fields });
+  const minted = await announce();
+  assert.match(minted.relativeUrl, /^\/api\/attachments\/upload\/img-[\w.-]+$/);
+  assert.equal(minted.relativeUrl, `/api/attachments/upload/${minted.attachmentId}`);
+  // The bytes of another type or size, or to an address never given or already used: refused.
+  assert.equal((await host.receiveUpload('/api/attachments/upload/img-never', 'image/png', new Blob([png]))).status, 404);
+  const wrongType = await announce();
+  assert.equal((await host.receiveUpload(wrongType.relativeUrl, 'image/jpeg', new Blob([png]))).status, 415);
+  const wrongSize = await announce();
+  assert.equal((await host.receiveUpload(wrongSize.relativeUrl, 'image/png', new Blob([png.subarray(1)]))).status, 400);
+  assert.equal((await host.receiveUpload(minted.relativeUrl, 'image/png', new Blob([png]))).status, 204);
+  assert.equal((await host.receiveUpload(minted.relativeUrl, 'image/png', new Blob([png]))).status, 404);
+  // T3's server refusals for what cannot be a picture for Claude.
+  for (const [fields, words] of [
+    [{ type: 'file', name: 'report.pdf', mimeType: 'application/pdf' }, /does not support file attachments/],
+    [{ name: 'logo.svg', mimeType: 'image/svg+xml' }, /'logo.svg' is not a supported image type/],
+    [{ name: 'huge.png', sizeBytes: 10 * 1024 * 1024 + 1 }, /'huge.png' is too large to attach/],
+  ]) {
+    const refused = await client.request('attachments.createUploadUrl', { name: 'red.png', mimeType: 'image/png', sizeBytes: PNG_BYTES, ...fields });
+    assert.equal(failureOf(refused)._tag, 'EnvironmentAuthorizationError');
+    assert.match(failureOf(refused).message, words);
+  }
+  // A removed picture is gone.
+  const removed = await announce();
+  await client.call('attachments.delete', { attachmentId: removed.attachmentId });
+  assert.equal((await host.receiveUpload(removed.relativeUrl, 'image/png', new Blob([png]))).status, 404);
+  // The message names the upload; the engine gets the picture's bytes before the text.
+  await newThread(client, 'chat-up');
+  await client.call('orchestration.dispatchCommand', dispatch('chat-up', 'm-up', 'What is this?', [{ type: 'image', id: minted.attachmentId, name: 'red.png', mimeType: 'image/png', sizeBytes: PNG_BYTES }]));
+  assert.deepEqual(sent(engine, 'session/prompt').at(-1).params.contentBlocks, [
+    { type: 'image', data: PNG, mimeType: 'image/png', name: 'red.png' },
+    { type: 'text', text: 'What is this?' },
+  ]);
+});
+
+test('T3\'s XMLHttpRequest to the HoH address is answered in the window; any other goes to the platform', async () => {
+  const http = await built.load('http');
+  const calls = [];
+  class PlatformXhr extends EventTarget {
+    open(method, url) { calls.push(['open', method, String(url)]); }
+    setRequestHeader(name, value) { calls.push(['header', name, value]); }
+    send(body) { calls.push(['send', body]); }
+    abort() { calls.push(['abort']); }
+    get status() { return 299; }
+    get readyState() { return 1; }
+  }
+  const target = { XMLHttpRequest: PlatformXhr };
+  const received = [];
+  const restore = http.installHohXhr(url => new URL(url).host === 'hoh.local', async (...args) => { received.push(args); return { status: 204 }; }, target);
+  const xhr = new target.XMLHttpRequest();
+  xhr.open('POST', 'http://hoh.local/api/attachments/upload/img-1', true);
+  xhr.setRequestHeader('Content-Type', 'image/png');
+  const file = new Blob([Buffer.from(PNG, 'base64')], { type: 'image/png' });
+  const loaded = new Promise(resolve => xhr.addEventListener('load', resolve));
+  xhr.send(file);
+  await loaded;
+  assert.deepEqual([xhr.status, xhr.readyState], [204, 4]);
+  assert.deepEqual(received, [['POST', '/api/attachments/upload/img-1', 'image/png', file]]);
+  assert.deepEqual(calls, []);
+  const other = new target.XMLHttpRequest();
+  other.open('POST', 'https://example.test/upload');
+  other.send('x');
+  assert.equal(other.status, 299);
+  assert.deepEqual(calls.map(call => call[0]), ['open', 'send']);
+  restore();
+  assert.equal(target.XMLHttpRequest, PlatformXhr);
+});

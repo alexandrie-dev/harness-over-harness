@@ -127,6 +127,14 @@ test('T3 client: @, / and $ before the first turn, and a picture — all decode'
     }));
     assert(Exit.isFailure(refused));
     assert.equal(Cause.squash(refused.cause)._tag, 'PersistChatAttachmentsError');
+    // How this T3 sends pictures: an upload address, then the bytes there (answered in the window).
+    const minted = await run(client['attachments.createUploadUrl']({ name: 'red.png', mimeType: 'image/png', sizeBytes: Buffer.from(png, 'base64').length }));
+    assert.match(minted.relativeUrl, /^\/api\/attachments\/upload\/img-/);
+    const file = await runExit(client['attachments.createUploadUrl']({ type: 'file', name: 'report.pdf', mimeType: 'application/pdf', sizeBytes: 28 }));
+    assert(Exit.isFailure(file));
+    assert.equal(Cause.squash(file.cause)._tag, 'EnvironmentAuthorizationError');
+    assert.match(Cause.squash(file.cause).message, /does not support file attachments/);
+    await run(client['attachments.delete']({ attachmentId: minted.attachmentId }));
   });
 });
 
