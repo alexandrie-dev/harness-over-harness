@@ -96,6 +96,8 @@ export const HIDDEN_SELECTORS: readonly string[] = [
   '[data-testid="sidebar-settled-header"]',
   '[data-thread-item] button[aria-label="Settle thread"]',
   '[data-thread-item] button[aria-label="Snooze thread"]',
+  // Полоски TimelineMinimap у левого края ленты выглядят как случайный знак «=» и дублируют прокрутку разговора.
+  '[data-testid="timeline-minimap"]',
   // Две кнопки справа в шапке разговора (HOH-41, основатель: «это нам не нужно»); на главной (пустой черновик) шапки с «No project / New thread» нет.
   '[aria-label="Toggle thread details panel"]',
   '[aria-label="Toggle right panel"]',

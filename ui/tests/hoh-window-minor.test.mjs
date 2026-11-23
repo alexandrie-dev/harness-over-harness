@@ -26,3 +26,8 @@ test('thread details card is hidden in every conversation, not only on Home', as
   assert.match(features, /['"]\[data-thread-details-card\]['"]/);
   assert.doesNotMatch(features, /body:has\([^\n]+\) \[data-thread-details-card\]/);
 });
+
+test('the timeline minimap strips that look like an equals sign are hidden', async () => {
+  const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
+  assert.match(features, /['"]\[data-testid="timeline-minimap"\]['"]/);
+});
