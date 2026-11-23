@@ -52,10 +52,18 @@ test('dist gate enforces the compressed payload cap', () => check(Object.fromEnt
 const WINDOW_CSP = JSON.parse(readFileSync(new URL('../../../apps/hoh-desktop/tauri.conf.json', import.meta.url), 'utf8')).app.security.csp;
 const withDirective = (directive) => WINDOW_CSP.split(';').map((part) => part.trim()).filter((part) => part && !part.startsWith(directive.split(' ')[0] + ' ')).concat(directive).join('; ');
 test('dist gate accepts the window CSP as it is', () => check({ 'app.js': 'console.log(1)' }, undefined, WINDOW_CSP));
+test('dist gate requires only the narrow WebAssembly execution permission', async () => {
+  const message = 'script-src должен разрешать только self и локальную компиляцию WASM';
+  await check({ 'app.js': 'console.log(1)' }, message, withDirective("script-src 'self'"));
+  await check({ 'app.js': 'console.log(1)' }, message,
+    withDirective("script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'"));
+  await check({ 'app.js': 'console.log(1)' }, message,
+    withDirective("script-src 'self' 'wasm-unsafe-eval' https://scripts.example.com"));
+});
 test('dist gate rejects a window CSP that lets anything out', async () => {
   await check({ 'app.js': 'console.log(1)' }, "default-src не 'self'", withDirective('default-src *'));
   for (const directive of ['connect-src ipc: http://ipc.localhost https://api.example.com', 'img-src \'self\' data: blob: https:',
-    'font-src \'self\' https://fonts.example.com', 'frame-src https://example.com', 'script-src \'self\' \'unsafe-eval\'', 'connect-src ipc: ws:']) {
+    'font-src \'self\' https://fonts.example.com', 'frame-src https://example.com', 'connect-src ipc: ws:']) {
     await check({ 'app.js': 'console.log(1)' }, 'источник не из списка', withDirective(directive));
   }
   await check({ 'app.js': 'console.log(1)' }, 'директива media-src не из списка', withDirective('media-src https://example.com'));
