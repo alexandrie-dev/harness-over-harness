@@ -510,6 +510,11 @@ choices!(ExecutorAccessMode { Confirm => "confirm", Full => "full" });
 choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
 choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
 object!(ExecutorParams { executor: String });
+object!(ExecutorTitleGenerateParams {
+    executor: String,
+    prompt: String
+});
+object!(ExecutorTitleGenerateResult { title: String });
 object!(ExecutorAccessSetParams {
     executor: String,
     mode: ExecutorAccessMode

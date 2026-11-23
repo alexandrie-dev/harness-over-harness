@@ -190,6 +190,31 @@ async fn context_usage_is_the_last_root_message_snapshot_not_aggregate_result_us
     ));
 }
 
+#[tokio::test]
+async fn title_generation_is_a_short_isolated_no_tools_call_outside_the_project() {
+    let env = Env::new();
+    let title = env
+        .harness()
+        .generate_title("title this conversation".into())
+        .await
+        .unwrap();
+    assert_eq!(title, "Context Window Indicator");
+    let args = env.args();
+    let value = |flag: &str| {
+        let at = args.iter().position(|arg| arg == flag).unwrap();
+        args[at + 1].as_str()
+    };
+    assert_eq!(value("--model"), "claude-haiku-5-5");
+    assert_eq!(value("--effort"), "low");
+    assert_eq!(value("--tools"), "");
+    let cwd = std::fs::read_to_string(env.dir.path().join("title-cwd")).unwrap();
+    assert_ne!(Path::new(&cwd), env.dir.path());
+    assert!(
+        !Path::new(&cwd).exists(),
+        "the temporary title directory is removed"
+    );
+}
+
 fn prompt(session: &Arc<dyn HarnessSession>, turn: &str, text: &str) {
     let fut = session.prompt(PromptParams {
         session_id: "hoh-1".into(),

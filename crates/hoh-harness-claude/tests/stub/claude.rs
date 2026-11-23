@@ -11,7 +11,7 @@
 //! `subagent-tool`, `unknown-request`, `withdraw-question`, `leave-open`, `subagent-stream`,
 //! `truncate`, `read: <path>`, `close-stdin`, `notebook: <path>`, `login-expired`, `forbidden`, `question-body`, `question-odd`, `question-bare`, `two-open`, `silent-interrupt`; STUB_MODE `version-fails`, `root-refusal`, `secret-start`; prompts `protected: <path>`, `dangerous-rm`, `secret-crash`.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 
@@ -52,6 +52,26 @@ fn main() {
     }
     if let Some(file) = env("STUB_ARGS_FILE") {
         let _ = std::fs::write(file, args.join("\n"));
+    }
+    if args
+        .windows(2)
+        .any(|pair| pair == ["--output-format", "json"])
+        && !args.iter().any(|arg| arg == "--input-format")
+    {
+        let mut prompt = String::new();
+        let _ = std::io::stdin().read_to_string(&mut prompt);
+        if let Some(dir) = env("STUB_STATE") {
+            let cwd = std::env::current_dir().unwrap();
+            let _ = std::fs::write(
+                PathBuf::from(dir).join("title-cwd"),
+                cwd.to_string_lossy().as_bytes(),
+            );
+        }
+        println!(
+            "{}",
+            json!({ "structured_output": { "title": "Context Window Indicator" } })
+        );
+        return;
     }
     let value_of = |flag: &str| {
         args.iter()

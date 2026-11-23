@@ -4,7 +4,8 @@
 //! `ClaudeAdapterV2.ts` (`permissionModeForClaudeRuntimePolicy`, `claudeRuntimeQueryPolicy…`);
 //! discovery follows `ClaudeProvider.ts` (`claudeAuthStatus`, capabilities probe).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,7 +17,8 @@ use hoh_external_harness::{
     VersionStatus, code,
 };
 use serde_json::Value;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
 
 use crate::session::{ClaudeSession, SessionSettings};
 use crate::version;
@@ -368,6 +370,142 @@ fn probe_args() -> Vec<String> {
     args
 }
 
+const TITLE_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string"}},"required":["title"],"additionalProperties":false}"#;
+
+fn managed_mcp_config_path() -> &'static Path {
+    if cfg!(target_os = "macos") {
+        Path::new("/Library/Application Support/ClaudeCode/managed-mcp.json")
+    } else if cfg!(target_os = "windows") {
+        Path::new(r"C:\Program Files\ClaudeCode\managed-mcp.json")
+    } else {
+        Path::new("/etc/claude-code/managed-mcp.json")
+    }
+}
+
+fn title_args(no_session_persistence: bool, managed_mcp_config: bool) -> Vec<String> {
+    let mut args = [
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        TITLE_SCHEMA,
+        "--model",
+        "claude-haiku-5-5",
+        "--effort",
+        "low",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+        "--tools",
+        "",
+        "--disable-slash-commands",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    if no_session_persistence {
+        args.push("--no-session-persistence".into());
+    }
+    // Claude rejects strict MCP mode when the administrator has installed managed-mcp.json;
+    // that file already excludes every other MCP source. This is T3's exact conditional.
+    if !managed_mcp_config {
+        args.push("--strict-mcp-config".into());
+    }
+    args.extend(["--permission-mode".into(), "dontAsk".into()]);
+    args
+}
+
+async fn run_title_command(
+    config: &ClaudeConfig,
+    cwd: &Path,
+    prompt: &str,
+    no_session_persistence: bool,
+) -> Result<std::process::Output, HarnessFailure> {
+    let mut command = Command::new(&config.executable);
+    command
+        .args(title_args(
+            no_session_persistence,
+            managed_mcp_config_path().exists(),
+        ))
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    for (name, value) in &config.extra_env {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().map_err(|error| {
+        HarnessFailure::new(
+            code::HARNESS,
+            format!("cannot start Claude title request: {error}"),
+        )
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes()).await.map_err(|error| {
+            HarnessFailure::new(
+                code::HARNESS,
+                format!("cannot send Claude title request: {error}"),
+            )
+        })?;
+        let _ = stdin.shutdown().await;
+    }
+    tokio::time::timeout(Duration::from_secs(45), child.wait_with_output())
+        .await
+        .map_err(|_| HarnessFailure::new(code::HARNESS, "Claude title request timed out"))?
+        .map_err(|error| {
+            HarnessFailure::new(
+                code::HARNESS,
+                format!("Claude title request failed: {error}"),
+            )
+        })
+}
+
+async fn generate_title(config: ClaudeConfig, prompt: String) -> HarnessResult<String> {
+    let directory = std::env::temp_dir().join(format!("hoh-claude-title-{}", random_uuid()?));
+    tokio::fs::create_dir(&directory).await.map_err(|error| {
+        HarnessFailure::new(
+            code::HARNESS,
+            format!("cannot create title directory: {error}"),
+        )
+    })?;
+    let outcome = async {
+        let first = run_title_command(&config, &directory, &prompt, true).await;
+        match first {
+            Ok(output)
+                if !output.status.success()
+                    && String::from_utf8_lossy(&output.stderr)
+                        .contains("--no-session-persistence") =>
+            {
+                run_title_command(&config, &directory, &prompt, false).await
+            }
+            output => output,
+        }
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(&directory).await;
+    let output = outcome?;
+    if !output.status.success() {
+        let detail = hoh_external_harness::redact::redact(&String::from_utf8_lossy(&output.stderr));
+        return Err(HarnessFailure::new(
+            code::HARNESS,
+            format!(
+                "Claude title request exited unsuccessfully: {}",
+                detail.trim()
+            ),
+        ));
+    }
+    let envelope: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
+        HarnessFailure::new(code::PROTOCOL, "Claude returned an invalid title response")
+    })?;
+    let title = envelope
+        .get("structured_output")
+        .and_then(|value| value.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty() && title.len() <= 120)
+        .ok_or_else(|| HarnessFailure::new(code::PROTOCOL, "Claude returned an invalid title"))?;
+    Ok(title.to_owned())
+}
+
 fn settings_of(config: &ClaudeConfig, bypass: bool) -> SessionSettings {
     SessionSettings {
         event_queue: config.event_queue,
@@ -706,6 +844,11 @@ impl ExternalHarness for ClaudeHarness {
         EFFORT_LEVELS
     }
 
+    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+        let config = self.config.clone();
+        Box::pin(async move { generate_title(config, prompt).await })
+    }
+
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).
     fn start_or_resume(&self, params: StartParams) -> BoxFuture<'static, HarnessResult<Started>> {
         self.start_with_access(params, DEFAULT_ACCESS)
@@ -940,6 +1083,27 @@ mod tests {
             .position(|arg| arg == "--tools")
             .unwrap();
         assert_eq!(read_only_argv[tools + 1], READ_ONLY_TOOLS);
+    }
+
+    #[test]
+    fn title_request_is_haiku_low_isolated_and_has_no_tools() {
+        let args = title_args(true, false);
+        let value = |flag: &str| {
+            let at = args.iter().position(|arg| arg == flag).unwrap();
+            args[at + 1].as_str()
+        };
+        assert_eq!(value("--model"), "claude-haiku-5-5");
+        assert_eq!(value("--effort"), "low");
+        assert_eq!(value("--tools"), "");
+        assert_eq!(value("--permission-mode"), "dontAsk");
+        assert!(args.contains(&"--no-session-persistence".to_owned()));
+        assert!(args.contains(&"--strict-mcp-config".to_owned()));
+        assert!(args.contains(&"--disable-slash-commands".to_owned()));
+        assert_eq!(value("--settings"), r#"{"disableAllHooks":true}"#);
+
+        let managed_args = title_args(true, true);
+        assert!(!managed_args.contains(&"--strict-mcp-config".to_owned()));
+        assert!(managed_args.contains(&"--no-session-persistence".to_owned()));
     }
 
     #[test]

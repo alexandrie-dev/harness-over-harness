@@ -112,6 +112,8 @@ pub enum Request {
     ExecutorAccessGet(ExecutorAccessGetParams),
     #[serde(rename = "hoh/executor/access/set")]
     ExecutorAccessSet(ExecutorAccessSetParams),
+    #[serde(rename = "hoh/executor/title/generate")]
+    ExecutorTitleGenerate(ExecutorTitleGenerateParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]
@@ -173,6 +175,7 @@ impl Request {
             Self::ExecutorSelect(_) => "hoh/executor/select",
             Self::ExecutorAccessGet(_) => "hoh/executor/access/get",
             Self::ExecutorAccessSet(_) => "hoh/executor/access/set",
+            Self::ExecutorTitleGenerate(_) => "hoh/executor/title/generate",
             Self::ApprovalRequest(_) => "approval/request",
             Self::UserQuestionAsk(_) => "user-question/ask",
         }
@@ -270,6 +273,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/executor/select",
     "hoh/executor/access/get",
     "hoh/executor/access/set",
+    "hoh/executor/title/generate",
     "approval/request",
     "user-question/ask",
 ];
@@ -352,6 +356,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/executor/select" => admit::<ExecutorSelectParams>(value),
         "hoh/executor/access/get" => admit::<ExecutorAccessGetParams>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetParams>(value),
+        "hoh/executor/title/generate" => admit::<ExecutorTitleGenerateParams>(value),
         "approval/request" => admit::<ApprovalRequestParams>(value),
         "user-question/ask" => admit::<SdkUserQuestionRequest>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -418,6 +423,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/executor/select" => admit::<ExecutorSelection>(value),
         "hoh/executor/access/get" => admit::<ExecutorAccessGetResult>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetResult>(value),
+        "hoh/executor/title/generate" => admit::<ExecutorTitleGenerateResult>(value),
         "approval/request" => admit::<ApprovalRequestResult>(value),
         "user-question/ask" => admit::<SdkUserQuestionResult>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -1109,6 +1115,12 @@ pub fn schemas() -> Vec<(String, Value)> {
             schema_for!(ExecutorAccessSetParams),
             schema_for!(ExecutorAccessSetResult),
         ),
+        (
+            "ExecutorTitleGenerate",
+            "hoh/executor/title/generate",
+            schema_for!(ExecutorTitleGenerateParams),
+            schema_for!(ExecutorTitleGenerateResult),
+        ),
     ] {
         schemas.push((
             format!("{name}Params"),
@@ -1234,6 +1246,8 @@ enum RequestDecode {
     ExecutorAccessGet(ExecutorAccessGetParams),
     #[serde(rename = "hoh/executor/access/set")]
     ExecutorAccessSet(ExecutorAccessSetParams),
+    #[serde(rename = "hoh/executor/title/generate")]
+    ExecutorTitleGenerate(ExecutorTitleGenerateParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]

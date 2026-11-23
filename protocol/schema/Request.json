@@ -851,6 +851,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/executor/title/generate"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorTitleGenerateParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "approval/request"
         },
         "params": {
@@ -2329,6 +2345,21 @@
       "enum": [
         "confirm",
         "full"
+      ]
+    },
+    "ExecutorTitleGenerateParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "executor",
+        "prompt"
       ]
     },
     "ApprovalRequestParams": {

@@ -128,6 +128,9 @@ export class HohHost {
   private readonly levels = new Map<string, { id: string; value: unknown }[]>();
   /** T3's per-thread composer interaction mode. */
   private readonly interactions = new Map<string, T3InteractionMode>();
+  /** Generated or manually edited titles that supersede the engine's first-message fallback. */
+  private readonly titles = new Map<string, string>();
+  private readonly titleRequests = new Map<string, string>();
   private readonly startedAt: number;
   private started: Promise<void> | undefined;
   private unsubscribers: (() => void)[] = [];
@@ -162,6 +165,7 @@ export class HohHost {
     for (const [threadId, projectId] of Object.entries(threads)) if (typeof projectId === 'string') this.homes.set(threadId, projectId);
     for (const [threadId, options] of Object.entries(saved?.options && typeof saved.options === 'object' ? saved.options : {})) if (Array.isArray(options) && options.length) this.levels.set(threadId, options as any);
     for (const [threadId, mode] of Object.entries(saved?.interactions && typeof saved.interactions === 'object' ? saved.interactions : {})) this.interactions.set(threadId, interactionModeOf(mode));
+    for (const [threadId, title] of Object.entries(saved?.titles && typeof saved.titles === 'object' ? saved.titles : {})) if (typeof title === 'string' && title.trim()) this.titles.set(threadId, title.trim());
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
     if (saved?.defaultMode === 'full' || saved?.defaultMode === 'confirm') this.defaultMode = saved.defaultMode;
   }
@@ -171,7 +175,7 @@ export class HohHost {
     const value = {
       version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
-      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels), interactions: Object.fromEntries(this.interactions),
+      defaultMode: this.defaultMode, options: Object.fromEntries(this.levels), interactions: Object.fromEntries(this.interactions), titles: Object.fromEntries(this.titles),
     };
     try { this.storage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage full or closed: kept for this run */ }
   }
@@ -291,7 +295,7 @@ export class HohHost {
     for (const session of sessions) {
       if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
       const at = Number(session.updatedAt) || this.startedAt;
-      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, interactionMode: this.interactions.get(session.id), projectId: this.homeOf(session.id) }));
+      this.threads.set(session.id, new ThreadModel({ id: session.id, title: this.titles.get(session.id) ?? (typeof session.title === 'string' ? session.title : ''), createdAt: at, updatedAt: at, model: this.model(), mode: this.mode, interactionMode: this.interactions.get(session.id), projectId: this.homeOf(session.id) }));
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.showProject();
     await this.peekToday();
@@ -369,7 +373,7 @@ export class HohHost {
     let thread = this.threads.get(sessionId);
     if (!thread) {
       // A chat started elsewhere (another window, a schedule): it joins the list.
-      thread = new ThreadModel({ id: sessionId, createdAt: this.now(), model: this.model(), mode: this.mode, interactionMode: this.interactions.get(sessionId) });
+      thread = new ThreadModel({ id: sessionId, title: this.titles.get(sessionId), createdAt: this.now(), model: this.model(), mode: this.mode, interactionMode: this.interactions.get(sessionId) });
       thread.loaded = true;
       this.threads.set(sessionId, thread);
       this.showProject();
@@ -652,16 +656,44 @@ export class HohHost {
   }
 
   private async send(thread: ThreadModel, messageId: string, text: string) {
+    const firstMessage = thread.userMessageCount() === 0;
     thread.sendLocal(messageId, text, this.now());
     this.changed(thread.id);
     try {
       const result = await this.engine.request('session/prompt', { sessionId: thread.id, contentBlocks: [{ type: 'text', text }], interactionMode: thread.interactionMode, ...effortParam(effortOf(thread.model, thread.options)) });
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
+      if (firstMessage) void this.generateTitle(thread, text);
     } catch (error) {
       thread.sendFailed(messageId, this.now(), error);
       this.changed(thread.id);
       throw error;
     }
+  }
+
+  private async generateTitle(thread: ThreadModel, message: string) {
+    const baseline = thread.title;
+    const requestId = globalThis.crypto?.randomUUID?.() ?? `${this.now()}-${Math.random()}`;
+    this.titleRequests.set(thread.id, requestId);
+    const prompt = `Generate a title that will help the user recognize this T3 Code thread weeks later.
+Return JSON with key title.
+
+Editorial rules:
+- 3-8 words, fewer than 40 characters.
+- Use a compact noun phrase or clear action phrase.
+- Title the durable subject and desired outcome, not the plan, model, tools, tests, or workflow.
+- Do not claim the work is complete, copy and truncate the message, use quotes, filler, or trailing punctuation.
+
+USER MESSAGE:
+${message.slice(0, 8000)}`;
+    try {
+      const result = await this.engine.request('hoh/executor/title/generate', { executor: 'claude', prompt });
+      const title = typeof result?.title === 'string' ? result.title.trim() : '';
+      if (!title || title.length > 120 || this.titleRequests.get(thread.id) !== requestId || thread.title !== baseline) return;
+      thread.title = title;
+      this.titles.set(thread.id, title);
+      this.titleRequests.delete(thread.id);
+      this.save(); this.changed(thread.id); this.flush();
+    } catch { /* A title is optional: the first-message fallback stays. */ }
   }
 
   /** «Стоп»: the same cancel as the current window; the engine ends Claude and its commands. */
@@ -741,7 +773,9 @@ export class HohHost {
         }
         case 'thread.metadata.update': {
           const target = needThread();
-          if (typeof command.title === 'string' && command.title.trim()) { target.title = command.title.trim(); this.changed(target.id); }
+          if (typeof command.title === 'string' && command.title.trim()) {
+            target.title = command.title.trim(); this.titles.set(target.id, target.title); this.titleRequests.delete(target.id); this.save(); this.changed(target.id);
+          }
           break;
         }
         case 'thread.archive': case 'thread.unarchive': {

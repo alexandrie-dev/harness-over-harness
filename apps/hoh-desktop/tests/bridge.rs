@@ -563,7 +563,7 @@ fn real_stub_child_accepts_host_handshake_serves_settings_and_stops() {
 }
 
 #[test]
-fn window_may_call_exactly_the_four_executor_methods_and_no_new_ones() {
+fn window_may_call_exactly_the_five_executor_methods_and_no_new_ones() {
     let mut executor: Vec<&str> = bridge::WINDOW_METHODS
         .iter()
         .copied()
@@ -576,12 +576,17 @@ fn window_may_call_exactly_the_four_executor_methods_and_no_new_ones() {
             "hoh/executor/access/get",
             "hoh/executor/access/set",
             "hoh/executor/discover",
-            "hoh/executor/select"
+            "hoh/executor/select",
+            "hoh/executor/title/generate"
         ]
     );
     // 47 methods before the executor ones; a new window method must be a deliberate change of this number.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 4);
-    for method in ["hoh/executor/access/get", "hoh/executor/discover"] {
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 5);
+    for method in [
+        "hoh/executor/access/get",
+        "hoh/executor/discover",
+        "hoh/executor/title/generate",
+    ] {
         assert!(!bridge::needs_approval(
             method,
             &json!({"executor":"claude"})

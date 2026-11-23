@@ -63,6 +63,15 @@ pub trait ExternalHarness: Send + Sync + 'static {
         &[]
     }
 
+    /// One isolated, no-tools title request. The default harness does not provide it.
+    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+        let _ = prompt;
+        Box::pin(std::future::ready(Err(HarnessFailure::new(
+            code::HARNESS,
+            "this harness cannot generate conversation titles",
+        ))))
+    }
+
     /// [`discover`](Self::discover), and where the found version stands against the range the
     /// harness was checked with. Default: the range is not known.
     fn discover_with_status(

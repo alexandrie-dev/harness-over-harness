@@ -544,6 +544,7 @@ export class ThreadModel {
 
   pendingRequest(id: string) { return this.requests.find(request => request.id === id && request.status === 'pending'); }
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
+  userMessageCount() { return this.messages.filter(message => message.role === 'user').length; }
   setInteractionMode(mode: T3InteractionMode) { this.interactionMode = mode; }
 
   private modelSelection() { return { instanceId: CLAUDE_INSTANCE_ID, model: this.model, ...(this.options?.length ? { options: this.options } : {}) }; }

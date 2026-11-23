@@ -19,7 +19,7 @@ use hoh_loader::ProfileContextKey;
 use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorEffectiveAccess, ExecutorParams, ExecutorSelectParams,
-    ExecutorSessionAccess,
+    ExecutorSessionAccess, ExecutorTitleGenerateParams,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -39,7 +39,8 @@ const DISCOVER: &str = "hoh/executor/discover";
 const SELECT: &str = "hoh/executor/select";
 const ACCESS_GET: &str = "hoh/executor/access/get";
 const ACCESS_SET: &str = "hoh/executor/access/set";
-const METHODS: [&str; 4] = [DISCOVER, SELECT, ACCESS_GET, ACCESS_SET];
+const TITLE_GENERATE: &str = "hoh/executor/title/generate";
+const METHODS: [&str; 5] = [DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, TITLE_GENERATE];
 
 /// The saved choices.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -156,6 +157,14 @@ impl Window {
             ACCESS_SET => Ok(serde_json::to_value(
                 self.access_set(parse(method, params)?).await?,
             )?),
+            TITLE_GENERATE => {
+                let params: ExecutorTitleGenerateParams = parse(method, params)?;
+                let harness = self
+                    .service()
+                    .get(&params.executor)
+                    .ok_or_else(|| format!("no external harness named {:?}", params.executor))?;
+                Ok(json!({ "title": harness.generate_title(params.prompt).await? }))
+            }
             _ => Err(format!("external harness window does not serve {method}").into()),
         }
     }

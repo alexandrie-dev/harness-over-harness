@@ -55,6 +55,7 @@ pub const WINDOW_METHODS: &[&str] = &[
     "hoh/executor/access/set",
     "hoh/executor/discover",
     "hoh/executor/select",
+    "hoh/executor/title/generate",
 ];
 pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), String> {
     if label != "main" {

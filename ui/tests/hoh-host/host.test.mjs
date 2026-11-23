@@ -205,6 +205,37 @@ test('Claude stream usage reaches T3 providerTurns with its exact context fill',
   assert.equal((usage.usedTokens / usage.maxTokens) * 100, 0.1545);
 });
 
+test('the first message gets a Claude title; failure keeps its beginning and a late result cannot overwrite a manual rename', async () => {
+  const launch = (client, id, text) => client.call('orchestration.launchThread', {
+    commandId: 'title-' + id, threadId: id, projectId: 'hoh-project',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    initialMessage: { messageId: 'm-' + id, text, attachments: [] },
+  });
+
+  const success = new FakeEngine(); const successRequest = success.request.bind(success);
+  success.request = (method, params) => {
+    if (method === 'hoh/executor/title/generate') { success.requests.push({ method, params }); return Promise.resolve({ title: 'Context Window Indicator' }); }
+    return successRequest(method, params);
+  };
+  const successful = connect(success); await launch(successful.client, 'title-ok', 'Покажи заполнение контекста'); await tick(5);
+  assert.equal((await successful.client.call('orchestration.getThreadProjection', { threadId: 'title-ok' })).thread.title, 'Context Window Indicator');
+  const titleCall = success.requests.find(request => request.method === 'hoh/executor/title/generate');
+  assert.equal(titleCall.params.executor, 'claude'); assert.match(titleCall.params.prompt, /3-8 words/);
+
+  const failed = new FakeEngine(); const failedRequest = failed.request.bind(failed);
+  failed.request = (method, params) => method === 'hoh/executor/title/generate' ? Promise.reject(new Error('offline')) : failedRequest(method, params);
+  const failure = connect(failed); await launch(failure.client, 'title-fail', 'Сохрани начало сообщения при ошибке'); await tick(5);
+  assert.equal((await failure.client.call('orchestration.getThreadProjection', { threadId: 'title-fail' })).thread.title, 'Сохрани начало сообщения при ошибке');
+
+  let finishTitle; const pending = new Promise(resolve => { finishTitle = resolve; });
+  const stale = new FakeEngine(); const staleRequest = stale.request.bind(stale);
+  stale.request = (method, params) => method === 'hoh/executor/title/generate' ? pending : staleRequest(method, params);
+  const guarded = connect(stale); await launch(guarded.client, 'title-stale', 'Первое имя');
+  await guarded.client.call('orchestration.dispatchCommand', { type: 'thread.metadata.update', commandId: 'rename', threadId: 'title-stale', title: 'Моё название' });
+  finishTitle({ title: 'Late Generated Title' }); await tick(5);
+  assert.equal((await guarded.client.call('orchestration.getThreadProjection', { threadId: 'title-stale' })).thread.title, 'Моё название');
+});
+
 test('a follow-up message goes to the same chat; Stop is the engine\'s cancel and the run ends interrupted', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);
