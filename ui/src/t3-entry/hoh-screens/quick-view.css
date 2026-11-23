@@ -64,12 +64,11 @@
 .hoh-quick-view__full { flex: 0 0 auto; }
 .hoh-quick-view__chat { display: flex; min-height: 0; flex: 1 1 0; overflow: hidden; background: var(--background); }
 
-/* Base UI portals Dialog next to #root. Keep its viewport in HoH's content area; while it is open, lower only the
-   decorative notch under T3's standard z-50 dialog stack. Nested T3 dialogs/media must retain their z-50/z-60 order. */
+/* Base UI portals Dialog next to #root. T3's fixed inset-0 DialogViewport owns the horizontal axis, independent of
+   the sidebar; HoH only reserves its top notch band and lowers that decoration under T3's z-50 dialog stack. */
 body:has(.hoh-quick-view) .hoh-notch-band { z-index: 40; }
 body:has(.hoh-quick-view) [data-slot="dialog-viewport"]:has(.hoh-quick-view) {
   inset-block-start: var(--hoh-notch-height, 0px);
-  inset-inline-start: var(--quick-view-content-inset, 0px);
   padding: 24px;
 }
 

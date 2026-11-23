@@ -12,9 +12,14 @@
    backdrop; the adjacent selector deliberately leaves the dialog's own ChatView/composer untouched. */
 body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat-composer-lane { visibility: hidden; }
 .hoh-home__inner { display: flex; flex-direction: column; gap: 28px; width: 100%; max-width: var(--chat-content-max-width); margin: 0 auto; padding: 28px 0 24px; }
-/* Пустая и занятая главная начинают приветствие на одной высоте; T3 headline и composer остаются внизу их родной колонки. */
-.hoh-home:not([data-busy]) { margin-bottom: 0; -webkit-mask-image: none; mask-image: none; }
-.hoh-home:not([data-busy]) .hoh-home__inner { padding-block: 28px 18px; gap: 0; }
+/* T3 centres its one-item empty draft hero vertically. HoH inserts the greeting as a preceding sibling, so the two
+   compact children form one centred column; occupied Home keeps the existing bottom-docked, scrolling layout. */
+.hoh-draft-hero:has(> .hoh-home:not([data-busy])) { justify-content: center; }
+.hoh-home:not([data-busy]) { flex: 0 0 auto; overflow: visible; margin-bottom: 28px; -webkit-mask-image: none; mask-image: none; }
+.hoh-home:not([data-busy]) .hoh-home__inner { padding-block: 0; gap: 0; }
+@media (max-height: 34rem) {
+  .hoh-draft-hero:has(> .hoh-home:not([data-busy])) { justify-content: flex-end; }
+}
 /* Один столбец: приветствие, затем «Needs your answer», карточки, «Done» (запрос, который ждёт человека, выше карточек). */
 .hoh-home__main { display: contents; }
 .hoh-home__main > section:last-child { order: 3; }

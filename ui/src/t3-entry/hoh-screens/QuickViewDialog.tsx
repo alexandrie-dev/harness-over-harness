@@ -1,7 +1,7 @@
 import { scopeThreadRef } from '@t3tools/client-runtime/environment';
 import { useNavigate } from '@tanstack/react-router';
 import { ArrowUpRightIcon } from 'lucide-react';
-import { useCallback, useLayoutEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
 
 import ChatView from '~/components/ChatView';
 import { BackgroundThreadContext } from '~/components/chat/backgroundThread';
@@ -80,21 +80,6 @@ export function QuickViewDialog() {
   const frameVariant = quickViewFrameVariant();
   const navigate = useNavigate();
   const title = thread?.title?.trim() || 'Conversation';
-  useLayoutEffect(() => {
-    if (threadId === null) return;
-    const root = document.documentElement;
-    const sidebarGap = document.querySelector<HTMLElement>('[data-slot="sidebar-gap"]');
-    const publishInset = () => {
-      root.style.setProperty('--quick-view-content-inset', `${sidebarGap?.getBoundingClientRect().width ?? 0}px`);
-    };
-    publishInset();
-    const observer = sidebarGap ? new ResizeObserver(publishInset) : null;
-    observer?.observe(sidebarGap!);
-    return () => {
-      observer?.disconnect();
-      root.style.removeProperty('--quick-view-content-inset');
-    };
-  }, [threadId]);
   const openFullConversation = useCallback(async () => {
     if (threadId === null) return;
     await navigate({

@@ -81,8 +81,8 @@ test('quick view keeps T3 DialogPopup and ChatView while exposing state and fram
   assert.match(dialogSource, /=== '2' \? '2' : '1'/, 'variant 1 remains the default');
   assert.match(dialogSource, /homeState === 'waiting'/);
   assert.match(dialogSource, /\['preparing', 'queued', 'starting', 'running'\]/);
-  assert.match(dialogSource, /\[data-slot="sidebar-gap"\]/);
-  assert.match(dialogSource, /--quick-view-content-inset/);
+  assert.doesNotMatch(dialogSource, /\[data-slot="sidebar-gap"\]/);
+  assert.doesNotMatch(dialogSource, /--quick-view-content-inset/);
 });
 
 test('quick view restores upstream T3 lane width and gutters inside a bounded modal viewport', () => {
@@ -91,7 +91,7 @@ test('quick view restores upstream T3 lane width and gutters inside a bounded mo
   assert.match(styles, /\.hoh-quick-view \[data-chat-canvas\] \.messages-timeline-scroll/);
   assert.match(styles, /env\(safe-area-inset-left\) \+ 3rem/);
   assert.match(styles, /inset-block-start: var\(--hoh-notch-height, 0px\)/);
-  assert.match(styles, /inset-inline-start: var\(--quick-view-content-inset, 0px\)/);
+  assert.doesNotMatch(styles, /inset-inline-start/);
   assert.match(styles, /body:has\(\.hoh-quick-view\) \.hoh-notch-band \{ z-index: 40; \}/);
   assert.match(styles, /padding: 24px/);
   assert.match(styles, /padding: 8px/);

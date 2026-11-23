@@ -182,6 +182,17 @@ test('agent cards open the shared quick-view host while Mark done keeps its dire
   assert.match(homeSource, /view\.host\?\.complete\(entry\.id\)/);
 });
 
+test('empty Home joins the greeting and native T3 draft composer into one centred hero group', async () => {
+  const [css, vite] = await Promise.all([
+    readFile(new URL('../src/t3-entry/hoh-screens/home.css', import.meta.url), 'utf8'),
+    readFile(new URL('../src/t3-entry/vite.ts', import.meta.url), 'utf8'),
+  ]);
+  assert.match(vite, /hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end/);
+  assert.match(css, /\.hoh-draft-hero:has\(> \.hoh-home:not\(\[data-busy\]\)\)\s*\{\s*justify-content:\s*center/);
+  assert.match(css, /\.hoh-home:not\(\[data-busy\]\)\s*\{[^}]*flex:\s*0 0 auto[^}]*margin-bottom:\s*28px/);
+  assert.match(css, /@media \(max-height: 34rem\)[\s\S]*justify-content:\s*flex-end/);
+});
+
 test('visible T3 draft and palette copy is patched to New chat and documented', async () => {
   const root = new URL('../', import.meta.url);
   const [draftPatch, palettePatch, manifestText, map] = await Promise.all([

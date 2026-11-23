@@ -181,11 +181,19 @@ async function rectangles(page) {
     };
     const firstVisible = selector => [...document.querySelectorAll(selector)].map(visible).find(Boolean) ?? null;
     const allVisible = selector => [...document.querySelectorAll(selector)].map(visible).filter(Boolean);
-    const contentBox = selector => {
-      const element = document.querySelector(selector); const r = visible(element);
+    const contentBoxOf = element => {
+      const r = visible(element);
       if (!element || !r) return null;
       const c = getComputedStyle(element); const left = parseFloat(c.paddingLeft) || 0; const right = parseFloat(c.paddingRight) || 0;
       return { ...r, left: r.left + left, right: r.right - right, width: r.width - left - right };
+    };
+    const contentBox = selector => contentBoxOf(document.querySelector(selector));
+    const union = (...rects) => {
+      const present = rects.filter(Boolean);
+      if (!present.length) return null;
+      const left = Math.min(...present.map(rect => rect.left)); const top = Math.min(...present.map(rect => rect.top));
+      const right = Math.max(...present.map(rect => rect.right)); const bottom = Math.max(...present.map(rect => rect.bottom));
+      return { left, top, right, bottom, width: right - left, height: bottom - top };
     };
     const paint = selector => {
       const element = document.querySelector(selector);
@@ -193,13 +201,19 @@ async function rectangles(page) {
       const style = getComputedStyle(element);
       return { display: style.display, visibility: style.visibility, opacity: Number(style.opacity) };
     };
+    const homeViewport = firstVisible('.hoh-home');
+    const composer = firstVisible('[data-chat-composer-stack]');
+    const mainLaneElement = [...document.querySelectorAll('.chat-composer-lane')]
+      .find(element => !element.closest('.hoh-quick-view') && visible(element));
+    const chatLane = contentBoxOf(mainLaneElement);
     return {
       viewport: { left: 0, top: 0, right: innerWidth, bottom: innerHeight, width: innerWidth, height: innerHeight },
       content: firstVisible('[data-slot="sidebar-inset"]'), notch: firstVisible('.hoh-notch'),
-      homeViewport: firstVisible('.hoh-home'), home: firstVisible('.hoh-home__inner'), greeting: firstVisible('.hoh-home__head'), composer: firstVisible('[data-chat-composer-stack]'),
+      homeViewport, home: firstVisible('.hoh-home__inner'), greeting: firstVisible('.hoh-home__head'), composer,
+      draftHero: firstVisible('.hoh-draft-hero'), emptyGroup: union(homeViewport, composer),
       headline: firstVisible('[data-chat-composer-stack] > .absolute.inset-x-0.bottom-full'), cards: firstVisible('.hoh-home__cards'), projects: firstVisible('.hoh-projects'), disclosure: firstVisible('.hoh-project-popover'),
       cardItems: allVisible('.hoh-home__cards > .hoh-card'), projectItems: allVisible('.hoh-projects > .hoh-project'),
-      canvas: firstVisible('[data-chat-canvas]'), chatLane: contentBox('.chat-composer-lane'), feed: firstVisible('[data-chat-canvas] .chat-content-lane'),
+      canvas: firstVisible('[data-chat-canvas]'), chatLane, feed: firstVisible('[data-chat-canvas] .chat-content-lane'),
       dialog: firstVisible('[data-slot="dialog-popup"].hoh-quick-view'), quickChat: firstVisible('.hoh-quick-view__chat'), quickComposer: firstVisible('.hoh-quick-view [data-chat-composer-stack]'), quickFeed: firstVisible('.hoh-quick-view [data-chat-canvas] .chat-content-lane'),
       underlayComposerPaint: paint('[data-hoh-home-body] + .chat-composer-lane'), quickComposerPaint: paint('.hoh-quick-view [data-chat-composer-stack]'),
       settingsScroll: firstVisible('[data-settings-page-scroll]'), settings: firstVisible('[data-settings-page-scroll] > div'),
@@ -210,15 +224,25 @@ async function rectangles(page) {
   });
 }
 
-function add(label, screen, size, sidebar, name, rect, reference, { equalMargins = true } = {}) {
-  if (!rect) { fail(label, `${name} not found`); return; }
+function add(label, screen, size, sidebar, name, rect, reference, { equalMargins = true, tolerance = TOL } = {}) {
+  if (!rect || !reference) { fail(label, `${name} or its reference not found`); return; }
   const center = rect.left + rect.width / 2; const target = reference.left + reference.width / 2;
   const deviation = center - target; const leftMargin = rect.left - reference.left; const rightMargin = reference.right - rect.right;
-  rows.push({ screen, size, sidebar, block: name, center: round(center), deviation: round(deviation), left: round(leftMargin), right: round(rightMargin), width: round(rect.width) });
-  if (Math.abs(deviation) > TOL) fail(label, `${name} center differs by ${round(deviation)}px`);
-  if (equalMargins && Math.abs(leftMargin - rightMargin) > TOL) fail(label, `${name} margins differ: ${round(leftMargin)} / ${round(rightMargin)}px`);
-  if (rect.left < reference.left - TOL || rect.right > reference.right + TOL) fail(label, `${name} leaves its horizontal container`);
-  if (rect.left < -TOL || rect.right > reference.width + reference.left + TOL) fail(label, `${name} leaves the visible bounds`);
+  rows.push({ screen, size, sidebar, block: name, axis: 'x', center: round(center), deviation: round(deviation), start: round(leftMargin), end: round(rightMargin), extent: round(rect.width) });
+  if (Math.abs(deviation) > tolerance) fail(label, `${name} center differs by ${round(deviation)}px`);
+  if (equalMargins && Math.abs(leftMargin - rightMargin) > tolerance) fail(label, `${name} margins differ: ${round(leftMargin)} / ${round(rightMargin)}px`);
+  if (rect.left < reference.left - tolerance || rect.right > reference.right + tolerance) fail(label, `${name} leaves its horizontal container`);
+  if (rect.left < -tolerance || rect.right > reference.width + reference.left + tolerance) fail(label, `${name} leaves the visible bounds`);
+}
+
+function addVertical(label, screen, size, sidebar, name, rect, reference, tolerance) {
+  if (!rect || !reference) { fail(label, `${name} or its reference not found`); return; }
+  const center = rect.top + rect.height / 2; const target = reference.top + reference.height / 2;
+  const deviation = center - target; const topMargin = rect.top - reference.top; const bottomMargin = reference.bottom - rect.bottom;
+  rows.push({ screen, size, sidebar, block: name, axis: 'y', center: round(center), deviation: round(deviation), start: round(topMargin), end: round(bottomMargin), extent: round(rect.height) });
+  if (Math.abs(deviation) > tolerance) fail(label, `${name} vertical center differs by ${round(deviation)}px`);
+  if (rect.top < reference.top - tolerance || rect.bottom > reference.bottom + tolerance) fail(label, `${name} leaves its vertical container`);
+  if (rect.top < -tolerance || rect.bottom > reference.bottom + tolerance) fail(label, `${name} leaves the visible bounds`);
 }
 
 function withinViewport(label, name, rect, viewport) {
@@ -237,7 +261,7 @@ function measure(label, scenario, size, sidebar, r) {
   if (!r.content || !r.notch) { fail(label, 'content inset or notch not found'); return; }
   for (const [name, rect] of [['content-inset', r.content], ['notch', r.notch], ['home-scrollport', r.homeViewport], ['composer', r.composer], ['quick-dialog', r.dialog], ['settings-scrollport', r.settingsScroll], ['plugin-scrollport', r.pluginPage]])
     withinViewport(label, name, rect, r.viewport);
-  add(label, scenario.name, size, sidebar, 'notch', r.notch, r.content);
+  add(label, scenario.name, size, sidebar, 'notch', r.notch, r.chatLane ?? r.content);
   if (scenario.blocks.includes('home')) {
     add(label, scenario.name, size, sidebar, 'home-column', r.home, r.content);
     add(label, scenario.name, size, sidebar, 'greeting', r.greeting, r.home);
@@ -245,6 +269,10 @@ function measure(label, scenario, size, sidebar, r) {
     if (r.headline) add(label, scenario.name, size, sidebar, 'headline', r.headline, r.composer);
     if (r.composer && r.home && r.composer.width > r.home.width + TOL) fail(label, `composer ${round(r.composer.width)}px is wider than home ${round(r.home.width)}px`);
     if (r.greeting && r.home && r.greeting.top > r.home.top + 40) fail(label, `greeting starts ${round(r.greeting.top - r.home.top)}px below the column top`);
+    if (scenario.name === 'home-empty') {
+      add(label, scenario.name, size, sidebar, 'notch-composer', r.notch, r.chatLane, { equalMargins: false, tolerance: 2 });
+      addVertical(label, scenario.name, size, sidebar, 'empty-group', r.emptyGroup, r.draftHero, 8);
+    }
   }
   if (scenario.blocks.includes('cards')) {
     add(label, scenario.name, size, sidebar, 'cards', r.cards, r.home);
@@ -262,6 +290,7 @@ function measure(label, scenario, size, sidebar, r) {
   if (scenario.blocks.includes('conversation')) {
     add(label, scenario.name, size, sidebar, 'composer', r.composer, r.chatLane);
     add(label, scenario.name, size, sidebar, 'feed', r.feed, r.chatLane);
+    add(label, scenario.name, size, sidebar, 'notch-composer', r.notch, r.chatLane, { equalMargins: false, tolerance: 2 });
     if (r.feed && r.composer && Math.abs(r.feed.width - r.composer.width) > TOL) fail(label, `feed/composer widths differ by ${round(r.feed.width - r.composer.width)}px`);
   }
   if (scenario.blocks.includes('quick')) {
@@ -353,18 +382,10 @@ for (const observation of observations) {
     compareToConversation(observation, 'quick-view chat column', rects.quickComposer, rects.quickChat, { width: (canonical?.rects.composer?.width ?? 0) >= 735 });
     if (rects.quickComposer && rects.quickComposer.width > 736 + TOL) fail(`${screen} ${size} ${sidebar}`, `quick-view composer exceeds T3 46rem maximum: ${round(rects.quickComposer.width)}px`);
   }
-  if (screen.startsWith('home-') && rects.greeting && rects.home) {
-    const empty = observations.find(item => item.screen === 'home-empty' && item.size === size && item.sidebar === sidebar);
-    if (empty?.rects.greeting && empty.rects.home) {
-      const offset = rects.greeting.top - rects.home.top;
-      const expected = empty.rects.greeting.top - empty.rects.home.top;
-      if (Math.abs(offset - expected) > TOL) fail(`${screen} ${size} ${sidebar}`, `greeting top differs from empty home by ${round(offset - expected)}px`);
-    }
-  }
 }
 
-const header = ['screen', 'size', 'sidebar', 'block', 'center', 'deviation', 'left margin', 'right margin', 'width'];
-const table = [header, ...rows.map(row => [row.screen, row.size, row.sidebar, row.block, row.center, row.deviation, row.left, row.right, row.width])];
+const header = ['screen', 'size', 'sidebar', 'block', 'axis', 'center', 'deviation', 'start margin', 'end margin', 'extent'];
+const table = [header, ...rows.map(row => [row.screen, row.size, row.sidebar, row.block, row.axis, row.center, row.deviation, row.start, row.end, row.extent])];
 const widths = header.map((_, index) => Math.max(...table.map(line => String(line[index]).length)));
 const rendered = table.map(line => line.map((cell, index) => String(cell).padEnd(widths[index])).join(' | ')).join('\n');
 console.log(rendered);

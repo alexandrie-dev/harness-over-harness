@@ -15,31 +15,44 @@ import { notchOutline, notchSize } from './shapes';
 
 export const NOTCH_NAME = 'Alexandrie';
 const GAP = 8;
-/** The notch follows T3's live content inset, including sidebar collapse and drag-resize. */
+/** The notch follows T3's live composer content box; pages without a composer fall back to the sidebar inset. */
 function useFrame(band: React.RefObject<HTMLDivElement | null>): { band: number; left: number; width: number } {
   const [frame, setFrame] = useState({ band: 36, left: 0, width: window.innerWidth });
   useLayoutEffect(() => {
     const element = band.current;
     if (!element) return;
+    const mainComposerLane = () => [...document.querySelectorAll<HTMLElement>('.chat-composer-lane')].find((candidate) => {
+      if (candidate.closest('.hoh-quick-view')) return false;
+      const rect = candidate.getBoundingClientRect();
+      const style = getComputedStyle(candidate);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    });
     const update = () => setFrame((was) => {
       const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')?.getBoundingClientRect();
+      const lane = mainComposerLane();
+      const laneRect = lane?.getBoundingClientRect();
+      const laneStyle = lane ? getComputedStyle(lane) : null;
+      const paddingLeft = Number.parseFloat(laneStyle?.paddingLeft ?? '') || 0;
+      const paddingRight = Number.parseFloat(laneStyle?.paddingRight ?? '') || 0;
       const next = {
         band: element.getBoundingClientRect().height || was.band,
-        left: inset?.left ?? 0,
-        width: inset?.width ?? window.innerWidth,
+        left: laneRect ? laneRect.left + paddingLeft : (inset?.left ?? 0),
+        width: laneRect ? Math.max(0, laneRect.width - paddingLeft - paddingRight) : (inset?.width ?? window.innerWidth),
       };
       return next.band === was.band && next.left === was.left && next.width === was.width ? was : next;
     });
     update();
     const resize = new ResizeObserver(update);
     resize.observe(element);
-    const observeInset = () => {
+    const observeFrame = () => {
       const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]');
       if (inset) resize.observe(inset);
+      const lane = mainComposerLane();
+      if (lane) resize.observe(lane);
       update();
     };
-    observeInset();
-    const mutations = new MutationObserver(observeInset);
+    observeFrame();
+    const mutations = new MutationObserver(observeFrame);
     mutations.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-sidebar-state', 'style'] });
     window.addEventListener('resize', update);
     return () => { resize.disconnect(); mutations.disconnect(); window.removeEventListener('resize', update); };
