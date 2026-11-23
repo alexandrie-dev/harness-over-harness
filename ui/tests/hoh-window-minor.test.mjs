@@ -20,3 +20,9 @@ test('T3 asset contract admits only its server paths and process-local blob prev
   assert(JSON.parse(manifestText).base.patched['contracts/assets.ts']);
   assert.match(map, /contracts\/assets\.ts\.patch[^\n]*Blob URL/);
 });
+
+test('thread details card is hidden in every conversation, not only on Home', async () => {
+  const features = await readFile(new URL('src/t3-entry/features.ts', root), 'utf8');
+  assert.match(features, /['"]\[data-thread-details-card\]['"]/);
+  assert.doesNotMatch(features, /body:has\([^\n]+\) \[data-thread-details-card\]/);
+});

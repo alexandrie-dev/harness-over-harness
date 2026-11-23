@@ -99,6 +99,8 @@ export const HIDDEN_SELECTORS: readonly string[] = [
   // Две кнопки справа в шапке разговора (HOH-41, основатель: «это нам не нужно»); на главной (пустой черновик) шапки с «No project / New thread» нет.
   '[aria-label="Toggle thread details panel"]',
   '[aria-label="Toggle right panel"]',
+  // Карточка ThreadDetailsCard («HoH» и папка) дублирует сведения окна и не нужна ни в черновике, ни в разговоре.
+  '[data-thread-details-card]',
   'body:has([data-hoh-home-body]) header:has(nav[aria-label="Thread breadcrumb"])',
 ];
 
