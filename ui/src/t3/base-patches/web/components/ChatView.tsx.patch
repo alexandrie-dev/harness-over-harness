@@ -1,14 +1,21 @@
 --- a/web/components/ChatView.tsx
 +++ b/web/components/ChatView.tsx
-@@ -3672,6 +3672,11 @@ export default function ChatView(props: ChatViewProps) {
-                                 }
-                               />
-                             ) : null}
-+                            {activeRunningTurnId && activeThread?.runtimeMode && activeThread.runtimeMode !== runtimeMode ? (
-+                              <div role="status" className="text-xs text-muted-foreground">
-+                                Current: {activeThread.runtimeMode === "full-access" ? "Full access" : activeThread.runtimeMode === "approval-required" ? "Supervised" : activeThread.runtimeMode} · Next: {runtimeMode === "full-access" ? "Full access" : runtimeMode === "approval-required" ? "Supervised" : runtimeMode}
-+                              </div>
-+                            ) : null}
-                             {!composerMounted ? null : (
-                               <ChatComposer
-                                 canOperateThread={canOperateThread}
+@@ -204 +203,0 @@
+-import { ComposerContextPermissions } from "./ComposerContextPermissions";
+@@ -3760,0 +3760 @@
++                                currentRuntimeMode={activeRunningTurnId ? activeThread?.runtimeMode : undefined}
+@@ -3879,14 +3878,0 @@
+-                                  {...(isServerThread
+-                                    ? {}
+-                                    : {
+-                                        trailing: (
+-                                          <ComposerContextPermissions
+-                                            environmentId={environmentId}
+-                                            runtimeMode={runtimeMode}
+-                                            supportedRuntimeModes={
+-                                              activeProviderStatus?.supportedRuntimeModes
+-                                            }
+-                                            onRuntimeModeChange={handleRuntimeModeChangeStable}
+-                                          />
+-                                        ),
+-                                      })}

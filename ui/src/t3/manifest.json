@@ -185,14 +185,14 @@
     "patched": {
       "contracts/orchestrationV2.ts": "режим доступа закрепляется за отправляемым сообщением",
       "client-runtime/operations/commands.ts": "режим композера сопровождает каждое отправленное и поставленное в очередь сообщение",
-      "web/components/ChatView.tsx": "текущий режим хода и выбор для следующего хода показаны раздельно",
+      "web/components/ChatView.tsx": "текущий режим хода и выбор для следующего хода показаны раздельно; чип режима всегда виден в строке ввода и показывает фактический и следующий режим хода",
       "web/components/chat/ChatHeader.tsx": "состояние доверия к настройкам папки и действие подтверждения окна",
       "contracts/assets.ts": "превью изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP; отказ нативной политики несёт ограниченную безопасную причину",
       "client-runtime/markdownImages.ts": "безопасность превью: data URI из ответа ассистента не передаётся напрямую в img",
       "client-runtime/state/assets.ts": "превью изображений: ограниченная причина отказа assets.createUrl сохраняется в состоянии ресурса для видимой заглушки; история URL ограничена LRU",
       "web/components/ChatMarkdown.tsx": "превью изображений: обычная markdown-ссылка на локальный растровый файл использует штатные T3 ChatMarkdownAssetImage и крупный просмотр",
       "web/components/chat/ChatMarkdownMedia.tsx": "превью изображений: заглушка Image unavailable показывает ограниченную безопасную причину отказа нативной политики",
-      "web/components/chat/ChatComposer.tsx": "скрепка в поле ввода доступна для поддерживаемых Claude изображений без объявления generic file attachments",
+      "web/components/chat/ChatComposer.tsx": "скрепка в поле ввода доступна для поддерживаемых Claude изображений без объявления generic file attachments; чип режима всегда виден в строке ввода и показывает фактический и следующий режим хода",
       "web/components/chat/ComposerAttachmentStrip.tsx": "диалог скрепки принимает только GIF, JPEG, PNG и WebP, показывает лимит 10 МиБ и использует общий путь addComposerAttachments",
       "web/components/chat/SkillInlineText.tsx": "скрывает View instructions у навыка Claude: движок даёт имя, но не безопасный путь к файлу",
       "web/components/ComposerPromptEditorTiptap.tsx": "скрывает открытие файла для навыка Claude с внутренним hoh-skill идентификатором",
@@ -230,7 +230,9 @@
       "web/state/projectClones.ts": "скрытая функция возвращает пустое состояние без неподдерживаемой подписки",
       "web/state/device.ts": "скрытая функция возвращает пустое состояние без неподдерживаемой подписки",
       "web/appInit.tsx": "не запускает скрытый просмотр устройств и неподдерживаемую подписку на них",
-      "web/components/settings/ArchivedThreadsPanel.tsx": "в архиве удаление обозначено Coming Soon до поддержки движком"
+      "web/components/settings/ArchivedThreadsPanel.tsx": "в архиве удаление обозначено Coming Soon до поддержки движком",
+      "web/components/chat/ComposerControlsBar.tsx": "режим доступа всегда виден в строке ввода; при активном ходе чип показывает фактический режим и выбор следующего хода",
+      "web/components/chat/ComposerFooterControls.tsx": "режим доступа всегда виден в строке ввода; при активном ходе чип показывает фактический режим и выбор следующего хода"
     },
     "switches": [
       [

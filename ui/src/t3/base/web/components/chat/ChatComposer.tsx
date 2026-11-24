@@ -412,6 +412,7 @@ export interface ChatComposerProps {
   respondingRequestIds: RuntimeRequestId[];
 
   runtimeMode: RuntimeMode;
+  currentRuntimeMode?: RuntimeMode | undefined;
   defaultRuntimeMode?: RuntimeMode;
 
   lockedProvider: ProviderDriverKind | null;
@@ -2519,6 +2520,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptUltrathink={promptUltrathink}
       onPromptEdit={editPromptFromTraitsStable}
       compatibleRuntimeMode={compatibleRuntimeMode}
+      currentRuntimeMode={props.currentRuntimeMode}
       defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       handleRuntimeModeChange={handleRuntimeModeChange}

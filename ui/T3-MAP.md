@@ -238,7 +238,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `^apps/web/src/components/device/models/.*\.glb$` | 3D-модели устройств скрытой части «устройства и пары» (~12 МБ): не переносятся (решение ведущего); импорты `?url` — адрес-заглушка stubs/absent-url.ts |
 | `^apps/web/src/i18n/translations/(?!(en\|ru)\.json$)[^/]+$` | переводы, кроме en и ru, не переносятся (решение ведущего); список языков сужен правкой gt.config.json |
 
-Файлов перенесено: **1974**, из них без изменений: **1926**, правок файлов T3: **49** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
+Файлов перенесено: **1974**, из них без изменений: **1924**, правок файлов T3: **51** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
 Отложено (не проверяет tsc: в замыкании импортов есть пакет, которого нет в `ui/package.json` и `ui/node_modules` в версии, совместимой с lock T3: тот же major, для 0.x — тот же minor): **0** из 1949 файлов кода;
 не хватает пакетов (сколько файлов T3 их импортирует): нет. Когда пакеты из `ui/T3-DEPS.md` (раздел HOH-40) стоят, отложенных нет —
 `t3-sync.py` пересчитывает список сам. tsc основы — с настройками T3 (`strict`, `noImplicitAny`, `noUncheckedIndexedAccess`,
@@ -286,6 +286,8 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `contracts/orchestrationV2.ts` | правка (`ui/src/t3/base-patches/contracts/orchestrationV2.ts.patch`) | режим доступа закрепляется за отправляемым сообщением |
 | `client-runtime/operations/commands.ts` | правка (`ui/src/t3/base-patches/client-runtime/operations/commands.ts.patch`) | режим композера сопровождает каждое отправленное и поставленное в очередь сообщение |
 | `web/components/ChatView.tsx` | правка (`ui/src/t3/base-patches/web/components/ChatView.tsx.patch`) | текущий режим хода и выбор для следующего хода показаны раздельно |
+| `web/components/chat/ComposerControlsBar.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ComposerControlsBar.tsx.patch`) | режим всегда остаётся в строке ввода, включая значение по умолчанию |
+| `web/components/chat/ComposerFooterControls.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ComposerFooterControls.tsx.patch`) | чип показывает фактический режим и выбранный для следующего хода |
 | `contracts/assets.ts` | правка (`ui/src/t3/base-patches/contracts/assets.ts.patch`) | превью изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP; отказ нативной политики несёт ограниченную безопасную причину |
 | `client-runtime/markdownImages.ts` | правка (`ui/src/t3/base-patches/client-runtime/markdownImages.ts.patch`) | безопасность превью: data URI из ответа ассистента не передаётся напрямую в img |
 | `client-runtime/state/assets.ts` | правка (`ui/src/t3/base-patches/client-runtime/state/assets.ts.patch`) | превью изображений: ограниченная причина отказа assets.createUrl сохраняется в состоянии ресурса для видимой заглушки; история URL ограничена LRU |
@@ -441,3 +443,5 @@ Providers (HOH-47 U4) — build-time подстановка `providerSettingsPan
 - Архив доступен в Settings: список берётся из сохранённого состояния хоста, Unarchive восстанавливает разговор, Delete обозначен Coming Soon.
 
 Длительность хода сохраняет время отправки в метаданных окна по идентификатору сообщения двигателя; остановленный ход без шагов сворачивается с подписью You stopped, карточка готового ответа не показывает прогресс.
+
+HOH-47 S4: чип Permissions постоянно находится в строке ввода; при несовпадении фактического и следующего режима его подпись — Current / Next. Отдельная подпись черновика удалена. Патчи: `ChatView.tsx`, `ChatComposer.tsx`, `ComposerControlsBar.tsx`, `ComposerFooterControls.tsx`.

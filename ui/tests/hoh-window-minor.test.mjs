@@ -4,10 +4,14 @@ import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
 
-test('the current/next label appears when the running mode differs from the composer choice', async () => {
+test('the permissions chip reports current and next mode for a running turn', async () => {
   const view = await readFile(new URL('src/t3/base/web/components/ChatView.tsx', root), 'utf8');
-  assert.match(view, /activeRunningTurnId && activeThread\?\.runtimeMode && activeThread\.runtimeMode !== runtimeMode/);
-  assert.match(view, /Current:.*Full access.*Supervised.*Next:.*Full access.*Supervised/);
+  const footer = await readFile(new URL('src/t3/base/web/components/chat/ComposerFooterControls.tsx', root), 'utf8');
+  const bar = await readFile(new URL('src/t3/base/web/components/chat/ComposerControlsBar.tsx', root), 'utf8');
+  assert.match(view, /currentRuntimeMode=\{activeRunningTurnId \? activeThread\?\.runtimeMode : undefined\}/);
+  assert.match(footer, /Current: \$\{currentModeOption.label\} · Next: \$\{runtimeModeOption.label\}/);
+  assert.match(bar, /matchesDefault: false/);
+  assert.doesNotMatch(view, /<ComposerContextPermissions/);
 });
 
 test('composer command drawers override glass opacity to an opaque surface', async () => {
