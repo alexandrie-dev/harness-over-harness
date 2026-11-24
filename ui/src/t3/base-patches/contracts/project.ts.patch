@@ -1,0 +1,5 @@
+--- a/contracts/project.ts
++++ b/contracts/project.ts
+@@ -201 +201 @@
+-      description: "Threads and files are kept.",
++      description: "Chats and files are kept.",

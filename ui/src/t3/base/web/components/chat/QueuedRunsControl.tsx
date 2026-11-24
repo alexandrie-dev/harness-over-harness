@@ -586,7 +586,7 @@ function QueuedMessage(props: {
                 tone="muted"
                 onClick={() => props.onOpenThread(senderRef.threadId, senderRef.environmentId)}
               >
-                <T>Open thread</T>
+                <T>Open chat</T>
               </InlineButton>
             ) : null}
             {scheduledTaskId ? (

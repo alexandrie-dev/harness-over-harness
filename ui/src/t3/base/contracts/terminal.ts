@@ -439,7 +439,7 @@ export class TerminalHistoryError extends Schema.TaggedError<TerminalHistoryErro
   },
 ) {
   override get message() {
-    return `Failed to ${this.operation} terminal history for thread: ${this.threadId}, terminal: ${this.terminalId}`;
+    return `Failed to ${this.operation} terminal history for chat: ${this.threadId}, terminal: ${this.terminalId}`;
   }
 }
 
@@ -451,7 +451,7 @@ export class TerminalSessionLookupError extends Schema.TaggedError<TerminalSessi
   },
 ) {
   override get message() {
-    return `Unknown terminal thread: ${this.threadId}, terminal: ${this.terminalId}`;
+    return `Unknown terminal chat: ${this.threadId}, terminal: ${this.terminalId}`;
   }
 }
 
@@ -486,7 +486,7 @@ export class TerminalNotRunningError extends Schema.TaggedError<TerminalNotRunni
   },
 ) {
   override get message() {
-    return `Terminal is not running for thread: ${this.threadId}, terminal: ${this.terminalId}`;
+    return `Terminal is not running for chat: ${this.threadId}, terminal: ${this.terminalId}`;
   }
 }
 
@@ -500,7 +500,7 @@ export class TerminalWriteError extends Schema.TaggedError<TerminalWriteError>()
   },
 ) {
   override get message() {
-    return `Failed to write to terminal for thread: ${this.threadId}, terminal: ${this.terminalId}, PID: ${this.terminalPid}`;
+    return `Failed to write to terminal for chat: ${this.threadId}, terminal: ${this.terminalId}, PID: ${this.terminalPid}`;
   }
 }
 
@@ -516,7 +516,7 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   },
 ) {
   override get message() {
-    return `Failed to resize terminal for thread: ${this.threadId}, terminal: ${this.terminalId}, PID: ${this.terminalPid} to ${this.cols}x${this.rows}`;
+    return `Failed to resize terminal for chat: ${this.threadId}, terminal: ${this.terminalId}, PID: ${this.terminalPid} to ${this.cols}x${this.rows}`;
   }
 }
 

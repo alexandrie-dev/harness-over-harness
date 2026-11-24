@@ -214,7 +214,7 @@ test('a chat whose history names a project folder joins that project; refusing t
   assert.equal((await shell.until(value => value.kind === 'project.updated' && value.project.id === 'p-home' && value.project.workspaceRoot.startsWith('/'))).project.workspaceRoot, '/home/person/Documents');
   // Projects: renamed, pinned; one with chats is kept, an empty one is removed.
   assert.equal((await client.call('projects.mutate', { type: 'project.update', commandId: 'u', projectId: 'p-tools', title: 'Tools', pinned: true })).title, 'Tools');
-  assert.match(failureOf(await client.request('projects.mutate', { type: 'project.delete', commandId: 'd', projectId: 'p-tools' })).message, /still has threads/);
+  assert.match(failureOf(await client.request('projects.mutate', { type: 'project.delete', commandId: 'd', projectId: 'p-tools' })).message, /still has chats/);
   await client.call('projects.mutate', create('p-empty', '/home/person/Projects/site'));
   assert.equal((await client.call('projects.mutate', { type: 'project.delete', commandId: 'd2', projectId: 'p-empty' })).id, 'p-empty');
   assert.equal((await shell.until(value => value.kind === 'project.removed')).projectId, 'p-empty');

@@ -11,12 +11,12 @@ export function NoActiveThreadState() {
         <WorkspacePageHeader electron={isElectron} className="border-b border-border">
           {isElectron ? (
             <span className="text-xs text-muted-foreground/50">
-              <T>No active thread</T>
+              <T>No active chat</T>
             </span>
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
-                <T>No active thread</T>
+                <T>No active chat</T>
               </span>
             </div>
           )}
@@ -26,10 +26,10 @@ export function NoActiveThreadState() {
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
               <EmptyTitle>
-                <T>Pick a thread to continue</T>
+                <T>Pick a chat to continue</T>
               </EmptyTitle>
               <EmptyDescription>
-                <T>Select an existing thread or create a new one to get started.</T>
+                <T>Select an existing chat or create a new one to get started.</T>
               </EmptyDescription>
             </EmptyHeader>
           </div>

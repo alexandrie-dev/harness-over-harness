@@ -7,7 +7,7 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const ThreadTag = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
   Schema.makeFilter((value) =>
-    /[\p{Cc}]/u.test(value) ? "A thread tag must be a single line of text." : true,
+    /[\p{Cc}]/u.test(value) ? "A chat tag must be a single line of text." : true,
   ),
 );
 export type ThreadTag = typeof ThreadTag.Type;

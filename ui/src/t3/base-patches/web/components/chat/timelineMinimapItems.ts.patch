@@ -1,0 +1,5 @@
+--- a/web/components/chat/timelineMinimapItems.ts
++++ b/web/components/chat/timelineMinimapItems.ts
+@@ -93 +93 @@
+-  return node.type === "link" && parseThreadLinkHref(text) !== null ? "a thread" : text;
++  return node.type === "link" && parseThreadLinkHref(text) !== null ? "a chat" : text;

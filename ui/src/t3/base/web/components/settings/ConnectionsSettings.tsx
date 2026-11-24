@@ -751,7 +751,7 @@ function ConnectionsSettingsContent({
     }
     const confirmed = await requestConfirmDialog(
       gt(
-        "Remove {environment} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.",
+        "Remove {environment} from this device?\nThis forgets its pairing, credentials, and cached chats here. Switch it off instead to keep it saved.",
         { environment: environment.label },
       ),
       { variant: "destructive" },
@@ -1541,10 +1541,10 @@ function ConnectionsSettingsContent({
                   {pendingWslChange?.kind === "disable"
                     ? pendingWslChange.wasWslOnly
                       ? gt(
-                          "T3 Code will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL.",
+                          "T3 Code will restart on the Windows backend. Chats and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL.",
                         )
                       : gt(
-                          "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL.",
+                          "The WSL backend will stop. Chats and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL.",
                         )
                     : pendingWslChange?.kind === "distro"
                       ? gt(

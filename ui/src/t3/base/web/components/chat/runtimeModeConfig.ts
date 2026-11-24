@@ -86,7 +86,7 @@ export function runtimeModeDenial(
     return undefined;
   }
   return resolve(
-    msg("{organization} limits threads to {mode}.", {
+    msg("{organization} limits chats to {mode}.", {
       organization: managedPolicy!.organization,
       mode: resolve(runtimeModeConfig[ceiling].label),
     }),

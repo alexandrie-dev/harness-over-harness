@@ -55,9 +55,9 @@ export function buildLinkedThreadActionItems(
     kind: "action",
     value: `thread:${input.environmentId}:${thread.id}`,
     threadRef: { environmentId: input.environmentId, threadId: thread.id },
-    title: thread.title || resolve(msg("Untitled thread")),
+    title: thread.title || resolve(msg("Untitled chat")),
     description:
-      thread.archivedAt === null ? resolve(msg("Linked thread")) : resolve(msg("Archived thread")),
+      thread.archivedAt === null ? resolve(msg("Linked chat")) : resolve(msg("Archived chat")),
     searchTerms: [input.query, thread.title],
     icon: input.icon,
     run: () => input.runThread({ environmentId: input.environmentId, id: thread.id }),
@@ -481,7 +481,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       thread.id === input.activeThread?.id &&
       thread.environmentId === input.activeThread.environmentId;
     if (isCurrent) {
-      descriptionParts.push(resolve(msg("Current thread")));
+      descriptionParts.push(resolve(msg("Current chat")));
     }
 
     const leadingContent = input.renderLeadingContent?.(thread);
@@ -638,7 +638,7 @@ export function filterCommandPaletteGroups(
     if (input.threadSearchItems.length > 0) {
       searchableGroups.push({
         value: "threads-search",
-        label: resolve(msg("Threads")),
+        label: resolve(msg("Chats")),
         items: input.threadSearchItems,
       });
     }
@@ -822,7 +822,7 @@ export function buildRootGroups(
   if (input.recentThreadItems.length > 0) {
     groups.push({
       value: "recent-threads",
-      label: resolve(msg("Recent Threads")),
+      label: resolve(msg("Recent Chats")),
       items: input.recentThreadItems,
     });
   }
@@ -835,7 +835,7 @@ export function getCommandPaletteInputPlaceholder(
 ): string {
   switch (mode) {
     case "root":
-      return resolve(msg("Search commands, projects, and threads..."));
+      return resolve(msg("Search commands, projects, and chats..."));
     case "root-browse":
       return resolve(msg("Enter project path (e.g. ~/projects/my-app)"));
     case "submenu":

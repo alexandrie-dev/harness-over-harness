@@ -58,7 +58,7 @@ try {
   const folder = page.getByTestId('sidebar-project-folder').filter({ hasText: 'site' });
   await folder.waitFor();
   assert.equal(engine.requests.filter(r => r.method === 'session/prompt').length, 0, 'empty project appears before any conversation');
-  await folder.getByRole('button', { name: 'New thread in site' }).click();
+  await folder.getByRole('button', { name: 'New chat in site' }).click();
   const composer = page.getByRole('textbox', { name: /message|ask/i }).last();
   await composer.fill('Work in this project');
   await composer.press('Enter');
@@ -74,7 +74,7 @@ try {
   await page.reload();
   await page.getByTestId('sidebar-project-folder').filter({ hasText: 'site' }).waitFor();
   await page.goto(`${ORIGIN}/hoh-local/${change.params.sessionId}`);
-  await page.getByRole('navigation', { name: 'Thread breadcrumb' }).getByText('site', { exact: true }).waitFor();
+  await page.getByRole('navigation', { name: 'Chat breadcrumb' }).getByText('site', { exact: true }).waitFor();
   off();
   await context.close();
   console.log('project flow: Add project on busy Home, empty sidebar, project chat cwd, and restart passed');

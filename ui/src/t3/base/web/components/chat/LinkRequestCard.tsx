@@ -325,7 +325,7 @@ function LinkRequestDialog(props: {
             pickMachine || unnamed ? gt("Link a machine") : gt("Link {targetName}", { targetName })
           }
           description={gt(
-            "Agents here can then launch, message and wait on threads there. Revoke it in that machine's Sharing & access.",
+            "Agents here can then launch, message and wait on chats there. Revoke it in that machine's Sharing & access.",
           )}
         >
           {steps.length > 1 && !useExisting ? (

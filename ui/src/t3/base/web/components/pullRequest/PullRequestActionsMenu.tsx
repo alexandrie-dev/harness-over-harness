@@ -270,11 +270,11 @@ export function PullRequestActionsMenu({
             <span className="text-xs text-muted-foreground">
               {attachesToComposer
                 ? gt(
-                    "Adds the {term, select, mr {merge request} cr {change request} other {pull request}} to this thread's composer.",
+                    "Adds the {term, select, mr {merge request} cr {change request} other {pull request}} to this chat's composer.",
                     { term: changeRequestTermKind(terminology) },
                   )
                 : gt(
-                    "Opens a thread that knows which {term, select, mr {merge request} cr {change request} other {pull request}} you mean.",
+                    "Opens a chat that knows which {term, select, mr {merge request} cr {change request} other {pull request}} you mean.",
                     {
                       term: changeRequestTermKind(terminology),
                     },

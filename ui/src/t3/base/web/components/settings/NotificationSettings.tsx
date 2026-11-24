@@ -28,7 +28,7 @@ export function NotificationSettings() {
       description={
         permissionMessage ??
         gt(
-          "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
+          "System alerts when a chat finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
         )
       }
       control={
@@ -80,7 +80,7 @@ export function NotificationSettings() {
           <SelectTrigger
             size="sm"
             className="w-full sm:w-56"
-            aria-label={gt("Thread notifications")}
+            aria-label={gt("Chat notifications")}
           >
             <SelectValue>{m(NOTIFICATION_MODE_LABELS[mode])}</SelectValue>
           </SelectTrigger>

@@ -518,7 +518,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Time format")]
       : []),
     ...(settings.notificationMode !== DEFAULT_UNIFIED_SETTINGS.notificationMode
-      ? [gt("Thread notifications")]
+      ? [gt("Chat notifications")]
       : []),
     ...(settings.inAppNotificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled
       ? [gt("In-app notifications")]
@@ -533,14 +533,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Working section")]
       : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
-      ? [gt("Auto-settle inactive threads")]
+      ? [gt("Auto-settle inactive chats")]
       : []),
     ...(settings.sidebarAutoSettleKeepPullRequests !==
     DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests
-      ? [gt("Keep threads with a PR")]
+      ? [gt("Keep chats with a PR")]
       : []),
     ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
-      ? [gt("Auto-settle merged threads")]
+      ? [gt("Auto-settle merged chats")]
       : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? [gt("Resume after usage limits")]
@@ -596,14 +596,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
-      ? [gt("Continue threads after restarts")]
+      ? [gt("Continue chats after restarts")]
       : []),
     ...(isBackgroundActivityDirty ? [gt("Background activity")] : []),
     ...(settings.keepAwakeWhileAgentsWork !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork
       ? [gt("Keep awake while agents work")]
       : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
-      ? [gt("New thread mode")]
+      ? [gt("New chat mode")]
       : []),
     ...(settings.newWorktreesStartFromOrigin !==
     DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
@@ -630,7 +630,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? [gt("Quit shortcut")] : []),
     ...(isTextGenerationModelDirty ? [gt("Text generation model")] : []),
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
-      ? [gt("Thread title instructions")]
+      ? [gt("Chat title instructions")]
       : []),
     ...getChangedBrowserSettingLabels(settings, messages),
     ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
@@ -844,7 +844,7 @@ export function GeneralSettingsPanel() {
           {...setting("in-app-notifications")}
           description={
             <T>
-              Show a toast when another thread finishes, fails, or needs input or approval while
+              Show a toast when another chat finishes, fails, or needs input or approval while
               this app has focus.
             </T>
           }
@@ -938,7 +938,7 @@ export function GeneralSettingsPanel() {
           {...setting("working-shelf")}
           description={
             <T>
-              Fold working and monitoring threads into a Working section. They return to the top of
+              Fold working and monitoring chats into a Working section. They return to the top of
               the inbox when they need you. The boring sidebar in Labs has no Working section.
             </T>
           }
@@ -970,7 +970,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection id="confirmations" title={gt("Confirmations")}>
         <SettingsRow
           {...setting("unpin-confirmation")}
-          description={<T>Ask before unpinning a thread from the pinned section.</T>}
+          description={<T>Ask before unpinning a chat from the pinned section.</T>}
           resetAction={
             settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin ? (
               <SettingResetButton
@@ -989,14 +989,14 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ confirmThreadUnpin: Boolean(checked) })
               }
-              aria-label={gt("Confirm thread unpinning")}
+              aria-label={gt("Confirm chat unpinning")}
             />
           }
         />
         <SettingsRow
           {...setting("archive-confirmation")}
           description={
-            <T>Require a second click on the inline archive action before a thread is archived.</T>
+            <T>Require a second click on the inline archive action before a chat is archived.</T>
           }
           resetAction={
             settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
@@ -1016,13 +1016,13 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ confirmThreadArchive: Boolean(checked) })
               }
-              aria-label={gt("Confirm thread archiving")}
+              aria-label={gt("Confirm chat archiving")}
             />
           }
         />
         <SettingsRow
           {...setting("delete-confirmation")}
-          description={<T>Ask before deleting a thread and its chat history.</T>}
+          description={<T>Ask before deleting a chat and its chat history.</T>}
           resetAction={
             settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
               <SettingResetButton
@@ -1041,7 +1041,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ confirmThreadDelete: Boolean(checked) })
               }
-              aria-label={gt("Confirm thread deletion")}
+              aria-label={gt("Confirm chat deletion")}
             />
           }
         />
@@ -1479,7 +1479,7 @@ function ScreenReaderAnnouncementsRow() {
     <SettingsRow
       {...setting("screen-reader-announcements")}
       description={gt(
-        "What a screen reader hears from the open thread: a turn starting, needing you, and ending. Status and messages adds what the agent writes before its last message. Everything adds each step.",
+        "What a screen reader hears from the open chat: a turn starting, needing you, and ending. Status and messages adds what the agent writes before its last message. Everything adds each step.",
       )}
       resetAction={
         settings.screenReaderAnnouncements !==
@@ -1534,7 +1534,7 @@ function ScreenReaderWindowTitleRow() {
     <SettingsRow
       {...setting("screen-reader-window-title")}
       description={gt(
-        "Start the window title with the thread's status, like Needs approval, and its name, so screen readers read them first when you switch apps. Taskbars, shared screens, and time trackers see it too.",
+        "Start the window title with the chat's status, like Needs approval, and its name, so screen readers read them first when you switch apps. Taskbars, shared screens, and time trackers see it too.",
       )}
       resetAction={
         settings.screenReaderWindowTitle !== DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle ? (
@@ -1801,12 +1801,12 @@ function ScopedCompactIdleThreadsRow() {
       mixed={idleCompaction.mixed}
       {...setting("compact-idle-threads")}
       description={gt(
-        "When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this.",
+        "When to compact an idle Claude chat over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this.",
       )}
       resetAction={
         globalIdleCompaction(settings) !== globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) ? (
           <SettingResetButton
-            ariaLabel={gt("Reset compact idle threads to default")}
+            ariaLabel={gt("Reset compact idle chats to default")}
             onClick={() =>
               updateSettings({ idleCompaction: globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) })
             }
@@ -1824,7 +1824,7 @@ function ScopedCompactIdleThreadsRow() {
           <SelectTrigger
             size="sm"
             className="w-full sm:w-56"
-            aria-label={gt("Compact idle threads")}
+            aria-label={gt("Compact idle chats")}
           >
             <SelectValue>
               {(value: string | null) =>
@@ -1991,7 +1991,7 @@ export function ThreadsSettingsPanel() {
           serverScoped
           {...setting("auto-resume-limited-threads")}
           description={gt(
-            "Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread.",
+            "Automatically resume chats when their usage limits reset. You can cancel auto-resume in each chat.",
           )}
           settingKeys={["autoResumeLimitedThreads"]}
           control={
@@ -2009,7 +2009,7 @@ export function ThreadsSettingsPanel() {
           serverScoped
           {...setting("snooze-limited-threads")}
           description={gt(
-            "Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset.",
+            "Snooze chats until their usage limits reset. Enable auto-resume to continue the agent after the reset.",
           )}
           settingKeys={["snoozeLimitedThreads"]}
           control={
@@ -2032,7 +2032,7 @@ export function ThreadsSettingsPanel() {
             settingKeys={["sidebarAutoSettleOnMerge"]}
             {...setting("auto-settle-merged-threads")}
             description={gt(
-              "Settle a thread when its pull request merges. Closed pull requests still settle automatically.",
+              "Settle a chat when its pull request merges. Closed pull requests still settle automatically.",
             )}
             resetAction={
               settings.sidebarAutoSettleOnMerge !==
@@ -2054,7 +2054,7 @@ export function ThreadsSettingsPanel() {
                 onCheckedChange={(checked) =>
                   updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
                 }
-                aria-label={gt("Auto-settle merged threads")}
+                aria-label={gt("Auto-settle merged chats")}
               />
             }
           />
@@ -2063,7 +2063,7 @@ export function ThreadsSettingsPanel() {
             serverScoped
             settingKeys={["sidebarAutoSettleAfterDays"]}
             {...setting("auto-settle-inactive-threads")}
-            description={gt("Sidebar threads with no activity for this long settle automatically.")}
+            description={gt("Sidebar chats with no activity for this long settle automatically.")}
             resetAction={
               settings.sidebarAutoSettleAfterDays !==
               DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
@@ -2087,7 +2087,7 @@ export function ThreadsSettingsPanel() {
                     sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
                   })
                 }
-                aria-label={gt("Auto-settle inactive threads")}
+                aria-label={gt("Auto-settle inactive chats")}
               />
             }
           />
@@ -2096,7 +2096,7 @@ export function ThreadsSettingsPanel() {
               serverScoped
               settingKeys={["sidebarAutoSettleAfterDays"]}
               title={setting("days-before-auto-settle").title}
-              description={gt("Any new activity un-settles a thread automatically.")}
+              description={gt("Any new activity un-settles a chat automatically.")}
               control={
                 <AutoSettleDaysInput
                   value={settings.sidebarAutoSettleAfterDays}
@@ -2111,9 +2111,9 @@ export function ThreadsSettingsPanel() {
             <SettingsRow
               serverScoped
               settingKeys={["sidebarAutoSettleKeepPullRequests"]}
-              title={gt("Keep threads with a PR")}
+              title={gt("Keep chats with a PR")}
               description={gt(
-                "Inactivity does not settle threads with a pull request. Merge and close still do.",
+                "Inactivity does not settle chats with a pull request. Merge and close still do.",
               )}
               control={
                 <ScopedSwitch
@@ -2122,7 +2122,7 @@ export function ThreadsSettingsPanel() {
                   onCheckedChange={(checked) =>
                     updateSettings({ sidebarAutoSettleKeepPullRequests: checked })
                   }
-                  aria-label={gt("Keep threads with a PR")}
+                  aria-label={gt("Keep chats with a PR")}
                 />
               }
             />
@@ -2136,7 +2136,7 @@ export function ThreadsSettingsPanel() {
           settingKeys={["textGenerationModelSelection"]}
           {...setting("text-generation-model")}
           description={gt(
-            "For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here.",
+            "For chat titles and other generated text. Source control has its own setting. Text generators from Providers also appear here.",
           )}
           resetAction={
             hasServerTargets && isTextGenerationModelDirty ? (
@@ -2348,7 +2348,7 @@ export function MaintenanceSettingsPanel() {
           serverScoped
           settingKeys={["continueThreadsAfterServerUpdate"]}
           description={gt(
-            "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.",
+            "Automatically resume interrupted chats after an update, crash, or machine restart on the selected environments.",
           )}
           status={
             !hasServerTargets
@@ -2360,7 +2360,7 @@ export function MaintenanceSettingsPanel() {
             settings.continueThreadsAfterServerUpdate !==
               DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
               <SettingResetButton
-                ariaLabel={gt("Reset continue threads after restarts to default")}
+                ariaLabel={gt("Reset continue chats after restarts to default")}
                 onClick={() =>
                   updateSettings({
                     continueThreadsAfterServerUpdate:
@@ -2378,7 +2378,7 @@ export function MaintenanceSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
-              aria-label={gt("Continue threads after restarts")}
+              aria-label={gt("Continue chats after restarts")}
             />
           }
         />

@@ -37,7 +37,7 @@ export function ThreadDetailsCard({
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
   const gt = useGT();
-  const detailsArea = workspaceAreaProps("details", 3, gt("Thread details"));
+  const detailsArea = workspaceAreaProps("details", 3, gt("Chat details"));
   const canvas = useChatCanvas();
   const preferredPlacement = canvas?.preferredDetailsCard ?? null;
   const placement = canvas?.detailsCardPlacement ?? null;

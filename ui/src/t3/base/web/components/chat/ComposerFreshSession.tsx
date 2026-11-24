@@ -15,7 +15,7 @@ export function freshSessionBannerItem(
     variant: "info",
     icon: <EraserIcon />,
     title: resolve(msg("Your next message starts a fresh session")),
-    description: resolve(msg("The agent won't see earlier messages in this thread.")),
+    description: resolve(msg("The agent won't see earlier messages in this chat.")),
     dismissLabel: resolve(msg("Keep the current session")),
     onDismiss: onUndo,
   };

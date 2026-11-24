@@ -258,13 +258,13 @@ export function pullRequestHandoffLabels(inThisThread: boolean, resolve: Message
   return inThisThread
     ? {
         fixFinding: resolve(msg("Fix", { $context: "verb, fix a review finding" })),
-        fixCheck: resolve(msg("Fix in this thread")),
-        fixFindings: resolve(msg("Fix findings in this thread")),
+        fixCheck: resolve(msg("Fix in this chat")),
+        fixFindings: resolve(msg("Fix findings in this chat")),
       }
     : {
-        fixFinding: resolve(msg("Fix in a thread")),
+        fixFinding: resolve(msg("Fix in a chat")),
         fixCheck: resolve(msg("Fix", { $context: "verb, fix a review finding" })),
-        fixFindings: resolve(msg("Fix findings in a thread")),
+        fixFindings: resolve(msg("Fix findings in a chat")),
       };
 }
 

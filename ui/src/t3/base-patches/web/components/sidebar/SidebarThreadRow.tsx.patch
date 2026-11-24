@@ -1,0 +1,38 @@
+--- a/web/components/sidebar/SidebarThreadRow.tsx
++++ b/web/components/sidebar/SidebarThreadRow.tsx
+@@ -421 +421 @@
+-                  aria-label={gt("Snooze thread")}
++                  aria-label={gt("Snooze chat")}
+@@ -433 +433 @@
+-          <T>Snooze thread</T>
++          <T>Snooze chat</T>
+@@ -664 +664 @@
+-      aria-label={gt("Thread title")}
++      aria-label={gt("Chat title")}
+@@ -1232 +1232 @@
+-              aria-label={gt("Unpin thread")}
++              aria-label={gt("Unpin chat")}
+@@ -1248 +1248 @@
+-          <T>Unpin thread</T>
++          <T>Unpin chat</T>
+@@ -1465 +1465 @@
+-                        aria-label={gt("Wake thread now")}
++                        aria-label={gt("Wake chat now")}
+@@ -1482 +1482 @@
+-                            aria-label={gt("Un-settle thread")}
++                            aria-label={gt("Un-settle chat")}
+@@ -1495 +1495 @@
+-                        <T>Un-settle thread</T>
++                        <T>Un-settle chat</T>
+@@ -1504 +1504 @@
+-                            aria-label={gt("Settle thread")}
++                            aria-label={gt("Settle chat")}
+@@ -1517 +1517 @@
+-                        <T>Settle thread</T>
++                        <T>Settle chat</T>
+@@ -1709 +1709 @@
+-                                aria-label={gt("Settle thread")}
++                                aria-label={gt("Settle chat")}
+@@ -1720 +1720 @@
+-                            <T>Settle thread</T>
++                            <T>Settle chat</T>

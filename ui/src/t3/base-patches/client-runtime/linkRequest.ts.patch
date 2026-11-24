@@ -1,0 +1,5 @@
+--- a/client-runtime/linkRequest.ts
++++ b/client-runtime/linkRequest.ts
+@@ -305 +305 @@
+-            label: resolve(msg("Waiting for an answer in the original thread")),
++            label: resolve(msg("Waiting for an answer in the original chat")),

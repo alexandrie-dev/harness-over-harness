@@ -58,7 +58,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     true;
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const stopServer = useAtomCommand(previewEnvironment.stopLocalServer, {
-    label: "thread server stop",
+    label: "chat server stop",
   });
   const [stoppingKey, setStoppingKey] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(SERVER_PAGE_COUNT);

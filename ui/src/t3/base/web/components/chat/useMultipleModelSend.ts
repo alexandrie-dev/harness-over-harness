@@ -228,7 +228,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
             type: "success",
             title: m(
               msg(
-                "{count, plural, one {Started {count} thread in background} other {Started {count} threads in background}}",
+                "{count, plural, one {Started {count} chat in background} other {Started {count} chats in background}}",
                 { count: startedCount },
               ),
             ),

@@ -466,7 +466,7 @@ export function AppearanceSettingsPanel() {
           <SettingsRow
             {...searchableSetting("composer-context")}
             description={gt(
-              "Keep branch and worktree controls below the composer after a thread starts.",
+              "Keep branch and worktree controls below the composer after a chat starts.",
             )}
             resetAction={
               settings.persistComposerContextStrip !==
@@ -488,7 +488,7 @@ export function AppearanceSettingsPanel() {
                 onCheckedChange={(checked) =>
                   updateSettings({ persistComposerContextStrip: Boolean(checked) })
                 }
-                aria-label={gt("Keep composer context visible in active threads")}
+                aria-label={gt("Keep composer context visible in active chats")}
               />
             }
           />

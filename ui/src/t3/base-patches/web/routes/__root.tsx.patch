@@ -1,0 +1,5 @@
+--- a/web/routes/__root.tsx
++++ b/web/routes/__root.tsx
+@@ -128 +128 @@
+-            project or start a thread.
++            project or start a chat.

@@ -968,7 +968,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   disabledInstanceIds: lockedDisabledInstanceIds,
                   getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
                     gt(
-                      "{provider} is unavailable in this thread. Start a new thread to switch providers.",
+                      "{provider} is unavailable in this chat. Start a new chat to switch providers.",
                       { provider: entry.displayName },
                     ),
                 }

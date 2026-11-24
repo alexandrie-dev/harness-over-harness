@@ -277,6 +277,8 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `packages/source-control-github/src` | `ui/src/t3/base/source-control-github` | 4 | 4 | 4 | 0 | 0 | 0 |
 | `packages/source-control-gitlab/src` | `ui/src/t3/base/source-control-gitlab` | 3 | 3 | 3 | 0 | 0 | 0 |
 
+Числа и таблица переноса выше относятся к снимку до HOH-48/49; текущий полный список патчей — `base.patched` в `ui/src/t3/manifest.json`.
+
 ### Правки файлов T3
 
 | Файл (в `ui/src/t3/base`) | Как | Зачем |
@@ -464,3 +466,9 @@ HOH-47 S4: чип Permissions постоянно находится в стро�
 - Чип режима S4 включает Plan Claude в общее меню и показывает текущий и следующий режим при ходе; Codex Plan остаётся недоступным.
 
 C6: остановка после уже выведенного ответа складывается в «You stopped after …»; начало и конец хода берутся из журнала двигателя, в том числе после перезапуска.
+
+| `web/components/chat/ThreadDetailsPanel.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ThreadDetailsPanel.tsx.patch`) | видимость контекста следует настройке Appearance и сохраняется вместе с настройками клиента |
+
+| `web/components/Sidebar.tsx` и `web/hooks/useSidebarProjectGroups.ts`, `web/sidebarProjectGrouping.ts` | правки `base-patches` | меню переименования проекта использует `project.update`; папка `Chats` показывается лишь после первого сообщения в чате без проекта |
+| Видимые строки `web`, `client-runtime`, `shared`, `contracts` (полный список — `base.patched` в `manifest.json`) | правки `base-patches` | текст и доступные подписи используют chat/chats; имена команд, идентификаторы и параметры протокола сохранены |
+| `ui/src/t3-entry/vite.ts` | вставка HoH | до сведения параллельной главной временно меняет её кнопку ответа на «Answer in the chat», не изменяя HomeBody.tsx |

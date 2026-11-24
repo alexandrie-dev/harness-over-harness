@@ -265,7 +265,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: m(msg("Failed to un-settle thread")),
+          title: m(msg("Failed to un-settle chat")),
           description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
@@ -310,7 +310,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: m(msg("Failed to wake thread")),
+          title: m(msg("Failed to wake chat")),
           description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
@@ -402,7 +402,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: m(msg("Checkout switched, but the thread could not be updated")),
+              title: m(msg("Checkout switched, but the chat could not be updated")),
               description: actionErrorMessage(squashAtomCommandFailure(updateResult)),
             }),
           );
@@ -501,7 +501,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     }
     const shell = readThreadShell(threadRef);
     if (shell === null ? !shellOmitsChildren && isEnvironmentLive() : shell.deletedAt != null) {
-      toastManager.add({ type: "info", title: m(msg("This thread is no longer available")) });
+      toastManager.add({ type: "info", title: m(msg("This chat is no longer available")) });
       return;
     }
     const routeRef = resolveThreadOpenRoute(threadRef, shell);
@@ -703,7 +703,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
       ).then(
         toastThreadActionFailure(
-          activeThreadPinned ? m(msg("Failed to unpin thread")) : m(msg("Failed to pin thread")),
+          activeThreadPinned ? m(msg("Failed to unpin chat")) : m(msg("Failed to pin chat")),
         ),
       );
     },

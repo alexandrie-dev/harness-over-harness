@@ -1,0 +1,7 @@
+--- a/shared/threadLinksCopy.ts
++++ b/shared/threadLinksCopy.ts
+@@ -19,2 +19,2 @@
+-    ? resolve(msg("Thread no longer available"))
+-    : resolve(msg("Thread on another machine"));
++    ? resolve(msg("Chat no longer available"))
++    : resolve(msg("Chat on another machine"));

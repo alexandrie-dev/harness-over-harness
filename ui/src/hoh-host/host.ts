@@ -580,7 +580,7 @@ export class HohHost {
     version: () => this.homeVersion,
     subscribe: (listener: () => void) => { this.homeListeners.add(listener); return () => { this.homeListeners.delete(listener); }; },
     entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => this.homeEntry(thread)).filter((entry): entry is HomeEntry => entry !== null),
-    projectTitle: (projectId: string) => projectId === HOH_PROJECT_ID ? 'No project' : this.folders.get(projectId)?.title ?? 'No project',
+    projectTitle: (projectId: string) => projectId === HOH_PROJECT_ID ? 'Chats' : this.folders.get(projectId)?.title ?? 'No project',
     /** Stable private color key for Home folders: a title can change, the workspace path does not. */
     projectKey: (projectId: string) => projectId === HOH_PROJECT_ID ? this.workspaceRoot : this.folders.get(projectId)?.workspaceRoot ?? projectId,
     /** Approve or decline a waiting permission request, as the chat's buttons do. */
@@ -1683,7 +1683,7 @@ export class HohHost {
         const already = this.threads.get(threadId);
         if (already) {
           if (typeof projectId === 'string' && projectId !== already.projectId) {
-            throw new Error('A conversation cannot change its project folder. Start a new thread.');
+            throw new Error('A conversation cannot change its project folder. Start a new chat.');
           }
           if (already.executor !== executor || already.model !== chosenModel || already.mode !== chosenMode) {
             throw new Error('Concurrent creation requested a different executor, model, or access mode for this conversation.');
@@ -1747,7 +1747,7 @@ export class HohHost {
    * launch as the authoritative choice, before the first prompt reaches Claude. */
   private validateLaunchProject(thread: ThreadModel, projectId: unknown): FolderProject | null {
     if (typeof projectId !== 'string' || projectId === thread.projectId) return null;
-    if (thread.userMessageCount() > 0) throw new Error('A conversation cannot change its project folder. Start a new thread.');
+    if (thread.userMessageCount() > 0) throw new Error('A conversation cannot change its project folder. Start a new chat.');
     if (projectId === HOH_PROJECT_ID) {
       // Moving an existing engine session back to its implicit startup folder has no safe typed
       // operation. T3 creates scratch drafts in scratch already, so never guess a broader path.
@@ -1836,7 +1836,7 @@ export class HohHost {
         const project = this.folders.get(projectId);
         if (!project) throw fail('This project does not exist.');
         // HoH keeps every chat; a project with chats stays (T3 removes its threads only on a forced delete).
-        if ([...this.threads.values()].some(thread => thread.projectId === projectId)) throw fail('This project still has threads.');
+        if ([...this.threads.values()].some(thread => thread.projectId === projectId)) throw fail('This project still has chats.');
         this.folders.delete(projectId);
         for (const [threadId, home] of this.homes) if (home === projectId) this.homes.delete(threadId);
         this.save();
@@ -2232,17 +2232,17 @@ ${message.slice(0, 8000)}`;
       const thread = typeof command.threadId === 'string'
         ? listAction ? this.threads.get(command.threadId) : await this.loaded(command.threadId)
         : undefined;
-      const needThread = () => { if (!thread) throw dispatchError(command, 'This thread does not exist.'); return thread; };
+      const needThread = () => { if (!thread) throw dispatchError(command, 'This chat does not exist.'); return thread; };
       switch (type) {
         case 'thread.create':
-          if (thread && typeof command.projectId === 'string' && command.projectId !== thread.projectId) throw new Error('A conversation cannot change its project folder. Start a new thread.');
+          if (thread && typeof command.projectId === 'string' && command.projectId !== thread.projectId) throw new Error('A conversation cannot change its project folder. Start a new chat.');
           if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId, command.modelSelection?.instanceId, command.interactionMode);
           break;
         case 'message.dispatch': {
           const target = needThread();
           const interaction = command.interactionMode === undefined ? undefined : interactionModeOf(command.interactionMode);
           if (target.executor === 'codex' && interaction === 'plan') throw new Error('Plan mode for Codex is coming soon.');
-          if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new thread.');
+          if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new chat.');
           if (!target.builtin && command.modelSelection?.model) { await this.applyModel(target.executor, command.modelSelection.model); target.model = command.modelSelection.model; }
           this.setLevel(target, command.modelSelection?.options);
           await this.withSelectionMutation(async () => {
@@ -2274,7 +2274,7 @@ ${message.slice(0, 8000)}`;
         }
         case 'thread.model-selection.set': {
           const target = needThread();
-          if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new thread.');
+          if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new chat.');
           await this.applyModel(target.executor, command.modelSelection?.model);
           if (command.modelSelection?.model) target.model = command.modelSelection.model;
           // The reasoning level of T3's model menu: kept for the chat, shown by the chip, sent with each message.
@@ -2326,7 +2326,7 @@ ${message.slice(0, 8000)}`;
     try {
       const requestedExecutor = executorOf(input.modelSelection?.instanceId ?? instanceOf(this.selectedExecutor));
       if (requestedExecutor === 'codex' && interactionMode === 'plan') throw new Error('Plan mode for Codex is coming soon.');
-      if (existing && requestedExecutor !== existing.executor) throw new Error('A conversation cannot change its executor. Start a new thread.');
+      if (existing && requestedExecutor !== existing.executor) throw new Error('A conversation cannot change its executor. Start a new chat.');
       const launchProject = existing ? this.validateLaunchProject(existing, input.projectId) : null;
       const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.modelSelection?.instanceId, interactionMode);
       if (existing) await this.selectLaunchProject(existing, launchProject);
@@ -2512,7 +2512,7 @@ ${message.slice(0, 8000)}`;
         'orchestration.getThreadProjection': async (payload: any) => {
           await this.start();
           const thread = await this.loaded(String(payload?.threadId ?? ''));
-          if (!thread) throw new RpcFailure({ _tag: 'OrchestrationV2GetThreadProjectionError', threadId: String(payload?.threadId ?? 'unknown'), message: 'This thread does not exist.' });
+          if (!thread) throw new RpcFailure({ _tag: 'OrchestrationV2GetThreadProjectionError', threadId: String(payload?.threadId ?? 'unknown'), message: 'This chat does not exist.' });
           return thread.projection();
         },
         'orchestration.forceStopThread': async (payload: any) => {

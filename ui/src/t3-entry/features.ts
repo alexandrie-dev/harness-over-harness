@@ -98,13 +98,13 @@ export const HIDDEN_SELECTORS: readonly string[] = [
   '[data-testid="sidebar-working-header"]',
   '[data-testid="sidebar-snoozed-header"]',
   '[data-testid="sidebar-settled-header"]',
-  '[data-thread-item] button[aria-label="Settle thread"]',
-  '[data-thread-item] button[aria-label="Snooze thread"]',
+  '[data-thread-item] button[aria-label="Settle chat"]',
+  '[data-thread-item] button[aria-label="Snooze chat"]',
   // Полоски TimelineMinimap у левого края ленты выглядят как случайный знак «=» и дублируют прокрутку разговора.
   '[data-testid="timeline-minimap"]',
   // Правая общая панель остаётся скрытой. Thread details теперь нужна: в ней штатный компонент T3 показывает контекст Claude.
   '[aria-label="Toggle right panel"]',
-  'body:has([data-hoh-home-body]) header:has(nav[aria-label="Thread breadcrumb"])',
+  'body:has([data-hoh-home-body]) header:has(nav[aria-label="Chat breadcrumb"])',
 ];
 
 /** Пункты палитры команд T3 (components/CommandPalette.tsx), которые не показываются: образец значения пункта. Все

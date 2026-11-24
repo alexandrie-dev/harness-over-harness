@@ -67,12 +67,27 @@ def build_environment(home, window=False, cargo=False):
     return env
 
 
+qa_parent = None
+if len(sys.argv) >= 3 and sys.argv[1] == '--qa-dir':
+    qa_parent = str(Path(sys.argv[2]).resolve())
+    if not qa_parent.startswith('/mnt/toshiba/alexandrie/hoh/qa/') or not Path(qa_parent).is_dir():
+        raise SystemExit('--qa-dir must be an existing directory under HoH QA')
+    del sys.argv[1:3]
 if len(sys.argv) < 2:
-    raise SystemExit('usage: offline.py COMMAND [ARG ...]')
-with tempfile.TemporaryDirectory(prefix='hoh-ui-build-', dir='/tmp') as home:
+    raise SystemExit('usage: offline.py [--qa-dir DIR] COMMAND [ARG ...]')
+with tempfile.TemporaryDirectory(prefix='hoh-ui-build-', dir=qa_parent or '/tmp') as home:
     os.mkdir(home + '/runtime', mode=0o700)
     # env -i also documents the process boundary explicitly. No inherited values.
     env = build_environment(home, window='xvfb-run' in sys.argv[1:], cargo=Path(sys.argv[1]).name == 'cargo')
+    if qa_parent:
+        for key, name in [('CLAUDE_CONFIG_DIR', 'claude'), ('CODEX_HOME', 'codex'),
+                          ('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data')]:
+            env[key] = home + '/' + name
+            os.mkdir(env[key], mode=0o700)
+        # Chromium's Unix socket has a 108-byte path limit. Keep its temporary paths
+        # short while still placing every QA artifact below the requested QA directory.
+        env['TMPDIR'] = str(Path(qa_parent) / 'tmp')
+        os.makedirs(env['TMPDIR'], mode=0o700, exist_ok=True)
     command = ['/usr/bin/env', '-i', *[f'{k}={v}' for k, v in env.items()], *sys.argv[1:]]
     result = subprocess.run(command)
     raise SystemExit(result.returncode if result.returncode >= 0 else 128 - result.returncode)

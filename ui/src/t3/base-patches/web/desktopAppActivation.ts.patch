@@ -1,0 +1,8 @@
+--- a/web/desktopAppActivation.ts
++++ b/web/desktopAppActivation.ts
+@@ -102 +102 @@
+-        "T3 Code could not open a new thread for the project.",
++        "T3 Code could not open a new chat for the project.",
+@@ -116 +116 @@
+-      errorMessage(error, "T3 Code could not open a new thread for the project."),
++      errorMessage(error, "T3 Code could not open a new chat for the project."),

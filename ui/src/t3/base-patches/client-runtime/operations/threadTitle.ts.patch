@@ -1,0 +1,5 @@
+--- a/client-runtime/operations/threadTitle.ts
++++ b/client-runtime/operations/threadTitle.ts
+@@ -78 +78 @@
+-  return resolve(msg("New thread"));
++  return resolve(msg("New chat"));

@@ -1,10 +1,12 @@
 --- a/web/components/settings/settingsSearch.ts
 +++ b/web/components/settings/settingsSearch.ts
+@@ -106 +106 @@
+-  "/settings/threads": msg("Threads"),
++  "/settings/threads": msg("Chats"),
 @@ -132 +132 @@
 -export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
 +const T3_SETTINGS_NAV_GROUPS: ReadonlyArray<{
-@@ -177,0 +178,14 @@
-+
+@@ -178,0 +179,14 @@
 +// HoH (ui/T3-MAP.md): разделы настроек скрытых частей не показываются и не ищутся; остаются общие, вид, чат, провайдеры, архив.
 +export const HOH_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set<SettingsPath>([
 +  "/settings/general",
@@ -18,5 +20,75 @@
 +  ...group,
 +  paths: group.paths.filter((path) => HOH_SETTINGS_PATHS.has(path)),
 +})).filter((group) => group.paths.length > 0);
++
+@@ -269 +283 @@
+-        "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom",
++        "disk storage automatic delete deleted archived chats old inactive merged settled unchanged worktrees retention days project inherit off custom",
+@@ -309 +323 @@
+-    searchTerms: [msg("new thread project provider reasoning effort")],
++    searchTerms: [msg("new chat project provider reasoning effort")],
+@@ -316 +330 @@
+-    searchTerms: [msg("fallback agent provider out of usage new threads")],
++    searchTerms: [msg("fallback agent provider out of usage new chats")],
+@@ -325 +339 @@
+-      msg("new thread default runtime mode supervised approvals auto accept edits full access"),
++      msg("new chat default runtime mode supervised approvals auto accept edits full access"),
+@@ -372 +386 @@
+-    title: msg("Thread details"),
++    title: msg("Chat details"),
+@@ -488 +502 @@
+-    searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
++    searchTerms: [msg("hide fold running monitoring chats inbox sidebar shelf")],
+@@ -530 +544 @@
+-        "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar thread status order working approval",
++        "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar chat status order working approval",
+@@ -684 +698 @@
+-    title: msg("Auto-settle inactive threads"),
++    title: msg("Auto-settle inactive chats"),
+@@ -692 +706 @@
+-    title: msg("Compact idle threads"),
++    title: msg("Compact idle chats"),
+@@ -699 +713 @@
+-    title: msg("Auto-settle merged threads"),
++    title: msg("Auto-settle merged chats"),
+@@ -707 +721 @@
+-    title: msg("Keep threads with a PR"),
++    title: msg("Keep chats with a PR"),
+@@ -719 +733 @@
+-    searchTerms: [msg("thread timeout activity sidebar")],
++    searchTerms: [msg("chat timeout activity sidebar")],
+@@ -725 +739 @@
+-    title: msg("Thread notifications"),
++    title: msg("Chat notifications"),
+@@ -819 +833 @@
+-    title: msg("Continue threads after restarts"),
++    title: msg("Continue chats after restarts"),
+@@ -848 +862 @@
+-    title: msg("New threads"),
++    title: msg("New chats"),
+@@ -885 +899 @@
+-    searchTerms: [msg("ask before thread pinned section")],
++    searchTerms: [msg("ask before chat pinned section")],
+@@ -891 +905 @@
+-    searchTerms: [msg("ask before thread second click inline action")],
++    searchTerms: [msg("ask before chat second click inline action")],
+@@ -897 +911 @@
+-    searchTerms: [msg("ask before thread chat history")],
++    searchTerms: [msg("ask before chat chat history")],
+@@ -917 +931 @@
+-    searchTerms: [msg("generated thread titles source control content default provider")],
++    searchTerms: [msg("generated chat titles source control content default provider")],
+@@ -921 +935 @@
+-    title: msg("Thread title instructions"),
++    title: msg("Chat title instructions"),
+@@ -924 +938 @@
+-    searchTerms: [msg("generated thread titles prompt custom style naming rename regenerate")],
++    searchTerms: [msg("generated chat titles prompt custom style naming rename regenerate")],
+@@ -1057 +1071 @@
+-        "model api api key openai openrouter anthropic ollama lm studio custom endpoint base url thread titles commit messages",
++        "model api api key openai openrouter anthropic ollama lm studio custom endpoint base url chat titles commit messages",
+@@ -1453 +1467 @@
+-    title: msg("Archived threads"),
++    title: msg("Archived chats"),
 @@ -1609,0 +1624 @@
 +      HOH_SETTINGS_PATHS.has(item.to) &&

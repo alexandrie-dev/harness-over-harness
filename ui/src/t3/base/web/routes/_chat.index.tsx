@@ -104,7 +104,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
           <EmptyTitle>
-            <T>Couldn’t start a new thread</T>
+            <T>Couldn’t start a new chat</T>
           </EmptyTitle>
           <EmptyDescription>
             <T>The project is still available. Try opening the draft again.</T>

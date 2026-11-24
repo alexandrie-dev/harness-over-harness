@@ -434,7 +434,7 @@ export function BranchToolbarBranchSelector({
         stackedThreadToast({
           type: "error",
           title: gt("Action unavailable"),
-          description: gt("This connection cannot change the thread's branch."),
+          description: gt("This connection cannot change the chat's branch."),
         }),
       );
       return;

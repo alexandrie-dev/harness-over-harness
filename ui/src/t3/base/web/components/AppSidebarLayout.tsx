@@ -422,7 +422,7 @@ export function AppSidebarLayout({
   showSidebar?: boolean;
 }) {
   const gt = useGT();
-  const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Threads"));
+  const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Chats"));
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
@@ -479,7 +479,7 @@ export function AppSidebarLayout({
               data-app-sidebar=""
               {...sidebarArea}
               role="navigation"
-              aria-label={gt("Threads")}
+              aria-label={gt("Chats")}
               resizable={{
                 maxWidth: sidebarMaximumWidth,
                 minWidth: sidebarMinimumWidth,

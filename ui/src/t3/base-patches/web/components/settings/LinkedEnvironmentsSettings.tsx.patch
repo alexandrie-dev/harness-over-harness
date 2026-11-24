@@ -1,0 +1,8 @@
+--- a/web/components/settings/LinkedEnvironmentsSettings.tsx
++++ b/web/components/settings/LinkedEnvironmentsSettings.tsx
+@@ -103 +103 @@
+-            "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there.",
++            "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive chats there.",
+@@ -321 +321 @@
+-              Agents here can then launch, message and wait on threads there. It appears under
++              Agents here can then launch, message and wait on chats there. It appears under

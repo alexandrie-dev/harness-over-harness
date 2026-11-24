@@ -103,7 +103,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": msg("Keybindings"),
   "/settings/snap-shot": msg("SnapShots"),
   "/settings/providers": msg("Providers"),
-  "/settings/threads": msg("Threads"),
+  "/settings/threads": msg("Chats"),
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
   "/settings/scheduled-tasks": msg("Scheduled tasks"),
@@ -280,7 +280,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: [
       msg(
-        "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom",
+        "disk storage automatic delete deleted archived chats old inactive merged settled unchanged worktrees retention days project inherit off custom",
       ),
     ],
   },
@@ -320,14 +320,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Default model"),
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: [msg("new thread project provider reasoning effort")],
+    searchTerms: [msg("new chat project provider reasoning effort")],
   },
   {
     id: "fallback-model",
     title: msg("Fallback model"),
     to: "/settings/threads",
     scope: "environment-defaults",
-    searchTerms: [msg("fallback agent provider out of usage new threads")],
+    searchTerms: [msg("fallback agent provider out of usage new chats")],
     environmentOnly: true,
   },
   {
@@ -336,7 +336,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: [
-      msg("new thread default runtime mode supervised approvals auto accept edits full access"),
+      msg("new chat default runtime mode supervised approvals auto accept edits full access"),
     ],
   },
   {
@@ -383,7 +383,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "thread-details-items",
-    title: msg("Thread details"),
+    title: msg("Chat details"),
     to: "/settings/appearance",
     searchTerms: [
       msg(
@@ -499,7 +499,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "working-shelf",
     title: msg("Working section"),
     to: "/settings/general",
-    searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
+    searchTerms: [msg("hide fold running monitoring chats inbox sidebar shelf")],
   },
   {
     id: "boring-sidebar",
@@ -541,7 +541,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/chat",
     searchTerms: [
       msg(
-        "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar thread status order working approval",
+        "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar chat status order working approval",
       ),
     ],
   },
@@ -695,7 +695,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-settle-inactive-threads",
-    title: msg("Auto-settle inactive threads"),
+    title: msg("Auto-settle inactive chats"),
     to: "/settings/threads",
     searchTerms: [msg("sidebar inactivity days no activity automatically")],
     requiresThreadAutoSettlement: true,
@@ -703,14 +703,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "compact-idle-threads",
-    title: msg("Compact idle threads"),
+    title: msg("Compact idle chats"),
     to: "/settings/providers",
     scope: "environment-defaults",
     searchTerms: [msg("claude context compaction idle cache tokens usage summary resume")],
   },
   {
     id: "auto-settle-merged-threads",
-    title: msg("Auto-settle merged threads"),
+    title: msg("Auto-settle merged chats"),
     to: "/settings/threads",
     searchTerms: [msg("pull request merge closed automatically sidebar")],
     requiresThreadAutoSettlement: true,
@@ -718,7 +718,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "keep-threads-with-pull-requests",
-    title: msg("Keep threads with a PR"),
+    title: msg("Keep chats with a PR"),
     to: "/settings/threads",
     targetId: "auto-settle-inactive-threads",
     searchTerms: [msg("pull request inactivity auto-settle merge close sidebar")],
@@ -730,13 +730,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Days of inactivity before auto-settle"),
     to: "/settings/threads",
     targetId: "auto-settle-inactive-threads",
-    searchTerms: [msg("thread timeout activity sidebar")],
+    searchTerms: [msg("chat timeout activity sidebar")],
     requiresThreadAutoSettlement: true,
     scope: "project-defaults",
   },
   {
     id: "thread-notifications",
-    title: msg("Thread notifications"),
+    title: msg("Chat notifications"),
     to: "/settings/general",
     searchTerms: [msg("notification sound alert completion input approval desktop")],
   },
@@ -830,7 +830,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "continue-threads-after-server-update",
-    title: msg("Continue threads after restarts"),
+    title: msg("Continue chats after restarts"),
     to: "/settings/maintenance",
     scope: "project-defaults",
     searchTerms: [
@@ -859,7 +859,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "new-threads",
-    title: msg("New threads"),
+    title: msg("New chats"),
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: [msg("default workspace mode draft local worktree")],
@@ -896,19 +896,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "unpin-confirmation",
     title: msg("Unpin confirmation"),
     to: "/settings/general",
-    searchTerms: [msg("ask before thread pinned section")],
+    searchTerms: [msg("ask before chat pinned section")],
   },
   {
     id: "archive-confirmation",
     title: msg("Archive confirmation"),
     to: "/settings/general",
-    searchTerms: [msg("ask before thread second click inline action")],
+    searchTerms: [msg("ask before chat second click inline action")],
   },
   {
     id: "delete-confirmation",
     title: msg("Delete confirmation"),
     to: "/settings/general",
-    searchTerms: [msg("ask before thread chat history")],
+    searchTerms: [msg("ask before chat chat history")],
   },
   {
     id: "terminal-close-confirmation",
@@ -928,14 +928,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Text generation model"),
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: [msg("generated thread titles source control content default provider")],
+    searchTerms: [msg("generated chat titles source control content default provider")],
   },
   {
     id: "thread-title-instructions",
-    title: msg("Thread title instructions"),
+    title: msg("Chat title instructions"),
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: [msg("generated thread titles prompt custom style naming rename regenerate")],
+    searchTerms: [msg("generated chat titles prompt custom style naming rename regenerate")],
   },
   {
     id: "app-version",
@@ -1068,7 +1068,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
     searchTerms: [
       msg(
-        "model api api key openai openrouter anthropic ollama lm studio custom endpoint base url thread titles commit messages",
+        "model api api key openai openrouter anthropic ollama lm studio custom endpoint base url chat titles commit messages",
       ),
     ],
     providerSettingsOnly: true,
@@ -1464,7 +1464,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "archive",
-    title: msg("Archived threads"),
+    title: msg("Archived chats"),
     to: "/settings/archived",
     searchTerms: [msg("restore reopen deleted history projects")],
   },

@@ -1,12 +1,31 @@
 --- a/web/components/settings/ArchivedThreadsPanel.tsx
 +++ b/web/components/settings/ArchivedThreadsPanel.tsx
-@@ -39,2 +39,2 @@
+@@ -34 +34 @@
+-    failureTitle: msg("Failed to unarchive thread"),
++    failureTitle: msg("Failed to unarchive chat"),
+@@ -39,3 +39,3 @@
 -    label: msg("Delete", { $context: "verb, deletes a thread" }),
 -    threadLabel: msg("Delete {title}"),
+-    failureTitle: msg("Failed to delete thread"),
 +    label: msg("Delete · Coming Soon"),
 +    threadLabel: msg("Delete {title} · Coming Soon"),
++    failureTitle: msg("Failed to delete chat"),
 @@ -171,0 +172,4 @@
 +    if (action === "delete") {
 +      toastManager.add({ title: "Coming Soon" });
 +      return;
 +    }
+@@ -210 +214 @@
+-    reportFailure(result, gt("Archived thread action failed"));
++    reportFailure(result, gt("Archived chat action failed"));
+@@ -229 +233 @@
+-                  ? gt("Loading archived threads")
++                  ? gt("Loading archived chats")
+@@ -231,2 +235,2 @@
+-                    ? gt("Could not load archived threads")
+-                    : gt("No archived threads")}
++                    ? gt("Could not load archived chats")
++                    : gt("No archived chats")}
+@@ -238 +242 @@
+-                : (archiveError ?? gt("Archived threads will appear here."))
++                : (archiveError ?? gt("Archived chats will appear here."))

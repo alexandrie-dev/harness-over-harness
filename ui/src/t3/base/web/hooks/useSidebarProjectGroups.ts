@@ -37,7 +37,9 @@ export function useSidebarProjectGroups() {
   );
   const unsortedGroups = buildSidebarProjectSnapshots(
     {
-      projects: sortOrder === "manual" ? orderedProjects : projects,
+      projects: (sortOrder === "manual" ? orderedProjects : projects).filter((project) =>
+        project.id !== "hoh-project" || threads.some((thread) =>
+          thread.projectId === project.id && thread.environmentId === project.environmentId && thread.latestUserMessageAt != null)),
       groupScratchProjects: true,
       settings: groupingSettings,
       primaryEnvironmentId,

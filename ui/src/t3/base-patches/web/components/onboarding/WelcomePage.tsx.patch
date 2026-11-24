@@ -1,16 +1,16 @@
 --- a/web/components/onboarding/WelcomePage.tsx
 +++ b/web/components/onboarding/WelcomePage.tsx
-@@ -619,4 +619,7 @@
-     }
-     if (needsInstallOrSignIn(provider)) {
+@@ -219 +219 @@
+-              "{count, plural, one {Imported {count} thread} other {Imported {count} threads}}",
++              "{count, plural, one {Imported {count} chat} other {Imported {count} chats}}",
+@@ -333 +333 @@
+-                        ? gt("Import threads and start")
++                        ? gt("Import chats and start")
+@@ -620,0 +621,3 @@
 +      if (!canOperateTerminal) {
 +        return <span className="text-sm text-muted-foreground">Coming Soon</span>;
 +      }
-       return (
-         <TerminalAction
-@@ -638,11 +641,4 @@
- 
-   const notes = [
+@@ -640,7 +642,0 @@
 -    !canOperateTerminal &&
 -    [...found, ...available].some(
 -      (provider) =>
@@ -18,5 +18,27 @@
 -    )
 -      ? gt("This connection cannot control terminals.")
 -      : null,
-     !canManageProviders &&
-     (acpAllowed ||
+@@ -889 +885 @@
+-                    "{count, plural, one {Import {count} project and their threads} other {Import {count} projects and their threads}}",
++                    "{count, plural, one {Import {count} project and their chats} other {Import {count} projects and their chats}}",
+@@ -892 +888 @@
+-                : gt("Import projects and their threads")}
++                : gt("Import projects and their chats")}
+@@ -1472 +1468 @@
+-const IMPORT_PERMISSION_MESSAGE = msg("This connection cannot import projects or thread history.");
++const IMPORT_PERMISSION_MESSAGE = msg("This connection cannot import projects or chat history.");
+@@ -1712 +1708 @@
+-          "{count, plural, one {Imported {count} thread.} other {Imported {count} threads.}}",
++          "{count, plural, one {Imported {count} chat.} other {Imported {count} chats.}}",
+@@ -1715 +1711 @@
+-          "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
++          "{count, plural, one {{count} chat could not be imported.} other {{count} chats could not be imported.}}",
+@@ -1720 +1716 @@
+-          "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
++          "{count, plural, one {{count} chat could not be imported.} other {{count} chats could not be imported.}}",
+@@ -1725 +1721 @@
+-          "{count, plural, one {Imported {count} thread. Some thread history could not be imported.} other {Imported {count} threads. Some thread history could not be imported.}}",
++          "{count, plural, one {Imported {count} chat. Some chat history could not be imported.} other {Imported {count} chats. Some chat history could not be imported.}}",
+@@ -1729 +1725 @@
+-        importWarningRef.current = gt("Could not import thread history.");
++        importWarningRef.current = gt("Could not import chat history.");

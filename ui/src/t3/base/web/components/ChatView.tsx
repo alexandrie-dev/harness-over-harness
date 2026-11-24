@@ -490,7 +490,7 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const loadEarlierThreadHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
-    label: "load earlier thread history",
+    label: "load earlier chat history",
     reportFailure: false,
   });
   const { environments } = useEnvironments();
@@ -922,7 +922,7 @@ export default function ChatView(props: ChatViewProps) {
   const sideChatParent = useQuietThreadShell(sideChatParentRef);
   const parentThreadLink = (() => {
     if (sideChatParentRef !== null) {
-      const title = sideChatParent?.title ?? gt("Parent thread");
+      const title = sideChatParent?.title ?? gt("Parent chat");
       // Embedded, the parent is the view around it.
       if (embedded) return { title, sideChat: true };
       return {
@@ -938,7 +938,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (parentSubagentThreadRef !== null) {
       return {
-        title: parentSubagentThread?.title ?? gt("Parent thread"),
+        title: parentSubagentThread?.title ?? gt("Parent chat"),
         open: (): void => {
           void navigate({
             to: "/$environmentId/$threadId",
@@ -973,7 +973,7 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : {
           threadId: parentSubagentThreadRef.threadId,
-          title: parentSubagentThread?.title ?? gt("Parent thread"),
+          title: parentSubagentThread?.title ?? gt("Parent chat"),
         };
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
@@ -1912,7 +1912,7 @@ export default function ChatView(props: ChatViewProps) {
   const insertArtifactTemplateStable = useStableCallback(insertArtifactTemplate);
   const sendAppMessage = async (text: string) => {
     if (!isServerThread || activeThreadId === null) {
-      throw new Error(gt("Messages from apps need a started thread."));
+      throw new Error(gt("Messages from apps need a started chat."));
     }
     const result = await startThreadTurn({
       environmentId,
@@ -2873,7 +2873,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.lineage.sideChat === true
       ? gt("Side chats cannot start side chats.")
       : isSubagentThread
-        ? gt("Subagent threads cannot start side chats.")
+        ? gt("Subagent chats cannot start side chats.")
         : serverConfig === null
           ? gt("Side chats are not ready yet. Try again in a moment.")
           : serverConfig.environment.capabilities.sideChats !== true
@@ -2885,7 +2885,7 @@ export default function ChatView(props: ChatViewProps) {
                     activeThread?.worktreePath ?? null,
                     serverProjection?.runs ?? [],
                   )
-                ? gt("Available once the thread's worktree is set up.")
+                ? gt("Available once the chat's worktree is set up.")
                 : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const sendSideChatStable = useStableCallback(sideChat.open);
@@ -3721,7 +3721,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
                                   !canOperateThread
-                                    ? gt("This connection cannot change threads.")
+                                    ? gt("This connection cannot change chats.")
                                     : isEnvironmentChanging
                                       ? gt("Preparing machine")
                                       : isRevertingCheckpoint

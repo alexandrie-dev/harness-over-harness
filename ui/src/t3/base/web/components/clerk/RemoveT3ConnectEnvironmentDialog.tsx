@@ -70,7 +70,7 @@ export function RemoveT3ConnectEnvironmentDialog({
               </T>
             </AlertDialogTitle>
             <AlertDialogDescription>
-              <T>This forgets its pairing, credentials, and cached threads here.</T>
+              <T>This forgets its pairing, credentials, and cached chats here.</T>
             </AlertDialogDescription>
             <AlertDialogDescription>
               {shown.registration === "registered" ? (

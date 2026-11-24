@@ -1,0 +1,14 @@
+--- a/web/components/chat/chatViewSend.ts
++++ b/web/components/chat/chatViewSend.ts
+@@ -96 +96 @@
+-            "The previous request may have started. Open its thread to check before sending again.",
++            "The previous request may have started. Open its chat to check before sending again.",
+@@ -132 +132 @@
+-                            "The previous request may already be running. Check its thread first. Allow another send that could create a duplicate thread?",
++                            "The previous request may already be running. Check its chat first. Allow another send that could create a duplicate chat?",
+@@ -152 +152 @@
+-                children: m(msg("Open thread")),
++                children: m(msg("Open chat")),
+@@ -270 +270 @@
+-      error: error instanceof Error ? error.message : m(msg("Failed to revert thread state.")),
++      error: error instanceof Error ? error.message : m(msg("Failed to revert chat state.")),

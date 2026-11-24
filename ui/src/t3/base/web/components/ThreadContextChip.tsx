@@ -46,7 +46,7 @@ export function ThreadContextChip(props: {
                 draggable={false}
               />
             }
-            aria-label={gt("Thread, {title}", { title })}
+            aria-label={gt("Chat, {title}", { title })}
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
@@ -64,7 +64,7 @@ export function ThreadContextChip(props: {
           ? gt(
               "On another machine, so this machine's agent can't read it. Remove it or switch back to send.",
             )
-          : gt("Open thread")}
+          : gt("Open chat")}
       </TooltipPopup>
     </Tooltip>
   );

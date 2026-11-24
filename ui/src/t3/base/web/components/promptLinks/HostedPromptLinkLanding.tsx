@@ -48,7 +48,7 @@ function summarize(
       value:
         prompt.value === null
           ? {
-              title: resolve(msg("Open this thread")),
+              title: resolve(msg("Open this chat")),
               description: resolve(
                 msg("It opens in T3 Code if you're connected to the machine it runs on."),
               ),
@@ -58,7 +58,7 @@ function summarize(
           : {
               ...PROMPT_HEADER,
               prompt: prompt.value,
-              details: [resolve(msg("Opens one of your threads."))],
+              details: [resolve(msg("Opens one of your chats."))],
             },
     };
   }

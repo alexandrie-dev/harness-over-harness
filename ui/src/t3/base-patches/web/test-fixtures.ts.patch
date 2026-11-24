@@ -1,0 +1,5 @@
+--- a/web/test-fixtures.ts
++++ b/web/test-fixtures.ts
+@@ -34 +34 @@
+-      title: "Thread",
++      title: "Chat",

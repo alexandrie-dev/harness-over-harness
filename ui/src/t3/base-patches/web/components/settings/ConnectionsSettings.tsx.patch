@@ -1,0 +1,11 @@
+--- a/web/components/settings/ConnectionsSettings.tsx
++++ b/web/components/settings/ConnectionsSettings.tsx
+@@ -754 +754 @@
+-        "Remove {environment} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.",
++        "Remove {environment} from this device?\nThis forgets its pairing, credentials, and cached chats here. Switch it off instead to keep it saved.",
+@@ -1544 +1544 @@
+-                          "T3 Code will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL.",
++                          "T3 Code will restart on the Windows backend. Chats and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL.",
+@@ -1547 +1547 @@
+-                          "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL.",
++                          "The WSL backend will stop. Chats and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL.",

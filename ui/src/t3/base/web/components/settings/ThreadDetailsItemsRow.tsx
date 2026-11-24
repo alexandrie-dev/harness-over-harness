@@ -24,12 +24,12 @@ export function ThreadDetailsItemsRow() {
     <SettingsRow
       {...searchableSetting("thread-details-items")}
       description={gt(
-        "Choose what the thread details card shows. You can also right-click the card.",
+        "Choose what the chat details card shows.",
       )}
       resetAction={
         isDefaultThreadDetailsVisibility(visibility) ? null : (
           <SettingResetButton
-            ariaLabel={gt("Reset thread details to default")}
+            ariaLabel={gt("Reset chat details to default")}
             onClick={() => updateClientSettings(RESET_THREAD_DETAILS_ITEMS)}
           />
         )
@@ -42,7 +42,7 @@ export function ThreadDetailsItemsRow() {
                 variant="outline"
                 size="sm"
                 className="w-full justify-between sm:w-40"
-                aria-label={gt("Thread details: {enabled} of {total} on", {
+                aria-label={gt("Chat details: {enabled} of {total} on", {
                   enabled,
                   total: items.length,
                 })}

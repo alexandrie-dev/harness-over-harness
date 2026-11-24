@@ -248,13 +248,20 @@ const scenarios = [
   },
   {
     name: 'home-project-expanded', engine: busyEngine, stored: () => storage(true),
-    prepare: async (page, engine, sidebar) => { await readyBusy(page, engine, true); await setSidebar(page, sidebar); const folder = page.locator('.hoh-project').filter({ hasText: 'Alexandrie' }).first(); await folder.focus(); await page.keyboard.press('Enter'); await page.locator('.hoh-project-popover').waitFor(); }, blocks: ['home', 'projects', 'disclosure'],
+    prepare: async (page, engine, sidebar) => { await readyBusy(page, engine, true); await setSidebar(page, sidebar); const folder = page.locator('.hoh-project').filter({ hasText: 'Alexandrie' }).first(); await folder.focus(); await page.keyboard.press('Enter'); await page.locator('.hoh-project-popover').waitFor();
+      // Home scrolls the disclosure into view smoothly; measure its final position.
+      await page.waitForFunction(() => {
+        const panel = document.querySelector('.hoh-project-popover');
+        const scroller = panel?.closest('.hoh-home');
+        return panel && scroller && panel.getBoundingClientRect().bottom <= scroller.getBoundingClientRect().bottom + 1;
+      }, null, { timeout: 5000 });
+    }, blocks: ['home', 'projects', 'disclosure'],
   },
   {
     name: 'conversation', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
     prepare: async (page, _engine, sidebar) => {
       await page.getByText('The measured conversation lane is ready.').waitFor(); await setSidebar(page, sidebar);
-      const breadcrumb = page.getByRole('navigation', { name: 'Thread breadcrumb' });
+      const breadcrumb = page.getByRole('navigation', { name: 'Chat breadcrumb' });
       if (await breadcrumb.getByText('Alexandrie', { exact: true }).count() !== 1 || await breadcrumb.getByText('No project', { exact: true }).count() !== 0)
         throw new Error(`project conversation breadcrumb is wrong: ${JSON.stringify(await breadcrumb.innerText())}`);
     }, blocks: ['conversation'],
@@ -279,14 +286,14 @@ const scenarios = [
       await page.getByText('The measured conversation lane is ready.').waitFor();
       await setSidebar(page, 'expanded');
       await page.locator('[data-thread-item]').first().click({ button: 'right' });
-      await page.getByRole('menuitem', { name: 'Pin thread', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Pin chat', exact: true }).click();
       await page.waitForFunction(id => JSON.parse(localStorage.getItem('hoh-host.thread-metadata.v1') ?? '{}')[id]?.pinnedAt != null, CHAT.id);
       await page.reload();
       await page.getByText('The measured conversation lane is ready.').waitFor();
       await setSidebar(page, 'expanded');
       await page.waitForTimeout(1000);
       await page.locator('[data-thread-item]').first().click({ button: 'right' });
-      try { await page.getByRole('menuitem', { name: 'Unpin thread', exact: true }).waitFor({ timeout: 5000 }); }
+      try { await page.getByRole('menuitem', { name: 'Unpin chat', exact: true }).waitFor({ timeout: 5000 }); }
       catch { throw new Error(`Unpin unavailable: ${await page.evaluate(() => [...document.querySelectorAll('[role=menu]')].map(x => x.innerText).join('|'))}; metadata: ${await page.evaluate(() => localStorage.getItem('hoh-host.thread-metadata.v1'))}`); }
       await page.getByRole('menuitem', { name: 'Delete · Coming Soon', exact: true }).click();
       await page.getByText('Coming Soon', { exact: true }).first().waitFor();
@@ -302,7 +309,7 @@ const scenarios = [
       await page.getByText('The measured conversation lane is ready.').waitFor();
       await setSidebar(page, 'expanded');
       await page.locator('[data-thread-item]').first().click({ button: 'right' });
-      await page.getByRole('menuitem', { name: 'Archive thread', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Archive chat', exact: true }).click();
       await page.waitForFunction(id => JSON.parse(localStorage.getItem('hoh-host.thread-metadata.v1') ?? '{}')[id]?.archivedAt != null, CHAT.id);
       await page.goto(`${ORIGIN}/settings/archived`);
       await page.reload();
@@ -316,7 +323,7 @@ const scenarios = [
       await unarchive.click();
       await page.waitForFunction(id => JSON.parse(localStorage.getItem('hoh-host.thread-metadata.v1') ?? '{}')[id]?.archivedAt === null, CHAT.id);
       await page.reload();
-      await page.getByText('No archived threads', { exact: true }).waitFor();
+      await page.getByText('No archived chats', { exact: true }).waitFor();
       await setSidebar(page, sidebar);
     }, blocks: ['settings'],
   },
@@ -400,12 +407,15 @@ const scenarios = [
       await page.getByText('The measured conversation lane is ready.').waitFor();
       await setSidebar(page, sidebar);
       const panel = page.locator('[data-thread-details-card]');
-      if (!(await panel.isVisible().catch(() => false))) await page.getByRole('button', { name: 'Toggle thread details panel' }).click();
-      await panel.getByText('Context', { exact: true }).waitFor();
-      await panel.getByText('1k / 200k', { exact: true }).waitFor();
+      if (!(await panel.isVisible().catch(() => false))) await page.getByRole('button', { name: 'Toggle chat details panel' }).click();
+      await panel.getByText('Контекст', { exact: true }).waitFor();
+      await panel.getByText('Заполнено', { exact: true }).waitFor();
       // At narrow widths the details card is a popover and intentionally overlays the lane.
       // Measure the conversation after closing it, as in the other conversation scenarios.
-      await page.getByRole('button', { name: 'Toggle thread details panel' }).click();
+      await page.keyboard.press('Escape');
+      if (await panel.isVisible().catch(() => false)) {
+        await page.getByRole('button', { name: 'Toggle chat details panel' }).click();
+      }
       await panel.waitFor({ state: 'hidden' });
     }, blocks: ['conversation'],
   },
@@ -414,7 +424,7 @@ const scenarios = [
     prepare: async (page, _engine, sidebar) => {
       await page.locator('[data-settings-page-scroll]').waitFor();
       await setSidebar(page, sidebar);
-      await page.getByRole('button', { name: /Thread details: .* of .* on/ }).click();
+      await page.getByRole('button', { name: /Chat details: .* of .* on/ }).click();
       const menu = page.getByRole('menu').last();
       await menu.getByText('Context window', { exact: true }).waitFor();
       if (await menu.getByRole('menuitemcheckbox').count() !== 1) throw new Error('Thread details must expose only Context window');
@@ -466,7 +476,7 @@ const scenarios = [
       await assertModeChip(page, 'Full access');
       await selectPlan();
       await setSidebar(page, 'expanded');
-      await page.getByRole('button', { name: /New chat/ }).click({ modifiers: ['Shift'] });
+      await page.locator('[data-sidebar="menu-button"]').filter({ hasText: 'New chat' }).first().click({ modifiers: ['Shift'] });
       await page.waitForURL('**/draft/*');
       await setSidebar(page, sidebar);
       await assertModeChip(page, 'Full access');
@@ -504,22 +514,22 @@ const scenarios = [
       await setSidebar(page, 'expanded');
       const row = page.locator('[data-thread-item]').filter({ hasText: 'Generated recovery title' });
       await row.waitFor();
-      await page.getByRole('navigation', { name: 'Thread breadcrumb' }).getByText('Generated recovery title', { exact: true }).waitFor();
+      await page.getByRole('navigation', { name: 'Chat breadcrumb' }).getByText('Generated recovery title', { exact: true }).waitFor();
       await row.click({ button: 'right' });
-      await page.getByRole('menuitem', { name: 'Rename thread', exact: true }).click();
-      const input = page.getByRole('textbox', { name: 'Thread title' });
+      await page.getByRole('menuitem', { name: 'Rename chat', exact: true }).click();
+      const input = page.getByRole('textbox', { name: 'Chat title' });
       await input.fill('Manual recovery title'); await input.press('Enter');
       const renamed = page.locator('[data-thread-item]').filter({ hasText: 'Manual recovery title' });
       await renamed.waitFor();
-      await page.getByRole('navigation', { name: 'Thread breadcrumb' }).getByText('Manual recovery title', { exact: true }).waitFor();
+      await page.getByRole('navigation', { name: 'Chat breadcrumb' }).getByText('Manual recovery title', { exact: true }).waitFor();
       await renamed.click({ button: 'right' });
-      await page.getByRole('menuitem', { name: 'Pin thread', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Pin chat', exact: true }).click();
       await page.waitForFunction(id => JSON.parse(localStorage.getItem('hoh-host.thread-metadata.v1') ?? '{}')[id]?.pinnedAt != null, CHAT.id);
       if (!(await page.locator('[data-thread-item]').first().innerText()).includes('Manual recovery title')) throw new Error('Pinned conversation did not move to the top');
       await page.reload();
       await page.getByText('The measured conversation lane is ready.').waitFor(); await setSidebar(page, 'expanded');
       await page.locator('[data-thread-item]').filter({ hasText: 'Manual recovery title' }).waitFor();
-      await page.getByRole('navigation', { name: 'Thread breadcrumb' }).getByText('Manual recovery title', { exact: true }).waitFor();
+      await page.getByRole('navigation', { name: 'Chat breadcrumb' }).getByText('Manual recovery title', { exact: true }).waitFor();
       await page.waitForTimeout(1000);
       if (!(await page.locator('[data-thread-item]').first().innerText()).includes('Manual recovery title')) throw new Error('Pinned order was lost after restart');
       await setSidebar(page, sidebar);

@@ -242,50 +242,50 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
-    "Create\nCreating\nCreated\nT3 threads",
+    "Create\nCreating\nCreated\nT3 chats",
     {
       detail: msg(
-        "{status, select, inProgress {Creating T3 threads} completed {Created T3 threads} failed {Failed to create T3 threads} declined {Declined to create T3 threads} stopped {Stopped creating T3 threads} other {Creating T3 threads}}",
+        "{status, select, inProgress {Creating T3 chats} completed {Created T3 chats} failed {Failed to create T3 chats} declined {Declined to create T3 chats} stopped {Stopped creating T3 chats} other {Creating T3 chats}}",
       ),
     },
   ],
   [
-    "Start\nStarting\nStarted\na T3 thread",
+    "Start\nStarting\nStarted\na T3 chat",
     {
       detail: msg(
-        "{status, select, inProgress {Starting a T3 thread} completed {Started a T3 thread} failed {Failed to start a T3 thread} declined {Declined to start a T3 thread} stopped {Stopped starting a T3 thread} other {Starting a T3 thread}}",
+        "{status, select, inProgress {Starting a T3 chat} completed {Started a T3 chat} failed {Failed to start a T3 chat} declined {Declined to start a T3 chat} stopped {Stopped starting a T3 chat} other {Starting a T3 chat}}",
       ),
     },
   ],
   [
-    "List\nListing\nListed\nT3 threads",
+    "List\nListing\nListed\nT3 chats",
     {
       detail: msg(
-        "{status, select, inProgress {Listing T3 threads} completed {Listed T3 threads} failed {Failed to list T3 threads} declined {Declined to list T3 threads} stopped {Stopped listing T3 threads} other {Listing T3 threads}}",
+        "{status, select, inProgress {Listing T3 chats} completed {Listed T3 chats} failed {Failed to list T3 chats} declined {Declined to list T3 chats} stopped {Stopped listing T3 chats} other {Listing T3 chats}}",
       ),
     },
   ],
   [
-    "Read\nReading\nRead\na T3 thread",
+    "Read\nReading\nRead\na T3 chat",
     {
       detail: msg(
-        "{status, select, inProgress {Reading a T3 thread} completed {Read a T3 thread} failed {Failed to read a T3 thread} declined {Declined to read a T3 thread} stopped {Stopped reading a T3 thread} other {Reading a T3 thread}}",
+        "{status, select, inProgress {Reading a T3 chat} completed {Read a T3 chat} failed {Failed to read a T3 chat} declined {Declined to read a T3 chat} stopped {Stopped reading a T3 chat} other {Reading a T3 chat}}",
       ),
     },
   ],
   [
-    "Send\nSending\nSent\nto a T3 thread",
+    "Send\nSending\nSent\nto a T3 chat",
     {
       detail: msg(
-        "{status, select, inProgress {Sending to a T3 thread} completed {Sent to a T3 thread} failed {Failed to send to a T3 thread} declined {Declined to send to a T3 thread} stopped {Stopped sending to a T3 thread} other {Sending to a T3 thread}}",
+        "{status, select, inProgress {Sending to a T3 chat} completed {Sent to a T3 chat} failed {Failed to send to a T3 chat} declined {Declined to send to a T3 chat} stopped {Stopped sending to a T3 chat} other {Sending to a T3 chat}}",
       ),
     },
   ],
   [
-    "Wait\nWaiting\nWaited\nfor a T3 thread",
+    "Wait\nWaiting\nWaited\nfor a T3 chat",
     {
       detail: msg(
-        "{status, select, inProgress {Waiting for a T3 thread} completed {Waited for a T3 thread} failed {Failed to wait for a T3 thread} declined {Declined to wait for a T3 thread} stopped {Stopped waiting for a T3 thread} other {Waiting for a T3 thread}}",
+        "{status, select, inProgress {Waiting for a T3 chat} completed {Waited for a T3 chat} failed {Failed to wait for a T3 chat} declined {Declined to wait for a T3 chat} stopped {Stopped waiting for a T3 chat} other {Waiting for a T3 chat}}",
       ),
     },
   ],
@@ -306,26 +306,26 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
-    "Interrupt\nInterrupting\nRequested an interrupt of\na T3 thread",
+    "Interrupt\nInterrupting\nRequested an interrupt of\na T3 chat",
     {
       detail: msg(
-        "{status, select, inProgress {Interrupting a T3 thread} completed {Requested an interrupt of a T3 thread} failed {Failed to interrupt a T3 thread} declined {Declined to interrupt a T3 thread} stopped {Stopped interrupting a T3 thread} other {Interrupting a T3 thread}}",
+        "{status, select, inProgress {Interrupting a T3 chat} completed {Requested an interrupt of a T3 chat} failed {Failed to interrupt a T3 chat} declined {Declined to interrupt a T3 chat} stopped {Stopped interrupting a T3 chat} other {Interrupting a T3 chat}}",
       ),
     },
   ],
   [
-    "Hand off\nHanding off\nHanded off\nthread to a git worktree",
+    "Hand off\nHanding off\nHanded off\nchat to a git worktree",
     {
       detail: msg(
-        "{status, select, inProgress {Handing off thread to a git worktree} completed {Handed off thread to a git worktree} failed {Failed to hand off thread to a git worktree} declined {Declined to hand off thread to a git worktree} stopped {Stopped handing off thread to a git worktree} other {Handing off thread to a git worktree}}",
+        "{status, select, inProgress {Handing off chat to a git worktree} completed {Handed off chat to a git worktree} failed {Failed to hand off chat to a git worktree} declined {Declined to hand off chat to a git worktree} stopped {Stopped handing off chat to a git worktree} other {Handing off chat to a git worktree}}",
       ),
     },
   ],
   [
-    "Get\nGetting\nGot\nthread worktree status",
+    "Get\nGetting\nGot\nchat worktree status",
     {
       detail: msg(
-        "{status, select, inProgress {Getting thread worktree status} completed {Got thread worktree status} failed {Failed to get thread worktree status} declined {Declined to get thread worktree status} stopped {Stopped getting thread worktree status} other {Getting thread worktree status}}",
+        "{status, select, inProgress {Getting chat worktree status} completed {Got chat worktree status} failed {Failed to get chat worktree status} declined {Declined to get chat worktree status} stopped {Stopped getting chat worktree status} other {Getting chat worktree status}}",
       ),
     },
   ],
@@ -618,74 +618,74 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
-    "Read\nReading\nRead\nthread configuration",
+    "Read\nReading\nRead\nchat configuration",
     {
       detail: msg(
-        "{status, select, inProgress {Reading thread configuration} completed {Read thread configuration} failed {Failed to read thread configuration} declined {Declined to read thread configuration} stopped {Stopped reading thread configuration} other {Reading thread configuration}}",
+        "{status, select, inProgress {Reading chat configuration} completed {Read chat configuration} failed {Failed to read chat configuration} declined {Declined to read chat configuration} stopped {Stopped reading chat configuration} other {Reading chat configuration}}",
       ),
     },
   ],
   [
-    "Use\nUsing\nUsed\nthread model settings",
+    "Use\nUsing\nUsed\nchat model settings",
     {
       detail: msg(
-        "{status, select, inProgress {Using thread model settings} completed {Used thread model settings} failed {Failed to use thread model settings} declined {Declined to use thread model settings} stopped {Stopped using thread model settings} other {Using thread model settings}}",
+        "{status, select, inProgress {Using chat model settings} completed {Used chat model settings} failed {Failed to use chat model settings} declined {Declined to use chat model settings} stopped {Stopped using chat model settings} other {Using chat model settings}}",
       ),
     },
   ],
   [
-    "Use\nUsing\nUsed\nthread transfers",
+    "Use\nUsing\nUsed\nchat transfers",
     {
       detail: msg(
-        "{status, select, inProgress {Using thread transfers} completed {Used thread transfers} failed {Failed to use thread transfers} declined {Declined to use thread transfers} stopped {Stopped using thread transfers} other {Using thread transfers}}",
+        "{status, select, inProgress {Using chat transfers} completed {Used chat transfers} failed {Failed to use chat transfers} declined {Declined to use chat transfers} stopped {Stopped using chat transfers} other {Using chat transfers}}",
       ),
     },
   ],
   [
-    "Fork\nForking\nRequested a fork of\nthis thread",
+    "Fork\nForking\nRequested a fork of\nthis chat",
     {
       detail: msg(
-        "{status, select, inProgress {Forking this thread} completed {Requested a fork of this thread} failed {Failed to fork this thread} declined {Declined to fork this thread} stopped {Stopped forking this thread} other {Forking this thread}}",
+        "{status, select, inProgress {Forking this chat} completed {Requested a fork of this chat} failed {Failed to fork this chat} declined {Declined to fork this chat} stopped {Stopped forking this chat} other {Forking this chat}}",
       ),
     },
   ],
   [
-    "Merge\nMerging\nRequested a merge of\nthread context",
+    "Merge\nMerging\nRequested a merge of\nchat context",
     {
       detail: msg(
-        "{status, select, inProgress {Merging thread context} completed {Requested a merge of thread context} failed {Failed to merge thread context} declined {Declined to merge thread context} stopped {Stopped merging thread context} other {Merging thread context}}",
+        "{status, select, inProgress {Merging chat context} completed {Requested a merge of chat context} failed {Failed to merge chat context} declined {Declined to merge chat context} stopped {Stopped merging chat context} other {Merging chat context}}",
       ),
     },
   ],
   [
-    "Search\nSearching\nSearched\nthread content",
+    "Search\nSearching\nSearched\nchat content",
     {
       detail: msg(
-        "{status, select, inProgress {Searching thread content} completed {Searched thread content} failed {Failed to search thread content} declined {Declined to search thread content} stopped {Stopped searching thread content} other {Searching thread content}}",
+        "{status, select, inProgress {Searching chat content} completed {Searched chat content} failed {Failed to search chat content} declined {Declined to search chat content} stopped {Stopped searching chat content} other {Searching chat content}}",
       ),
     },
   ],
   [
-    "Read\nReading\nRead\nthread transfers",
+    "Read\nReading\nRead\nchat transfers",
     {
       detail: msg(
-        "{status, select, inProgress {Reading thread transfers} completed {Read thread transfers} failed {Failed to read thread transfers} declined {Declined to read thread transfers} stopped {Stopped reading thread transfers} other {Reading thread transfers}}",
+        "{status, select, inProgress {Reading chat transfers} completed {Read chat transfers} failed {Failed to read chat transfers} declined {Declined to read chat transfers} stopped {Stopped reading chat transfers} other {Reading chat transfers}}",
       ),
     },
   ],
   [
-    "Organize\nOrganizing\nOrganized\na thread",
+    "Organize\nOrganizing\nOrganized\na chat",
     {
       detail: msg(
-        "{status, select, inProgress {Organizing a thread} completed {Organized a thread} failed {Failed to organize a thread} declined {Declined to organize a thread} stopped {Stopped organizing a thread} other {Organizing a thread}}",
+        "{status, select, inProgress {Organizing a chat} completed {Organized a chat} failed {Failed to organize a chat} declined {Declined to organize a chat} stopped {Stopped organizing a chat} other {Organizing a chat}}",
       ),
     },
   ],
   [
-    "Update\nUpdating\nUpdated\nT3 thread metadata",
+    "Update\nUpdating\nUpdated\nT3 chat metadata",
     {
       detail: msg(
-        "{status, select, inProgress {Updating T3 thread metadata} completed {Updated T3 thread metadata} failed {Failed to update T3 thread metadata} declined {Declined to update T3 thread metadata} stopped {Stopped updating T3 thread metadata} other {Updating T3 thread metadata}}",
+        "{status, select, inProgress {Updating T3 chat metadata} completed {Updated T3 chat metadata} failed {Failed to update T3 chat metadata} declined {Declined to update T3 chat metadata} stopped {Stopped updating T3 chat metadata} other {Updating T3 chat metadata}}",
       ),
     },
   ],
@@ -770,10 +770,10 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
-    "Launch\nLaunching\nLaunched\na project thread",
+    "Launch\nLaunching\nLaunched\na project chat",
     {
       detail: msg(
-        "{status, select, inProgress {Launching a project thread} completed {Launched a project thread} failed {Failed to launch a project thread} declined {Declined to launch a project thread} stopped {Stopped launching a project thread} other {Launching a project thread}}",
+        "{status, select, inProgress {Launching a project chat} completed {Launched a project chat} failed {Failed to launch a project chat} declined {Declined to launch a project chat} stopped {Stopped launching a project chat} other {Launching a project chat}}",
       ),
     },
   ],

@@ -216,7 +216,7 @@ export function WelcomePage({
           toastManager.add({
             type: "success",
             title: gt(
-              "{count, plural, one {Imported {count} thread} other {Imported {count} threads}}",
+              "{count, plural, one {Imported {count} chat} other {Imported {count} chats}}",
               { count: importedThreadCount },
             ),
           });
@@ -330,7 +330,7 @@ export function WelcomePage({
                           { count: newCount },
                         )
                       : selected.length > 0
-                        ? gt("Import threads and start")
+                        ? gt("Import chats and start")
                         : gt("Start", { $context: "verb, finishes setup" })}
                 </Button>
               </div>
@@ -882,10 +882,10 @@ function ProjectsSection({
             <span className="block text-sm font-medium text-foreground">
               {canWrite && selected.length > 0
                 ? gt(
-                    "{count, plural, one {Import {count} project and their threads} other {Import {count} projects and their threads}}",
+                    "{count, plural, one {Import {count} project and their chats} other {Import {count} projects and their chats}}",
                     { count: selected.length },
                   )
-                : gt("Import projects and their threads")}
+                : gt("Import projects and their chats")}
             </span>
             <span className="block text-xs text-muted-foreground">
               <T>
@@ -1465,7 +1465,7 @@ function AgentInstallTerminal({
   );
 }
 
-const IMPORT_PERMISSION_MESSAGE = msg("This connection cannot import projects or thread history.");
+const IMPORT_PERMISSION_MESSAGE = msg("This connection cannot import projects or chat history.");
 
 // Creates the selected projects, then imports each one's agent history. Owns retry state so a
 // second Start resumes instead of recreating projects.
@@ -1705,24 +1705,24 @@ function useProjectImport({
     if (importedProjectsCount < selection.length) {
       if (importedThreadCount > 0 && skippedThreadCount > 0) {
         importWarningRef.current = `${gt(
-          "{count, plural, one {Imported {count} thread.} other {Imported {count} threads.}}",
+          "{count, plural, one {Imported {count} chat.} other {Imported {count} chats.}}",
           { count: importedThreadCount },
         )} ${gt(
-          "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
+          "{count, plural, one {{count} chat could not be imported.} other {{count} chats could not be imported.}}",
           { count: skippedThreadCount },
         )}`;
       } else if (skippedThreadCount > 0) {
         importWarningRef.current = gt(
-          "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
+          "{count, plural, one {{count} chat could not be imported.} other {{count} chats could not be imported.}}",
           { count: skippedThreadCount },
         );
       } else if (importedThreadCount > 0) {
         importWarningRef.current = gt(
-          "{count, plural, one {Imported {count} thread. Some thread history could not be imported.} other {Imported {count} threads. Some thread history could not be imported.}}",
+          "{count, plural, one {Imported {count} chat. Some chat history could not be imported.} other {Imported {count} chats. Some chat history could not be imported.}}",
           { count: importedThreadCount },
         );
       } else {
-        importWarningRef.current = gt("Could not import thread history.");
+        importWarningRef.current = gt("Could not import chat history.");
       }
     }
     finishAfterImport();

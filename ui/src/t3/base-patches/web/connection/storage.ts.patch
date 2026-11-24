@@ -1,0 +1,9 @@
+--- a/web/connection/storage.ts
++++ b/web/connection/storage.ts
+@@ -128,3 +128,3 @@
+-  "load-thread": msg("Could not load thread: {cause}"),
+-  "save-thread": msg("Could not save thread: {cause}"),
+-  "remove-thread": msg("Could not remove thread: {cause}"),
++  "load-thread": msg("Could not load chat: {cause}"),
++  "save-thread": msg("Could not save chat: {cause}"),
++  "remove-thread": msg("Could not remove chat: {cause}"),

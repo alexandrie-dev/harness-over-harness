@@ -45,12 +45,12 @@ export function ThreadLinkPicker({
     )
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
-    <Command mode="none" value={query} onValueChange={setQuery} aria-label={gt("Choose a thread")}>
-      <CommandInput placeholder={gt("Search threads or projects...")} disabled={pending} />
+    <Command mode="none" value={query} onValueChange={setQuery} aria-label={gt("Choose a chat")}>
+      <CommandInput placeholder={gt("Search chats or projects...")} disabled={pending} />
       <CommandList className="max-h-80 overflow-y-auto">
         {candidates.length === 0 ? (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-            <T>No active threads found.</T>
+            <T>No active chats found.</T>
           </div>
         ) : (
           candidates.map((thread) => {
@@ -64,7 +64,7 @@ export function ThreadLinkPicker({
               >
                 <MessageSquareIcon aria-hidden className="size-4 shrink-0" />
                 <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate">{thread.title || gt("Untitled thread")}</span>
+                  <span className="truncate">{thread.title || gt("Untitled chat")}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     {projectNames.get(thread.projectId)}
                   </span>

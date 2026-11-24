@@ -1,0 +1,17 @@
+--- a/contracts/terminal.ts
++++ b/contracts/terminal.ts
+@@ -442 +442 @@
+-    return `Failed to ${this.operation} terminal history for thread: ${this.threadId}, terminal: ${this.terminalId}`;
++    return `Failed to ${this.operation} terminal history for chat: ${this.threadId}, terminal: ${this.terminalId}`;
+@@ -454 +454 @@
+-    return `Unknown terminal thread: ${this.threadId}, terminal: ${this.terminalId}`;
++    return `Unknown terminal chat: ${this.threadId}, terminal: ${this.terminalId}`;
+@@ -489 +489 @@
+-    return `Terminal is not running for thread: ${this.threadId}, terminal: ${this.terminalId}`;
++    return `Terminal is not running for chat: ${this.threadId}, terminal: ${this.terminalId}`;
+@@ -503 +503 @@
+-    return `Failed to write to terminal for thread: ${this.threadId}, terminal: ${this.terminalId}, PID: ${this.terminalPid}`;
++    return `Failed to write to terminal for chat: ${this.threadId}, terminal: ${this.terminalId}, PID: ${this.terminalPid}`;
+@@ -519 +519 @@
+-    return `Failed to resize terminal for thread: ${this.threadId}, terminal: ${this.terminalId}, PID: ${this.terminalPid} to ${this.cols}x${this.rows}`;
++    return `Failed to resize terminal for chat: ${this.threadId}, terminal: ${this.terminalId}, PID: ${this.terminalPid} to ${this.cols}x${this.rows}`;

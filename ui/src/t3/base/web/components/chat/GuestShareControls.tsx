@@ -123,7 +123,7 @@ function GuestShareDialog({
           </DialogTitle>
           <DialogDescription>
             <T>
-              The guest sees the thread as you do, including command output and the agent&apos;s
+              The guest sees the chat as you do, including command output and the agent&apos;s
               reasoning. Each message they send waits for you.
             </T>
           </DialogDescription>

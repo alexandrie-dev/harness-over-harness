@@ -1,0 +1,5 @@
+--- a/web/components/settings/ProviderAuthenticationSection.tsx
++++ b/web/components/settings/ProviderAuthenticationSection.tsx
+@@ -343 +343 @@
+-                        "Sign out of {provider} on {environment}? This stops running threads that share this sign-in. Thread history is kept.",
++                        "Sign out of {provider} on {environment}? This stops running chats that share this sign-in. Chat history is kept.",

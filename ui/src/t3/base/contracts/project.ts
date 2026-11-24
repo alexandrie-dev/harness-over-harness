@@ -198,7 +198,7 @@ export const ProjectUpdatePayload = Schema.Struct({
   pinned: Schema.optional(Schema.Boolean),
   archived: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Threads and files are kept.",
+      description: "Chats and files are kept.",
     }),
   ),
 });

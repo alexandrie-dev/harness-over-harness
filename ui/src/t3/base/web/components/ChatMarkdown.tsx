@@ -1244,7 +1244,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return environmentId ? (
         <MarkdownThreadLink environmentId={environmentId} link={threadLink} label={label} />
       ) : (
-        <span>{label ?? gt("Thread")}</span>
+        <span>{label ?? gt("Chat")}</span>
       );
     }
     const contextReference = href ? parseComposerContextHref(href) : null;

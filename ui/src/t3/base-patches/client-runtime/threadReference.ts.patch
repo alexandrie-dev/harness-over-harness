@@ -1,0 +1,7 @@
+--- a/client-runtime/threadReference.ts
++++ b/client-runtime/threadReference.ts
+@@ -43,2 +43,2 @@
+-    successTitle: resolve(msg("Thread copied")),
+-    failureTitle: resolve(msg("Failed to copy thread")),
++    successTitle: resolve(msg("Chat copied")),
++    failureTitle: resolve(msg("Failed to copy chat")),

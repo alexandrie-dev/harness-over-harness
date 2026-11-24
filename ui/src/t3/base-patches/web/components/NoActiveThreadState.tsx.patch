@@ -1,0 +1,14 @@
+--- a/web/components/NoActiveThreadState.tsx
++++ b/web/components/NoActiveThreadState.tsx
+@@ -14 +14 @@
+-              <T>No active thread</T>
++              <T>No active chat</T>
+@@ -19 +19 @@
+-                <T>No active thread</T>
++                <T>No active chat</T>
+@@ -29 +29 @@
+-                <T>Pick a thread to continue</T>
++                <T>Pick a chat to continue</T>
+@@ -32 +32 @@
+-                <T>Select an existing thread or create a new one to get started.</T>
++                <T>Select an existing chat or create a new one to get started.</T>

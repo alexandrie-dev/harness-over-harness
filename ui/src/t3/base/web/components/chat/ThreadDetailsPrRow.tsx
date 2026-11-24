@@ -400,8 +400,8 @@ export function ThreadDetailsPrRow({
           suffix: newThreadSuffix,
           tooltip:
             composerTarget === undefined
-              ? gt("Check the branch out and resolve the conflicts in a new thread")
-              : gt("Resolve the conflicts in this thread"),
+              ? gt("Check the branch out and resolve the conflicts in a new chat")
+              : gt("Resolve the conflicts in this chat"),
           onClick: startResolveConflicts,
         }
       : rowAction === "ready"
@@ -431,8 +431,8 @@ export function ThreadDetailsPrRow({
                 ),
               tooltip:
                 composerTarget === undefined
-                  ? gt("Fix the failing checks in a new thread")
-                  : gt("Fix the failing checks in this thread"),
+                  ? gt("Fix the failing checks in a new chat")
+                  : gt("Fix the failing checks in this chat"),
               onClick: startFixChecks,
             }
           : rowAction === "merge"

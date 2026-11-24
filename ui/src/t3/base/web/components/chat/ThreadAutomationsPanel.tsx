@@ -82,10 +82,10 @@ export function ThreadAutomationsPanel(props: {
     useMessages(),
   );
   const setTaskEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
-    label: "thread automation toggle",
+    label: "chat automation toggle",
   });
   const runTaskNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
-    label: "thread automation run now",
+    label: "chat automation run now",
   });
   const navigate = useNavigate();
   const gt = useGT();

@@ -124,7 +124,7 @@ export function V2LifecycleRow(props: {
             <MessageSquareIcon className="size-4 text-secondary-label" aria-hidden />
           </span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
-            {item.title ?? gt("Created thread")}
+            {item.title ?? gt("Created chat")}
           </span>
           <Button
             size="xs"
@@ -132,7 +132,7 @@ export function V2LifecycleRow(props: {
             aria-label={
               item.title != null
                 ? gt("Open {title}", { title: item.title })
-                : gt("Open created thread")
+                : gt("Open created chat")
             }
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >
@@ -148,10 +148,10 @@ export function V2LifecycleRow(props: {
         label={
           item.title ? (
             <T>
-              Created thread · <Var>{item.title}</Var>
+              Created chat · <Var>{item.title}</Var>
             </T>
           ) : (
-            <T>Created thread</T>
+            <T>Created chat</T>
           )
         }
         trailing={
@@ -159,7 +159,7 @@ export function V2LifecycleRow(props: {
             aria-label={
               item.title != null
                 ? gt("Open {title}", { title: item.title })
-                : gt("Open created thread")
+                : gt("Open created chat")
             }
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >

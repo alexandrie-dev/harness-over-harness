@@ -71,7 +71,7 @@ function statusWithoutLiveData(
   return Option.isSome(data) ? "cached" : "empty";
 }
 
-const THREAD_SYNC_ERROR = msg("Could not synchronize the thread.");
+const THREAD_SYNC_ERROR = msg("Could not synchronize the chat.");
 const HISTORY_LOAD_ERROR = msg("Could not load earlier activity.");
 const WORK_HISTORY_CHANGED_ERROR = msg("Work history changed. Retry loading it.");
 const THREAD_ERRORS: ReadonlySet<string> = new Set([

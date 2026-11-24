@@ -109,7 +109,7 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
   ["Launch arguments", msg("Launch arguments")],
   ["CLAUDE_CONFIG_DIR path", msg("CLAUDE_CONFIG_DIR path")],
   ["Auto-compact after", msg("Auto-compact after")],
-  ["Compact idle threads", msg("Compact idle threads")],
+  ["Compact idle chats", msg("Compact idle chats")],
   ["Sign-in method", msg("Sign-in method")],
   ["API key", msg("API key")],
   ["GCP project", msg("GCP project")],
@@ -156,9 +156,9 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
     msg("Compact after 100,000 to 1,000,000 tokens. Leave empty to use Claude's default."),
   ],
   [
-    "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+    "When to compact an idle chat over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
     msg(
-      "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+      "When to compact an idle chat over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
     ),
   ],
   [

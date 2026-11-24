@@ -1,0 +1,14 @@
+--- a/web/components/auth/ConnectAgentSurface.tsx
++++ b/web/components/auth/ConnectAgentSurface.tsx
+@@ -44 +44 @@
+-    description: msg("Read projects and threads. Cannot start, message or change anything."),
++    description: msg("Read projects and chats. Cannot start, message or change anything."),
+@@ -274 +274 @@
+-              This agent wants to use the threads in every project on{" "}
++              This agent wants to use the chats in every project on{" "}
+@@ -282 +282 @@
+-              This agent wants to use the threads in every project on{" "}
++              This agent wants to use the chats in every project on{" "}
+@@ -389 +389 @@
+-                Beyond read only, it can start, message and stop threads, and none of them can run
++                Beyond read only, it can start, message and stop chats, and none of them can run

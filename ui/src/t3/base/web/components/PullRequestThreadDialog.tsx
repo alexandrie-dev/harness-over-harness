@@ -163,7 +163,7 @@ export function PullRequestThreadDialog({
         setPrepareErrorMessage(
           thrownErrorMessage(error, m) ??
             gt(
-              "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
+              "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} chat.",
               { term },
             ),
         );
@@ -202,7 +202,7 @@ export function PullRequestThreadDialog({
       : preparePullRequestThreadAction.error
         ? (thrownErrorMessage(preparePullRequestThreadAction.error, messages) ??
           gt(
-            "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
+            "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} chat.",
             { term },
           ))
         : null);
@@ -234,7 +234,7 @@ export function PullRequestThreadDialog({
           </DialogTitle>
           <DialogDescription>
             {gt(
-              "Resolve a {provider} {term, select, mr {merge request} cr {change request} other {pull request}}, then create the draft thread in the main repo or in a dedicated worktree.",
+              "Resolve a {provider} {term, select, mr {merge request} cr {change request} other {pull request}}, then create the draft chat in the main repo or in a dedicated worktree.",
               { provider: sourceControlPresentation.providerName, term },
             )}
           </DialogDescription>

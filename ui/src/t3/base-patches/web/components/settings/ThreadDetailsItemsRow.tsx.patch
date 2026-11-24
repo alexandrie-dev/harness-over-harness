@@ -1,28 +1,21 @@
 --- a/web/components/settings/ThreadDetailsItemsRow.tsx
 +++ b/web/components/settings/ThreadDetailsItemsRow.tsx
-@@ -18,7 +18,8 @@
-   const gt = useGT();
-   const searchableSetting = useSearchableSetting();
-   const visibility = useClientSettings(resolveThreadDetailsVisibility);
+@@ -21 +21,2 @@
 -  const enabled = THREAD_DETAILS_ITEMS.filter((item) => visibility[item.id]).length;
 +  const items = THREAD_DETAILS_ITEMS.filter((item) => item.id === "context");
 +  const enabled = items.filter((item) => visibility[item.id]).length;
-   return (
-     <SettingsRow
-       {...searchableSetting("thread-details-items")}
-@@ -43,13 +44,13 @@
-                 className="w-full justify-between sm:w-40"
-                 aria-label={gt("Thread details: {enabled} of {total} on", {
-                   enabled,
+@@ -26 +27 @@
+-        "Choose what the thread details card shows. You can also right-click the card.",
++        "Choose what the chat details card shows.",
+@@ -31 +32 @@
+-            ariaLabel={gt("Reset thread details to default")}
++            ariaLabel={gt("Reset chat details to default")}
+@@ -44 +45 @@
+-                aria-label={gt("Thread details: {enabled} of {total} on", {
++                aria-label={gt("Chat details: {enabled} of {total} on", {
+@@ -46 +47 @@
 -                  total: THREAD_DETAILS_ITEMS.length,
 +                  total: items.length,
-                 })}
-               />
-             }
-           >
-             <T>
+@@ -52 +53 @@
 -              <Var>{enabled}</Var> of <Var>{THREAD_DETAILS_ITEMS.length}</Var> on
 +              <Var>{enabled}</Var> of <Var>{items.length}</Var> on
-             </T>
-             <ChevronDownIcon aria-hidden />
-           </MenuTrigger>

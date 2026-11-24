@@ -203,7 +203,7 @@ function ProviderSetupActions({
   async function removeRuntime() {
     const confirmed = await ensureLocalApi().dialogs.confirm(
       gt(
-        "Remove the downloaded Antigravity runtime from {environment}? Google sign-in and thread history are kept.",
+        "Remove the downloaded Antigravity runtime from {environment}? Google sign-in and chat history are kept.",
         { environment: environmentLabel },
       ),
     );

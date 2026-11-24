@@ -325,7 +325,7 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
     return (
       <Notice
         title={gt("This link has ended")}
-        detail={gt("The owner stopped sharing this thread.")}
+        detail={gt("The owner stopped sharing this chat.")}
       />
     );
   }
@@ -382,7 +382,7 @@ function NameForm({
   return (
     <form className="m-auto flex w-full max-w-xs flex-col gap-3 p-6" onSubmit={submit}>
       <h1 className="text-base font-medium">
-        <T>Join a shared thread</T>
+        <T>Join a shared chat</T>
       </h1>
       <label className="flex flex-col gap-1.5 text-sm" htmlFor="guest-name">
         {gt("Your name")}

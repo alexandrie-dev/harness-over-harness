@@ -1,0 +1,8 @@
+--- a/web/components/sidebar/SidebarProjectFolderHeader.tsx
++++ b/web/components/sidebar/SidebarProjectFolderHeader.tsx
+@@ -122 +122 @@
+-                aria-label={gt("New thread in {project}", { project: group.displayName })}
++                aria-label={gt("New chat in {project}", { project: group.displayName })}
+@@ -131 +131 @@
+-              New thread in <Var>{group.displayName}</Var>
++              New chat in <Var>{group.displayName}</Var>

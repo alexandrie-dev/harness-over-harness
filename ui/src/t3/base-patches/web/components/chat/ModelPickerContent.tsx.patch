@@ -1,0 +1,5 @@
+--- a/web/components/chat/ModelPickerContent.tsx
++++ b/web/components/chat/ModelPickerContent.tsx
+@@ -971 +971 @@
+-                      "{provider} is unavailable in this thread. Start a new thread to switch providers.",
++                      "{provider} is unavailable in this chat. Start a new chat to switch providers.",

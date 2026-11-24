@@ -120,10 +120,10 @@ export function IssueThreadLinks({
   const linkedThreadsLabel =
     linkedThreads.length > 0
       ? gt(
-          "{count, plural, one {Linked from {count} thread} other {Linked from {count} threads}}",
+          "{count, plural, one {Linked from {count} chat} other {Linked from {count} chats}}",
           { count: linkedThreads.length },
         )
-      : gt("Linked threads");
+      : gt("Linked chats");
   // A failed read shows "?" and falls back to searching threads for the issue's link.
   const relationsKnown = (relations.data ?? lastRelations) !== null;
   return (
@@ -162,7 +162,7 @@ export function IssueThreadLinks({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label={linkedHere ? gt("Unlink from thread") : gt("Link to thread")}
+                aria-label={linkedHere ? gt("Unlink from chat") : gt("Link to chat")}
                 aria-pressed={thread === null ? undefined : linkedHere}
                 disabled={pending}
                 onClick={() => {
@@ -180,11 +180,11 @@ export function IssueThreadLinks({
           </TooltipTrigger>
           <TooltipPopup>
             {linkedHere ? (
-              <T>Unlink from this thread</T>
+              <T>Unlink from this chat</T>
             ) : thread === null ? (
-              gt("Link to thread")
+              gt("Link to chat")
             ) : (
-              <T>Link to this thread</T>
+              <T>Link to this chat</T>
             )}
           </TooltipPopup>
         </Tooltip>
@@ -193,7 +193,7 @@ export function IssueThreadLinks({
         <Dialog open onOpenChange={setPickerOpen}>
           <DialogPopup className="max-w-md" showCloseButton={false}>
             <DialogTitle className="sr-only">
-              <T>Link issue to a thread</T>
+              <T>Link issue to a chat</T>
             </DialogTitle>
             <ThreadLinkPicker
               environmentId={environmentId}

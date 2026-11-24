@@ -1,0 +1,8 @@
+--- a/web/hooks/useStartTriage.ts
++++ b/web/hooks/useStartTriage.ts
+@@ -92 +92 @@
+-    }).catch(() => fail(m(msg("T3 Code could not open a new thread."))));
++    }).catch(() => fail(m(msg("T3 Code could not open a new chat."))));
+@@ -97 +97 @@
+-      fail(m(msg("This machine cannot start threads without a project.")));
++      fail(m(msg("This machine cannot start chats without a project.")));

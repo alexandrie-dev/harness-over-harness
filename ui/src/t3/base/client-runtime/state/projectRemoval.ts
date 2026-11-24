@@ -40,13 +40,13 @@ export function planProjectRemoval<
       ? targetKind === "checkout"
         ? resolve(
             msg(
-              '{count, plural, one {Remove checkout "{label}" and delete its {count} thread?} other {Remove checkout "{label}" and delete its {count} threads?}}',
+              '{count, plural, one {Remove checkout "{label}" and delete its {count} chat?} other {Remove checkout "{label}" and delete its {count} chats?}}',
               { count: threadCount, label: targetLabel },
             ),
           )
         : resolve(
             msg(
-              '{count, plural, one {Remove project "{label}" and delete its {count} thread?} other {Remove project "{label}" and delete its {count} threads?}}',
+              '{count, plural, one {Remove project "{label}" and delete its {count} chat?} other {Remove project "{label}" and delete its {count} chats?}}',
               { count: threadCount, label: targetLabel },
             ),
           )
@@ -71,13 +71,13 @@ export function planProjectRemoval<
       ? [
           resolve(
             msg(
-              "Those threads and any archived threads are deleted from T3 Code. Provider sessions are kept.",
+              "Those chats and any archived chats are deleted from T3 Code. Provider sessions are kept.",
             ),
           ),
         ]
       : [
           resolve(
-            msg("Any archived threads are deleted from T3 Code. Provider sessions are kept."),
+            msg("Any archived chats are deleted from T3 Code. Provider sessions are kept."),
           ),
         ]),
     isWholeGroup && !hasOtherMembers

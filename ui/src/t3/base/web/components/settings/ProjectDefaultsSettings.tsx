@@ -145,10 +145,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       title={gt("Model")}
       description={
         isProjectScope
-          ? gt("Model for new threads in this project.")
+          ? gt("Model for new chats in this project.")
           : !unavailable && modelSource !== "project" && automaticModel
-            ? gt("Default model for new threads, selected automatically. Projects can override it.")
-            : gt("Default model for new threads. Projects can override it.")
+            ? gt("Default model for new chats, selected automatically. Projects can override it.")
+            : gt("Default model for new chats. Projects can override it.")
       }
       status={
         mixedModel
@@ -230,8 +230,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       title={gt("Workspace")}
       description={
         isProjectScope
-          ? gt("Where new threads in this project start.")
-          : gt("Where new threads start. Projects and their t3.json can override it.")
+          ? gt("Where new chats in this project start.")
+          : gt("Where new chats start. Projects and their t3.json can override it.")
       }
       resetAction={
         !isProjectScope && settings.defaultThreadEnvMode !== null ? (
@@ -275,7 +275,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       settingKeys={["fallbackModelSelection"]}
       mixed={mixedFallback}
       {...searchableSetting("fallback-model")}
-      description={gt("Used for new threads when the default model's provider is out of usage.")}
+      description={gt("Used for new chats when the default model's provider is out of usage.")}
       resetAction={
         mixedFallback || settings.fallbackModelSelection !== null ? (
           <SettingResetButton
@@ -353,7 +353,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   return (
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
-      title={category === "source-control" ? gt("Repositories") : gt("New threads")}
+      title={category === "source-control" ? gt("Repositories") : gt("New chats")}
     >
       {category === "project" ? (
         <>
@@ -372,8 +372,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {...searchableSetting("default-permissions")}
             description={
               isProjectScope
-                ? gt("Permissions for new threads in this project.")
-                : gt("Default permissions for new threads. Projects can override them.")
+                ? gt("Permissions for new chats in this project.")
+                : gt("Default permissions for new chats. Projects can override them.")
             }
             resetAction={
               settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (

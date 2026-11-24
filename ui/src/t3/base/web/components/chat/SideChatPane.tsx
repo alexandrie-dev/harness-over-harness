@@ -61,9 +61,9 @@ export default function SideChatPane(props: {
   const mergeRun = projection ? resolveLatestMergeBackRun(projection) : null;
   // A pending merge-back would fail the main thread's queued message, so the server refuses it.
   const bringBackBlockedReason = !canOperate
-    ? gt("This connection cannot change threads.")
+    ? gt("This connection cannot change chats.")
     : threadRuntimeIsActive(parent?.runtime)
-      ? gt("Available when the main thread is idle.")
+      ? gt("Available when the main chat is idle.")
       : mergeRun === null
         ? gt("Available after a finished reply.")
         : null;
@@ -80,7 +80,7 @@ export default function SideChatPane(props: {
       toastManager.add({
         type: "success",
         title: gt("Brought back"),
-        description: gt("The main thread gets this side chat with your next message there."),
+        description: gt("The main chat gets this side chat with your next message there."),
       });
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -148,7 +148,7 @@ export default function SideChatPane(props: {
             }
           />
           <TooltipPopup side="bottom">
-            {bringBackBlockedReason ?? gt("Adds this side chat to the main thread's next message.")}
+            {bringBackBlockedReason ?? gt("Adds this side chat to the main chat's next message.")}
           </TooltipPopup>
         </Tooltip>
         <Button

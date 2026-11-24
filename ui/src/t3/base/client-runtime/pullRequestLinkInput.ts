@@ -113,7 +113,7 @@ export function resolveLinkPullRequestInput(
     return {
       error: resolve(
         msg(
-          "Paste the full pull request URL; this thread has no repository to resolve the number against.",
+          "Paste the full pull request URL; this chat has no repository to resolve the number against.",
         ),
       ),
     };

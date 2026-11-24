@@ -1,12 +1,14 @@
 --- a/web/components/chat/PanelLayoutControls.tsx
 +++ b/web/components/chat/PanelLayoutControls.tsx
-@@ -41,7 +41,8 @@
- 
- export const PanelLayoutControls = memo(function PanelLayoutControls({
-   showThreadPanelControl = true,
+@@ -44 +44,2 @@
 -  showTerminalControl = true,
 +  // HoH (ui/T3-MAP.md): терминал выключен — кнопки ящика терминала нет.
 +  showTerminalControl = false,
-   showRightPanelControl = true,
-   terminalAvailable,
-   terminalOpen,
+@@ -67 +68 @@
+-      aria-label={gt("Toggle thread details panel")}
++      aria-label={gt("Toggle chat details panel")}
+@@ -85,2 +86,2 @@
+-          ? gt("Toggle thread details ({shortcut})", { shortcut: threadPanelShortcutLabel })
+-          : gt("Toggle thread details")}
++          ? gt("Toggle chat details ({shortcut})", { shortcut: threadPanelShortcutLabel })
++          : gt("Toggle chat details")}

@@ -1,0 +1,23 @@
+--- a/web/components/issue/IssueThreadLinks.tsx
++++ b/web/components/issue/IssueThreadLinks.tsx
+@@ -123 +123 @@
+-          "{count, plural, one {Linked from {count} thread} other {Linked from {count} threads}}",
++          "{count, plural, one {Linked from {count} chat} other {Linked from {count} chats}}",
+@@ -126 +126 @@
+-      : gt("Linked threads");
++      : gt("Linked chats");
+@@ -165 +165 @@
+-                aria-label={linkedHere ? gt("Unlink from thread") : gt("Link to thread")}
++                aria-label={linkedHere ? gt("Unlink from chat") : gt("Link to chat")}
+@@ -183 +183 @@
+-              <T>Unlink from this thread</T>
++              <T>Unlink from this chat</T>
+@@ -185 +185 @@
+-              gt("Link to thread")
++              gt("Link to chat")
+@@ -187 +187 @@
+-              <T>Link to this thread</T>
++              <T>Link to this chat</T>
+@@ -196 +196 @@
+-              <T>Link issue to a thread</T>
++              <T>Link issue to a chat</T>

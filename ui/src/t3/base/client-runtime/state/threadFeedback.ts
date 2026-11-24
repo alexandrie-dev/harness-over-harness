@@ -43,7 +43,7 @@ export function codexFeedbackNotice(
     case "sent":
       return {
         title: resolve(msg("Feedback sent to OpenAI")),
-        description: resolve(msg("Thread ID: {feedbackId}", { feedbackId: submission.feedbackId })),
+        description: resolve(msg("Chat ID: {feedbackId}", { feedbackId: submission.feedbackId })),
       };
     case "failed":
       return {
@@ -73,7 +73,7 @@ export function codexFeedbackMessage(
       ? submission.command
       : submission.status === "sent"
         ? resolve(
-            msg("Feedback sent to OpenAI.\n\nThread ID: `{feedbackId}`", {
+            msg("Feedback sent to OpenAI.\n\nChat ID: `{feedbackId}`", {
               feedbackId: submission.feedbackId,
             }),
           )

@@ -1,0 +1,16 @@
+--- a/web/components/threadTitleRegenerationToast.ts
++++ b/web/components/threadTitleRegenerationToast.ts
+@@ -40 +40 @@
+-          ? m(msg("Failed to regenerate thread title"))
++          ? m(msg("Failed to regenerate chat title"))
+@@ -43 +43 @@
+-                "{total, plural, one {Failed to regenerate {failed} of {total} thread titles} other {Failed to regenerate {failed} of {total} thread titles}}",
++                "{total, plural, one {Failed to regenerate {failed} of {total} chat titles} other {Failed to regenerate {failed} of {total} chat titles}}",
+@@ -59 +59 @@
+-      description: m(msg("The current title already fits this thread.")),
++      description: m(msg("The current title already fits this chat.")),
+@@ -75,2 +75,2 @@
+-        ? m(msg("The current titles already fit these threads."))
+-        : m(msg("Those titles already fit their threads.")),
++        ? m(msg("The current titles already fit these chats."))
++        : m(msg("Those titles already fit their chats.")),

@@ -844,7 +844,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           onClick={() => ctx.onOpenThread(senderRef.threadId, senderRef.environmentId)}
           tone="muted"
         >
-          <T>Open thread</T>
+          <T>Open chat</T>
         </InlineButton>
       ) : null}
       <Tooltip>

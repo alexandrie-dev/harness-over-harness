@@ -147,13 +147,13 @@ export function summarizeT3ToolCalls(
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Requested interrupts for {count} thread} other {Requested interrupts for {count} threads}}",
+              "{count, plural, one {Requested interrupts for {count} chat} other {Requested interrupts for {count} chats}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to interrupt {count} thread} other {Tried to interrupt {count} threads}}",
+              "{count, plural, one {Tried to interrupt {count} chat} other {Tried to interrupt {count} chats}}",
               { count },
             ),
           );
@@ -265,13 +265,13 @@ export function summarizeT3ToolCalls(
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Requested {count} thread fork} other {Requested {count} thread forks}}",
+              "{count, plural, one {Requested {count} chat fork} other {Requested {count} chat forks}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to request {count} thread fork} other {Tried to request {count} thread forks}}",
+              "{count, plural, one {Tried to request {count} chat fork} other {Tried to request {count} chat forks}}",
               { count },
             ),
           );
@@ -298,13 +298,13 @@ export function summarizeT3ToolCalls(
       const count = countEntities(threadIds);
       label = done
         ? resolve(
-            msg("{count, plural, one {Updated {count} thread} other {Updated {count} threads}}", {
+            msg("{count, plural, one {Updated {count} chat} other {Updated {count} chats}}", {
               count,
             }),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to update {count} thread} other {Tried to update {count} threads}}",
+              "{count, plural, one {Tried to update {count} chat} other {Tried to update {count} chats}}",
               { count },
             ),
           );
@@ -855,13 +855,13 @@ export function summarizeT3ToolCalls(
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Listed threads {count} time} other {Listed threads {count} times}}",
+              "{count, plural, one {Listed chats {count} time} other {Listed chats {count} times}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to list threads {count} time} other {Tried to list threads {count} times}}",
+              "{count, plural, one {Tried to list chats {count} time} other {Tried to list chats {count} times}}",
               { count },
             ),
           );
@@ -923,13 +923,13 @@ export function summarizeT3ToolCalls(
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Checked thread configuration {count} time} other {Checked thread configuration {count} times}}",
+              "{count, plural, one {Checked chat configuration {count} time} other {Checked chat configuration {count} times}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to check thread configuration {count} time} other {Tried to check thread configuration {count} times}}",
+              "{count, plural, one {Tried to check chat configuration {count} time} other {Tried to check chat configuration {count} times}}",
               { count },
             ),
           );
@@ -940,13 +940,13 @@ export function summarizeT3ToolCalls(
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Set thread model {count} time} other {Set thread model {count} times}}",
+              "{count, plural, one {Set chat model {count} time} other {Set chat model {count} times}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to set thread model {count} time} other {Tried to set thread model {count} times}}",
+              "{count, plural, one {Tried to set chat model {count} time} other {Tried to set chat model {count} times}}",
               { count },
             ),
           );
@@ -957,13 +957,13 @@ export function summarizeT3ToolCalls(
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Searched threads {count} time} other {Searched threads {count} times}}",
+              "{count, plural, one {Searched chats {count} time} other {Searched chats {count} times}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to search threads {count} time} other {Tried to search threads {count} times}}",
+              "{count, plural, one {Tried to search chats {count} time} other {Tried to search chats {count} times}}",
               { count },
             ),
           );
@@ -974,13 +974,13 @@ export function summarizeT3ToolCalls(
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Checked thread transfers {count} time} other {Checked thread transfers {count} times}}",
+              "{count, plural, one {Checked chat transfers {count} time} other {Checked chat transfers {count} times}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to check thread transfers {count} time} other {Tried to check thread transfers {count} times}}",
+              "{count, plural, one {Tried to check chat transfers {count} time} other {Tried to check chat transfers {count} times}}",
               { count },
             ),
           );
@@ -991,13 +991,13 @@ export function summarizeT3ToolCalls(
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Organized threads {count} time} other {Organized threads {count} times}}",
+              "{count, plural, one {Organized chats {count} time} other {Organized chats {count} times}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to organize threads {count} time} other {Tried to organize threads {count} times}}",
+              "{count, plural, one {Tried to organize chats {count} time} other {Tried to organize chats {count} times}}",
               { count },
             ),
           );
@@ -1229,13 +1229,13 @@ export function summarizeT3ToolCalls(
         const count = new Set(threadIds).size;
         label = done
           ? resolve(
-              msg("{count, plural, one {Read {count} thread} other {Read {count} threads}}", {
+              msg("{count, plural, one {Read {count} chat} other {Read {count} chats}}", {
                 count,
               }),
             )
           : resolve(
               msg(
-                "{count, plural, one {Tried to read {count} thread} other {Tried to read {count} threads}}",
+                "{count, plural, one {Tried to read {count} chat} other {Tried to read {count} chats}}",
                 { count },
               ),
             );
@@ -1244,13 +1244,13 @@ export function summarizeT3ToolCalls(
         label = done
           ? resolve(
               msg(
-                "{count, plural, one {Read threads {count} time} other {Read threads {count} times}}",
+                "{count, plural, one {Read chats {count} time} other {Read chats {count} times}}",
                 { count },
               ),
             )
           : resolve(
               msg(
-                "{count, plural, one {Tried to read threads {count} time} other {Tried to read threads {count} times}}",
+                "{count, plural, one {Tried to read chats {count} time} other {Tried to read chats {count} times}}",
                 { count },
               ),
             );
@@ -1263,13 +1263,13 @@ export function summarizeT3ToolCalls(
         label = done
           ? resolve(
               msg(
-                "{count, plural, one {Waited on {count} thread} other {Waited on {count} threads}}",
+                "{count, plural, one {Waited on {count} chat} other {Waited on {count} chats}}",
                 { count },
               ),
             )
           : resolve(
               msg(
-                "{count, plural, one {Tried to wait on {count} thread} other {Tried to wait on {count} threads}}",
+                "{count, plural, one {Tried to wait on {count} chat} other {Tried to wait on {count} chats}}",
                 { count },
               ),
             );
@@ -1278,13 +1278,13 @@ export function summarizeT3ToolCalls(
         label = done
           ? resolve(
               msg(
-                "{count, plural, one {Waited on threads {count} time} other {Waited on threads {count} times}}",
+                "{count, plural, one {Waited on chats {count} time} other {Waited on chats {count} times}}",
                 { count },
               ),
             )
           : resolve(
               msg(
-                "{count, plural, one {Tried to wait on threads {count} time} other {Tried to wait on threads {count} times}}",
+                "{count, plural, one {Tried to wait on chats {count} time} other {Tried to wait on chats {count} times}}",
                 { count },
               ),
             );
@@ -1312,13 +1312,13 @@ export function summarizeT3ToolCalls(
         label = done
           ? resolve(
               msg(
-                "{threads, plural, one {Sent messages to {threads} thread} other {Sent messages to {threads} threads}}",
+                "{threads, plural, one {Sent messages to {threads} chat} other {Sent messages to {threads} chats}}",
                 { threads },
               ),
             )
           : resolve(
               msg(
-                "{threads, plural, one {Tried to send messages to {threads} thread} other {Tried to send messages to {threads} threads}}",
+                "{threads, plural, one {Tried to send messages to {threads} chat} other {Tried to send messages to {threads} chats}}",
                 { threads },
               ),
             );
@@ -1326,13 +1326,13 @@ export function summarizeT3ToolCalls(
         label = done
           ? resolve(
               msg(
-                "{messages, plural, one {Sent {messages} message to {threads, plural, one {{threads} thread} other {{threads} threads}}} other {Sent {messages} messages to {threads, plural, one {{threads} thread} other {{threads} threads}}}}",
+                "{messages, plural, one {Sent {messages} message to {threads, plural, one {{threads} chat} other {{threads} chats}}} other {Sent {messages} messages to {threads, plural, one {{threads} chat} other {{threads} chats}}}}",
                 { messages, threads },
               ),
             )
           : resolve(
               msg(
-                "{messages, plural, one {Tried to send {messages} message to {threads, plural, one {{threads} thread} other {{threads} threads}}} other {Tried to send {messages} messages to {threads, plural, one {{threads} thread} other {{threads} threads}}}}",
+                "{messages, plural, one {Tried to send {messages} message to {threads, plural, one {{threads} chat} other {{threads} chats}}} other {Tried to send {messages} messages to {threads, plural, one {{threads} chat} other {{threads} chats}}}}",
                 { messages, threads },
               ),
             );
@@ -1357,7 +1357,7 @@ export function summarizeT3ToolCalls(
       if (resultsKnown) {
         const count = new Set(createdIds).size;
         label = resolve(
-          msg("{count, plural, one {Created {count} thread} other {Created {count} threads}}", {
+          msg("{count, plural, one {Created {count} chat} other {Created {count} chats}}", {
             count,
           }),
         );
@@ -1365,7 +1365,7 @@ export function summarizeT3ToolCalls(
         const count = selected.length;
         label = resolve(
           msg(
-            "{count, plural, one {Requested thread creation {count} time} other {Requested thread creation {count} times}}",
+            "{count, plural, one {Requested chat creation {count} time} other {Requested chat creation {count} times}}",
             { count },
           ),
         );
@@ -1392,26 +1392,26 @@ export function summarizeT3ToolCalls(
           ? done
             ? resolve(
                 msg(
-                  "{attachments, plural, one {Sent {attachments} attachment to {threads, plural, one {{threads} thread} other {{threads} threads}}} other {Sent {attachments} attachments to {threads, plural, one {{threads} thread} other {{threads} threads}}}}",
+                  "{attachments, plural, one {Sent {attachments} attachment to {threads, plural, one {{threads} chat} other {{threads} chats}}} other {Sent {attachments} attachments to {threads, plural, one {{threads} chat} other {{threads} chats}}}}",
                   { attachments, threads },
                 ),
               )
             : resolve(
                 msg(
-                  "{attachments, plural, one {Tried to send {attachments} attachment to {threads, plural, one {{threads} thread} other {{threads} threads}}} other {Tried to send {attachments} attachments to {threads, plural, one {{threads} thread} other {{threads} threads}}}}",
+                  "{attachments, plural, one {Tried to send {attachments} attachment to {threads, plural, one {{threads} chat} other {{threads} chats}}} other {Tried to send {attachments} attachments to {threads, plural, one {{threads} chat} other {{threads} chats}}}}",
                   { attachments, threads },
                 ),
               )
           : done
             ? resolve(
                 msg(
-                  "{count, plural, one {Sent attachments to {threads, plural, one {{threads} thread} other {{threads} threads}} {count} time} other {Sent attachments to {threads, plural, one {{threads} thread} other {{threads} threads}} {count} times}}",
+                  "{count, plural, one {Sent attachments to {threads, plural, one {{threads} chat} other {{threads} chats}} {count} time} other {Sent attachments to {threads, plural, one {{threads} chat} other {{threads} chats}} {count} times}}",
                   { threads, count },
                 ),
               )
             : resolve(
                 msg(
-                  "{count, plural, one {Tried to send attachments to {threads, plural, one {{threads} thread} other {{threads} threads}} {count} time} other {Tried to send attachments to {threads, plural, one {{threads} thread} other {{threads} threads}} {count} times}}",
+                  "{count, plural, one {Tried to send attachments to {threads, plural, one {{threads} chat} other {{threads} chats}} {count} time} other {Tried to send attachments to {threads, plural, one {{threads} chat} other {{threads} chats}} {count} times}}",
                   { threads, count },
                 ),
               );

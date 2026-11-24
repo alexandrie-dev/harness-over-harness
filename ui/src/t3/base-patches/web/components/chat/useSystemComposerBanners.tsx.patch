@@ -1,0 +1,5 @@
+--- a/web/components/chat/useSystemComposerBanners.tsx
++++ b/web/components/chat/useSystemComposerBanners.tsx
+@@ -175 +175 @@
+-          title={gt("Hide this server's threads. Switch it on again in Environments.")}
++          title={gt("Hide this server's chats. Switch it on again in Environments.")}

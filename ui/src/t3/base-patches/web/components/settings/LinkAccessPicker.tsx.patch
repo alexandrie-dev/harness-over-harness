@@ -1,0 +1,5 @@
+--- a/web/components/settings/LinkAccessPicker.tsx
++++ b/web/components/settings/LinkAccessPicker.tsx
+@@ -62 +62 @@
+-          change only threads this link started, not that machine's own threads, projects or
++          change only chats this link started, not that machine's own chats, projects or

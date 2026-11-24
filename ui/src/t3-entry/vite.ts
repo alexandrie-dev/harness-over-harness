@@ -216,6 +216,8 @@ function hohT3(): Plugin {
       return hiddenRouteModule(file, HIDDEN_ROUTES[file]!);
     },
     transform(code, id) {
+      // The home screen is maintained on another line; keep its chat wording until that change lands.
+      if (id === HOME_BODY) return { code: code.replace('Answer in the thread', 'Answer in the chat'), map: null };
       if (id === resolve(T3_WEB, 'components/settings/settingsSearch.ts')) return { code: settingsNavFilter(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderSettingsPanel.tsx')) return { code: providerSettingsPanel(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };

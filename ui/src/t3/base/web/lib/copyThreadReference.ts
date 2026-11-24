@@ -25,8 +25,8 @@ export async function copyThreadReference(target: ThreadReferenceCopyTarget): Pr
           }
         : {
             target: target.clipboardTarget,
-            unavailableMessage: msg("Clipboard API is unavailable while copying thread."),
-            failureMessage: msg("Failed to copy thread to the clipboard."),
+            unavailableMessage: msg("Clipboard API is unavailable while copying chat."),
+            failureMessage: msg("Failed to copy chat to the clipboard."),
           },
       fragment ? { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment } : undefined,
     );

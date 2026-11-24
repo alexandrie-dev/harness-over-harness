@@ -2,4 +2,16 @@
 +++ b/client-runtime/contractLabels.ts
 @@ -104,0 +105,2 @@
 +    case "unknown":
-+      return resolve(msg("{organization} has an unknown thread permission limit.", { organization }));
++      return resolve(msg("{organization} has an unknown chat permission limit.", { organization }));
+@@ -106 +108 @@
+-      return resolve(msg("{organization} limits threads to Supervised.", { organization }));
++      return resolve(msg("{organization} limits chats to Supervised.", { organization }));
+@@ -108 +110 @@
+-      return resolve(msg("{organization} limits threads to Auto-accept edits.", { organization }));
++      return resolve(msg("{organization} limits chats to Auto-accept edits.", { organization }));
+@@ -110 +112 @@
+-      return resolve(msg("{organization} limits threads to Auto.", { organization }));
++      return resolve(msg("{organization} limits chats to Auto.", { organization }));
+@@ -112 +114 @@
+-      return resolve(msg("{organization} limits threads to Full access.", { organization }));
++      return resolve(msg("{organization} limits chats to Full access.", { organization }));

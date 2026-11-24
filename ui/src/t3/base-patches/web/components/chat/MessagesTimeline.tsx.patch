@@ -1,5 +1,8 @@
 --- a/web/components/chat/MessagesTimeline.tsx
 +++ b/web/components/chat/MessagesTimeline.tsx
+@@ -1237 +1237 @@
+-              : { actionLabel: gt("Open parent thread"), onAction: parentThreadLink.open })}
++              : { actionLabel: gt("Open parent chat"), onAction: parentThreadLink.open })}
 @@ -1868 +1868 @@
 -        <button
 +        {row.hasDetails === false ? <span className="px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">{row.label}</span> : <button

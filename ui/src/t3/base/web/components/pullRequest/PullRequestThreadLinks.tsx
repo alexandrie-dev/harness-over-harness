@@ -144,12 +144,12 @@ function EnabledPullRequestThreadLinks({
   const linkedThreadsLabel =
     linkedThreads.length > 0
       ? gt(
-          "{count, plural, one {Linked from {count} thread} other {Linked from {count} threads}}",
+          "{count, plural, one {Linked from {count} chat} other {Linked from {count} chats}}",
           {
             count: linkedThreads.length,
           },
         )
-      : gt("Linked threads");
+      : gt("Linked chats");
   return (
     <>
       {display === "count" && (linkedThreads.length > 0 || relations.error !== null) ? (
@@ -196,10 +196,10 @@ function EnabledPullRequestThreadLinks({
             <PullRequestGlyph.link aria-hidden className="size-3.5" />
           )}
           {linkedHere
-            ? gt("Unlink from this thread")
+            ? gt("Unlink from this chat")
             : currentThreadRef
-              ? gt("Link to this thread")
-              : gt("Link to thread")}
+              ? gt("Link to this chat")
+              : gt("Link to chat")}
         </MenuItem>
       ) : null}
       {display === "picker" ? (
@@ -211,7 +211,7 @@ function EnabledPullRequestThreadLinks({
                 <Branch branch={term} mr="merge request" cr="change request">
                   pull request
                 </Branch>{" "}
-                to a thread
+                to a chat
               </T>
             </DialogTitle>
             <ThreadLinkPicker

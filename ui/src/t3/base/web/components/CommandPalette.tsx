@@ -1401,7 +1401,7 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "find-current-thread",
-      title: gt("Find in current thread"),
+      title: gt("Find in current chat"),
       searchTerms: ["find", "search", "messages", "plans"],
       icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.find",
@@ -1486,7 +1486,7 @@ function OpenCommandPaletteDialog(props: {
       title:
         activeThreadReferenceCopyTarget.kind === "pull-request"
           ? gt("Copy PR link")
-          : gt("Copy thread"),
+          : gt("Copy chat"),
       description: activeThreadReferenceCopyTarget.description,
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.copyReference",
@@ -1503,7 +1503,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:link-pull-request",
       searchTerms: ["link", "pull request", "pr", "attach", "stack"],
-      title: gt("Link pull request to thread"),
+      title: gt("Link pull request to chat"),
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         openLinkPullRequestDialog(threadRef);
@@ -2717,7 +2717,7 @@ function OpenCommandPaletteDialog(props: {
       else
         toastManager.add({
           id: "thread-find-unavailable",
-          title: gt("Thread search is unavailable on this server."),
+          title: gt("Chat search is unavailable on this server."),
           description: gt("Update the server to enable it."),
         });
       return;
@@ -3171,9 +3171,9 @@ function OpenCommandPaletteDialog(props: {
                     ),
                   }
                 : isThreadSearchPending
-                  ? { emptyStateMessage: gt("Searching thread messages…") }
+                  ? { emptyStateMessage: gt("Searching chat messages…") }
                   : isThreadSearchFailed
-                    ? { emptyStateMessage: gt("Couldn't search thread messages.") }
+                    ? { emptyStateMessage: gt("Couldn't search chat messages.") }
                     : {})}
       />
     </CommandPaletteContent>

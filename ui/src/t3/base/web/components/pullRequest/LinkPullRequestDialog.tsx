@@ -132,7 +132,7 @@ function LinkPullRequestDialog({
           </DialogTitle>
           <DialogDescription>
             <T>
-              Attach a pull request to this thread by its URL, or by its number for this thread's
+              Attach a pull request to this chat by its URL, or by its number for this chat's
               repository.
             </T>
           </DialogDescription>

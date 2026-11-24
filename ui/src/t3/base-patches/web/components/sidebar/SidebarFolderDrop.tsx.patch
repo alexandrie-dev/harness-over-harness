@@ -1,0 +1,5 @@
+--- a/web/components/sidebar/SidebarFolderDrop.tsx
++++ b/web/components/sidebar/SidebarFolderDrop.tsx
+@@ -118 +118 @@
+-              description: gt("Drop files on a thread to attach them."),
++              description: gt("Drop files on a chat to attach them."),

@@ -115,7 +115,7 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
             stackedThreadToast({
               type: "info",
               title: gt("Only folders can be added as projects"),
-              description: gt("Drop files on a thread to attach them."),
+              description: gt("Drop files on a chat to attach them."),
             }),
           );
         }

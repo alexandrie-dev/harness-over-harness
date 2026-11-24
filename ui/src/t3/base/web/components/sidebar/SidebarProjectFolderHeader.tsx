@@ -119,7 +119,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
                 data-sidebar-action-for={rowId}
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={gt("New thread in {project}", { project: group.displayName })}
+                aria-label={gt("New chat in {project}", { project: group.displayName })}
                 onClick={() => props.onNewThread(group)}
               />
             }
@@ -128,7 +128,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           </TooltipTrigger>
           <TooltipPopup>
             <T>
-              New thread in <Var>{group.displayName}</Var>
+              New chat in <Var>{group.displayName}</Var>
             </T>
           </TooltipPopup>
         </Tooltip>

@@ -90,7 +90,7 @@ function markdownNodeText(node: Nodes): string {
   const separator = INLINE_PARENT_TYPES.has(node.type) ? "" : " ";
   const text = node.children.map(markdownNodeText).join(separator);
   // A thread autolink's only text is its URL.
-  return node.type === "link" && parseThreadLinkHref(text) !== null ? "a thread" : text;
+  return node.type === "link" && parseThreadLinkHref(text) !== null ? "a chat" : text;
 }
 
 /** Markdown as one line of the text it renders, without markup or link targets. */

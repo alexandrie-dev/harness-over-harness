@@ -44,7 +44,7 @@ function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActions
         (props.isActionsOnly ? (
           <T>No matching actions.</T>
         ) : (
-          <T>No matching commands, projects, or threads.</T>
+          <T>No matching commands, projects, or chats.</T>
         ))}
     </div>
   );
@@ -262,7 +262,7 @@ function CommandPaletteResultRow(props: {
             event.nativeEvent,
             props.item.threadRef,
             props.item.searchTitle ??
-              (typeof props.item.title === "string" ? props.item.title : "Thread"),
+              (typeof props.item.title === "string" ? props.item.title : "Chat"),
           );
         }
       }}

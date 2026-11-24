@@ -1,11 +1,10 @@
 --- a/web/components/chat/TimelineUserMessageRow.tsx
 +++ b/web/components/chat/TimelineUserMessageRow.tsx
-@@ -373,14 +373,3 @@
-             <div className="flex items-center gap-0.5">
+@@ -374,3 +373,0 @@
 -              {typeof revertTurnCount === "number" && (
 -                <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
 -              )}
-               <MessageCopyButton text={text} variant="ghost" />
+@@ -378,8 +374,0 @@
 -              {promptLink !== null && (
 -                <MessageCopyButton
 -                  text={promptLink}
@@ -14,15 +13,14 @@
 -                  variant="ghost"
 -                />
 -              )}
-             </div>
-@@ -875,5 +864,2 @@
-       <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>
+@@ -858 +847 @@
+-          <T>Open thread</T>
++          <T>Open chat</T>
+@@ -876,3 +864,0 @@
 -        {typeof revertTurnCount === "number" && (
 -          <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
 -        )}
-         {copyText && (
-@@ -888,10 +874,2 @@
-               : {})}
+@@ -889,8 +874,0 @@
 -            variant="ghost"
 -          />
 -        )}
@@ -31,4 +29,3 @@
 -            text={promptLink}
 -            label={gt("Copy prompt link")}
 -            icon={LinkIcon}
-             variant="ghost"

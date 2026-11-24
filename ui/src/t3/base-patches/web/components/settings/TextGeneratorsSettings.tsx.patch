@@ -1,0 +1,11 @@
+--- a/web/components/settings/TextGeneratorsSettings.tsx
++++ b/web/components/settings/TextGeneratorsSettings.tsx
+@@ -113 +113 @@
+-              "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
++              "Add a model API to write chat titles, commit messages, and other short text without starting a coding agent.",
+@@ -253 +253 @@
+-  { key: "textGenerationModelSelection", label: msg("Thread titles and other generated text") },
++  { key: "textGenerationModelSelection", label: msg("Chat titles and other generated text") },
+@@ -356 +356 @@
+-            "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
++            "Writes chat titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",

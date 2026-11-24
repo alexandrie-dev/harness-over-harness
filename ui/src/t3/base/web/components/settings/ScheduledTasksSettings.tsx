@@ -938,7 +938,7 @@ function ScheduledTaskThreadLink({
       params={buildThreadRouteParams(ref)}
       className="max-w-64 truncate underline underline-offset-2 hover:text-foreground"
     >
-      {title || gt("Open thread")}
+      {title || gt("Open chat")}
     </Link>
   );
 }
@@ -1278,9 +1278,9 @@ function ScheduledTaskEditorDialog({
 }
 
 const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
-  new_thread: msg("New thread each run"),
-  continue: msg("One thread, continuing the conversation"),
-  fresh_session: msg("One thread, fresh session each run"),
+  new_thread: msg("New chat each run"),
+  continue: msg("One chat, continuing the conversation"),
+  fresh_session: msg("One chat, fresh session each run"),
 };
 
 function useScheduledTaskThread(environmentId: EnvironmentId, threadId: ThreadId | null) {
@@ -1319,9 +1319,9 @@ function ScheduledTaskDestination({
   const thread = useScheduledTaskThread(environmentId, threadId);
   const currentLabel =
     ref !== null
-      ? thread?.title.trim() || gt("Thread {id}", { id: ref.threadId })
+      ? thread?.title.trim() || gt("Chat {id}", { id: ref.threadId })
       : threadMode === "new_thread"
-        ? gt("New thread each run")
+        ? gt("New chat each run")
         : gt("Started by the first run");
   const shells = useVisibleThreadShells(open);
   // Mounts older settled threads matching the query, which shells may leave out.
@@ -1347,18 +1347,18 @@ function ScheduledTaskDestination({
   };
   const detail =
     threadMode === "new_thread"
-      ? gt("Each run starts a new thread with the workspace and model below.")
+      ? gt("Each run starts a new chat with the workspace and model below.")
       : ref === null
         ? threadMode === "continue"
           ? gt(
-              "The first run starts a thread with the workspace and model below. Later runs continue that conversation.",
+              "The first run starts a chat with the workspace and model below. Later runs continue that conversation.",
             )
           : gt(
-              "The first run starts a thread with the workspace and model below. Later runs post there, each in a fresh session without earlier runs' context.",
+              "The first run starts a chat with the workspace and model below. Later runs post there, each in a fresh session without earlier runs' context.",
             )
         : threadMode === "continue"
           ? gt("Each run continues this conversation, in its workspace and with its current model.")
-          : gt("Each run starts a fresh session in this thread, without earlier runs' context.");
+          : gt("Each run starts a fresh session in this chat, without earlier runs' context.");
   return (
     <Field label={gt("Destination")} htmlFor="scheduled-task-destination">
       {onThreadModeChange ? (
@@ -1404,7 +1404,7 @@ function ScheduledTaskDestination({
                 ? "scheduled-task-destination-thread"
                 : "scheduled-task-destination"
             }
-            aria-label={onThreadModeChange ? gt("Destination thread") : undefined}
+            aria-label={onThreadModeChange ? gt("Destination chat") : undefined}
             disabled={disabled}
             render={<Button variant="outline" size="sm" />}
             className="w-full justify-between"
@@ -1415,23 +1415,23 @@ function ScheduledTaskDestination({
           </ComboboxTrigger>
           <ComboboxPopup align="start" side="bottom" className="w-80">
             <ComboboxSearchInput
-              aria-label={gt("Search threads")}
-              placeholder={gt("Search all threads...")}
+              aria-label={gt("Search chats")}
+              placeholder={gt("Search all chats...")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
             <ComboboxEmpty>
-              <T>No threads found.</T>
+              <T>No chats found.</T>
             </ComboboxEmpty>
             <ComboboxList className="max-h-72">
               {items.map((value, index) => (
                 <ComboboxItem key={value} index={index} value={value}>
                   <span className="block truncate">
                     {value === NEW_THREAD_DESTINATION
-                      ? gt("New thread each run")
+                      ? gt("New chat each run")
                       : value === threadId
                         ? currentLabel
-                        : threads.find((row) => row.id === value)?.title || gt("Untitled thread")}
+                        : threads.find((row) => row.id === value)?.title || gt("Untitled chat")}
                   </span>
                 </ComboboxItem>
               ))}
@@ -1443,7 +1443,7 @@ function ScheduledTaskDestination({
         <p className="text-muted-foreground">{detail}</p>
         {threadMode !== "new_thread" ? (
           <p className="text-muted-foreground">
-            <T>Deleting the thread also deletes this task.</T>
+            <T>Deleting the chat also deletes this task.</T>
           </p>
         ) : null}
       </div>

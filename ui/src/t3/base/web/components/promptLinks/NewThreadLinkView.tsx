@@ -145,7 +145,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       replace: true,
     }).catch(() => null);
     if (opened === null) {
-      setState({ status: "failed", message: gt("T3 Code could not open a new thread.") });
+      setState({ status: "failed", message: gt("T3 Code could not open a new chat.") });
       return;
     }
     setState({ status: "opened" });
@@ -194,7 +194,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     if (project === null) {
       setState({
         status: "failed",
-        message: gt("None of your machines can start a thread without a project right now."),
+        message: gt("None of your machines can start a chat without a project right now."),
       });
       return;
     }

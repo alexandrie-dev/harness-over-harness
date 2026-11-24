@@ -759,7 +759,7 @@ export class ThreadModel {
 
   private instanceId() { return !this.bindingKnown ? 'unknown' : this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
   private modelSelection() { return { instanceId: this.instanceId(), model: this.bindingKnown ? this.model : 'unknown', ...(this.options?.length ? { options: this.options } : {}) }; }
-  private titleText() { return nonBlank(this.title, 'New thread'); }
+  private titleText() { return nonBlank(this.title, 'New chat'); }
 
   /** `OrchestrationV2ThreadProjection`, encoded. */
   projection() {

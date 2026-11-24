@@ -35,7 +35,7 @@ export function NoProjectsHero() {
               </EmptyTitle>
               <EmptyDescription>
                 {scratchTargetEnvironmentId === null
-                  ? gt("Add a project to start your first thread.")
+                  ? gt("Add a project to start your first chat.")
                   : gt("Add a project, or start without one.")}
               </EmptyDescription>
               <div className="mt-6 flex justify-center gap-2">

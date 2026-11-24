@@ -93,7 +93,7 @@ export async function startFanoutThread(input: {
       throw new Error(
         m(
           msg(
-            "The previous request may have started. Open its thread to check before sending again.",
+            "The previous request may have started. Open its chat to check before sending again.",
           ),
         ),
       );
@@ -129,7 +129,7 @@ export async function startFanoutThread(input: {
                       ?.dialogs.confirm(
                         m(
                           msg(
-                            "The previous request may already be running. Check its thread first. Allow another send that could create a duplicate thread?",
+                            "The previous request may already be running. Check its chat first. Allow another send that could create a duplicate chat?",
                           ),
                         ),
                       )
@@ -149,7 +149,7 @@ export async function startFanoutThread(input: {
                 },
               },
               actionProps: {
-                children: m(msg("Open thread")),
+                children: m(msg("Open chat")),
                 onClick: () => input.openThread(retainedThreadId),
               },
             }
@@ -267,7 +267,7 @@ export async function rewindToMessage(input: {
     return { error: null, prompt: nextPrompt };
   } catch (error) {
     return {
-      error: error instanceof Error ? error.message : m(msg("Failed to revert thread state.")),
+      error: error instanceof Error ? error.message : m(msg("Failed to revert chat state.")),
     };
   }
 }

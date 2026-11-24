@@ -302,7 +302,7 @@ export function linkRequestDisplay(
         ? { kind: "pending" }
         : {
             kind: "pending-elsewhere",
-            label: resolve(msg("Waiting for an answer in the original thread")),
+            label: resolve(msg("Waiting for an answer in the original chat")),
           };
     case "linked": {
       const target =

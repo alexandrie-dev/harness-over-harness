@@ -81,7 +81,7 @@ export class ScratchProjectNotLoadedError extends Schema.TaggedError<ScratchProj
 
   get i18nMessage(): MarkedText {
     return [
-      msg("The folder for threads without a project has not reached this device yet. Try again."),
+      msg("The folder for chats without a project has not reached this device yet. Try again."),
     ];
   }
 }

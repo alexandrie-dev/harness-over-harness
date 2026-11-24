@@ -233,7 +233,7 @@ const KEYBINDING_GROUPS = [
     title: msg("Navigation"),
     prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
   },
-  { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
+  { id: "threads", title: msg("Chats"), prefixes: ["thread", "chat", "pullRequest"] },
   { id: "composer", title: msg("Composer"), prefixes: ["composer", "modelPicker"] },
   { id: "terminal", title: msg("Terminal"), prefixes: ["terminal"] },
   { id: "preview", title: msg("Preview & diff"), prefixes: ["preview", "diff"] },
@@ -409,11 +409,11 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "workspace.focusPrevious": msg("Focus Previous Workspace Area"),
   "composer.sendAlternate": msg("Composer: Opposite Queue or Steer Action"),
   "composer.sendBackground": msg("Composer: Start in Background"),
-  "composer.sendAndNewThread": msg("Composer: Send and Start New Thread"),
+  "composer.sendAndNewThread": msg("Composer: Send and Start New Chat"),
   "composer.dictation": msg("Composer: Start or Finish Dictation"),
   "thread.steerQueuedMessage": msg("Queue: Send First Queued Message"),
   "thread.editQueuedMessage": msg("Queue: Edit Last Queued Message"),
-  "thread.copyReference": msg("Pull Request: Copy Link or Thread"),
+  "thread.copyReference": msg("Pull Request: Copy Link or Chat"),
   "sidebar.toggle": msg("Sidebar: Toggle"),
   "navigation.back": msg("Navigation: Back"),
   "navigation.forward": msg("Navigation: Forward"),
@@ -424,7 +424,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "terminal.close": msg("Terminal: Close"),
   "rightPanel.toggle": msg("Right Panel: Toggle"),
   "rightPanel.new": msg("Right Panel: New"),
-  "threadPanel.toggle": msg("Thread Panel: Toggle"),
+  "threadPanel.toggle": msg("Chat Panel: Toggle"),
   "rightPanel.toggleMaximized": msg("Right Panel: Toggle Maximized"),
   "rightPanel.close": msg("Right Panel: Close"),
   "pullRequest.copyNumber": msg("Pull Request: Copy Number"),
@@ -459,13 +459,13 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "modelPicker.toggle": msg("Model Picker: Toggle"),
   "modelPicker.previousProvider": msg("Model Picker: Previous Provider"),
   "modelPicker.nextProvider": msg("Model Picker: Next Provider"),
-  "thread.stop": msg("Thread: Stop"),
-  "thread.previous": msg("Thread: Previous"),
-  "thread.next": msg("Thread: Next"),
-  "thread.settle": msg("Thread: Settle"),
-  "thread.pin": msg("Thread: Pin"),
-  "thread.regenerateTitle": msg("Thread: Regenerate Title"),
-  "thread.undo": msg("Thread: Undo"),
+  "thread.stop": msg("Chat: Stop"),
+  "thread.previous": msg("Chat: Previous"),
+  "thread.next": msg("Chat: Next"),
+  "thread.settle": msg("Chat: Settle"),
+  "thread.pin": msg("Chat: Pin"),
+  "thread.regenerateTitle": msg("Chat: Regenerate Title"),
+  "thread.undo": msg("Chat: Undo"),
 };
 
 // Whole labels: search titles keep the encoded message, which cannot nest another one.
@@ -497,7 +497,7 @@ export function commandLabel(command: KeybindingCommand, resolve: MessageResolve
   if (lateLabel) return resolve(lateLabel);
   const raw = String(command);
   if (raw.startsWith("thread.jump.")) {
-    return resolve(msg("Thread: Jump: {n}", { n: raw.slice("thread.jump.".length) }));
+    return resolve(msg("Chat: Jump: {n}", { n: raw.slice("thread.jump.".length) }));
   }
   if (raw.startsWith("modelPicker.jump.")) {
     return resolve(msg("Model Picker: Jump: {n}", { n: raw.slice("modelPicker.jump.".length) }));

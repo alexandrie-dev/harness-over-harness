@@ -92,7 +92,7 @@ export function useThreadLinkedPullRequest(input: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: m(msg("Unable to update the thread pull request")),
+          title: m(msg("Unable to update the chat pull request")),
           description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );

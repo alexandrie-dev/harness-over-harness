@@ -1,0 +1,19 @@
+--- a/web/components/pullRequest/PullRequestThreadLinks.tsx
++++ b/web/components/pullRequest/PullRequestThreadLinks.tsx
+@@ -147 +147 @@
+-          "{count, plural, one {Linked from {count} thread} other {Linked from {count} threads}}",
++          "{count, plural, one {Linked from {count} chat} other {Linked from {count} chats}}",
+@@ -152 +152 @@
+-      : gt("Linked threads");
++      : gt("Linked chats");
+@@ -199 +199 @@
+-            ? gt("Unlink from this thread")
++            ? gt("Unlink from this chat")
+@@ -201,2 +201,2 @@
+-              ? gt("Link to this thread")
+-              : gt("Link to thread")}
++              ? gt("Link to this chat")
++              : gt("Link to chat")}
+@@ -214 +214 @@
+-                to a thread
++                to a chat

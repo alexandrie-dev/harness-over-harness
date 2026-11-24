@@ -1,0 +1,11 @@
+--- a/web/components/ThreadNotificationCoordinator.tsx
++++ b/web/components/ThreadNotificationCoordinator.tsx
+@@ -149 +149 @@
+-        ? m(msg("Thread completed"))
++        ? m(msg("Chat completed"))
+@@ -155 +155 @@
+-              ? m(msg("Thread failed"))
++              ? m(msg("Chat failed"))
+@@ -192 +192 @@
+-          children: m(msg("Open thread")),
++          children: m(msg("Open chat")),

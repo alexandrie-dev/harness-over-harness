@@ -146,13 +146,13 @@ export function startThreadNotifications(
     const active = activeThread();
     const title =
       kind === "completion"
-        ? m(msg("Thread completed"))
+        ? m(msg("Chat completed"))
         : status === "approval"
           ? m(msg("Approval needed"))
           : status === "limited"
             ? m(msg("Usage limit reached"))
             : status === "failed"
-              ? m(msg("Thread failed"))
+              ? m(msg("Chat failed"))
               : status === "request"
                 ? m(msg("Guest request"))
                 : m(msg("Input needed"));
@@ -189,7 +189,7 @@ export function startThreadNotifications(
             ),
         },
         actionProps: {
-          children: m(msg("Open thread")),
+          children: m(msg("Open chat")),
           onClick: () => {
             toastManager.close(toastId);
             void router.navigate({

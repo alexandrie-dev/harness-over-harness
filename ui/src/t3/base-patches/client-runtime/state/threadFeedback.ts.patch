@@ -1,0 +1,8 @@
+--- a/client-runtime/state/threadFeedback.ts
++++ b/client-runtime/state/threadFeedback.ts
+@@ -46 +46 @@
+-        description: resolve(msg("Thread ID: {feedbackId}", { feedbackId: submission.feedbackId })),
++        description: resolve(msg("Chat ID: {feedbackId}", { feedbackId: submission.feedbackId })),
+@@ -76 +76 @@
+-            msg("Feedback sent to OpenAI.\n\nThread ID: `{feedbackId}`", {
++            msg("Feedback sent to OpenAI.\n\nChat ID: `{feedbackId}`", {

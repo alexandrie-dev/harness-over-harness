@@ -1,0 +1,5 @@
+--- a/web/components/chat/ThreadServersPanel.tsx
++++ b/web/components/chat/ThreadServersPanel.tsx
+@@ -61 +61 @@
+-    label: "thread server stop",
++    label: "chat server stop",

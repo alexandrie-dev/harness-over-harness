@@ -1,0 +1,5 @@
+--- a/web/components/chat/composerSend.logic.ts
++++ b/web/components/chat/composerSend.logic.ts
+@@ -66 +66 @@
+-            "No machine can read every attached thread. Choose a machine in the composer or remove the threads.",
++            "No machine can read every attached chat. Choose a machine in the composer or remove the chats.",

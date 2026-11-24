@@ -63,7 +63,7 @@ export function loadBalancingSendWarning(
     description: noMachineReadsEveryThread
       ? resolve(
           msg(
-            "No machine can read every attached thread. Choose a machine in the composer or remove the threads.",
+            "No machine can read every attached chat. Choose a machine in the composer or remove the chats.",
           ),
         )
       : resolve(

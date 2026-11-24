@@ -110,7 +110,7 @@ export function TextGeneratorsSettings({
           <SettingsRow
             title={gt("No text generators yet")}
             description={gt(
-              "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
+              "Add a model API to write chat titles, commit messages, and other short text without starting a coding agent.",
             )}
           />
         ) : null}
@@ -250,7 +250,7 @@ const STEPS = [msg("Connect", { $context: "wizard step" }), msg("Use it")] as co
 
 /** Text tasks a generator can write, in the order the settings pages show them. */
 const TASKS = [
-  { key: "textGenerationModelSelection", label: msg("Thread titles and other generated text") },
+  { key: "textGenerationModelSelection", label: msg("Chat titles and other generated text") },
   {
     key: "sourceControlWriterModelSelection",
     label: msg("Commit messages, pull requests, and branch names"),
@@ -353,7 +353,7 @@ function TextGeneratorWizard({
               : gt("Add a text generator")
           }
           description={gt(
-            "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
+            "Writes chat titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
           )}
         >
           <WizardSteps

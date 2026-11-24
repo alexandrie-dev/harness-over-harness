@@ -1234,7 +1234,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             icon={parentThreadLink.sideChat ? MessagesSquareIcon : BotIcon}
             {...(parentThreadLink.open === undefined
               ? {}
-              : { actionLabel: gt("Open parent thread"), onAction: parentThreadLink.open })}
+              : { actionLabel: gt("Open parent chat"), onAction: parentThreadLink.open })}
           />
         </div>
       </div>

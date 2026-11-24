@@ -63,7 +63,7 @@ export function MarkdownThreadLink(props: {
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
   }
   const ref = resolved?.ref ?? writtenRef;
-  const title = resolved?.metadata.title.trim() || props.label || gt("Thread");
+  const title = resolved?.metadata.title.trim() || props.label || gt("Chat");
   return (
     <ThreadContextChip
       record={{ ...ref, title }}

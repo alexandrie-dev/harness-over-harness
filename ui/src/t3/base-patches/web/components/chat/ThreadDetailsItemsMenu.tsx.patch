@@ -1,11 +1,8 @@
 --- a/web/components/chat/ThreadDetailsItemsMenu.tsx
 +++ b/web/components/chat/ThreadDetailsItemsMenu.tsx
-@@ -23,7 +23,7 @@
-         <MenuGroupLabel>
-           <T>Show in thread details</T>
-         </MenuGroupLabel>
+@@ -24 +24 @@
+-          <T>Show in thread details</T>
++          <T>Show in chat details</T>
+@@ -26 +26 @@
 -        {THREAD_DETAILS_ITEMS.map((item) => (
 +        {THREAD_DETAILS_ITEMS.filter((item) => item.id === "context").map((item) => (
-           <MenuCheckboxItem
-             key={item.id}
-             checked={visibility[item.id]}

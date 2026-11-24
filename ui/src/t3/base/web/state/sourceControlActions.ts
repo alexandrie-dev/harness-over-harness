@@ -339,7 +339,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthOrchestrationOperateScope,
-            message: m(msg("This connection cannot change threads.")),
+            message: m(msg("This connection cannot change chats.")),
           }),
         ),
       );
@@ -356,7 +356,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
   };
   return useAction({
     kind: "preparePullRequestThread",
-    label: msg("Preparing pull request thread"),
+    label: msg("Preparing pull request chat"),
     scope,
     action,
   });

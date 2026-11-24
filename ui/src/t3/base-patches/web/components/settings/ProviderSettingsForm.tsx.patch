@@ -1,0 +1,11 @@
+--- a/web/components/settings/ProviderSettingsForm.tsx
++++ b/web/components/settings/ProviderSettingsForm.tsx
+@@ -112 +112 @@
+-  ["Compact idle threads", msg("Compact idle threads")],
++  ["Compact idle chats", msg("Compact idle chats")],
+@@ -159 +159 @@
+-    "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
++    "When to compact an idle chat over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+@@ -161 +161 @@
+-      "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
++      "When to compact an idle chat over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
