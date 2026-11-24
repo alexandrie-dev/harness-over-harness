@@ -7,6 +7,28 @@ use serde_json::{Value, json};
 /// Session id of an approval for a method that is not bound to a session.
 pub(crate) const HOST_SESSION: &str = "host";
 
+#[cfg(test)]
+mod trust_tests {
+    use super::*;
+
+    #[test]
+    fn folder_trust_confirmation_names_both_executors() {
+        for executor in ["claude", "codex"] {
+            for trust in [true, false] {
+                let text = method_human_text(
+                    "hoh/executor/trust/set",
+                    &json!({
+                        "executor": executor, "cwd": "/work/project", "trust": trust
+                    }),
+                )
+                .unwrap();
+                assert!(text.contains("«/work/project» (Claude и Codex)"), "{text}");
+                assert!(text.contains("настройкам проекта"), "{text}");
+            }
+        }
+    }
+}
+
 /// Text shown to the user for one privileged method call; `Err` refuses malformed calls.
 pub fn method_human_text(method: &str, params: &Value) -> Result<String, String> {
     match method {
@@ -15,14 +37,12 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
                 serde_json::from_value(params.clone()).map_err(|_| "invalid folder trust")?;
             Ok(if request.trust {
                 format!(
-                    "Доверять настройкам {} в папке {}? Они могут запускать программы.",
-                    executor_name(&request.executor),
+                    "Доверять настройкам проекта в папке {} (Claude и Codex)? Они могут запускать программы.",
                     quoted(&request.cwd)
                 )
             } else {
                 format!(
-                    "Отозвать доверие к настройкам {} в папке {}?",
-                    executor_name(&request.executor),
+                    "Отозвать доверие к настройкам проекта в папке {} (Claude и Codex)?",
                     quoted(&request.cwd)
                 )
             })

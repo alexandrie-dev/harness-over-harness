@@ -27,6 +27,22 @@ pub(crate) fn snapshot(folder: &Path) -> std::io::Result<Snapshot> {
         return Err(std::io::Error::other("folder is not a directory"));
     }
     let mut hash = Sha256::new();
+    // Claude discovers MCP files all the way to the filesystem root, even when
+    // the selected folder is not a Git repository.
+    for root in path.ancestors() {
+        let root_bytes = root.as_os_str().as_encoded_bytes();
+        hash.update((root_bytes.len() as u64).to_be_bytes());
+        hash.update(root_bytes);
+        match read_setting(&root.join(".mcp.json")) {
+            Ok(bytes) => {
+                hash.update([1]);
+                hash.update((bytes.len() as u64).to_be_bytes());
+                hash.update(bytes);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => hash.update([0]),
+            Err(error) => return Err(error),
+        }
+    }
     for root in settings_roots(&path)? {
         let identity = std::fs::metadata(&root)?;
         let root_bytes = root.as_os_str().as_encoded_bytes();
@@ -226,6 +242,25 @@ pub(crate) async fn set(profile: &Path, folder: &Path, trusted: bool) -> std::io
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn parent_mcp_changes_revoke_trust_outside_and_above_git() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("parent");
+        let repo = parent.join("repo");
+        let sub = repo.join("sub");
+        let profile = temp.path().join("profile");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(&profile).unwrap();
+        for git_repo in [false, true] {
+            if git_repo {
+                git(&repo, &["init", "-q"]);
+            }
+            set(&profile, &sub, true).await.unwrap();
+            std::fs::write(parent.join(".mcp.json"), format!("{git_repo}")).unwrap();
+            assert_eq!(status(&profile, &sub).await.unwrap(), (false, true));
+        }
+    }
 
     fn git(cwd: &Path, args: &[&str]) {
         let status = std::process::Command::new("git")

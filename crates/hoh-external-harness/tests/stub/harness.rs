@@ -360,7 +360,7 @@ impl Stub {
                     "action": command("touch first.txt")}));
                 self.event(json!({"type": "approval-requested", "requestId": "r2",
                     "action": command("touch second.txt")}));
-                std::thread::sleep(Duration::from_millis(200));
+                std::thread::sleep(Duration::from_millis(500));
                 self.event(json!({"type": "request-resolved", "requestId": "r1"}));
                 self.wait(Duration::from_secs(20), |stub| {
                     stub.responses.contains_key("r2")
@@ -424,6 +424,12 @@ impl Stub {
                 let mut out = std::io::stdout().lock();
                 let _ = write!(out, "{{\"jsonrpc\":\"2.0\",\"method\":\"harness/ev");
                 let _ = out.flush();
+                std::process::exit(0);
+            }
+            "exit after turn" => {
+                self.text("m1", "finished");
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+                std::thread::sleep(Duration::from_millis(200));
                 std::process::exit(0);
             }
             "crash" => {

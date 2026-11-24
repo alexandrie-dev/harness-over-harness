@@ -402,7 +402,35 @@ impl ExternalAgent {
                 tokio::select! {
                     () = &mut notified => continue,
                     () = token.cancelled() => break,
+                    event = async {
+                        match live.as_mut() {
+                            Some(session) if !session.dead => session.events.recv().await,
+                            _ => std::future::pending().await,
+                        }
+                    } => {
+                        if let Some(session) = live.as_mut() {
+                            match event {
+                                None | Some(HarnessEvent::SessionEnded { .. }) => {
+                                    session.dead = true;
+                                    self.shared.forget_launch(self.id.as_ref(), &session.control);
+                                }
+                                Some(HarnessEvent::NativeSession { native_session_id }) => {
+                                    self.record_native(&native_session_id, None);
+                                }
+                                Some(HarnessEvent::ApprovalRequested { request_id, .. })
+                                | Some(HarnessEvent::QuestionAsked { request_id, .. }) => {
+                                    let withdrawn = respond(&self, &session.control, request_id, HarnessResponse::Cancelled);
+                                    let _ = tokio::time::timeout(self.interrupt_grace(), withdrawn).await;
+                                }
+                                Some(other) => self.ctx.logger().debug(format_args!(
+                                    "dropped a harness event between turns: {}",
+                                    js_json_stringify(&redact_value(&json!(other)))
+                                )),
+                            }
+                        }
+                    }
                 }
+                continue;
             };
             self.emit_status(AgentStatus::Running);
             self.run_turn(&mut live, input, &abort).await;
@@ -571,6 +599,7 @@ impl ExternalAgent {
                     prompted = true;
                     if let Err(failure) = result {
                         session.dead = true;
+                        self.shared.forget_launch(self.id.as_ref(), &session.control);
                         return if signal.aborted() {
                             TurnOutcome::Aborted
                         } else {
@@ -585,6 +614,7 @@ impl ExternalAgent {
                 event = session.events.recv() => {
                     let Some(event) = event else {
                         session.dead = true;
+                        self.shared.forget_launch(self.id.as_ref(), &session.control);
                         return TurnOutcome::Failed(HarnessFailure::new(
                             code::CLOSED,
                             "the harness event stream ended",
@@ -592,6 +622,7 @@ impl ExternalAgent {
                     };
                     if let HarnessEvent::SessionEnded { .. } = &event {
                         session.dead = true;
+                        self.shared.forget_launch(self.id.as_ref(), &session.control);
                     }
                     if let Some(outcome) = log.apply(event, session, &turn_id) {
                         if log.broken {
@@ -599,6 +630,7 @@ impl ExternalAgent {
                             // a new process, asking for a wider policy again).
                             session.control.terminate(self.terminate_grace()).await;
                             session.dead = true;
+                            self.shared.forget_launch(self.id.as_ref(), &session.control);
                         }
                         return outcome;
                     }
@@ -625,6 +657,7 @@ impl ExternalAgent {
                     // The native interrupt did not end the turn in time: stop the process.
                     session.control.terminate(self.terminate_grace()).await;
                     session.dead = true;
+                    self.shared.forget_launch(self.id.as_ref(), &session.control);
                     return TurnOutcome::Aborted;
                 }
             }
