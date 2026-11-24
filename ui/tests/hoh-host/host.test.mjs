@@ -774,10 +774,17 @@ test('the first message gets a Claude title; failure keeps its beginning and a l
     if (method === 'hoh/executor/title/generate') { success.requests.push({ method, params }); return Promise.resolve({ title: 'Context Window Indicator' }); }
     return successRequest(method, params);
   };
-  const successful = connect(success); await launch(successful.client, 'title-ok', 'Покажи заполнение контекста'); await tick(5);
+  const titleData = new Map();
+  const titleStorage = { getItem: key => titleData.get(key) ?? null, setItem: (key, value) => titleData.set(key, value) };
+  const successful = connect(success, { storage: titleStorage }); await launch(successful.client, 'title-ok', 'Покажи заполнение контекста'); await tick(5);
   assert.equal((await successful.client.call('orchestration.getThreadProjection', { threadId: 'title-ok' })).thread.title, 'Context Window Indicator');
   const titleCall = success.requests.find(request => request.method === 'hoh/executor/title/generate');
   assert.equal(titleCall.params.executor, 'claude'); assert.match(titleCall.params.prompt, /3-8 words/);
+  successful.host.stop();
+  const reopenedTitle = connect(new FakeEngine({ store: success.store }), { storage: titleStorage });
+  await reopenedTitle.host.start(); await tick(10);
+  assert.equal((await reopenedTitle.client.call('orchestration.getThreadProjection', { threadId: 'title-ok' })).thread.title, 'Context Window Indicator');
+  reopenedTitle.host.stop();
 
   const failed = new FakeEngine(); const failedRequest = failed.request.bind(failed);
   failed.request = (method, params) => method === 'hoh/executor/title/generate' ? Promise.reject(new Error('offline')) : failedRequest(method, params);
@@ -2882,4 +2889,38 @@ test('prompt timestamps and stopped provenance survive replay of the engine hist
   assert.deepEqual(after.turnItems.filter(item => item.type === 'user_message').map(item => item.startedAt), before.turnItems.filter(item => item.type === 'user_message').map(item => item.startedAt));
   assert(after.turnItems.some(item => item.type === 'run_interrupt_result'));
   second.host.stop();
+});
+
+test('background history replay preserves the active process mode after earlier completed turns', async () => {
+  const engine = new FakeEngine();
+  const session = engine.seed('quick-replay-mode', 'Quick view', [
+    ['user/message', { id: 'old', source: { kind: 'user' }, content: [{ type: 'text', text: 'old turn' }] }],
+    ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ['user/message', { id: 'current', source: { kind: 'user' }, content: [{ type: 'text', text: 'current turn' }] }],
+    ['turn/start', { turn: 2 }],
+  ]);
+  Object.assign(session, { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full', runningRuntimeMode: 'plan' });
+  const { host } = connect(engine, { throttleMs: 0 });
+  await host.start();
+  for (let i = 0; i < 100 && host.thread('quick-replay-mode')?.shell().interactionMode !== 'plan'; i++) await tick(5);
+  const shell = host.thread('quick-replay-mode').shell();
+  assert.equal(shell.runtimeMode, 'approval-required');
+  assert.equal(shell.interactionMode, 'plan');
+  host.stop();
+});
+
+test('background history learns a known binding after an initial access read fails', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('retry-quick-binding', 'Retry binding', [
+    ['user/message', { id: 'retry-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] }],
+    ['turn/end', { reason: { kind: 'completed' } }],
+  ]), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const request = engine.request.bind(engine); let reads = 0;
+  engine.request = (method, params) => method === 'hoh/executor/access/get' && params.sessionId === 'retry-quick-binding' && ++reads === 1
+    ? Promise.reject(new Error('not ready')) : request(method, params);
+  const { host } = connect(engine, { throttleMs: 0 });
+  await host.start();
+  for (let i = 0; i < 100 && !host.thread('retry-quick-binding')?.bindingKnown; i++) await tick(5);
+  assert.equal(host.thread('retry-quick-binding')?.shell().runtimeMode, 'full-access');
+  host.stop();
 });
