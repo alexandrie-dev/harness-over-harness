@@ -62,6 +62,27 @@ impl LocalFs {
             FsType::Other
         }
     }
+
+    fn version(meta: &std::fs::Metadata) -> FsVersion {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let mtime = i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec());
+            let ctime = i128::from(meta.ctime()) * 1_000_000_000 + i128::from(meta.ctime_nsec());
+            format!(
+                "{}:{}:{}:{mtime}:{ctime}",
+                meta.dev(),
+                meta.ino(),
+                meta.len()
+            )
+            .into()
+        }
+        #[cfg(not(unix))]
+        {
+            meta.len().to_string().into()
+        }
+    }
 }
 
 impl hoh_fs::FileSystem for LocalFs {
@@ -104,7 +125,7 @@ impl hoh_fs::FileSystem for LocalFs {
             let park = self.park.lock().unwrap().take();
             let info = match tokio::fs::metadata(&target.display_path).await {
                 Ok(meta) => Some(FsInfo {
-                    version: FsVersion::from(format!("{}", meta.len())),
+                    version: Self::version(&meta),
                     r#type: Self::kind(&meta),
                     size: Some(meta.len()),
                 }),
@@ -128,7 +149,7 @@ impl hoh_fs::FileSystem for LocalFs {
                 .await
                 .ok()
                 .map(|meta| FsPathInfo {
-                    version: FsVersion::from(format!("{}", meta.len())),
+                    version: Self::version(&meta),
                     r#type: FsPathType::from(Self::kind(&meta)),
                     size: Some(meta.len()),
                 }))

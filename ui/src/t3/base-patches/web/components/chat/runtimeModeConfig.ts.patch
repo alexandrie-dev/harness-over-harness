@@ -1,20 +1,20 @@
 --- a/web/components/chat/runtimeModeConfig.ts
 +++ b/web/components/chat/runtimeModeConfig.ts
-@@ -62,12 +62,16 @@
-   disabledReason?: string;
- } {
-   const config = runtimeModeConfig[mode];
+@@ -42 +42 @@
+-/** The modes a provider supports (all when it reports none) and the mode a thread really runs in. */
++/** Undefined keeps T3's legacy "all modes"; an explicit empty list means access is unknown. */
+@@ -48,3 +48,3 @@
+-    supportedRuntimeModes && supportedRuntimeModes.length > 0
+-      ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
+-      : runtimeModeOptions;
++    supportedRuntimeModes === undefined
++      ? runtimeModeOptions
++      : runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode));
+@@ -65 +65 @@
 -  return {
 +  const option = {
-     mode,
-     ...config,
-     label: resolve(config.label),
-     description: resolve(config.description),
-   };
+@@ -70,0 +71,4 @@
 +  // HoH implements only Supervised and Full access end to end for both executors.
 +  return mode === "auto-accept-edits" || mode === "auto"
 +    ? { ...option, disabledReason: resolve(msg("Coming Soon")) }
 +    : option;
- }
-
- /** Why `mode` is unavailable under `managedPolicy`, or undefined when it is allowed. */

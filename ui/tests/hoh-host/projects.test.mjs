@@ -131,12 +131,38 @@ test('a folder becomes a T3 project; a chat in it runs in that folder; the list 
   assert.match(failureOf(recreated).message, /cannot change its project folder/);
   assert.equal(engine.requests.filter(request => request.method === 'session/prompt').length, 1);
   assert.equal((await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-site')).thread.projectId, 'p-site');
+  // A rejected project transition is validated before the launch can widen Claude's global mode.
+  const accessSetsBeforeRejectedLaunch = engine.requests.filter(request => request.method === 'hoh/executor/access/set').length;
+  for (const projectId of ['p-missing', 'hoh-project']) {
+    await assert.rejects(() => client.call('orchestration.launchThread', {
+      commandId: `rejected-${projectId}`, threadId: 'thread-site', projectId, title: 'Must stay put',
+      modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'full-access', interactionMode: 'default',
+      initialMessage: { messageId: `rejected-message-${projectId}`, text: 'must not run', attachments: [] },
+    }), /project/i);
+  }
+  assert.equal(engine.requests.filter(request => request.method === 'hoh/executor/access/set').length, accessSetsBeforeRejectedLaunch);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'thread-site' })).thread.runtimeMode, 'approval-required');
+  // T3 may create a scratch draft before its project picker settles. The explicit launch project
+  // wins before the first prompt, and that association is durable across a window restart.
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'draft-create', threadId: 'draft-site', projectId: 'hoh-project', title: 'Draft',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+  });
+  const draft = await client.call('orchestration.launchThread', {
+    commandId: 'draft-launch', threadId: 'draft-site', projectId: 'p-site', title: 'Draft',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
+    workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'draft-message', text: 'Use this project', attachments: [] },
+  });
+  assert.equal(draft.projection.thread.projectId, 'p-site');
+  const draftSet = engine.requests.find(request => request.method === 'session/working-directory/set' && request.params.sessionId === 'draft-site');
+  assert.deepEqual(draftSet?.params, { sessionId: 'draft-site', path: '/home/person/Projects/site' });
   // A chat without a project stays in "No project", the engine's default folder.
   await client.call('orchestration.launchThread', {
     commandId: 'cmd-2', threadId: 'thread-plain', projectId: 'hoh-project', title: 'Plain', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
     runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' },
   });
-  assert.equal(engine.requests.filter(request => request.method === 'session/working-directory/set').length, 1);
+  assert.equal(engine.requests.filter(request => request.method === 'session/working-directory/set').length, 2);
+  assert.equal(engine.requests.some(request => request.method === 'session/working-directory/set' && request.params.sessionId === 'thread-plain'), false);
   assert.equal((await client.call('server.getConfig', {})).scratchWorkspaceRoot, '/home/person/Documents/HoH');
 
   // Restart: a new engine process over the same sessions, a new page over the same storage.
@@ -145,7 +171,7 @@ test('a folder becomes a T3 project; a chat in it runs in that folder; the list 
   const againShell = await again.stream('orchestration.subscribeShell', {});
   const restored = await againShell.until(value => value.kind === 'snapshot');
   assert.deepEqual(restored.snapshot.projects.map(p => [p.id, p.title, p.workspaceRoot]).sort(), [['hoh-project', 'No project', '/home/person/Documents/HoH'], ['p-site', 'site', '/home/person/Projects/site']]);
-  assert.deepEqual(Object.fromEntries(restored.snapshot.threads.map(t => [t.id, t.projectId])), { 'thread-site': 'p-site', 'thread-plain': 'hoh-project' });
+  assert.deepEqual(Object.fromEntries(restored.snapshot.threads.map(t => [t.id, t.projectId])), { 'thread-site': 'p-site', 'thread-plain': 'hoh-project', 'draft-site': 'p-site' });
   assert.equal(store.get('thread-site').cwd, '/home/person/Projects/site');
   await again.call('orchestration.launchThread', {
     commandId: 'cmd-after-restart', threadId: 'thread-site-2', projectId: 'p-site', title: 'After restart',
@@ -157,7 +183,7 @@ test('a folder becomes a T3 project; a chat in it runs in that folder; the list 
   assert.equal((await again.call('server.getConfig', {})).scratchWorkspaceRoot, '/home/person/Documents/HoH');
   // Opened again, the chat's row takes its title from the history (the engine kept no title here).
   await again.call('orchestration.getThreadProjection', { threadId: 'thread-site' });
-  assert.equal((await againShell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-site')).thread.title, 'Build it');
+  assert.equal((await againShell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-site' && value.thread.title === 'Build it')).thread.title, 'Build it');
 });
 
 test('a chat whose history names a project folder joins that project; refusing the folder fails the start in English', async () => {

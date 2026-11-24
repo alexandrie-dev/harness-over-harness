@@ -222,6 +222,33 @@ async fn refuses_when_the_selected_directory_disappears_without_recovery() {
 }
 
 #[tokio::test]
+async fn refuses_an_ordinary_directory_replacement_after_selection() {
+    let f = Fixture::new().await;
+    let selected = f.path(&["selected"]);
+    let held = f.path(&["held"]);
+    let replacement = f.path(&["replacement"]);
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::create_dir(&replacement).unwrap();
+    f.service
+        .set(&f.agent.agent, &selected, None)
+        .await
+        .unwrap();
+    let identity = f.service.verify_for_spawn(&f.agent.session()).unwrap().1;
+
+    std::fs::rename(&selected, &held).unwrap();
+    std::fs::rename(&replacement, &selected).unwrap();
+    let error = f.service.verify_for_spawn(&f.agent.session()).unwrap_err();
+    assert!(error.to_string().contains("changed"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let replacement = std::fs::metadata(&selected).unwrap();
+        assert_ne!(identity, [replacement.dev(), replacement.ino()]);
+    }
+    f.shutdown().await;
+}
+
+#[tokio::test]
 async fn reports_a_missing_original_project_and_permits_an_explicit_directory_change_to_recover() {
     let f = Fixture::new().await;
     let origin = f.path(&["original"]);

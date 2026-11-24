@@ -110,20 +110,47 @@ pub struct PeerInfo {
 /// Who settles the harness's permission checks. Chosen only by the user in the window
 /// (`hoh/executor/access/set`, a privileged command); nothing in a session — the chat, the model,
 /// the harness, a file in the working folder, the parameters a session is created with — sets it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "kebab-case")]
+///
+/// The four modes T3 Code exposes, with both executors' native spelling of auto-accept edits.
+/// The middle modes keep confirm's sandbox (the session folder, no network) and its questions for
+/// what the CLI does not settle itself. `AutoAcceptEdits` is Codex's wire value; `AcceptEdits` is
+/// Claude's. They have the same security boundary and remain distinct so persisted choices cannot
+/// silently change provider-native meaning.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum AccessMode {
-    /// «С подтверждением»: the CLI keeps its sandbox (the session folder, no network) and puts
-    /// every command, write and network step it does not settle itself to the user through HoH.
+    /// «С подтверждением» (T3 Supervised): the CLI keeps its sandbox (the session folder, no
+    /// network) and puts every command, write and network step it does not settle itself to the
+    /// user through HoH.
+    #[serde(rename = "confirm")]
     Confirm,
     /// T3 «Auto-accept edits»: Codex may write in the workspace, while commands and wider
     /// permissions still reach the person.
+    #[serde(rename = "auto-accept-edits")]
     AutoAcceptEdits,
-    /// T3 «Auto»: Codex's own auto-reviewer settles ordinary workspace actions.
+    /// T3 «Auto-accept edits»: as confirm, but the CLI makes file edits in its working folders
+    /// without asking (Claude Code `acceptEdits`).
+    #[serde(rename = "acceptEdits")]
+    AcceptEdits,
+    /// T3 «Auto»: as confirm, but the CLI itself decides which steps are safe to run without
+    /// asking (Codex's auto-reviewer or Claude Code `auto`); the others still reach the user.
+    #[serde(rename = "auto")]
     Auto,
     /// «Полный доступ», as in T3 Code: the CLI runs commands without questions and without a
     /// sandbox. A session configured read-only stays read-only (a reviewer stays one): full access
     /// only takes the questions away (review 232500, item 4).
+    #[serde(rename = "full")]
     Full,
 }
 
@@ -141,9 +168,15 @@ impl AccessMode {
         match self {
             Self::Confirm => "confirm",
             Self::AutoAcceptEdits => "auto-accept-edits",
+            Self::AcceptEdits => "acceptEdits",
             Self::Auto => "auto",
             Self::Full => "full",
         }
+    }
+
+    /// The CLI's questions it does not settle itself reach the user: every mode but full access.
+    pub fn asks(self) -> bool {
+        self != Self::Full
     }
 
     /// A session started with `policy` under this mode runs with the harness's full-access
@@ -346,9 +379,27 @@ pub struct StartParams {
     /// [`effort_levels`](crate::ExternalHarness::effort_levels); none: the harness's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// The interaction mode selected for this turn. A changed mode starts another native
+    /// process on the same continued conversation.
+    #[serde(default, skip_serializing_if = "InteractionMode::is_default")]
+    pub interaction_mode: InteractionMode,
     pub policy: HarnessPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<NativeSessionId>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InteractionMode {
+    #[default]
+    Default,
+    Plan,
+}
+
+impl InteractionMode {
+    fn is_default(value: &Self) -> bool {
+        *value == Self::Default
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -438,6 +489,204 @@ pub struct EventParams {
     pub event: HarnessEvent,
 }
 
+/// Ignorable session-log record that carries one raw provider telemetry frame.
+pub const TELEMETRY_RECORD: &str = "plugin:hoh-external-harness/telemetry";
+
+/// Durable record written for raw provider telemetry. The session log supplies ordering; these
+/// fields preserve the provider identity needed to recognise a replay or a process/session reset
+/// without deriving totals in the harness adapter.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessTelemetryRecord {
+    pub provenance: HarnessTelemetryProvenance,
+    pub payload: HarnessTelemetry,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessTelemetryProvenance {
+    /// Unique for one native process launch, including when it resumes the same native session.
+    pub launch_id: String,
+    pub native_session_id: NativeSessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// The provider frame UUID or message id. It is absent rather than invented when the
+    /// provider supplied no stable id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_item_id: Option<String>,
+}
+
+/// Raw telemetry only. Conversation totals, ledger deltas, task reconciliation and
+/// deduplication belong to the session-stats projection that folds these durable records.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum HarnessTelemetry {
+    AssistantUsage {
+        usage: HarnessTokenUsage,
+    },
+    ResultUsage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<HarnessTokenUsage>,
+        /// `None` means the field was absent; `Some([])` preserves an explicitly empty ledger.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_usage: Option<Vec<HarnessModelUsage>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_cost_usd: Option<f64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        user_message_uuids: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<String>,
+    },
+    McpServers {
+        servers: Vec<HarnessMcpServer>,
+    },
+    BackgroundTask {
+        update: HarnessBackgroundTaskUpdate,
+    },
+    BackgroundTaskUpdated {
+        task_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        patch: HarnessBackgroundTaskPatch,
+    },
+    BackgroundTasksSnapshot {
+        tasks: Vec<HarnessBackgroundTask>,
+    },
+}
+
+/// Token counts exactly as Claude reported them. Missing is not zero.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessTokenUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessModelUsage {
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search_requests: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+}
+
+/// Only public identity/status from `system/init.mcp_servers`; command, args, env and transport
+/// configuration never enter the session log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessMcpServer {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessBackgroundTask {
+    pub task_id: String,
+    /// A resumed task may reuse `task_id`; when Claude supplies this identity it distinguishes
+    /// the concrete run without making the harness infer lifecycle state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessBackgroundTaskUpdate {
+    pub subtype: String,
+    pub task: HarnessBackgroundTask,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_backgrounded: Option<bool>,
+    /// Typed-safe subset of a workflow progress roster. Unknown item shapes are omitted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflow_progress: Vec<HarnessWorkflowProgress>,
+}
+
+/// Typed-safe subset of Claude's `task_updated.patch`. Missing fields remain unknown; aliases
+/// seen across CLI versions are normalized by the adapter before this record is emitted.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessBackgroundTaskPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessWorkflowProgress {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_progress_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u64>,
+}
+
 /// One thing that happened in a native session.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -497,6 +746,21 @@ pub enum HarnessEvent {
     /// A progress line (not part of the answer).
     Status {
         text: String,
+    },
+    /// Provider accounting and background lifecycle that does not belong in the visible turn
+    /// stream. The external agent persists it as an ignorable plugin record.
+    Telemetry {
+        record: HarnessTelemetryRecord,
+    },
+    /// The latest root model-message context snapshot. These are per-message counts, not the
+    /// aggregate usage of every model call in a turn.
+    Usage {
+        input_tokens: u64,
+        cache_creation_input_tokens: u64,
+        cache_read_input_tokens: u64,
+        output_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_tokens: Option<u64>,
     },
     /// A step began: a command, a file change, another tool.
     ItemStarted {

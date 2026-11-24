@@ -46,6 +46,12 @@ export interface LocalImageAsset {
   readonly sizeBytes: number;
   readonly sourcePath: string;
   readonly fileRevision: string;
+  readonly decodeProfile: {
+    readonly canvasPixels: number;
+    readonly decodedFramePixels: number;
+    readonly animationPixelsPerSecond: number;
+    readonly frameCount: number;
+  };
 }
 
 export interface FolderBrowseInput { readonly partialPath: string; readonly cwd?: string }
@@ -55,4 +61,4 @@ export interface FolderListing {
 }
 
 /** `hoh/executor/access/get` (the engine's contract): the mode asked for and the one in effect. */
-export type AccessMode = 'confirm' | 'full';
+export type AccessMode = 'confirm' | 'auto-accept-edits' | 'auto' | 'full';

@@ -34,7 +34,7 @@
 Корень: `/home/save/Alexandrie/HarnessOverHarness` — свой git-репозиторий, только локально.
 Один рабочий каталог, исполнители пишут в непересекающиеся каталоги crates, коммитит ведущий.
 Образец: dsh на коммите `39163dd3` (0.2.2-rc.3), копия в `/mnt/toshiba/alexandrie/hoh/refs/`.
-Сборка: `/mnt/toshiba/alexandrie/hoh/target` (на системном диске 30 ГБ).
+Сборка: цели cargo только на NVMe — общая цель линии /home/save/.cache/hoh-build/line-<линия> (claude, plug, codexw), без cargo clean; на / при свободном < 15 ГБ сборки не начинать (CEO 23.11; logs/lead1118/build-rules-20261123.txt).
 
 Опись `docs/porting/MAP.tsv` уже построена по исходникам: для каждого пакета dsh решение, этап, имя нашего
 crate, размер. Правило: один пакет dsh — один crate `crates/hoh-<имя>`. Итог описи:

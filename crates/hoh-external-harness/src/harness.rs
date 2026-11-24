@@ -80,6 +80,23 @@ pub trait ExternalHarness: Send + Sync + 'static {
         Box::pin(std::future::ready(Ok(HarnessCommands::default())))
     }
 
+    /// The revision of [`commands`](Self::commands) available without starting a probe. A harness
+    /// increments it when a real session supplies a newer snapshot for `cwd`, so the window can
+    /// replace its short-lived pre-turn cache immediately. Default: no revisions.
+    fn commands_revision(&self, cwd: &std::path::Path) -> u64 {
+        let _ = cwd;
+        0
+    }
+
+    /// One isolated, no-tools title request. The default harness does not provide it.
+    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+        let _ = prompt;
+        Box::pin(std::future::ready(Err(HarnessFailure::new(
+            code::HARNESS,
+            "this harness cannot generate conversation titles",
+        ))))
+    }
+
     /// [`discover`](Self::discover), and where the found version stands against the range the
     /// harness was checked with. Default: the range is not known.
     fn discover_with_status(

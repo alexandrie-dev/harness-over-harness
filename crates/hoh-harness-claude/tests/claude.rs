@@ -8,8 +8,8 @@ use std::time::Duration;
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, ApprovalMode, AuthState, DiscoveryFailure, DiscoveryOperation,
     EndReason, ExternalHarness, HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse,
-    HarnessSession, ItemOutcome, PromptParams, QuestionAnswer, RespondParams, SandboxMode,
-    StartParams, Started, code,
+    HarnessSession, HarnessTelemetry, InteractionMode, ItemOutcome, PromptParams, QuestionAnswer,
+    RespondParams, SandboxMode, StartParams, Started, code,
 };
 use hoh_harness_claude::{ClaudeConfig, ClaudeHarness, SettingSources};
 use tokio::sync::mpsc::Receiver;
@@ -99,6 +99,7 @@ fn params(dir: &Path, resume: Option<&str>, policy: HarnessPolicy) -> StartParam
         cwd_identity: None,
         model: None,
         effort: None,
+        interaction_mode: hoh_external_harness::InteractionMode::Default,
         policy,
         resume: resume.map(Into::into),
     }
@@ -113,6 +114,108 @@ async fn start(env: &Env, resume: Option<&str>) -> Started {
         .await
         .map_err(|e| e.message)
         .unwrap()
+}
+
+#[tokio::test]
+async fn plan_mode_captures_exit_plan_without_asking_for_permission() {
+    let env = Env::new();
+    let mut parameters = params(env.dir.path(), None, HarnessPolicy::default());
+    parameters.interaction_mode = InteractionMode::Plan;
+    let mut started = env
+        .harness()
+        .start_with_access(parameters, AccessMode::Confirm)
+        .await
+        .unwrap();
+    prompt(&started.session, "turn-plan", "plan");
+    let events = until(&mut started.events, |event| {
+        matches!(event, HarnessEvent::TurnCompleted { .. })
+    })
+    .await;
+    assert!(events.iter().any(|event| matches!(event,
+        HarnessEvent::ItemStarted { action: HarnessAction::Tool { name, input }, .. }
+            if name == "ExitPlanMode" && input["plan"] == "# Plan\n\n1. Inspect\n2. Implement"
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, HarnessEvent::ApprovalRequested { .. }))
+    );
+    let args = env.args();
+    let at = args
+        .iter()
+        .position(|arg| arg == "--permission-mode")
+        .unwrap();
+    assert_eq!(args[at + 1], "plan");
+}
+
+#[tokio::test]
+async fn context_usage_is_the_last_root_message_snapshot_not_aggregate_result_usage() {
+    let env = Env::new();
+    let mut started = start(&env, None).await;
+    prompt(&started.session, "turn-usage", "usage");
+    let events = until(&mut started.events, |event| {
+        matches!(event, HarnessEvent::TurnCompleted { .. })
+    })
+    .await;
+    let usage_events: Vec<&HarnessEvent> = events
+        .iter()
+        .filter(|event| matches!(event, HarnessEvent::Usage { .. }))
+        .collect();
+    assert_eq!(usage_events.len(), 5, "{usage_events:?}");
+    assert!(matches!(
+        usage_events[0],
+        HarnessEvent::Usage {
+            input_tokens: 100,
+            output_tokens: 1,
+            max_tokens: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        usage_events[3],
+        HarnessEvent::Usage {
+            input_tokens: 200,
+            cache_creation_input_tokens: 40,
+            cache_read_input_tokens: 60,
+            output_tokens: 9,
+            max_tokens: None,
+        }
+    ));
+    assert!(matches!(
+        usage_events[4],
+        HarnessEvent::Usage {
+            input_tokens: 200,
+            cache_creation_input_tokens: 40,
+            cache_read_input_tokens: 60,
+            output_tokens: 9,
+            max_tokens: Some(200_000),
+        }
+    ));
+}
+
+#[tokio::test]
+async fn title_generation_is_a_short_isolated_no_tools_call_outside_the_project() {
+    let env = Env::new();
+    let title = env
+        .harness()
+        .generate_title("title this conversation".into())
+        .await
+        .unwrap();
+    assert_eq!(title, "Context Window Indicator");
+    let args = env.args();
+    let value = |flag: &str| {
+        let at = args.iter().position(|arg| arg == flag).unwrap();
+        args[at + 1].as_str()
+    };
+    assert_eq!(value("--model"), "claude-haiku-5-5");
+    assert_eq!(value("--effort"), "low");
+    assert_eq!(value("--tools"), "");
+    let cwd = std::fs::read_to_string(env.dir.path().join("title-cwd")).unwrap();
+    assert_ne!(Path::new(&cwd), env.dir.path());
+    assert!(
+        !Path::new(&cwd).exists(),
+        "the temporary title directory is removed"
+    );
 }
 
 fn prompt(session: &Arc<dyn HarnessSession>, turn: &str, text: &str) {
@@ -189,7 +292,8 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
     let env = Env::new();
     let folder = env.dir.path().join("project");
     std::fs::create_dir(&folder).unwrap();
-    let found = env.harness().commands(folder.clone()).await.unwrap();
+    let harness = env.harness();
+    let found = harness.commands(folder.clone()).await.unwrap();
     let commands: Vec<_> = found
         .commands
         .iter()
@@ -235,6 +339,45 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
     // No prompt was sent: nothing reached the stub's prompt log.
     assert!(!env.dir.path().join("prompt-sessions").exists());
 
+    // A real personal-profile session is started only for the person's turn. Its project/local
+    // sources then add the folder's commands and skills, and its snapshot replaces the safe
+    // pre-turn probe without waiting for the window's short cache to expire.
+    assert_eq!(harness.commands_revision(&folder), 0);
+    assert!(
+        !found
+            .commands
+            .iter()
+            .any(|command| command.name == "project-command")
+    );
+    assert!(
+        !found
+            .skills
+            .iter()
+            .any(|skill| skill.name == "project-skill")
+    );
+    let started = harness
+        .start_with_access(
+            params(&folder, None, HarnessPolicy::default()),
+            AccessMode::Confirm,
+        )
+        .await
+        .unwrap();
+    let after = harness.commands(folder.clone()).await.unwrap();
+    assert!(harness.commands_revision(&folder) > 0);
+    assert!(
+        after
+            .commands
+            .iter()
+            .any(|command| command.name == "project-command")
+    );
+    assert!(
+        after
+            .skills
+            .iter()
+            .any(|skill| skill.name == "project-skill")
+    );
+    started.session.terminate(Duration::from_millis(500)).await;
+
     // A CLI without `reload_skills` still gives its commands; a missing folder, nothing.
     let mut env = Env::new();
     env.mode = Some("no-skills");
@@ -249,8 +392,8 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
         .unwrap();
     assert_eq!(
         args[at + 1],
-        "user",
-        "the probe is independent of the profile"
+        "",
+        "the isolated probe uses the isolated profile's empty sources"
     );
     let missing = env.harness().commands(env.dir.path().join("gone")).await;
     assert_eq!(missing.unwrap_err().code, hoh_external_harness::code::IO);
@@ -416,6 +559,244 @@ async fn a_turn_streams_reasoning_and_text_and_completes() {
     assert!(!args.iter().any(|a| a.contains("dangerously")));
     let at = args.iter().position(|a| a == "--session-id").unwrap();
     assert_eq!(args[at + 1], String::from(result.native_session_id));
+    session.terminate(Duration::from_millis(500)).await;
+}
+
+#[tokio::test]
+async fn telemetry_keeps_raw_usage_safe_mcp_and_background_provenance() {
+    let env = Env::new();
+    let Started {
+        result,
+        session,
+        mut events,
+    } = start(&env, None).await;
+    prompt(&session, "t-telemetry", "telemetry");
+    let seen = until(&mut events, turn_end).await;
+    let records: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            HarnessEvent::Telemetry { record } => Some(record),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(records.len(), 9, "{seen:#?}");
+    for rejected in ["tasks-mixed-telemetry", "tasks-malformed-telemetry"] {
+        assert!(
+            records
+                .iter()
+                .all(|record| record.provenance.source_id.as_deref() != Some(rejected)),
+            "an incomplete roster must emit no snapshot: {seen:#?}"
+        );
+    }
+    assert!(records.iter().all(|record| {
+        !String::from(record.provenance.native_session_id.clone()).is_empty()
+            && !record.provenance.launch_id.is_empty()
+    }));
+    for (index, record) in records.iter().enumerate() {
+        let expected_turn = matches!(index, 1 | 2 | 3 | 8).then_some("t-telemetry");
+        assert_eq!(
+            record.provenance.turn_id.as_deref(),
+            expected_turn,
+            "system/background telemetry must not be attributed to the active prompt"
+        );
+    }
+    assert!(
+        records
+            .iter()
+            .all(|record| record.provenance.launch_id == records[0].provenance.launch_id)
+    );
+
+    match &records[0].payload {
+        HarnessTelemetry::McpServers { servers } => {
+            assert_eq!(servers.len(), 2);
+            assert_eq!(servers[0].name, "codex");
+            assert_eq!(servers[0].status.as_deref(), Some("connected"));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        &records[1].payload,
+        HarnessTelemetry::AssistantUsage { usage }
+            if usage.input_tokens == Some(11)
+                && usage.output_tokens == Some(3)
+                && usage.cache_read_input_tokens == Some(5)
+                && usage.cache_creation_input_tokens.is_none()
+    ));
+    for record in &records[2..=3] {
+        assert!(matches!(
+            &record.payload,
+            HarnessTelemetry::AssistantUsage { .. }
+        ));
+        assert_eq!(
+            record.provenance.source_id, None,
+            "an id-less assistant frame must not get an invented source id"
+        );
+    }
+    assert!(matches!(
+        &records[4].payload,
+        HarnessTelemetry::BackgroundTask { update }
+            if update.subtype == "task_started"
+                && update.task.task_id == "task-1"
+                && update.task.run_id.as_deref() == Some("run-main")
+                && update.is_backgrounded == Some(true)
+    ));
+    assert!(matches!(
+        &records[5].payload,
+        HarnessTelemetry::BackgroundTask { update }
+            if update.subtype == "task_progress"
+                && update.workflow_progress.len() == 2
+                && update.workflow_progress[1].agent_id.as_deref() == Some("agent-1")
+    ));
+    assert!(matches!(
+        &records[6].payload,
+        HarnessTelemetry::BackgroundTask { update }
+            if update.subtype == "task_notification"
+                && update.status.as_deref() == Some("completed")
+    ));
+    assert!(matches!(
+        &records[7].payload,
+        HarnessTelemetry::BackgroundTasksSnapshot { tasks } if tasks.is_empty()
+    ));
+    match &records[8].payload {
+        HarnessTelemetry::ResultUsage {
+            usage,
+            model_usage,
+            total_cost_usd,
+            user_message_uuids,
+            ..
+        } => {
+            assert_eq!(
+                usage.as_ref().and_then(|usage| usage.input_tokens),
+                Some(13)
+            );
+            let ledger = model_usage.as_ref().expect("modelUsage field was present");
+            assert_eq!(ledger.len(), 1);
+            assert_eq!(ledger[0].model, "stub-model");
+            assert_eq!(ledger[0].input_tokens, Some(20));
+            assert_eq!(ledger[0].context_window, Some(200_000));
+            assert_eq!(ledger[0].cost_usd, Some(0.125));
+            assert_eq!(*total_cost_usd, Some(0.25));
+            assert_eq!(user_message_uuids.len(), 1);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let encoded = serde_json::to_string(&records).unwrap();
+    for secret in [
+        "secret-command",
+        "secret-token",
+        "secret-arg",
+        "secret-output",
+    ] {
+        assert!(
+            !encoded.contains(secret),
+            "unsafe MCP/task field leaked: {encoded}"
+        );
+    }
+    let first_launch = records[0].provenance.launch_id.clone();
+    let native = String::from(result.native_session_id);
+    session.terminate(Duration::from_millis(500)).await;
+
+    let Started {
+        result,
+        session,
+        mut events,
+    } = start(&env, Some(&native)).await;
+    assert!(result.resumed);
+    assert_eq!(String::from(result.native_session_id), native);
+    prompt(&session, "t-resumed-telemetry", "telemetry");
+    let resumed = until(&mut events, turn_end).await;
+    let resumed_record = resumed.iter().find_map(|event| match event {
+        HarnessEvent::Telemetry { record } => Some(record),
+        _ => None,
+    });
+    let resumed_record = resumed_record.expect("resumed telemetry");
+    assert_ne!(resumed_record.provenance.launch_id, first_launch);
+    assert_eq!(
+        String::from(resumed_record.provenance.native_session_id.clone()),
+        native
+    );
+    session.terminate(Duration::from_millis(500)).await;
+}
+
+#[tokio::test]
+async fn late_parented_assistant_usage_keeps_its_origin_turn() {
+    let env = Env::new();
+    let Started {
+        session,
+        mut events,
+        ..
+    } = start(&env, None).await;
+    prompt(&session, "t-origin", "telemetry-parent");
+    let origin = until(&mut events, turn_end).await;
+    assert!(origin.iter().any(|event| matches!(
+        event,
+        HarnessEvent::Telemetry { record }
+            if record.provenance.source_id.as_deref() == Some("parent-message")
+                && record.provenance.turn_id.as_deref() == Some("t-origin")
+    )));
+
+    prompt(&session, "t-next", "telemetry-late-parent");
+    let late = until(&mut events, turn_end).await;
+    let turn_of = |source: &str| {
+        late.iter().find_map(|event| match event {
+            HarnessEvent::Telemetry { record }
+                if record.provenance.source_id.as_deref() == Some(source) =>
+            {
+                Some(record.provenance.turn_id.as_deref())
+            }
+            _ => None,
+        })
+    };
+    assert_eq!(turn_of("late-known"), Some(Some("t-origin")), "{late:#?}");
+    assert_eq!(turn_of("late-unknown"), Some(None), "{late:#?}");
+    session.terminate(Duration::from_millis(500)).await;
+}
+
+#[tokio::test]
+async fn task_runs_and_typed_updates_remain_distinguishable() {
+    let env = Env::new();
+    let Started {
+        session,
+        mut events,
+        ..
+    } = start(&env, None).await;
+    prompt(&session, "t-tasks", "telemetry-tasks");
+    let seen = until(&mut events, turn_end).await;
+    let records: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            HarnessEvent::Telemetry { record } => Some(record),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(records.len(), 6, "{seen:#?}");
+    let lifecycle_runs: Vec<_> = records[..3]
+        .iter()
+        .filter_map(|record| match &record.payload {
+            HarnessTelemetry::BackgroundTask { update } => update.task.run_id.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lifecycle_runs, ["run-1", "run-1", "run-2"]);
+    assert!(matches!(
+        &records[3].payload,
+        HarnessTelemetry::BackgroundTaskUpdated { task_id, run_id, patch }
+            if task_id == "same-task"
+                && run_id.as_deref() == Some("run-1")
+                && patch.status.as_deref() == Some("completed")
+                && patch.end_time == Some(17)
+    ));
+    assert!(matches!(
+        &records[4].payload,
+        HarnessTelemetry::BackgroundTaskUpdated { run_id, patch, .. }
+            if run_id.as_deref() == Some("run-2") && patch.background == Some(false)
+    ));
+    assert!(matches!(
+        &records[5].payload,
+        HarnessTelemetry::BackgroundTaskUpdated { run_id, patch, .. }
+            if run_id.as_deref() == Some("run-2") && patch.background == Some(true)
+    ));
     session.terminate(Duration::from_millis(500)).await;
 }
 
@@ -606,6 +987,23 @@ async fn a_result_of_another_turn_does_not_end_the_prompts_turn() {
         assert!(
             answer,
             "{scenario}: the turn ended before its answer: {seen:?}"
+        );
+        let background_usage = seen.iter().find_map(|event| match event {
+            HarnessEvent::Telemetry { record }
+                if matches!(
+                    &record.payload,
+                    HarnessTelemetry::ResultUsage { origin, .. }
+                        if origin.as_deref() == Some("task-notification")
+                ) =>
+            {
+                Some(record)
+            }
+            _ => None,
+        });
+        assert_eq!(
+            background_usage.and_then(|record| record.provenance.turn_id.as_deref()),
+            None,
+            "{scenario}: a background result must not be attributed to t1"
         );
         // The next prompt is a turn of its own, answered and ended once.
         prompt(&session, "t2", "hello");
@@ -2102,11 +2500,21 @@ async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
         assert_eq!(argv[1..], args[..], "{access:?}");
         let has = |flag: &str| args.iter().any(|a| a == flag);
         match access {
-            AccessMode::Confirm | AccessMode::AutoAcceptEdits | AccessMode::Auto => {
+            AccessMode::Confirm
+            | AccessMode::AutoAcceptEdits
+            | AccessMode::AcceptEdits
+            | AccessMode::Auto => {
+                // CEO 23.11 00:07: the two modes in between are Claude's own, with confirm's
+                // question channel.
                 assert!(has("--permission-prompt-tool"));
                 assert!(!has("--allow-dangerously-skip-permissions"));
                 let at = args.iter().position(|a| a == "--permission-mode").unwrap();
-                assert_eq!(args[at + 1], "default");
+                let mode = match access {
+                    AccessMode::AutoAcceptEdits | AccessMode::AcceptEdits => "acceptEdits",
+                    AccessMode::Auto => "auto",
+                    _ => "default",
+                };
+                assert_eq!(args[at + 1], mode);
             }
             AccessMode::Full => {
                 // The callback stays for what even bypass refuses.

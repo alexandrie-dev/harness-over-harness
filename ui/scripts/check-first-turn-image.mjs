@@ -47,6 +47,7 @@ engine.readImageAsset = async ({ sessionId, path }) => {
   return {
     dataBase64: PNG, mimeType: 'image/png', sizeBytes: Buffer.from(PNG, 'base64').length,
     sourcePath: '/workspace/chat/shots/test-image.png', fileRevision: 'first-turn-browser',
+    decodeProfile: { canvasPixels: 4, decodedFramePixels: 4, animationPixelsPerSecond: 0, frameCount: 1 },
   };
 };
 

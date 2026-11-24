@@ -90,7 +90,7 @@ pub struct Engine<W> {
     /// Test clients without a host (the UI checks drive the stub directly): privileged methods are applied at once, as the
     /// host's approval would have allowed them. Off by default: a real host must sign every decision.
     local_approvals: bool,
-    /// Access mode of the Claude executor (`confirm` | `full`), kept in memory like the engine keeps it.
+    /// Access mode of the Claude executor (`confirm` | `acceptEdits` | `auto` | `full`), kept in memory like the engine keeps it.
     access_mode: &'static str,
     /// Model chosen with `hoh/executor/select` (`None`: new chats run on the engine's own model).
     selected: Option<String>,
@@ -285,11 +285,27 @@ impl<W: Write> Engine<W> {
                         "Полный доступ: Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить.",
                     )
                 } else {
+                    // CEO 23.11 00:07: the two modes between confirm and full are Claude's own
+                    // mode with confirm's question channel and closed network.
+                    let (permission_mode, text) = match shown {
+                        "acceptEdits" => (
+                            "acceptEdits",
+                            "Правки без вопросов: файлы в папке разговора Claude меняет сам, команды и сеть — после вашего подтверждения",
+                        ),
+                        "auto" => (
+                            "auto",
+                            "Автоматически: что безопасно, Claude решает и выполняет сам, остальное — после вашего подтверждения",
+                        ),
+                        _ => (
+                            "default",
+                            "С подтверждением: команды, правки файлов и сеть Claude выполняет после вашего подтверждения",
+                        ),
+                    };
                     (
                         // Confirm closes the network: the CLI's two network tools stay off.
                         json!([
                             "--permission-mode",
-                            "default",
+                            permission_mode,
                             "--setting-sources",
                             "user,project,local",
                             "--permission-prompt-tool",
@@ -297,7 +313,7 @@ impl<W: Write> Engine<W> {
                             "--disallowedTools",
                             "WebFetch,WebSearch"
                         ]),
-                        "С подтверждением: команды, правки файлов и сеть Claude выполняет после вашего подтверждения",
+                        text,
                     )
                 };
                 let selected = self.selected.as_ref().map_or(
@@ -320,8 +336,15 @@ impl<W: Write> Engine<W> {
             "hoh/executor/access/set" => {
                 let mode: &'static str = match params["mode"].as_str() {
                     Some("confirm") => "confirm",
+                    Some("acceptEdits") => "acceptEdits",
+                    Some("auto") => "auto",
                     Some("full") => "full",
-                    _ => return Err("executor access: mode must be confirm or full".into()),
+                    _ => {
+                        return Err(
+                            "executor access: mode must be confirm, acceptEdits, auto or full"
+                                .into(),
+                        );
+                    }
                 };
                 // The engine's answer (`ExecutorAccessSetResult`): the executor is checked above.
                 self.defer(

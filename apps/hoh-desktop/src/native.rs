@@ -1007,14 +1007,44 @@ pub async fn browse_folders_for(
     if label != "main" {
         return Err("Folder browsing is available to the main window only.".into());
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or("The home folder is unknown.")?;
+    let home = folder_browser_home(
+        std::env::var_os("HOH_WINDOW_HOME"),
+        std::env::var_os("HOME"),
+    )?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::folders::list_folders(&partial_path, cwd.as_deref(), &home)
     })
     .await
     .map_err(|_| "Request interrupted.".to_owned())?
+}
+
+/// Resolve `~` for the folder browser. Isolated window launches can give Claude the person's real
+/// HOME while pinning browser discovery to the demo root. An explicit root is a security boundary:
+/// malformed or missing roots fail closed instead of silently falling back to ambient HOME.
+pub fn folder_browser_home(
+    explicit: Option<OsString>,
+    ambient: Option<OsString>,
+) -> Result<PathBuf, String> {
+    if let Some(value) = explicit {
+        if value.is_empty() {
+            return Err("The window home folder is empty.".into());
+        }
+        let root = PathBuf::from(value);
+        if !root.is_absolute() {
+            return Err("The window home folder must be an absolute path.".into());
+        }
+        let root = root
+            .canonicalize()
+            .map_err(|_| "The window home folder does not exist or cannot be read.".to_owned())?;
+        if !root.is_dir() {
+            return Err("The window home folder is not a directory.".into());
+        }
+        return Ok(root);
+    }
+    ambient
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "The home folder is unknown.".to_owned())
 }
 
 /// Read one raster referenced by a conversation. The page supplies only the session id and path;
@@ -1042,10 +1072,49 @@ pub async fn read_image_asset(
             .ok_or_else(|| {
                 "Image unavailable: the conversation project folder is unknown.".to_owned()
             })?;
+        let identity = answer
+            .get("rootIdentity")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| {
+                "Image unavailable: the conversation project folder identity is unknown.".to_owned()
+            })?;
+        let parse_identity = |field: &str| -> Result<u64, String> {
+            let value = identity
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| {
+                    !value.is_empty()
+                        && value.len() <= 20
+                        && value.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .ok_or_else(|| {
+                    "Image unavailable: the conversation project folder identity is invalid."
+                        .to_owned()
+                })?;
+            let parsed = value.parse::<u64>().map_err(|_| {
+                "Image unavailable: the conversation project folder identity is invalid.".to_owned()
+            })?;
+            if parsed.to_string() != value {
+                return Err(
+                    "Image unavailable: the conversation project folder identity is invalid."
+                        .to_owned(),
+                );
+            }
+            Ok(parsed)
+        };
+        let expected_root = crate::image_asset::ProjectRootIdentity {
+            device: parse_identity("device")?,
+            inode: parse_identity("inode")?,
+        };
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| "Image unavailable: the home folder is unknown.".to_owned())?;
-        crate::image_asset::read_project_image(std::path::Path::new(root), &path, &home)
+        crate::image_asset::read_project_image(
+            std::path::Path::new(root),
+            expected_root,
+            &path,
+            &home,
+        )
     })
     .await
     .map_err(|_| "Image unavailable: the read was interrupted.".to_owned())?

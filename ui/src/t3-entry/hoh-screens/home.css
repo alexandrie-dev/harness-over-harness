@@ -40,6 +40,7 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 .hoh-home__date { color: var(--muted-foreground); font-size: 0.875rem; margin-top: 4px; }
 .hoh-home__add-project { margin-top: 12px; }
 .hoh-home__head { position: relative; width: 100%; margin-top: 0; text-align: center; }
+.hoh-home__greeting { display: block; width: 100%; text-align: center; }
 /* Эмблема над приветствием (правило u2: emblem-fit.ts ставит data-hoh-emblem, только если она помещается без прокрутки; на узком окне скрыта). */
 .hoh-home__head[data-hoh-emblem] { margin-top: 134px; }
 .hoh-home__head[data-hoh-emblem]::before {
@@ -122,9 +123,6 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
   .hoh-ask__text[data-expanded] { max-height: 7.5rem; }
   .hoh-home[data-busy] .hoh-home__inner { gap: 16px; }
 }
-/* Карточка деталей разговора T3 (рабочая среда, папка) в правом верхнем углу на главной не нужна. */
-body:has([data-hoh-home-body]) [data-thread-details-card] { display: none; }
-
 /* Занятая главная (есть агенты, запросы или готовое): приветствие сверху уже есть, заголовок черновика T3 («What should we work on?» / «No project») не показывается — место отдано списку.
    На пустой главной он остаётся. Список прокручивается внутри себя; его нижний край — поле ввода, отступ 24 px — у .hoh-home__inner. */
 body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute.inset-x-0.bottom-full { display: none; }

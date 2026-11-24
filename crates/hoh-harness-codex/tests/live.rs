@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, AuthState, ExternalHarness, HarnessEvent, HarnessResponse,
-    PromptParams, RespondParams, StartParams,
+    InteractionMode, PromptParams, RespondParams, StartParams,
 };
 use hoh_harness_codex::{CodexConfig, CodexHarness};
 use tempfile::TempDir;
@@ -24,6 +24,7 @@ fn params(
         cwd_identity: None,
         model: Some(model),
         effort,
+        interaction_mode: InteractionMode::Default,
         policy: Default::default(),
         resume: resume.map(Into::into),
     }

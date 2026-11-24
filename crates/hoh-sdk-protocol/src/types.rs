@@ -189,8 +189,18 @@ pub struct SessionWorkingDirectorySetParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingDirectoryRootIdentity {
+    pub device: String,
+    pub inode: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionWorkingDirectoryResult {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_identity: Option<WorkingDirectoryRootIdentity>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

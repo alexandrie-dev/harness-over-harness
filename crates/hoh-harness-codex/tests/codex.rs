@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, AuthState, ExternalHarness, HarnessEvent, HarnessPolicy,
-    HarnessResponse, PromptParams, RespondParams, StartParams, VersionStatus,
+    HarnessResponse, InteractionMode, PromptParams, RespondParams, StartParams, VersionStatus,
 };
 use hoh_harness_codex::{CodexConfig, CodexHarness};
 use serde_json::Value;
@@ -40,6 +40,7 @@ fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
         cwd_identity: None,
         model: Some("gpt-stub".into()),
         effort: Some("high".into()),
+        interaction_mode: InteractionMode::Default,
         policy: HarnessPolicy::default(),
         resume: resume.map(Into::into),
     }
@@ -97,6 +98,20 @@ async fn protocol_end_without_a_request_card(
             _ => {}
         }
     }
+}
+
+#[tokio::test]
+async fn plan_is_refused_before_codex_process_can_start_even_with_full_access() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "plan-refused");
+    let mut params = start_params(&temp, None);
+    params.interaction_mode = InteractionMode::Plan;
+    let failure = match harness.start_with_access(params, AccessMode::Full).await {
+        Ok(_) => panic!("Codex must not run a plan as an ordinary full-access turn"),
+        Err(failure) => failure,
+    };
+    assert!(failure.message.contains("coming soon"));
+    assert!(lines(&log).is_empty());
 }
 
 #[tokio::test]

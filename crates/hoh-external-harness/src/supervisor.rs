@@ -300,6 +300,40 @@ impl Supervisor {
         }
     }
 
+    /// Write one bounded, non-JSON input and close stdin after it. This is for isolated one-shot
+    /// provider requests whose CLI takes a prompt on stdin rather than the harness JSON-lines
+    /// protocol. Taking the sole sender makes the writer close the pipe after this input; a second
+    /// call cannot append data or keep the child waiting indefinitely.
+    pub async fn send_input_and_close(
+        &self,
+        input: &[u8],
+        max_bytes: usize,
+    ) -> Result<(), HarnessFailure> {
+        if input.len() > max_bytes {
+            return Err(HarnessFailure::new(
+                code::PROTOCOL,
+                format!("one-shot harness input exceeds {max_bytes} bytes"),
+            ));
+        }
+        let closed = || HarnessFailure::new(code::CLOSED, "harness stdin is closed");
+        let sender = lock(&self.stdin).take().ok_or_else(closed)?;
+        let (written, result) = oneshot::channel();
+        sender
+            .send((input.to_vec(), written))
+            .await
+            .map_err(|_| closed())?;
+        drop(sender);
+        match result.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => Err(closed()),
+            Ok(Err(error)) => Err(HarnessFailure::new(
+                code::IO,
+                format!("cannot write one-shot harness input: {error}"),
+            )),
+            Err(_) => Err(closed()),
+        }
+    }
+
     /// Wait, at most `timeout`, until stderr is read to its end (a process that exits may leave
     /// lines not yet read; a surviving descendant may keep the pipe open).
     pub async fn stderr_drained(&self, timeout: Duration) {
@@ -783,6 +817,32 @@ mod tests {
         // The process is gone: a send now fails instead of vanishing.
         let gone = supervisor.send(&serde_json::json!({})).await;
         assert_eq!(gone.expect_err("exited").code, code::CLOSED);
+    }
+
+    #[tokio::test]
+    async fn one_shot_input_is_bounded_and_closes_stdin() {
+        let supervisor = shell(
+            "payload=$(cat); printf '{\"bytes\":%s}\\n' \"$(printf %s \"$payload\" | wc -c)\"",
+        )
+        .await;
+        let mut frames = supervisor.take_frames().expect("frames");
+        supervisor
+            .send_input_and_close(b"title prompt", 32)
+            .await
+            .expect("bounded input");
+        assert_eq!(
+            next_frame(&mut frames).await,
+            Some(Frame::Message(serde_json::json!({"bytes": 12})))
+        );
+        supervisor.wait_timeout(Duration::from_secs(10)).await;
+
+        let refused = spawn_shell("exec sleep 30");
+        let error = refused
+            .send_input_and_close(b"too long", 3)
+            .await
+            .expect_err("oversized one-shot input");
+        assert_eq!(error.code, code::PROTOCOL);
+        refused.terminate(Duration::from_millis(200)).await;
     }
 
     #[tokio::test]
