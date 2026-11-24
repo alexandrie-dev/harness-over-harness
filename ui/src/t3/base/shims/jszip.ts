@@ -23,7 +23,7 @@ interface JSZip {
 }
 const JSZip: { new (): JSZip; loadAsync(data: unknown): Promise<JSZip> } = class {
   static loadAsync(): Promise<never> {
-    return Promise.reject(new Error('jszip: архивы в окне HoH не читаются'));
+    return Promise.reject(new Error('Archives are unavailable in the HoH window.'));
   }
 } as never;
 export default JSZip;

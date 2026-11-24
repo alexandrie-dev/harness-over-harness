@@ -472,3 +472,6 @@ C6: остановка после уже выведенного ответа с�
 | `web/components/Sidebar.tsx` и `web/hooks/useSidebarProjectGroups.ts`, `web/sidebarProjectGrouping.ts` | правки `base-patches` | меню переименования проекта использует `project.update`; папка `Chats` показывается лишь после первого сообщения в чате без проекта |
 | Видимые строки `web`, `client-runtime`, `shared`, `contracts` (полный список — `base.patched` в `manifest.json`) | правки `base-patches` | текст и доступные подписи используют chat/chats; имена команд, идентификаторы и параметры протокола сохранены |
 | `ui/src/t3-entry/vite.ts` | вставка HoH | до сведения параллельной главной временно меняет её кнопку ответа на «Answer in the chat», не изменяя HomeBody.tsx |
+
+| `web/components/chat/ThreadDetailsPanel.tsx`, `web/components/ChatView.tsx`, `web/rightPanelStore.ts` | правки `base-patches` | C7f: статистика активного чата берётся из проекции и контекста, пустые возможности скрыты, панель по умолчанию закрыта и отсутствует на главной |
+| `web/components/settings/settingsSearch.ts` | правка `base-patches` | C7f: настройка доступна по запросу «Choose what to show» |

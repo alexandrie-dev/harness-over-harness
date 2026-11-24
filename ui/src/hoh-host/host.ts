@@ -238,6 +238,7 @@ export class HohHost {
   private readonly localImageContextGraceMs: number;
   private stopped = false;
   private readonly threads = new Map<string, ThreadModel>();
+  private readonly projectTrustRevisions = new Map<string, number>();
   /** Rows restored before the engine answers; its list/history replaces their cached metadata once available. */
   private readonly restored = new Set<string>();
   /** Histories already peeked successfully during startup; a cached row is retried until its log is readable. */
@@ -1481,13 +1482,37 @@ export class HohHost {
     return thread;
   }
 
+  /** Record only a confirmed live launch; this also runs for chats not currently on screen. */
+  private async rememberProjectTrust(thread: ThreadModel, revision: number) {
+    try {
+      const access = await this.engine.request('hoh/executor/access/get', { executor: 'claude', sessionId: thread.id });
+      const flags = Array.isArray(access?.effective?.flags) ? access.effective.flags : [];
+      const at = flags.indexOf('--setting-sources');
+      const sources = at >= 0 && typeof flags[at + 1] === 'string' ? flags[at + 1].split(',') : [];
+      if (access?.session?.executor !== 'claude' || !access?.session?.running || !['user', 'project', 'local'].every(source => sources.includes(source))) return;
+      const directory = await this.engine.request('session/working-directory/get', { sessionId: thread.id });
+      if (typeof directory?.cwd !== 'string' || !directory.cwd) return;
+      const trust = await this.engine.request('hoh/executor/trust/get', { executor: 'claude', cwd: directory.cwd });
+      if (this.stopped || this.projectTrustRevisions.get(thread.id) !== revision || !trust?.trusted || trust?.changed) return;
+      this.threadMetadata.update(thread.id, { appliedProjectTrust: { cwd: directory.cwd, executor: 'claude' } });
+    } catch { /* No proof or storage: the banner must not claim a saved launch. */ }
+  }
+
   private onNotification(notification: EngineNotification) {
     const params = notification.params ?? {};
     switch (notification.method) {
       case 'session.event': {
         const thread = this.threadFor(params.sessionId);
         if (thread?.applyEvent(params.event)) this.changed(thread.id);
+        if (thread && params.event?.type === 'plugin:external-harness/folder-trust-changed') {
+          this.projectTrustRevisions.set(thread.id, (this.projectTrustRevisions.get(thread.id) ?? 0) + 1);
+          try { if (this.threadMetadata.get(thread.id).appliedProjectTrust) this.threadMetadata.update(thread.id, { appliedProjectTrust: null }); } catch { /* Storage is optional. */ }
+        }
         if (thread && params.event?.type === 'plugin:external-harness/launch') {
+          const trustRevision = (this.projectTrustRevisions.get(thread.id) ?? 0) + 1;
+          this.projectTrustRevisions.set(thread.id, trustRevision);
+          try { if (this.threadMetadata.get(thread.id).appliedProjectTrust) this.threadMetadata.update(thread.id, { appliedProjectTrust: null }); } catch { /* Storage is optional. */ }
+          void this.rememberProjectTrust(thread, trustRevision);
           const runningPlan = params.event?.data?.runtimeMode === 'plan';
           const mode = runningPlan ? 'confirm' : exactMode(params.event?.data?.runtimeMode);
           if (mode) {

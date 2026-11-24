@@ -51,3 +51,11 @@
 -                                          />
 -                                        ),
 -                                      })}
+@@ -3937 +3929 @@
+-                <ThreadDetailsPanel
++                {isServerThread ? <ThreadDetailsPanel
+@@ -4000,0 +3993 @@
++                  projection={serverProjection}
+@@ -4007 +4000 @@
+-                />
++                /> : null}

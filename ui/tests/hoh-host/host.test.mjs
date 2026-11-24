@@ -3108,3 +3108,31 @@ test('Stop during streaming, approval and subagent work replays the user-message
     reopened.host.stop();
   }
 });
+
+test('trusted Claude launches are recorded even when the chat is not open', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('background-trust', 'Background', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm', cwd: '/home/person/Documents/HoH' });
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const { host } = connect(engine, { storage }); await host.start();
+  const original = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'background-trust') {
+      const result = await original(method, params);
+      return { ...result, session: { ...result.session, executor: 'claude', running: 'confirm' }, effective: { flags: ['--setting-sources', 'user,project,local'] } };
+    }
+    if (method === 'hoh/executor/trust/get') return { trusted: true, changed: false, cwd: params.cwd };
+    return original(method, params);
+  };
+  engine.emitEvent('background-trust', 'plugin:external-harness/launch', { runtimeMode: 'confirm', interactionMode: 'default' });
+  const key = 'hoh-host.thread-metadata.v1';
+  for (let i = 0; i < 100 && !JSON.parse(values.get(key) ?? '{}')['background-trust']?.appliedProjectTrust; i++) await tick(5);
+  const saved = JSON.parse(values.get(key))['background-trust'].appliedProjectTrust;
+  assert.deepEqual(saved, { cwd: engine.store.get('background-trust').cwd, executor: 'claude' });
+  host.stop();
+  const restored = connect(engine, { storage }); await restored.host.start();
+  assert.deepEqual(JSON.parse(values.get(key))['background-trust'].appliedProjectTrust, saved);
+  engine.emitEvent('background-trust', 'plugin:external-harness/folder-trust-changed', {});
+  assert.equal(JSON.parse(values.get(key))['background-trust'].appliedProjectTrust, null);
+  restored.host.stop();
+});

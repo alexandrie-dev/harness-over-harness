@@ -408,8 +408,8 @@ const scenarios = [
       await setSidebar(page, sidebar);
       const panel = page.locator('[data-thread-details-card]');
       if (!(await panel.isVisible().catch(() => false))) await page.getByRole('button', { name: 'Toggle chat details panel' }).click();
-      await panel.getByText('Контекст', { exact: true }).waitFor();
-      await panel.getByText('Заполнено', { exact: true }).waitFor();
+      await panel.getByText('Context', { exact: true }).waitFor();
+      await panel.getByText('Used', { exact: true }).waitFor();
       // At narrow widths the details card is a popover and intentionally overlays the lane.
       // Measure the conversation after closing it, as in the other conversation scenarios.
       await page.keyboard.press('Escape');

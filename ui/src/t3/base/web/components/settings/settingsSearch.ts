@@ -383,11 +383,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "thread-details-items",
-    title: msg("Chat details"),
+    title: msg("Choose what to show"),
     to: "/settings/appearance",
     searchTerms: [
       msg(
-        "customize show hide panel card environment editor scripts branch pull request git changes servers automations lineage usage limits 5 hour weekly quota tokens context window",
+        "choose what to show customize show hide chat details panel context window",
       ),
     ],
   },

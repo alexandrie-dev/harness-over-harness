@@ -35,7 +35,10 @@
 +      msg("new chat default runtime mode supervised approvals auto accept edits full access"),
 @@ -372 +386 @@
 -    title: msg("Thread details"),
-+    title: msg("Chat details"),
++    title: msg("Choose what to show"),
+@@ -376 +390 @@
+-        "customize show hide panel card environment editor scripts branch pull request git changes servers automations lineage usage limits 5 hour weekly quota tokens context window",
++        "choose what to show customize show hide chat details panel context window",
 @@ -488 +502 @@
 -    searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
 +    searchTerms: [msg("hide fold running monitoring chats inbox sidebar shelf")],

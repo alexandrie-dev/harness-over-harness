@@ -1,0 +1,16 @@
+--- a/web/rightPanelStore.ts
++++ b/web/rightPanelStore.ts
+@@ -242 +242 @@
+-  inlineOpen: true,
++  inlineOpen: false,
+@@ -417 +417 @@
+-  if (next.inlineOpen && !next.popoverOpen) {
++  if (!next.inlineOpen && !next.popoverOpen) {
+@@ -711,2 +711,2 @@
+-            return value.inlineOpen === false
+-              ? [[threadKey, { inlineOpen: false, popoverOpen: false }]]
++            return value.inlineOpen === true
++              ? [[threadKey, { inlineOpen: true, popoverOpen: false }]]
+@@ -1313 +1313 @@
+-              visibility.inlineOpen ? [] : [[threadKey, { inlineOpen: false, popoverOpen: false }]],
++              visibility.inlineOpen ? [[threadKey, { inlineOpen: true, popoverOpen: false }]] : [],

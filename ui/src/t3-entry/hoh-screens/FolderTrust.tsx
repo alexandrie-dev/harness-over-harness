@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { folderTrustView } from './folder-trust-view.mjs';
 import type { HohEngineLike } from '../host';
+import { readAppliedTrust, writeAppliedTrust } from './folder-trust-record.mjs';
 
 declare global { interface Window { __HOH_TRUST_ENGINE__?: HohEngineLike } }
 
@@ -39,7 +40,18 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
       const isolated = sources >= 0 && flags[sources + 1] === '';
       const running = !!access.session?.running;
       const selectedSources = sources >= 0 ? flags[sources + 1]?.split(',') ?? [] : [];
-      const applied = running && (executor === 'codex' ? flags.includes('project-trust=trusted') : selectedSources.includes('user') && selectedSources.includes('project') && selectedSources.includes('local'));
+      const liveApplied = running && (executor === 'codex' ? flags.includes('project-trust=trusted') : selectedSources.includes('user') && selectedSources.includes('project') && selectedSources.includes('local'));
+      let applied = liveApplied;
+      if (isServerThread) try {
+        const saved = readAppliedTrust(window.localStorage, threadId);
+        if (!result.trusted || result.changed || isolated) {
+          if (saved) writeAppliedTrust(window.localStorage, threadId, null);
+        } else if (liveApplied) {
+          if (saved?.cwd !== cwd || saved.executor !== executor) writeAppliedTrust(window.localStorage, threadId, { cwd, executor });
+        } else if (!running && saved?.cwd === cwd && saved.executor === executor) {
+          applied = true;
+        }
+      } catch { /* Storage is optional; never claim a prior launch without evidence. */ }
       if (result.changed && current === generation.current) setChangedNotice(true);
       update({ ...result, trusted: isolated ? false : result.trusted, isolated, running, applied });
     } catch { update(null); }
@@ -53,9 +65,9 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     let stopped = false;
     let unsubscribe: (() => void) | undefined;
     void window.__HOH_TRUST_ENGINE__?.subscribe?.(event => {
-      if (event.method === 'session.event' && event.params?.sessionId === threadId && event.params?.event?.type === 'plugin:external-harness/folder-trust-changed') {
-        setChangedNotice(true);
-        void refresh();
+      if (event.method === 'session.event' && event.params?.sessionId === threadId) {
+        if (event.params?.event?.type === 'plugin:external-harness/folder-trust-changed') { setChangedNotice(true); void refresh(); }
+        if (event.params?.event?.type === 'plugin:external-harness/launch') void refresh();
       }
     }).then(off => { if (stopped) off(); else unsubscribe = off; }).catch(() => {});
     return () => { stopped = true; unsubscribe?.(); generation.current++; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
@@ -68,7 +80,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
       const engine = window.__HOH_TRUST_ENGINE__;
       if (!engine) return;
       setBusy(true);
-      try { await engine.request('hoh/executor/trust/set', { executor: state.executor, cwd: state.cwd, trust: true }); setChangedNotice(false); }
+      try { if (isServerThread) { try { writeAppliedTrust(window.localStorage, threadId, null); } catch { /* Storage is optional. */ } } await engine.request('hoh/executor/trust/set', { executor: state.executor, cwd: state.cwd, trust: true }); setChangedNotice(false); }
       catch { /* The native host rejected or could not confirm the request. */ }
       finally { setBusy(false); void refresh(); }
     }}>Trust project settings in this folder (Claude and Codex)…</button>}

@@ -2,7 +2,7 @@
 import type { HohStorage } from './host.ts';
 
 export const THREAD_METADATA_KEY = 'hoh-host.thread-metadata.v1';
-export interface ThreadMetadata { title?: string; pinnedAt?: number | null; pinOrderKey?: string | null; archivedAt?: number | null; promptTimes?: Record<string, number> }
+export interface ThreadMetadata { title?: string; pinnedAt?: number | null; pinOrderKey?: string | null; archivedAt?: number | null; promptTimes?: Record<string, number>; appliedProjectTrust?: { cwd: string; executor: string } | null }
 
 export class ThreadMetadataStore {
   constructor(private readonly storage: HohStorage | null) {}

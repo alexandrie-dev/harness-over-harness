@@ -26,5 +26,9 @@ test('dist chat wording check catches visible labels while preserving protocol i
     assert.equal(run().status, 1);
     await writeFile(join(dir, 'main-example.js'), 'const x=gt("thread", {context: "label"});');
     assert.equal(run().status, 1);
+    await writeFile(join(dir, 'main-example.js'), 'const x={title:"Токены"};');
+    assert.equal(run().status, 1);
+    await writeFile(join(dir, 'main-example.js'), 'const x={title:`Токены ${count}`};');
+    assert.equal(run().status, 1);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

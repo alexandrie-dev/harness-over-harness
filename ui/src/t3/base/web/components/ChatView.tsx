@@ -3926,7 +3926,7 @@ export default function ChatView(props: ChatViewProps) {
                   onConfirm={handleSwitchCheckoutToThreadStable}
                 />
 
-                <ThreadDetailsPanel
+                {isServerThread ? <ThreadDetailsPanel
                   anchor={threadPanelPopoverAnchorRef}
                   handle={threadPanelPopoverHandle}
                   forceNewWorktree={multipleModelSelections !== null}
@@ -3990,13 +3990,14 @@ export default function ChatView(props: ChatViewProps) {
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
+                  projection={serverProjection}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
                   }}
-                />
+                /> : null}
 
                 <PullRequestThreadDialogHost
                   threadKey={activeThreadKey}

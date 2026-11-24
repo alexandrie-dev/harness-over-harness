@@ -45,7 +45,8 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
-import { getHohSessionStatsSnapshot } from "../../../../../t3-entry/session-stats";
+import * as DateTime from "effect/DateTime";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -93,205 +94,72 @@ interface ThreadDetailsPanelProps extends Pick<
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
   usage: ThreadDetailsUsageInput;
+  projection: ThreadStructure | null;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
-  const snapshot = getHohSessionStatsSnapshot();
-  const noData = "нет данных";
-  const number = (value: number | undefined) =>
-    value === undefined ? noData : value.toLocaleString("ru-RU");
-  const status = (value: string) =>
-    ({ running: "идёт", finished: "закончено", failed: "ошибка", unknown: "неизвестно" })[
-      value
-    ] ?? "неизвестно";
-  const duration = (value: number | undefined) => {
-    if (value === undefined) return noData;
-    const seconds = Math.floor(value / 1_000);
-    const minutes = Math.floor(seconds / 60);
-    return `${minutes} мин ${seconds % 60} с`;
+  const projection = props.projection;
+  const turns = projection?.providerTurns ?? [];
+  const usageTurns = turns.filter((turn) => turn.tokenUsage != null);
+  const runs = projection?.runs ?? [];
+  const lastRun = runs.at(-1);
+  const current = turns.find((turn) => turn.ordinal === lastRun?.ordinal)?.tokenUsage;
+  const total = (key: "inputTokens" | "outputTokens" | "cachedInputTokens" | "reasoningOutputTokens") => {
+    const values = usageTurns.map((turn) => turn.tokenUsage?.[key]).filter((value): value is number => typeof value === "number");
+    return values.length ? values.reduce((sum, value) => sum + value, 0) : undefined;
   };
-  const total = snapshot.tokens.providerTotal ?? snapshot.tokens.conversation;
-  const context = snapshot.context;
-  const contextFill =
-    context?.usedTokens !== undefined && context.maxTokens !== undefined && context.maxTokens > 0
-      ? Math.max(0, Math.min(100, (context.usedTokens / context.maxTokens) * 100))
-      : null;
-  const contextTick =
-    context?.autoCompactThreshold !== undefined &&
-    context.maxTokens !== undefined &&
-    context.maxTokens > 0
-      ? Math.max(0, Math.min(100, (context.autoCompactThreshold / context.maxTokens) * 100))
-      : null;
-  const row = (label: string, value: string, detail?: string, key?: string) => (
-    <ThreadDetailsControl
-      key={key}
-      render={<div />}
-      part="row"
-      multiline={detail !== undefined}
-      aria-label={`${label}: ${value}`}
-    >
-      <span className="min-w-0 flex-1">
-        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{label}</span>
-        {detail ? (
-          <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">
-            {detail}
-          </span>
-        ) : null}
-      </span>
-      <span className="max-w-44 truncate text-end font-normal text-muted-foreground tabular-nums">
-        {value}
-      </span>
+  const number = (value: number | null | undefined) => value == null ? "—" : value.toLocaleString("en-US");
+  const context = props.usage.contextWindow;
+  const goalItem = projection?.turnItems.find((item) => item.type === "user_message");
+  const goal = goalItem?.type === "user_message" ? goalItem.text.trim() : "";
+  const plan = projection?.plans.findLast((item) => item.status === "active" && item.kind === "proposed_plan");
+  const effort = projection?.thread.modelSelection.options?.find((option) => option.id === "effort" || option.id === "reasoningEffort")?.value;
+  const toolCalls = projection?.turnItems.filter((item) => ["command_execution", "file_change", "file_search", "web_search", "dynamic_tool", "proposed_plan"].includes(item.type)).length ?? 0;
+  const completed = runs.flatMap((run) => {
+    if (!run.startedAt || !run.completedAt) return [];
+    const duration = DateTime.toEpochMillis(run.completedAt) - DateTime.toEpochMillis(run.startedAt);
+    return Number.isFinite(duration) && duration >= 0 ? [duration] : [];
+  });
+  const rows = [
+    ["Input", current?.inputTokens, total("inputTokens")],
+    ["Output", current?.outputTokens, total("outputTokens")],
+    ["Cache read", current?.cachedInputTokens, total("cachedInputTokens")],
+  ].filter(([, last, sum]) => last != null || sum != null);
+  const row = (label: string, value: string) => (
+    <ThreadDetailsControl key={label} render={<div />} part="row" aria-label={`${label}: ${value}`}>
+      <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{label}</span>
+      <span className="ml-auto max-w-44 truncate font-normal text-muted-foreground tabular-nums">{value}</span>
     </ThreadDetailsControl>
   );
-
   return (
-    <ThreadDetailsCard
-      threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
-      anchor={props.anchor}
-      handle={props.handle}
-      contentKey={`hoh-session-stats:${snapshot.revision}`}
-    >
-      {() => (
-        <div className="group/details-items">
-          <ThreadDetailsSection
-            headingId="thread-details-goal-heading"
-            title="Цель и план"
-            separated={false}
-          >
-            <div className="flex flex-col">
-              {row("Цель", snapshot.goal ?? noData)}
-              {row(
-                "План",
-                snapshot.plan?.text ?? "нет",
-                snapshot.plan?.source === "todoWrite"
-                  ? "TodoWrite"
-                  : snapshot.plan?.source === "exitPlanMode"
-                    ? "ExitPlanMode"
-                    : undefined,
-              )}
-            </div>
-          </ThreadDetailsSection>
-
-          <ThreadDetailsSection headingId="thread-details-tokens-heading" title="Токены">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 px-2.5 text-xs">
-              <span className="text-muted-foreground">Тип</span>
-              <span className="text-end text-muted-foreground">За ход</span>
-              <span className="text-end text-muted-foreground">Всего</span>
-              {[
-                ["Вход", snapshot.tokens.turn?.inputTokens, total?.inputTokens],
-                ["Выход", snapshot.tokens.turn?.outputTokens, total?.outputTokens],
-                ["Кэш · чтение", snapshot.tokens.turn?.cacheReadTokens, total?.cacheReadTokens],
-                ["Кэш · запись", snapshot.tokens.turn?.cacheWriteTokens, total?.cacheWriteTokens],
-                ["Рассуждение", snapshot.tokens.turn?.reasoningTokens, total?.reasoningTokens],
-              ].map(([label, turn, conversation]) => (
-                <div
-                  key={String(label)}
-                  className="col-span-3 grid h-6 grid-cols-subgrid items-center"
-                >
-                  <span className="truncate text-muted-foreground">{label}</span>
-                  <span className="text-end font-medium tabular-nums">{number(turn as number)}</span>
-                  <span className="text-end font-medium tabular-nums">
-                    {number(conversation as number)}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-1 flex flex-col">
-              {snapshot.provider === "codex"
-                ? null
-                : row(
-                    "Стоимость Claude",
-                    snapshot.costUsd === undefined ? noData : `$${snapshot.costUsd.toFixed(4)}`,
-                  )}
-              {snapshot.provider === "claude" && snapshot.tokens.providerTotal
-                ? row("Охват итога", "включая субагентов", "modelUsage без двойного счёта")
-                : null}
-            </div>
-          </ThreadDetailsSection>
-
-          {visible.context ? <ThreadDetailsSection headingId="thread-details-context-heading" title="Контекст">
-            <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] items-center gap-x-3 px-2.5 text-xs">
-              <span className="text-muted-foreground">Заполнено</span>
-              <span className="relative h-[3px] rounded-full bg-muted-foreground/30 dark:bg-muted-foreground/20">
-                {contextFill !== null ? (
-                  <span
-                    className="absolute inset-y-0 left-0 rounded-full bg-foreground/80"
-                    style={{ width: `max(${contextFill}%, 6px)` }}
-                  />
-                ) : null}
-                {contextTick !== null ? (
-                  <span
-                    aria-hidden
-                    className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 bg-foreground/75"
-                    style={{ left: `clamp(0.5px, ${contextTick}%, calc(100% - 0.5px))` }}
-                  />
-                ) : null}
-              </span>
-              <span className="text-end font-medium tabular-nums">
-                {context?.usedTokens === undefined
-                  ? noData
-                  : `${number(context.usedTokens)}${context.maxTokens === undefined ? "" : ` / ${number(context.maxTokens)}`}`}
-              </span>
-            </div>
-          </ThreadDetailsSection> : null}
-
-          <ThreadDetailsSection headingId="thread-details-subagents-heading" title="Субагенты">
-            <div className="flex flex-col">
-              {snapshot.subagents?.length
-                ? snapshot.subagents.map((agent) =>
-                    row(
-                      agent.kind === "codex" ? `${agent.name} · Codex` : agent.name,
-                      status(agent.status),
-                      [agent.description, agent.note].filter(Boolean).join(" · ") || undefined,
-                      agent.callId,
-                    ),
-                  )
-                : row("Субагенты", noData)}
-            </div>
-          </ThreadDetailsSection>
-
-          <ThreadDetailsSection headingId="thread-details-skills-heading" title="Навыки">
-            <div className="flex flex-col">
-              {row("Доступны", snapshot.skills.available?.join(", ") || noData)}
-              {row(
-                "Вызваны",
-                snapshot.skills.invoked?.map((skill) => skill.name).join(", ") || noData,
-              )}
-            </div>
-          </ThreadDetailsSection>
-
-          <ThreadDetailsSection
-            headingId="thread-details-background-heading"
-            title="Фоновые работы и циклы"
-          >
-            <div className="flex flex-col">
-              {snapshot.backgroundJobs?.length
-                ? snapshot.backgroundJobs.map((job) =>
-                    row(job.label, status(job.status), job.kind, job.id),
-                  )
-                : row("Работы", noData)}
-            </div>
-          </ThreadDetailsSection>
-
-          <ThreadDetailsSection headingId="thread-details-other-heading" title="Прочее">
-            <div className="flex flex-col">
-              {row("Модель", snapshot.model ?? noData)}
-              {row("Усилие", snapshot.effort ?? noData)}
-              {row("Режим", snapshot.mode ?? noData)}
-              {row("Время работы", duration(snapshot.runtimeMs))}
-              {row("Ходы", number(snapshot.turnCount))}
-              {row("Вызовы инструментов", number(snapshot.toolCallCount))}
-              {row(
-                "MCP-серверы",
-                snapshot.mcpServers
-                  ?.map((server) => `${server.name}: ${server.status}`)
-                  .join(", ") || noData,
-              )}
-            </div>
-          </ThreadDetailsSection>
-        </div>
-      )}
+    <ThreadDetailsCard threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+      anchor={props.anchor} handle={props.handle} contentKey={`hoh-stats:${turns.length}:${runs.length}:${visible.context}`}>
+      {() => <div className="group/details-items">
+        {goal || (plan && plan.kind === "proposed_plan" && plan.markdown) ? <ThreadDetailsSection headingId="chat-details-goal-heading" title="Goal and plan">
+          {goal ? row("Goal", goal) : null}
+          {plan && plan.kind === "proposed_plan" && plan.markdown ? row("Plan", plan.markdown) : null}
+        </ThreadDetailsSection> : null}
+        {rows.length ? <ThreadDetailsSection headingId="chat-details-tokens-heading" title="Tokens">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 px-2.5 text-xs">
+            <span>Type</span><span>Last turn</span><span>Total</span>
+            {rows.map(([label, last, sum]) => <div key={String(label)} className="col-span-3 grid h-6 grid-cols-subgrid items-center">
+              <span>{label}</span><span className="text-end tabular-nums">{number(last as number | undefined)}</span><span className="text-end tabular-nums">{number(sum as number | undefined)}</span>
+            </div>)}
+          </div>
+        </ThreadDetailsSection> : null}
+        {visible.context && context ? <ThreadDetailsSection headingId="chat-details-context-heading" title="Context">
+          {row("Used", `${number(context.usedTokens)}${context.maxTokens == null ? "" : ` / ${number(context.maxTokens)}`}`)}
+        </ThreadDetailsSection> : null}
+        {projection ? <ThreadDetailsSection headingId="chat-details-other-heading" title="Details">
+          {projection.thread.modelSelection.model && projection.thread.modelSelection.model !== "unknown" ? row("Model", projection.thread.modelSelection.model) : null}
+          {typeof effort === "string" && effort ? row("Effort", effort) : null}
+          {projection.thread.runtimeMode && projection.thread.runtimeMode !== "unknown" ? row("Mode", ({ "approval-required": "Supervised", "full-access": "Full access", "auto-accept-edits": "Auto-accept edits", "plan": "Plan" } as Record<string, string>)[projection.thread.runtimeMode] ?? projection.thread.runtimeMode) : null}
+          {runs.length ? row("Turns", number(runs.length)) : null}
+          {toolCalls ? row("Tool calls", number(toolCalls)) : null}
+          {completed.length ? row("Run time", `${Math.floor(completed.reduce((a, b) => a + b, 0) / 1000)} s`) : null}
+        </ThreadDetailsSection> : null}
+      </div>}
     </ThreadDetailsCard>
   );
 }

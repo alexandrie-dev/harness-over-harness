@@ -1,5 +1,7 @@
 export function folderTrustView({ running, applied, trusted, isolated, changed }) {
-  let text = trusted && !isolated && !applied
+  let text = trusted && !isolated && applied
+    ? 'Project settings in this folder (Claude and Codex): active'
+    : trusted && !isolated && !applied
     ? 'Project settings in this folder (Claude and Codex) will be enabled from the next message'
     : running
     ? `Project settings in this folder (Claude and Codex): ${applied ? 'active' : 'inactive'}`

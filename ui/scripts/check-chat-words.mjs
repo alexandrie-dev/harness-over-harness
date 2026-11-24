@@ -8,10 +8,14 @@ import ts from 'typescript';
 const dist = resolve(process.env.HOH_CHECK_DIST ?? 'dist');
 const exceptions = [
   { file: /^(?:en|ru)-[^/]+\.js$/, reason: 'upstream translation dictionaries include unused message hashes' },
-  { file: /^(?:blade|cobol|hack|lua|luau|php|racket)-[^/]+\.js$/, reason: 'syntax-highlighting grammar, not interface copy' },
+  { file: /^(?:blade|bsl|cobol|gherkin|hack|lua|luau|php|racket|sdbl)-[^/]+\.js$/, reason: 'syntax-highlighting grammar, not interface copy' },
+];
+const cyrillicFileExceptions = [
+  { path: /^assets\//, reason: 'legacy shell is not the T3 window entry' },
 ];
 // Each remaining exception is either a protocol/diagnostic identifier or text sent to an agent.
 const literalExceptions = [
+  { value: /^locale translation english deutsch german/, reason: 'search keywords for language names, not rendered copy' },
   { file: /^network-[^/]+\.js$/, value: /^thread$/, reason: 'wire protocol schema literal' },
   { value: /^(?:new thread|thread id)$/, reason: 'command palette search synonyms' },
   { value: /^(?:thread session stop|thread metadata update)$/, reason: 'internal command diagnostics' },
@@ -48,7 +52,7 @@ async function walk(dir) {
     if (!entry.name.endsWith('.js')) continue;
     if (exceptions.some(exception => exception.file.test(entry.name))) continue;
     const text = await readFile(file, 'utf8');
-    if (!/thread/i.test(text)) continue;
+    if (!/thread|[\u0400-\u04ff]/i.test(text)) continue;
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     files++;
     function visit(node) {
@@ -57,11 +61,16 @@ async function walk(dir) {
         const raw = node.text;
         // Only ICU identifiers, never their surrounding prose, are stripped.
         const prose = raw.replace(/\{threads?\s*(?=[,}])/gi, '{ARG').replace(/\{threads?\}/gi, '{ARG}');
-        const parent = node.parent;
+        // Template fragments inherit the visibility of the containing expression.
+        const expression = ts.isTemplateExpression(node.parent) ? node.parent
+          : ts.isTemplateSpan(node.parent) && ts.isTemplateExpression(node.parent.parent) ? node.parent.parent : node;
+        const parent = expression.parent;
         const name = ts.isPropertyAssignment(parent) ? parent.name.getText(source).replace(/^["'`]|["'`]$/g, '') : '';
         const visibleProperty = /^(?:children|title|label|description|placeholder|aria-label|aria-description)$/.test(name);
-        const visibleCall = ts.isCallExpression(parent) && parent.arguments[0] === node && (parent.arguments.length === 1 || (parent.arguments.length === 2 && ts.isObjectLiteralExpression(parent.arguments[1])));
-        if (/(?<![\w{.-])threads?(?![\w.-])/i.test(prose) && (/\s/.test(prose) || /^Threads?$/.test(prose) || ((visibleProperty || visibleCall) && /^threads?$/i.test(prose)))) {
+        const visibleCall = ts.isCallExpression(parent) && parent.arguments[0] === expression && (parent.arguments.length === 1 || (parent.arguments.length === 2 && ts.isObjectLiteralExpression(parent.arguments[1])));
+        const cyrillicExcluded = cyrillicFileExceptions.some(exception => exception.path.test(file.slice(dist.length + 1)));
+        const cyrillic = !cyrillicExcluded && /[\u0400-\u04ff]/.test(raw) && (visibleProperty || visibleCall);
+        if (cyrillic || /(?<![\w{.-])threads?(?![\w.-])/i.test(prose) && (/\s/.test(prose) || /^Threads?$/.test(prose) || ((visibleProperty || visibleCall) && /^threads?$/i.test(prose)))) {
           const logging = ts.isCallExpression(parent) && /^console\.(?:warn|error|log)$/.test(parent.expression.getText(source));
           // Paths, styles, data attributes and translation context labels are implementation data.
           if (!logging && !literalExceptions.some(exception => (!exception.file || exception.file.test(entry.name)) && exception.value.test(raw)) && !contextExceptions.has(name) && !/^(?:className|class|id|key|testId|data-|\$)/.test(name)) {
@@ -76,4 +85,4 @@ async function walk(dir) {
 }
 await walk(dist);
 if (findings.length) { console.error(findings.join('\n')); process.exitCode = 1; }
-else console.log(`chat words: ${files} JS chunks, ${checked} literals checked; no visible thread labels`);
+else console.log(`chat words: ${files} JS chunks, ${checked} literals checked; no visible thread labels or Cyrillic`);
