@@ -1,0 +1,12 @@
+--- a/web/components/chat/MarkdownFileLink.tsx
++++ b/web/components/chat/MarkdownFileLink.tsx
+@@ -120,4 +120,9 @@
+ 
+   const handleOpenInFilePreview = () => {
++    // HoH can load GIF/JPEG/PNG/WebP assets; the workspace file API is not available.
++    if (onOpenMedia && /\.(?:gif|jpe?g|png|webp)$/i.test(iconPath)) {
++      onOpenMedia();
++      return;
++    }
+     if (threadRef && panelPath) {
+       onOpenInPanel(panelPath, line);

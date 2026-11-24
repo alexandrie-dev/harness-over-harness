@@ -22,8 +22,8 @@ test('no engine inventory produces an honest install-oriented empty state', () =
   assert.match(pageSource, /data-plugin-empty/);
   assert.match(pageSource, /No plugins installed/);
   assert.match(pageSource, /added from a local folder once plugin installation is available/);
-  assert.match(pageSource, /How to install a plugin/);
-  assert.match(pageSource, /Plugin installation is not connected to the HoH engine yet/);
+  assert.equal((pageSource.match(/Coming Soon/g) ?? []).length, 1);
+  assert.doesNotMatch(pageSource, /How to install a plugin|Add from folder|Choose folder/);
   assert.doesNotMatch(pageSource, /alexandrie-orbit-tools|northlight-draftsmith|SAMPLE_PLUGINS/);
 });
 

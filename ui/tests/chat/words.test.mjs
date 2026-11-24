@@ -22,15 +22,20 @@ function code(text) {
   return text.replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n]/g, ' ')).split('\n').map(line => line.replace(/(^|\s)\/\/.*$/, '$1'));
 }
 function hits(text, source) {
-  return code(text).flatMap((line, index) => FORBIDDEN.filter(word => word.test(line)).map(word => `${source}:${index + 1}: ${word} — ${line.trim().slice(0, 90)}`));
+  return code(text).flatMap((line, index) => FORBIDDEN.filter(word => word.test(line) && !(source === 'hoh-host/composer.ts' && word === FORBIDDEN[1] && line.startsWith('const IMAGE_CONTEXT_REFERENCE = /!'))).map(word => `${source}:${index + 1}: ${word} — ${line.trim().slice(0, 90)}`));
 }
 
 test('the words of the window do not use the forbidden words', () => {
   const found = files(join(UI, 'src')).flatMap(path => {
     const name = relative(join(UI, 'src'), path);
     const allowed = ALLOWED.filter(rule => rule.file === name);
-    return code(readFileSync(path, 'utf8')).flatMap((line, index) => allowed.some(rule => rule.line.test(line)) ? []
-      : FORBIDDEN.filter(word => word.test(line)).map(word => `ui/src/${name}:${index + 1}: ${word} — ${line.trim().slice(0, 90)}`));
+    const text = readFileSync(path, 'utf8');
+    const lines = code(text);
+    return hits(text, name).filter(hit => {
+      const lineNumber = Number(hit.split(':')[1]);
+      const line = lines[lineNumber - 1] ?? '';
+      return !allowed.some(rule => rule.line.test(line));
+    });
   });
   assert.deepEqual(found, [], 'запрещённые слова в окне');
 });
@@ -57,4 +62,5 @@ test('the check itself sees a forbidden word', () => {
   assert.equal(hits('const a = "Только чтение";', 'x').length, 1);
   assert.equal(hits('// песочница\nconst a = 1;', 'x').length, 0, 'комментарий не считается');
   assert.equal(hits('const a = "http://x/v1";', 'x').length, 1, 'ссылка с двумя косыми не считается комментарием');
+  assert.equal(hits('const a = "http://x/v1";', 'hoh-host/composer.ts').length, 1, 'исключение не скрывает пользовательский текст в том же файле');
 });

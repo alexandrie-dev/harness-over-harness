@@ -1,0 +1,28 @@
+--- a/web/components/chat/useThreadLifecycle.tsx
++++ b/web/components/chat/useThreadLifecycle.tsx
+@@ -692,12 +691,0 @@
+-    "thread.settle": () => {
+-      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+-      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+-      if (activeThreadSettled) {
+-        void handleUnsettleActiveThread();
+-        return;
+-      }
+-      if (settleAndAdvance(activeThreadRef)) return;
+-      void settleThread(activeThreadRef).then(
+-        toastThreadActionFailure(m(msg("Failed to settle thread"))),
+-      );
+-    },
+@@ -721,12 +708,0 @@
+-    },
+-    "thread.regenerateTitle": () => {
+-      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+-      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+-      if (activeThreadShell.titleRegeneration != null) return;
+-      void regenerateThreadTitle({
+-        environmentId: activeThreadRef.environmentId,
+-        input: { threadId: activeThreadRef.threadId },
+-      }).then((result) => {
+-        const toast = titleRegenerationToast([result]);
+-        if (toast) toastManager.add(toast);
+-      });

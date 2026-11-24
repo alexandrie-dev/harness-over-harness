@@ -1,12 +1,10 @@
-import { type EnvironmentId, T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
-import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import type { EnvironmentId, T3ProjectFile } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
 import { useMessages } from "gt-react";
 import { createContext, type ReactNode, useContext } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import {
   applyPendingScopedWrites,
@@ -25,25 +23,9 @@ type ProjectFileMember = readonly [
 
 const memberProjectFilesAtom = Atom.family((membersKey: string) => {
   const members = JSON.parse(membersKey) as ReadonlyArray<ProjectFileMember>;
-  return Atom.make((get) => {
-    const files = new Map<string, T3ProjectFile | null>();
-    for (const [environmentId, workspaceRoot, physicalProjectKey] of members) {
-      const result = get(
-        getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME),
-      );
-      if (result.waiting) continue;
-      const data =
-        get(optimisticFileAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME))?.data ??
-        AsyncResult.getOrElse(result, () => null);
-      files.set(
-        physicalProjectKey,
-        data === null || data.exists === false || data.truncated
-          ? null
-          : parseT3ProjectFile(data.contents),
-      );
-    }
-    return files;
-  }).pipe(Atom.withLabel(`web-settings-member-project-files:${membersKey}`));
+  return Atom.make(() => new Map<string, T3ProjectFile | null>(
+    members.map(([, , physicalProjectKey]) => [physicalProjectKey, null]),
+  )).pipe(Atom.withLabel(`web-settings-member-project-files:${membersKey}`));
 });
 
 function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {

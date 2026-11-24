@@ -371,18 +371,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               alwaysVisible
             />
             <div className="flex items-center gap-0.5">
-              {typeof revertTurnCount === "number" && (
-                <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-              )}
               <MessageCopyButton text={text} variant="ghost" />
-              {promptLink !== null && (
-                <MessageCopyButton
-                  text={promptLink}
-                  label={gt("Copy prompt link")}
-                  icon={LinkIcon}
-                  variant="ghost"
-                />
-              )}
             </div>
           </div>
         </div>
@@ -873,9 +862,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </TooltipPopup>
       </Tooltip>
       <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>
-        {typeof revertTurnCount === "number" && (
-          <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-        )}
         {copyText && (
           <MessageCopyButton
             text={contextClipboardFragment ? copyText : plainText}
@@ -886,14 +872,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   },
                 }
               : {})}
-            variant="ghost"
-          />
-        )}
-        {promptLink !== null && (
-          <MessageCopyButton
-            text={promptLink}
-            label={gt("Copy prompt link")}
-            icon={LinkIcon}
             variant="ghost"
           />
         )}

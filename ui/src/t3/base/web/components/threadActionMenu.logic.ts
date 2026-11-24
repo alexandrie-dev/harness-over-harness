@@ -96,6 +96,7 @@ export function buildDraftActionMenuItems(
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly canFind?: boolean;
+  readonly hasProject?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -211,7 +212,6 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
       : []),
@@ -285,7 +285,7 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: resolve(msg("Thread ID")), icon: "hash" },
       ],
     },
-    { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
+    ...(state.hasProject ? [{ id: "project-settings" as const, label: resolve(msg("Project settings")), icon: "settings" }] : []),
     {
       id: "archive",
       label: resolve(msg("Archive thread")),
@@ -295,14 +295,15 @@ export function buildThreadActionMenuItems(
     },
     {
       id: "delete",
-      label: resolve(msg("Delete", { $context: "verb, delete the thread" })),
+      label: resolve(msg("Delete · Coming Soon")),
       destructive: true,
       icon: "trash",
     },
   ];
+  const availableItems = items.filter((item) => !["regenerate-title", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
   return state.canOperate
-    ? items
-    : items.map((item) =>
+    ? availableItems
+    : availableItems.map((item) =>
         threadActionRequiresOperate(item.id)
           ? {
               ...item,

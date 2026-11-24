@@ -238,7 +238,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `^apps/web/src/components/device/models/.*\.glb$` | 3D-модели устройств скрытой части «устройства и пары» (~12 МБ): не переносятся (решение ведущего); импорты `?url` — адрес-заглушка stubs/absent-url.ts |
 | `^apps/web/src/i18n/translations/(?!(en\|ru)\.json$)[^/]+$` | переводы, кроме en и ru, не переносятся (решение ведущего); список языков сужен правкой gt.config.json |
 
-Файлов перенесено: **1974**, из них без изменений: **1950**, правок файлов T3: **25** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
+Файлов перенесено: **1974**, из них без изменений: **1926**, правок файлов T3: **49** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
 Отложено (не проверяет tsc: в замыкании импортов есть пакет, которого нет в `ui/package.json` и `ui/node_modules` в версии, совместимой с lock T3: тот же major, для 0.x — тот же minor): **0** из 1949 файлов кода;
 не хватает пакетов (сколько файлов T3 их импортирует): нет. Когда пакеты из `ui/T3-DEPS.md` (раздел HOH-40) стоят, отложенных нет —
 `t3-sync.py` пересчитывает список сам. tsc основы — с настройками T3 (`strict`, `noImplicitAny`, `noUncheckedIndexedAccess`,
@@ -250,10 +250,10 @@ Tailwind прежней оболочки её не сканирует (`@source 
 
 | Папка T3 | Папка у нас | Файлов | Из них кода | Без изменений | Правок | Отложено | На заглушках |
 |---|---|---|---|---|---|---|---|
-| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1439 | 21 | 0 | 70 |
-| `packages/contracts/src` | `ui/src/t3/base/contracts` | 79 | 79 | 78 | 1 | 0 | 0 |
+| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1418 | 42 | 0 | 70 |
+| `packages/contracts/src` | `ui/src/t3/base/contracts` | 79 | 79 | 77 | 2 | 0 | 0 |
 | `packages/shared/src` | `ui/src/t3/base/shared` | 126 | 125 | 126 | 0 | 0 | 1 |
-| `packages/client-runtime/src` | `ui/src/t3/base/client-runtime` | 267 | 267 | 265 | 2 | 0 | 10 |
+| `packages/client-runtime/src` | `ui/src/t3/base/client-runtime` | 267 | 267 | 263 | 4 | 0 | 10 |
 | `packages/issue-tracker-linear/src` | `ui/src/t3/base/issue-tracker-linear` | 1 | 1 | 1 | 0 | 0 | 0 |
 | `packages/provider-acp-registry/src` | `ui/src/t3/base/provider-acp-registry` | 2 | 2 | 2 | 0 | 0 | 0 |
 | `packages/provider-core/src` | `ui/src/t3/base/provider-core` | 2 | 2 | 2 | 0 | 0 | 0 |
@@ -283,17 +283,19 @@ Tailwind прежней оболочки её не сканирует (`@source 
 |---|---|---|
 | `web/components/T3Wordmark.tsx` | замена (наш файл) | знак T3 не берём: на его месте эмблема HoH (прозрачные растры src/assets/emblem-brand-*.png из emblem-a.webp, srcset 1×/1.5×/2×/3×) |
 | `web/components/T3AppIcon.tsx` | замена (наш файл) | значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src |
+| `contracts/orchestrationV2.ts` | правка (`ui/src/t3/base-patches/contracts/orchestrationV2.ts.patch`) | режим доступа закрепляется за отправляемым сообщением |
+| `client-runtime/operations/commands.ts` | правка (`ui/src/t3/base-patches/client-runtime/operations/commands.ts.patch`) | режим композера сопровождает каждое отправленное и поставленное в очередь сообщение |
+| `web/components/ChatView.tsx` | правка (`ui/src/t3/base-patches/web/components/ChatView.tsx.patch`) | текущий режим хода и выбор для следующего хода показаны раздельно |
 | `contracts/assets.ts` | правка (`ui/src/t3/base-patches/contracts/assets.ts.patch`) | превью изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP; отказ нативной политики несёт ограниченную безопасную причину |
 | `client-runtime/markdownImages.ts` | правка (`ui/src/t3/base-patches/client-runtime/markdownImages.ts.patch`) | безопасность превью: data URI из ответа ассистента не передаётся напрямую в img |
 | `client-runtime/state/assets.ts` | правка (`ui/src/t3/base-patches/client-runtime/state/assets.ts.patch`) | превью изображений: ограниченная причина отказа assets.createUrl сохраняется в состоянии ресурса для видимой заглушки; история URL ограничена LRU |
-| `client-runtime/state/projects.ts` | правка (`ui/src/t3/base-patches/client-runtime/state/projects.ts.patch`) | No project определяется по id, когда реальный проект совпадает с папкой запуска движка |
 | `web/components/ChatMarkdown.tsx` | правка (`ui/src/t3/base-patches/web/components/ChatMarkdown.tsx.patch`) | превью изображений: обычная markdown-ссылка на локальный растровый файл использует штатные T3 ChatMarkdownAssetImage и крупный просмотр |
 | `web/components/chat/ChatMarkdownMedia.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ChatMarkdownMedia.tsx.patch`) | превью изображений: заглушка Image unavailable показывает ограниченную безопасную причину отказа нативной политики |
 | `web/components/chat/ChatComposer.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ChatComposer.tsx.patch`) | скрепка в поле ввода доступна для поддерживаемых Claude изображений без объявления generic file attachments |
 | `web/components/chat/ComposerAttachmentStrip.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ComposerAttachmentStrip.tsx.patch`) | диалог скрепки принимает только GIF, JPEG, PNG и WebP, показывает лимит 10 МиБ и использует общий путь addComposerAttachments |
 | `web/components/chat/SkillInlineText.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/SkillInlineText.tsx.patch`) | скрывает View instructions у навыка Claude: движок даёт имя, но не безопасный путь к файлу |
 | `web/components/ComposerPromptEditorTiptap.tsx` | правка (`ui/src/t3/base-patches/web/components/ComposerPromptEditorTiptap.tsx.patch`) | скрывает открытие файла для навыка Claude с внутренним hoh-skill идентификатором |
-| `web/routeTree.gen.ts` | правка (`ui/src/t3/base-patches/web/routeTree.gen.ts.patch`) | выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются |
+| `web/routeTree.gen.ts` | правка (`ui/src/t3/base-patches/web/routeTree.gen.ts.patch`) | выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, скрытые разделы настроек) не регистрируются; типы маршрутов остаются |
 | `web/components/settings/settingsSearch.ts` | правка (`ui/src/t3/base-patches/web/components/settings/settingsSearch.ts.patch`) | выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS) |
 | `web/components/sidebar/SidebarChrome.tsx` | правка (`ui/src/t3/base-patches/web/components/sidebar/SidebarChrome.tsx.patch`) | имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3 |
 | `web/terminalUiStateStore.ts` | правка (`ui/src/t3/base-patches/web/terminalUiStateStore.ts.patch`) | выключатель: терминал — ящик терминала не открывается (normalizeThreadTerminalUiState держит terminalOpen: false), клавиши и действия ничего не открывают |
@@ -303,10 +305,31 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/branding.ts` | правка (`ui/src/t3/base-patches/web/branding.ts.patch`) | имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет |
 | `web/components/chat/turnDetailAnnouncement.ts` | правка (`ui/src/t3/base-patches/web/components/chat/turnDetailAnnouncement.ts.patch`) | имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code» |
 | `web/components/ChatView.logic.ts` | правка (`ui/src/t3/base-patches/web/components/ChatView.logic.ts.patch`) | термин нового разговора: видимый заголовок черновика — New chat вместо New thread |
-| `web/components/chat/DraftHeroHeadline.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/DraftHeroHeadline.tsx.patch`) | проект HoH с постоянным id всегда показывает продуктовый вопрос без подписи scratch-проекта, поэтому пустая главная не меняется при resize |
-| `web/components/CommandPalette.tsx` | правка (`ui/src/t3/base-patches/web/components/CommandPalette.tsx.patch`) | New chat вместо New thread; папку No project можно явно добавить как проект |
+| `web/components/chat/DraftHeroHeadline.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/DraftHeroHeadline.tsx.patch`) | стабильная пустая главная: проект HoH с постоянным id всегда показывает продуктовый вопрос без подписи scratch-проекта |
+| `web/components/CommandPalette.tsx` | правка (`ui/src/t3/base-patches/web/components/CommandPalette.tsx.patch`) | термин нового разговора: видимые действия палитры — New chat вместо New thread |
 | `web/components/chat/runtimeModeConfig.ts` | правка (`ui/src/t3/base-patches/web/components/chat/runtimeModeConfig.ts.patch`) | режим доступа: только Supervised и Full access выбираются; Auto-accept edits и Auto видны как Coming Soon |
 | `web/components/chat/MessagesTimeline.logic.ts` | правка (`ui/src/t3/base-patches/web/components/chat/MessagesTimeline.logic.ts.patch`) | остановленный пользователем ход сохраняет подпись You stopped после перезапуска и после следующих ходов |
+| `client-runtime/state/projects.ts` | правка (`ui/src/t3/base-patches/client-runtime/state/projects.ts.patch`) | идентичность проекта HoH: No project определяется по id, даже если настоящий проект совпал с папкой запуска |
+| `web/components/threadActionMenu.logic.ts` | правка (`ui/src/t3/base-patches/web/components/threadActionMenu.logic.ts.patch`) | меню без неподдерживаемых действий: Mark unread, удаление, смена статуса, перегенерация названия; закрепление сохраняется |
+| `web/components/chat/ThreadDetailsItemsMenu.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ThreadDetailsItemsMenu.tsx.patch`) | в настройках сведений о разговоре остаётся Context window |
+| `web/components/settings/ThreadDetailsItemsRow.tsx` | правка (`ui/src/t3/base-patches/web/components/settings/ThreadDetailsItemsRow.tsx.patch`) | счётчик Thread details учитывает только Context window |
+| `web/components/chat/TimelineAssistantRows.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/TimelineAssistantRows.tsx.patch`) | скрыты неподдерживаемые fork и reply |
+| `web/components/chat/TimelineUserMessageRow.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/TimelineUserMessageRow.tsx.patch`) | скрыты неподдерживаемые edit from here и ссылка на запрос |
+| `web/components/chat/threadDetailsItems.ts` | правка (`ui/src/t3/base-patches/web/components/chat/threadDetailsItems.ts.patch`) | неподдерживаемые сведения скрыты даже при сохранённых настройках |
+| `web/components/Sidebar.tsx` | правка (`ui/src/t3/base-patches/web/components/Sidebar.tsx.patch`) | массовое меню без неподдерживаемых действий; закрепление сохраняется |
+| `web/components/files/FilePreviewPanel.tsx` | правка (`ui/src/t3/base-patches/web/components/files/FilePreviewPanel.tsx.patch`) | неподдерживаемый просмотр файлов и открытие в редакторе обозначены Coming Soon; вложения сохраняют просмотр |
+| `web/components/chat/useThreadLifecycle.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/useThreadLifecycle.tsx.patch`) | не регистрирует неподдерживаемые сочетания закрепления, смены статуса и перегенерации |
+| `web/components/onboarding/WelcomePage.tsx` | правка (`ui/src/t3/base-patches/web/components/onboarding/WelcomePage.tsx.patch`) | установка и вход агента без терминального API обозначены Coming Soon |
+| `web/hooks/useThreadActionMenu.ts` | правка (`ui/src/t3/base-patches/web/hooks/useThreadActionMenu.ts.patch`) | настройки проекта предлагаются только при наличии проекта |
+| `web/components/chat/MarkdownFileLink.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/MarkdownFileLink.tsx.patch`) | ссылки на поддерживаемые изображения открывают просмотр изображений, минуя неподключённый просмотр файлов |
+| `web/components/chat/WorkspaceEntryIcon.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/WorkspaceEntryIcon.tsx.patch`) | значок и подпись файла не вызывают неподдерживаемый filesystem.getMetadata |
+| `web/hooks/useT3ProjectFileScripts.ts` | правка (`ui/src/t3/base-patches/web/hooks/useT3ProjectFileScripts.ts.patch`) | не запрашивает неподдерживаемый файл настроек проекта через projects.readFile |
+| `web/lib/t3ProjectFileDefaults.ts` | правка (`ui/src/t3/base-patches/web/lib/t3ProjectFileDefaults.ts.patch`) | не запрашивает неподдерживаемый файл настроек проекта через projects.readFile |
+| `web/components/settings/SettingsScopeContext.tsx` | правка (`ui/src/t3/base-patches/web/components/settings/SettingsScopeContext.tsx.patch`) | не запрашивает неподдерживаемый файл настроек проекта через projects.readFile |
+| `web/state/projectClones.ts` | правка (`ui/src/t3/base-patches/web/state/projectClones.ts.patch`) | скрытая функция возвращает пустое состояние без неподдерживаемой подписки |
+| `web/state/device.ts` | правка (`ui/src/t3/base-patches/web/state/device.ts.patch`) | скрытая функция возвращает пустое состояние без неподдерживаемой подписки |
+| `web/appInit.tsx` | правка (`ui/src/t3/base-patches/web/appInit.tsx.patch`) | не запускает скрытый просмотр устройств и неподдерживаемую подписку на них |
+| `web/components/settings/ArchivedThreadsPanel.tsx` | правка (`ui/src/t3/base-patches/web/components/settings/ArchivedThreadsPanel.tsx.patch`) | в архиве удаление обозначено Coming Soon до поддержки движком |
 
 Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
 `desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 136 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).
@@ -332,7 +355,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | секреты и 1Password | раздел есть в навигации только при T3CODE_FEATURE_SECRETS (в окне пусто) и не регистрируется; capabilities.secretSourceCheck — от хоста | правка + переменная сборки |
 | GitHub-звезда и конфетти | GitHubStarPrompt.tsx никто не импортирует (у T3 тоже); звезда — через source control, которого нет | не подключено у T3 |
 | голосовой ввод | capabilities.voiceTranscription, cloudVoiceTranscription — от хоста; раздел «Голос» не регистрируется | правка + хост (э3) |
-| разделы настроек, кроме общих, вида, чата, провайдеров и доступа | не регистрируются (routeTree.gen.ts), не показываются и не ищутся (settingsSearch.ts, HOH_SETTINGS_PATHS) | правка |
+| разделы настроек, кроме общих, вида, чата, провайдеров и архива | не регистрируются (routeTree.gen.ts), не показываются и не ищутся (settingsSearch.ts, HOH_SETTINGS_PATHS) | правка |
 | обновления приложения | capabilities.desktopAppUpdate, serverSelfUpdate, npmReleaseLookup — от хоста | хост (э3) |
 | ACP-реестр, установка и вход провайдеров T3 | @t3tools/provider-* — заглушки; список провайдеров даёт providerClients.ts из client-runtime — в э3 рабочая прослойка с исполнителями HoH | заглушки; прослойка — э3 |
 | импорт сессий агентов | раздел «Интеграции» не регистрируется; импорт сессий остаётся в карточке провайдера (AcpSessionManagementSection.tsx из ProviderInstanceCard.tsx) и на странице приветствия (WelcomePage.tsx) — выключит хост, не объявив сессий агентов | правка; остаток — э3/э4 |
@@ -401,3 +424,19 @@ Providers (HOH-47 U4) — build-time подстановка `providerSettingsPan
 
 Боковая панель (HOH-41, состав раунда 12: `design/round12/shots/home.png`) — подстановки при сборке (`vite.ts`, `sidebarList`, `sidebarChrome`), файлы T3 не правятся: (1) `components/Sidebar.tsx` — вместо `SidebarThreadHeader` (поиск, фильтр, «Add project», «New thread») рисуется `SidebarTop` (`src/t3-entry/hoh-screens/SidebarTop.tsx`: «New chat» с сочетанием клавиш T3, группа «Team» с «+» без строк — движка сотрудников нет, «+» выключена, «Recent chats» над списком T3); полка Working выключена (`useClientSettings(…sidebarWorkingShelfEnabled)` → `false`), все разговоры — строки в один ряд «slim» (без строки проекта; `isCard` → `false`); (2) тот же файл: в «Recent chats» не попадает разговор без первого сообщения (пустой черновик; хост даёт ему `latestUserMessageAt = null`, `threads.ts`); (3) `components/sidebar/SidebarChrome.tsx` — у «Settings» внизу рядом со значком подпись. Заголовки полок Working/Snoozed/Settled и кнопки «Settle»/«Snooze» в строке скрыты правилами `HIDDEN_SELECTORS` (`features.ts`). Две кнопки справа в шапке разговора («Toggle thread details panel», «Toggle right panel») и вся шапка с «No project / New thread» на главной (пустой черновик) скрыты теми же правилами. «Learning» открывает пустую страницу «Coming soon»; «Plugins» на месте прежнего «Widgets» использует карточки списка и полную страницу деталей выбранного плагина, а до появления engine API показывает честное пустое состояние без образцов и переключателя вариантов (`hoh-screens/SidebarPages.tsx`, `PluginsPage.tsx`, `plugins.css`, `pages.ts`). Оба экрана — слой поверх области справа от панели, не маршруты T3; поведение проверяет `scripts/check-grid.mjs`, матрицу снимков — `scripts/check-align.mjs`. `SidebarThreadHeader` больше не в `HIDDEN_COMPONENTS`.
 # Режим сообщения U0: `contracts/orchestrationV2.ts`, `client-runtime/operations/commands.ts` и `web/components/ChatView.tsx` переносят выбранный режим с сообщением и различают текущий и следующий ход.
+
+- **HOH-47 U1:** Sharing & access скрыт; в настройках Thread details оставлен Context window, меню значка среды и Mark unread скрыты. Team, Learning и установка Plugins обозначены Coming Soon; неподдерживаемые действия fork, reply, edit и ссылка на запрос в ленте скрыты; Open in editor в просмотре файла обозначен Coming Soon, поскольку хост его не поддерживает.
+- Меню разговоров скрывает неподдерживаемые смену статуса и перегенерацию названия; удаление обозначено Coming Soon.
+- Сочетания клавиш смены статуса и перегенерации разговора не регистрируются до поддержки хостом; закрепление доступно.
+- При отсутствии Claude установка и вход без терминального API обозначены Coming Soon; окно не предлагает неподключённый терминал.
+- Настройки проекта в меню разговора доступны только при наличии соответствующего проекта.
+- Просмотр произвольных файлов без `projects.readFile`/`projects.listEntries` показывает Coming Soon; ссылки на GIF/JPEG/PNG/WebP и вложения сохраняют поддерживаемый просмотр изображений.
+- Значок файла в ответе не запрашивает неподдерживаемую метаинформацию; имя и значок по расширению остаются.
+- Не запрашиваем неподдерживаемый T3 project file в деталях, настройках и при создании разговора; используются доступные настройки окна и проекта.
+- Скрытые устройства и клонирование получают пустое состояние без молчащих subscribeDeviceState и subscribeProjectClones.
+- Запуск скрытых device/preview-наблюдателей отключён, поэтому подписка на устройства не открывается при старте окна.
+
+- fix1: Rename, Pin/Unpin и Archive сохраняются в постоянных метаданных окна; Delete показывает Coming Soon до появления удаления сессий в движке.
+- Архив доступен в Settings: список берётся из сохранённого состояния хоста, Unarchive восстанавливает разговор, Delete обозначен Coming Soon.
+
+Длительность хода сохраняет время отправки в метаданных окна по идентификатору сообщения двигателя; остановленный ход без шагов сворачивается с подписью You stopped, карточка готового ответа не показывает прогресс.

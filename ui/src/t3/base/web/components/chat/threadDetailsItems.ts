@@ -51,7 +51,7 @@ export function resolveThreadDetailsVisibility(
   return Object.fromEntries(
     THREAD_DETAILS_ITEMS.map((item) => [
       item.id,
-      settings.threadDetailsItems[item.id] ?? defaultVisible(item, settings),
+      item.id === "context" && (settings.threadDetailsItems[item.id] ?? defaultVisible(item, settings)),
     ]),
   ) as Record<ThreadDetailsItemId, boolean>;
 }
@@ -67,7 +67,7 @@ export function setThreadDetailsItem(
 }
 
 export function isDefaultThreadDetailsVisibility(visibility: ThreadDetailsVisibility) {
-  return THREAD_DETAILS_ITEMS.every((item) => visibility[item.id] === item.defaultVisible);
+  return visibility.context === false;
 }
 
 /** Also clears the retired Labs flag, so Usage and Context return to off. */

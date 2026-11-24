@@ -618,6 +618,9 @@ function AgentsSection({
       );
     }
     if (needsInstallOrSignIn(provider)) {
+      if (!canOperateTerminal) {
+        return <span className="text-sm text-muted-foreground">Coming Soon</span>;
+      }
       return (
         <TerminalAction
           name={name}
@@ -637,13 +640,6 @@ function AgentsSection({
   };
 
   const notes = [
-    !canOperateTerminal &&
-    [...found, ...available].some(
-      (provider) =>
-        needsInstallOrSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
-    )
-      ? gt("This connection cannot control terminals.")
-      : null,
     !canManageProviders &&
     (acpAllowed ||
       [...found, ...available].some(

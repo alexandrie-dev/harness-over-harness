@@ -89,6 +89,8 @@ function engineWith(busy) {
     const done = engine.open(id, title);
     engine.append(done, 'turn/start', { turn: 1 });
     engine.append(done, 'user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: title }] });
+    engine.append(done, 'tool/call', { callId: `${id}-c`, turn: 1, name: 'Bash', arguments: { command: 'ls' } });
+    engine.append(done, 'tool/result', { turn: 1, message: { toolCallId: `${id}-c`, content: [{ type: 'text', text: 'ok' }] } });
     engine.append(done, 'assistant/message', { message: { id: `${id}-a`, content: [{ type: 'text', text: 'ok' }] } });
     engine.append(done, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
   }
@@ -158,6 +160,10 @@ try {
           await page.locator('.hoh-card').first().waitFor({ state: 'attached' });
           step = 'attach approval card';
           await page.locator('.hoh-ask').first().waitFor({ state: 'attached' });
+          step = 'check completed card has no progress';
+          const review = page.locator('.hoh-card').filter({ hasText: 'Summarize the invoices' });
+          await review.getByText('Ready for review').waitFor({ state: 'attached' });
+          if (await review.locator('.hoh-steps').count()) fail(`${label}: completed card still has progress`);
           step = 'mark a completed card Done';
           await page.evaluate(() => window.__HOH_HOME__.complete('d1'));
           await page.locator('.hoh-card[data-state="done"]').waitFor({ state: 'attached' });
@@ -222,11 +228,17 @@ try {
           }
         }
         if (busy) { // Learning и живая страница Plugins; «New chat» закрывает обе.
+          step = 'team coming soon';
+          await page.getByRole('button', { name: 'Add to team' }).click();
+          if (await page.locator('[data-hoh-sidebar-top]').getByRole('status').filter({ hasText: 'Coming Soon' }).count() !== 1) fail(`${label}: Team не показывает Coming Soon`);
+          if (process.env.QA_DIR && width === 2000 && height === 1137) await page.screenshot({ path: join(process.env.QA_DIR, 'team-coming-soon-2000x1137.png'), animations: 'disabled' });
+          await page.getByRole('button', { name: 'Add to team' }).click();
           step = 'open Learning';
           await page.locator('[data-hoh-page-item="learning"]').click();
           await page.locator('.hoh-page').waitFor({ state: 'visible' });
+          if (process.env.QA_DIR && width === 2000 && height === 1137) await page.screenshot({ path: join(process.env.QA_DIR, 'learning-2000x1137.png'), animations: 'disabled' });
           const learningText = await page.locator('.hoh-page').innerText();
-          if (learningText.replace(/\s+/g, ' ').trim() !== 'Learning Coming soon') fail(`${label}: страница Learning: «${learningText.trim()}»`);
+          if (learningText.replace(/\s+/g, ' ').trim() !== 'Learning Coming Soon') fail(`${label}: страница Learning: «${learningText.trim()}»`);
           if (await page.locator('[data-hoh-page-item="learning"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Learning не подсвечен`);
           const pageMiss = await page.evaluate(() => window.hohGridCheck());
           for (const miss of pageMiss) fail(`${label}: страница Learning: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
@@ -243,13 +255,8 @@ try {
           const overflow = await page.locator('.hoh-plugins').evaluate((node) => node.scrollWidth > node.clientWidth + 1);
           if (overflow) fail(`${label}: страница Plugins имеет горизонтальное переполнение`);
 
-          if (width === 1440 && height === 900) {
-            step = 'open plugin installation help';
-            await page.locator('[data-add-plugin-folder]').click();
-            await page.getByRole('heading', { name: 'Add plugin from folder' }).waitFor();
-            if (await page.getByText('Plugin installation is not connected to the HoH engine yet.').count() !== 1) fail(`${label}: диалог установки скрывает отсутствие engine API`);
-            await page.locator('[data-slot="dialog-footer"]').getByRole('button', { name: 'Close' }).click();
-          }
+          if (await page.locator('.hoh-plugins').getByText('Coming Soon', { exact: true }).count() !== 1) fail(`${label}: установка Plugins должна показывать одну надпись Coming Soon`);
+          if (await page.getByRole('button', { name: /Add from folder|Choose folder|How to install/ }).count() !== 0) fail(`${label}: осталась кнопка установки Plugins`);
           step = 'return to New chat';
           await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();
           if (await page.locator('.hoh-page').count() !== 0) fail(`${label}: «New chat» не закрыл страницу`);
@@ -269,6 +276,21 @@ try {
       }
       off(); await context.close();
     }
+  }
+  // Replay a stopped turn with no assistant or tool entries: the durable stop is its only timeline event.
+  {
+    const engine = engineWith(false);
+    const session = engine.open('stopped-replay', 'Stopped replay');
+    engine.append(session, 'turn/start', { turn: 1 });
+    engine.append(session, 'user/message', { id: 'stopped-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Stop before the first step' }] });
+    engine.append(session, 'turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } });
+    const { context, page, off } = await open(browser, engine, { width: 2000, height: 1137 });
+    try {
+      await page.goto(ORIGIN + '/hoh-local/stopped-replay');
+      await page.getByText(/You stopped after/).waitFor({ timeout: 10000 });
+      if (await page.getByText(/Run interrupted.*Stopped by user/).count()) fail('stopped replay: raw interruption remains visible');
+    } catch (error) { fail(`stopped replay: ${String(error.message).split('\n')[0]}`); }
+    finally { off(); await context.close(); }
   }
 } finally { await browser?.close(); await rm(home, { recursive: true, force: true }); }
 

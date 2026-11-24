@@ -1,0 +1,38 @@
+--- a/web/hooks/useThreadActionMenu.ts
++++ b/web/hooks/useThreadActionMenu.ts
+@@ -2,0 +3,3 @@
++import { isScratchProject } from "@t3tools/client-runtime/state/projects";
++import { appAtomRegistry } from "../rpc/atomRegistry";
++import { environmentServerConfigsAtom } from "../state/server";
+@@ -91 +93,0 @@
+-    deleteThread,
+@@ -99 +100,0 @@
+-  const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+@@ -144,0 +146,4 @@
++        hasProject: projects.some((project) =>
++          project.environmentId === thread.environmentId && project.id === thread.projectId &&
++          !isScratchProject(project, appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.scratchWorkspaceRoot)
++        ),
+@@ -344,21 +349 @@
+-          if (confirmThreadDelete) {
+-            const confirmed = await settlePromise(() =>
+-              api.dialogs.confirm(
+-                [
+-                  m(msg('Delete thread "{title}"?', { title: thread.title })),
+-                  m(msg("This permanently clears conversation history for this thread.")),
+-                ].join("\n"),
+-                { variant: "destructive" },
+-              ),
+-            );
+-            if (confirmed._tag === "Failure" || !confirmed.value) return;
+-          }
+-          const deleted = await deleteThread(threadRef);
+-          if (
+-            deleted._tag === "Failure" &&
+-            !isAtomCommandInterrupted(deleted) &&
+-            // A missing thread means cleanup failed after deletion; deleteThread already toasted that failure.
+-            readThreadShell(threadRef) !== null
+-          ) {
+-            failureToast(m(msg("Failed to delete thread")), squashAtomCommandFailure(deleted));
+-          }
++          toastManager.add({ title: "Coming Soon" });

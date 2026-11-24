@@ -170,6 +170,8 @@ export class ThreadModel {
   /** The last turn was closed by `settleUnfinished`, a guess the engine may still correct. */
   private settledByGuess = false;
   archivedAt: number | null = null;
+  pinnedAt: number | null = null;
+  pinOrderKey: string | null = null;
   private readonly seen = new Set<number>();
   private readonly runs: Run[] = [];
   private readonly items: Item[] = [];
@@ -186,6 +188,10 @@ export class ThreadModel {
   private readonly outgoing: { text: string; messageId: string; at: number }[] = [];
   private readonly echoed = new Map<string, string>();
   private ordinal = 0;
+  private promptTimes: Record<string, number> = {};
+
+  restorePromptTimes(times: Record<string, number> | undefined) { this.promptTimes = times ?? {}; }
+  promptTime(messageId: string): number | undefined { return this.runs.find(run => run.userMessageId === messageId)?.requestedAt; }
 
   constructor(seed: ThreadSeed) {
     this.id = seed.id;
@@ -252,7 +258,8 @@ export class ThreadModel {
     if (pending >= 0) { this.echoed.set(engineId, this.outgoing.splice(pending, 1)[0].messageId); return; }
     const messageId = 'msg-' + engineId;
     this.echoed.set(engineId, messageId);
-    this.addUserMessage(messageId, value, at);
+    const saved = this.promptTimes[engineId];
+    this.addUserMessage(messageId, value, typeof saved === 'number' && Number.isFinite(saved) && saved > 0 && saved <= at ? saved : at);
   }
 
   private addUserMessage(messageId: string, value: string, at: number, attachments: ShownAttachment[] = []) {
@@ -670,6 +677,7 @@ export class ThreadModel {
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
+        pinnedAt: this.pinnedAt === null ? null : iso(this.pinnedAt), pinOrderKey: this.pinOrderKey,
         archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, lastVisitedAt: null, deletedAt: null,
       },
       runs: this.runs.map(run => ({
@@ -776,6 +784,7 @@ export class ThreadModel {
       hasActionableProposedPlan: false,
       itemCount: this.items.length, visibleItemCount: this.items.filter(item => item.parentItemId === null).length,
       createdAt: iso(this.createdAt), updatedAt: iso(this.updatedAt),
+      pinnedAt: this.pinnedAt === null ? null : iso(this.pinnedAt), pinOrderKey: this.pinOrderKey,
       archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, deletedAt: null,
     };
   }

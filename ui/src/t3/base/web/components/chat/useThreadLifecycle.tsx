@@ -689,18 +689,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       );
     };
   const shortcuts = {
-    "thread.settle": () => {
-      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
-      if (activeThreadSettled) {
-        void handleUnsettleActiveThread();
-        return;
-      }
-      if (settleAndAdvance(activeThreadRef)) return;
-      void settleThread(activeThreadRef).then(
-        toastThreadActionFailure(m(msg("Failed to settle thread"))),
-      );
-    },
     "thread.pin": ({ event }) => {
       // An open project list pins its highlighted project with this key instead.
       if (
@@ -718,18 +706,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           activeThreadPinned ? m(msg("Failed to unpin thread")) : m(msg("Failed to pin thread")),
         ),
       );
-    },
-    "thread.regenerateTitle": () => {
-      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
-      if (activeThreadShell.titleRegeneration != null) return;
-      void regenerateThreadTitle({
-        environmentId: activeThreadRef.environmentId,
-        input: { threadId: activeThreadRef.threadId },
-      }).then((result) => {
-        const toast = titleRegenerationToast([result]);
-        if (toast) toastManager.add(toast);
-      });
     },
   } satisfies ChatShortcutCommands;
   return {

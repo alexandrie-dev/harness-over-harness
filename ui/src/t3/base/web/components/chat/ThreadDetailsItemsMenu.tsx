@@ -23,7 +23,7 @@ export function ThreadDetailsItemsMenuItems() {
         <MenuGroupLabel>
           <T>Show in thread details</T>
         </MenuGroupLabel>
-        {THREAD_DETAILS_ITEMS.map((item) => (
+        {THREAD_DETAILS_ITEMS.filter((item) => item.id === "context").map((item) => (
           <MenuCheckboxItem
             key={item.id}
             checked={visibility[item.id]}

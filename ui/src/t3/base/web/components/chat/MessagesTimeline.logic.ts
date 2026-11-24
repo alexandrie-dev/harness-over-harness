@@ -955,7 +955,8 @@ function timelineEntryFoldRunId(entry: TimelineEntry, runlessKey: RunId | null):
   }
   if (
     entry.kind === "event" &&
-    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent")
+    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent" ||
+      entry.projectedItem.item.type === "run_interrupt_result")
   ) {
     return entry.projectedItem.item.runId ?? runlessKey;
   }
@@ -1930,6 +1931,7 @@ export function deriveMessagesTimelineRows(
     // A stopped fold carries the durable label; otherwise keep T3's lifecycle divider visible.
     if (
       timelineEntry.kind === "event" &&
+      !foldsByAnchorEntryId.has(timelineEntry.id) &&
       (timelineEntry.projectedItem.item.type === "run_interrupt_request" ||
         (timelineEntry.projectedItem.item.type === "run_interrupt_result" &&
           timelineEntry.projectedItem.item.runId !== null &&

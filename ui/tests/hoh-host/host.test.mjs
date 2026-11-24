@@ -1894,3 +1894,34 @@ test('permission request text for the person: the point of a subagent, the comma
   for (const request of [agent, bash, edit, unknown]) assert(!/[{}]"|":/.test(request.text), 'no raw JSON: ' + request.text);
   assert.equal(unknown.text, 'Frobnicate\ntarget: db\nretries: 3\nnested: {…}\nitems: 2 items');
 });
+
+test('prompt timestamps and stopped provenance survive replay of the engine history', async () => {
+  const data = new Map();
+  const storage = { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('timed', 'Timed', []);
+  let now = engine.clock - 10000;
+  const first = connect(engine, { storage, now: () => now, throttleMs: 0 });
+  const stream = await first.client.stream('orchestration.subscribeThread', { threadId: 'timed' });
+  await stream.until(value => value.kind === 'snapshot');
+  for (let i = 1; i <= 2; i++) {
+    now += 4000;
+    await first.client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: `cmd-${i}`, threadId: 'timed', messageId: `local-${i}`, text: `message ${i}`, attachments: [], createdBy: 'user', creationSource: 'web', dispatchMode: { type: 'start_immediately' } });
+    await tick(10);
+    engine.emitEvent('timed', 'turn/end', { turn: i, reason: i === 2 ? { kind: 'aborted', reason: { kind: 'user' } } : { kind: 'completed' } });
+    first.host.flush();
+    await tick(5);
+  }
+  const before = lastSnapshot(stream).projection;
+  const times = before.runs.map(run => run.startedAt);
+  assert.equal(times.length, 2);
+  first.host.stop();
+  const second = connect(new FakeEngine({ store: engine.store }), { storage, now: () => now });
+  const replay = await second.client.stream('orchestration.subscribeThread', { threadId: 'timed' });
+  const after = (await replay.until(value => value.kind === 'snapshot')).projection;
+  assert.deepEqual(after.runs.map(run => run.startedAt), times);
+  assert.deepEqual(after.runs.map(run => run.completedAt), before.runs.map(run => run.completedAt));
+  assert.deepEqual(after.turnItems.filter(item => item.type === 'user_message').map(item => item.startedAt), before.turnItems.filter(item => item.type === 'user_message').map(item => item.startedAt));
+  assert(after.turnItems.some(item => item.type === 'run_interrupt_result'));
+  second.host.stop();
+});

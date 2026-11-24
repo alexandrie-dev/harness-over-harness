@@ -30,6 +30,7 @@ export const HIDDEN_ROUTES: Readonly<Record<string, string>> = {
   'approve-agent': '/',
   'pair': '/',
   'guest': '/',
+  '_chat.settings.access': '/settings/general',
   '_chat.settings.diffs': '/settings/general',
   '_chat.settings.keybindings': '/settings/general',
   '_chat.settings.voice': '/settings/general',
@@ -49,22 +50,23 @@ export const HIDDEN_ROUTES: Readonly<Record<string, string>> = {
   '_chat.settings.beta': '/settings/general',
   '_chat.settings.integrations': '/settings/general',
   '_chat.settings.storage': '/settings/general',
-  '_chat.settings.archived': '/settings/general',
 };
 
-/** Разделы настроек, которые остаются (план: общие, вид, чат, провайдеры, доступ). */
+/** Разделы настроек, которые остаются (план: общие, вид, чат, провайдеры, архив). */
 export const VISIBLE_SETTINGS: readonly string[] = [
   '/settings/general',
   '/settings/appearance',
   '/settings/chat',
   '/settings/providers',
-  '/settings/access',
+  '/settings/archived',
   // Сведения о программе и лицензии T3 (MIT; страница лицензий открывается из неё).
   '/settings/about',
 ];
 
 /** Компоненты T3, которые не рисуются: файл в apps/web/src → имена экспортов (`default` — экспорт по умолчанию). */
 export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
+  // Выбор значка среды не поддерживается движком.
+  'components/settings/EnvironmentIconPicker.tsx': ['EnvironmentIconMenu'],
   // «Open in VS Code / Cursor» в карточке разговора и в просмотре файла.
   'components/chat/OpenInPicker.tsx': ['OpenInPicker'],
   // «Add project script» и кнопки скриптов проекта.
@@ -140,5 +142,5 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'other-providers', title: 'Codex и другие поставщики в Providers, «Add provider» и «+»; в карточке Claude остаются название и состояние (без Runtime, Environment, Models, Usage providers, Advanced)', how: ['component'] },
   { id: 'theme-names', title: 'имена тем «T3 Code» и «T3 Chat» в Appearance → Themes → «Default» и «Chat»', how: ['component'] },
   { id: 'more-agents', title: '«Add more agents» на Welcome', how: ['css'] },
-  { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Access', how: ['route', 'nav'] },
+  { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Archived', how: ['route', 'nav'] },
 ];

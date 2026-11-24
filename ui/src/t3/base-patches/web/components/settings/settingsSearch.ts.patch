@@ -1,40 +1,22 @@
 --- a/web/components/settings/settingsSearch.ts
 +++ b/web/components/settings/settingsSearch.ts
-@@ -129,7 +129,7 @@
- };
- 
- /** Sidebar order. A group with a hidden heading is set apart on screen by space alone. */
+@@ -132 +132 @@
 -export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
 +const T3_SETTINGS_NAV_GROUPS: ReadonlyArray<{
-   readonly heading: string;
-   readonly headingHidden?: true;
-   readonly paths: ReadonlyArray<SettingsPath>;
-@@ -176,6 +176,20 @@
-   },
- ];
- 
-+// HoH (ui/T3-MAP.md): разделы настроек скрытых частей не показываются и не ищутся; остаются общие, вид, чат, провайдеры, доступ.
+@@ -177,0 +178,14 @@
++
++// HoH (ui/T3-MAP.md): разделы настроек скрытых частей не показываются и не ищутся; остаются общие, вид, чат, провайдеры, архив.
 +export const HOH_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set<SettingsPath>([
 +  "/settings/general",
 +  "/settings/appearance",
 +  "/settings/chat",
 +  "/settings/providers",
-+  "/settings/access",
++  "/settings/archived",
 +]);
 +
 +export const SETTINGS_NAV_GROUPS = T3_SETTINGS_NAV_GROUPS.map((group) => ({
 +  ...group,
 +  paths: group.paths.filter((path) => HOH_SETTINGS_PATHS.has(path)),
 +})).filter((group) => group.paths.length > 0);
-+
- export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
-   return `keybinding-${command}` as const;
- }
-@@ -1607,6 +1621,7 @@
-   const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
-   return items.filter(
-     (item) =>
+@@ -1609,0 +1624 @@
 +      HOH_SETTINGS_PATHS.has(item.to) &&
-       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
-       (!item.environmentOnly || availability.hasEnvironment) &&
-       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&

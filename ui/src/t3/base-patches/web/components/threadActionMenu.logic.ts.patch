@@ -1,0 +1,19 @@
+--- a/web/components/threadActionMenu.logic.ts
++++ b/web/components/threadActionMenu.logic.ts
+@@ -98,0 +99 @@
++  readonly hasProject?: boolean;
+@@ -214 +214,0 @@
+-    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
+@@ -288 +288 @@
+-    { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
++    ...(state.hasProject ? [{ id: "project-settings" as const, label: resolve(msg("Project settings")), icon: "settings" }] : []),
+@@ -298 +298 @@
+-      label: resolve(msg("Delete", { $context: "verb, delete the thread" })),
++      label: resolve(msg("Delete · Coming Soon")),
+@@ -302,0 +303 @@
++  const availableItems = items.filter((item) => !["regenerate-title", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
+@@ -304,2 +305,2 @@
+-    ? items
+-    : items.map((item) =>
++    ? availableItems
++    : availableItems.map((item) =>

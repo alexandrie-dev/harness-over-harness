@@ -24,6 +24,7 @@ import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedIma
 import { englishError } from './errors.ts';
 import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
+import { ThreadMetadataStore } from './thread-metadata.ts';
 
 export interface HohHostOptions {
   readonly engine: HohEngine;
@@ -155,7 +156,7 @@ const effectiveSessionMode = (session: any, fallback: HohAccessMode): HohAccessM
 const PAGE = 1000;
 const NO_OP_COMMANDS = new Set([
   'thread.visit', 'thread.mark-unread', 'thread.settle', 'thread.unsettle', 'thread.auto-settle', 'thread.auto-settle.set',
-  'thread.pin', 'thread.unpin', 'thread.pin.reorder', 'thread.active.reorder', 'thread.tag.set', 'thread.snooze', 'thread.unsnooze',
+  'thread.active.reorder', 'thread.tag.set', 'thread.snooze', 'thread.unsnooze',
   'thread.interaction-mode.set',
 ]);
 
@@ -243,6 +244,7 @@ export class HohHost {
   /** Whether the "No project" project is in the list (see the head of this file). */
   private projectShown = false;
   private readonly storage: HohStorage | null;
+  private readonly threadMetadata: ThreadMetadataStore;
   /** Folders the person added as projects, by project id. */
   private readonly folders = new Map<string, FolderProject>();
   /** The project of each chat the host placed (thread id → project id). */
@@ -302,6 +304,7 @@ export class HohHost {
     this.workspaceRoot = options.workspaceRoot ?? PLACEHOLDER_ROOT;
     this.startedAt = this.now();
     this.storage = options.storage === undefined ? windowStorage() : options.storage;
+    this.threadMetadata = new ThreadMetadataStore(this.storage);
     this.restore();
   }
 
@@ -356,10 +359,20 @@ export class HohHost {
       const thread = new ThreadModel({ id, title, createdAt, updatedAt, model, mode, executor, projectId });
       thread.options = this.levels.get(id);
       thread.archivedAt = entry?.archivedAt === null ? null : timeOf(entry?.archivedAt);
+      this.applyThreadMetadata(thread);
       this.threads.set(id, thread);
       this.restored.add(id);
     }
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.projectShown = true;
+  }
+
+  private applyThreadMetadata(thread: ThreadModel) {
+    const metadata = this.threadMetadata.get(thread.id);
+    thread.restorePromptTimes(metadata.promptTimes);
+    if (typeof metadata.title === 'string' && metadata.title.trim()) thread.title = metadata.title;
+    if (typeof metadata.pinnedAt === 'number' || metadata.pinnedAt === null) thread.pinnedAt = metadata.pinnedAt;
+    if (typeof metadata.pinOrderKey === 'string' || metadata.pinOrderKey === null) thread.pinOrderKey = metadata.pinOrderKey;
+    if (typeof metadata.archivedAt === 'number' || metadata.archivedAt === null) thread.archivedAt = metadata.archivedAt;
   }
 
   private save() {
@@ -1013,13 +1026,16 @@ export class HohHost {
           // The cache is only continuity for the first snapshot. Once this session is visible on
           // disk, let its current list entry and history replace stale presentation metadata.
           existing.title = typeof session.title === 'string' ? session.title : '';
+          this.applyThreadMetadata(existing);
           existing.updatedAt = Math.max(existing.updatedAt, at);
           inventoryChanged = true;
           if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
         }
         continue;
       }
-      this.threads.set(session.id, new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model, mode, executor, projectId: this.homeOf(session.id) }));
+      const discovered = new ThreadModel({ id: session.id, title: typeof session.title === 'string' ? session.title : '', createdAt: at, updatedAt: at, model, mode, executor, projectId: this.homeOf(session.id) });
+      this.applyThreadMetadata(discovered);
+      this.threads.set(session.id, discovered);
       if ((executor === 'codex' ? this.codexDiscovery : this.claudeDiscovery) === null) this.catalogPending.add(session.id);
       inventoryChanged = true;
       // During the first load the metadata is already in the forthcoming snapshot. A retry happens after that
@@ -1080,6 +1096,7 @@ export class HohHost {
         // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
         try { if ((await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
         if (this.stopped) return;
+        this.applyThreadMetadata(thread);
         thread.settleUnfinished(this.now());
         this.peeked.add(thread.id);
         if (this.syncHomeDisposition(thread)) dispositionChanged = true;
@@ -1154,6 +1171,7 @@ export class HohHost {
     if (!thread) {
       // A chat started elsewhere (another window, a schedule): it joins the list.
       thread = new ThreadModel({ id: sessionId, createdAt: this.now(), model: this.model(), mode: this.defaultMode, executor: this.selectedExecutor });
+      this.applyThreadMetadata(thread);
       thread.loaded = true;
       this.threads.set(sessionId, thread);
       this.showProject();
@@ -1589,7 +1607,16 @@ export class HohHost {
       this.failedHomePrompts.delete(thread.id);
       if (this.homeDispositions.delete(thread.id)) this.save();
       for (const image of images) this.uploads.delete(image.id);
-      if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
+      if (typeof result?.messageId === 'string') {
+        thread.receipt(result.messageId, messageId);
+        const startedAt = thread.promptTime(messageId);
+        if (startedAt !== undefined) {
+          try {
+            const metadata = this.threadMetadata.get(thread.id);
+            this.threadMetadata.update(thread.id, { promptTimes: { ...metadata.promptTimes, [result.messageId]: startedAt } });
+          } catch { /* the engine history remains usable if window storage is unavailable */ }
+        }
+      }
     } catch (error) {
       this.homePrompts.delete(thread.id);
       if (this.homeDispositions.has(thread.id)) this.failedHomePrompts.add(thread.id);
@@ -1788,12 +1815,24 @@ export class HohHost {
         }
         case 'thread.metadata.update': {
           const target = needThread();
-          if (typeof command.title === 'string' && command.title.trim()) { target.title = command.title.trim(); this.changed(target.id); }
+          if (typeof command.title === 'string' && command.title.trim()) { const title = command.title.trim(); this.threadMetadata.update(target.id, { title }); target.title = title; this.changed(target.id); }
+          break;
+        }
+        case 'thread.pin': case 'thread.unpin': case 'thread.pin.reorder': {
+          const target = needThread();
+          const pinnedAt = type === 'thread.unpin' ? null : target.pinnedAt ?? this.now();
+          const pinOrderKey = type === 'thread.unpin' ? null : typeof command.orderKey === 'string' && command.orderKey.trim() ? command.orderKey : target.pinOrderKey;
+          this.threadMetadata.update(target.id, { pinnedAt, pinOrderKey });
+          target.pinnedAt = pinnedAt;
+          target.pinOrderKey = pinOrderKey;
+          this.changed(target.id);
           break;
         }
         case 'thread.archive': case 'thread.unarchive': {
           const target = needThread();
-          target.archivedAt = type === 'thread.archive' ? this.now() : null;
+          const archivedAt = type === 'thread.archive' ? this.now() : null;
+          this.threadMetadata.update(target.id, { archivedAt });
+          target.archivedAt = archivedAt;
           this.changed(target.id);
           break;
         }
@@ -1988,6 +2027,11 @@ export class HohHost {
         },
         'orchestration.dispatchCommand': (command: any) => this.dispatch(command ?? {}),
         'orchestration.launchThread': (input: any) => this.launch(input ?? {}),
+        'orchestration.getArchivedShellSnapshot': async () => {
+          await this.start();
+          const { snapshot } = this.shellSnapshot();
+          return { schemaVersion: snapshot.schemaVersion, snapshotSequence: snapshot.snapshotSequence, projects: snapshot.projects, threads: snapshot.archivedThreads };
+        },
         'orchestration.getThreadProjection': async (payload: any) => {
           await this.start();
           const thread = await this.loaded(String(payload?.threadId ?? ''));

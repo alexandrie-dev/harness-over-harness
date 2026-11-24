@@ -77,7 +77,7 @@ const Mark = ({ entry }: { entry: Entry }) => entry.providerInstanceId === 'code
   : <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
 
 function Steps({ entry }: { entry: Entry }) {
-  if (entry.steps.total === 0) return null;
+  if (entry.steps.total === 0 || entry.canComplete) return null;
   return (
     <span className="hoh-steps" data-waiting={entry.state === 'waiting' || undefined} title={`${entry.steps.done} of ${entry.steps.total} steps`}>
       {Array.from({ length: Math.min(entry.steps.total, 12) }, (_, index) => (

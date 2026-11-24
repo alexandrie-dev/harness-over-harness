@@ -1,59 +1,30 @@
 --- a/web/components/chat/MessagesTimeline.logic.ts
 +++ b/web/components/chat/MessagesTimeline.logic.ts
-@@ -1179,7 +1179,6 @@
-   for (const [runId, group] of groupsByRunId) {
-     if (
-       input.unfoldedRunIds.has(runId) ||
+@@ -958 +958,2 @@
+-    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent")
++    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent" ||
++      entry.projectedItem.item.type === "run_interrupt_result")
+@@ -1182 +1182,0 @@
 -      interruptedRunIds.has(runId) ||
-       runlessFailedKeys.has(runId) ||
-       (input.runlessWorkActive && runId === runlessKey)
-     ) {
-@@ -1233,8 +1232,9 @@
-       continue;
-     }
-
+@@ -1236,2 +1236,3 @@
 -    const isLatestInterruptedTurn =
 -      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
 +    const isInterruptedTurn =
 +      interruptedRunIds.has(runId) ||
 +      (input.latestRun?.runId === runId && input.latestRun.status === "interrupted");
-     // A turn cut short by a steer leaves trailing work entries behind its
-     // terminal message — take whichever ended last.
-     const lastEntryEnd = timelineEntryEnd(lastEntry);
-@@ -1248,7 +1247,7 @@
-           );
-     const { resolve } = input;
-     const duration = elapsedMs !== null ? formatDuration(elapsedMs, resolve) : null;
+@@ -1251 +1252 @@
 -    const label = isLatestInterruptedTurn
 +    const label = isInterruptedTurn
-       ? duration
-         ? resolve(msg("You stopped after {duration}", { duration }))
-         : resolve(msg("You stopped this response"))
-@@ -1682,5 +1681,6 @@
-           resolve,
-         });
+@@ -1681,0 +1683 @@
 +  const foldedRunIds = new Set(Array.from(foldsByAnchorEntryId.values(), (fold) => fold.runId));
-   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
-   const collapsedEntryIds = new Set<string>();
-   const collapsedFoldMemberIds = new Set<string>();
-@@ -1927,14 +1927,15 @@
-       appendActiveWorkRows();
-     }
-
+@@ -1929 +1931 @@
 -    // A stopped compaction's own divider already says it stopped.
 +    // A stopped fold carries the durable label; otherwise keep T3's lifecycle divider visible.
-     if (
-       timelineEntry.kind === "event" &&
-       (timelineEntry.projectedItem.item.type === "run_interrupt_request" ||
--        (timelineEntry.projectedItem.item.type === "run_interrupt_result" &&
--          timelineEntry.projectedItem.item.runId !== null &&
+@@ -1931,0 +1934 @@
++      !foldsByAnchorEntryId.has(timelineEntry.id) &&
+@@ -1935,2 +1938,3 @@
 -          compactionRuns.has(timelineEntry.projectedItem.item.runId) &&
 -          compactedRunIds.has(timelineEntry.projectedItem.item.runId)))
-+        (timelineEntry.projectedItem.item.type === "run_interrupt_result" &&
-+          timelineEntry.projectedItem.item.runId !== null &&
 +          (foldedRunIds.has(timelineEntry.projectedItem.item.runId) ||
 +            (compactionRuns.has(timelineEntry.projectedItem.item.runId) &&
 +              compactedRunIds.has(timelineEntry.projectedItem.item.runId)))))
-     ) {
-       continue;
-     }

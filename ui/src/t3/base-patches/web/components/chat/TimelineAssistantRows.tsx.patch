@@ -1,0 +1,11 @@
+--- a/web/components/chat/TimelineAssistantRows.tsx
++++ b/web/components/chat/TimelineAssistantRows.tsx
+@@ -252,8 +252,2 @@
+       />
+-      {projectedItem?.item.type === "assistant_message" ? (
+-        <AssistantForkButton projectedItem={projectedItem} />
+-      ) : null}
+-      {!message.streaming && projectedItem ? (
+-        <AssistantReplyButton message={message} itemId={projectedItem.sourceItemId} />
+-      ) : null}
+       {!message.streaming && (

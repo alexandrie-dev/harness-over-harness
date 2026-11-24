@@ -3,7 +3,7 @@
 // списком разговоров T3. Под «New chat» находятся Learning и Plugins. Подставляется вместо SidebarThreadHeader при сборке (vite.ts, sidebarList);
 // получает те же свойства, что получал T3 (SidebarThreadHeaderProps).
 import { GraduationCapIcon, PlusIcon, PuzzleIcon, SquarePenIcon } from 'lucide-react';
-import type { MouseEvent } from 'react';
+import { useState, type MouseEvent } from 'react';
 
 import { SidebarHeaderIconButton } from '~/components/sidebar/SidebarThreadHeader';
 import { SidebarMenuButton } from '~/components/ui/sidebar';
@@ -21,6 +21,7 @@ interface Props {
 
 export function SidebarTop({ onNewThread, newThreadDisabled, newThreadShortcutLabel }: Props) {
   const page = usePage();
+  const [teamComingSoon, setTeamComingSoon] = useState(false);
   return (
     <div className="hoh-side" data-hoh-sidebar-top="">
       <PageLayer />
@@ -41,10 +42,11 @@ export function SidebarTop({ onNewThread, newThreadDisabled, newThreadShortcutLa
       <div className="hoh-side__group">
         <span>Team</span>
         {/* Движка сотрудников у HoH нет: «+» ничего не создаёт и выключена, пока он не появится. */}
-        <SidebarHeaderIconButton label="Add to team" tooltip="Not available yet" disabled>
+        <SidebarHeaderIconButton label="Add to team" tooltip="Coming Soon" onClick={() => setTeamComingSoon((visible) => !visible)}>
           <PlusIcon />
         </SidebarHeaderIconButton>
       </div>
+      {teamComingSoon ? <p className="hoh-side__coming-soon" role="status">Coming Soon</p> : null}
       <div className="hoh-side__group hoh-side__group--list"><span>Recent chats</span></div>
     </div>
   );

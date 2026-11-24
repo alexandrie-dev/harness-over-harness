@@ -13,3 +13,5 @@
 @media (min-width: 640px) { .hoh-page__column { max-width: calc(var(--chat-content-max-width) + 6rem); padding-inline: 3rem; } }
 .hoh-page h1 { font-size: 1.75rem; line-height: 2.25rem; font-weight: 600; margin: 0; }
 .hoh-page p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 0.875rem; }
+
+.hoh-side__coming-soon { margin: 0 8px; font-size: 0.875rem; color: var(--muted-foreground); }

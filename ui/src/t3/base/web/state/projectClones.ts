@@ -1,22 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
 
-import { environmentServerConfigsAtom } from "./server";
-import { sourceControlEnvironment } from "./sourceControl";
 
 const EMPTY_CLONES: ReadonlyArray<ProjectCloneSnapshot> = [];
 const EMPTY_CLONE_ATOM = Atom.make<ProjectCloneSnapshot | null>(null).pipe(
   Atom.withLabel("web-project-clone:empty"),
 );
 
+// HoH does not offer repository cloning or subscribeProjectClones.
 export const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
-    if (!get(environmentServerConfigsAtom).has(environmentId)) return EMPTY_CLONES;
-    const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
-    return AsyncResult.getOrElse(result, () => EMPTY_CLONES);
-  }).pipe(Atom.withLabel(`web-project-clones:${environmentId}`)),
+  Atom.make(EMPTY_CLONES).pipe(Atom.withLabel(`web-project-clones:${environmentId}`)),
 );
 
 const projectCloneAtom = Atom.family((key: string) => {

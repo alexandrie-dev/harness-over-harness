@@ -18,7 +18,8 @@ export function ThreadDetailsItemsRow() {
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
-  const enabled = THREAD_DETAILS_ITEMS.filter((item) => visibility[item.id]).length;
+  const items = THREAD_DETAILS_ITEMS.filter((item) => item.id === "context");
+  const enabled = items.filter((item) => visibility[item.id]).length;
   return (
     <SettingsRow
       {...searchableSetting("thread-details-items")}
@@ -43,13 +44,13 @@ export function ThreadDetailsItemsRow() {
                 className="w-full justify-between sm:w-40"
                 aria-label={gt("Thread details: {enabled} of {total} on", {
                   enabled,
-                  total: THREAD_DETAILS_ITEMS.length,
+                  total: items.length,
                 })}
               />
             }
           >
             <T>
-              <Var>{enabled}</Var> of <Var>{THREAD_DETAILS_ITEMS.length}</Var> on
+              <Var>{enabled}</Var> of <Var>{items.length}</Var> on
             </T>
             <ChevronDownIcon aria-hidden />
           </MenuTrigger>
