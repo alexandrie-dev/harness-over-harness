@@ -67,8 +67,19 @@ pub(crate) struct Shared {
 /// The access mode and command-line switches a native session was started with.
 pub(crate) struct Launched {
     pub access: AccessMode,
+    pub interaction_mode: crate::InteractionMode,
     pub flags: Vec<String>,
     pub session: Weak<dyn HarnessSession>,
+}
+
+impl Launched {
+    fn visible_access(&self) -> AccessMode {
+        if self.interaction_mode == crate::InteractionMode::Plan {
+            AccessMode::Confirm
+        } else {
+            self.access
+        }
+    }
 }
 
 impl Shared {
@@ -89,7 +100,7 @@ impl Shared {
             .rev()
             .map(|(_, launched)| launched)
             .find(|launched| launched.session.strong_count() > 0)
-            .map(|launched| (launched.access, launched.flags.clone()))
+            .map(|launched| (launched.visible_access(), launched.flags.clone()))
     }
 
     /// The mode and switches of the native session of conversation `session`, if it still runs.
@@ -97,7 +108,7 @@ impl Shared {
         lock(&self.launched)
             .iter()
             .find(|(id, launched)| id == session && launched.session.strong_count() > 0)
-            .map(|(_, launched)| (launched.access, launched.flags.clone()))
+            .map(|(_, launched)| (launched.visible_access(), launched.flags.clone()))
     }
 
     /// Conversation `session` has worked in its folder: its native session is recorded, or its

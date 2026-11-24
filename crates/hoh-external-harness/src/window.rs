@@ -48,6 +48,7 @@ pub const CHOICES_FILE: &str = "external-harness.json";
 /// Exact per-conversation modes. Kept separate so older HoH versions ignore it instead of
 /// rejecting their legacy choices file when it contains a newer four-mode value.
 pub const SESSION_ACCESS_FILE: &str = "external-harness-session-access.json";
+const SESSION_ACCESS_PAIRS_FILE: &str = "external-harness-session-access-pairs.json";
 /// Codex selection for new conversations. Kept in a versioned sidecar so an older HoH ignores
 /// an executor it does not know instead of rejecting or restoring it from the legacy file.
 pub const CODEX_SELECTION_FILE: &str = "external-harness-codex-selection.json";
@@ -91,11 +92,29 @@ struct SavedSelection {
     model: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SavedSessionAccess {
     version: u32,
     sessions: BTreeMap<String, crate::SessionAccessChoice>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SavedSessionAccessPairs {
+    version: u32,
+    legacy: SavedSessionAccess,
+    previous_legacy: Option<SavedSessionAccess>,
+    pairs: BTreeMap<String, BTreeMap<String, AccessMode>>,
+    previous_pairs: BTreeMap<String, BTreeMap<String, AccessMode>>,
+}
+
+fn sorted_pairs(choices: &crate::Choices) -> BTreeMap<String, BTreeMap<String, AccessMode>> {
+    choices
+        .all_session_access_pairs()
+        .into_iter()
+        .map(|(session, modes)| (session, modes.into_iter().collect()))
+        .collect()
 }
 
 fn build_15_mode(mode: AccessMode) -> AccessMode {
@@ -860,6 +879,38 @@ impl Window {
                 version: 1,
                 sessions,
             };
+            let previous_legacy = match tokio::fs::read(&self.session_access_path).await {
+                Ok(bytes) => serde_json::from_slice::<SavedSessionAccess>(&bytes).ok(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(
+                        format!("the conversation access could not be read: {error}").into(),
+                    );
+                }
+            };
+            let previous_pairs = sorted_pairs(self.service().choices());
+            let mut pairs = previous_pairs.clone();
+            pairs
+                .entry(session.clone())
+                .or_default()
+                .insert(executor.clone(), *mode);
+            let paired = SavedSessionAccessPairs {
+                version: 1,
+                legacy: saved.clone(),
+                previous_legacy,
+                pairs,
+                previous_pairs,
+            };
+            // Write the pair snapshot first. It is selected on recovery only when the legacy
+            // file matches its corresponding snapshot, so a failed second write cannot widen access.
+            let pairs_path = self
+                .session_access_path
+                .with_file_name(SESSION_ACCESS_PAIRS_FILE);
+            write(&pairs_path, &serde_json::to_vec_pretty(&paired)?)
+                .await
+                .map_err(|error| -> BoxError {
+                    format!("the conversation access pairs could not be saved: {error}").into()
+                })?;
             write(
                 &self.session_access_path,
                 &serde_json::to_vec_pretty(&saved)?,
@@ -1067,12 +1118,14 @@ pub(crate) async fn restore_choices(ctx: &Context, choices: &Choices, agents: &A
     }
 
     let session_path = profile.dir.join(SESSION_ACCESS_FILE);
+    let mut legacy = None;
     match tokio::fs::read(&session_path).await {
         Ok(bytes) => match serde_json::from_slice::<SavedSessionAccess>(&bytes) {
             Ok(saved) if saved.version == 1 => {
-                for (session, choice) in saved.sessions {
+                for (session, choice) in &saved.sessions {
                     choices.set_session_access(&session, &choice.executor, choice.mode);
                 }
+                legacy = Some(saved);
             }
             Ok(saved) => logger.warn(format_args!(
                 "saved conversation access {} has unsupported version {}",
@@ -1089,6 +1142,26 @@ pub(crate) async fn restore_choices(ctx: &Context, choices: &Choices, agents: &A
             "saved conversation access {} could not be read: {error}",
             session_path.display()
         )),
+    }
+    let pairs_path = profile.dir.join(SESSION_ACCESS_PAIRS_FILE);
+    if let Ok(bytes) = tokio::fs::read(&pairs_path).await
+        && let Ok(saved) = serde_json::from_slice::<SavedSessionAccessPairs>(&bytes)
+        && saved.version == 1
+    {
+        let pairs = if legacy.as_ref() == Some(&saved.legacy) {
+            Some(saved.pairs)
+        } else if legacy == saved.previous_legacy {
+            Some(saved.previous_pairs)
+        } else {
+            None
+        };
+        if let Some(pairs) = pairs {
+            for (session, modes) in pairs {
+                for (executor, mode) in modes {
+                    choices.restore_session_access_pair(&session, &executor, mode);
+                }
+            }
+        }
     }
 }
 

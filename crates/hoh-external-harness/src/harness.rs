@@ -49,6 +49,16 @@ pub trait ExternalHarness: Send + Sync + 'static {
         Vec::new()
     }
 
+    fn launch_flags_for_turn(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        interaction: crate::InteractionMode,
+    ) -> Vec<String> {
+        let _ = interaction;
+        self.launch_flags(policy, access)
+    }
+
     /// Whether «Стоп» ends the process of the session, with every process under it, instead of
     /// trusting the native interrupt: for a harness whose interrupt may leave a command running.
     /// The next turn starts the process again on the same native session. Default: no.

@@ -625,13 +625,18 @@ impl HarnessSdkJsonRpcServer {
         &self,
         params: SessionPromptParams,
     ) -> Result<SessionPromptResult, BoxError> {
+        let listener_params = serde_json::to_value(&params)?;
         let blocks = params
             .content_blocks
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()?;
-        self.prompt_blocks(SessionId::from(params.session_id), blocks, None)
-            .await
+        self.prompt_blocks(
+            SessionId::from(params.session_id),
+            blocks,
+            Some(&listener_params),
+        )
+        .await
     }
     /// `params`: those of a `session/prompt` request, for its listener (HOH-40).
     async fn prompt_blocks(
@@ -900,7 +905,12 @@ impl HarnessSdkJsonRpcServer {
         let cwd = directory
             .ensure(&directory_agent(agent.clone()), None)
             .await?;
-        let (_, identity) = directory.verify_for_spawn(agent.session())?;
+        let (verified, identity) = directory.verify_for_read(agent.session())?;
+        if verified != cwd {
+            return Err(error(
+                "The conversation folder changed while it was being read",
+            ));
+        }
         let root_identity = Some(WorkingDirectoryRootIdentity {
             device: identity[0].to_string(),
             inode: identity[1].to_string(),

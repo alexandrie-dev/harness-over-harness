@@ -160,6 +160,38 @@ test('a delayed running-mode read does not block forced stop', async () => {
   host.stop();
 });
 
+test('Claude acceptEdits launch is projected as auto-accept-edits', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('native-edits', 'Edits', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
+  const { client, host } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'native-edits' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitEvent('native-edits', 'plugin:external-harness/launch', { runtimeMode: 'acceptEdits' });
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'auto-accept-edits');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'auto-accept-edits');
+  host.stop();
+});
+
+test('stop and approval commands do not wait for history or access reads', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('cold-control', 'Cold', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
+  const request = engine.request.bind(engine);
+  const never = new Promise(() => {});
+  let blocked = false;
+  engine.request = (method, params) => blocked && (method === 'session/events' || (method === 'hoh/executor/access/get' && params.sessionId === 'cold-control')) ? never : request(method, params);
+  const { client, host } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await shell.until(value => value.kind === 'snapshot');
+  blocked = true;
+  engine.askApproval('cold-control', 'cold-approval', 'Allow?');
+  await client.call('orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: 'answer-cold', threadId: 'cold-control', requestId: 'cold-approval', decision: 'accept' });
+  await client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stop-cold', threadId: 'cold-control' });
+  await client.call('orchestration.forceStopThread', { threadId: 'cold-control' });
+  assert.deepEqual(engine.decisions, [{ approvalId: 'cold-approval', outcome: 'allowed-once' }]);
+  assert.equal(engine.cancelled, 2);
+  host.stop();
+});
+
 test('each message keeps its own permissions and interaction across overlapping sends', async () => {
   const engine = new FakeEngine();
   Object.assign(engine.seed('send-race', 'Race', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
@@ -237,6 +269,18 @@ test('a notification-first conversation reads its exact engine mode before it is
   engine.setStatus('ready');
   const refreshed = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'auto');
   assert.equal(refreshed.projection.thread.runtimeMode, 'auto', 'later inventory reconciles a notification-created row');
+  host.stop();
+});
+
+test('a notification-first row takes its running mode from the engine', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine);
+  await client.call('server.getConfig', {});
+  Object.assign(engine.seed('first-running-mode', 'Running', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm', runningRuntimeMode: 'full' });
+  engine.emitFrame('first-running-mode', {});
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'first-running-mode' });
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'full-access');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'full-access');
   host.stop();
 });
 

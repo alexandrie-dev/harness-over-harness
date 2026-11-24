@@ -1389,11 +1389,47 @@ impl ExternalHarness for ClaudeHarness {
     fn launch_flags(&self, policy: &HarnessPolicy, access: AccessMode) -> Vec<String> {
         self.config.launch_flags(policy, access)
     }
+
+    fn launch_flags_for_turn(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        interaction: InteractionMode,
+    ) -> Vec<String> {
+        permission_args(
+            &launch_for_interaction(policy, access, interaction),
+            self.config.setting_sources,
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_plan_flags_match_the_actual_full_plan_launch() {
+        use hoh_external_harness::ExternalHarness;
+        let harness = ClaudeHarness::new(ClaudeConfig::default());
+        let policy = HarnessPolicy {
+            sandbox: SandboxMode::FullAccess,
+            ..HarnessPolicy::default()
+        };
+        let flags = harness.launch_flags_for_turn(&policy, AccessMode::Full, InteractionMode::Plan);
+        let at = flags
+            .iter()
+            .position(|flag| flag == "--permission-mode")
+            .unwrap();
+        assert_eq!(flags[at + 1], "plan");
+        assert!(!flags.iter().any(|flag| flag.contains("bypass")));
+        assert_eq!(
+            flags,
+            permission_args(
+                &launch_for_interaction(&policy, AccessMode::Full, InteractionMode::Plan),
+                harness.config.setting_sources
+            )
+        );
+    }
     use serde_json::json;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;

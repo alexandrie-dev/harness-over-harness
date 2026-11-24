@@ -682,6 +682,29 @@ impl ExternalAgent {
             Ok(images) => images,
             Err(failure) => return TurnOutcome::Failed(failure),
         };
+        let checked = match self
+            .shared
+            .ctx
+            .get::<hoh_working_directory::WorkingDirectoryKey>()
+        {
+            Some(service) => service.verify_for_spawn(&self.session),
+            None => hoh_working_directory::verify_session_directory(&self.session, &self.cwd()),
+        };
+        match checked {
+            Ok((cwd, identity)) if cwd == session.cwd && identity == session.cwd_identity => {}
+            Ok(_) => {
+                return TurnOutcome::Failed(HarnessFailure::new(
+                    code::IO,
+                    "Рабочая папка разговора изменилась до отправки сообщения",
+                ));
+            }
+            Err(error) => {
+                return TurnOutcome::Failed(HarnessFailure::new(
+                    code::IO,
+                    format!("Рабочая папка разговора недоступна: {error}"),
+                ));
+            }
+        }
         // The answer to the prompt is awaited together with the events: a harness may stream
         // the turn before it answers, and a stop before the answer must not be lost.
         let mut prompt = session.control.prompt(PromptParams {
@@ -779,6 +802,20 @@ impl ExternalAgent {
         live: &mut Option<LiveSession>,
         signal: &AbortSignal,
     ) -> Result<(), HarnessFailure> {
+        if let Some(directories) = self.ctx.get::<hoh_working_directory::WorkingDirectoryKey>() {
+            let owner = self
+                .as_dyn()
+                .ok_or_else(|| HarnessFailure::new(code::CLOSED, "agent is gone"))?;
+            directories
+                .ensure(&owner, Some(signal))
+                .await
+                .map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("Рабочая папка разговора недоступна: {error}"),
+                    )
+                })?;
+        }
         let (effort, interaction_mode) = {
             let state = lock(&self.state);
             (state.effort.clone(), state.interaction_mode)
@@ -853,7 +890,10 @@ impl ExternalAgent {
         } else {
             false
         };
-        let flags = self.shared.harness.launch_flags(&policy, access);
+        let flags = self
+            .shared
+            .harness
+            .launch_flags_for_turn(&policy, access, interaction_mode);
         let resume = lock(&self.state).native.clone();
         let checked_cwd = || -> Result<(String, [u64; 2]), HarnessFailure> {
             match self
@@ -867,6 +907,8 @@ impl ExternalAgent {
             .map_err(|error| HarnessFailure::new(code::IO, error.to_string()))
         };
         let (cwd, identity) = checked_cwd()?;
+        let mut launch_cwd = cwd.clone();
+        let mut launch_identity = identity;
         let mut params = StartParams {
             session_id: self.id.to_string(),
             cwd,
@@ -886,6 +928,8 @@ impl ExternalAgent {
                 ));
                 params.resume = None;
                 let (cwd, identity) = checked_cwd()?;
+                launch_cwd = cwd.clone();
+                launch_identity = identity;
                 params.cwd = cwd;
                 params.cwd_identity = Some(identity);
                 (harness.start_with_access(params, access).await?, resume)
@@ -908,6 +952,7 @@ impl ExternalAgent {
             self.id.as_ref(),
             Launched {
                 access,
+                interaction_mode,
                 flags,
                 session: Arc::downgrade(&started.session),
             },
@@ -915,7 +960,7 @@ impl ExternalAgent {
         if let Err(error) = append_plugin_record(
             &self.session,
             "plugin:external-harness/launch",
-            json!({ "runtimeMode": access }),
+            json!({ "runtimeMode": if interaction_mode == InteractionMode::Plan { json!("plan") } else { json!(access) }, "interactionMode": interaction_mode }),
         ) {
             self.ctx.logger().warn(format_args!(
                 "could not publish the running access mode: {error}"
@@ -930,6 +975,8 @@ impl ExternalAgent {
             access,
             effort,
             interaction_mode,
+            cwd: launch_cwd,
+            cwd_identity: launch_identity,
         });
         Ok(())
     }
@@ -1419,6 +1466,8 @@ pub(crate) struct LiveSession {
     effort: Option<String>,
     /// The interaction mode it was started with: another prompt mode restarts it.
     interaction_mode: InteractionMode,
+    cwd: String,
+    cwd_identity: [u64; 2],
 }
 
 enum TurnOutcome {

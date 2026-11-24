@@ -187,7 +187,7 @@ const titleOf = (root: string) => root.split('/').filter(Boolean).at(-1) ?? root
 const timeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 const executorOf = (instanceId: unknown): HohExecutor => instanceId === CODEX_INSTANCE_ID ? 'codex' : 'claude';
 const instanceOf = (executor: HohExecutor) => executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID;
-const exactMode = (value: unknown): HohAccessMode | null => ['confirm', 'auto-accept-edits', 'auto', 'full'].includes(String(value)) ? value as HohAccessMode : null;
+const exactMode = (value: unknown): HohAccessMode | null => value === 'acceptEdits' ? 'auto-accept-edits' : ['confirm', 'auto-accept-edits', 'auto', 'full'].includes(String(value)) ? value as HohAccessMode : null;
 /** What the executor is actually running wins over a requested mode waiting for the next turn. */
 const effectiveSessionMode = (session: any, fallback: HohAccessMode): HohAccessMode =>
   exactMode(session?.runningRuntimeMode) ?? exactMode(session?.running)
@@ -571,9 +571,7 @@ export class HohHost {
     projectKey: (projectId: string) => projectId === HOH_PROJECT_ID ? this.workspaceRoot : this.folders.get(projectId)?.workspaceRoot ?? projectId,
     /** Approve or decline a waiting permission request, as the chat's buttons do. */
     answer: async (threadId: string, requestId: string, decision: 'accept' | 'decline') => {
-      const thread = await this.loaded(threadId);
-      if (!thread) return;
-      await this.respond(thread, { requestId, decision });
+      await this.respondImmediately(threadId, { requestId, decision });
       this.flush();
     },
     /** A completed answer becomes Done only by the person's explicit action on that exact turn. */
@@ -1343,7 +1341,7 @@ export class HohHost {
           if ((this.modeGenerations.get(sessionId) ?? 0) !== modeGeneration) return;
           if (sessionRevision < (this.sessionAccessApplied.get(sessionId) ?? 0)) return;
           const own = result?.session;
-          const mode = exactMode(own?.runtimeMode);
+          const mode = exactMode(own?.runningRuntimeMode) ?? exactMode(own?.runtimeMode);
           if (own && own.executor == null && own.runtimeMode == null) {
             this.sessionAccessApplied.set(sessionId, sessionRevision); this.sessionAccessKnown.add(sessionId); this.modeRevision++; this.changed(sessionId); return;
           }
@@ -1368,8 +1366,10 @@ export class HohHost {
         const thread = this.threadFor(params.sessionId);
         if (thread?.applyEvent(params.event)) this.changed(thread.id);
         if (thread && params.event?.type === 'plugin:external-harness/launch') {
-          const mode = exactMode(params.event?.data?.runtimeMode);
+          const runningPlan = params.event?.data?.runtimeMode === 'plan';
+          const mode = runningPlan ? 'confirm' : exactMode(params.event?.data?.runtimeMode);
           if (mode) {
+            if (params.event?.data?.interactionMode === 'plan' || params.event?.data?.interactionMode === 'default') thread.setInteractionMode(params.event.data.interactionMode);
             this.sessionAccessKnown.add(thread.id);
             this.modeGenerations.set(thread.id, (this.modeGenerations.get(thread.id) ?? 0) + 1);
             if (thread.mode !== mode) { thread.mode = mode; this.changed(thread.id); }
@@ -2049,9 +2049,31 @@ ${message.slice(0, 8000)}`;
     this.changed(thread.id);
   }
 
+  private async respondImmediately(threadId: string, command: Record<string, any>) {
+    const thread = this.threads.get(threadId);
+    const requestId = String(command.requestId ?? '');
+    if (thread?.pendingRequest(requestId)) return this.respond(thread, command);
+    if (command.answers && this.engine.answerQuestion) {
+      await this.engine.answerQuestion(requestId, questionAnswer(this.questions.get(requestId), command.answers));
+    } else if (this.engine.decideApproval) {
+      const allowed = ['accept', 'acceptForSession', 'acceptAlways'].includes(command.decision);
+      await this.engine.decideApproval(requestId, allowed ? 'allowed-once' : 'rejected');
+    } else throw dispatchError(command, 'This request is no longer available.');
+  }
+
   private async dispatch(command: Record<string, any>) {
-    await this.start();
     const type = String(command.type ?? '');
+    const directId = typeof command.threadId === 'string' ? command.threadId : '';
+    if ((type === 'thread.stop' || type === 'run.interrupt') && directId) {
+      const existing = this.threads.get(directId);
+      if (existing) await this.cancel(existing); else await this.engine.request('session/cancel', { sessionId: directId });
+      this.flush(); return { sequence: this.sequence };
+    }
+    if (type === 'runtime-request.respond' && directId) {
+      await this.respondImmediately(directId, command);
+      this.flush(); return { sequence: this.sequence };
+    }
+    await this.start();
     const thread = typeof command.threadId === 'string' ? await this.loaded(command.threadId) : undefined;
     const needThread = () => { if (!thread) throw dispatchError(command, 'This thread does not exist.'); return thread; };
     try {
@@ -2323,10 +2345,9 @@ ${message.slice(0, 8000)}`;
           return thread.projection();
         },
         'orchestration.forceStopThread': async (payload: any) => {
-          await this.start();
-          const thread = await this.loaded(String(payload?.threadId ?? ''));
-          if (!thread) throw new RpcFailure({ _tag: 'OrchestrationV2ForceStopThreadError', threadId: String(payload?.threadId ?? 'unknown') });
-          await this.cancel(thread);
+          const id = String(payload?.threadId ?? '');
+          const thread = this.threads.get(id);
+          if (thread) await this.cancel(thread); else await this.engine.request('session/cancel', { sessionId: id });
           return { outcome: 'killed', sharedWithThreadIds: [] };
         },
         // Git is hidden; T3 still asks about the folder when a thread opens. It is not a repository.

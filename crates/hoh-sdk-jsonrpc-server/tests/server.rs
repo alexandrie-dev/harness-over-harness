@@ -1031,6 +1031,30 @@ async fn rechecks_agent_liveness_after_asynchronous_image_admission() {
 }
 
 #[tokio::test]
+async fn rust_prompt_preserves_plan_for_the_prompt_listener() {
+    use hoh_sdk_jsonrpc_server::{HohRpcMethodRegistry, HohRpcMethods};
+    let h = Env::new().await;
+    let registry = Arc::new(HohRpcMethodRegistry::default());
+    h.ctx
+        .provide::<HohRpcMethods>(registry.clone())
+        .await
+        .unwrap();
+    let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let _guard = registry
+        .on_prompt(&h.ctx, move |_, _, params| {
+            lock(&log).push(params["interactionMode"].clone());
+        })
+        .unwrap();
+    h.initialize().await;
+    let params = serde_json::from_value(json!({"sessionId":"rust-plan","contentBlocks":[{"type":"text","text":"plan"}],"interactionMode":"plan"})).unwrap();
+    h.server.prompt(params).await.unwrap();
+    assert_eq!(*lock(&heard), vec![json!("plan")]);
+    h.wait("rust-plan").await;
+    h.close().await;
+}
+
+#[tokio::test]
 async fn a_plain_query_notifies_the_prompt_listener_before_enqueue() {
     use hoh_sdk_jsonrpc_server::{HohRpcMethodRegistry, HohRpcMethods};
     let h = Env::new().await;

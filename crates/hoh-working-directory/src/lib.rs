@@ -230,6 +230,12 @@ impl WorkingDirectoryService {
         let current = self.inner.get(session);
         verify_session_directory(session, &current)
     }
+
+    /// Validate a read without appending a directory change to the journal.
+    pub fn verify_for_read(&self, session: &Session) -> Result<(String, [u64; 2]), BoxError> {
+        let current = self.inner.get(session);
+        inspect_session_directory(session, &current, false)
+    }
     /// Validate the configuration and register everything the service contributes.
     async fn start(ctx: Context, deps: Deps, config: &Config) -> Result<Self, BoxError> {
         let directory = match &config.default_directory {
@@ -441,6 +447,14 @@ pub fn verify_session_directory(
     session: &Session,
     current: &str,
 ) -> Result<(String, [u64; 2]), BoxError> {
+    inspect_session_directory(session, current, true)
+}
+
+fn inspect_session_directory(
+    session: &Session,
+    current: &str,
+    bind: bool,
+) -> Result<(String, [u64; 2]), BoxError> {
     let identity = directory_identity(current)?;
     let events = session.snapshot_events(None, None);
     let previous = events
@@ -460,7 +474,7 @@ pub fn verify_session_directory(
         if previous != identity {
             return Err(format!("The conversation folder {current:?} has changed. Select a new folder before starting the executor.").into());
         }
-    } else {
+    } else if bind {
         session.append(
             WORKING_DIRECTORY_CHANGE,
             json!({ "cwd": current, "identity": identity }),
@@ -616,7 +630,7 @@ impl Inner {
         agent.ctx().ensure_active()?;
         if info.is_some_and(|info| info.r#type == FsType::Directory) {
             if self.recorded(session).is_none() {
-                verify_session_directory(session, &current)?;
+                inspect_session_directory(session, &current, false)?;
             }
             return Ok(current);
         }

@@ -2603,6 +2603,51 @@ async fn a_retry_after_failed_turn_open_keeps_the_accepted_messages_access() {
 }
 
 #[tokio::test]
+async fn unbound_session_keeps_each_executors_mode_across_restart() {
+    let dirs = dirs();
+    let initial = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    let other = StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_str().unwrap().into()],
+        ..ProcessSpec::default()
+    }));
+    let _registration = initial
+        .base
+        .harnesses
+        .register(&initial.base.ctx, "codex", Arc::new(other))
+        .unwrap();
+    initial
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":HARNESS,"mode":"full"}),
+        )
+        .await
+        .unwrap();
+    initial
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":HARNESS,"sessionId":"unbound-pair","mode":"confirm"}),
+        )
+        .await
+        .unwrap();
+    initial
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":"codex","sessionId":"unbound-pair","mode":"full"}),
+        )
+        .await
+        .unwrap();
+    initial.close().await;
+
+    let restarted = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    let agent = restarted.base.create("unbound-pair").await;
+    turn(&agent, "hello").await;
+    assert_eq!(started_with(&dirs)["access"], "confirm");
+    assert!(!stub_argv(&dirs).contains(&FULL_ARGS.to_string()));
+    restarted.close().await;
+}
+
+#[tokio::test]
 async fn a_different_executor_cannot_replace_a_bound_sessions_access_choice() {
     let dirs = dirs();
     let window = window(&dirs, quick(), Host::Allows, |_| {}).await;
