@@ -39,6 +39,10 @@ export function installHohHost(options: InstallOptions) {
     method === 'POST' ? host.receiveUpload(pathname, contentType, body) : Promise.resolve({ status: 404 }), options.target);
   // The home screen (src/t3-entry/hoh-screens) reads the host through this handle.
   (options.target ?? globalThis).__HOH_HOME__ = host.home;
+  (options.target ?? globalThis).__HOH_TRUST_ENGINE__ = {
+    request: (method: string, params: unknown) => host.trustRequest(method, params),
+    subscribe: (listener: any) => options.engine.subscribe(listener),
+  };
   void host.start();
   return {
     host,

@@ -4,124 +4,128 @@
 -import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 +import { useProjectPin, useProjectGroupUpdate } from "../hooks/useProjectGroupUpdate";
 +import { Dialog, DialogPopup, DialogTitle, DialogFooter } from "./ui/dialog";
-@@ -883,2 +884,2 @@
+@@ -543,0 +545,3 @@
++            totalThreads: partition.visibleThreads.filter((thread) =>
++              folder.group.memberProjects.some((project) => project.environmentId === thread.environmentId && project.id === thread.projectId),
++            ).length,
+@@ -883,2 +887,2 @@
 -    title: m(msg("Thread action unavailable")),
 -    description: m(msg("This connection cannot change one or more selected threads.")),
 +    title: m(msg("Chat action unavailable")),
 +    description: m(msg("This connection cannot change one or more selected chats.")),
-@@ -911,0 +913,3 @@
+@@ -911,0 +916,3 @@
 +  const [renameProject, setRenameProject] = useState<SidebarProjectSnapshot | null>(null);
 +  const [renameProjectTitle, setRenameProjectTitle] = useState("");
 +  const { updateProjectGroup } = useProjectGroupUpdate();
-@@ -985 +989 @@
+@@ -985 +992 @@
 -          title: gt("Failed to copy thread ID"),
 +          title: gt("Failed to copy chat ID"),
-@@ -1261 +1265,5 @@
+@@ -1261 +1268,5 @@
 -    void handleNewThread(scopeProjectRef(group.environmentId, group.id));
 +    void handleNewThread(scopeProjectRef(group.environmentId, group.id)).then((opened) => {
 +      if (!opened) return;
 +      try { sessionStorage.setItem("hoh-project-new-chat", opened.draftId); } catch { /* Storage is optional. */ }
 +      window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: opened.draftId }));
 +    });
-@@ -1275 +1283,2 @@
+@@ -1275 +1286,2 @@
 -              { id: "new-thread", label: gt("New thread") },
 +              { id: "new-thread", label: gt("New chat") },
 +              ...(!group.isScratch ? [{ id: "rename-project", label: gt("Rename project") }] : []),
-@@ -1294,0 +1304,4 @@
+@@ -1294,0 +1307,4 @@
 +          case "rename-project":
 +            setRenameProject(group);
 +            setRenameProjectTitle(group.displayName);
 +            return;
-@@ -1555 +1568 @@
+@@ -1555 +1571 @@
 -        toastManager.add({ type: "warning", title: gt("Thread title cannot be empty") });
 +        toastManager.add({ type: "warning", title: gt("Chat title cannot be empty") });
-@@ -1568 +1581 @@
+@@ -1568 +1584 @@
 -            title: gt("Failed to rename thread"),
 +            title: gt("Failed to rename chat"),
-@@ -1640 +1653 @@
+@@ -1640 +1656 @@
 -              title: gt("Failed to settle thread"),
 +              title: gt("Failed to settle chat"),
-@@ -1678 +1691 @@
+@@ -1678 +1694 @@
 -            title: gt("Failed to un-settle thread"),
 +            title: gt("Failed to un-settle chat"),
-@@ -1693 +1706 @@
+@@ -1693 +1709 @@
 -            title: gt("Failed to wake thread"),
 +            title: gt("Failed to wake chat"),
-@@ -1793 +1806 @@
+@@ -1793 +1809 @@
 -    const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || gt("Thread");
 +    const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || gt("Chat");
-@@ -1896 +1909 @@
+@@ -1896 +1912 @@
 -            title: gt("Failed to pin thread"),
 +            title: gt("Failed to pin chat"),
-@@ -1911 +1924 @@
+@@ -1911 +1927 @@
 -            title: gt("Failed to unpin thread"),
 +            title: gt("Failed to unpin chat"),
-@@ -2190 +2203 @@
+@@ -2190 +2206 @@
 -          const settled = await run(settleThread(threadRef), gt("Failed to settle thread")).finally(
 +          const settled = await run(settleThread(threadRef), gt("Failed to settle chat")).finally(
-@@ -2207 +2220 @@
+@@ -2207 +2223 @@
 -          if (plan.unpin && !(await run(unpinThread(threadRef), gt("Failed to unpin thread"))))
 +          if (plan.unpin && !(await run(unpinThread(threadRef), gt("Failed to unpin chat"))))
-@@ -2211 +2224 @@
+@@ -2211 +2227 @@
 -            !(await run(unsettleThread(threadRef), gt("Failed to un-settle thread")))
 +            !(await run(unsettleThread(threadRef), gt("Failed to un-settle chat")))
-@@ -2214 +2227 @@
+@@ -2214 +2230 @@
 -          if (plan.unsnooze && !(await run(unsnoozeThread(threadRef), gt("Failed to wake thread"))))
 +          if (plan.unsnooze && !(await run(unsnoozeThread(threadRef), gt("Failed to wake chat"))))
-@@ -2221 +2234 @@
+@@ -2221 +2237 @@
 -              gt("Failed to pin thread"),
 +              gt("Failed to pin chat"),
-@@ -2240,2 +2253,2 @@
+@@ -2240,2 +2256,2 @@
 -              ? gt("Failed to reorder active threads")
 -              : gt("Failed to reorder pinned threads"),
 +              ? gt("Failed to reorder active chats")
 +              : gt("Failed to reorder pinned chats"),
-@@ -2291 +2304 @@
+@@ -2291 +2307 @@
 -              title: gt("Failed to snooze thread"),
 +              title: gt("Failed to snooze chat"),
-@@ -2391 +2403,0 @@
+@@ -2391 +2406,0 @@
 -            { id: "mark-unread", label: gt("Mark unread ({count})", { count }) },
-@@ -2398 +2410 @@
+@@ -2398 +2413 @@
 -          ],
 +          ].filter((item) => !["settle", "snooze", "regenerate-title", "delete"].includes(item.id)),
-@@ -2454 +2466 @@
+@@ -2454 +2469 @@
 -                        "{count, plural, one {Failed to snooze {count} thread} other {Failed to snooze {count} threads}}",
 +                        "{count, plural, one {Failed to snooze {count} chat} other {Failed to snooze {count} chats}}",
-@@ -2457 +2469 @@
+@@ -2457 +2472 @@
 -                    : gt("Failed to snooze threads"),
 +                    : gt("Failed to snooze chats"),
-@@ -2509 +2521 @@
+@@ -2509 +2524 @@
 -              gt("{count, plural, one {Delete {count} thread?} other {Delete {count} threads?}}", {
 +              gt("{count, plural, one {Delete {count} chat?} other {Delete {count} chats?}}", {
-@@ -2512 +2524 @@
+@@ -2512 +2527 @@
 -              gt("This permanently clears conversation history for these threads."),
 +              gt("This permanently clears conversation history for these chats."),
-@@ -2543 +2555 @@
+@@ -2543 +2558 @@
 -            title: gt("Failed to delete threads"),
 +            title: gt("Failed to delete chats"),
-@@ -2654,0 +2667,4 @@
+@@ -2654,0 +2670,4 @@
 +              hasProject: threadProjectGroup !== null && !isScratchProject(
 +                threadProjectGroup,
 +                serverConfigs.get(thread.environmentId)?.scratchWorkspaceRoot,
 +              ),
-@@ -2733 +2749 @@
+@@ -2733 +2752 @@
 -                  title: gt("Could not create thread"),
 +                  title: gt("Could not create chat"),
-@@ -2768 +2784 @@
+@@ -2768 +2787 @@
 -                  title: gt("Could not turn thread into a project"),
 +                  title: gt("Could not turn chat into a project"),
-@@ -2819 +2835 @@
+@@ -2819 +2838 @@
 -                  description: gt("This thread does not have a workspace path to copy."),
 +                  description: gt("This chat does not have a workspace path to copy."),
-@@ -2842 +2858 @@
+@@ -2842 +2861 @@
 -                api.dialogs.confirm(gt('Archive thread "{title}"?', { title: thread.title })),
 +                api.dialogs.confirm(gt('Archive chat "{title}"?', { title: thread.title })),
-@@ -2858,2 +2874,2 @@
+@@ -2858,2 +2877,2 @@
 -                    ? gt("Thread archived, but navigation failed")
 -                    : gt("Failed to archive thread"),
 +                    ? gt("Chat archived, but navigation failed")
 +                    : gt("Failed to archive chat"),
-@@ -2868,24 +2884 @@
+@@ -2868,24 +2887 @@
 -            if (confirmThreadDelete) {
 -              const confirmed = await settlePromise(() =>
 -                api.dialogs.confirm(
@@ -147,7 +151,7 @@
 -              return;
 -            }
 +            toastManager.add({ title: "Coming Soon" });
-@@ -2948,20 +2941 @@
+@@ -2948,20 +2944 @@
 -  const handleNewThreadClick = (event?: ReactMouseEvent) => {
 -    if (
 -      shouldCreateNewThreadInCurrentProject(
@@ -169,51 +173,63 @@
 -      return;
 -    }
 +  const handleNewThreadClick = (_event?: ReactMouseEvent) => {
-@@ -2969 +2943,9 @@
+@@ -2969 +2946,16 @@
 -    openCommandPalette({ open: "new-thread-in" });
 +    // Use the same project resolution on Home and inside a conversation.
 +    void startNewThreadFromContext({
 +      activeDraftThread: newThreadContext.activeDraftThread,
 +      activeThread: newThreadContext.activeThread ?? undefined,
 +      defaultProjectRef: newThreadContext.defaultProjectRef,
-+      handleNewThread,
++      handleNewThread: async (...args: Parameters<typeof handleNewThread>) => {
++        const opened = await handleNewThread(...args);
++        if (opened) {
++          try { sessionStorage.setItem("hoh-project-new-chat", opened.draftId); } catch { /* Storage is optional. */ }
++          window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: opened.draftId }));
++        }
++        return opened;
++      },
 +    }).then((started) => {
 +      if (!started) openCommandPalette({ open: "new-thread-in" });
 +    });
-@@ -3030 +3012 @@
+@@ -3030 +3022 @@
 -                            ? gt("Filter threads by project: {projects}", {
 +                            ? gt("Filter chats by project: {projects}", {
-@@ -3035 +3017 @@
+@@ -3035 +3027 @@
 -                            : gt("Filter threads by project")
 +                            : gt("Filter chats by project")
-@@ -3244 +3226 @@
+@@ -3244 +3236 @@
 -                    aria-label={gt("Thread search results")}
 +                    aria-label={gt("Chat search results")}
-@@ -3300 +3282 @@
+@@ -3300 +3292 @@
 -                  ? gt("Searching thread messages…")
 +                  ? gt("Searching chat messages…")
-@@ -3302,2 +3284,2 @@
+@@ -3302,2 +3294,2 @@
 -                    ? gt("Couldn't search thread messages")
 -                    : gt("No threads found")}
 +                    ? gt("Couldn't search chat messages")
 +                    : gt("No chats found")}
-@@ -3337,2 +3319,2 @@
+@@ -3308 +3300 @@
+-          {!isSearchingThreads &&
++          {allProjectSnapshotsReady && !isSearchingThreads &&
+@@ -3337,2 +3329,2 @@
 -                        ? gt("No active threads in these projects")
 -                        : gt("No active threads in {project}", {
 +                        ? gt("No active chats in these projects")
 +                        : gt("No active chats in {project}", {
-@@ -3342,2 +3324,2 @@
+@@ -3342,2 +3334,2 @@
 -                        ? gt("No threads in these projects yet")
 -                        : gt("No threads in {project} yet", {
 +                        ? gt("No chats in these projects yet")
 +                        : gt("No chats in {project} yet", {
-@@ -3356 +3338 @@
+@@ -3356 +3348 @@
 -                <T>No threads yet</T>
 +                <T>No chats yet</T>
-@@ -3689 +3671 @@
+@@ -3540,0 +3533 @@
++                                totalThreads={folder.totalThreads}
+@@ -3689 +3682 @@
 -                              ? gt("Could not load older threads. Retry")
 +                              ? gt("Could not load older chats. Retry")
-@@ -3706,0 +3689,20 @@
+@@ -3706,0 +3700,20 @@
 +      <Dialog open={renameProject !== null} onOpenChange={(open) => { if (!open) setRenameProject(null); }}>
 +        <DialogPopup className="max-w-md">
 +          <DialogTitle>{gt("Rename project")}</DialogTitle>

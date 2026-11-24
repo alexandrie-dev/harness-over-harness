@@ -330,7 +330,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/components/chat/TimelineAssistantRows.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/TimelineAssistantRows.tsx.patch`) | скрыты неподдерживаемые fork и reply |
 | `web/components/chat/TimelineUserMessageRow.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/TimelineUserMessageRow.tsx.patch`) | скрыты неподдерживаемые edit from here и ссылка на запрос |
 | `web/components/chat/threadDetailsItems.ts` | правка (`ui/src/t3/base-patches/web/components/chat/threadDetailsItems.ts.patch`) | неподдерживаемые сведения скрыты; Context window по умолчанию виден в панели |
-| `web/components/Sidebar.tsx` | правка (`ui/src/t3/base-patches/web/components/Sidebar.tsx.patch`) | массовое меню без неподдерживаемых действий; закрепление сохраняется; New chat единообразно открывает черновик в текущем проекте |
+| `web/components/Sidebar.tsx` | правка (`ui/src/t3/base-patches/web/components/Sidebar.tsx.patch`) | массовое меню без неподдерживаемых действий; New chat помечает черновик проекта; счётчик включает открытый чат; пустое состояние ожидает снимок проектов |
 | `web/components/files/FilePreviewPanel.tsx` | правка (`ui/src/t3/base-patches/web/components/files/FilePreviewPanel.tsx.patch`) | неподдерживаемый просмотр файлов и открытие в редакторе обозначены Coming Soon; вложения сохраняют просмотр |
 | `web/components/chat/useThreadLifecycle.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/useThreadLifecycle.tsx.patch`) | не регистрирует неподдерживаемые сочетания закрепления, смены статуса и перегенерации |
 | `web/components/onboarding/WelcomePage.tsx` | правка (`ui/src/t3/base-patches/web/components/onboarding/WelcomePage.tsx.patch`) | установка и вход агента без терминального API обозначены Coming Soon |
@@ -482,3 +482,6 @@ C8: общее состояние панели деталей, переход к
 C8: панель пустого чата показывает его статус; патч ThreadDetailsPanel.
 
 | `client-runtime/state/threadExecution.ts` | правка (`ui/src/t3/base-patches/client-runtime/state/threadExecution.ts.patch`) | живые reasoning и текст снимают статус запуска провайдера |
+
+| `web/components/sidebar/SidebarProjectFolderHeader.tsx` | правка (`ui/src/t3/base-patches/web/components/sidebar/SidebarProjectFolderHeader.tsx.patch`) | счётчик включает открытый разговор |
+| `web/components/chat/ProviderModelPicker.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ProviderModelPicker.tsx.patch`) | скрывает временную подмену имени модели именем Claude |

@@ -291,3 +291,35 @@ test('sidebar New chat resolves the same context regardless of the current route
   assert.match(handler, /if \(!started\) openCommandPalette/);
   assert.doesNotMatch(handler, /shouldCreateNewThreadInCurrentProject/);
 });
+
+test('folder trust never sends a relative or tilde fallback as an engine cwd', async () => {
+  const mod = await import('../src/t3-entry/hoh-screens/folder-trust-view.mjs');
+  assert.equal(mod.isKnownAbsoluteFolder('~/Documents/HoH'), false);
+  assert.equal(mod.isKnownAbsoluteFolder('relative'), false);
+  assert.equal(mod.isKnownAbsoluteFolder('/home/person/project'), true);
+  assert.equal(mod.isKnownAbsoluteFolder(null), false);
+});
+
+test('sidebar waits for the project snapshot before showing No projects yet', async () => {
+  const source = await readFile(new URL('../src/t3/base/web/components/Sidebar.tsx', import.meta.url), 'utf8');
+  const condition = source.slice(source.indexOf('{/* A scope can hide every active thread'), source.indexOf('<T>No projects yet</T>'));
+  assert.match(condition, /allProjectSnapshotsReady/);
+});
+
+test('composer suppresses the Claude placeholder while its model is unknown', async () => {
+  const source = await readFile(new URL('../src/t3/base/web/components/chat/ProviderModelPicker.tsx', import.meta.url), 'utf8');
+  assert.match(source, /isComposerOwned.*selectedModel/s);
+  assert.match(source, /hideUnknownComposerModel/);
+});
+
+test('sidebar New chat marks the opened draft as a project chat', async () => {
+  const source = await readFile(new URL('../src/t3/base/web/components/Sidebar.tsx', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf('  const handleNewThreadClick ='), source.indexOf('  const newThreadShortcutLabel ='));
+  assert.match(handler, /hoh-project-new-chat/);
+});
+
+test('collapsed sidebar project count includes the currently open chat', async () => {
+  const source = await readFile(new URL('../src/t3/base/web/components/sidebar/SidebarProjectFolderHeader.tsx', import.meta.url), 'utf8');
+  assert.match(source, /totalThreads/);
+  assert.doesNotMatch(source, /\{hiddenThreads\.length\}/);
+});

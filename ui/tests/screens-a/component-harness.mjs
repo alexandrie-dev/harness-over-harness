@@ -20,6 +20,7 @@ export function componentHarness(file, name, mocks = {}, props = {}) {
       return [slots[index].value, value => { slots[index].value = typeof value === 'function' ? value(slots[index].value) : value; dirty = true; }];
     },
     useRef(initial) { const index = cursor++; slots[index] ??= { kind: 'ref', value: { current: initial } }; return slots[index].value; },
+    useCallback(fn, deps) { const index = cursor++; const before = slots[index]; if (!before || deps.some((v, i) => !Object.is(v, before.deps?.[i]))) slots[index] = { kind: 'callback', deps, value: fn }; return slots[index].value; },
     useEffect(fn, deps) {
       const index = cursor++, before = slots[index];
       if (!before || !deps || deps.some((value, i) => !Object.is(value, before.deps?.[i]))) {
@@ -52,6 +53,8 @@ export function componentHarness(file, name, mocks = {}, props = {}) {
       return require(id);
     };
     const setTimer = (fn, delay, repeat = false) => { const id = ++nextTimer; timers.set(id, { fn, at: clock + delay, delay, repeat }); return id; };
+    window.setInterval = (fn, ms) => setTimer(fn, ms, true);
+    window.clearInterval = id => timers.delete(id);
     runInNewContext(source, {
       exports: module.exports, module, require: localRequire, window, Error,
       Date: class extends Date { static now() { return clock; } },
@@ -87,7 +90,7 @@ export function componentHarness(file, name, mocks = {}, props = {}) {
   async function settle() { for (let i = 0; i < 12; i++) { await Promise.resolve(); render(); } }
   render();
   return {
-    render, settle, slots, inputs, forceRender() { dirty = true; render(); }, exports: modules.get(resolve(file)),
+    render, settle, slots, inputs, window, forceRender() { dirty = true; render(); }, exports: modules.get(resolve(file)),
     nodes: () => nodes, text: () => textOf(tree),
     button(label) { return nodes.find(node => node.type === 'button' && textOf(node) === label); },
     byId(id) { return nodes.find(node => node.props.id === id); },

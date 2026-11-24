@@ -542,6 +542,9 @@ function useSidebarThreads(input: {
           return {
             group: folder.group,
             collapsed,
+            totalThreads: partition.visibleThreads.filter((thread) =>
+              folder.group.memberProjects.some((project) => project.environmentId === thread.environmentId && project.id === thread.projectId),
+            ).length,
             // A closed folder still shows the open thread, and hints at the rest.
             threads: collapsed
               ? routeThreadOnly(folder.threads, routeRowThreadKey)
@@ -2945,7 +2948,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       activeDraftThread: newThreadContext.activeDraftThread,
       activeThread: newThreadContext.activeThread ?? undefined,
       defaultProjectRef: newThreadContext.defaultProjectRef,
-      handleNewThread,
+      handleNewThread: async (...args: Parameters<typeof handleNewThread>) => {
+        const opened = await handleNewThread(...args);
+        if (opened) {
+          try { sessionStorage.setItem("hoh-project-new-chat", opened.draftId); } catch { /* Storage is optional. */ }
+          window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: opened.draftId }));
+        }
+        return opened;
+      },
     }).then((started) => {
       if (!started) openCommandPalette({ open: "new-thread-in" });
     });
@@ -3287,7 +3297,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             )
           ) : null}
           {/* A scope can hide every active thread; say so even when its project still has settled ones. */}
-          {!isSearchingThreads &&
+          {allProjectSnapshotsReady && !isSearchingThreads &&
           !hasProjectFolders &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
@@ -3520,6 +3530,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 group={folder.group}
                                 collapsed={folder.collapsed}
                                 hiddenThreads={folder.hiddenThreads}
+                                totalThreads={folder.totalThreads}
                                 onToggle={toggleProjectFolder}
                                 onNewThread={startThreadInProjectFolder}
                                 onContextMenu={handleProjectFolderContextMenu}

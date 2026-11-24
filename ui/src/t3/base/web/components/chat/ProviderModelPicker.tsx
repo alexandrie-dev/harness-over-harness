@@ -280,7 +280,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     .filter(Boolean)
     .join(" · ");
 
-  const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
+  // The HoH discovery placeholder names only the provider, not the actual model.
+  const hideUnknownComposerModel = props.isComposerOwned && selectedModel?.slug === "default" && selectedModel.name === "Claude";
+  const triggerText = hideUnknownComposerModel ? "" : (props.triggerLabel ?? multipleLabel ?? triggerTitle);
   const triggerTextProps = {
     className: cn(
       "min-w-0 flex-1 overflow-hidden truncate",
