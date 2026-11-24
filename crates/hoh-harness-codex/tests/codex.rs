@@ -100,6 +100,20 @@ async fn protocol_end_without_a_request_card(
 }
 
 #[tokio::test]
+async fn plan_is_refused_before_codex_process_can_start_even_with_full_access() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "plan-refused");
+    let mut params = start_params(&temp, None);
+    params.interaction_mode = InteractionMode::Plan;
+    let failure = match harness.start_with_access(params, AccessMode::Full).await {
+        Ok(_) => panic!("Codex must not run a plan as an ordinary full-access turn"),
+        Err(failure) => failure,
+    };
+    assert!(failure.message.contains("coming soon"));
+    assert!(lines(&log).is_empty());
+}
+
+#[tokio::test]
 async fn discovery_uses_app_server_models_and_account() {
     let temp = TempDir::new().unwrap();
     let (harness, _) = harness(&temp, "discover");

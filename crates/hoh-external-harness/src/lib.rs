@@ -112,8 +112,9 @@ pub(crate) struct SessionAccessChoice {
     pub mode: AccessMode,
 }
 
-/// Settings snapshotted when `session/prompt` accepts a message. A later access change cannot
-/// alter a queued turn, and another conversation never shares this queue.
+/// Message-specific effort and the access observed when the prompt was accepted. The turn uses
+/// the current conversation access at dequeue time; the stored value is retained only for
+/// compatibility with the prompt bookkeeping.
 type PromptSettings = VecDeque<(String, Option<String>, Option<AccessMode>)>;
 
 #[derive(Default)]
@@ -233,13 +234,28 @@ impl Choices {
         let mut interactions = lock(&self.interactions);
         let pending = interactions.get_mut(session)?;
         let at = pending.iter().position(|(id, _)| id == message)?;
-        pending.drain(..=at).next_back().map(|(_, mode)| mode)
+        pending.remove(at).map(|(_, mode)| mode)
     }
 }
 
 #[cfg(test)]
 mod access_snapshot_tests {
-    use super::{AccessMode, Choices};
+    use super::{AccessMode, Choices, InteractionMode};
+
+    #[test]
+    fn interaction_modes_remain_bound_when_preparation_finishes_out_of_order() {
+        let choices = Choices::default();
+        choices.note_interaction("chat", "a", InteractionMode::Plan);
+        choices.note_interaction("chat", "b", InteractionMode::Default);
+        assert_eq!(
+            choices.take_interaction("chat", "b"),
+            Some(InteractionMode::Default)
+        );
+        assert_eq!(
+            choices.take_interaction("chat", "a"),
+            Some(InteractionMode::Plan)
+        );
+    }
 
     #[test]
     fn parallel_sessions_keep_the_mode_bound_to_each_accepted_message() {

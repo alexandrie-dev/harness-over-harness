@@ -641,15 +641,7 @@ impl HarnessSdkJsonRpcServer {
         params: Option<&Value>,
     ) -> Result<SessionPromptResult, BoxError> {
         self.assert_initialized()?;
-        // Allocate and announce the message before the first await. JSON-RPC requests run
-        // concurrently, so a following access-change request must not overtake the snapshot for
-        // this prompt while its session or durable attachments are still being prepared. If
-        // preparation fails, the listener deliberately leaves an abandoned snapshot which its
-        // next successful message drops by id.
         let message_id: MessageId = hoh_util_crypto::random_uuid().as_str().into();
-        if let (Some(params), Some(methods)) = (params, self.inner.ctx.get::<HohRpcMethods>()) {
-            methods.prompted(session_id.as_ref(), message_id.as_ref(), params);
-        }
         let rec = self.get_or_create_session(session_id.clone()).await?;
         self.inner.lifetime.signal().throw_if_aborted()?;
         self.assert_live_agent(&rec, &session_id)?;
@@ -661,6 +653,11 @@ impl HarnessSdkJsonRpcServer {
             source: MessageSource::new("user"),
             id: message_id.clone(),
         };
+        // Register message-specific choices only once preparation is complete, immediately
+        // before enqueueing. Concurrent attachment preparation may finish out of order.
+        if let (Some(params), Some(methods)) = (params, self.inner.ctx.get::<HohRpcMethods>()) {
+            methods.prompted(session_id.as_ref(), message_id.as_ref(), params);
+        }
         rec.handle.agent.followup(message)?;
         Ok(SessionPromptResult {
             message_id: message_id.to_string(),

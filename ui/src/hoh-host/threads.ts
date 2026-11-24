@@ -201,7 +201,7 @@ export class ThreadModel {
     this.model = seed.model;
     this.mode = seed.mode;
     this.executor = seed.executor ?? 'claude';
-    this.interactionMode = seed.interactionMode ?? 'default';
+    this.interactionMode = seed.executor === 'codex' ? 'default' : seed.interactionMode ?? 'default';
     this.projectId = seed.projectId ?? HOH_PROJECT_ID;
   }
 
@@ -693,7 +693,7 @@ export class ThreadModel {
       thread: {
         createdBy: 'user', creationSource: 'web',
         id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-        modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.interactionMode,
+        modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
@@ -794,7 +794,7 @@ export class ThreadModel {
     return {
       createdBy: 'user', creationSource: 'web',
       id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-      modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.interactionMode,
+      modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
       branch: null, worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
       forkedFrom: null, activeProviderThreadId: null,

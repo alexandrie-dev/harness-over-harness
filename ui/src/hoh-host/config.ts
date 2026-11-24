@@ -239,7 +239,7 @@ export function codexProvider(discovery: CodexDiscovery | null, now: string, req
     instanceId: CODEX_INSTANCE_ID,
     driver: CODEX_INSTANCE_ID,
     displayName: 'Codex',
-    showInteractionModeToggle: true,
+    showInteractionModeToggle: false,
     supportedRuntimeModes: ['approval-required', 'auto-accept-edits', 'auto', 'full-access'],
     supportsConversationRollback: false,
     supportsTextGeneration: false,

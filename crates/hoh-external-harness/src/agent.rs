@@ -830,6 +830,22 @@ impl ExternalAgent {
         if live.is_some() {
             return Ok(());
         }
+        // Revalidate the recorded directory identity on the native-launch path itself. A
+        // pathname can have been replaced after the window last displayed it.
+        if let Some(directories) = self.ctx.get::<hoh_working_directory::WorkingDirectoryKey>() {
+            let owner = self
+                .as_dyn()
+                .ok_or_else(|| HarnessFailure::new(code::CLOSED, "agent is gone"))?;
+            directories
+                .ensure(&owner, Some(signal))
+                .await
+                .map_err(|error| {
+                    HarnessFailure::new(
+                        code::POLICY_UNAVAILABLE,
+                        format!("Рабочая папка разговора недоступна или была заменена: {error}"),
+                    )
+                })?;
+        }
         self.model.restart.store(false, Ordering::SeqCst);
         // Read at every start, from the user's choice in the window only.
         let access = lock(&self.state).access;
@@ -906,7 +922,7 @@ impl ExternalAgent {
         let Some(prompt) = input.messages.last().filter(|_| input.last_from_next_turn) else {
             return;
         };
-        let (named, access) = self
+        let (named, _access) = self
             .shared
             .choices
             .take_prompt(self.id.as_ref(), prompt.id.as_ref())
@@ -929,9 +945,9 @@ impl ExternalAgent {
         });
         let mut state = lock(&self.state);
         state.effort = effort;
-        if let Some(access) = access {
-            state.access = access;
-        }
+        // The UI displays one current access mode for the conversation. A queued message must
+        // therefore use the current choice at the start of its turn, not an older snapshot.
+        state.access = self.shared.access_for(self.id.as_ref());
         drop(state);
         if let Some(mode) = self
             .shared

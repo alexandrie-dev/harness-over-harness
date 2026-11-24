@@ -1919,7 +1919,9 @@ impl Host {
                 running |= frame["params"]["status"] == "running";
             }
             // The fake has said it is working: the turn is in the middle.
-            worked |= frame["method"] == "session.event" && frame.to_string().contains("working");
+            worked |= frame["method"] == "session.event"
+                && frame["params"]["event"]["type"] == "assistant/message"
+                && frame.to_string().contains("working");
         }
         let cancel = self
             .send("session/cancel", json!({"sessionId": session}))
@@ -2210,6 +2212,34 @@ async fn t5_a_chat_with_claude_does_not_take_a_change_of_folder() {
     host.shutdown().await;
 }
 
+#[tokio::test]
+async fn replaced_working_directory_is_refused_before_native_executor_launch() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.ok(
+        "session/working-directory/get",
+        json!({"sessionId": SESSION}),
+    )
+    .await;
+    let original = workspace.root.path().join("moved-work");
+    std::fs::rename(&workspace.folder, &original).unwrap();
+    std::fs::create_dir(&workspace.folder).unwrap();
+    host.turn(SESSION, "hello", None).await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "error", "{end}");
+    assert!(
+        end["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("папка")),
+        "{end}"
+    );
+    assert!(
+        workspace.sessions().is_empty(),
+        "native executor ran in the replacement directory"
+    );
+    host.shutdown().await;
+}
+
 /// Ревью i7, п. 1. «Новый чат в другой папке»: a new chat with Claude takes another folder before
 /// its first turn, the turn runs there; after that turn the folder is the conversation's own.
 #[tokio::test]
@@ -2412,6 +2442,7 @@ async fn hang_turn(host: &mut Host, session: &str, text: &str) {
     while !host.frames.iter().any(|frame| {
         frame["method"] == "session.event"
             && frame["params"]["sessionId"] == session
+            && frame["params"]["event"]["type"] == "assistant/message"
             && frame.to_string().contains("working")
     }) {
         host.next().await;
@@ -2963,6 +2994,53 @@ async fn t19_a_queued_prompt_runs_at_its_own_effort() {
         assert_eq!(start.value_of("--resume"), Some(native), "{start:?}");
     }
     assert_eq!(notes(&workspace), "notes\nedited\n");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn queued_turn_uses_the_current_visible_session_access() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let from = host.frames.len();
+    host.send(
+        "session/prompt",
+        json!({"sessionId":SESSION,"contentBlocks":[{"type":"text","text":"edit"}]}),
+    )
+    .await;
+    let request = loop {
+        let frame = host.next().await;
+        if frame["method"] == "approval/request" {
+            break frame;
+        }
+    };
+    host.set_session_access(SESSION, "full", "allowed-once")
+        .await;
+    let id = host
+        .send(
+            "session/prompt",
+            json!({"sessionId":SESSION,"contentBlocks":[{"type":"text","text":"hello"}]}),
+        )
+        .await;
+    let (response, _) = host.response(&id, None).await;
+    assert!(response["result"]["messageId"].is_string());
+    host.set_session_access(SESSION, "confirm", "allowed-once")
+        .await;
+    host.answer_approval(&request, Some("allowed-once")).await;
+    while host.frames[from..]
+        .iter()
+        .filter(|frame| {
+            frame["method"] == "session.event" && frame["params"]["event"]["type"] == "turn/end"
+        })
+        .count()
+        < 2
+    {
+        host.next().await;
+    }
+    let starts = workspace.sessions();
+    assert!(
+        starts.iter().all(|start| mode_of(start) == "confirm"),
+        "{starts:?}"
+    );
     host.shutdown().await;
 }
 
@@ -3620,9 +3698,8 @@ async fn p19_composer_folder_calls_share_the_inflight_result_and_thirty_second_c
     host.shutdown().await;
 }
 
-/// HOH-18. The four-state Codex choice is captured with the exact prompt. A later mode change
-/// for the same chat cannot widen a turn which the engine already accepted, and only that chat is
-/// retired for the following message.
+/// A mode change does not alter a native turn that is already running; only that chat is
+/// retired for its following message, which uses the current choice.
 #[tokio::test]
 async fn cx1_session_access_is_bound_to_the_message_without_a_cross_chat_race() {
     let workspace = Workspace::new();
@@ -3635,18 +3712,24 @@ async fn cx1_session_access_is_bound_to_the_message_without_a_cross_chat_race() 
         .await;
     assert_eq!(chosen["result"]["runtimeMode"], "auto", "{chosen}");
 
-    // The first request has entered the engine before the second privileged request is written.
-    // Its prompt settings therefore remain `auto`, even though the chat immediately changes to
-    // full access while the native turn is running.
+    // Wait for the native process before changing the mode; the running turn keeps its own mode,
+    // and the next one uses the current selection.
     let from = host.frames.len();
     let prompt = host
         .send(
             "session/prompt",
-            json!({"sessionId":"chat-a","contentBlocks":[{"type":"text","text":"hello"}]}),
+            json!({"sessionId":"chat-a","contentBlocks":[{"type":"text","text":"edit"}]}),
         )
         .await;
+    let request = loop {
+        let frame = host.next().await;
+        if frame["method"] == "approval/request" {
+            break frame;
+        }
+    };
     host.set_session_access("chat-a", "full", "allowed-once")
         .await;
+    host.answer_approval(&request, Some("allowed-once")).await;
 
     let (mut answered, mut running, mut idle, mut index) = (false, false, false, from);
     while !(answered && running && idle) {
@@ -3710,7 +3793,7 @@ async fn cx2_session_access_is_isolated_persistent_and_downgrade_safe() {
         .expect("session access JSON");
     assert_eq!(document["version"], 1, "{document}");
     assert_eq!(
-        document["sessions"]["chat-a"]["mode"], "acceptEdits",
+        document["sessions"]["chat-a"]["mode"], "auto-accept-edits",
         "{document}"
     );
     assert_eq!(document["sessions"]["chat-b"]["mode"], "auto", "{document}");

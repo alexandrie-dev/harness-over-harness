@@ -994,6 +994,55 @@ async fn rechecks_agent_liveness_after_asynchronous_image_admission() {
     assert!(lock(&h.model.requests).is_empty());
     h.close().await;
 }
+
+#[tokio::test]
+async fn prompt_listener_follows_enqueue_order_when_image_preparation_is_delayed() {
+    use hoh_sdk_jsonrpc_server::{HohRpcMethodRegistry, HohRpcMethods};
+    let h = Env::new().await;
+    let registry = Arc::new(HohRpcMethodRegistry::default());
+    h.ctx
+        .provide::<HohRpcMethods>(registry.clone())
+        .await
+        .unwrap();
+    let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let _guard = registry
+        .on_prompt(&h.ctx, move |_, id, params| {
+            lock(&log).push((id.to_owned(), params["interactionMode"].clone()));
+        })
+        .unwrap();
+    h.initialize().await;
+    let store = support::images::Store::mount(&h).await;
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    *lock(&store.gate) = Some(release.clone());
+    let server = h.server.clone();
+    let a = tokio::spawn(async move {
+        server.handle_request("session/prompt", json!({"sessionId":"race","interactionMode":"plan","contentBlocks":[{"type":"image","data":"AQ==","mimeType":"image/png"}]})).await
+    });
+    store.entered.notified().await;
+    let b = h.server.handle_request("session/prompt", json!({"sessionId":"race","interactionMode":"default","contentBlocks":[{"type":"text","text":"second"}]})).await.unwrap();
+    assert_eq!(
+        lock(&heard).as_slice(),
+        [(
+            b["messageId"].as_str().unwrap().to_owned(),
+            json!("default")
+        )]
+    );
+    release.add_permits(1);
+    let a = a.await.unwrap().unwrap();
+    assert_eq!(
+        lock(&heard).as_slice(),
+        [
+            (
+                b["messageId"].as_str().unwrap().to_owned(),
+                json!("default")
+            ),
+            (a["messageId"].as_str().unwrap().to_owned(), json!("plan")),
+        ]
+    );
+    h.wait("race").await;
+    h.close().await;
+}
 #[tokio::test]
 async fn creates_an_sdk_session_without_an_optional_system_prompt() {
     let h = Env::new().await;

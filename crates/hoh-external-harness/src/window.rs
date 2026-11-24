@@ -98,6 +98,14 @@ struct SavedSessionAccess {
     sessions: BTreeMap<String, crate::SessionAccessChoice>,
 }
 
+fn build_15_mode(mode: AccessMode) -> AccessMode {
+    if mode == AccessMode::AcceptEdits {
+        AccessMode::AutoAcceptEdits
+    } else {
+        mode
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SavedCodexSelection {
@@ -163,8 +171,8 @@ impl Plugin for ExternalHarnessWindowPlugin {
                 async move { window.call(method, params).await }
             })?;
         }
-        // The prompt accepts effort plus a snapshot of the privileged per-session access. Both
-        // are bound to this message before the agent can dequeue it.
+        // Bind effort and interaction to this message before the agent can dequeue it. Access
+        // itself is read again at turn start, matching the mode shown for the conversation.
         let choices = window.service().choices().clone();
         let log = ctx.logger();
         deps.methods
@@ -834,9 +842,13 @@ impl Window {
                 session.clone(),
                 crate::SessionAccessChoice {
                     executor: executor.clone(),
-                    mode: *mode,
+                    // Version 1 must remain readable by build 15, including every other entry.
+                    mode: build_15_mode(*mode),
                 },
             );
+            for choice in sessions.values_mut() {
+                choice.mode = build_15_mode(choice.mode);
+            }
             let saved = SavedSessionAccess {
                 version: 1,
                 sessions,
@@ -1184,12 +1196,61 @@ async fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Window, protected_folder, saved_folder_match};
+    use super::{Window, build_15_mode, protected_folder, saved_folder_match};
     use crate::contract::{
         AuthState, Discovery, DiscoveryFailure, DiscoveryOperation, VersionStatus,
     };
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn saved_session_modes_are_readable_by_build_15_without_losing_confirm() {
+        #[derive(serde::Deserialize, Debug, PartialEq)]
+        #[serde(rename_all = "kebab-case")]
+        enum OldMode {
+            Confirm,
+            AutoAcceptEdits,
+            Auto,
+            Full,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OldChoice {
+            executor: String,
+            mode: OldMode,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OldFile {
+            version: u32,
+            sessions: std::collections::BTreeMap<String, OldChoice>,
+        }
+        let saved = super::SavedSessionAccess {
+            version: 1,
+            sessions: [
+                (
+                    "a".into(),
+                    crate::SessionAccessChoice {
+                        executor: "claude".into(),
+                        mode: build_15_mode(crate::AccessMode::AcceptEdits),
+                    },
+                ),
+                (
+                    "b".into(),
+                    crate::SessionAccessChoice {
+                        executor: "claude".into(),
+                        mode: build_15_mode(crate::AccessMode::Confirm),
+                    },
+                ),
+            ]
+            .into(),
+        };
+        let old: OldFile = serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(old.version, 1);
+        assert_eq!(old.sessions["b"].executor, "claude");
+        assert_eq!(old.sessions["a"].mode, OldMode::AutoAcceptEdits);
+        assert_eq!(old.sessions["b"].mode, OldMode::Confirm);
+    }
 
     #[test]
     fn discovery_json_keeps_the_structured_probe_failure_for_the_window() {

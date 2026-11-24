@@ -115,6 +115,33 @@ test('a closed Codex chat uses the Codex default model before resume', async () 
   );
 });
 
+test('a notification-first conversation reads its exact engine mode before it is used', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine, { loadRetryMs: 10 });
+  await client.call('server.getConfig', {});
+  const session = engine.seed('notification-first', 'Scheduled', []);
+  Object.assign(session, { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const request = engine.request.bind(engine);
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'notification-first') await pending;
+    return request(method, params);
+  };
+  engine.emitStatus('notification-first', 'running');
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'notification-first' });
+  await tick(20);
+  assert.equal(stream.values.some(value => value.kind === 'snapshot'), false, 'no guessed access is published while the engine answer is pending');
+  release();
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'full-access');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'full-access');
+  session.runtimeMode = 'auto';
+  engine.setStatus('ready');
+  const refreshed = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'auto');
+  assert.equal(refreshed.projection.thread.runtimeMode, 'auto', 'later inventory reconciles a notification-created row');
+  host.stop();
+});
+
 test('delayed discovery resolves closed Codex models before shell materialization', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-codex-default', 'Catalog default', []);
@@ -453,6 +480,7 @@ test('Codex: app-server models and effort are offered; executor and exact mode a
   const config = await client.call('server.getConfig', {});
   const codex = config.providers.find(provider => provider.instanceId === 'codex');
   assert.equal(codex.driver, 'codex');
+  assert.equal(codex.showInteractionModeToggle, false);
   assert.deepEqual(codex.models.map(model => model.slug), ['gpt-6-sol']);
   assert.deepEqual(codex.models[0].capabilities.optionDescriptors[0].options.map(option => [option.id, !!option.isDefault]), [
     ['low', false], ['medium', true], ['high', false],
@@ -473,6 +501,10 @@ test('Codex: app-server models and effort are offered; executor and exact mode a
   assert.deepEqual(access.params, { executor: 'codex', sessionId: 'cx-chat', mode: 'confirm', runtimeMode: 'auto' });
   assert.equal(prompt.params.effort, 'high');
   assert(engine.requests.indexOf(access) < engine.requests.indexOf(prompt));
+  assert.equal(engine.requests.some(request => request.method === 'hoh/executor/title/generate'), false, 'Codex text never goes to Claude');
+  await assert.rejects(client.call('orchestration.dispatchCommand', {
+    type: 'thread.interaction-mode.set', commandId: 'codex-plan', threadId: 'cx-chat', interactionMode: 'plan',
+  }), /coming soon/i);
   assert.equal(host.home.entries()[0].providerInstanceId, 'codex');
 
   const unsupported = new FakeEngine({ codexDiscovery: {
@@ -1128,7 +1160,7 @@ test('home screen data: working chats with real steps, a chat waiting for the pe
   assert.deepEqual(host.home.entries(), []);
   const user = (id, text) => ({ id, source: { kind: 'user' }, content: [{ type: 'text', text }] });
   const turn = (session, n, text) => { engine.emitEvent(session, 'turn/start', { turn: n }); engine.emitEvent(session, 'user/message', user(session + n, text)); };
-  for (const id of ['w1', 'w2', 'p1', 'd1', 'd2']) engine.seed(id, id, []);
+  for (const id of ['w1', 'w2', 'p1', 'd1', 'd2']) Object.assign(engine.seed(id, id, []), { executor: 'claude', model: 'claude-sonnet' });
   engine.emitStatus('w1', 'running');
   turn('w1', 1, 'Build report');
   engine.emitEvent('w1', 'tool/call', { turn: 1, callId: 'a', name: 'bash', arguments: { command: 'ls' } });

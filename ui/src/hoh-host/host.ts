@@ -277,6 +277,7 @@ export class HohHost {
   private modelRevision = 0;
   /** Sessions for which the engine returned a concrete executor binding and per-session mode. */
   private readonly sessionAccessKnown = new Set<string>();
+  private readonly notificationAccess = new Map<string, Promise<void>>();
   /** Rows published before their provider catalog arrived are reconciled when discovery completes. */
   private readonly catalogPending = new Set<string>();
   /** Only the newest global access/get may publish either success or failure. Lost engines and
@@ -1128,12 +1129,17 @@ export class HohHost {
       // An unbound history row follows the authoritative engine access setting.
       // `defaultMode` is only the composer default for a new draft.
       let mode = globalMode;
+      const wasKnown = this.sessionAccessKnown.has(session.id);
+      let ownKnown = false;
+      const modeRevision = this.modeRevision;
       try {
         const own = (await this.engine.request('hoh/executor/access/get', { executor: 'codex', sessionId: session.id }))?.session;
-        if (own) this.sessionAccessKnown.add(session.id);
+        const exact = exactMode(own?.runtimeMode);
+        if (own && (!exact || (own.executor !== 'codex' && own.executor !== 'claude'))) continue;
+        if (own) ownKnown = true;
         if (own?.executor === 'codex' || own?.executor === 'claude') executor = own.executor;
         model = typeof own?.model === 'string' && own.model ? own.model : undefined;
-        mode = exactMode(own?.runtimeMode) ?? exactMode(own?.mode) ?? mode;
+        mode = exact ?? mode;
       } catch { /* a session without an external executor follows the current composer */ }
       // A Codex row with no persisted model must not publish the synthetic `default` model while
       // app-server's native catalog is already in flight. Claude rows stay non-blocking for cold start.
@@ -1143,6 +1149,8 @@ export class HohHost {
 
       const existing = this.threads.get(session.id);
       if (existing) {
+        if (modeRevision !== this.modeRevision) continue;
+        if (ownKnown) this.sessionAccessKnown.add(session.id);
         if (this.restored.delete(session.id)) {
           // The cache is only continuity for the first snapshot. Once this session is visible on
           // disk, let its current list entry and history replace stale presentation metadata.
@@ -1152,8 +1160,8 @@ export class HohHost {
           existing.model = model;
           existing.mode = mode;
           inventoryChanged = true;
-          if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
-        } else if (!this.sessionAccessKnown.has(session.id)
+          if (this.sessionsKnown) this.changed(session.id);
+        } else if ((ownKnown || !wasKnown || !this.sessionAccessKnown.has(session.id))
           && (existing.mode !== mode || existing.executor !== executor || existing.model !== model)) {
           // Until a session reports its own binding it follows the global selection/access
           // returned by the engine. Refresh those provisional rows on every ready event.
@@ -1161,10 +1169,12 @@ export class HohHost {
           existing.executor = executor;
           existing.model = model;
           inventoryChanged = true;
-          if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
+          if (this.sessionsKnown) this.changed(session.id);
         }
         continue;
       }
+      if (modeRevision !== this.modeRevision) continue;
+      if (ownKnown) this.sessionAccessKnown.add(session.id);
       this.threads.set(session.id, new ThreadModel({
         id: session.id,
         title: this.titles.get(session.id) ?? (typeof session.title === 'string' ? session.title : ''),
@@ -1261,6 +1271,7 @@ export class HohHost {
 
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
   private async loaded(threadId: string): Promise<ThreadModel | undefined> {
+    if (!this.sessionAccessKnown.has(threadId)) await this.notificationAccess.get(threadId);
     const thread = this.threads.get(threadId);
     if (thread && !thread.options && this.levels.has(threadId)) thread.options = this.levels.get(threadId);
     if (!thread || thread.loaded) return thread;
@@ -1316,12 +1327,26 @@ export class HohHost {
         title: this.titles.get(sessionId),
         createdAt: this.now(),
         model: this.model(),
-        mode: this.defaultMode,
+        mode: this.mode,
         executor: this.selectedExecutor,
         interactionMode: this.interactions.get(sessionId),
       });
       thread.loaded = true;
       this.threads.set(sessionId, thread);
+      const created = thread;
+      const access = this.engine.request('hoh/executor/access/get', { executor: this.selectedExecutor, sessionId })
+        .then(result => {
+          if (this.sessionAccessKnown.has(sessionId)) return;
+          const own = result?.session;
+          const mode = exactMode(own?.runtimeMode);
+          if (!mode || (own?.executor !== 'claude' && own?.executor !== 'codex')) throw new Error('Conversation access is unavailable.');
+          created.executor = own.executor; created.mode = mode;
+          if (typeof own.model === 'string' && own.model) created.model = own.model;
+          this.sessionAccessKnown.add(sessionId); this.changed(sessionId);
+        });
+      // Retain the promise, including a failure, so sending cannot use a guessed mode.
+      this.notificationAccess.set(sessionId, access);
+      void access.catch(() => {});
       this.showProject();
     }
     return thread;
@@ -1403,6 +1428,10 @@ export class HohHost {
     this.homeChanged();
   }
 
+  private accessVisible(threadId: string) {
+    return !this.notificationAccess.has(threadId) || this.sessionAccessKnown.has(threadId);
+  }
+
   /** Send every pending change now (tests call it; the timer calls it otherwise). */
   flush() {
     if (this.flushTimer) clearTimeout(this.flushTimer);
@@ -1414,7 +1443,7 @@ export class HohHost {
     if (this.homeDirty) { this.homeDirty = false; this.homeVersion++; for (const listener of this.homeListeners) listener(); }
     for (const id of ids) {
       const thread = this.threads.get(id);
-      if (!thread) continue;
+      if (!thread || !this.accessVisible(id)) continue;
       this.sequence++;
       for (const sink of this.shellSinks) sink.emit({ kind: 'thread.updated', sequence: this.sequence, location: thread.archivedAt === null ? 'active' : 'archive', thread: thread.shell() });
       if (thread.loaded) for (const sink of this.threadSinks.get(id) ?? []) sink.emit(this.threadSnapshot(thread));
@@ -1461,7 +1490,7 @@ export class HohHost {
   }
 
   private shellSnapshot() {
-    const threads = [...this.threads.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+    const threads = [...this.threads.values()].filter(thread => this.accessVisible(thread.id)).sort((a, b) => b.updatedAt - a.updatedAt);
     return {
       kind: 'snapshot',
       snapshot: {
@@ -1499,6 +1528,7 @@ export class HohHost {
     try {
       return await this.withSelectionMutation(async () => {
         const executor = executorOf(providerInstanceId ?? instanceOf(this.selectedExecutor));
+        if (executor === 'codex' && interaction === 'plan') throw new Error('Plan mode for Codex is coming soon.');
         const chosenModel = model ?? this.model(executor);
         const chosenMode = accessModeOf(mode ?? runtimeModeOf(this.defaultMode));
         const already = this.threads.get(threadId);
@@ -1724,7 +1754,7 @@ export class HohHost {
     if (!mode) return;
     const wanted = accessModeOf(mode);
     this.modeRevision++;
-    if (!force && wanted === thread.mode) return;
+    if (!force && wanted === thread.mode && this.sessionAccessKnown.has(thread.id)) return;
     const processGeneration = this.accessProcessGeneration;
     this.accessGeneration++;
     await this.engine.request('hoh/executor/access/set', {
@@ -1770,6 +1800,7 @@ export class HohHost {
    */
   private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = []) {
     await this.requireAccess();
+    if (!this.sessionAccessKnown.has(thread.id)) await this.notificationAccess.get(thread.id);
     const firstMessage = thread.userMessageCount() === 0;
     const images = this.keptImages(attachments);
     // T3 releases the completed upload immediately after send. Promote its process-local preview
@@ -1794,7 +1825,7 @@ export class HohHost {
       const result = await this.engine.request('session/prompt', {
         sessionId: thread.id,
         contentBlocks,
-        interactionMode: thread.interactionMode,
+        interactionMode: thread.executor === 'codex' ? 'default' : thread.interactionMode,
         ...effortParam(effort),
       });
       this.homePrompts.delete(thread.id);
@@ -1802,7 +1833,7 @@ export class HohHost {
       if (this.homeDispositions.delete(thread.id)) this.save();
       for (const image of images) this.uploads.delete(image.id);
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
-      if (firstMessage) void this.generateTitle(thread, text);
+      if (firstMessage && thread.executor === 'claude') void this.generateTitle(thread, text);
     } catch (error) {
       this.homePrompts.delete(thread.id);
       if (this.homeDispositions.has(thread.id)) this.failedHomePrompts.add(thread.id);
@@ -2021,7 +2052,9 @@ ${message.slice(0, 8000)}`;
         case 'thread.runtime-mode.set': { const target = needThread(); await this.applyMode(target, command.runtimeMode); break; }
         case 'thread.interaction-mode.set': {
           const target = needThread();
-          target.setInteractionMode(interactionModeOf(command.interactionMode));
+          const interaction = interactionModeOf(command.interactionMode);
+          if (target.executor === 'codex' && interaction === 'plan') throw new Error('Plan mode for Codex is coming soon.');
+          target.setInteractionMode(interaction);
           this.interactions.set(target.id, target.interactionMode);
           this.save(); this.changed(target.id);
           break;
@@ -2069,6 +2102,7 @@ ${message.slice(0, 8000)}`;
     const existing = await this.loaded(threadId);
     try {
       const requestedExecutor = executorOf(input.modelSelection?.instanceId ?? instanceOf(this.selectedExecutor));
+      if (requestedExecutor === 'codex' && interactionMode === 'plan') throw new Error('Plan mode for Codex is coming soon.');
       if (existing && requestedExecutor !== existing.executor) throw new Error('A conversation cannot change its executor. Start a new thread.');
       // Validate the complete project transition before access/set: a rejected launch must not
       // mutate this conversation's permissions even when the request also asks for a wider mode.
