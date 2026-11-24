@@ -384,7 +384,8 @@
       "contracts/preview.ts": "сообщения пользователю: chat вместо thread",
       "contracts/terminal.ts": "сообщения пользователю: chat вместо thread",
       "contracts/t3ProjectFile.ts": "описания настроек проекта: chat вместо thread",
-      "web/rightPanelStore.ts": "C7f: параметры панели чата"
+      "web/rightPanelStore.ts": "C7f: параметры панели чата",
+      "client-runtime/state/threadExecution.ts": "провайдер больше не запускается после появления кадров ответа или reasoning"
     },
     "switches": [
       [

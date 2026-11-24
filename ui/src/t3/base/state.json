@@ -12,6 +12,7 @@
     "client-runtime/operations/commands.ts",
     "client-runtime/state/assets.ts",
     "client-runtime/state/projects.ts",
+    "client-runtime/state/threadExecution.ts",
     "contracts/assets.ts",
     "contracts/orchestrationV2.ts",
     "gt.config.json",

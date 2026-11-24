@@ -33,7 +33,7 @@ interface Agent {
   startedAt: number; doneAt: number | null; currentStep: string | null;
 }
 interface Home {
-  version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectTitle(id: string): string; projectKey(id: string): string;
+  version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectCounts(): Record<string, number>; projectTitle(id: string): string; projectKey(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
   complete(threadId: string): Promise<void>;
 }
@@ -246,7 +246,8 @@ function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: 
 }) {
   const panelId = `hoh-project-agents-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const style = { '--hoh-project-color': `var(--hoh-project-color-${group.color})` } as CSSProperties;
-  const agentLabel = `${group.entries.length} agent${group.entries.length === 1 ? '' : 's'}`;
+  const count = group.totalChats ?? group.entries.length;
+  const agentLabel = `${count} agent${count === 1 ? '' : 's'}`;
   const waitingLabel = `${group.waiting} waiting`;
   return (
     <button
@@ -390,7 +391,7 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
             onMouseEnter={cancelClose}
             onMouseLeave={leave}
           >
-            <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.entries.length} agent{openGroup.entries.length === 1 ? '' : 's'}</small></div>
+            <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.totalChats ?? openGroup.entries.length} agent{(openGroup.totalChats ?? openGroup.entries.length) === 1 ? '' : 's'}</small></div>
             <div className="hoh-project-popover__cards">
               {openGroup.entries.map((entry, agentIndex) => (
                 <div key={entry.id} className="hoh-project-popover__agent" style={{ '--hoh-agent-index': agentIndex } as CSSProperties}>
@@ -406,12 +407,12 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
   );
 }
 
-function GroupedCards({ working, done, asking, view }: Lists) {
+function GroupedCards({ working, done, asking, view, projectEntries }: Lists) {
   const groups = groupEntriesByProject(
-    [...working, ...done],
+    projectEntries,
     (projectId) => view.host?.projectTitle(projectId) ?? 'No project',
     view.projectKey,
-  );
+  ).map((group) => ({ ...group, totalChats: view.host?.projectCounts()[group.id] ?? group.entries.length }));
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">
@@ -440,7 +441,7 @@ function GroupedCards({ working, done, asking, view }: Lists) {
   );
 }
 
-interface Lists { working: Entry[]; done: Entry[]; asking: Entry[]; view: View }
+interface Lists { working: Entry[]; done: Entry[]; asking: Entry[]; projectEntries: Entry[]; view: View }
 function Head({ now, busy }: { now: number; busy: boolean }) {
   const date = new Date(now);
   return (
@@ -473,7 +474,8 @@ export function HomeBody() {
     where: (entry) => host?.projectTitle(entry.projectId) ?? '',
     projectKey: (projectId) => host?.projectKey(projectId) ?? projectId,
   };
-  const lists = { working, done, asking, view };
+  const projectEntries = entries.filter((entry) => entry.state !== 'ended');
+  const lists = { working, done, asking, projectEntries, view };
   return (
     <div className="hoh-home" data-hoh-home-body="" data-busy={working.length + done.length + asking.length > 0 || undefined}>
       {grouped ? <GroupedCards {...lists} /> : <Cards {...lists} />}

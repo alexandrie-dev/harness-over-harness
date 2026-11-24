@@ -581,6 +581,12 @@ export class HohHost {
     version: () => this.homeVersion,
     subscribe: (listener: () => void) => { this.homeListeners.add(listener); return () => { this.homeListeners.delete(listener); }; },
     entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => this.homeEntry(thread)).filter((entry): entry is HomeEntry => entry !== null),
+    // Counts include chats without a loaded or completed turn; cards keep their real state.
+    projectCounts: (): Record<string, number> => {
+      const counts: Record<string, number> = {};
+      for (const thread of this.threads.values()) if (thread.archivedAt === null) counts[thread.projectId] = (counts[thread.projectId] ?? 0) + 1;
+      return counts;
+    },
     projectTitle: (projectId: string) => projectId === HOH_PROJECT_ID ? 'Chats' : this.folders.get(projectId)?.title ?? 'No project',
     /** Stable private color key for Home folders: a title can change, the workspace path does not. */
     projectKey: (projectId: string) => projectId === HOH_PROJECT_ID ? this.workspaceRoot : this.folders.get(projectId)?.workspaceRoot ?? projectId,

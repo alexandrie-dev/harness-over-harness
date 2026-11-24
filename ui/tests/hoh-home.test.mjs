@@ -267,6 +267,27 @@ test('folder status follows visible card labels and singular agent wording', () 
   const mixed = grouping.groupEntriesByProject([...ready, entry('d')], id => id, id => id)[0];
   assert.equal(mixed.waiting, 1);
   assert.equal(mixed.ready, 3);
-  assert.match(homeSource, /agent\$\{group\.entries\.length === 1 \? '' : 's'\}/);
-  assert.match(homeSource, /agent\{openGroup\.entries\.length === 1 \? '' : 's'\}/);
+  assert.match(homeSource, /agent\$\{count === 1 \? '' : 's'\}/);
+  assert.match(homeSource, /agent\{\(openGroup\.totalChats \?\? openGroup\.entries\.length\) === 1 \? '' : 's'\}/);
+});
+
+test('folder totals use all project chats while status counts come from actual cards', () => {
+  assert.match(homeSource, /projectCounts\(\)\[group\.id\]/);
+  const group = grouping.groupEntriesByProject([
+    { id: 'interrupted', projectId: 'p', state: 'waiting', interrupted: true, startedAt: 1, agents: [] },
+    { id: 'done', projectId: 'p', state: 'done', startedAt: 2, agents: [] },
+  ], id => id, id => id)[0];
+  assert.equal(group.entries.length, 2);
+  assert.equal(group.states.interrupted, 1);
+  assert.equal(group.states.done, 1);
+});
+
+test('sidebar New chat resolves the same context regardless of the current route', async () => {
+  const source = await readFile(new URL('../src/t3/base/web/components/Sidebar.tsx', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf('  const handleNewThreadClick ='), source.indexOf('  const newThreadShortcutLabel ='));
+  assert.match(handler, /startNewThreadFromContext/);
+  assert.match(handler, /activeDraftThread: newThreadContext\.activeDraftThread/);
+  assert.match(handler, /activeThread: newThreadContext\.activeThread/);
+  assert.match(handler, /if \(!started\) openCommandPalette/);
+  assert.doesNotMatch(handler, /shouldCreateNewThreadInCurrentProject/);
 });

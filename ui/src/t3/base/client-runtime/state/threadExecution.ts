@@ -132,6 +132,10 @@ function summarizeThreadRun(
   const turnStatus = ACTIVITY_RUN_STATUSES.has(run.status)
     ? latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId)?.status
     : undefined;
+  // HoH may not expose provider turns, but streamed items prove that launch finished.
+  const providerHasResponded = projection.turnItems.some(
+    (item) => item.runId === run.id && (item.type === "reasoning" || item.type === "assistant_message"),
+  ) || projection.messages.some((message) => message.runId === run.id && message.role === "assistant");
   return {
     runId: run.id,
     status: run.status,
@@ -145,7 +149,7 @@ function summarizeThreadRun(
     // A run counts as running before its provider opens; until a turn appears,
     // the provider can still be launching for minutes.
     ...(turnStatus === undefined
-      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
+      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status) && !providerHasResponded
         ? providerStarting(projection, run)
         : {}
       : turnStatus === "pending" || turnStatus === "running"

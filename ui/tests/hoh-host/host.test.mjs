@@ -3259,3 +3259,14 @@ test('one stream attempt can deliver reasoning followed by text without losing t
   assert(!items.some(item => item.id === 'item-live-mixed-empty-reasoning'));
   host.stop(); client.close();
 });
+
+test('project counts include every unarchived chat, including one with no turns after host restart', async () => {
+  const store = new Map();
+  const engine = new FakeEngine({ store });
+  for (const id of ['one', 'two', 'three', 'empty']) engine.seed(id, id, []);
+  const first = connect(engine); await first.host.start();
+  assert.equal(first.host.home.projectCounts()['hoh-project'], 4);
+  const restarted = connect(new FakeEngine({ store })); await restarted.host.start();
+  assert.equal(restarted.host.home.projectCounts()['hoh-project'], 4);
+  assert.equal(restarted.host.home.entries().length, 0, 'no invented turn or status for an empty chat');
+});

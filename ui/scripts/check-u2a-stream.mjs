@@ -78,5 +78,41 @@ async function open(browser, engine, width, height, path = '/', stored = {}) {
 const engine=new FakeEngine();engine.access='confirm';engine.claude=CLAUDE;engine.bind(CHAT.id);const session=engine.open(CHAT.id,CHAT.title);
 const browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true,args:['--no-sandbox','--disable-gpu','--disable-background-networking']});
 const {page,context,off,problems}=await open(browser,engine,1200,900,`/hoh-local/${CHAT.id}`,conversationStorage());
-const frames=JSON.parse(await readFile(join(UI,'tests/hoh-host/fixtures/u2a-stream.json'),'utf8'));let gotText=false;
-try {await page.waitForTimeout(1200);for(const f of frames) {if(!['session.event','session.status','session.assistant-stream'].includes(f.method)||f.params?.sessionId!==CHAT.id)continue;if(f.method==='session.event')session.events.push(f.params.event);await page.evaluate(x=>window.__hohT3Notify(x),f);await page.waitForTimeout(300);const body=await page.locator('body').innerText();if(f.method==='session.assistant-stream') {const fr=f.params.frame;console.log(fr.type,fr.chunk?.type,JSON.stringify(fr.chunk?.text), 'visibleThinking',body.includes('Thinking'),'visibleText',body.includes('Hello'));if(fr.chunk?.type==='reasoning-delta')assert(body.includes('Thinking'),'empty live reasoning must show Thinking before text');if(fr.chunk?.type==='text-delta'&&fr.chunk.text.includes('Hello')){gotText=true;assert(body.includes('Hello'),'partial response must be visible before the final message');}}}assert(gotText);assert.deepEqual(problems,[])}finally{off();await context.close();await browser.close();}
+const captured = JSON.parse(await readFile(join(UI, 'tests/hoh-host/fixtures/u2a-stream.json'), 'utf8'));
+const raw = JSON.parse(await readFile(join(UI, 'tests/hoh-host/fixtures/u2a-real-stream.json'), 'utf8'));
+const firstStream = captured.findIndex(f => f.method === 'session.assistant-stream');
+const lastStream = captured.findLastIndex(f => f.method === 'session.assistant-stream');
+const template = captured[firstStream];
+const frames = captured.slice(0, firstStream);
+const attempts = new Map();
+for (const event of raw) {
+  if (event.type !== 'content_block_delta') continue;
+  const kind = event.delta.type === 'thinking_delta' ? 'reasoning' : event.delta.type === 'text_delta' ? 'text' : null;
+  if (!kind) continue;
+  let attempt = attempts.get(kind);
+  if (!attempt) {
+    attempt = { id: `${CHAT.id}:1:${kind}:fixture:${event.index}`, revision: attempts.size + 1, index: 0 };
+    attempts.set(kind, attempt);
+    frames.push({ ...template, params: { ...template.params, frame: { type: 'start', attemptId: attempt.id, revision: attempt.revision, turn: 1, step: 1 } } });
+  }
+  frames.push({ ...template, params: { ...template.params, frame: { type: 'chunk', attemptId: attempt.id, revision: attempt.revision, index: attempt.index++, time: Date.now(), chunk: { type: `${kind}-delta`, text: kind === 'reasoning' ? event.delta.thinking : event.delta.text } } } });
+}
+for (const attempt of attempts.values()) frames.push({ ...template, params: { ...template.params, frame: { type: 'end', attemptId: attempt.id, revision: attempt.revision, index: attempt.index, outcome: 'committed' } } });
+frames.push(...captured.slice(lastStream + 1));
+let gotText = false; let textFrames = 0;
+try {
+  await page.waitForTimeout(1200);
+  for (const f of frames) {
+    if (!['session.event', 'session.status', 'session.assistant-stream'].includes(f.method) || f.params?.sessionId !== CHAT.id) continue;
+    if (f.method === 'session.event') session.events.push(f.params.event);
+    await page.evaluate(x => window.__hohT3Notify(x), f);
+    await page.waitForTimeout(80);
+    const body = await page.locator('body').innerText();
+    const fr = f.params.frame;
+    if (fr?.chunk?.type === 'reasoning-delta' && !gotText) { assert(body.includes('Thinking'), 'empty live reasoning must show Thinking'); assert(!body.includes('Starting'), 'Starting must disappear on reasoning'); }
+    if (fr?.chunk?.type === 'text-delta') { gotText = true; textFrames++; assert(body.includes('part1'), 'partial answer visible before final message'); }
+    if (gotText && f.method === 'session.assistant-stream') assert(!body.includes('Starting'), 'Starting must stay hidden after the first text frame');
+  }
+  assert.equal(textFrames, 30); assert.deepEqual(problems, []);
+  console.log(`C9: ${textFrames} text frames visible without Starting`);
+} finally { off(); await context.close(); await browser.close(); }

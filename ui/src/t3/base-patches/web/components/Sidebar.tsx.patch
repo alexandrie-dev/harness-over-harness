@@ -147,40 +147,73 @@
 -              return;
 -            }
 +            toastManager.add({ title: "Coming Soon" });
-@@ -3030 +3023 @@
+@@ -2948,20 +2941 @@
+-  const handleNewThreadClick = (event?: ReactMouseEvent) => {
+-    if (
+-      shouldCreateNewThreadInCurrentProject(
+-        event?.shiftKey ?? false,
+-        scopeGroups.length,
+-        projectGroups.length,
+-      )
+-    ) {
+-      if (isMobile) setOpenMobile(false);
+-      // With no current or open project, such as when every project is archived, pick one.
+-      void startNewThreadFromContext({
+-        activeDraftThread: newThreadContext.activeDraftThread,
+-        activeThread: newThreadContext.activeThread ?? undefined,
+-        defaultProjectRef: newThreadContext.defaultProjectRef,
+-        handleNewThread,
+-      }).then((started) => {
+-        if (!started) openCommandPalette({ open: "new-thread-in" });
+-      });
+-      return;
+-    }
++  const handleNewThreadClick = (_event?: ReactMouseEvent) => {
+@@ -2969 +2943,9 @@
+-    openCommandPalette({ open: "new-thread-in" });
++    // Use the same project resolution on Home and inside a conversation.
++    void startNewThreadFromContext({
++      activeDraftThread: newThreadContext.activeDraftThread,
++      activeThread: newThreadContext.activeThread ?? undefined,
++      defaultProjectRef: newThreadContext.defaultProjectRef,
++      handleNewThread,
++    }).then((started) => {
++      if (!started) openCommandPalette({ open: "new-thread-in" });
++    });
+@@ -3030 +3012 @@
 -                            ? gt("Filter threads by project: {projects}", {
 +                            ? gt("Filter chats by project: {projects}", {
-@@ -3035 +3028 @@
+@@ -3035 +3017 @@
 -                            : gt("Filter threads by project")
 +                            : gt("Filter chats by project")
-@@ -3244 +3237 @@
+@@ -3244 +3226 @@
 -                    aria-label={gt("Thread search results")}
 +                    aria-label={gt("Chat search results")}
-@@ -3300 +3293 @@
+@@ -3300 +3282 @@
 -                  ? gt("Searching thread messages…")
 +                  ? gt("Searching chat messages…")
-@@ -3302,2 +3295,2 @@
+@@ -3302,2 +3284,2 @@
 -                    ? gt("Couldn't search thread messages")
 -                    : gt("No threads found")}
 +                    ? gt("Couldn't search chat messages")
 +                    : gt("No chats found")}
-@@ -3337,2 +3330,2 @@
+@@ -3337,2 +3319,2 @@
 -                        ? gt("No active threads in these projects")
 -                        : gt("No active threads in {project}", {
 +                        ? gt("No active chats in these projects")
 +                        : gt("No active chats in {project}", {
-@@ -3342,2 +3335,2 @@
+@@ -3342,2 +3324,2 @@
 -                        ? gt("No threads in these projects yet")
 -                        : gt("No threads in {project} yet", {
 +                        ? gt("No chats in these projects yet")
 +                        : gt("No chats in {project} yet", {
-@@ -3356 +3349 @@
+@@ -3356 +3338 @@
 -                <T>No threads yet</T>
 +                <T>No chats yet</T>
-@@ -3689 +3682 @@
+@@ -3689 +3671 @@
 -                              ? gt("Could not load older threads. Retry")
 +                              ? gt("Could not load older chats. Retry")
-@@ -3706,0 +3700,20 @@
+@@ -3706,0 +3689,20 @@
 +      <Dialog open={renameProject !== null} onOpenChange={(open) => { if (!open) setRenameProject(null); }}>
 +        <DialogPopup className="max-w-md">
 +          <DialogTitle>{gt("Rename project")}</DialogTitle>

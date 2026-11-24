@@ -22,6 +22,7 @@ export interface ProjectGroup<Entry extends GroupableEntry = GroupableEntry> {
   title: string;
   color: number;
   entries: Entry[];
+  totalChats?: number;
   waiting: number;
   ready: number;
   states: { working: number; waiting: number; ready: number; stopped: number; interrupted: number; done: number };
