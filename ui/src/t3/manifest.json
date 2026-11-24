@@ -342,7 +342,7 @@
       "web/components/sidebar/SidebarThreadRow.tsx": "видимый термин chat вместо thread",
       "web/components/sidebar/UpdateEverythingDialog.tsx": "видимый термин chat вместо thread",
       "web/components/threadTitleRegenerationToast.ts": "видимый термин chat вместо thread",
-      "web/connection/storage.ts": "видимый термин chat вместо thread",
+      "web/connection/storage.ts": "видимый термин chat вместо thread; фоновая загрузка кэша иконок не задерживает оболочку",
       "web/hooks/useStartTriage.ts": "видимый термин chat вместо thread",
       "web/hooks/useThreadActions.ts": "видимый термин chat вместо thread",
       "web/lib/copyThreadReference.ts": "видимый термин chat вместо thread",

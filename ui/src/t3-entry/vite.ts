@@ -11,6 +11,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { HOH_THEME_COLORS } from './hoh-theme';
 import { HIDDEN_COMPONENTS, HIDDEN_PALETTE_ITEMS, HIDDEN_ROUTES, VISIBLE_PROVIDER_DRIVERS, VISIBLE_SETTINGS } from './features';
 import { HOH_HTTP_URL } from './host';
+import { deferRouterScrollStorage } from './router-scroll';
 
 const UI = resolve(import.meta.dirname, '../..');
 export const T3_BASE = resolve(UI, 'src/t3/base');
@@ -179,6 +180,7 @@ const VIRTUAL_HOST = 'virtual:hoh-host';
 const VIRTUAL_BOOTSTRAP = 'virtual:t3-bootstrap';
 
 function hohT3(): Plugin {
+  let routerStoragePatched = false;
   return {
     name: 'hoh-t3-entry',
     enforce: 'pre',
@@ -216,6 +218,12 @@ function hohT3(): Plugin {
       return hiddenRouteModule(file, HIDDEN_ROUTES[file]!);
     },
     transform(code, id) {
+      // Router's unused sessionStorage cache can stall WebKitGTK during startup.
+      if (id.replaceAll('\\', '/').includes('/@tanstack/router-core/dist/esm/scroll-restoration.js')) {
+        const patched = deferRouterScrollStorage(code);
+        routerStoragePatched = true;
+        return { code: patched, map: null };
+      }
       // The home screen is maintained on another line; keep its chat wording until that change lands.
       if (id === HOME_BODY) return { code: code.replace('Answer in the thread', 'Answer in the chat'), map: null };
       if (id === resolve(T3_WEB, 'components/settings/settingsSearch.ts')) return { code: settingsNavFilter(code), map: null };
@@ -229,6 +237,9 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/NoProjectsHero.tsx')) return { code: noProjectsHero(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderInstanceCard.tsx')) return { code: providerInstanceCard(code), map: null };
       return null;
+    },
+    generateBundle() {
+      if (!routerStoragePatched) this.error('TanStack scroll-restoration.js was not patched; check the router dependency');
     },
   };
 }

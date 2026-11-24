@@ -871,7 +871,8 @@ export const layer = Layer.effectContext(
     const cacheStore = Persistence.EnvironmentCacheStore.of({
       loadShell: Effect.fn("Persistence.EnvironmentCacheStore.loadShell")(function (environmentId) {
         return readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
-          Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
+          // Project icons are optional; a slow IndexedDB must not hold the shell or chat history.
+          Effect.tap(() => Effect.sync(() => { void projectFaviconCache.hydrate(); })),
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
               return Effect.succeedNone;
