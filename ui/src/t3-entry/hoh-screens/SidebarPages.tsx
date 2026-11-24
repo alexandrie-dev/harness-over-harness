@@ -26,7 +26,7 @@ export function PageLayer() {
       {page === 'plugins' ? <PluginsPage /> : (
         <div className="hoh-page__column">
           <h1>{PAGE_TITLES[page]}</h1>
-          <p>Coming soon</p>
+          <p>Coming Soon</p>
         </div>
       )}
     </div>,

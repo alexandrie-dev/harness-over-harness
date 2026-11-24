@@ -1,0 +1,16 @@
+--- a/web/components/Sidebar.tsx
++++ b/web/components/Sidebar.tsx
+@@ -2390,3 +2390,2 @@
+               : []),
+-            { id: "mark-unread", label: gt("Mark unread ({count})", { count }) },
+             {
+@@ -2397,3 +2396,3 @@
+             },
+-          ],
++          ].filter((item) => !["unpin", "settle", "snooze", "regenerate-title", "delete"].includes(item.id)),
+           position,
+@@ -3439,3 +3438,3 @@
+                             snoozeSupported={serverConfigs.has(thread.environmentId)}
+-                            pinningSupported={serverConfigs.has(thread.environmentId)}
++                            pinningSupported={false}
+                             isPinned={thread.pinnedAt != null}

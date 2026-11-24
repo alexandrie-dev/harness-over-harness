@@ -222,11 +222,17 @@ try {
           }
         }
         if (busy) { // Learning и живая страница Plugins; «New chat» закрывает обе.
+          step = 'team coming soon';
+          await page.getByRole('button', { name: 'Add to team' }).click();
+          if (await page.locator('[data-hoh-sidebar-top]').getByRole('status').filter({ hasText: 'Coming Soon' }).count() !== 1) fail(`${label}: Team не показывает Coming Soon`);
+          if (process.env.QA_DIR && width === 2000 && height === 1137) await page.screenshot({ path: join(process.env.QA_DIR, 'team-coming-soon-2000x1137.png'), animations: 'disabled' });
+          await page.getByRole('button', { name: 'Add to team' }).click();
           step = 'open Learning';
           await page.locator('[data-hoh-page-item="learning"]').click();
           await page.locator('.hoh-page').waitFor({ state: 'visible' });
+          if (process.env.QA_DIR && width === 2000 && height === 1137) await page.screenshot({ path: join(process.env.QA_DIR, 'learning-2000x1137.png'), animations: 'disabled' });
           const learningText = await page.locator('.hoh-page').innerText();
-          if (learningText.replace(/\s+/g, ' ').trim() !== 'Learning Coming soon') fail(`${label}: страница Learning: «${learningText.trim()}»`);
+          if (learningText.replace(/\s+/g, ' ').trim() !== 'Learning Coming Soon') fail(`${label}: страница Learning: «${learningText.trim()}»`);
           if (await page.locator('[data-hoh-page-item="learning"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Learning не подсвечен`);
           const pageMiss = await page.evaluate(() => window.hohGridCheck());
           for (const miss of pageMiss) fail(`${label}: страница Learning: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
@@ -243,13 +249,8 @@ try {
           const overflow = await page.locator('.hoh-plugins').evaluate((node) => node.scrollWidth > node.clientWidth + 1);
           if (overflow) fail(`${label}: страница Plugins имеет горизонтальное переполнение`);
 
-          if (width === 1440 && height === 900) {
-            step = 'open plugin installation help';
-            await page.locator('[data-add-plugin-folder]').click();
-            await page.getByRole('heading', { name: 'Add plugin from folder' }).waitFor();
-            if (await page.getByText('Plugin installation is not connected to the HoH engine yet.').count() !== 1) fail(`${label}: диалог установки скрывает отсутствие engine API`);
-            await page.locator('[data-slot="dialog-footer"]').getByRole('button', { name: 'Close' }).click();
-          }
+          if (await page.locator('.hoh-plugins').getByText('Coming Soon', { exact: true }).count() !== 1) fail(`${label}: установка Plugins должна показывать одну надпись Coming Soon`);
+          if (await page.getByRole('button', { name: /Add from folder|Choose folder|How to install/ }).count() !== 0) fail(`${label}: осталась кнопка установки Plugins`);
           step = 'return to New chat';
           await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();
           if (await page.locator('.hoh-page').count() !== 0) fail(`${label}: «New chat» не закрыл страницу`);

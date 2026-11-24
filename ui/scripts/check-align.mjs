@@ -188,12 +188,36 @@ const scenarios = [
     }, blocks: ['conversation'],
   },
   {
+    name: 'thread-menu', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, sidebar);
+      if (sidebar === 'collapsed') return;
+      await page.locator('[data-thread-item]').first().click({ button: 'right' });
+      const menu = page.getByRole('menu').last();
+      await menu.waitFor();
+      const text = await menu.innerText();
+      if (/Mark unread|Regenerate title|Pin thread|Delete|Snooze|Settle/.test(text)) throw new Error(`Unsupported thread action: ${text}`);
+    }, blocks: ['conversation'],
+  },
+  {
     name: 'quick-view', engine: completedEngine, stored: () => ({}),
     prepare: async (page, _engine, sidebar) => { await page.locator(`.hoh-card`).first().waitFor(); await setSidebar(page, sidebar); await page.getByRole('button', { name: `Open ${CHAT.title}` }).click(); await page.getByRole('dialog').last().waitFor(); await page.getByRole('dialog').last().getByRole('textbox').waitFor(); }, blocks: ['quick'],
   },
   {
     name: 'settings', engine: completedEngine, path: () => '/settings/general', stored: () => ({}),
     prepare: async (page, _engine, sidebar) => { await page.locator('[data-settings-page-scroll]').waitFor(); await setSidebar(page, sidebar); }, blocks: ['settings'],
+  },
+  {
+    name: 'thread-details-menu', engine: completedEngine, path: () => '/settings/appearance', stored: () => ({}),
+    prepare: async (page, _engine, sidebar) => {
+      await page.locator('[data-settings-page-scroll]').waitFor();
+      await setSidebar(page, sidebar);
+      await page.getByRole('button', { name: /Thread details: .* of .* on/ }).click();
+      const menu = page.getByRole('menu').last();
+      await menu.getByText('Context window', { exact: true }).waitFor();
+      if (await menu.getByRole('menuitemcheckbox').count() !== 1) throw new Error('Thread details must expose only Context window');
+    }, blocks: ['settings'],
   },
   {
     name: 'plugins', engine: busyEngine, stored: () => storage(true),

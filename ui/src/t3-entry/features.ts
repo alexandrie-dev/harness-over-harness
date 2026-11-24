@@ -30,6 +30,7 @@ export const HIDDEN_ROUTES: Readonly<Record<string, string>> = {
   'approve-agent': '/',
   'pair': '/',
   'guest': '/',
+  '_chat.settings.access': '/settings/general',
   '_chat.settings.diffs': '/settings/general',
   '_chat.settings.keybindings': '/settings/general',
   '_chat.settings.voice': '/settings/general',
@@ -58,13 +59,14 @@ export const VISIBLE_SETTINGS: readonly string[] = [
   '/settings/appearance',
   '/settings/chat',
   '/settings/providers',
-  '/settings/access',
   // Сведения о программе и лицензии T3 (MIT; страница лицензий открывается из неё).
   '/settings/about',
 ];
 
 /** Компоненты T3, которые не рисуются: файл в apps/web/src → имена экспортов (`default` — экспорт по умолчанию). */
 export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
+  // Выбор значка среды не поддерживается движком.
+  'components/settings/EnvironmentIconPicker.tsx': ['EnvironmentIconMenu'],
   // «Open in VS Code / Cursor» в карточке разговора и в просмотре файла.
   'components/chat/OpenInPicker.tsx': ['OpenInPicker'],
   // «Add project script» и кнопки скриптов проекта.

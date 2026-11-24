@@ -1,0 +1,15 @@
+--- a/web/components/threadActionMenu.logic.ts
++++ b/web/components/threadActionMenu.logic.ts
+@@ -213,3 +213,2 @@
+       : []),
+-    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
+     ...(state.canShareWithGuest
+@@ -302,5 +301,6 @@
+   ];
++  const availableItems = items.filter((item) => !["pin", "unpin", "regenerate-title", "delete", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
+   return state.canOperate
+-    ? items
+-    : items.map((item) =>
++    ? availableItems
++    : availableItems.map((item) =>
+         threadActionRequiresOperate(item.id)

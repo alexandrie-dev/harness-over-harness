@@ -1,0 +1,16 @@
+--- a/web/components/files/FilePreviewPanel.tsx
++++ b/web/components/files/FilePreviewPanel.tsx
+@@ -1558,12 +1558,3 @@
+             remoteOpenState.mode !== "local-exec") ? (
+-            <OpenInPicker
+-              environmentId={environmentId}
+-              keybindings={keybindings}
+-              availableEditors={availableEditors}
+-              enableShortcut={openInShortcutEnabled}
+-              openInCwd={absolutePath}
+-              openInCwdIsFile={file.isFile}
+-              compact
+-              revealFileManager={revealsInFileManager}
+-            />
++            <span className="text-sm text-muted-foreground">Open in editor · Coming Soon</span>
+           ) : null}

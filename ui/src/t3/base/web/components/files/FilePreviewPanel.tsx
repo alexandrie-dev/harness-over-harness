@@ -1556,16 +1556,7 @@ export default function FilePreviewPanel({
           (environmentId === primaryEnvironmentId ||
             environmentId === hostEnvironmentId ||
             remoteOpenState.mode !== "local-exec") ? (
-            <OpenInPicker
-              environmentId={environmentId}
-              keybindings={keybindings}
-              availableEditors={availableEditors}
-              enableShortcut={openInShortcutEnabled}
-              openInCwd={absolutePath}
-              openInCwdIsFile={file.isFile}
-              compact
-              revealFileManager={revealsInFileManager}
-            />
+            <span className="text-sm text-muted-foreground">Open in editor · Coming Soon</span>
           ) : null}
           {canToggleRendered && renderedMode ? (
             <FileSurfaceAction

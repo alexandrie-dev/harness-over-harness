@@ -1,5 +1,5 @@
 import {
-  ArrowLeftIcon, CheckIcon, ChevronDownIcon, CopyIcon, FolderPlusIcon,
+  ArrowLeftIcon, CheckIcon, ChevronDownIcon, CopyIcon,
   LockKeyholeIcon, MoreHorizontalIcon, PackageOpenIcon, PuzzleIcon, Trash2Icon,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -8,7 +8,7 @@ import { Badge } from '~/components/ui/badge';
 import { Button } from '~/components/ui/button';
 import {
   Dialog, DialogAction, DialogClose, DialogDescription, DialogFooter, DialogHeader,
-  DialogPanel, DialogPopup, DialogTitle,
+  DialogPopup, DialogTitle,
 } from '~/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '~/components/ui/menu';
 import { writeTextToClipboard } from '~/hooks/useCopyToClipboard';
@@ -167,13 +167,12 @@ function CardGrid({ plugins, onOpen }: { plugins: readonly Plugin[]; onOpen(plug
   );
 }
 
-function EmptyPlugins({ onAdd }: { onAdd(): void }) {
+function EmptyPlugins() {
   return (
     <section className="hoh-plugins-empty" data-plugin-empty>
       <span className="hoh-plugins-empty__icon"><PackageOpenIcon aria-hidden /></span>
       <h2>No plugins installed</h2>
       <p>Plugins can be added from a local folder once plugin installation is available in HoH.</p>
-      <Button variant="outline" onClick={onAdd}><FolderPlusIcon />How to install a plugin</Button>
     </section>
   );
 }
@@ -181,7 +180,6 @@ function EmptyPlugins({ onAdd }: { onAdd(): void }) {
 export function PluginsPage() {
   const [statuses, setStatuses] = useState<Partial<Record<string, PluginState>>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [folderDialog, setFolderDialog] = useState(false);
   const [removePlugin, setRemovePlugin] = useState<Plugin | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -207,7 +205,7 @@ export function PluginsPage() {
     <main className="hoh-plugins">
       <header className="hoh-plugins__top">
         <div><span className="hoh-plugins__kicker">Extensions</span><h1>Plugins</h1><p>Tools, skills, pages, and controls that extend HoH.</p></div>
-        <Button variant="outline" onClick={() => setFolderDialog(true)} data-add-plugin-folder><FolderPlusIcon />Add from folder</Button>
+        <span className="hoh-plugins__coming-soon">Coming Soon</span>
       </header>
 
       {selected ? <PluginDetail plugin={selected} onBack={() => setSelectedId(null)} {...detailProps} /> : plugins.length > 0 ? (
@@ -217,15 +215,8 @@ export function PluginsPage() {
             <CardGrid plugins={plugins} onOpen={openPlugin} />
           </section>
         </div>
-      ) : <EmptyPlugins onAdd={() => setFolderDialog(true)} />}
+      ) : <EmptyPlugins />}
 
-      <Dialog open={folderDialog} onOpenChange={setFolderDialog}>
-        <DialogPopup>
-          <DialogHeader><DialogTitle>Add plugin from folder</DialogTitle><DialogDescription>Plugin installation is not connected to the HoH engine yet.</DialogDescription></DialogHeader>
-          <DialogPanel><p className="hoh-plugin-dialog-note">When installation is available, choose a local plugin folder here. HoH will inspect it and ask for approval before anything can run.</p></DialogPanel>
-          <DialogFooter><DialogClose render={<Button variant="outline" />}>Close</DialogClose><DialogAction disabled>Choose folder</DialogAction></DialogFooter>
-        </DialogPopup>
-      </Dialog>
       <Dialog open={removePlugin !== null} onOpenChange={(open) => { if (!open) setRemovePlugin(null); }}>
         <DialogPopup>
           <DialogHeader><DialogTitle>Remove {removePlugin?.name}?</DialogTitle><DialogDescription>HoH will ask for confirmation before changing installed plugins.</DialogDescription></DialogHeader>

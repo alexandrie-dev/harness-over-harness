@@ -211,7 +211,6 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
       : []),
@@ -300,9 +299,10 @@ export function buildThreadActionMenuItems(
       icon: "trash",
     },
   ];
+  const availableItems = items.filter((item) => !["pin", "unpin", "regenerate-title", "delete", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
   return state.canOperate
-    ? items
-    : items.map((item) =>
+    ? availableItems
+    : availableItems.map((item) =>
         threadActionRequiresOperate(item.id)
           ? {
               ...item,

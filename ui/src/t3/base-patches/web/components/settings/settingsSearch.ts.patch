@@ -9,28 +9,28 @@
    readonly heading: string;
    readonly headingHidden?: true;
    readonly paths: ReadonlyArray<SettingsPath>;
-@@ -176,6 +176,20 @@
+@@ -175,6 +175,19 @@
+     paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
    },
  ];
- 
-+// HoH (ui/T3-MAP.md): разделы настроек скрытых частей не показываются и не ищутся; остаются общие, вид, чат, провайдеры, доступ.
++
++// HoH (ui/T3-MAP.md): разделы настроек скрытых частей не показываются и не ищутся; остаются общие, вид, чат, провайдеры.
 +export const HOH_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set<SettingsPath>([
 +  "/settings/general",
 +  "/settings/appearance",
 +  "/settings/chat",
 +  "/settings/providers",
-+  "/settings/access",
 +]);
 +
 +export const SETTINGS_NAV_GROUPS = T3_SETTINGS_NAV_GROUPS.map((group) => ({
 +  ...group,
 +  paths: group.paths.filter((path) => HOH_SETTINGS_PATHS.has(path)),
 +})).filter((group) => group.paths.length > 0);
+-
 +
  export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
    return `keybinding-${command}` as const;
- }
-@@ -1607,6 +1621,7 @@
+@@ -1607,6 +1620,7 @@
    const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
    return items.filter(
      (item) =>

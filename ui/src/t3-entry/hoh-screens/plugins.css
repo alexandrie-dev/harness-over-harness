@@ -10,6 +10,7 @@
 }
 .hoh-plugins__top { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .hoh-plugins__top h1 { margin: 0; font-size: 2rem; line-height: 2.5rem; font-weight: 650; letter-spacing: -0.03em; }
+.hoh-plugins__coming-soon { color: var(--muted-foreground); font-size: 0.875rem; }
 .hoh-plugins__top p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 0.875rem; }
 .hoh-plugins__kicker { display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 0.6875rem; font-weight: 650; letter-spacing: 0.12em; text-transform: uppercase; }
 .hoh-plugins__groups { display: flex; flex-direction: column; gap: 48px; margin-top: 40px; }

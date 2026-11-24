@@ -176,13 +176,12 @@ const T3_SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
 ];
 
-// HoH (ui/T3-MAP.md): разделы настроек скрытых частей не показываются и не ищутся; остаются общие, вид, чат, провайдеры, доступ.
+// HoH (ui/T3-MAP.md): разделы настроек скрытых частей не показываются и не ищутся; остаются общие, вид, чат, провайдеры.
 export const HOH_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set<SettingsPath>([
   "/settings/general",
   "/settings/appearance",
   "/settings/chat",
   "/settings/providers",
-  "/settings/access",
 ]);
 
 export const SETTINGS_NAV_GROUPS = T3_SETTINGS_NAV_GROUPS.map((group) => ({
