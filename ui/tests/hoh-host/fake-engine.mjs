@@ -129,12 +129,13 @@ export class FakeEngine {
         const session = this.store.get(params.sessionId);
         session.executor ??= this.access.selected.executor;
         session.model ??= this.access.selected.model;
-        session.runningRuntimeMode = session.runtimeMode ?? 'confirm';
+        session.runningRuntimeMode = params.interactionMode === 'plan' ? 'plan' : session.runtimeMode ?? 'confirm';
         this.starts.push({ sessionId: params.sessionId, executor: session.executor, cwd: session.cwd ?? DEFAULT_FOLDER });
         const text = params.contentBlocks.map(block => block.text ?? '').join('');
         const messageId = `engine-m-${++this.counter}`;
         // After answering, the engine starts the turn and then records its message (session.v4 order).
         setTimeout(() => {
+          this.emitEvent(params.sessionId, 'plugin:external-harness/launch', { runtimeMode: session.runningRuntimeMode, interactionMode: params.interactionMode === 'plan' ? 'plan' : 'default' });
           this.emitEvent(params.sessionId, 'turn/start', { turn: 1 });
           this.emitEvent(params.sessionId, 'step/start', { turn: 1, step: 1 });
           this.emitEvent(params.sessionId, 'user/message', { id: messageId, source: { kind: 'user' }, content: [{ type: 'text', text }] });

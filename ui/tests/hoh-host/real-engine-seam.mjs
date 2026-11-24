@@ -64,7 +64,8 @@ try {
     interactionMode: 'default', workspaceStrategy: { type: 'root' },
     initialMessage: { messageId: 'message-real-seam', text: 'run', attachments: [] },
   });
-  assert.equal(launched.projection.thread.runtimeMode, 'auto');
+  assert(['unknown', 'auto'].includes(launched.projection.thread.runtimeMode));
+  await thread.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'auto', 0, 60_000);
 
   const pendingRequest = value => value?.kind === 'snapshot'
     ? value.projection.runtimeRequests.find(candidate => candidate.status === 'pending')

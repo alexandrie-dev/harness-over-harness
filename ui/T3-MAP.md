@@ -285,7 +285,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/components/T3AppIcon.tsx` | замена (наш файл) | значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src |
 | `contracts/orchestrationV2.ts` | правка (`ui/src/t3/base-patches/contracts/orchestrationV2.ts.patch`) | режим доступа закрепляется за отправляемым сообщением |
 | `client-runtime/operations/commands.ts` | правка (`ui/src/t3/base-patches/client-runtime/operations/commands.ts.patch`) | режим композера сопровождает каждое отправленное и поставленное в очередь сообщение |
-| `web/components/ChatView.tsx` | правка (`ui/src/t3/base-patches/web/components/ChatView.tsx.patch`) | текущий режим хода и выбор для следующего хода показаны раздельно |
+| `web/components/ChatView.tsx` | правка (`ui/src/t3/base-patches/web/components/ChatView.tsx.patch`) | текущий режим хода и выбор следующего показаны раздельно; неизвестный режим не скрывает известного исполнителя |
 | `web/components/chat/ComposerControlsBar.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ComposerControlsBar.tsx.patch`) | режим всегда остаётся в строке ввода, включая значение по умолчанию |
 | `web/components/chat/ComposerFooterControls.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ComposerFooterControls.tsx.patch`) | чип показывает фактический режим и выбранный для следующего хода |
 | `contracts/assets.ts` | правка (`ui/src/t3/base-patches/contracts/assets.ts.patch`) | превью изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP; отказ нативной политики несёт ограниченную безопасную причину |

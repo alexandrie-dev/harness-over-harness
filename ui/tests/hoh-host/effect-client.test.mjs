@@ -315,8 +315,11 @@ test('mode chip: T3 shows it under the composer of a started thread whose mode i
     runtimeMode: 'full-access', interactionMode: 'default', workspaceStrategy: { type: 'root' },
     initialMessage: { messageId: 'm-c', text: 'go', attachments: [] },
   }));
-  assert.equal(launched.projection.thread.runtimeMode, 'full-access');
-  assert.equal(chip(launched.projection.thread.runtimeMode), false, 'Full access is the default mode');
+  assert.equal(launched.projection.thread.runtimeMode, 'unknown', 'the launch has not reported its actual mode yet');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const running = await run(client['orchestration.getThreadProjection']({ threadId: 'thread-c' }));
+  assert.equal(running.thread.runtimeMode, 'full-access');
+  assert.equal(chip(running.thread.runtimeMode), false, 'Full access is the default mode');
   await run(client['orchestration.dispatchCommand']({ type: 'thread.runtime-mode.set', commandId: 'c-m', threadId: 'thread-c', runtimeMode: 'approval-required' }));
   const back = await run(client['orchestration.getThreadProjection']({ threadId: 'thread-c' }));
   assert.deepEqual([back.thread.runtimeMode, chip(back.thread.runtimeMode)], ['full-access', false], 'the running Full turn remains factual while Supervised is pending for the next turn');

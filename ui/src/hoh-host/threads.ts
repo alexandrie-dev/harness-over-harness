@@ -164,6 +164,8 @@ export class ThreadModel {
   /** Durable `approval/asked` can arrive before the native `approval.pending`; keep its exact id. */
   private readonly approvalDetails = new Map<string, { requestKind: string }>();
   interactionMode: T3InteractionMode;
+  /** The actual interaction policy of the running process, independent of the next selection. */
+  runningInteractionMode: T3InteractionMode | null = null;
   projectId: string;
   /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
   cwd: string | null = null;
@@ -454,6 +456,7 @@ export class ThreadModel {
   }
 
   private endTurn(reason: string, at: number, error?: unknown, cause?: unknown, rawUsage?: unknown) {
+    this.runningInteractionMode = null;
     this.reopened = null;
     const run = this.currentRun();
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
@@ -588,6 +591,7 @@ export class ThreadModel {
   }
 
   setRunning(running: boolean, at = Date.now()): boolean {
+    const engineChanged = this.engineRunning !== running;
     this.engineRunning = running;
     const run = this.currentRun();
     if (running && this.settledByGuess && run && run.status === 'interrupted') {
@@ -601,7 +605,7 @@ export class ThreadModel {
     // here would cancel the card before the native Broker's one-second read delay has elapsed.
     const open = !running && !!run && (run.status === 'running' || run.status === 'waiting')
       && this.outgoing.length === 0 && !this.requests.some(request => request.status === 'pending');
-    if (this.running === running && !open) return false;
+    if (this.running === running && !open) return engineChanged;
     this.running = running;
     if (open) this.endTurn('completed', at);
     return true;
@@ -703,6 +707,19 @@ export class ThreadModel {
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
   userMessageCount() { return this.messages.filter(message => message.role === 'user').length; }
   setInteractionMode(mode: T3InteractionMode) { this.interactionMode = mode; }
+  setRunningInteractionMode(mode: T3InteractionMode | null) { this.runningInteractionMode = mode; }
+  private projectedInteractionMode(): T3InteractionMode {
+    if (this.executor === 'codex') return 'default';
+    return (this.running || this.engineRunning || this.activeRunId() !== null) && this.runningInteractionMode !== null
+      ? this.runningInteractionMode : this.interactionMode;
+  }
+  private projectedRuntimeMode() {
+    if (!this.bindingKnown) return 'unknown';
+    // A queued turn can start before the executor publishes its actual launch. Do not label
+    // that interval with either the previous process or the newly selected access mode.
+    if ((this.running || this.engineRunning || this.activeRunId() !== null) && this.runningInteractionMode === null) return 'unknown';
+    return runtimeModeOf(this.mode);
+  }
 
   private instanceId() { return !this.bindingKnown ? 'unknown' : this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
   private modelSelection() { return { instanceId: this.instanceId(), model: this.bindingKnown ? this.model : 'unknown', ...(this.options?.length ? { options: this.options } : {}) }; }
@@ -716,7 +733,7 @@ export class ThreadModel {
       thread: {
         createdBy: 'user', creationSource: 'web',
         id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-        modelSelection: this.modelSelection(), runtimeMode: this.bindingKnown ? runtimeModeOf(this.mode) : 'unknown', interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
+        modelSelection: this.modelSelection(), runtimeMode: this.projectedRuntimeMode(), interactionMode: this.projectedInteractionMode(),
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
@@ -818,7 +835,7 @@ export class ThreadModel {
     return {
       createdBy: 'user', creationSource: 'web',
       id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-      modelSelection: this.modelSelection(), runtimeMode: this.bindingKnown ? runtimeModeOf(this.mode) : 'unknown', interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
+      modelSelection: this.modelSelection(), runtimeMode: this.projectedRuntimeMode(), interactionMode: this.projectedInteractionMode(),
       branch: null, worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
       forkedFrom: null, activeProviderThreadId: null,

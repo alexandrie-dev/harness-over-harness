@@ -302,7 +302,9 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
                     Ok(value) => json!({"type":"response","id":id,"result":value}),
                     Err(error) => json!({"type":"response","id":id,"error":error}),
                 };
-                to_node.send(response).unwrap();
+                if to_node.send(response).is_err() {
+                    break;
+                }
             }
             Some("decide") => {
                 let id = frame["id"].clone();

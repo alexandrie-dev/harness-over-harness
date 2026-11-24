@@ -191,11 +191,129 @@ test('Claude acceptEdits launch is projected as auto-accept-edits', async () => 
   host.stop();
 });
 
+test('the actual running interaction stays separate from the next selected interaction', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('interaction-running', 'Running', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const { client, host } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'interaction-running' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitEvent('interaction-running', 'plugin:external-harness/launch', { runtimeMode: 'full', interactionMode: 'default' });
+  await client.call('orchestration.dispatchCommand', { type: 'thread.interaction-mode.set', commandId: 'choose-plan-next', threadId: 'interaction-running', interactionMode: 'plan' });
+  let projected = (await client.call('orchestration.getThreadProjection', { threadId: 'interaction-running' })).thread;
+  assert.equal(projected.runtimeMode, 'full-access');
+  assert.equal(projected.interactionMode, 'default', 'the current Full turn must not become Plan');
+  assert.equal(host.thread('interaction-running').interactionMode, 'plan', 'the next choice is retained');
+  engine.emitEvent('interaction-running', 'plugin:external-harness/launch', { runtimeMode: 'plan', interactionMode: 'plan' });
+  await client.call('orchestration.dispatchCommand', { type: 'thread.interaction-mode.set', commandId: 'choose-default-next', threadId: 'interaction-running', interactionMode: 'default' });
+  projected = (await client.call('orchestration.getThreadProjection', { threadId: 'interaction-running' })).thread;
+  assert.equal(projected.interactionMode, 'plan', 'the current Plan turn must remain Plan');
+  assert.equal(host.thread('interaction-running').interactionMode, 'default', 'the next choice is separate');
+  host.stop();
+});
+
+test('a new turn is unknown until its own launch, rather than borrowing the previous Plan', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('new-turn-mode', 'Turns', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const { client, host } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'new-turn-mode' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitEvent('new-turn-mode', 'plugin:external-harness/launch', { runtimeMode: 'plan', interactionMode: 'plan' });
+  engine.emitEvent('new-turn-mode', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  const original = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/access/get' && params.sessionId === 'new-turn-mode' ? new Promise(() => {}) : original(method, params);
+  engine.emitEvent('new-turn-mode', 'turn/start', { turn: 2 });
+  const pending = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'unknown');
+  assert.notEqual(pending.projection.thread.interactionMode, 'plan');
+  engine.emitEvent('new-turn-mode', 'plugin:external-harness/launch', { runtimeMode: 'full', interactionMode: 'default' });
+  const started = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'full-access');
+  assert.equal(started.projection.thread.interactionMode, 'default');
+  host.stop();
+});
+
+test('a cold conversation publishes an approval even while its access read never returns', async () => {
+  const engine = new FakeEngine();
+  engine.seed('cold-pending', 'Cold pending', []);
+  const original = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/access/get' && params.sessionId === 'cold-pending' ? new Promise(() => {}) : original(method, params);
+  const { client, host } = connect(engine, { loadRetries: 0 });
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(row => row.id === 'cold-pending'));
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'cold-pending' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.askApproval('cold-pending', 'cold-pending-approval', 'Allow?');
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.some(item => item.id === 'cold-pending-approval'));
+  assert(snapshot.projection.turnItems.some(item => item.type === 'approval_request' && item.requestId === 'cold-pending-approval'));
+  await client.call('orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: 'answer-cold-pending', threadId: 'cold-pending', requestId: 'cold-pending-approval', decision: 'accept' });
+  assert.deepEqual(engine.decisions, [{ approvalId: 'cold-pending-approval', outcome: 'allowed-once' }]);
+  host.stop();
+});
+
+test('launch before a delayed access answer keeps the newer mode and recovers the executor', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine, { loadRetries: 0 });
+  await client.call('server.getConfig', {});
+  Object.assign(engine.seed('notification-launch', 'Scheduled', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const original = engine.request.bind(engine);
+  let release;
+  let bindingReads = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'notification-launch') {
+      if (++bindingReads > 2) throw new Error('retry unavailable');
+      const stale = await original(method, params);
+      await gate;
+      return stale;
+    }
+    return original(method, params);
+  };
+  engine.emitStatus('notification-launch', 'running');
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'notification-launch' });
+  await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'unknown');
+  engine.store.get('notification-launch').runningRuntimeMode = 'confirm';
+  engine.emitEvent('notification-launch', 'plugin:external-harness/launch', { runtimeMode: 'confirm', interactionMode: 'default' });
+  await tick(10);
+  assert.equal(host.thread('notification-launch').bindingKnown, false);
+  release();
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.providerInstanceId === 'claudeAgent');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'approval-required');
+  host.stop();
+});
+
+test('a launch retries a failed first binding read', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine, { loadRetries: 0 });
+  await client.call('server.getConfig', {});
+  Object.assign(engine.seed('retry-binding', 'Scheduled', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
+  const original = engine.request.bind(engine);
+  let reads = 0;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'retry-binding' && ++reads === 1) throw new Error('temporary error');
+    return original(method, params);
+  };
+  engine.emitEvent('retry-binding', 'user/message', { id: 'retry-user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] });
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'retry-binding' });
+  await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'unknown');
+  assert.equal(reads, 1);
+  engine.store.get('retry-binding').runningRuntimeMode = 'confirm';
+  engine.emitEvent('retry-binding', 'plugin:external-harness/launch', { runtimeMode: 'confirm', interactionMode: 'default' });
+  const known = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.providerInstanceId === 'claudeAgent');
+  assert.equal(known.projection.thread.runtimeMode, 'approval-required');
+  assert(reads >= 2);
+  host.stop();
+});
+
 test('a running Claude Plan from access/get remains visible as Plan with Full selected', async () => {
   const engine = new FakeEngine();
-  Object.assign(engine.seed('running-plan', 'Plan', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full', runningRuntimeMode: 'plan' });
+  Object.assign(engine.seed('running-plan', 'Plan', [
+    ['user/message', { id: 'running-plan-message', source: { kind: 'user' }, content: [{ type: 'text', text: 'Plan this' }] }],
+    ['turn/start', { turn: 1 }],
+  ]), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full', runningRuntimeMode: 'plan' });
   const { client, host } = connect(engine);
   const stream = await client.stream('orchestration.subscribeThread', { threadId: 'running-plan' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.notify('session.status', { sessionId: 'running-plan', status: 'running' });
+  await tick(30);
+  host.flush();
   const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.interactionMode === 'plan');
   assert.equal(snapshot.projection.thread.runtimeMode, 'approval-required');
   assert.equal(snapshot.projection.thread.interactionMode, 'plan');
@@ -566,7 +684,7 @@ test('Plan mode follows the T3 composer command and ExitPlanMode becomes its pro
   });
   assert.equal(engine.requests.find(r => r.method === 'session/prompt').params.interactionMode, 'plan');
   engine.emitEvent('thread-plan', 'tool/call', { turn: 1, callId: 'exit-plan', name: 'ExitPlanMode', arguments: { plan: '# План\n\n1. Проверить код\n2. Внести правку' } });
-  const planned = await thread.until(value => value.kind === 'snapshot' && value.projection.plans.length === 1);
+  const planned = await thread.until(value => value.kind === 'snapshot' && value.projection.plans.length === 1 && value.projection.thread.interactionMode === 'plan');
   assert.equal(planned.projection.thread.interactionMode, 'plan');
   assert.equal(planned.projection.plans[0].status, 'active');
   assert.equal(planned.projection.turnItems.find(item => item.type === 'proposed_plan').markdown, '# План\n\n1. Проверить код\n2. Внести правку');
@@ -574,6 +692,9 @@ test('Plan mode follows the T3 composer command and ExitPlanMode becomes its pro
   const replanned = await thread.until(value => value.kind === 'snapshot' && value.projection.plans.length === 2);
   assert.deepEqual(replanned.projection.plans.map(plan => plan.status), ['superseded', 'active']);
   await client.call('orchestration.dispatchCommand', { type: 'thread.interaction-mode.set', commandId: 'p2', threadId: 'thread-plan', interactionMode: 'default' });
+  const stillPlan = await client.call('orchestration.getThreadProjection', { threadId: 'thread-plan' });
+  assert.equal(stillPlan.thread.interactionMode, 'plan');
+  engine.emitEvent('thread-plan', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
   const ordinary = await thread.until(value => value.kind === 'snapshot' && value.projection.thread.interactionMode === 'default');
   assert.equal(ordinary.projection.thread.interactionMode, 'default');
 });
@@ -939,7 +1060,9 @@ test('Codex: app-server models and effort are offered; executor and exact mode a
     initialMessage: { messageId: 'cx-message', text: 'work', attachments: [] },
   });
   assert.equal(launched.projection.thread.providerInstanceId, 'codex');
-  assert.equal(launched.projection.thread.runtimeMode, 'auto');
+  assert.equal(launched.projection.thread.runtimeMode, 'unknown');
+  await tick(20);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'cx-chat' })).thread.runtimeMode, 'auto');
   const selected = engine.requests.find(request => request.method === 'hoh/executor/select' && request.params.executor === 'codex');
   const access = engine.requests.find(request => request.method === 'hoh/executor/access/set' && request.params.sessionId === 'cx-chat');
   const prompt = engine.requests.find(request => request.method === 'session/prompt' && request.params.sessionId === 'cx-chat');
@@ -1433,7 +1556,9 @@ test('the mode chosen for a new thread is in effect for its first message: acces
   assert(accessWrites.length >= 1);
   assert(accessWrites.every(params => JSON.stringify(params) === JSON.stringify({ executor: 'claude', sessionId: 'thread-w', mode: 'full', runtimeMode: 'full' })));
   assert(order.indexOf('hoh/executor/access/set') < order.indexOf('session/prompt'), 'the engine has the mode before Claude starts');
-  assert.equal(launched.projection.thread.runtimeMode, 'full-access');
+  assert.equal(launched.projection.thread.runtimeMode, 'unknown');
+  await tick(20);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'thread-w' })).thread.runtimeMode, 'full-access');
   // A started thread: T3 sends the switch right before the next message (ChatView `persistThreadSettingsForNextTurn`).
   engine.requests.length = 0;
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'thread-w', runtimeMode: 'approval-required' });

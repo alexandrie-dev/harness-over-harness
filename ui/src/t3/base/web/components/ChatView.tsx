@@ -3431,7 +3431,7 @@ export default function ChatView(props: ChatViewProps) {
             />
             {activeThread.runtimeMode === "unknown" ? (
               <span role="status" className="shrink-0 text-xs text-muted-foreground" data-hoh-unknown-access>
-                Executor: <strong>Unknown</strong> · Access: <strong>Unknown</strong>
+                {activeThread.modelSelection.instanceId === "unknown" ? <>Executor: <strong>Unknown</strong> · </> : null}Access: <strong>Unknown</strong>
               </span>
             ) : null}
           </header>

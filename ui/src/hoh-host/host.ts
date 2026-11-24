@@ -1165,6 +1165,7 @@ export class HohHost {
       let ownKnown = Boolean(previous?.bindingKnown && this.sessionAccessKnown.has(session.id));
       let builtin = previous?.builtin ?? false;
       let runningPlan = false;
+      let runningInteraction: T3InteractionMode | null = null;
       const modeRevision = this.modeRevision;
       const modeGeneration = this.modeGenerations.get(session.id) ?? 0;
       try {
@@ -1178,6 +1179,7 @@ export class HohHost {
         model = typeof own?.model === 'string' && own.model ? own.model : undefined;
         mode = effectiveSessionMode(own, mode);
         runningPlan = own?.runningRuntimeMode === 'plan';
+        if (own?.runningRuntimeMode != null) runningInteraction = runningPlan ? 'plan' : 'default';
       } catch {
         if (previous) { executor = previous.executor; model = previous.model; mode = previous.mode; }
       }
@@ -1196,8 +1198,8 @@ export class HohHost {
         existing.bindingKnown = ownKnown;
         const builtinChanged = existing.builtin !== builtin;
         existing.builtin = builtin;
-        const planChanged = runningPlan && existing.interactionMode !== 'plan';
-        if (runningPlan) existing.setInteractionMode('plan');
+        const planChanged = runningInteraction !== null && existing.runningInteractionMode !== runningInteraction;
+        if (runningInteraction !== null) existing.setRunningInteractionMode(runningInteraction);
         if (bindingChanged || builtinChanged || planChanged || existing.executor !== executor || existing.model !== model || existing.mode !== mode) {
           existing.executor = executor;
           existing.model = model;
@@ -1226,9 +1228,10 @@ export class HohHost {
         mode,
         executor,
         bindingKnown: ownKnown,
-        interactionMode: runningPlan ? 'plan' : this.interactions.get(session.id),
+        interactionMode: this.interactions.get(session.id),
         projectId: this.homeOf(session.id),
       });
+      if (runningInteraction !== null) discovered.setRunningInteractionMode(runningInteraction);
       this.applyThreadMetadata(discovered);
       this.threads.set(session.id, discovered);
       if ((executor === 'codex' ? this.codexDiscovery : this.claudeDiscovery) === null) this.catalogPending.add(session.id);
@@ -1353,7 +1356,7 @@ export class HohHost {
             }
             if (typeof own?.model === 'string' && own.model) thread.model = own.model;
             thread.mode = effectiveSessionMode(own, thread.mode);
-            if (own?.runningRuntimeMode === 'plan') thread.setInteractionMode('plan');
+            if (own?.runningRuntimeMode != null) thread.setRunningInteractionMode(own.runningRuntimeMode === 'plan' ? 'plan' : 'default');
           }
         } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
@@ -1400,9 +1403,18 @@ export class HohHost {
       const access = this.engine.request('hoh/executor/access/get', { executor: this.selectedExecutor, sessionId })
         .then(result => {
           if (processGeneration !== this.accessProcessGeneration) return;
-          if ((this.modeGenerations.get(sessionId) ?? 0) !== modeGeneration) return;
           if (sessionRevision < (this.sessionAccessApplied.get(sessionId) ?? 0)) return;
           const own = result?.session;
+          if ((this.modeGenerations.get(sessionId) ?? 0) !== modeGeneration) {
+            // A newer launch owns the mode, but cannot change the conversation's immutable
+            // executor binding. Keep that part of this successful answer.
+            if (own && (own.executor === 'claude' || own.executor === 'codex') && exactMode(own.runtimeMode)) {
+              created.executor = own.executor; created.bindingKnown = true; created.builtin = false;
+              if (typeof own.model === 'string' && own.model) created.model = own.model;
+              this.sessionAccessApplied.set(sessionId, sessionRevision); this.sessionAccessKnown.add(sessionId); this.changed(sessionId);
+            }
+            return;
+          }
           const mode = exactMode(own?.runningRuntimeMode) ?? exactMode(own?.runtimeMode);
           if (own?.builtin === true && own.executor == null && own.runtimeMode == null) {
             created.builtin = true;
@@ -1412,7 +1424,7 @@ export class HohHost {
           created.executor = own.executor; created.mode = mode;
           created.bindingKnown = true;
           created.builtin = false;
-          if (own.runningRuntimeMode === 'plan') created.setInteractionMode('plan');
+          if (own.runningRuntimeMode != null) created.setRunningInteractionMode(own.runningRuntimeMode === 'plan' ? 'plan' : 'default');
           if (typeof own.model === 'string' && own.model) created.model = own.model;
           this.modeGenerations.set(sessionId, modeGeneration + 1);
           this.sessionAccessApplied.set(sessionId, sessionRevision); this.sessionAccessKnown.add(sessionId); this.modeRevision++; this.changed(sessionId);
@@ -1435,10 +1447,13 @@ export class HohHost {
           const runningPlan = params.event?.data?.runtimeMode === 'plan';
           const mode = runningPlan ? 'confirm' : exactMode(params.event?.data?.runtimeMode);
           if (mode) {
-            if (params.event?.data?.interactionMode === 'plan' || params.event?.data?.interactionMode === 'default') thread.setInteractionMode(params.event.data.interactionMode);
+            thread.setRunningInteractionMode(runningPlan || params.event?.data?.interactionMode === 'plan' ? 'plan' : 'default');
+            thread.setRunning(true, this.now());
             this.sessionAccessKnown.add(thread.id);
             this.modeGenerations.set(thread.id, (this.modeGenerations.get(thread.id) ?? 0) + 1);
-            if (thread.mode !== mode) { thread.mode = mode; this.changed(thread.id); }
+            thread.mode = mode;
+            this.changed(thread.id);
+            if (!thread.bindingKnown) void this.refreshThreadMode(thread);
           }
         }
         if (thread && params.event?.type === 'turn/start') void this.refreshThreadMode(thread);
@@ -1496,7 +1511,7 @@ export class HohHost {
     // replacement engine has not answered access/get yet.
     this.configChanged();
     for (const thread of this.threads.values()) {
-      if (thread.running || thread.activeRunId()) { thread.engineRunning = false; thread.running = false; thread.settleUnfinished(this.now()); this.changed(thread.id); }
+      if (thread.running || thread.activeRunId()) { thread.engineRunning = false; thread.running = false; thread.setRunningInteractionMode(null); thread.settleUnfinished(this.now()); this.changed(thread.id); }
     }
   }
 
@@ -1507,6 +1522,8 @@ export class HohHost {
     this.homeDirty = true;
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => this.flush(), this.throttleMs);
+    // Node's test host should not stay alive solely for a deferred UI notification.
+    (this.flushTimer as any).unref?.();
   }
 
   private changed(threadId: string) {
@@ -1534,7 +1551,7 @@ export class HohHost {
       if (!thread || !this.accessVisible(id)) continue;
       this.sequence++;
       for (const sink of this.shellSinks) sink.emit({ kind: 'thread.updated', sequence: this.sequence, location: thread.archivedAt === null ? 'active' : 'archive', thread: thread.shell() });
-      if (thread.loaded) for (const sink of this.threadSinks.get(id) ?? []) sink.emit(this.threadSnapshot(thread));
+      for (const sink of this.threadSinks.get(id) ?? []) sink.emit(this.threadSnapshot(thread));
     }
   }
 
@@ -1871,15 +1888,19 @@ export class HohHost {
         if (thread.mode !== fallback) { thread.mode = fallback; this.changed(thread.id); }
         return;
       }
+      let bindingChanged = false;
       if ((own.executor === 'claude' || own.executor === 'codex') && exactMode(own.runtimeMode)) {
+        if (thread.bindingKnown && thread.executor !== own.executor) return;
+        bindingChanged = !thread.bindingKnown || thread.executor !== own.executor;
         thread.executor = own.executor;
         thread.bindingKnown = true;
       }
       this.sessionAccessKnown.add(thread.id);
       const actual = effectiveSessionMode(own, fallback);
-      const planChanged = own.runningRuntimeMode === 'plan' && thread.interactionMode !== 'plan';
-      if (planChanged) thread.setInteractionMode('plan');
-      if (thread.mode !== actual || planChanged) { thread.mode = actual; this.changed(thread.id); }
+      const runningInteraction = own.runningRuntimeMode == null ? null : own.runningRuntimeMode === 'plan' ? 'plan' : 'default';
+      const planChanged = thread.runningInteractionMode !== runningInteraction;
+      thread.setRunningInteractionMode(runningInteraction);
+      if (thread.mode !== actual || planChanged || bindingChanged) { thread.mode = actual; this.changed(thread.id); }
     } catch { /* keep the last engine-reported value until the bridge answers again */ }
   }
 
