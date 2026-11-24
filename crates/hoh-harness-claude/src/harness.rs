@@ -18,6 +18,7 @@ use hoh_external_harness::{
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
 
+use crate::channel_plugins;
 use crate::session::{ClaudeSession, SessionSettings};
 use crate::version;
 
@@ -129,11 +130,11 @@ impl Default for ClaudeConfig {
 }
 
 impl ClaudeConfig {
-    /// The command line a session is started with under `access`, program first: exactly what is
-    /// run for these arguments. `native_id` is the id of a new session (`--session-id`), unless
-    /// `resume` names one to continue (`--resume`); `effort` is one of [`EFFORT_LEVELS`]
-    /// (`--effort`). The part that decides what the session may do without asking is
-    /// [`launch_flags`](Self::launch_flags) of the same policy and mode, in the same place.
+    /// The cwd-independent command line under `access`, program first. The real window launch
+    /// uses [`Self::argv_in`] to add its project-aware channel-plugin overlay. `native_id` is the
+    /// id of a new session (`--session-id`), unless `resume` names one to continue (`--resume`);
+    /// `effort` is one of [`EFFORT_LEVELS`] (`--effort`). The part that decides what the session
+    /// may do without asking is [`launch_flags`](Self::launch_flags) of the same policy and mode.
     pub fn argv(
         &self,
         policy: &HarnessPolicy,
@@ -153,6 +154,26 @@ impl ClaudeConfig {
             resume,
             native_id,
         ));
+        argv
+    }
+
+    /// [`Self::argv`] for the explicit working directory whose project/local Claude settings
+    /// apply. The window launch uses this same channel-plugin overlay with its session cwd.
+    #[allow(clippy::too_many_arguments)]
+    pub fn argv_in(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        model: Option<&str>,
+        effort: Option<&str>,
+        resume: Option<&str>,
+        native_id: &str,
+        cwd: &std::path::Path,
+    ) -> Vec<String> {
+        let mut argv = self.argv(policy, access, model, effort, resume, native_id);
+        if self.setting_sources == SettingSources::Personal {
+            channel_plugins::append_disabled_channels(&mut argv, &self.extra_env, cwd);
+        }
         argv
     }
 
@@ -883,7 +904,8 @@ impl ExternalHarness for ClaudeHarness {
                 None => random_uuid()?,
             };
             let launch = launch_for(&params.policy, access);
-            let args = session_args(
+            let cwd = PathBuf::from(&params.cwd);
+            let mut args = session_args(
                 &launch,
                 config.setting_sources,
                 params.model.as_deref(),
@@ -891,7 +913,9 @@ impl ExternalHarness for ClaudeHarness {
                 resume.as_deref(),
                 &native,
             );
-            let cwd = PathBuf::from(&params.cwd);
+            if config.setting_sources == SettingSources::Personal {
+                channel_plugins::append_disabled_channels(&mut args, &config.extra_env, &cwd);
+            }
             let sup = spawn(&spec(&config, args, cwd.clone(), false)).await?;
             let (session, events, _init) = ClaudeSession::start(
                 sup,
@@ -1028,6 +1052,66 @@ mod tests {
         assert!(argv.contains(&"--permission-prompt-tool".to_owned()));
         assert!(!argv.contains(&"--disallowedTools".to_owned()));
         assert!(!argv.contains(&"--tools".to_owned()));
+    }
+
+    #[test]
+    fn argv_disables_only_channel_plugins_in_the_session_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_dir = dir.path().join("claude-config");
+        let project = dir.path().join("project");
+        let channel = config_dir.join("plugins/cache/test/chat/1");
+        let ordinary = config_dir.join("plugins/cache/test/ordinary/1");
+        std::fs::create_dir_all(channel.join("src")).unwrap();
+        std::fs::create_dir_all(&ordinary).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            config_dir.join("settings.json"),
+            r#"{"enabledPlugins":{"chat@test":true,"ordinary@test":true}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            config_dir.join("plugins/installed_plugins.json"),
+            serde_json::json!({
+                "plugins": {
+                    "chat@test": [{"installPath": channel}],
+                    "ordinary@test": [{"installPath": ordinary}]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            channel.join("src/server.ts"),
+            "experimental: { 'claude/channel': {} }",
+        )
+        .unwrap();
+        std::fs::write(
+            channel.join(".mcp.json"),
+            r#"{"mcpServers":{"chat":{"command":"node","args":["src/server.ts"]}}}"#,
+        )
+        .unwrap();
+        let config = ClaudeConfig {
+            extra_env: vec![(
+                "CLAUDE_CONFIG_DIR".into(),
+                config_dir.to_string_lossy().into_owned(),
+            )],
+            ..ClaudeConfig::default()
+        };
+
+        let argv = config.argv_in(
+            &HarnessPolicy::default(),
+            AccessMode::Confirm,
+            None,
+            None,
+            None,
+            "id",
+            &project,
+        );
+        let at = argv.iter().position(|arg| arg == "--settings").unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&argv[at + 1]).unwrap(),
+            serde_json::json!({"enabledPlugins":{"chat@test":false}})
+        );
     }
 
     #[test]

@@ -72,6 +72,16 @@ test('Recent chats omits T3 draft rows until a sent thread exists', async () => 
   assert.match(vite, /latestUserMessageAt != null/);
 });
 
+test('Claude provider settings disclose that channel plugins are disabled without a toggle', async () => {
+  const [vite, map] = await Promise.all([
+    readFile(new URL('src/t3-entry/vite.ts', root), 'utf8'),
+    readFile(new URL('T3-MAP.md', root), 'utf8'),
+  ]);
+  assert.match(vite, />Channel plugins are disabled in the window<\/p>/);
+  assert.doesNotMatch(vite, /Channel plugins are disabled in the window[\s\S]{0,200}(?:Switch|Toggle)/);
+  assert.match(map, /Channel plugins are disabled in the window/);
+});
+
 test('paperclip uses T3 attachment intake with an image-only human picker', async () => {
   const [composerPatch, stripPatch, stripSource, manifestText, map] = await Promise.all([
     readFile(new URL('src/t3/base-patches/web/components/chat/ChatComposer.tsx.patch', root), 'utf8'),
