@@ -181,8 +181,23 @@ run_window() {
   local run=$1 rc=0
   # The private bus and everything it activates (portal, keyring) get the isolated runtime dir too:
   # the outer environment carries XDG_RUNTIME_DIR=/run/user/1000 (rule "звук и шина", lead 24.11).
+  # Its own bus config has no service directories: nothing is activated on it (no portal, no keyring).
+  cat >"$OUTPUT/runtime/bus.conf" <<BUS
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:dir=$OUTPUT/runtime</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+BUS
   setsid env XDG_RUNTIME_DIR="$OUTPUT/runtime" PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=/nonexistent \
-    GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 dbus-run-session -- env \
+    GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 dbus-run-session --config-file="$OUTPUT/runtime/bus.conf" -- env \
     DISPLAY="$QA_DISPLAY" HOME="$REAL_HOME" \
     XDG_CONFIG_HOME="$OUTPUT/config" XDG_CACHE_HOME="$OUTPUT/cache" \
     XDG_DATA_HOME="$OUTPUT/data" XDG_STATE_HOME="$OUTPUT/state" \
