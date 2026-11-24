@@ -1770,10 +1770,10 @@ impl TurnLog {
                 // Usage is a live projection, not merely turn-end accounting. Persisting the
                 // snapshot also broadcasts it through session.event so T3 can repaint its native
                 // context component while Claude is still streaming.
-                if let Err(error) = self.agent.session.append(
-                    "turn/usage",
+                if let Err(error) = append_plugin_record(
+                    &self.agent.session,
+                    "plugin:hoh/context-usage",
                     json!({"turn": self.turn, "usage": usage}),
-                    None,
                 ) {
                     self.warn("cannot record context usage", error);
                 }

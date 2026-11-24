@@ -797,8 +797,16 @@ async fn context_usage_is_broadcast_while_the_turn_is_running_and_kept_at_the_en
     let env = env(&dirs).await;
     let agent = env.create("s-usage").await;
     turn(&agent, "usage").await;
-    let updates = of_type(&agent, "turn/usage");
+    let updates = of_type(&agent, "plugin:hoh/context-usage");
     assert_eq!(updates.len(), 2, "{updates:?}");
+    assert!(
+        agent
+            .session()
+            .snapshot_events(None, None)
+            .iter()
+            .filter(|event| event.event_type() == "plugin:hoh/context-usage")
+            .all(|event| event.ignorable())
+    );
     assert_eq!(updates[0]["usage"]["inputTokens"], 100);
     assert_eq!(updates[0]["usage"]["maxTokens"], Value::Null);
     assert_eq!(updates[1]["usage"]["inputTokens"], 200);

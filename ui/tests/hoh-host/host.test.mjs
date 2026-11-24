@@ -832,7 +832,7 @@ test('Claude stream usage reaches T3 providerTurns with its exact context fill',
   });
   const stream = await client.stream('orchestration.subscribeThread', { threadId: 'thread-usage' });
   await stream.until(value => value.kind === 'snapshot');
-  engine.emitEvent('thread-usage', 'turn/usage', {
+  engine.emitEvent('thread-usage', 'plugin:hoh/context-usage', {
     usage: { inputTokens: 200, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, outputTokens: 9 },
   });
   const live = await stream.until(value => value.kind === 'snapshot' && value.projection.providerTurns.length === 1);
@@ -850,6 +850,31 @@ test('Claude stream usage reaches T3 providerTurns with its exact context fill',
   const usage = snapshot.projection.providerTurns[0].tokenUsage;
   assert.deepEqual(usage, { usedTokens: 309, maxTokens: 200_000, inputTokens: 300, cachedInputTokens: 60, outputTokens: 9, reasoningOutputTokens: 0, updatedAt: usage.updatedAt });
   assert.equal((usage.usedTokens / usage.maxTokens) * 100, 0.1545);
+});
+
+test('cold history restores usage from both plugin and legacy events', async () => {
+  for (const eventType of ['plugin:hoh/context-usage', 'turn/usage']) {
+    const id = 'cold-' + eventType;
+    const engine = new FakeEngine();
+    Object.assign(engine.seed(id, 'Usage', [
+      ['turn/start', { turn: 1 }],
+      ['user/message', { id: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] }],
+      [eventType, { turn: 1, usage: { inputTokens: 200, cacheCreationInputTokens: 40, cacheReadInputTokens: 60, outputTokens: 9, maxTokens: 200_000 } }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ]), { executor: 'claude', runtimeMode: 'confirm' });
+    const { client, host } = connectColdHistory(engine, id, {});
+    try {
+      const shell = await client.stream('orchestration.subscribeShell', {});
+      await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(row => row.id === id));
+      const stream = await client.stream('orchestration.subscribeThread', { threadId: id });
+      const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.providerTurns.length === 1);
+      assert.equal(snapshot.projection.providerTurns[0].tokenUsage.usedTokens, 309);
+      assert.equal(snapshot.projection.providerTurns[0].tokenUsage.maxTokens, 200_000);
+    } finally {
+      host.stop();
+      client.close();
+    }
+  }
 });
 
 test('the first message gets a Claude title; failure keeps its beginning and a late result cannot overwrite a manual rename', async () => {

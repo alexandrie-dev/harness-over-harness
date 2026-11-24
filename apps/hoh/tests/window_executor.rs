@@ -2411,9 +2411,14 @@ async fn a_cold_claude_conversation_keeps_usage_and_stopped_turns_and_can_contin
     let page = json!({"sessionId": SESSION, "limit": 1000});
     let history = host.ok("session/events", page.clone()).await;
     let events = history["events"].as_array().expect("history");
-    assert!(events.iter().any(|event| event["type"] == "turn/usage"
-        && event["data"]["usage"]["inputTokens"] == 17
-        && event["data"]["usage"]["cacheReadInputTokens"] == 23));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["type"] == "plugin:hoh/context-usage"
+                && event["ignorable"] == true
+                && event["data"]["usage"]["inputTokens"] == 17
+                && event["data"]["usage"]["cacheReadInputTokens"] == 23)
+    );
     assert!(
         events.iter().any(
             |event| event["type"] == "turn/end" && event["data"]["reason"]["kind"] == "aborted"

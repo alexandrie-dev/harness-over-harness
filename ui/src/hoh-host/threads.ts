@@ -518,7 +518,8 @@ export class ThreadModel {
         this.running = true; this.settledByGuess = false;
         break;
       }
-      case 'turn/usage': this.updateUsage(data.usage, at); break;
+      case 'turn/usage':
+      case 'plugin:hoh/context-usage': this.updateUsage(data.usage, at); break;
       case 'turn/end': {
         const reason = record(data.reason);
         this.endTurn(text(reason.kind), at, reason.error, reason.reason, data.usage);
