@@ -243,6 +243,9 @@ export class HohHost {
   private readonly restored = new Set<string>();
   /** Histories already peeked successfully during startup; a cached row is retried until its log is readable. */
   private readonly peeked = new Set<string>();
+  private peekInFlight: Promise<void> | undefined;
+  private peekAgain = false;
+  private peekScheduled = false;
   /** Last-known rows wait here until `access/get` supplies their real runtime mode. */
   private readonly savedSessions: any[] = [];
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
@@ -1124,11 +1127,14 @@ export class HohHost {
   }
 
   private async onEngineReady() {
-    await this.readDiscovery();
-    const accessRead = await this.readAccess();
-    await this.readSessions();
-    this.configChanged();
-    if (accessRead) this.flush();
+    // Inventory is independent of provider discovery and the global access read. In particular,
+    // a slow CLI probe after the engine connects must not delay the authoritative welcome and rows.
+    const discovery = this.readDiscovery().then(() => this.configChanged());
+    const access = this.readAccess().then(accessRead => {
+      this.configChanged();
+      if (accessRead) this.flush();
+    });
+    await Promise.all([discovery, access, this.readSessions()]);
   }
 
   private async readSessions(): Promise<boolean> {
@@ -1154,7 +1160,12 @@ export class HohHost {
     }
     // session/list is authoritative even when an executor never answers its access query.
     // Give immediate replies a turn to fill the first snapshot, then unblock bootstrap.
-    const bootstrapTimer: any = setTimeout(() => { if (!this.stopped) this.sessionsReady(); }, 0);
+    const bootstrapTimer: any = setTimeout(() => {
+      if (!this.stopped) {
+        this.sessionsReady();
+        this.schedulePeekToday();
+      }
+    }, 0);
     bootstrapTimer?.unref?.();
     await Promise.all(sessions.map(async session => {
       if (typeof session?.id !== 'string' || !session.id) return;
@@ -1250,8 +1261,7 @@ export class HohHost {
     // History enriches Home and list rows, but metadata is enough to render and select a conversation. Start it
     // only after the authoritative bootstrap frames have been queued: this keeps first paint ahead of disk I/O
     // and lets an immediate Add project win over stale folder inference from an old history.
-    const timer: any = setTimeout(() => { if (!this.stopped) void this.peekToday(); }, 0);
-    timer?.unref?.();
+    this.schedulePeekToday();
     return true;
   }
 
@@ -1263,6 +1273,22 @@ export class HohHost {
     for (const sink of this.shellSinks) sink.emit(this.shellSnapshot());
     for (const sink of this.shellCompletionSinks) sink.emit({ kind: 'synchronized' });
     this.shellCompletionSinks.clear();
+  }
+
+  /** Coalesce repeated inventories while allowing history to start before all access reads finish. */
+  private schedulePeekToday() {
+    if (this.stopped || this.peekScheduled) return;
+    this.peekScheduled = true;
+    const timer: any = setTimeout(() => {
+      this.peekScheduled = false;
+      if (this.stopped) return;
+      if (this.peekInFlight) { this.peekAgain = true; return; }
+      this.peekInFlight = this.peekToday().finally(() => {
+        this.peekInFlight = undefined;
+        if (this.peekAgain) { this.peekAgain = false; this.schedulePeekToday(); }
+      });
+    }, 0);
+    timer?.unref?.();
   }
 
   /**

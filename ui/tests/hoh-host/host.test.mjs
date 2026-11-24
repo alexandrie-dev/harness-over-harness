@@ -445,6 +445,33 @@ test('a stalled session access read does not hide its row or other conversations
   host.stop();
 });
 
+test('a stalled access read cannot prevent other saved Home cards from recovering', async () => {
+  const engine = new FakeEngine();
+  const completed = id => [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id, source: { kind: 'user' }, content: [{ type: 'text', text: id }] }],
+    ['assistant/message', { turn: 1, message: { id: `${id}-answer`, content: [{ type: 'text', text: 'done' }] } }],
+    ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+  ];
+  engine.seed('slow-card', 'Slow', completed('slow'));
+  engine.seed('ready-card', 'Ready', completed('ready'));
+  const request = engine.request.bind(engine);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'slow-card') await gate;
+    return request(method, params);
+  };
+  const { host } = connect(engine, { loadRetries: 0, now: () => engine.clock });
+  await host.start();
+  for (let i = 0; i < 100 && !host.home.entries().some(entry => entry.id === 'ready-card'); i++) await tick(5);
+  assert.equal(host.home.entries().find(entry => entry.id === 'ready-card')?.state, 'waiting');
+  release();
+  for (let i = 0; i < 100 && !host.home.entries().some(entry => entry.id === 'slow-card'); i++) await tick(5);
+  assert.equal(host.home.entries().find(entry => entry.id === 'slow-card')?.state, 'waiting');
+  host.stop();
+});
+
 test('a provisional project conversation does not invent a duplicate scratch project', async () => {
   const engine = new FakeEngine();
   engine.seed('project-pending', 'Project chat', []);
@@ -2362,6 +2389,37 @@ test('the startup retry lane cannot supersede a slower explicit Refresh', async 
     false,
   );
   host.stop();
+});
+
+test('engine ready: welcome and saved rows do not wait for discovery or global access', async () => {
+  const engine = new FakeEngine();
+  engine.seed('saved-ready', 'Saved chat', []);
+  const request = engine.request.bind(engine);
+  let ready = false;
+  let releaseDiscovery; let releaseAccess;
+  const discovery = new Promise(resolve => { releaseDiscovery = resolve; });
+  const access = new Promise(resolve => { releaseAccess = resolve; });
+  engine.request = async (method, params) => {
+    if (!ready) throw { code: 'connecting' };
+    if (method === 'hoh/executor/discover') await discovery;
+    if (method === 'hoh/executor/access/get' && !params.sessionId) await access;
+    return request(method, params);
+  };
+  const { client, host } = connect(engine, { loadRetries: 0 });
+  const lifecycle = await client.stream('subscribeServerLifecycle', {});
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  await lifecycle.until(value => value.payload?.bootstrapStatus === 'pending');
+  ready = true;
+  engine.setStatus('ready');
+  await lifecycle.until(value => value.payload?.bootstrapStatus === 'complete');
+  const snapshot = await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(row => row.id === 'saved-ready'));
+  assert.equal(snapshot.snapshot.threads.length, 1);
+  // The provider and permission reads still run and are allowed to reconcile after bootstrap.
+  releaseDiscovery(); releaseAccess();
+  await tick(10);
+  assert(engine.requests.some(entry => entry.method === 'hoh/executor/discover'));
+  assert(engine.requests.some(entry => entry.method === 'hoh/executor/access/get' && !entry.params.sessionId));
+  host.stop(); client.close();
 });
 
 test('cold start: lifecycle and empty shell do not wait for session list, Claude discovery, or conversation history', async () => {
