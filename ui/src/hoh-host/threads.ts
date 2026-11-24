@@ -715,10 +715,13 @@ export class ThreadModel {
   approvalPending(params: { approvalId: string; humanText?: string; risk?: string }, at = Date.now()) {
     if (!text(params.approvalId) || this.requests.some(request => request.id === params.approvalId)) return false;
     const run = this.currentRun();
+    // Access changes can ask for confirmation between turns, before the next
+    // user message exists. Such a request does not belong to the previous run.
+    const runId = run && (run.status === 'running' || run.status === 'waiting') ? run.id : null;
     const request = this.approvalDetails.get(params.approvalId) ?? { requestKind: 'command' };
     this.requests.push({ id: params.approvalId, kind: request.requestKind, status: 'pending', createdAt: at, resolvedAt: null });
     this.items.push({
-      ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at),
+      ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at, runId),
       requestId: params.approvalId, requestKind: request.requestKind,
       ...(text(params.humanText) ? { prompt: text(params.humanText) } : {}),
       // T3's own set for a Claude request without a standing grant (apps/server ClaudeAdapterV2.ts
@@ -738,7 +741,8 @@ export class ThreadModel {
     request.resolvedAt = at;
     if (request.status === 'resolved') request.decision = allowed ? 'accept' : 'decline';
     const item = this.item('item-approval-' + params.approvalId);
-    if (item) this.settleItem(item, request.status === 'resolved' ? 'completed' : 'cancelled', at);
+    if (item?.runId === null) this.items.splice(this.items.indexOf(item), 1);
+    else if (item) this.settleItem(item, request.status === 'resolved' ? 'completed' : 'cancelled', at);
     this.approvalDetails.delete(params.approvalId);
     const run = this.currentRun();
     if (run && run.status === 'waiting' && !this.requests.some(entry => entry.status === 'pending')) run.status = 'running';

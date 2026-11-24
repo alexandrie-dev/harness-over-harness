@@ -1,0 +1,316 @@
+[
+  {
+    "seq": 0,
+    "type": "plugin:external-harness/session",
+    "time": 1795522892814,
+    "data": {}
+  },
+  {
+    "seq": 1,
+    "type": "working-directory/change",
+    "time": 1795522892921,
+    "data": {
+      "cwd": "/workspace/project"
+    }
+  },
+  {
+    "seq": 2,
+    "type": "turn/start",
+    "time": 1795522892926,
+    "data": {
+      "turn": 1
+    }
+  },
+  {
+    "seq": 3,
+    "type": "step/start",
+    "time": 1795522892926,
+    "data": {
+      "turn": 1,
+      "step": 1
+    }
+  },
+  {
+    "seq": 4,
+    "type": "user/message",
+    "time": 1795522892926,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "workspace changed"
+        }
+      ],
+      "source": {
+        "kind": "working-directory"
+      },
+      "role": "user",
+      "id": "229035f0-09c1-4419-9077-8268a1989e12"
+    }
+  },
+  {
+    "seq": 5,
+    "type": "user/message",
+    "time": 1795522892926,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "prompt 5"
+        }
+      ],
+      "source": {
+        "kind": "user"
+      },
+      "role": "user",
+      "id": "16d375ba-d503-4a7d-bfc0-680454f121d6"
+    }
+  },
+  {
+    "seq": 6,
+    "type": "plugin:external-harness/session",
+    "time": 1795522894162,
+    "data": {}
+  },
+  {
+    "seq": 7,
+    "type": "plugin:external-harness/launch",
+    "time": 1795522894162,
+    "data": {
+      "runtimeMode": "full",
+      "interactionMode": "default"
+    }
+  },
+  {
+    "seq": 8,
+    "type": "plugin:hoh-external-harness/telemetry",
+    "time": 1795522894246,
+    "data": {}
+  },
+  {
+    "seq": 9,
+    "type": "plugin:hoh/context-usage",
+    "time": 1795522895615,
+    "data": {}
+  },
+  {
+    "seq": 10,
+    "type": "plugin:hoh-external-harness/telemetry",
+    "time": 1795522896943,
+    "data": {}
+  },
+  {
+    "seq": 11,
+    "type": "plugin:hoh-external-harness/telemetry",
+    "time": 1795522896999,
+    "data": {}
+  },
+  {
+    "seq": 12,
+    "type": "assistant/message",
+    "time": 1795522896999,
+    "data": {
+      "turn": 1,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "answer 12"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "064dc57a-37ef-447c-811b-f1da80c17ffb"
+      }
+    }
+  },
+  {
+    "seq": 13,
+    "type": "plugin:hoh/context-usage",
+    "time": 1795522897006,
+    "data": {}
+  },
+  {
+    "seq": 14,
+    "type": "plugin:hoh-external-harness/telemetry",
+    "time": 1795522897049,
+    "data": {}
+  },
+  {
+    "seq": 15,
+    "type": "plugin:hoh/context-usage",
+    "time": 1795522897049,
+    "data": {}
+  },
+  {
+    "seq": 16,
+    "type": "step/end",
+    "time": 1795522897049,
+    "data": {
+      "turn": 1,
+      "step": 1
+    }
+  },
+  {
+    "seq": 17,
+    "type": "turn/end",
+    "time": 1795522897049,
+    "data": {
+      "turn": 1,
+      "reason": {
+        "kind": "completed"
+      },
+      "usage": {
+        "inputTokens": 2,
+        "cacheCreationInputTokens": 22101,
+        "cacheReadInputTokens": 13276,
+        "outputTokens": 169,
+        "maxTokens": 1000000
+      }
+    }
+  },
+  {
+    "seq": 18,
+    "type": "turn/start",
+    "time": 1795522950131,
+    "data": {
+      "turn": 2
+    }
+  },
+  {
+    "seq": 19,
+    "type": "step/start",
+    "time": 1795522950131,
+    "data": {
+      "turn": 2,
+      "step": 1
+    }
+  },
+  {
+    "seq": 20,
+    "type": "user/message",
+    "time": 1795522950131,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "prompt 20"
+        }
+      ],
+      "source": {
+        "kind": "user"
+      },
+      "role": "user",
+      "id": "2b4238c8-bde3-4d16-938a-68dc330045fd"
+    }
+  },
+  {
+    "seq": 21,
+    "type": "plugin:external-harness/launch",
+    "time": 1795522951862,
+    "data": {
+      "runtimeMode": "full",
+      "interactionMode": "default"
+    }
+  },
+  {
+    "seq": 22,
+    "type": "plugin:hoh-external-harness/telemetry",
+    "time": 1795522951945,
+    "data": {}
+  },
+  {
+    "seq": 23,
+    "type": "plugin:hoh/context-usage",
+    "time": 1795522953190,
+    "data": {}
+  },
+  {
+    "seq": 24,
+    "type": "plugin:hoh-external-harness/telemetry",
+    "time": 1795522953193,
+    "data": {}
+  },
+  {
+    "seq": 25,
+    "type": "assistant/message",
+    "time": 1795522953193,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "answer 25"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "40f2df72-1e55-48b8-9f70-0c60b25e1595"
+      }
+    }
+  },
+  {
+    "seq": 26,
+    "type": "plugin:hoh/context-usage",
+    "time": 1795522953203,
+    "data": {}
+  },
+  {
+    "seq": 27,
+    "type": "plugin:hoh-external-harness/telemetry",
+    "time": 1795522953251,
+    "data": {}
+  },
+  {
+    "seq": 28,
+    "type": "plugin:hoh/context-usage",
+    "time": 1795522953251,
+    "data": {}
+  },
+  {
+    "seq": 29,
+    "type": "step/end",
+    "time": 1795522953251,
+    "data": {
+      "turn": 2,
+      "step": 1
+    }
+  },
+  {
+    "seq": 30,
+    "type": "turn/end",
+    "time": 1795522953251,
+    "data": {
+      "turn": 2,
+      "reason": {
+        "kind": "completed"
+      },
+      "usage": {
+        "inputTokens": 4,
+        "cacheCreationInputTokens": 177,
+        "cacheReadInputTokens": 35377,
+        "outputTokens": 5,
+        "maxTokens": 1000000
+      }
+    }
+  },
+  {
+    "seq": 31,
+    "type": "session/end-seed",
+    "time": 1795523065150,
+    "data": {}
+  }
+]
