@@ -1310,6 +1310,9 @@ export class HohHost {
         const chosenMode = accessModeOf(mode ?? runtimeModeOf(this.defaultMode));
         const already = this.threads.get(threadId);
         if (already) {
+          if (typeof projectId === 'string' && projectId !== already.projectId) {
+            throw new Error('A conversation cannot change its project folder. Start a new thread.');
+          }
           if (already.executor !== executor || already.model !== chosenModel || already.mode !== chosenMode) {
             throw new Error('Concurrent creation requested a different executor, model, or access mode for this conversation.');
           }
@@ -1388,7 +1391,6 @@ export class HohHost {
         const root = folderPath(mutation.workspaceRoot);
         if (!root.startsWith('/') && root !== '~' && !root.startsWith('~/')) throw fail('Use the full path of the folder (starting with / or ~).');
         if (this.folderAt(root)) throw fail(`${root} is already a project.`);
-        if (root === this.workspaceRoot) throw fail(`${root} is the folder of "No project". Use "Start without a project".`);
         if (!projectId || projectId === HOH_PROJECT_ID || this.folders.has(projectId)) throw fail('This project id is taken.');
         await this.checkFolder(root, fail);
         // The engine learns the folder (the person's "Add project" in the main window confirms it), so `@`, `/` and `$`
@@ -1396,7 +1398,7 @@ export class HohHost {
         let added: string;
         try { added = folderPath((await this.engine.request('hoh/workspace/add', { cwd: root }))?.cwd) || root; }
         catch (error) { throw fail(`The folder ${root} cannot be a project: ${englishError(error, 'HoH refused it.')}`); }
-        if (added !== root && (this.folderAt(added) || added === this.workspaceRoot)) throw fail(`${added} is already a project or the folder of "No project".`);
+        if (added !== root && this.folderAt(added)) throw fail(`${added} is already a project.`);
         const at = this.now();
         const title = typeof mutation.title === 'string' && mutation.title.trim() ? mutation.title.trim() : titleOf(root);
         const project: FolderProject = { id: projectId, title, workspaceRoot: added, createdAt: at, updatedAt: at, pinnedAt: null, archivedAt: null };
@@ -1731,6 +1733,7 @@ export class HohHost {
     try {
       switch (type) {
         case 'thread.create':
+          if (thread && typeof command.projectId === 'string' && command.projectId !== thread.projectId) throw new Error('A conversation cannot change its project folder. Start a new thread.');
           if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId, command.modelSelection?.instanceId);
           break;
         case 'message.dispatch': {
@@ -1793,6 +1796,7 @@ export class HohHost {
     try {
       const requestedExecutor = executorOf(input.modelSelection?.instanceId ?? instanceOf(this.selectedExecutor));
       if (existing && requestedExecutor !== existing.executor) throw new Error('A conversation cannot change its executor. Start a new thread.');
+      if (existing && typeof input.projectId === 'string' && input.projectId !== existing.projectId) throw new Error('A conversation cannot change its project folder. Start a new thread.');
       const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.modelSelection?.instanceId);
       if (existing) await this.applyMode(existing, input.runtimeMode);
       const message = input.initialMessage;

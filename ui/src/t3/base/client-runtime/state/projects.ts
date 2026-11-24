@@ -136,9 +136,10 @@ export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: stri
 }
 
 export function isScratchProject(
-  project: { readonly workspaceRoot: string; readonly isScratch?: true },
+  project: { readonly id?: string; readonly workspaceRoot: string; readonly isScratch?: true },
   scratchWorkspaceRoot: string | null | undefined,
 ): boolean {
+  if (project.id !== undefined) return project.id === "hoh-project";
   return (
     project.isScratch === true ||
     (scratchWorkspaceRoot != null &&

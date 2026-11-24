@@ -8,6 +8,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalSto
 
 import { ClaudeAI, OpenAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
+import { openCommandPalette } from '~/commandPaletteBus';
 import { openQuickView, QuickViewDialog } from './QuickViewDialog';
 import {
   getGroupAgentsByProject,
@@ -133,9 +134,12 @@ function Ask({ entry, view }: { entry: Entry; view: View }) {
     </div>
   );
 }
+export function waitingLabel(entry: Pick<Entry, 'stopped' | 'interrupted' | 'canComplete'>): string {
+  return entry.stopped ? 'Stopped' : entry.interrupted ? 'Interrupted' : entry.canComplete ? 'Ready for review' : 'Waiting for your answer';
+}
 const stateLabel = (entry: Entry) => entry.state === 'working'
   ? <><span className="hoh-orbit" aria-hidden />Working</>
-  : entry.stopped ? 'Stopped' : entry.interrupted ? 'Interrupted' : 'Waiting for your answer';
+  : waitingLabel(entry);
 /** An agent as a card (HOH-41): the executor's mark top-left, the title, where it works, its subagents inside, the state at the bottom.
  *  The glow of the border follows the state (home.css: blue — working, red — waits for the person, neutral — done). */
 function Card({ entry, view, children }: { entry: Entry; view: View; children: React.ReactNode }) {
@@ -183,7 +187,7 @@ function Cards({ working, done, asking, view }: Lists) {
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">
-        <Head now={view.now} />
+        <Head now={view.now} busy={working.length + done.length + asking.length > 0} />
         {working.length > 0 ? (
           <section>
             <h2 className="hoh-home__label">Now <Count list={working} /></h2>
@@ -408,7 +412,7 @@ function GroupedCards({ working, done, asking, view }: Lists) {
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">
-        <Head now={view.now} />
+        <Head now={view.now} busy={working.length + done.length + asking.length > 0} />
         {groups.length > 0 ? (
           <section>
             <h2 className="hoh-home__label">Projects <span className="hoh-home__count">{groups.length}</span></h2>
@@ -434,12 +438,13 @@ function GroupedCards({ working, done, asking, view }: Lists) {
 }
 
 interface Lists { working: Entry[]; done: Entry[]; asking: Entry[]; view: View }
-function Head({ now }: { now: number }) {
+function Head({ now, busy }: { now: number; busy: boolean }) {
   const date = new Date(now);
   return (
     <div className="hoh-home__head">
       <h1>{greeting(date.getHours())}</h1>
       <div className="hoh-home__date">{dateLabel(date)}</div>
+      {busy ? <Button size="sm" variant="outline" className="hoh-home__add-project" onClick={() => openCommandPalette({ open: 'add-project' })}>Add project</Button> : null}
     </div>
   );
 }

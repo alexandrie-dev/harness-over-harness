@@ -14,7 +14,7 @@ export class FakeEngine {
     this.projectFolders = new Set();
     this.store = store; // sessionId -> { title, events: [], updatedAt }
     this.listeners = new Set(); this.questionListeners = new Set(); this.statusListeners = new Set();
-    this.requests = []; this.decisions = []; this.answers = []; this.counter = 0; this.clock = 1_700_000_000_000;
+    this.requests = []; this.decisions = []; this.answers = []; this.starts = []; this.counter = 0; this.clock = 1_700_000_000_000;
     this.open = new Set();
     this.discovery = discovery ?? { executor: 'claude', installed: true, version: '2.1.0', versionStatus: 'supported', auth: 'authenticated',
       models: [{ id: 'claude-sonnet', displayName: 'Claude Sonnet', isDefault: true }, { id: 'claude-opus', displayName: 'Claude Opus' }], detail: null };
@@ -126,6 +126,7 @@ export class FakeEngine {
         session.executor ??= this.access.selected.executor;
         session.model ??= this.access.selected.model;
         session.runningRuntimeMode = session.runtimeMode ?? 'confirm';
+        this.starts.push({ sessionId: params.sessionId, executor: session.executor, cwd: session.cwd ?? DEFAULT_FOLDER });
         const text = params.contentBlocks.map(block => block.text ?? '').join('');
         const messageId = `engine-m-${++this.counter}`;
         // After answering, the engine starts the turn and then records its message (session.v4 order).

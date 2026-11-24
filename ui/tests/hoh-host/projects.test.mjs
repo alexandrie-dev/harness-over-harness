@@ -30,6 +30,24 @@ const create = (projectId, workspaceRoot, title = workspaceRoot.split('/').at(-1
 });
 const failureOf = exit => exit.cause[0].error;
 
+test('the default chat folder can also be explicitly added as a project', async () => {
+  const engine = new FakeEngine();
+  const storage = new MemoryStorage();
+  const { client } = connect(engine, storage);
+  await client.call('orchestration.launchThread', {
+    commandId: 'scratch', threadId: 'scratch-thread', projectId: 'hoh-project', title: 'Scratch',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
+    runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+  });
+  const root = '/home/person/Documents/HoH';
+  const project = await client.call('projects.mutate', create('p-default', root));
+  assert.equal(project.workspaceRoot, root);
+  const again = connect(new FakeEngine({ store: engine.store }), storage);
+  const shell = await again.client.stream('orchestration.subscribeShell', {});
+  const snapshot = (await shell.until(value => value.kind === 'snapshot')).snapshot;
+  assert(snapshot.projects.some(value => value.id === 'p-default' && value.workspaceRoot === root));
+});
+
 test('Add project: T3 browses folders through the Tauri host (folders only, hidden ones when asked), without it says so', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine, null);
@@ -80,6 +98,19 @@ test('a folder becomes a T3 project; a chat in it runs in that folder; the list 
   const order = engine.requests.map(request => request.method).filter(method => method.startsWith('session/working-directory') || method === 'session/prompt');
   assert.deepEqual(order, ['session/working-directory/get', 'session/working-directory/set', 'session/prompt']);
   assert.deepEqual(engine.requests.find(request => request.method === 'session/working-directory/set').params, { sessionId: 'thread-site', path: '/home/person/Projects/site' });
+  assert.deepEqual(engine.starts, [{ sessionId: 'thread-site', executor: 'claude', cwd: '/home/person/Projects/site' }]);
+  const moved = await client.request('orchestration.launchThread', {
+    commandId: 'cmd-move', threadId: 'thread-site', projectId: 'hoh-project', title: 'Move',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' },
+    runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'm-move', text: 'Do not send', attachments: [] },
+  });
+  assert.match(failureOf(moved).message, /cannot change its project folder/);
+  const recreated = await client.request('orchestration.dispatchCommand', {
+    type: 'thread.create', commandId: 'cmd-recreate', threadId: 'thread-site', projectId: 'hoh-project', title: 'Move',
+  });
+  assert.match(failureOf(recreated).message, /cannot change its project folder/);
+  assert.equal(engine.requests.filter(request => request.method === 'session/prompt').length, 1);
   assert.equal((await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'thread-site')).thread.projectId, 'p-site');
   // A chat without a project stays in "No project", the engine's default folder.
   await client.call('orchestration.launchThread', {
@@ -90,11 +121,20 @@ test('a folder becomes a T3 project; a chat in it runs in that folder; the list 
   assert.equal((await client.call('server.getConfig', {})).scratchWorkspaceRoot, '/home/person/Documents/HoH');
 
   // Restart: a new engine process over the same sessions, a new page over the same storage.
-  const { client: again } = connect(new FakeEngine({ store }), storage);
+  const restartedEngine = new FakeEngine({ store });
+  const { client: again } = connect(restartedEngine, storage);
   const againShell = await again.stream('orchestration.subscribeShell', {});
   const restored = await againShell.until(value => value.kind === 'snapshot');
   assert.deepEqual(restored.snapshot.projects.map(p => [p.id, p.title, p.workspaceRoot]).sort(), [['hoh-project', 'No project', '/home/person/Documents/HoH'], ['p-site', 'site', '/home/person/Projects/site']]);
   assert.deepEqual(Object.fromEntries(restored.snapshot.threads.map(t => [t.id, t.projectId])), { 'thread-site': 'p-site', 'thread-plain': 'hoh-project' });
+  assert.equal(store.get('thread-site').cwd, '/home/person/Projects/site');
+  await again.call('orchestration.launchThread', {
+    commandId: 'cmd-after-restart', threadId: 'thread-site-2', projectId: 'p-site', title: 'After restart',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required',
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'm-after-restart', text: 'Build again', attachments: [] },
+  });
+  assert.deepEqual(restartedEngine.starts, [{ sessionId: 'thread-site-2', executor: 'claude', cwd: '/home/person/Projects/site' }]);
   assert.equal((await again.call('server.getConfig', {})).scratchWorkspaceRoot, '/home/person/Documents/HoH');
   // Opened again, the chat's row takes its title from the history (the engine kept no title here).
   await again.call('orchestration.getThreadProjection', { threadId: 'thread-site' });

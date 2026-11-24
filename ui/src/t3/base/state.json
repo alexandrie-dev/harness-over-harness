@@ -10,6 +10,7 @@
   "patched": [
     "client-runtime/markdownImages.ts",
     "client-runtime/state/assets.ts",
+    "client-runtime/state/projects.ts",
     "contracts/assets.ts",
     "gt.config.json",
     "web/branding.ts",

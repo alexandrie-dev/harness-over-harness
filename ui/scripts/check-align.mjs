@@ -90,6 +90,8 @@ function conversationStorage() {
   const stored = storage(false);
   const projects = JSON.parse(stored['hoh-host.projects.v1']);
   projects.threads[CHAT.id] = 'project-alpha';
+  // The engine default can be the same folder the person explicitly added as a project.
+  projects.defaultFolder = '/work/alexandrie';
   stored['hoh-host.projects.v1'] = JSON.stringify(projects);
   return stored;
 }
@@ -410,6 +412,17 @@ try {
           await page.waitForTimeout(50);
           await page.screenshot({ path: join(QA, `${scenario.name}-${size}-${sidebar}-scrolled.png`), animations: 'disabled' });
         }
+      }
+      if (scenario.name === 'quick-view') {
+        await page.getByRole('button', { name: `Open ${CHAT.title} in full conversation` }).click();
+        await page.waitForURL(`**/hoh-local/${CHAT.id}`);
+        await page.getByRole('dialog').last().waitFor({ state: 'hidden' });
+        await page.getByText('The measured conversation lane is ready.').waitFor();
+      }
+      if (scenario.name === 'conversation' && sidebar === 'expanded') {
+        const folder = page.getByTestId('sidebar-project-folder').filter({ hasText: 'Alexandrie' });
+        await folder.getByRole('button').first().click({ button: 'right' });
+        await page.getByText('Copy path', { exact: true }).waitFor();
       }
     } catch (error) { const message = String(error?.message ?? error).split('\n')[0]; fail(label, message); console.error(`align: setup ${label}: ${message}`); }
     finally { off(); await context.close(); }

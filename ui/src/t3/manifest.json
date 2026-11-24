@@ -205,7 +205,8 @@
       "web/components/chat/DraftHeroHeadline.tsx": "стабильная пустая главная: проект HoH с постоянным id всегда показывает продуктовый вопрос без подписи scratch-проекта",
       "web/components/CommandPalette.tsx": "термин нового разговора: видимые действия палитры — New chat вместо New thread",
       "web/components/chat/runtimeModeConfig.ts": "режим доступа: только Supervised и Full access выбираются; Auto-accept edits и Auto видны как Coming Soon",
-      "web/components/chat/MessagesTimeline.logic.ts": "остановленный пользователем ход сохраняет подпись You stopped после перезапуска и после следующих ходов"
+      "web/components/chat/MessagesTimeline.logic.ts": "остановленный пользователем ход сохраняет подпись You stopped после перезапуска и после следующих ходов",
+      "client-runtime/state/projects.ts": "идентичность проекта HoH: No project определяется по id, даже если настоящий проект совпал с папкой запуска"
     },
     "switches": [
       [

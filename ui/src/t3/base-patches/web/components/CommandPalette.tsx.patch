@@ -34,3 +34,8 @@
        icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
        shortcutCommand: "chat.newWithoutProject",
        run: () => startScratchThread(scratchTargetEnvironmentId),
+@@ -2003,3 +2003,3 @@ function OpenCommandPaletteDialog(props: {
+     const existing = findProjectByPath(
+-      projects.filter((project) => project.environmentId === input.environmentId),
++      projects.filter((project) => project.environmentId === input.environmentId && project.id !== "hoh-project"),
+       cwd,

@@ -2001,7 +2001,7 @@ function OpenCommandPaletteDialog(props: {
     if (cwd.length === 0) return;
 
     const existing = findProjectByPath(
-      projects.filter((project) => project.environmentId === input.environmentId),
+      projects.filter((project) => project.environmentId === input.environmentId && project.id !== "hoh-project"),
       cwd,
     );
     if (existing) {

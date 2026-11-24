@@ -15,7 +15,7 @@ import {
 } from '~/components/ui/dialog';
 import { ComposerHandleContext } from '~/composerHandleContext';
 import { useQuietThreadShell } from '~/state/entities';
-import { closeQuickView, openQuickView, quickViewStore } from './quick-view-store';
+import { closeQuickView, openFullFromQuickView, openQuickView, quickViewStore } from './quick-view-store';
 import './quick-view.css';
 
 const ENVIRONMENT_ID = 'hoh-local';
@@ -80,14 +80,12 @@ export function QuickViewDialog() {
   const frameVariant = quickViewFrameVariant();
   const navigate = useNavigate();
   const title = thread?.title?.trim() || 'Conversation';
-  const openFullConversation = useCallback(async () => {
-    if (threadId === null) return;
-    await navigate({
+  const openFullConversation = useCallback(() => {
+    openFullFromQuickView((threadId) => { void navigate({
       to: '/$environmentId/$threadId',
       params: { environmentId: ENVIRONMENT_ID, threadId },
-    });
-    closeQuickView(false);
-  }, [navigate, threadId]);
+    }); });
+  }, [navigate]);
   // Embedded ChatView has no workspace chrome. If a timeline action needs it, continue in the full conversation.
   const parentPanel = useMemo(() => ({
     openToolDiff: () => { void openFullConversation(); },
