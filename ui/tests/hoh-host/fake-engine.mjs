@@ -43,7 +43,11 @@ export class FakeEngine {
     return event;
   }
   emitFrame(sessionId, frame) { this.notify('session.assistant-stream', { sessionId, frame }); }
-  emitStatus(sessionId, status) { this.notify('session.status', { sessionId, status }); }
+  emitStatus(sessionId, status) {
+    const session = this.store.get(sessionId);
+    if (session) session.runningRuntimeMode = status === 'running' ? (this.sessionAccess.get(sessionId) ?? session.runtimeMode ?? 'confirm') : null;
+    this.notify('session.status', { sessionId, status });
+  }
   askApproval(sessionId, approvalId, humanText) { this.notify('approval.pending', { approvalId, sessionId, risk: 'unassessed', humanText, expiresAt: this.clock + 60_000 }); }
   askQuestion(question) { for (const listener of this.questionListeners) listener(question); }
   notify(method, params) { for (const listener of this.listeners) listener({ method, params }); }
@@ -77,7 +81,7 @@ export class FakeEngine {
         const answer = { executor: params.executor, mode: this.access.mode, runtimeMode: this.access.mode, effective: { mode: this.access.mode, flags: [] }, selected: this.access.selected };
         const session = params.sessionId ? this.store.get(params.sessionId) : undefined;
         const chosen = params.sessionId ? (this.sessionAccess.get(params.sessionId) ?? session?.runtimeMode) : undefined;
-        return session?.executor || session?.model ? { ...answer, session: { executor: session.executor ?? 'claude', model: session.model, privacy: 'remote', mode: chosen === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? 'confirm', running: null, runningRuntimeMode: null, pending: false } } : answer;
+        return session?.executor || session?.model ? { ...answer, session: { executor: session.executor ?? 'claude', model: session.model, privacy: 'remote', mode: chosen === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? 'confirm', running: session.runningRuntimeMode ?? null, runningRuntimeMode: session.runningRuntimeMode ?? null, pending: !!session.runningRuntimeMode && session.runningRuntimeMode !== chosen } } : answer;
       }
       case 'hoh/executor/access/set':
         if (params.sessionId) {

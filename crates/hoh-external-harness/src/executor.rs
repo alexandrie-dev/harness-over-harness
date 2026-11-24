@@ -62,6 +62,7 @@ pub(crate) struct Shared {
     /// How each conversation's native session was started, while it runs; the one started last
     /// is the last entry. One entry per conversation: another chat's start does not replace it.
     pub launched: Mutex<Vec<(String, Launched)>>,
+    pub turn_access: Mutex<std::collections::HashMap<String, AccessMode>>,
 }
 
 /// The access mode and command-line switches a native session was started with.
@@ -72,6 +73,18 @@ pub(crate) struct Launched {
 }
 
 impl Shared {
+    pub(crate) fn set_turn_access(&self, session: &str, access: Option<AccessMode>) {
+        let mut turns = lock(&self.turn_access);
+        if let Some(access) = access {
+            turns.insert(session.to_owned(), access);
+        } else {
+            turns.remove(session);
+        }
+    }
+
+    pub(crate) fn turn_access(&self, session: &str) -> Option<AccessMode> {
+        lock(&self.turn_access).get(session).copied()
+    }
     /// The access mode the user chose for this harness.
     pub(crate) fn access(&self) -> AccessMode {
         self.choices.access(&self.name)

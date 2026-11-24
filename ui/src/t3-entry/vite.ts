@@ -118,6 +118,9 @@ export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [
     ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
     ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
+    ['    if (input.runtimeMode !== serverThread.runtimeMode) {', '    if (true) { // HoH: persist the composer choice even when the running projection is stale.'],
+    ['                      <ComposerSurface.Shell contextRow={showComposerContextStrip}>', `                      <ComposerSurface.Shell contextRow={showComposerContextStrip}>
+                        {isWorking && activeThread?.runtimeMode ? <div className="px-3 pt-1 text-xs text-muted-foreground" role="status">Active permissions: {({"approval-required":"Confirm", "auto-accept-edits":"Accept edits", "auto":"Auto", "full-access":"Full"} as Record<string, string>)[activeThread.runtimeMode] ?? activeThread.runtimeMode}{runtimeMode !== activeThread.runtimeMode ? <> · Next: {({"approval-required":"Confirm", "auto-accept-edits":"Accept edits", "auto":"Auto", "full-access":"Full"} as Record<string, string>)[runtimeMode] ?? runtimeMode}</> : null}</div> : null}`],
   ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
 }
 /** Боковая панель (HOH-41, состав раунда 12): верх — SidebarTop (New chat, Team с «+», Recent chats) вместо шапки T3 с поиском и значками;

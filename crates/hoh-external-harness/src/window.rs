@@ -171,8 +171,7 @@ impl Plugin for ExternalHarnessWindowPlugin {
                 async move { window.call(method, params).await }
             })?;
         }
-        // Bind effort and interaction to this message before the agent can dequeue it. Access
-        // itself is read again at turn start, matching the mode shown for the conversation.
+        // Bind effort, interaction and access to this message before it can be dequeued.
         let choices = window.service().choices().clone();
         let log = ctx.logger();
         deps.methods
@@ -724,7 +723,9 @@ impl Window {
             .shared(&name)
             .ok_or_else(|| format!("no external harness named \"{name}\""))?;
         let mode = shared.access_for(id.as_ref());
-        let running = shared.running_launch_of(id.as_ref()).map(|(mode, _)| mode);
+        let running = shared
+            .turn_access(id.as_ref())
+            .or_else(|| shared.running_launch_of(id.as_ref()).map(|(mode, _)| mode));
         Ok(ExecutorSessionAccess {
             executor: Some(name),
             model: model.map(|model| redact(&model)),

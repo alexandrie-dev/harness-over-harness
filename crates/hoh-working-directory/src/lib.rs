@@ -407,7 +407,32 @@ impl WorkingDirectoryService {
                 inner
                     .ctx
                     .waterfall(event, move |_| async move {
-                        tail.ensure_now(&owner, &control).await
+                        tail.ensure_now(&owner, &control, true).await
+                    })
+                    .await
+            })
+    }
+
+    /// Validate the selected directory without recovering to another directory when it is missing.
+    pub fn ensure_current(
+        &self,
+        agent: &impl AsLiveAgent,
+        signal: Option<&AbortSignal>,
+    ) -> impl Future<Output = Result<String, BoxError>> + Send + 'static {
+        let inner = self.inner.clone();
+        let owner = agent.live();
+        self.inner
+            .serialize(owner.clone(), signal, move |control| async move {
+                let event = WorkingDirectoryAccess {
+                    agent: owner.clone(),
+                    path: None,
+                    signal: control.clone(),
+                };
+                let tail = inner.clone();
+                inner
+                    .ctx
+                    .waterfall(event, move |_| async move {
+                        tail.ensure_now(&owner, &control, false).await
                     })
                     .await
             })
@@ -591,6 +616,7 @@ impl Inner {
         &self,
         agent: &Arc<dyn Agent>,
         control: &AbortSignal,
+        recover: bool,
     ) -> Result<String, BoxError> {
         let session = agent.session();
         let current = self.get(session);
@@ -628,6 +654,13 @@ impl Inner {
                 )?;
             }
             return Ok(current);
+        }
+        if !recover {
+            return Err(WorkingDirectoryError::new(
+                "working-directory: the selected directory is unavailable",
+                WorkingDirectoryErrorCode::Unavailable,
+            )
+            .into());
         }
         let original = session
             .header()

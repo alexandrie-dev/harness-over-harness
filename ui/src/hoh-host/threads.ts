@@ -156,6 +156,8 @@ export class ThreadModel {
   updatedAt: number;
   model: string;
   mode: HohAccessMode;
+  /** The mode captured for the active turn; mode remains the choice for the next turn. */
+  runningMode: HohAccessMode | null = null;
   executor: HohExecutor;
   /** Durable `approval/asked` can arrive before the native `approval.pending`; keep its exact id. */
   private readonly approvalDetails = new Map<string, { requestKind: string }>();
@@ -693,7 +695,7 @@ export class ThreadModel {
       thread: {
         createdBy: 'user', creationSource: 'web',
         id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-        modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
+        modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.engineRunning ? this.runningMode ?? this.mode : this.mode), interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
@@ -794,7 +796,7 @@ export class ThreadModel {
     return {
       createdBy: 'user', creationSource: 'web',
       id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-      modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
+      modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.engineRunning ? this.runningMode ?? this.mode : this.mode), interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
       branch: null, worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
       forkedFrom: null, activeProviderThreadId: null,

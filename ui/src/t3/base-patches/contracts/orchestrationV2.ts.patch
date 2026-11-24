@@ -1,0 +1,11 @@
+--- a/contracts/orchestrationV2.ts
++++ b/contracts/orchestrationV2.ts
+@@ -3386,6 +3386,8 @@
+   }),
+   Schema.Struct({
+     type: Schema.Literal("message.dispatch"),
++    runtimeMode: Schema.optional(RuntimeMode),
++    interactionMode: Schema.optional(ProviderInteractionMode),
+     notification: Schema.optional(OrchestrationV2Notification),
+     /** Sends this pending guest message; the server uses the guest's text, not `text`. */
+     guestMessageId: Schema.optional(GuestMessageId),

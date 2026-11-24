@@ -516,7 +516,7 @@ async fn commands_of(config: &ClaudeConfig, cwd: PathBuf) -> HarnessResult<Harne
         }
     };
     let args = commands_probe_args(config.setting_sources);
-    let sup = spawn(&spec(config, args, cwd.clone(), true)).await?;
+    let sup = spawn(&spec(config, args, cwd.clone(), true), None)?;
     let (session, _events, init) = ClaudeSession::start(
         sup,
         String::new(),
@@ -1027,17 +1027,18 @@ fn spec(config: &ClaudeConfig, args: Vec<String>, cwd: PathBuf, probe: bool) -> 
     }
 }
 
-async fn spawn(spec: &ProcessSpec) -> Result<Supervisor, HarnessFailure> {
+fn spawn(spec: &ProcessSpec, params: Option<&StartParams>) -> Result<Supervisor, HarnessFailure> {
     // A missing folder fails the launch with the same `NotFound` as a missing program.
     if let Some(cwd) = &spec.cwd
-        && !tokio::fs::metadata(cwd)
-            .await
-            .is_ok_and(|meta| meta.is_dir())
+        && !std::fs::metadata(cwd).is_ok_and(|meta| meta.is_dir())
     {
         return Err(HarnessFailure::new(
             code::IO,
             format!("Рабочая папка «{}» не найдена.", cwd.display()),
         ));
+    }
+    if let Some(params) = params {
+        hoh_external_harness::validate_launch_directory(params)?;
     }
     Supervisor::spawn(spec, SupervisorLimits::default(), None).map_err(|failure| {
         if failure.code == code::NOT_INSTALLED {
@@ -1150,7 +1151,7 @@ async fn discover_claude(config: &ClaudeConfig) -> (Discovery, VersionStatus) {
         }
     };
     let probe = spec(config, probe_args(), std::env::temp_dir(), true);
-    let started = match spawn(&probe).await {
+    let started = match spawn(&probe, None) {
         Ok(sup) => {
             ClaudeSession::start(
                 sup,
@@ -1309,7 +1310,7 @@ impl ExternalHarness for ClaudeHarness {
             let command_key = tokio::fs::canonicalize(&cwd)
                 .await
                 .unwrap_or_else(|_| cwd.clone());
-            let sup = spawn(&spec(&config, args, cwd.clone(), false)).await?;
+            let sup = spawn(&spec(&config, args, cwd.clone(), false), Some(&params))?;
             let (session, events, init) = ClaudeSession::start(
                 sup,
                 native.clone(),
@@ -1797,6 +1798,7 @@ mod tests {
         let params = StartParams {
             session_id: "s".into(),
             cwd: "/".into(),
+            cwd_identity: None,
             model: None,
             effort: Some("--dangerously-skip-permissions".into()),
             interaction_mode: InteractionMode::Default,

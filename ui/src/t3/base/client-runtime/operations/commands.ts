@@ -826,6 +826,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         creationSource: input.creationSource ?? "web",
         threadId: input.threadId,
         messageId: input.message.messageId,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
         ...(input.manualContinuationOfRunId === undefined
           ? {}
           : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
@@ -863,6 +865,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
       messageId: input.message.messageId,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
       text: input.message.text,
       ...(context ? { context } : {}),
       ...(input.message.idleCompaction === undefined

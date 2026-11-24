@@ -334,6 +334,7 @@ impl ExternalHarness for CodexHarness {
                 }
             };
             let cwd = PathBuf::from(&params.cwd);
+            hoh_external_harness::validate_launch_directory(&params)?;
             let supervisor = spawn(&config, &cwd)?;
             let resume = params.resume.as_ref().map(|id| String::from(id.clone()));
             let started = CodexSession::start(

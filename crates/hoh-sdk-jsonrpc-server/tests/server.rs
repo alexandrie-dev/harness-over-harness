@@ -996,7 +996,7 @@ async fn rechecks_agent_liveness_after_asynchronous_image_admission() {
 }
 
 #[tokio::test]
-async fn prompt_listener_follows_enqueue_order_when_image_preparation_is_delayed() {
+async fn prompt_listener_captures_choices_before_image_preparation() {
     use hoh_sdk_jsonrpc_server::{HohRpcMethodRegistry, HohRpcMethods};
     let h = Env::new().await;
     let registry = Arc::new(HohRpcMethodRegistry::default());
@@ -1021,23 +1021,17 @@ async fn prompt_listener_follows_enqueue_order_when_image_preparation_is_delayed
     });
     store.entered.notified().await;
     let b = h.server.handle_request("session/prompt", json!({"sessionId":"race","interactionMode":"default","contentBlocks":[{"type":"text","text":"second"}]})).await.unwrap();
-    assert_eq!(
-        lock(&heard).as_slice(),
-        [(
-            b["messageId"].as_str().unwrap().to_owned(),
-            json!("default")
-        )]
-    );
+    assert_eq!(lock(&heard).len(), 2);
     release.add_permits(1);
     let a = a.await.unwrap().unwrap();
     assert_eq!(
         lock(&heard).as_slice(),
         [
+            (a["messageId"].as_str().unwrap().to_owned(), json!("plan")),
             (
                 b["messageId"].as_str().unwrap().to_owned(),
                 json!("default")
             ),
-            (a["messageId"].as_str().unwrap().to_owned(), json!("plan")),
         ]
     );
     h.wait("race").await;

@@ -43,6 +43,33 @@ pub use executor::BINDING_RECORD;
 pub use harness::{ExternalHarness, HarnessResult, HarnessSession, Started};
 pub use stdio::{StdioHarness, StdioHarnessConfig};
 pub use supervisor::{ExitInfo, Frame, ProcessSpec, StderrSink, Supervisor, SupervisorLimits};
+
+/// Recheck the selected folder immediately before spawning a native executor.
+pub fn validate_launch_directory(params: &StartParams) -> Result<(), HarnessFailure> {
+    let Some(expected) = &params.cwd_identity else {
+        return Ok(());
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(&params.cwd).map_err(|_| {
+            HarnessFailure::new(
+                code::POLICY_UNAVAILABLE,
+                "Рабочая папка разговора недоступна",
+            )
+        })?;
+        if metadata.is_dir()
+            && metadata.dev().to_string() == expected.device
+            && metadata.ino().to_string() == expected.inode
+        {
+            return Ok(());
+        }
+    }
+    Err(HarnessFailure::new(
+        code::POLICY_UNAVAILABLE,
+        "Рабочая папка разговора была заменена",
+    ))
+}
 pub use window::{
     CHOICES_FILE, CODEX_SELECTION_FILE, ExternalHarnessWindowPlugin, SESSION_ACCESS_FILE,
 };
@@ -112,10 +139,13 @@ pub(crate) struct SessionAccessChoice {
     pub mode: AccessMode,
 }
 
-/// Message-specific effort and the access observed when the prompt was accepted. The turn uses
-/// the current conversation access at dequeue time; the stored value is retained only for
-/// compatibility with the prompt bookkeeping.
-type PromptSettings = VecDeque<(String, Option<String>, Option<AccessMode>)>;
+/// Message-specific effort and access captured when the prompt was accepted.
+type PromptSettings = VecDeque<(
+    String,
+    Option<String>,
+    Option<AccessMode>,
+    HashMap<String, AccessMode>,
+)>;
 
 #[derive(Default)]
 struct ServedPrompts {
@@ -203,9 +233,10 @@ impl Choices {
         let served = prompts.get_mut(session).expect("inserted above");
         let access =
             (!served.executor.is_empty()).then(|| self.access_for(&served.executor, session));
+        let defaults = lock(&self.access).clone();
         served
             .pending
-            .push_back((message.to_owned(), effort, access));
+            .push_back((message.to_owned(), effort, access, defaults));
     }
 
     /// The prompt settings for `message`, with older abandoned prompts dropped.
@@ -215,12 +246,18 @@ impl Choices {
         message: &str,
     ) -> Option<(Option<String>, Option<AccessMode>)> {
         let mut prompts = lock(&self.prompts);
-        let pending = &mut prompts.get_mut(session)?.pending;
-        let at = pending.iter().position(|(id, _, _)| id == message)?;
-        pending
-            .drain(..=at)
-            .next_back()
-            .map(|(_, effort, access)| (effort, access))
+        let served = prompts.get_mut(session)?;
+        let executor = served.executor.clone();
+        let pending = &mut served.pending;
+        let at = pending.iter().position(|(id, _, _, _)| id == message)?;
+        pending.remove(at).map(|(_, effort, access, defaults)| {
+            (
+                effort,
+                access
+                    .or_else(|| defaults.get(&executor).copied())
+                    .or(Some(AccessMode::Confirm)),
+            )
+        })
     }
 
     pub(crate) fn note_interaction(&self, session: &str, message: &str, mode: InteractionMode) {
@@ -241,6 +278,52 @@ impl Choices {
 #[cfg(test)]
 mod access_snapshot_tests {
     use super::{AccessMode, Choices, InteractionMode};
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_rejects_a_missing_or_replaced_directory() {
+        use std::os::unix::fs::MetadataExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("workspace");
+        std::fs::create_dir(&path).unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        let params = super::StartParams {
+            session_id: "chat".into(),
+            cwd: path.to_string_lossy().into_owned(),
+            cwd_identity: Some(hoh_working_directory::WorkingDirectoryRootIdentity {
+                device: metadata.dev().to_string(),
+                inode: metadata.ino().to_string(),
+            }),
+            model: None,
+            effort: None,
+            interaction_mode: InteractionMode::Default,
+            policy: Default::default(),
+            resume: None,
+        };
+        assert!(super::validate_launch_directory(&params).is_ok());
+        std::fs::rename(&path, temp.path().join("original")).unwrap();
+        assert!(super::validate_launch_directory(&params).is_err());
+        std::fs::create_dir(&path).unwrap();
+        assert!(super::validate_launch_directory(&params).is_err());
+    }
+
+    #[test]
+    fn out_of_order_preparation_keeps_each_messages_original_access() {
+        let choices = Choices::default();
+        choices.set_session_access("chat", "codex", AccessMode::Confirm);
+        choices.note_prompt("chat", "a", None);
+        choices.set_session_access("chat", "codex", AccessMode::Full);
+        choices.note_prompt("chat", "b", None);
+        choices.serve_prompts("chat", "codex");
+        assert_eq!(
+            choices.take_prompt("chat", "b"),
+            Some((None, Some(AccessMode::Full)))
+        );
+        assert_eq!(
+            choices.take_prompt("chat", "a"),
+            Some((None, Some(AccessMode::Confirm)))
+        );
+    }
 
     #[test]
     fn interaction_modes_remain_bound_when_preparation_finishes_out_of_order() {
@@ -293,7 +376,20 @@ mod access_snapshot_tests {
 
         assert_eq!(
             choices.take_prompt("chat-a", "message-a1"),
-            Some((Some("high".into()), None))
+            Some((Some("high".into()), Some(AccessMode::Confirm)))
+        );
+    }
+
+    #[test]
+    fn unbound_prompt_captures_the_provider_default_before_it_changes() {
+        let choices = Choices::default();
+        choices.set_access("claude", AccessMode::Full);
+        choices.note_prompt("chat", "a", None);
+        choices.set_access("claude", AccessMode::Confirm);
+        choices.serve_prompts("chat", "claude");
+        assert_eq!(
+            choices.take_prompt("chat", "a"),
+            Some((None, Some(AccessMode::Full)))
         );
     }
 }
@@ -340,6 +436,7 @@ impl ExternalHarnessesService {
             config: inner.config.clone(),
             choices: inner.choices.clone(),
             launched: Mutex::new(Vec::new()),
+            turn_access: Mutex::new(HashMap::new()),
         });
         let executor: Arc<dyn SessionExecutor> = Arc::new(ExternalExecutor(shared.clone()));
         ctx.try_effect(

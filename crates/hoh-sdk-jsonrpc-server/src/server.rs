@@ -642,6 +642,11 @@ impl HarnessSdkJsonRpcServer {
     ) -> Result<SessionPromptResult, BoxError> {
         self.assert_initialized()?;
         let message_id: MessageId = hoh_util_crypto::random_uuid().as_str().into();
+        // Capture the permission selected when the request is accepted, before attachment I/O
+        // can let a later access change overtake this message.
+        if let (Some(params), Some(methods)) = (params, self.inner.ctx.get::<HohRpcMethods>()) {
+            methods.prompted(session_id.as_ref(), message_id.as_ref(), params);
+        }
         let rec = self.get_or_create_session(session_id.clone()).await?;
         self.inner.lifetime.signal().throw_if_aborted()?;
         self.assert_live_agent(&rec, &session_id)?;
@@ -653,11 +658,6 @@ impl HarnessSdkJsonRpcServer {
             source: MessageSource::new("user"),
             id: message_id.clone(),
         };
-        // Register message-specific choices only once preparation is complete, immediately
-        // before enqueueing. Concurrent attachment preparation may finish out of order.
-        if let (Some(params), Some(methods)) = (params, self.inner.ctx.get::<HohRpcMethods>()) {
-            methods.prompted(session_id.as_ref(), message_id.as_ref(), params);
-        }
         rec.handle.agent.followup(message)?;
         Ok(SessionPromptResult {
             message_id: message_id.to_string(),

@@ -371,6 +371,8 @@ pub struct StartParams {
     pub session_id: String,
     pub cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd_identity: Option<hoh_working_directory::WorkingDirectoryRootIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// The effort level of the session, one of the harness's
     /// [`effort_levels`](crate::ExternalHarness::effort_levels); none: the harness's own.

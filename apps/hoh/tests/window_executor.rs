@@ -2240,6 +2240,66 @@ async fn replaced_working_directory_is_refused_before_native_executor_launch() {
     host.shutdown().await;
 }
 
+#[tokio::test]
+async fn missing_selected_directory_never_falls_back_to_the_original_folder() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.ok(
+        "session/working-directory/get",
+        json!({"sessionId": SESSION}),
+    )
+    .await;
+    let selected = workspace.root.path().join("selected-work");
+    std::fs::create_dir(&selected).unwrap();
+    let result = host
+        .privileged(
+            "session/working-directory/set",
+            json!({"sessionId": SESSION, "path": selected}),
+            "allowed-once",
+        )
+        .await;
+    assert!(result.get("error").is_none(), "{result}");
+    std::fs::remove_dir(&selected).unwrap();
+    host.turn(SESSION, "hello", None).await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "error", "{end}");
+    assert!(
+        end["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("папка")),
+        "{end}"
+    );
+    assert!(
+        workspace.sessions().is_empty(),
+        "executor fell back to the old folder"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_removed_directory_is_refused_even_when_the_native_process_is_idle() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.turn(SESSION, "hello", None).await;
+    assert_eq!(host.turn_end(SESSION)["kind"], "completed");
+    std::fs::rename(&workspace.folder, workspace.root.path().join("moved-work")).unwrap();
+    host.turn(SESSION, "hello", None).await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "error", "{end}");
+    assert!(
+        end["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("папка")),
+        "{end}"
+    );
+    assert_eq!(
+        workspace.prompts().len(),
+        1,
+        "the idle process must receive no second prompt"
+    );
+    host.shutdown().await;
+}
+
 /// Ревью i7, п. 1. «Новый чат в другой папке»: a new chat with Claude takes another folder before
 /// its first turn, the turn runs there; after that turn the folder is the conversation's own.
 #[tokio::test]
@@ -2998,7 +3058,7 @@ async fn t19_a_queued_prompt_runs_at_its_own_effort() {
 }
 
 #[tokio::test]
-async fn queued_turn_uses_the_current_visible_session_access() {
+async fn queued_turn_keeps_the_access_selected_when_it_was_accepted() {
     let workspace = Workspace::new();
     let mut host = engine_with_claude(&workspace, "confirm").await;
     let from = host.frames.len();
@@ -3013,8 +3073,6 @@ async fn queued_turn_uses_the_current_visible_session_access() {
             break frame;
         }
     };
-    host.set_session_access(SESSION, "full", "allowed-once")
-        .await;
     let id = host
         .send(
             "session/prompt",
@@ -3023,7 +3081,7 @@ async fn queued_turn_uses_the_current_visible_session_access() {
         .await;
     let (response, _) = host.response(&id, None).await;
     assert!(response["result"]["messageId"].is_string());
-    host.set_session_access(SESSION, "confirm", "allowed-once")
+    host.set_session_access(SESSION, "full", "allowed-once")
         .await;
     host.answer_approval(&request, Some("allowed-once")).await;
     while host.frames[from..]

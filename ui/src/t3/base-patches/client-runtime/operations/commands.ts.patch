@@ -1,0 +1,20 @@
+--- a/client-runtime/operations/commands.ts
++++ b/client-runtime/operations/commands.ts
+@@ -826,6 +826,8 @@
+         creationSource: input.creationSource ?? "web",
+         threadId: input.threadId,
+         messageId: input.message.messageId,
++        runtimeMode: input.runtimeMode,
++        interactionMode: input.interactionMode,
+         ...(input.manualContinuationOfRunId === undefined
+           ? {}
+           : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
+@@ -863,6 +865,8 @@
+       creationSource: input.creationSource ?? "web",
+       threadId: input.threadId,
+       messageId: input.message.messageId,
++      runtimeMode: input.runtimeMode,
++      interactionMode: input.interactionMode,
+       text: input.message.text,
+       ...(context ? { context } : {}),
+       ...(input.message.idleCompaction === undefined

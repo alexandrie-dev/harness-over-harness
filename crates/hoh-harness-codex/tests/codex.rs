@@ -37,6 +37,7 @@ fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
     StartParams {
         session_id: "hoh-session".into(),
         cwd: temp.path().to_string_lossy().into_owned(),
+        cwd_identity: None,
         model: Some("gpt-stub".into()),
         effort: Some("high".into()),
         interaction_mode: InteractionMode::Default,

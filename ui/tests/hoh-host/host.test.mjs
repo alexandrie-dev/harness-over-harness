@@ -98,6 +98,102 @@ test('the list: chats of the engine, newest first, with the completion marker', 
   await shell.until(value => value.kind === 'synchronized');
 });
 
+test('a built-in agent session remains in the inventory when it has no external binding', async () => {
+  const engine = new FakeEngine();
+  engine.seed('built-in', 'Built-in conversation', []);
+  const original = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'built-in')
+      return { session: { executor: null, runtimeMode: null } };
+    return original(method, params);
+  };
+  const { client, host } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  assert(snapshot.snapshot.threads.some(thread => thread.id === 'built-in'));
+  host.stop();
+});
+
+test('a running turn projects its captured mode rather than the next selected mode', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('mode-running', 'Running', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const original = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    const result = await original(method, params);
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'mode-running')
+      return { ...result, session: { ...result.session, runningRuntimeMode: 'confirm', pending: true } };
+    return result;
+  };
+  const { client, host } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'mode-running' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitStatus('mode-running', 'running');
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'approval-required');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'approval-required');
+  host.stop();
+});
+
+test('the window waits for the running mode before publishing a running turn', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('delayed-running', 'Running', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const original = engine.request.bind(engine);
+  let delay = false, release;
+  const gate = new Promise(resolve => { release = resolve; });
+  engine.request = async (method, params) => {
+    const result = await original(method, params);
+    if (delay && method === 'hoh/executor/access/get' && params.sessionId === 'delayed-running') {
+      await gate;
+      return { ...result, session: { ...result.session, runningRuntimeMode: 'confirm', pending: true } };
+    }
+    return result;
+  };
+  const { client, host } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'delayed-running' });
+  await stream.until(value => value.kind === 'snapshot');
+  await tick(50);
+  const before = stream.values.filter(value => value.kind === 'snapshot').length;
+  delay = true;
+  engine.emitStatus('delayed-running', 'running');
+  await tick(30);
+  assert.equal(stream.values.filter(value => value.kind === 'snapshot').length, before, 'the selected next mode must not be published as the running mode');
+  release();
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'approval-required');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'approval-required');
+  host.stop();
+});
+
+test('each message keeps its own permissions and interaction across overlapping sends', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('send-race', 'Race', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
+  const original = engine.request.bind(engine);
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const observed = [];
+  engine.request = async (method, params) => {
+    if (method === 'session/prompt' && params.sessionId === 'send-race') {
+      observed.push({ mode: engine.sessionAccess.get('send-race'), interaction: params.interactionMode });
+      if (observed.length === 1) { entered(); await gate; }
+    }
+    return original(method, params);
+  };
+  const { client, host } = connect(engine);
+  await client.call('orchestration.getThreadProjection', { threadId: 'send-race' });
+  const send = (id, runtimeMode, interactionMode) => client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: id, threadId: 'send-race', messageId: id,
+    text: id, attachments: [], runtimeMode, interactionMode,
+  });
+  const a = send('a', 'approval-required', 'plan');
+  await started;
+  const b = send('b', 'full-access', 'default');
+  await tick(30);
+  assert.equal(engine.sessionAccess.get('send-race'), 'confirm');
+  release();
+  await Promise.all([a, b]);
+  assert.deepEqual(observed, [{ mode: 'confirm', interaction: 'plan' }, { mode: 'full', interaction: 'default' }]);
+  host.stop();
+});
+
 test('a closed Codex chat uses the Codex default model before resume', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-codex-closed', 'Codex saved chat', []);
@@ -136,9 +232,64 @@ test('a notification-first conversation reads its exact engine mode before it is
   const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'full-access');
   assert.equal(snapshot.projection.thread.runtimeMode, 'full-access');
   session.runtimeMode = 'auto';
+  engine.emitStatus('notification-first', 'idle');
   engine.setStatus('ready');
   const refreshed = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'auto');
   assert.equal(refreshed.projection.thread.runtimeMode, 'auto', 'later inventory reconciles a notification-created row');
+  host.stop();
+});
+
+test('a late inventory response cannot replace a newer notification mode', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine);
+  await client.call('server.getConfig', {});
+  Object.assign(engine.seed('racing-list', 'Race', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const original = engine.request.bind(engine);
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const entered = new Promise(resolve => { started = resolve; });
+  let first = true;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'racing-list' && first) {
+      first = false; started(); await gate;
+      return { session: { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' } };
+    }
+    return original(method, params);
+  };
+  engine.setStatus('ready');
+  await entered;
+  engine.emitStatus('racing-list', 'running');
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'racing-list' });
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'full-access');
+  release(); await tick(50);
+  assert.equal(lastSnapshot(stream).projection.thread.runtimeMode, snapshot.projection.thread.runtimeMode);
+  host.stop();
+});
+
+test('a failed newer inventory read does not discard a pending exact notification mode', async () => {
+  const engine = new FakeEngine();
+  const { client, host } = connect(engine);
+  await client.call('server.getConfig', {});
+  Object.assign(engine.seed('failed-list', 'Race', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  const original = engine.request.bind(engine);
+  let release, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'failed-list') {
+      calls++;
+      if (calls === 1) await gate;
+      else throw new Error('inventory unavailable');
+    }
+    return original(method, params);
+  };
+  engine.emitFrame('failed-list', {});
+  engine.setStatus('ready');
+  await tick(30);
+  assert(calls >= 2);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'failed-list' });
+  release();
+  const snapshot = await stream.until(value => value.kind === 'snapshot');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'full-access');
   host.stop();
 });
 
@@ -981,7 +1132,9 @@ test('the mode chosen for a new thread is in effect for its first message: acces
     initialMessage: { messageId: 'm-w', text: 'hi', attachments: [] },
   });
   const order = engine.requests.map(r => r.method);
-  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', sessionId: 'thread-w', mode: 'full', runtimeMode: 'full' }]);
+  const accessWrites = engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params);
+  assert(accessWrites.length >= 1);
+  assert(accessWrites.every(params => JSON.stringify(params) === JSON.stringify({ executor: 'claude', sessionId: 'thread-w', mode: 'full', runtimeMode: 'full' })));
   assert(order.indexOf('hoh/executor/access/set') < order.indexOf('session/prompt'), 'the engine has the mode before Claude starts');
   assert.equal(launched.projection.thread.runtimeMode, 'full-access');
   // A started thread: T3 sends the switch right before the next message (ChatView `persistThreadSettingsForNextTurn`).

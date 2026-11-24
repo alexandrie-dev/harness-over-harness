@@ -534,8 +534,12 @@ impl ExternalAgent {
                     () = token.cancelled() => break,
                 }
             };
+            self.take_prompt_choices(&input);
+            self.shared
+                .set_turn_access(self.id.as_ref(), Some(lock(&self.state).access));
             self.emit_status(AgentStatus::Running);
             self.run_turn(&mut live, input, &abort).await;
+            self.shared.set_turn_access(self.id.as_ref(), None);
             self.end_turn();
         }
         if let Some(live) = live.take() {
@@ -616,7 +620,6 @@ impl ExternalAgent {
             self.emit_error(turn, step, error);
             return;
         }
-        self.take_prompt_choices(&input);
         let messages = input.messages;
         let mut log = TurnLog::new(self.clone(), turn, step, signal.clone());
         let outcome = self.native_turn(live, &mut log, &messages, &signal).await;
@@ -827,17 +830,16 @@ impl ExternalAgent {
                 lock(&self.state).control = None;
             }
         }
-        if live.is_some() {
-            return Ok(());
-        }
-        // Revalidate the recorded directory identity on the native-launch path itself. A
-        // pathname can have been replaced after the window last displayed it.
-        if let Some(directories) = self.ctx.get::<hoh_working_directory::WorkingDirectoryKey>() {
+        // Validate on every turn, even when an idle native process could be reused: a removed
+        // selected folder must never silently turn into the process's old directory.
+        let cwd_identity = if let Some(directories) =
+            self.ctx.get::<hoh_working_directory::WorkingDirectoryKey>()
+        {
             let owner = self
                 .as_dyn()
                 .ok_or_else(|| HarnessFailure::new(code::CLOSED, "agent is gone"))?;
             directories
-                .ensure(&owner, Some(signal))
+                .ensure_current(&owner, Some(signal))
                 .await
                 .map_err(|error| {
                     HarnessFailure::new(
@@ -845,6 +847,17 @@ impl ExternalAgent {
                         format!("Рабочая папка разговора недоступна или была заменена: {error}"),
                     )
                 })?;
+            Some(directories.root_identity(&self.session).ok_or_else(|| {
+                HarnessFailure::new(
+                    code::POLICY_UNAVAILABLE,
+                    "Не удалось проверить идентичность рабочей папки",
+                )
+            })?)
+        } else {
+            None
+        };
+        if live.is_some() {
+            return Ok(());
         }
         self.model.restart.store(false, Ordering::SeqCst);
         // Read at every start, from the user's choice in the window only.
@@ -863,6 +876,7 @@ impl ExternalAgent {
         let mut params = StartParams {
             session_id: self.id.to_string(),
             cwd: self.cwd(),
+            cwd_identity,
             model: lock(&self.model.model).clone(),
             effort: effort.clone(),
             interaction_mode,
@@ -922,7 +936,7 @@ impl ExternalAgent {
         let Some(prompt) = input.messages.last().filter(|_| input.last_from_next_turn) else {
             return;
         };
-        let (named, _access) = self
+        let (named, access) = self
             .shared
             .choices
             .take_prompt(self.id.as_ref(), prompt.id.as_ref())
@@ -945,9 +959,8 @@ impl ExternalAgent {
         });
         let mut state = lock(&self.state);
         state.effort = effort;
-        // The UI displays one current access mode for the conversation. A queued message must
-        // therefore use the current choice at the start of its turn, not an older snapshot.
-        state.access = self.shared.access_for(self.id.as_ref());
+        // Unknown external bindings are never widened to a later global choice.
+        state.access = access.unwrap_or(AccessMode::Confirm);
         drop(state);
         if let Some(mode) = self
             .shared
