@@ -1,3 +1,4 @@
+import { FolderTrust as HohFolderTrust } from "../../../../../t3-entry/hoh-screens/FolderTrust";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -257,6 +258,7 @@ export const ChatHeader = memo(function ChatHeader({
       )}
       onContextMenu={handleHeaderContextMenu}
     >
+      <HohFolderTrust threadId={activeThreadId} fallbackCwd={activeProjectCwd} isServerThread={isServerThread} />
       <WorkspaceBreadcrumb
         ariaLabel={gt("Thread breadcrumb")}
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"

@@ -54,6 +54,20 @@ fn main() {
     if let Some(file) = env("STUB_ARGS_FILE") {
         let _ = std::fs::write(file, args.join("\n"));
     }
+    // A controlled MCP fixture: the stub mimics project MCP discovery only in this test mode.
+    if env("STUB_MODE").as_deref() == Some("test-project-mcp")
+        && args.windows(2).any(|pair| {
+            pair[0] == "--setting-sources" && pair[1].split(',').any(|source| source == "project")
+        })
+        && !args.iter().any(|arg| arg == "--strict-mcp-config")
+        && let Ok(bytes) = std::fs::read(".mcp.json")
+        && let Ok(config) = serde_json::from_slice::<Value>(&bytes)
+        && let Some(program) = config
+            .pointer("/mcpServers/project/command")
+            .and_then(Value::as_str)
+    {
+        let _ = std::process::Command::new(program).status();
+    }
     let value_of = |flag: &str| {
         args.iter()
             .position(|arg| arg == flag)

@@ -112,6 +112,10 @@ pub enum Request {
     ExecutorAccessGet(ExecutorAccessGetParams),
     #[serde(rename = "hoh/executor/access/set")]
     ExecutorAccessSet(ExecutorAccessSetParams),
+    #[serde(rename = "hoh/executor/trust/get")]
+    ExecutorTrustGet(ExecutorTrustGetParams),
+    #[serde(rename = "hoh/executor/trust/set")]
+    ExecutorTrustSet(ExecutorTrustSetParams),
     #[serde(rename = "hoh/executor/commands")]
     ExecutorCommands(ExecutorCommandsParams),
     #[serde(rename = "hoh/workspace/entries")]
@@ -179,6 +183,8 @@ impl Request {
             Self::ExecutorSelect(_) => "hoh/executor/select",
             Self::ExecutorAccessGet(_) => "hoh/executor/access/get",
             Self::ExecutorAccessSet(_) => "hoh/executor/access/set",
+            Self::ExecutorTrustGet(_) => "hoh/executor/trust/get",
+            Self::ExecutorTrustSet(_) => "hoh/executor/trust/set",
             Self::ExecutorCommands(_) => "hoh/executor/commands",
             Self::WorkspaceEntries(_) => "hoh/workspace/entries",
             Self::WorkspaceAdd(_) => "hoh/workspace/add",
@@ -279,6 +285,8 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/executor/select",
     "hoh/executor/access/get",
     "hoh/executor/access/set",
+    "hoh/executor/trust/get",
+    "hoh/executor/trust/set",
     "hoh/executor/commands",
     "hoh/workspace/entries",
     "hoh/workspace/add",
@@ -364,6 +372,8 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/executor/select" => admit::<ExecutorSelectParams>(value),
         "hoh/executor/access/get" => admit::<ExecutorAccessGetParams>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetParams>(value),
+        "hoh/executor/trust/get" => admit::<ExecutorTrustGetParams>(value),
+        "hoh/executor/trust/set" => admit::<ExecutorTrustSetParams>(value),
         "hoh/executor/commands" => admit::<ExecutorCommandsParams>(value),
         "hoh/workspace/entries" => admit::<WorkspaceEntriesParams>(value),
         "hoh/workspace/add" => admit::<WorkspaceAddParams>(value),
@@ -433,6 +443,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/executor/select" => admit::<ExecutorSelection>(value),
         "hoh/executor/access/get" => admit::<ExecutorAccessGetResult>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetResult>(value),
+        "hoh/executor/trust/get" | "hoh/executor/trust/set" => admit::<ExecutorTrustResult>(value),
         "hoh/executor/commands" => admit::<ExecutorCommandsResult>(value),
         "hoh/workspace/entries" => admit::<WorkspaceEntriesResult>(value),
         "hoh/workspace/add" => admit::<WorkspaceAddResult>(value),
@@ -1128,6 +1139,18 @@ pub fn schemas() -> Vec<(String, Value)> {
             schema_for!(ExecutorAccessSetResult),
         ),
         (
+            "ExecutorTrustGet",
+            "hoh/executor/trust/get",
+            schema_for!(ExecutorTrustGetParams),
+            schema_for!(ExecutorTrustResult),
+        ),
+        (
+            "ExecutorTrustSet",
+            "hoh/executor/trust/set",
+            schema_for!(ExecutorTrustSetParams),
+            schema_for!(ExecutorTrustResult),
+        ),
+        (
             "ExecutorCommands",
             "hoh/executor/commands",
             schema_for!(ExecutorCommandsParams),
@@ -1270,6 +1293,10 @@ enum RequestDecode {
     ExecutorAccessGet(ExecutorAccessGetParams),
     #[serde(rename = "hoh/executor/access/set")]
     ExecutorAccessSet(ExecutorAccessSetParams),
+    #[serde(rename = "hoh/executor/trust/get")]
+    ExecutorTrustGet(ExecutorTrustGetParams),
+    #[serde(rename = "hoh/executor/trust/set")]
+    ExecutorTrustSet(ExecutorTrustSetParams),
     #[serde(rename = "hoh/executor/commands")]
     ExecutorCommands(ExecutorCommandsParams),
     #[serde(rename = "hoh/workspace/entries")]
@@ -1329,6 +1356,7 @@ privileged_methods! {
     "hoh/model/probe" => |p:&Value| p.get("baseUrl").is_some(),
     "hoh/model/key/set" => |_:&Value| true,
     "hoh/settings/rules/set" => |_:&Value| true,
+    "hoh/executor/trust/set" => |_:&Value| true,
     "hoh/executor/access/set" => |_:&Value| true,
     "hoh/executor/select" => |_:&Value| true,
     "hoh/workspace/add" => |_:&Value| true,

@@ -10,6 +10,21 @@ pub(crate) const HOST_SESSION: &str = "host";
 /// Text shown to the user for one privileged method call; `Err` refuses malformed calls.
 pub fn method_human_text(method: &str, params: &Value) -> Result<String, String> {
     match method {
+        "hoh/executor/trust/set" => {
+            let request: hoh_protocol::ExecutorTrustSetParams =
+                serde_json::from_value(params.clone()).map_err(|_| "invalid folder trust")?;
+            Ok(if request.trust {
+                format!(
+                    "Доверять настройкам Claude в папке {}? Они могут запускать программы.",
+                    quoted(&request.cwd)
+                )
+            } else {
+                format!(
+                    "Отозвать доверие к настройкам Claude в папке {}?",
+                    quoted(&request.cwd)
+                )
+            })
+        }
         "session/working-directory/set" => {
             let request: hoh_protocol::SessionWorkingDirectorySetParams =
                 serde_json::from_value(params.clone()).map_err(|_| "invalid working directory")?;

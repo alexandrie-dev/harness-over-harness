@@ -29,10 +29,21 @@ pub(crate) fn append_disabled_channels(
     cwd: &Path,
     expected: Option<[u64; 2]>,
 ) {
-    let Some(settings) = disabled_channel_settings_with_identity(extra_env, cwd, expected) else {
+    let Some(settings) = disabled_channel_settings_for_sources(extra_env, cwd, expected, true)
+    else {
         return;
     };
     args.extend(["--settings".to_owned(), settings]);
+}
+
+pub(crate) fn append_disabled_user_channels(
+    args: &mut Vec<String>,
+    extra_env: &[(String, String)],
+    cwd: &Path,
+) {
+    if let Some(settings) = disabled_channel_settings_for_sources(extra_env, cwd, None, false) {
+        args.extend(["--settings".to_owned(), settings]);
+    }
 }
 
 #[cfg(test)]
@@ -40,15 +51,37 @@ fn disabled_channel_settings(extra_env: &[(String, String)], cwd: &Path) -> Opti
     disabled_channel_settings_with_identity(extra_env, cwd, None)
 }
 
+#[cfg(test)]
 fn disabled_channel_settings_with_identity(
     extra_env: &[(String, String)],
     cwd: &Path,
     expected: Option<[u64; 2]>,
 ) -> Option<String> {
+    disabled_channel_settings_for_sources(extra_env, cwd, expected, true)
+}
+
+fn disabled_channel_settings_for_sources(
+    extra_env: &[(String, String)],
+    cwd: &Path,
+    expected: Option<[u64; 2]>,
+    project: bool,
+) -> Option<String> {
     let home = env_path(extra_env, "HOME");
     let config_dir = env_path(extra_env, "CLAUDE_CONFIG_DIR")
         .or_else(|| home.as_ref().map(|home| home.join(".claude")))?;
-    let effective = enabled_plugins_with_identity(&config_dir, cwd, expected);
+    let effective = if project {
+        enabled_plugins_with_identity(&config_dir, cwd, expected)
+    } else {
+        let mut enabled = BTreeMap::new();
+        let uncertain = merge_enabled(&config_dir.join("settings.json"), &mut enabled);
+        EffectivePlugins {
+            ids: enabled
+                .into_iter()
+                .filter_map(|(id, on)| on.then_some(id))
+                .collect(),
+            uncertain,
+        }
+    };
     let registry = read_json(&config_dir.join("plugins/installed_plugins.json"));
     let mut candidates = effective.ids;
     if effective.uncertain {

@@ -16,11 +16,13 @@ declare global {
     __HOH_T3_TEST_ENGINE__?: HohEngineLike;
     __HOH_T3_TEST_REQUESTS__?: { method: string; payload: unknown }[];
     __TAURI_INTERNALS__?: unknown;
+    __HOH_TRUST_ENGINE__?: HohEngineLike;
   }
 }
 
 const testEngine = !window.__TAURI_INTERNALS__ ? window.__HOH_T3_TEST_ENGINE__ : undefined;
 const engine = testEngine ?? tauriEngine();
+window.__HOH_TRUST_ENGINE__ = engine;
 installHohHost({
   engine,
   ...(testEngine ? { onRequest: (method: string, payload: unknown) => window.__HOH_T3_TEST_REQUESTS__?.push({ method, payload }) } : {}),

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutorTrustResult",
+  "type": "object",
+  "properties": {
+    "executor": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "trusted": {
+      "type": "boolean"
+    },
+    "changed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "executor",
+    "cwd",
+    "trusted",
+    "changed"
+  ],
+  "x-method": "hoh/executor/trust/get"
+}

@@ -242,7 +242,7 @@ async fn the_slot_mode_decides_even_when_the_configuration_says_full() {
     );
     assert_eq!(
         flag_value(&args, "--setting-sources"),
-        Some("user,project,local"),
+        Some("user"),
         "{args:?}"
     );
     assert!(
@@ -369,18 +369,18 @@ async fn the_launch_flags_are_the_flags_the_process_gets() {
     let words = |flags: Vec<String>| flags.join(" ");
     assert_eq!(
         words(confirm(CONFIRM_POLICY)),
-        "--permission-mode default --setting-sources user,project,local \
+        "--permission-mode default --setting-sources user \
          --permission-prompt-tool stdio"
     );
     assert_eq!(
         words(full(FULL_POLICY)),
-        "--permission-mode bypassPermissions --setting-sources user,project,local \
+        "--permission-mode bypassPermissions --setting-sources user \
          --permission-prompt-tool stdio --allow-dangerously-skip-permissions"
     );
     // Full does not widen a read-only session.
     assert_eq!(
         words(full(READ_ONLY_POLICY)),
-        "--permission-mode dontAsk --setting-sources user,project,local --tools \
+        "--permission-mode dontAsk --setting-sources user --tools \
          Read,Glob,Grep,LS,NotebookRead,TodoWrite"
     );
     slot.close().await;
@@ -599,10 +599,9 @@ impl Window {
     }
 }
 
-/// The human's settings and the working folder's by default (as T3, HOH-40); none of them when
-/// the profile says `isolated`.
+/// Without folder trust, only user settings apply; the isolated profile reads none.
 const SOURCES: [(&str, &[&str]); 2] = [
-    ("{}", &["--setting-sources", "user,project,local"]),
+    ("{}", &["--setting-sources", "user"]),
     (
         r#"{"settingSources":"isolated"}"#,
         &["--setting-sources", "", "--strict-mcp-config"],
