@@ -1345,11 +1345,16 @@ export class HohHost {
 
   /** A cached conversation can be opened before the desktop transport finishes connecting. */
   private async readThreadHistory(thread: ThreadModel) {
+    const retryable = (error: unknown) => {
+      const { code } = hostFailure(error);
+      // The desktop bridge reports queue saturation and send failures as `failed`.
+      return code === 'connecting' || code === 'failed';
+    };
     for (let attempt = 0; ; attempt++) {
       try {
         try { await this.engine.request('session/resume', { sessionId: thread.id }); }
         catch (error) {
-          if (hostFailure(error).code === 'connecting') throw error;
+          if (retryable(error)) throw error;
           // Already open, or recoverable as a read-only log.
         }
         let afterSeq: number | undefined;
@@ -1361,7 +1366,7 @@ export class HohHost {
           afterSeq = page.nextSeq;
         }
       } catch (error) {
-        if (this.stopped || attempt >= this.loadRetries || hostFailure(error).code !== 'connecting') throw error;
+        if (this.stopped || attempt >= this.loadRetries || !retryable(error)) throw error;
         await new Promise<void>(resolve => setTimeout(resolve, this.loadRetryMs));
         if (this.stopped) throw error;
       }

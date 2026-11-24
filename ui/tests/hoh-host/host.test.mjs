@@ -230,6 +230,96 @@ test('a new turn is unknown until its own launch, rather than borrowing the prev
   host.stop();
 });
 
+function connectColdHistory(engine, threadId, options) {
+  const { title, updatedAt } = engine.store.get(threadId);
+  const storage = {
+    getItem: key => key === mod.host.STORAGE_KEY
+      ? JSON.stringify({ version: 2, sessions: [{ id: threadId, title, createdAt: updatedAt, updatedAt }] })
+      : null,
+    setItem() {},
+  };
+  // Cached rows can open while session/list is pending. Keep the background Home scan out of
+  // the request count so these tests measure the cold subscription's own retry budget.
+  const request = engine.request.bind(engine);
+  const pendingList = new Promise(() => {});
+  engine.request = (method, params) => method === 'session/list' ? pendingList : request(method, params);
+  return connect(engine, { ...options, storage });
+}
+
+test('cold history retries temporary bridge failures and deduplicates replayed events and approvals', async () => {
+  const id = 'history-overload';
+  const engine = new FakeEngine();
+  const user = { id: 'first-message', source: { kind: 'user' }, content: [{ type: 'text', text: 'Existing question' }] };
+  const session = engine.seed(id, 'Existing chat', [['user/message', user], ['turn/start', { turn: 1 }]]);
+  for (let i = session.events.length; i < 1000; i++) engine.persist(id, 'padding', {});
+  engine.persist(id, 'assistant/message', { turn: 1, step: 1, message: { id: 'answer', content: [{ type: 'text', text: 'Recovered answer' }] } });
+
+  const originalRequest = engine.request.bind(engine);
+  const errors = [
+    { code: 'failed', message: 'Помощник занят. Повторите запрос позже' },
+    { code: 'failed', message: 'Помощник недоступен' },
+  ];
+  let firstPages = 0;
+  let followingPages = 0;
+  engine.request = async (method, params) => {
+    if (method !== 'session/events' || params.sessionId !== id) return originalRequest(method, params);
+    if (params.afterSeq === undefined) {
+      firstPages++;
+    } else if (followingPages++ < errors.length) {
+      engine.notify('session.event', { sessionId: id, event: session.events[0] });
+      engine.askApproval(id, 'approval-during-retry', 'Allow once?');
+      throw errors[followingPages - 1];
+    }
+    return originalRequest(method, params);
+  };
+  const { client, host } = connectColdHistory(engine, id, { loadRetries: 2, loadRetryMs: 5 });
+  try {
+    const shell = await client.stream('orchestration.subscribeShell', { requestCompletionMarker: true });
+    await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(row => row.id === id));
+    const stream = await client.stream('orchestration.subscribeThread', { threadId: id, requestCompletionMarker: true });
+    await stream.until(value => value.kind === 'synchronized' || stream.exit !== undefined);
+    assert.equal(stream.exit, undefined, JSON.stringify(stream.exit));
+    const { projection } = lastSnapshot(stream);
+    assert.equal(projection.messages.filter(message => message.role === 'user' && message.text === 'Existing question').length, 1);
+    assert.equal(projection.messages.filter(message => message.role === 'assistant' && message.text === 'Recovered answer').length, 1);
+    assert.equal(projection.runtimeRequests.filter(request => request.id === 'approval-during-retry').length, 1);
+    assert.equal(projection.turnItems.filter(item => item.requestId === 'approval-during-retry').length, 1);
+    assert.equal(followingPages, 3);
+    assert.equal(firstPages, 3, 'each failed historical read replays an already applied page');
+  } finally {
+    host.stop();
+    client.close();
+  }
+});
+
+test('cold history stops retrying when the read budget is exhausted', async () => {
+  const id = 'history-still-unavailable';
+  const engine = new FakeEngine();
+  Object.assign(engine.seed(id, 'Existing chat', []), { executor: undefined });
+  const originalRequest = engine.request.bind(engine);
+  let failures = 0;
+  engine.request = async (method, params) => {
+    if (method === 'session/events' && params.sessionId === id) {
+      if (engine.open.has(id)) failures++;
+      throw { code: 'failed', message: 'Помощник недоступен' };
+    }
+    return originalRequest(method, params);
+  };
+  const { client, host } = connectColdHistory(engine, id, { loadRetries: 2, loadRetryMs: 10 });
+  try {
+    const shell = await client.stream('orchestration.subscribeShell', {});
+    await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(row => row.id === id));
+    const stream = await client.stream('orchestration.subscribeThread', { threadId: id, requestCompletionMarker: true });
+    await stream.until(() => stream.exit !== undefined);
+    assert.equal(stream.exit._tag, 'Failure');
+    assert.equal(failures, 3, 'one attempt and two retries');
+    assert(!stream.values.some(value => value.kind === 'synchronized'));
+  } finally {
+    host.stop();
+    client.close();
+  }
+});
+
 test('a cold conversation publishes an approval even while its access read never returns', async () => {
   const engine = new FakeEngine();
   engine.seed('cold-pending', 'Cold pending', []);

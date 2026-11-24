@@ -179,7 +179,10 @@ echo "Follow the select Codex -> command -> approval -> response -> Stop scenari
 
 run_window() {
   local run=$1 rc=0
-  setsid dbus-run-session -- env \
+  # The private bus and everything it activates (portal, keyring) get the isolated runtime dir too:
+  # the outer environment carries XDG_RUNTIME_DIR=/run/user/1000 (rule "звук и шина", lead 24.11).
+  setsid env XDG_RUNTIME_DIR="$OUTPUT/runtime" PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=/nonexistent \
+    GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 dbus-run-session -- env \
     DISPLAY="$QA_DISPLAY" HOME="$REAL_HOME" \
     XDG_CONFIG_HOME="$OUTPUT/config" XDG_CACHE_HOME="$OUTPUT/cache" \
     XDG_DATA_HOME="$OUTPUT/data" XDG_STATE_HOME="$OUTPUT/state" \

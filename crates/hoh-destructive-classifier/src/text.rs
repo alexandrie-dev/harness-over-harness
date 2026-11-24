@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::classify::{GitKind, Risk, Source};
+use crate::classify::{GitKind, RestoreSource, Risk, Source};
 
 const MAX_NAMES: usize = 4;
 const MAX_EXPLAINED_NAMES: usize = 20;
@@ -17,8 +17,8 @@ const MAX_JUSTIFICATION_CHARS: usize = 1500;
 const OUTSIDE: &str = "The assistant asks to work outside its folder";
 /// Where an escalation's explanation sends the reader for the assistant's own reasons.
 const JUSTIFICATION_HINT: &str = "See details for the assistant’s justification";
-/// After a question that deletes files: they cannot be brought back.
-const NO_UNDO: &str = ". Deleted files won’t go to the trash and cannot be recovered";
+/// Shell and Git removal do not use the desktop trash.
+const NO_UNDO: &str = ". Removed files bypass the trash and may be unrecoverable";
 
 pub struct Question {
     /// Becomes `humanText`: one line, what will happen and what cannot be undone.
@@ -50,7 +50,10 @@ fn drops_files(risks: &[Risk]) -> bool {
             r,
             Risk::Delete { .. }
                 | Risk::Git {
-                    kind: GitKind::Clean | GitKind::Remove,
+                    kind: GitKind::Clean
+                        | GitKind::CleanIgnored
+                        | GitKind::CleanWithIgnored
+                        | GitKind::Remove,
                     ..
                 }
         )
@@ -63,7 +66,9 @@ fn drops_files(risks: &[Risk]) -> bool {
 pub fn escalation_question(risks: &[Risk], command: &str, justification: &str) -> Question {
     let wording = |limit: usize| {
         let mut text = if risks.is_empty() {
-            format!("{OUTSIDE}: it can read and change any file on this computer")
+            format!(
+                "{OUTSIDE}: it may read and change files outside its folder with the current user’s permissions"
+            )
         } else {
             format!("{OUTSIDE}: {}", phrases(risks, limit).join("; "))
         };
@@ -97,7 +102,7 @@ pub fn escalation_question(risks: &[Risk], command: &str, justification: &str) -
 }
 
 /// The question for a command (or a file change) that may delete or overwrite files: the action
-/// first, then the folder it runs in, then that deleted files cannot be brought back.
+/// first, then the folder it runs in and the risk of losing deleted files.
 pub fn question(risks: &[Risk], command: &str, cwd: Option<&Path>) -> Question {
     let folder = cwd.and_then(folder_name);
     let wording = |limit: usize| {
@@ -130,55 +135,77 @@ fn phrase(risk: &Risk, limit: usize) -> String {
             folders,
             source,
         } => delete_phrase(names, *folders, *source, limit),
-        Risk::Truncate { names } => match names.len() {
-            0 => "empty files and discard their contents".to_owned(),
-            _ => format!(
-                "empty {} and discard the previous contents",
+        Risk::Truncate { names } => {
+            let files = if names.is_empty() {
+                "files".to_owned()
+            } else {
                 list(names, limit)
-            ),
-        },
+            };
+            format!("Resize {files}. If the files shrink, data past the new size is discarded")
+        }
         Risk::Overwrite { names, checked } => overwrite_phrase(names, *checked, limit),
-        Risk::Patch { names } => match names.len() {
-            0 => "apply a patch and overwrite the affected files, discarding their previous contents".to_owned(),
-            1 => format!("apply a patch and overwrite {}, discarding its previous contents", list(names, limit)),
-            _ => format!("apply a patch and overwrite {}, discarding their previous contents", list(names, limit)),
-        },
-        Risk::Extract { archive } => match archive {
-            Some(name) => format!(
-                "extract archive {} and overwrite files with matching names, discarding their previous contents",
-                list(std::slice::from_ref(name), limit)
-            ),
-            None => "extract an archive and overwrite files with matching names, discarding their previous contents".to_owned(),
-        },
+        Risk::MoveOverwrite {
+            sources,
+            names,
+            checked,
+        } => {
+            let source = if sources.is_empty() {
+                "files".to_owned()
+            } else {
+                list(sources, limit)
+            };
+            format!(
+                "Move {source} to a new location. This can {}",
+                overwrite_phrase(names, *checked, limit)
+            )
+        }
+        Risk::Patch { names } => {
+            let files = if names.is_empty() {
+                String::new()
+            } else {
+                format!(" to {}", list(names, limit))
+            };
+            format!(
+                "Apply a patch{files}. It may change or remove existing files and discard their previous contents"
+            )
+        }
+        Risk::Extract { archive } => {
+            let archive = archive.as_ref().map_or_else(
+                || "an archive".to_owned(),
+                |name| format!("archive {}", list(std::slice::from_ref(name), limit)),
+            );
+            format!(
+                "Extract {archive}. Existing destination files with matching paths may be replaced"
+            )
+        }
         Risk::Git { kind, names } => git_phrase(*kind, names, limit),
         Risk::Opaque(what) => format!(
             "run an action that cannot be checked in advance ({what}). It may delete or overwrite files"
         ),
         Risk::Unparsable => {
-            "run a command that could not be parsed. It may delete or overwrite files"
-                .to_owned()
+            "run a command that could not be parsed. It may delete or overwrite files".to_owned()
         }
     }
 }
 
 fn delete_phrase(names: &[String], folders: bool, source: Source, limit: usize) -> String {
     match source {
-        Source::Find => "delete all files found by find".to_owned(),
-        Source::Xargs => "delete files listed by xargs".to_owned(),
-        Source::Sync => {
-            "delete destination files missing from the source (rsync --delete)".to_owned()
-        }
+        Source::Find => "delete paths selected by the removal action in find".to_owned(),
+        Source::Xargs => "delete paths passed to the removal command by xargs".to_owned(),
+        Source::Sync => "sync files with rsync. The deletion options may remove destination paths".to_owned(),
+        Source::SyncSender => "transfer files with rsync and remove successfully duplicated files from the sender".to_owned(),
+        Source::SyncBoth => "sync files with rsync. This can remove successfully duplicated files from the sender and remove paths at the destination".to_owned(),
         Source::Listed if names.is_empty() => "delete files".to_owned(),
         Source::Listed => {
             let patterns = names.iter().any(|n| n.contains(['*', '?', '[', '(']));
             if patterns {
                 format!(
-                    "delete files matching names and patterns: {}",
+                    "delete paths matching the listed names and patterns: {}",
                     list(names, limit)
                 )
             } else if folders {
                 format!(
-                    "delete {} {} and their contents: {}",
+                    "delete {} {}: {}. With recursive deletion, directories and their contents can be removed",
                     names.len(),
                     if names.len() == 1 { "entry" } else { "entries" },
                     list(names, limit)
@@ -197,17 +224,18 @@ fn delete_phrase(names: &[String], folders: bool, source: Source, limit: usize) 
 
 fn overwrite_phrase(names: &[String], checked: bool, limit: usize) -> String {
     if names.is_empty() {
-        return "overwrite files whose names are only known at runtime".to_owned();
+        return "overwrite existing destination files. Their names are determined at runtime"
+            .to_owned();
     }
     let noun = if names.len() == 1 { "file" } else { "files" };
     if checked {
         format!(
-            "overwrite {noun} {} and discard the previous contents",
+            "overwrite {noun} {}. Previous contents may be lost",
             list(names, limit)
         )
     } else {
         format!(
-            "overwrite {noun} {} if already present and discard the previous contents. Existence could not be checked",
+            "overwrite {noun} {} if present. Previous contents may be lost",
             list(names, limit)
         )
     }
@@ -220,12 +248,35 @@ fn git_phrase(kind: GitKind, names: &[String], limit: usize) -> String {
         format!(": {}", list(names, limit))
     };
     match kind {
-        GitKind::Clean => "delete untracked Git files".to_owned(),
-        GitKind::ResetHard => "reset to the last commit and discard uncommitted changes".to_owned(),
-        GitKind::Checkout | GitKind::Restore => {
-            format!("restore the committed version of files{files} and discard uncommitted changes")
+        GitKind::Clean => format!("Clean the working tree by deleting selected untracked paths{files}. Ignored paths are normally spared"),
+        GitKind::CleanIgnored => format!("Clean the working tree by deleting selected ignored paths{files}"),
+        GitKind::CleanWithIgnored => format!("Clean the working tree by deleting selected untracked paths{files}, which can include ignored paths"),
+        GitKind::ResetHard => "Reset the current branch or detached HEAD, the index, and the working tree to the chosen commit (HEAD by default). Discard staged and working-tree changes. Untracked paths in the way may be overwritten or removed".to_owned(),
+        GitKind::ResetUnknown => "Run git reset with options determined at runtime. Depending on those options, it can move HEAD, change the index, and discard working-tree changes".to_owned(),
+        GitKind::Checkout => format!("Check out selected paths from the Git index{files}, overwriting the working copies"),
+        GitKind::CheckoutTree => format!("Check out selected paths from the specified Git tree{files}, replacing their index entries and working copies"),
+        GitKind::CheckoutPaths => format!("Check out selected paths{files}. Depending on the source and options, this can replace working copies and index entries"),
+        GitKind::CheckoutUnknown => format!("Run git checkout with the requested options{files}. It may switch branches or replace paths in the index or working tree and discard local changes. A forced switch may remove untracked paths in the way"),
+        GitKind::SwitchDiscard => "Switch to the selected branch or commit and reset the index and working tree to match. Local changes are discarded, and untracked paths in the way may be removed".to_owned(),
+        GitKind::Restore => format!("Restore selected paths from the Git index (the last commit if those entries match HEAD), overwriting the working copies{files}. Paths absent from the source may be removed"),
+        GitKind::RestoreWithOptions { source, staged, worktree, patch, overlay } => {
+            let source = match source {
+                RestoreSource::Index => "the Git index",
+                RestoreSource::Head => "HEAD (the current commit)",
+                RestoreSource::SpecifiedTree => "the specified Git tree",
+            };
+            let target = match (staged, worktree) {
+                (true, true) => "the index and working tree",
+                (true, false) => "the index",
+                _ => "the working tree",
+            };
+            let selected = if patch { "selected changes to paths" } else { "selected paths" };
+            let effect = if overlay { "overwritten" } else { "overwritten or removed" };
+            format!("Restore {selected} from {source} in {target}{files}. The affected contents can be {effect}")
         }
-        GitKind::Remove => format!("delete files from the folder and Git{files}"),
+        GitKind::RestoreUnknown => format!("Run git restore with the requested source and destination options{files}. It may overwrite or remove paths in the Git index or working tree"),
+        GitKind::Remove => format!("Remove selected paths from the Git index and working tree{files}"),
+        GitKind::RemovePreview => format!("Preview the paths git rm would remove from the index and working tree{files}"),
     }
 }
 

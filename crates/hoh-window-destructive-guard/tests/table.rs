@@ -89,12 +89,12 @@ fn deleting_commands_name_the_files_and_say_why_it_hurts() {
     let ask = question(&found, "rm old1.txt old2.txt old3.txt", Some(dir.path()));
     assert!(
         ask.headline
-            .starts_with("Удалить 3 файла: old1.txt, old2.txt, old3.txt (папка "),
+            .starts_with("Delete 3 files: old1.txt, old2.txt, old3.txt (folder "),
         "{}",
         ask.headline
     );
-    assert!(ask.headline.contains("не попадут в корзину"));
-    assert_eq!(ask.details, "Команда: rm old1.txt old2.txt old3.txt");
+    assert!(ask.headline.contains("bypass the trash"));
+    assert_eq!(ask.details, "Command: rm old1.txt old2.txt old3.txt");
     assert!(
         !ask.headline.contains("rm old1"),
         "the raw command stays in the details"
@@ -102,13 +102,13 @@ fn deleting_commands_name_the_files_and_say_why_it_hurts() {
     // A-03: the window's explanation is words and the files, never the raw command.
     assert!(
         ask.explanation
-            .contains("Удалить 3 файла: old1.txt, old2.txt, old3.txt")
-            && ask.explanation.contains("не попадут в корзину"),
+            .contains("Delete 3 files: old1.txt, old2.txt, old3.txt")
+            && ask.explanation.contains("bypass the trash"),
         "{}",
         ask.explanation
     );
     assert!(
-        !ask.explanation.contains("rm ") && !ask.explanation.contains("Команда:"),
+        !ask.explanation.contains("rm ") && !ask.explanation.contains("Command:"),
         "{}",
         ask.explanation
     );
@@ -166,7 +166,7 @@ fn the_explanation_lists_the_files_and_never_the_raw_command() {
     let ask = question(&risks(dir.path(), command), command, Some(dir.path()));
     assert!(
         ask.headline
-            .contains("f1.txt, f2.txt, f3.txt, f4.txt и ещё 2")
+            .contains("f1.txt, f2.txt, f3.txt, f4.txt and 2 more")
     );
     assert!(
         ask.explanation
@@ -182,14 +182,14 @@ fn the_explanation_lists_the_files_and_never_the_raw_command() {
     ] {
         let ask = question(&risks(dir.path(), command), command, Some(dir.path()));
         assert!(
-            !ask.explanation.contains("Команда:")
+            !ask.explanation.contains("Command:")
                 && !ask.explanation.contains(command)
                 && !ask.explanation.contains("echo")
                 && !ask.explanation.contains("sed -i"),
             "{command}: {}",
             ask.explanation
         );
-        assert!(ask.details.starts_with("Команда: "), "{command}");
+        assert!(ask.details.starts_with("Command: "), "{command}");
         assert!(
             ask.explanation.contains("a.txt") || command.starts_with("rm"),
             "{command}: {}",
@@ -210,7 +210,7 @@ fn an_escalation_explanation_has_no_word_of_the_justification_and_the_details_ha
         ("rm  old.txt", "run `rm old.txt` to clean up"),
         ("rm -rf dir", "очистить dir через Rm -Rf, он устарел"),
         ("rm a", "perform a cleanup"),
-        ("ls", "show details about the directory"),
+        ("ls", "summarize personal directory contents"),
         ("rm /tmp/archive/old.txt", "rm old.txt"),
     ] {
         let ask = escalation_question(&risks(dir.path(), command), command, justification);
@@ -229,13 +229,13 @@ fn an_escalation_explanation_has_no_word_of_the_justification_and_the_details_ha
         }
         assert!(
             ask.explanation
-                .ends_with("Обоснование Помощника — в подробностях"),
+                .ends_with("See details for the assistant’s justification"),
             "{}",
             ask.explanation
         );
         assert_eq!(
             ask.details,
-            format!("Команда: {command}\nОбоснование Помощника: {justification}")
+            format!("Command: {command}\nAssistant justification: {justification}")
         );
     }
     // The size stays inside the protocol (8192 UTF-16 units), astral characters included.
@@ -246,7 +246,7 @@ fn an_escalation_explanation_has_no_word_of_the_justification_and_the_details_ha
         "{}",
         ask.details.encode_utf16().count()
     );
-    assert!(ask.details.contains("Команда: ") && ask.details.contains("Обоснование Помощника: "));
+    assert!(ask.details.contains("Command: ") && ask.details.contains("Assistant justification: "));
 }
 
 #[test]
@@ -255,11 +255,11 @@ fn overwrite_text_names_the_file() {
     let found = risks(dir.path(), "echo hi > a.txt");
     let ask = question(&found, "echo hi > a.txt", Some(dir.path()));
     assert!(
-        ask.headline.starts_with("Перезаписать файл a.txt"),
+        ask.headline.starts_with("Overwrite file a.txt"),
         "{}",
         ask.headline
     );
-    assert!(ask.headline.contains("прежнее содержимое будет потеряно"));
+    assert!(ask.headline.contains("Previous contents may be lost"));
 }
 
 #[test]
@@ -465,7 +465,7 @@ fn text_is_one_clean_line_with_a_bounded_list() {
     let ask = question(&risks(dir.path(), command), command, Some(dir.path()));
     assert!(
         ask.headline
-            .contains("Удалить 7 файлов: f1, f2, f3, f4 и ещё 3"),
+            .contains("Delete 7 files: f1, f2, f3, f4 and 3 more"),
         "{}",
         ask.headline
     );
@@ -490,12 +490,12 @@ fn text_is_one_clean_line_with_a_bounded_list() {
 fn plural_forms() {
     let dir = folder();
     for (count, word) in [
-        (1, "1 файл:"),
-        (2, "2 файла:"),
-        (5, "5 файлов:"),
-        (11, "11 файлов:"),
-        (21, "21 файл:"),
-        (22, "22 файла:"),
+        (1, "1 file:"),
+        (2, "2 files:"),
+        (5, "5 files:"),
+        (11, "11 files:"),
+        (21, "21 files:"),
+        (22, "22 files:"),
     ] {
         let names: Vec<String> = (0..count).map(|i| format!("f{i}")).collect();
         let command = format!("rm {}", names.join(" "));
@@ -513,7 +513,8 @@ fn recursive_delete_says_contents_go_too() {
         Some(dir.path()),
     );
     assert!(
-        ask.headline.contains("вместе со всем содержимым"),
+        ask.headline
+            .contains("directories and their contents can be removed"),
         "{}",
         ask.headline
     );
@@ -688,17 +689,17 @@ fn new_texts_say_what_happens() {
         assert!(!found.is_empty(), "{command}");
         question(&found, command, Some(dir.path())).headline
     };
-    assert!(ask("sed -i s/a/b/ a.txt").starts_with("Перезаписать файл a.txt"));
-    assert!(ask("sed -i s/a/b/ a.txt b.txt").starts_with("Перезаписать файлы a.txt, b.txt"));
-    assert!(ask("tar xzf a.tgz").starts_with("Распаковать архив a.tgz и перезаписать файлы"));
-    assert!(ask("tar xf -").starts_with("Распаковать архив и перезаписать файлы"));
+    assert!(ask("sed -i s/a/b/ a.txt").starts_with("Overwrite file a.txt"));
+    assert!(ask("sed -i s/a/b/ a.txt b.txt").starts_with("Overwrite files a.txt, b.txt"));
+    assert!(ask("tar xzf a.tgz").starts_with("Extract archive a.tgz. Existing destination files"));
+    assert!(ask("tar xf -").starts_with("Extract an archive. Existing destination files"));
     let rsync = ask("rsync -a --delete src/ dst/");
     assert!(
-        rsync.contains("rsync --delete") && rsync.contains("не попадут в корзину"),
+        rsync.contains("may remove destination paths") && rsync.contains("bypass the trash"),
         "{rsync}"
     );
-    assert!(ask("python -c x").contains("встроенный код"));
-    assert!(ask("ln -sf b.txt a.txt").starts_with("Перезаписать файл a.txt"));
+    assert!(ask("python -c x").contains("inline interpreter code"));
+    assert!(ask("ln -sf b.txt a.txt").starts_with("Overwrite file a.txt"));
     assert!(ask("install a.txt backup").contains("backup/a.txt"));
 }
 
@@ -790,30 +791,32 @@ fn escalated_questions_are_worded_like_the_guards() {
     let found = risks(dir.path(), command);
     let ask = escalation_question(&found, command, "clean the build output");
     assert!(
-        ask.headline.starts_with(
-            "Помощник просит разрешения работать за пределами своей папки: удалить 1 элемент вместе со всем содержимым: dir"
-        ),
+        ask.headline
+            .starts_with("The assistant asks to work outside its folder: delete 1 entry: dir"),
         "{}",
         ask.headline
     );
-    assert!(ask.headline.contains("Файлы не попадут в корзину"));
+    assert!(ask.headline.contains("Removed files bypass the trash"));
     assert_eq!(
         ask.details,
-        "Команда: rm -rf dir\nОбоснование Помощника: clean the build output"
+        "Command: rm -rf dir\nAssistant justification: clean the build output"
     );
     // Everything the headline says is not said again: only where the reasons are.
-    assert_eq!(ask.explanation, "Обоснование Помощника — в подробностях");
+    assert_eq!(
+        ask.explanation,
+        "See details for the assistant’s justification"
+    );
     assert!(
         !ask.explanation.contains("rm -rf")
             && !ask.explanation.contains("clean")
-            && !ask.explanation.contains("Команда:"),
+            && !ask.explanation.contains("Command:"),
         "{}",
         ask.explanation
     );
     let plain = escalation_question(&[], "ls /", "look around");
     assert_eq!(
         plain.headline,
-        "Помощник просит разрешения работать за пределами своей папки: он сможет читать и менять любые файлы на этом компьютере"
+        "The assistant asks to work outside its folder: it may read and change files outside its folder with the current user’s permissions"
     );
 }
 
@@ -825,16 +828,14 @@ fn new_download_and_patch_texts() {
         assert!(!found.is_empty(), "{command}");
         question(&found, command, Some(dir.path())).headline
     };
-    assert!(ask("curl -o a.txt https://e.com/x").starts_with("Перезаписать файл a.txt"));
-    assert!(ask("unzip a.zip").starts_with("Распаковать архив a.zip и перезаписать файлы"));
-    assert!(
-        ask("patch notes.md fix.diff").starts_with("Применить патч и перезаписать файл notes.md")
-    );
+    assert!(ask("curl -o a.txt https://e.com/x").starts_with("Overwrite file a.txt"));
+    assert!(ask("unzip a.zip").starts_with("Extract archive a.zip. Existing destination files"));
+    assert!(ask("patch notes.md fix.diff").starts_with("Apply a patch to notes.md"));
     assert!(
         ask("git apply fix.patch")
-            .starts_with("Применить патч и перезаписать файлы, которые он меняет")
+            .starts_with("Apply a patch. It may change or remove existing files")
     );
-    assert!(ask("awk -i inplace '{print}' a.txt").starts_with("Перезаписать файл a.txt"));
+    assert!(ask("awk -i inplace '{print}' a.txt").starts_with("Overwrite file a.txt"));
 }
 
 #[test]
