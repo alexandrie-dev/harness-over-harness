@@ -292,6 +292,54 @@ try {
     } catch (error) { fail(`stopped replay: ${String(error.message).split('\n')[0]}`); }
     finally { off(); await context.close(); }
   }
+  for (const kind of ['stream', 'approval', 'subagent']) {
+    const engine = engineWith(false);
+    const id = `journal-stop-${kind}`;
+    const session = engine.open(id, `Journal stop ${kind}`);
+    const start = FIXTURE_NOW - 60000;
+    const append = (type, data, ms) => { const event = engine.append(session, type, data); event.time = start + ms; return event; };
+    append('turn/start', { turn: 1 }, 1000);
+    append('user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: 'Stop this work' }] }, 2000);
+    append('assistant/message', { turn: 1, step: 1, message: { id: `${id}-a`, role: 'assistant', content: [{ type: 'text', text: 'I will start.' }] } }, 3000);
+    if (kind !== 'stream') {
+      append('tool/call', { turn: 1, step: 1, callId: 'call', name: kind === 'subagent' ? 'Agent' : 'Bash', arguments: { command: 'sleep 120', description: 'Investigate' } }, 4000);
+      if (kind === 'subagent') append('tool/call', { turn: 1, step: 1, callId: 'child', parentCallId: 'call', name: 'WebFetch', arguments: { url: 'https://example.test/' } }, 5000);
+      append('approval/asked', { id: 'approval', callId: kind === 'subagent' ? 'child' : 'call' }, 6000);
+      append('tool/result', { turn: 1, step: 1, message: { id: 'result', toolCallId: 'call', isError: true, content: [{ type: 'text', text: 'Stopped' }] } }, 35000);
+    }
+    append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } }, 35000);
+    // A later completed turn must not erase the earlier stopped turn's label or duration.
+    append('turn/start', { turn: 2 }, 40000);
+    append('user/message', { id: `${id}-u2`, source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue afterward' }] }, 41000);
+    append('assistant/message', { turn: 2, step: 1, message: { id: `${id}-a2`, role: 'assistant', content: [{ type: 'text', text: 'Done afterward.' }] } }, 42000);
+    append('turn/end', { turn: 2, reason: { kind: 'completed' } }, 43000);
+    const { context, page, off } = await open(browser, engine, { width: 2000, height: 1137 });
+    try {
+      await page.goto(ORIGIN + `/hoh-local/${id}`);
+      for (let restart = 0; restart < 2; restart++) {
+        await page.getByText('You stopped after 34s', { exact: true }).waitFor({ timeout: 10000 });
+        if (await page.getByText(/Run interrupted.*Stopped by user/).count()) fail(`${kind}: raw interruption remains visible`);
+        if (restart === 0) await page.reload();
+      }
+    } catch (error) { fail(`${kind} journal stop: ${String(error.message).split('\n')[0]}`); }
+    finally { off(); await context.close(); }
+  }
+  if (process.env.C6_REPLAY_EVENTS) {
+    const engine = engineWith(false);
+    const session = engine.open('c5-journal', 'C5 journal');
+    session.events = JSON.parse(await readFile(process.env.C6_REPLAY_EVENTS, 'utf8'));
+    session.updatedAt = session.events.at(-1)?.time ?? FIXTURE_NOW;
+    const { context, page, off } = await open(browser, engine, { width: 2000, height: 1137 });
+    try {
+      await page.goto(ORIGIN + '/hoh-local/c5-journal');
+      for (let restart = 0; restart < 2; restart++) {
+        await page.getByText('You stopped after 34s', { exact: true }).waitFor({ timeout: 15000 });
+        if (await page.getByText(/Run interrupted.*Stopped by user/).count()) fail('C5 journal: raw interruption remains visible');
+        if (restart === 0) await page.reload();
+      }
+    } catch (error) { fail(`C5 journal: ${String(error.message).split('\n')[0]}`); }
+    finally { off(); await context.close(); }
+  }
 } finally { await browser?.close(); await rm(home, { recursive: true, force: true }); }
 
 if (errors.length) { for (const message of errors) console.error('grid: ' + message); process.exit(1); }

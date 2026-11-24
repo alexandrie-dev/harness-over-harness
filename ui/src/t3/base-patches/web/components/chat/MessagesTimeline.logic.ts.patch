@@ -4,25 +4,31 @@
 -    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent")
 +    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent" ||
 +      entry.projectedItem.item.type === "run_interrupt_result")
-@@ -1182 +1182,0 @@
+@@ -1181,2 +1182 @@
+-      input.unfoldedRunIds.has(runId) ||
 -      interruptedRunIds.has(runId) ||
-@@ -1236,2 +1236,3 @@
++      (input.unfoldedRunIds.has(runId) && !interruptedRunIds.has(runId)) ||
+@@ -1206 +1206,2 @@
+-      if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
++      const isStopResult = entry.kind === "event" && entry.projectedItem.item.type === "run_interrupt_result";
++      if (!isCompaction && !isStopResult && index > terminalEntryIndex && !isFoldableTrailingActivity) {
+@@ -1236,2 +1237,3 @@
 -    const isLatestInterruptedTurn =
 -      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
 +    const isInterruptedTurn =
 +      interruptedRunIds.has(runId) ||
 +      (input.latestRun?.runId === runId && input.latestRun.status === "interrupted");
-@@ -1251 +1252 @@
+@@ -1251 +1253 @@
 -    const label = isLatestInterruptedTurn
 +    const label = isInterruptedTurn
-@@ -1681,0 +1683 @@
+@@ -1681,0 +1684 @@
 +  const foldedRunIds = new Set(Array.from(foldsByAnchorEntryId.values(), (fold) => fold.runId));
-@@ -1929 +1931 @@
+@@ -1929 +1932 @@
 -    // A stopped compaction's own divider already says it stopped.
 +    // A stopped fold carries the durable label; otherwise keep T3's lifecycle divider visible.
-@@ -1931,0 +1934 @@
+@@ -1931,0 +1935 @@
 +      !foldsByAnchorEntryId.has(timelineEntry.id) &&
-@@ -1935,2 +1938,3 @@
+@@ -1935,2 +1939,3 @@
 -          compactionRuns.has(timelineEntry.projectedItem.item.runId) &&
 -          compactedRunIds.has(timelineEntry.projectedItem.item.runId)))
 +          (foldedRunIds.has(timelineEntry.projectedItem.item.runId) ||

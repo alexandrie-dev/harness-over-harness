@@ -1179,7 +1179,7 @@ function deriveTurnFolds(input: {
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [runId, group] of groupsByRunId) {
     if (
-      input.unfoldedRunIds.has(runId) ||
+      (input.unfoldedRunIds.has(runId) && !interruptedRunIds.has(runId)) ||
       runlessFailedKeys.has(runId) ||
       (input.runlessWorkActive && runId === runlessKey)
     ) {
@@ -1203,7 +1203,8 @@ function deriveTurnFolds(input: {
         entry.kind === "work" &&
         entry.entry.toolLifecycleStatus !== "inProgress" &&
         !workEntryDisplayIndicatesToolFailure(entry.entry);
-      if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
+      const isStopResult = entry.kind === "event" && entry.projectedItem.item.type === "run_interrupt_result";
+      if (!isCompaction && !isStopResult && index > terminalEntryIndex && !isFoldableTrailingActivity) {
         continue;
       }
       if (

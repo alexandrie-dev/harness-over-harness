@@ -3039,3 +3039,71 @@ test('background history learns a known binding after an initial access read fai
   assert.equal(host.thread('retry-quick-binding')?.shell().runtimeMode, 'full-access');
   host.stop();
 });
+
+test('journal start and end survive host restart for streaming, approval and subagent stops', async () => {
+  for (const kind of ['stream', 'approval', 'subagent']) {
+    const engine = new FakeEngine();
+    const id = `stop-${kind}`;
+    const session = engine.seed(id, 'Stopped', []);
+    const base = 1700000000000;
+    const add = (type, data, offset) => { const event = engine.persist(id, type, data); event.time = base + offset; return event; };
+    add('turn/start', { turn: 1 }, 1000);
+    add('user/message', { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Do work' }] }, 2000);
+    add('assistant/message', { turn: 1, step: 1, message: { id: 'a', role: 'assistant', content: [{ type: 'text', text: 'I will start.' }] } }, 3000);
+    if (kind !== 'stream') {
+      const name = kind === 'subagent' ? 'Agent' : 'Bash';
+      add('tool/call', { turn: 1, step: 1, callId: 'call', name, arguments: { command: 'sleep 120', description: 'Investigate' } }, 4000);
+      if (kind === 'subagent') add('tool/call', { turn: 1, step: 1, callId: 'child', parentCallId: 'call', name: 'WebFetch', arguments: { url: 'https://example.test/' } }, 5000);
+      add('approval/asked', { id: 'approval', callId: kind === 'subagent' ? 'child' : 'call' }, 6000);
+      add('tool/result', { turn: 1, step: 1, message: { id: 'result', toolCallId: 'call', isError: true, content: [{ type: 'text', text: 'Stopped' }] } }, 35000);
+    }
+    add('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } }, 35000);
+    add('turn/start', { turn: 2 }, 40000);
+    add('user/message', { id: 'u2', source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue afterward' }] }, 41000);
+    add('assistant/message', { turn: 2, step: 1, message: { id: 'a2', role: 'assistant', content: [{ type: 'text', text: 'Done afterward.' }] } }, 42000);
+    add('turn/end', { turn: 2, reason: { kind: 'completed' } }, 43000);
+    session.updatedAt = base + 43000;
+    const shared = engine.store;
+    for (let restart = 0; restart < 2; restart++) {
+      const { host, client } = connect(new FakeEngine({ store: shared }), { storage: null });
+      const projection = await client.call('orchestration.getThreadProjection', { threadId: id });
+      const run = projection.runs[0];
+      assert.equal(Date.parse(run.completedAt) - Date.parse(run.startedAt), 34000, `${kind}: journal duration on restart ${restart}`);
+      assert.equal(run.status, 'interrupted');
+      assert(projection.turnItems.some(item => item.type === 'run_interrupt_result' && item.runId === run.id));
+      host.stop();
+    }
+  }
+});
+
+test('Stop during streaming, approval and subagent work replays the engine timing after host restart', async () => {
+  for (const kind of ['stream', 'approval', 'subagent']) {
+    const engine = new FakeEngine(); const id = `live-stop-${kind}`;
+    engine.seed(id, 'Live stop', []);
+    const { client, host } = connect(engine, { throttleMs: 0 });
+    const stream = await client.stream('orchestration.subscribeThread', { threadId: id });
+    await stream.until(value => value.kind === 'snapshot');
+    const start = engine.emitEvent(id, 'turn/start', { turn: 1 });
+    engine.emitEvent(id, 'user/message', { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Do work' }] });
+    engine.emitEvent(id, 'assistant/message', { turn: 1, step: 1, message: { id: 'a', role: 'assistant', content: [{ type: 'text', text: 'I will start.' }] } });
+    if (kind !== 'stream') {
+      engine.emitEvent(id, 'tool/call', { turn: 1, step: 1, callId: 'call', name: kind === 'subagent' ? 'Agent' : 'Bash', arguments: { command: 'sleep 120', description: 'Investigate' } });
+      if (kind === 'subagent') engine.emitEvent(id, 'tool/call', { turn: 1, step: 1, callId: 'child', parentCallId: 'call', name: 'WebFetch', arguments: { url: 'https://example.test/' } });
+      const callId = kind === 'subagent' ? 'child' : 'call';
+      engine.emitEvent(id, 'approval/asked', { id: 'approval', callId });
+      engine.askApproval(id, 'approval', 'Allow?');
+    }
+    await client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: `stop-${kind}`, threadId: id });
+    assert.equal(engine.cancelled, 1);
+    engine.clock = start.time + 33000;
+    engine.emitEvent(id, 'turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } });
+    const stopped = await stream.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.completedAt === new Date(start.time + 34000).toISOString());
+    assert.equal(stopped.projection.runs[0].status, 'interrupted');
+    host.stop();
+    const reopened = connect(new FakeEngine({ store: engine.store }), { storage: null });
+    const projection = await reopened.client.call('orchestration.getThreadProjection', { threadId: id });
+    assert.equal(Date.parse(projection.runs[0].completedAt) - Date.parse(projection.runs[0].startedAt), 34000, kind);
+    assert(projection.turnItems.some(item => item.type === 'run_interrupt_result'));
+    reopened.host.stop();
+  }
+});

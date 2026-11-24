@@ -201,6 +201,8 @@ export class ThreadModel {
   private readonly echoed = new Map<string, string>();
   private ordinal = 0;
   private promptTimes: Record<string, number> = {};
+  /** Durable start from the engine; turn/start normally precedes its user/message. */
+  private pendingTurnStart: number | null = null;
 
   restorePromptTimes(times: Record<string, number> | undefined) { this.promptTimes = times ?? {}; }
   promptTime(messageId: string): number | undefined { return this.runs.find(run => run.userMessageId === messageId)?.requestedAt; }
@@ -267,13 +269,25 @@ export class ThreadModel {
 
   /** A user message from the engine: a new run starts with it, unless it is the echo of one sent from T3. */
   private userMessage(engineId: string, value: string, at: number) {
-    if (this.echoed.has(engineId)) return;
+    const start = this.pendingTurnStart;
+    this.pendingTurnStart = null;
+    const known = this.echoed.get(engineId);
     const pending = this.outgoing.findIndex(entry => entry.text === value);
-    if (pending >= 0) { this.echoed.set(engineId, this.outgoing.splice(pending, 1)[0].messageId); return; }
-    const messageId = 'msg-' + engineId;
+    const messageId = known ?? (pending >= 0 ? this.outgoing.splice(pending, 1)[0].messageId : 'msg-' + engineId);
     this.echoed.set(engineId, messageId);
+    if (known || pending >= 0) {
+      if (start !== null) {
+        const run = this.runs.find(entry => entry.userMessageId === messageId);
+        const message = this.messages.find(entry => entry.id === messageId);
+        const item = this.item('item-' + messageId);
+        if (run) { run.requestedAt = start; run.startedAt = start; }
+        if (message) { message.createdAt = start; message.updatedAt = start; }
+        if (item) Object.assign(item, { startedAt: iso(start), completedAt: iso(start), updatedAt: iso(start) });
+      }
+      return;
+    }
     const saved = this.promptTimes[engineId];
-    this.addUserMessage(messageId, value, typeof saved === 'number' && Number.isFinite(saved) && saved > 0 && saved <= at ? saved : at);
+    this.addUserMessage(messageId, value, start ?? (typeof saved === 'number' && Number.isFinite(saved) && saved > 0 && saved <= at ? saved : at));
   }
 
   private addUserMessage(messageId: string, value: string, at: number, attachments: ShownAttachment[] = []) {
@@ -463,7 +477,7 @@ export class ThreadModel {
     this.stopRequested = false;
     const open = run?.status === 'running' || run?.status === 'waiting';
     const lateCompletedGuess = run?.status === 'interrupted' && this.settledByGuess && status === 'completed';
-    if (run && (open || lateCompletedGuess)) { run.status = status; run.completedAt = at; }
+    if (run && (open || lateCompletedGuess || (reason === 'aborted' && record(cause).kind === 'user'))) { run.status = status; run.completedAt = at; }
     this.updateUsage(rawUsage, at);
     for (const item of this.items) {
       if (item.status === 'running' || item.status === 'waiting' || item.status === 'pending')
@@ -509,6 +523,7 @@ export class ThreadModel {
         this.userMessage(text(data.id), contentText(data.content), at);
         break;
       case 'turn/start': {
+        this.pendingTurnStart = at;
         // A turn without a message of its own continues the last run; a message, when it follows, starts its own.
         const run = this.currentRun();
         if (run && run.status !== 'running' && run.status !== 'waiting') {
@@ -521,6 +536,7 @@ export class ThreadModel {
       case 'turn/usage':
       case 'plugin:hoh/context-usage': this.updateUsage(data.usage, at); break;
       case 'turn/end': {
+        this.pendingTurnStart = null;
         const reason = record(data.reason);
         this.endTurn(text(reason.kind), at, reason.error, reason.reason, data.usage);
         this.engineRunning = false; this.settledByGuess = false;
