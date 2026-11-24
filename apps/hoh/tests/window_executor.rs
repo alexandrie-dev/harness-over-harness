@@ -424,7 +424,9 @@ def long_command(name):
 def short_answer():
     message_id = next_id("msg")
     stream = {"type": "stream_event", "session_id": SESSION, "parent_tool_use_id": None}
-    write(dict(stream, event={"type": "message_start", "message": {"id": message_id, "role": "assistant"}}))
+    write(dict(stream, event={"type": "message_start", "message": {
+        "id": message_id, "role": "assistant", "usage": {"input_tokens": 17, "cache_read_input_tokens": 23}
+    }}))
     write(dict(stream, event={"type": "content_block_delta", "index": 0,
                               "delta": {"type": "text_delta", "text": "ok1"}}))
     write({"type": "assistant", "session_id": SESSION, "parent_tool_use_id": None,
@@ -2395,6 +2397,63 @@ async fn t7_after_the_engine_restarts_a_claude_chat_keeps_its_model_and_its_mode
     let after = host.access_of("chat-m").await;
     assert_eq!(after["session"]["model"], "sonnet", "{after}");
     assert_session(&after, "full", "full", "after the next turn");
+    host.shutdown().await;
+}
+
+/// The window reopens a Claude log containing context snapshots and a stopped turn.
+#[tokio::test]
+async fn a_cold_claude_conversation_keeps_usage_and_stopped_turns_and_can_continue() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.prompt("short").await;
+    host.turn_then_stop(SESSION, "hang").await;
+    let session = json!({"sessionId": SESSION});
+    let page = json!({"sessionId": SESSION, "limit": 1000});
+    let history = host.ok("session/events", page.clone()).await;
+    let events = history["events"].as_array().expect("history");
+    assert!(events.iter().any(|event| event["type"] == "turn/usage"
+        && event["data"]["usage"]["inputTokens"] == 17
+        && event["data"]["usage"]["cacheReadInputTokens"] == 23));
+    assert!(
+        events.iter().any(
+            |event| event["type"] == "turn/end" && event["data"]["reason"]["kind"] == "aborted"
+        )
+    );
+    host.shutdown().await;
+
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let list = host.ok("session/list", json!({"limit": 20})).await;
+    assert!(
+        list["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .any(|row| row["id"] == SESSION)
+    );
+    let access = host.access_of(SESSION).await;
+    assert_eq!(access["session"]["executor"], "claude", "{access}");
+    assert_no_process(&access, "confirm", "cold conversation");
+    host.ok("session/resume", session.clone()).await;
+    let reopened = host.ok("session/events", page).await;
+    // A clean shutdown can append end-seed after the first read.
+    assert!(
+        reopened["events"]
+            .as_array()
+            .expect("reopened history")
+            .starts_with(events)
+    );
+    let working_directory = host.ok("session/working-directory/get", session).await;
+    assert_eq!(working_directory["cwd"], json!(workspace.folder));
+    host.prompt("hello").await;
+    assert_eq!(host.turn_end(SESSION)["kind"], "completed");
+    assert!(
+        workspace
+            .sessions()
+            .last()
+            .expect("Claude resumed")
+            .has("--resume")
+    );
     host.shutdown().await;
 }
 

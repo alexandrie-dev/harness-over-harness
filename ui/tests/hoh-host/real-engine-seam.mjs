@@ -83,10 +83,12 @@ try {
   assert(['unknown', 'auto'].includes(launched.projection.thread.runtimeMode));
   await thread.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'auto', 0, 60_000);
 
-  const pendingRequest = value => value?.kind === 'snapshot'
-    ? value.projection.runtimeRequests.find(candidate => candidate.status === 'pending')
-    : undefined;
   const cardFor = (value, id) => value.projection.turnItems.find(item => item.type === 'approval_request' && item.requestId === id);
+  // Launch can briefly show the approval for changing access mode before the Bash request.
+  const pendingRequest = value => value?.kind === 'snapshot'
+    ? value.projection.runtimeRequests.find(candidate => candidate.status === 'pending'
+      && cardFor(value, candidate.id)?.prompt?.includes('echo real-seam'))
+    : undefined;
   let pending = await thread.until(value => pendingRequest(value), 0, 60_000);
   let request = pendingRequest(pending);
   let card = cardFor(pending, request.id);
@@ -150,6 +152,7 @@ try {
   assert(!reopened.exit, JSON.stringify(reopened.exit));
   const history = await reopened.until(value => stopped(value) && value.projection.thread.providerInstanceId === 'claudeAgent' && value.projection.thread.runtimeMode === 'auto', 0, 15_000);
   assert(history.projection.messages.some(message => message.text === 'seam complete'));
+  assert.equal(history.projection.providerTurns[0]?.tokenUsage?.inputTokens, 40, 'context usage survives restart');
   const restoredStop = history.projection.runs.find(run => run.status === 'interrupted');
   assert.equal(restoredStop?.ordinal, interruptedRun.ordinal);
   const duration = run => Date.parse(run.completedAt) - Date.parse(run.startedAt);

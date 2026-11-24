@@ -106,6 +106,10 @@ while True:
                "result": "subagent complete", "session_id": session, "duration_ms": 1, "num_turns": 1})
         continue
     tool_id = "toolu-%d" % counter
+    write({"type": "stream_event", "session_id": session, "parent_tool_use_id": None,
+           "event": {"type": "message_start",
+                     "message": {"id": "assistant-%d" % counter, "role": "assistant",
+                                 "usage": {"input_tokens": 17, "cache_read_input_tokens": 23}}}})
     write({"type": "assistant", "session_id": session, "parent_tool_use_id": None,
            "message": {"id": "assistant-%d" % counter, "role": "assistant", "model": "claude-seam",
                        "content": [{"type": "tool_use", "id": tool_id, "name": "Bash",

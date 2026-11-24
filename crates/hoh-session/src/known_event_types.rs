@@ -59,6 +59,7 @@ pub const KNOWN_SESSION_EVENT_TYPES: &[&str] = &[
     "tool/result",
     "turn/end",
     "turn/start",
+    "turn/usage",
     "user/message",
     "web/deepseek-search-llm-request",
     "working-directory/change",

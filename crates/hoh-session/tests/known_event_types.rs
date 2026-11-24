@@ -1,8 +1,8 @@
 use hoh_session::known_event_types::{KNOWN_SESSION_EVENT_TYPES, MESSAGE_PROJECTION_EVENT_TYPES};
 
 #[test]
-fn pins_both_generated_sets_to_the_source_catalog() {
-    // Source packages/core/session/src/known-event-types.ts @ 39163dd3: 63, not 64.
+fn pins_both_sets_to_the_source_catalog_and_hoh_extensions() {
+    // Upstream catalog at 39163dd3 plus HoH's external-harness context snapshots.
     let expected = [
         "agent-preset/selected",
         "agent/inbox/spliced",
@@ -63,13 +63,14 @@ fn pins_both_generated_sets_to_the_source_catalog() {
         "tool/result",
         "turn/end",
         "turn/start",
+        "turn/usage",
         "user/message",
         "web/deepseek-search-llm-request",
         "working-directory/change",
         "workspace/changes",
     ];
     assert_eq!(KNOWN_SESSION_EVENT_TYPES, expected);
-    assert_eq!(KNOWN_SESSION_EVENT_TYPES.len(), 63);
+    assert_eq!(KNOWN_SESSION_EVENT_TYPES.len(), 64);
     assert!(
         KNOWN_SESSION_EVENT_TYPES
             .windows(2)
