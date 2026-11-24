@@ -3108,3 +3108,41 @@ test('Stop during streaming, approval and subagent work replays the user-message
     reopened.host.stop();
   }
 });
+
+test('between-turn approvals do not become work of the completed turn, while in-turn approvals stay attached', async () => {
+  const engine = new FakeEngine();
+  engine.seed('between-turns', 'Timing', [
+    ['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'first' }] }],
+    ['assistant/message', { turn: 1, step: 1, message: { id: 'a1', content: [{ type: 'text', text: 'done' }] } }],
+    ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+  ]);
+  const { host } = connect(engine);
+  await host.start();
+  const streamClient = new WireClient(mod.socket.HohWebSocket, new mod.wire.WireServer(host.handlers()));
+  const stream = await streamClient.stream('orchestration.subscribeThread', { threadId: 'between-turns' });
+  const before = (await stream.until(value => value.kind === 'snapshot' && value.projection.runs.length === 1)).projection;
+  const prior = before.runs[0];
+  for (const outcome of ['allowed-once', 'rejected', 'cancelled']) {
+    const approvalId = `mode-${outcome}`;
+    engine.askApproval('between-turns', approvalId, 'Return Claude to Supervised mode?');
+    const pending = (await stream.until(value => value.kind === 'snapshot' && value.projection.turnItems.some(item => item.requestId === approvalId))).projection;
+    assert.equal(pending.turnItems.find(item => item.requestId === approvalId).runId, null);
+    engine.notify('approval.resolved', { approvalId, outcome });
+    await tick(20);
+    const resolved = host.thread('between-turns').projection();
+    assert(!resolved.turnItems.some(item => item.requestId === approvalId));
+    assert.deepEqual(resolved.runs[0], prior);
+  }
+  engine.emitEvent('between-turns', 'user/message', { id: 'u2', source: { kind: 'user' }, content: [{ type: 'text', text: 'second' }] });
+  engine.askApproval('between-turns', 'tool-approval', 'Allow this command?');
+  await tick(20);
+  const active = host.thread('between-turns').projection();
+  assert.equal(active.turnItems.find(item => item.requestId === 'tool-approval').runId, active.runs[1].id);
+  host.stop(); streamClient.close();
+  const restarted = connect(new FakeEngine({ store: engine.store }));
+  const reopened = await restarted.client.stream('orchestration.subscribeThread', { threadId: 'between-turns' });
+  const restored = (await reopened.until(value => value.kind === 'snapshot' && value.projection.runs.length === 2)).projection;
+  assert.deepEqual(restored.runs[0], prior);
+  assert(!restored.turnItems.some(item => item.requestId?.startsWith('mode-')));
+  restarted.host.stop(); restarted.client.close();
+});
