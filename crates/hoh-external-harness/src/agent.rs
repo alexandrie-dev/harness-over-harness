@@ -763,6 +763,15 @@ impl ExternalAgent {
                 session: Arc::downgrade(&started.session),
             },
         );
+        if let Err(error) = append_plugin_record(
+            &self.session,
+            "plugin:external-harness/launch",
+            json!({ "runtimeMode": access }),
+        ) {
+            self.ctx.logger().warn(format_args!(
+                "could not publish the running access mode: {error}"
+            ));
+        }
         lock(&self.state).control = Some(started.session.clone());
         *live = Some(LiveSession {
             control: started.session,

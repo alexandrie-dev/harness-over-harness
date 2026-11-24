@@ -558,6 +558,10 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
     turn(&agent, "hello").await;
     assert_eq!(last_answer(&agent), "Hello from native-1 turn 1");
     assert_eq!(last_turn_end(&agent), json!({"kind": "completed"}));
+    assert_eq!(
+        of_type(&agent, "plugin:external-harness/launch")[0]["runtimeMode"],
+        "confirm"
+    );
     let types: Vec<String> = events(&agent).into_iter().map(|(kind, _)| kind).collect();
     assert_eq!(
         types,
@@ -568,6 +572,7 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
             "user/message",
             "working-directory/change",
             BINDING_RECORD,
+            "plugin:external-harness/launch",
             "assistant/message",
             "step/end",
             "turn/end"

@@ -420,6 +420,40 @@ test('each queued message captures its own access choice even when it matches th
   assert.deepEqual(observed, ['full', 'confirm']);
 });
 
+test('the launch event publishes B full while C supervised is queued and defeats stale access replies', async () => {
+  const engine = new FakeEngine();
+  engine.seed('queue-current', 'Queued', []);
+  Object.assign(engine.store.get('queue-current'), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm', runningRuntimeMode: 'confirm' });
+  const { client } = connect(engine);
+  await (await client.stream('orchestration.subscribeShell', {})).until(value => value.kind === 'snapshot');
+  const original = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    const result = await original(method, params);
+    if (method === 'session/prompt') engine.store.get('queue-current').runningRuntimeMode = 'confirm';
+    return result;
+  };
+  for (const [id, runtimeMode] of [['B', 'full-access'], ['C', 'approval-required']]) {
+    await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: id, threadId: 'queue-current', messageId: id, text: id, attachments: [], runtimeMode, dispatchMode: { type: 'queue_after_active' } });
+  }
+  assert.equal(engine.sessionAccess.get('queue-current'), 'confirm');
+  let release;
+  engine.request = async (method, params) => {
+    if (method === 'hoh/executor/access/get' && params.sessionId === 'queue-current' && !release) {
+      const stale = await original(method, params);
+      return await new Promise(resolve => { release = () => resolve(stale); });
+    }
+    return original(method, params);
+  };
+  engine.emitEvent('queue-current', 'turn/start', { turn: 2 });
+  await tick(5);
+  engine.store.get('queue-current').runningRuntimeMode = 'full';
+  engine.emitEvent('queue-current', 'plugin:external-harness/launch', { runtimeMode: 'full' });
+  release();
+  await tick(5);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'queue-current' })).thread.runtimeMode, 'full-access');
+  assert.equal(engine.store.get('queue-current').runtimeMode, 'confirm', 'C remains Supervised');
+});
+
 test('Codex: app-server models and effort are offered; executor and exact mode apply before the first message', async () => {
   const engine = new FakeEngine();
   const { client, host } = connect(engine);

@@ -289,6 +289,7 @@ export class HohHost {
   private unsubscribers: (() => void)[] = [];
   /** Every mutation of the engine's global executor/model shares the new-session critical section. */
   private selectionTail: Promise<void> = Promise.resolve();
+  private readonly modeGenerations = new Map<string, number>();
 
   constructor(options: HohHostOptions) {
     this.engine = options.engine;
@@ -984,6 +985,7 @@ export class HohHost {
       let executor = this.selectedExecutor;
       let model: string | undefined;
       let mode = this.defaultMode;
+      const modeGeneration = this.modeGenerations.get(session.id) ?? 0;
       try {
         const own = (await this.engine.request('hoh/executor/access/get', { executor: 'codex', sessionId: session.id }))?.session;
         if (own) this.sessionAccessKnown.add(session.id);
@@ -999,6 +1001,7 @@ export class HohHost {
 
       const existing = this.threads.get(session.id);
       if (existing) {
+        if ((this.modeGenerations.get(session.id) ?? 0) !== modeGeneration) mode = existing.mode;
         if (existing.executor !== executor || existing.model !== model || existing.mode !== mode) {
           existing.executor = executor;
           existing.model = model;
@@ -1121,11 +1124,12 @@ export class HohHost {
         }
         thread.settleUnfinished(this.now());
         // The model this chat is bound to (a chat that has had a turn keeps its own).
+        const modeGeneration = this.modeGenerations.get(threadId) ?? 0;
         try {
           const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: threadId }))?.session;
           if (own?.executor === 'codex' || own?.executor === 'claude') thread.executor = own.executor;
           if (typeof own?.model === 'string' && own.model) thread.model = own.model;
-          thread.mode = effectiveSessionMode(own, thread.mode);
+          if ((this.modeGenerations.get(threadId) ?? 0) === modeGeneration) thread.mode = effectiveSessionMode(own, thread.mode);
         } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
         // The list row learns what the history knows (a title from the first message, the last answer).
@@ -1163,6 +1167,14 @@ export class HohHost {
       case 'session.event': {
         const thread = this.threadFor(params.sessionId);
         if (thread?.applyEvent(params.event)) this.changed(thread.id);
+        if (thread && params.event?.type === 'plugin:external-harness/launch') {
+          const mode = exactMode(params.event?.data?.runtimeMode);
+          if (mode) {
+            this.sessionAccessKnown.add(thread.id);
+            this.modeGenerations.set(thread.id, (this.modeGenerations.get(thread.id) ?? 0) + 1);
+            if (thread.mode !== mode) { thread.mode = mode; this.changed(thread.id); }
+          }
+        }
         if (thread && params.event?.type === 'turn/start') void this.refreshThreadMode(thread);
         // The end of a turn reaches the thread list at once: the sidebar's "Working" must not wait for the next change.
         if (thread && params.event?.type === 'turn/end') this.flush();
@@ -1508,8 +1520,10 @@ export class HohHost {
 
   /** Reconcile the projection with the engine's current launch, never with the browser's request. */
   private async refreshThreadMode(thread: ThreadModel, fallback = thread.mode) {
+    const generation = this.modeGenerations.get(thread.id) ?? 0;
     try {
       const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: thread.id }))?.session;
+      if ((this.modeGenerations.get(thread.id) ?? 0) !== generation) return;
       // A just-created SDK session may not expose its executor binding until its first prompt.
       // access/set already accepted `fallback`, and there is no running launch to contradict it.
       if (!own) {

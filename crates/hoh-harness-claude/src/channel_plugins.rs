@@ -335,7 +335,9 @@ fn plugin_roots(
 
     // A damaged registry must not re-enable a conventional cached channel plugin. This path is
     // Claude Code's cache layout; it is only a fallback and does not replace registry entries.
-    if let Some((plugin, marketplace)) = cache_coordinates(id) {
+    if roots.is_empty()
+        && let Some((plugin, marketplace)) = cache_coordinates(id)
+    {
         let cache = config_dir
             .join("plugins/cache")
             .join(marketplace)
@@ -602,7 +604,7 @@ fn non_empty_declaration(value: &Value) -> bool {
 
 /// A linked script or executable named by an MCP declaration cannot be inspected safely.
 fn declared_server_uses_symlink(root: &Path) -> bool {
-    fn linked(root: &Path, raw: &str) -> bool {
+    fn linked(root: &Path, raw: &str, scan_file: bool) -> bool {
         let value = raw.replace("${CLAUDE_PLUGIN_ROOT}", ".");
         if value.starts_with('-') || value.contains("${") {
             return false;
@@ -652,6 +654,16 @@ fn declared_server_uses_symlink(root: &Path) -> bool {
                         }
                     }
                     Ok(_) if index + 1 < parts.len() => return false,
+                    Ok(meta) if meta.is_file() && scan_file => {
+                        match file_contains(&child, CHANNEL_CAPABILITY, MAX_SOURCE_BYTES) {
+                            Ok((true, _)) => return true,
+                            Ok((false, _)) => {}
+                            Err(error) => {
+                                eprintln!("HoH: cannot inspect declared MCP server {raw}: {error}");
+                                return true;
+                            }
+                        }
+                    }
                     Ok(_) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
                     Err(error) => {
@@ -672,10 +684,23 @@ fn declared_server_uses_symlink(root: &Path) -> bool {
         match value {
             Value::Object(map) => map.iter().any(|(key, value)| {
                 if key == "command" {
-                    value.as_str().is_some_and(|s| linked(root, s))
+                    value.as_str().is_some_and(|s| {
+                        let executable = Path::new(s)
+                            .file_name()
+                            .and_then(OsStr::to_str)
+                            .unwrap_or(s);
+                        let interpreter = [
+                            "node", "nodejs", "python", "python3", "bash", "sh", "deno", "bun",
+                            "uv", "uvx", "npx",
+                        ]
+                        .contains(&executable);
+                        linked(root, s, !interpreter)
+                    })
                 } else if key == "args" {
                     value.as_array().is_some_and(|a| {
-                        a.iter().filter_map(Value::as_str).any(|s| linked(root, s))
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .any(|s| linked(root, s, true))
                     })
                 } else {
                     inspect(root, value)
@@ -850,11 +875,20 @@ fn source_tree_has_capability(root: &Path) -> bool {
 }
 
 fn documentation(path: &Path) -> bool {
-    path.extension().and_then(OsStr::to_str).is_some_and(|ext| {
-        ["md", "mdx", "rst", "txt"]
-            .iter()
-            .any(|doc| ext.eq_ignore_ascii_case(doc))
-    })
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| {
+            let name = name.to_ascii_lowercase();
+            name == "license"
+                || name.starts_with("license.")
+                || name == "changelog"
+                || name.starts_with("changelog.")
+        })
+        || path.extension().and_then(OsStr::to_str).is_some_and(|ext| {
+            ["md", "mdx", "rst", "txt", "adoc"]
+                .iter()
+                .any(|doc| ext.eq_ignore_ascii_case(doc))
+        })
 }
 
 fn file_contains(path: &Path, needle: &[u8], remaining: u64) -> std::io::Result<(bool, u64)> {
@@ -1066,6 +1100,66 @@ mod tests {
             serde_json::from_str::<Value>(&settings).unwrap(),
             serde_json::json!({"enabledPlugins":{"bot@test":false}})
         );
+    }
+
+    #[test]
+    fn declared_server_in_node_modules_is_scanned() {
+        let (_dir, config, project) = fixture();
+        let plugin = config.join("plugins/cache/test/bot/1");
+        write(
+            &config.join("settings.json"),
+            r#"{"enabledPlugins":{"bot@test":true}}"#,
+        );
+        write(
+            &plugin.join(".mcp.json"),
+            r#"{"mcpServers":{"bot":{"command":"node","args":["node_modules/bot/server.js"]}}}"#,
+        );
+        write(&plugin.join("node_modules/bot/server.js"), "claude/channel");
+        let env = [(
+            "CLAUDE_CONFIG_DIR".into(),
+            config.to_string_lossy().into_owned(),
+        )];
+        assert!(
+            disabled_channel_settings(&env, &project)
+                .unwrap()
+                .contains("bot@test")
+        );
+        write(&plugin.join(".mcp.json"), &serde_json::json!({"mcpServers":{"bot":{"command":"node","args":[plugin.join("node_modules/bot/server.js")]}}}).to_string());
+        assert!(
+            disabled_channel_settings(&env, &project)
+                .unwrap()
+                .contains("bot@test")
+        );
+    }
+
+    #[test]
+    fn installed_version_wins_over_old_cache_and_asciidoc_is_ignored() {
+        let (_dir, config, project) = fixture();
+        let current = config.join("plugins/cache/test/bot/2");
+        let old = config.join("plugins/cache/test/bot/1");
+        write(
+            &config.join("settings.json"),
+            r#"{"enabledPlugins":{"bot@test":true}}"#,
+        );
+        write(
+            &config.join("plugins/installed_plugins.json"),
+            &serde_json::json!({"plugins":{"bot@test":[{"installPath":current}]}}).to_string(),
+        );
+        for root in [&current, &old] {
+            write(
+                &root.join(".mcp.json"),
+                r#"{"mcpServers":{"bot":{"command":"node","args":["server.js"]}}}"#,
+            );
+        }
+        write(&current.join("server.js"), "ordinary");
+        write(&current.join("README.adoc"), "claude/channel");
+        write(&current.join("LICENSE"), "claude/channel");
+        write(&old.join("server.js"), "claude/channel");
+        let env = [(
+            "CLAUDE_CONFIG_DIR".into(),
+            config.to_string_lossy().into_owned(),
+        )];
+        assert_eq!(disabled_channel_settings(&env, &project), None);
     }
 
     #[cfg(unix)]

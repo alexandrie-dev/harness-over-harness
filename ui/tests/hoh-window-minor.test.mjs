@@ -4,6 +4,12 @@ import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
 
+test('the current/next label appears when the running mode differs from the composer choice', async () => {
+  const view = await readFile(new URL('src/t3/base/web/components/ChatView.tsx', root), 'utf8');
+  assert.match(view, /activeRunningTurnId && activeThread\?\.runtimeMode && activeThread\.runtimeMode !== runtimeMode/);
+  assert.match(view, /Current:.*Full access.*Supervised.*Next:.*Full access.*Supervised/);
+});
+
 test('composer command drawers override glass opacity to an opaque surface', async () => {
   const css = await readFile(new URL('src/t3-entry/brand.css', root), 'utf8');
   assert.match(css, /\[data-composer-command-drawer="true"\]\s*\{[^}]*--glass-opacity:\s*100%/s);
