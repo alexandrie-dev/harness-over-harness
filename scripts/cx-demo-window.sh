@@ -116,6 +116,12 @@ printf 'XDG_DOCUMENTS_DIR="%s"\n' "$OUTPUT/home/Documents" >"$OUTPUT/config/user
 mkdir -p "$OUTPUT/config/local.hoh.desktop"
 printf '{"folder":"%s"}\n' "$OUTPUT/home/Documents/HoH" >"$OUTPUT/config/local.hoh.desktop/workspace.json"
 printf 'HOH-18 isolated live workspace.\n' >"$OUTPUT/home/Documents/HoH/README.txt"
+# CEO 24.11 (C9 QA: claude under QA started the founder's user-level playwright MCP via npx @latest):
+# QA never brings up the human's settings or MCP servers. The engine's isolated profile passes
+# `--setting-sources "" --strict-mcp-config` with no config; the founder's window is not launched by this script.
+mkdir -p "$OUTPUT/data/local.hoh.desktop/engine/profiles/window"
+printf -- '- id: harness-claude\n  config:\n    settingSources: isolated\n' \
+  >"$OUTPUT/data/local.hoh.desktop/engine/profiles/window/cordis.patch.yml"
 
 # Preserve Codex's native login environment while isolating the desktop and
 # engine. The wrapper does not inspect, copy, or modify any Codex-owned file.
