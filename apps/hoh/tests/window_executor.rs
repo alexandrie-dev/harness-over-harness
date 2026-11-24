@@ -2074,10 +2074,7 @@ async fn t4_the_request_of_claude_is_worded_for_a_person_and_its_risk_is_not_cla
 
     let asked = host.turn(SESSION, "run", Some("allowed-once")).await;
     assert_eq!(asked.len(), 1, "{asked:?}");
-    assert_eq!(
-        asked[0].human_text,
-        "Claude просит выполнить команду: touch ran.txt"
-    );
+    assert_eq!(asked[0].human_text, "Claude asks to run: touch ran.txt");
     assert_eq!(
         asked[0].risk,
         hoh_protocol::Risk::Unassessed,
@@ -2103,7 +2100,7 @@ async fn t4_the_request_of_claude_is_worded_for_a_person_and_its_risk_is_not_cla
     let path = workspace.folder.join("notes.txt");
     assert_eq!(
         asked[0].human_text,
-        format!("Claude просит изменить файл {}", path.display())
+        format!("Claude asks to edit file {}", path.display())
     );
     for request in host
         .frames
@@ -2133,16 +2130,16 @@ async fn t4b_an_invisible_character_keeps_the_request_worded_for_a_person() {
     let cases = [
         (
             "run: echo \"ok \u{2714}\u{fe0f}\"",
-            "Claude просит выполнить команду: echo \"ok \u{2714} \"".to_owned(),
+            "Claude asks to run: echo \"ok \u{2714} \"".to_owned(),
         ),
         (
             "run: echo a\u{a0}b",
-            "Claude просит выполнить команду: echo a b".to_owned(),
+            "Claude asks to run: echo a b".to_owned(),
         ),
         (
             "edit: no\u{200b}tes.txt",
             format!(
-                "Claude просит изменить файл {}",
+                "Claude asks to edit file {}",
                 workspace.folder.join("no tes.txt").display()
             ),
         ),

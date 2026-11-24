@@ -427,6 +427,51 @@ const scenarios = [
       await page.locator('[data-plugin-empty]').waitFor(); await setSidebar(page, sidebar);
     }, blocks: ['plugins'],
   },
+  {
+    name: 'subagent-approval', engine: () => modeEngine('confirm', true),
+    path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, engine, sidebar) => {
+      await page.getByText('Keep working').waitFor();
+      await setSidebar(page, sidebar);
+      const session = engine.sessions.get(CHAT.id);
+      const emit = (type, data) => engine.emit('session.event', { sessionId: CHAT.id, event: engine.append(session, type, data) });
+      emit('turn/usage', { usage: { inputTokens: 200, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 2 } });
+      emit('tool/call', { turn: 2, callId: 'approve-agent', name: 'Agent', arguments: { description: 'Write a file' } });
+      emit('tool/call', { turn: 2, callId: 'approve-write', parentCallId: 'approve-agent', name: 'Write', arguments: { file_path: 'task.txt' } });
+      emit('approval/asked', { id: 'approve-subagent', toolName: 'edit_file', callId: 'approve-write' });
+      engine.emit('approval.pending', { sessionId: CHAT.id, approvalId: 'approve-subagent', humanText: 'Claude asks to create file task.txt', risk: 'unassessed', expiresAt: Date.now() + 60_000 });
+      await page.getByText('Claude asks to create file task.txt', { exact: true }).first().waitFor();
+      await page.getByRole('button', { name: 'Approve', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Decline', exact: true }).waitFor();
+    }, blocks: ['conversation'],
+  },
+  {
+    name: 'plan-reset', engine: () => modeEngine('full', false),
+    path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, sidebar);
+      const selectPlan = async () => {
+        await page.getByRole('button', { name: 'Permissions: Full access', exact: true }).click();
+        await page.getByRole('menuitem', { name: 'Plan', exact: true }).click();
+        await assertModeChip(page, 'Plan');
+      };
+      await selectPlan();
+      await page.getByRole('button', { name: 'Permissions: Plan', exact: true }).click();
+      await page.getByRole('menuitem', { name: /Plan/ }).click();
+      await assertModeChip(page, 'Full access');
+      await selectPlan();
+      await page.getByRole('button', { name: 'Permissions: Plan', exact: true }).click();
+      await page.getByRole('menuitemradio', { name: 'Full access', exact: true }).click();
+      await assertModeChip(page, 'Full access');
+      await selectPlan();
+      await setSidebar(page, 'expanded');
+      await page.getByRole('button', { name: /New chat/ }).click({ modifiers: ['Shift'] });
+      await page.waitForURL('**/draft/*');
+      await setSidebar(page, sidebar);
+      await assertModeChip(page, 'Full access');
+    }, blocks: [],
+  },
   ...['full', 'confirm'].flatMap(mode => {
     const label = mode === 'full' ? 'Full access' : 'Supervised';
     return [

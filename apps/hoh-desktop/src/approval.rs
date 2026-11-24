@@ -358,6 +358,8 @@ pub struct ApprovalView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
     pub expires_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder_trust: Option<bool>,
 }
 
 pub struct OpenApproval {
@@ -412,7 +414,7 @@ impl Pending {
 pub struct Broker {
     key: [u8; 32],
     next: AtomicU64,
-    pending: Mutex<Option<Pending>>,
+    pending: Mutex<Vec<Pending>>,
     confirmed: Mutex<Vec<Confirmed>>,
     in_flight: Mutex<Vec<InFlight>>,
     audit: Mutex<Vec<AuditEntry>>,
@@ -425,7 +427,7 @@ impl Broker {
         Ok(Self {
             key,
             next: AtomicU64::new(0),
-            pending: Mutex::new(None),
+            pending: Mutex::new(Vec::new()),
             confirmed: Mutex::new(Vec::new()),
             in_flight: Mutex::new(Vec::new()),
             audit: Mutex::new(Vec::new()),
@@ -665,7 +667,7 @@ impl Broker {
             action,
         };
         let (reply, receiver) = mpsc::sync_channel(1);
-        let open = self.insert(request, Destination::Preflight(reply), nested)?;
+        let open = self.insert(request, Destination::Preflight(reply), nested, None)?;
         Ok((open, receiver))
     }
 
@@ -743,7 +745,7 @@ impl Broker {
         now: u64,
     ) -> Result<OpenApproval, String> {
         let request = Self::parse_engine_request(method, params, now)?;
-        self.insert(request, Destination::Engine { generation, id }, false)
+        self.insert(request, Destination::Engine { generation, id }, false, None)
     }
 
     /// The engine's request gets a window, except the one the person has just confirmed in the
@@ -758,12 +760,42 @@ impl Broker {
         params: Value,
         now: u64,
     ) -> Result<Begun, String> {
+        self.begin_engine_request(generation, id, method, params, now, None)
+    }
+
+    /// In-chat approvals can be concurrent. Their IDs remain independent of the exclusive modal.
+    pub fn begin_engine_in_chat(
+        &self,
+        generation: u64,
+        id: Value,
+        method: &str,
+        params: Value,
+        now: u64,
+        instant: Instant,
+    ) -> Result<Begun, String> {
+        self.begin_engine_request(generation, id, method, params, now, Some(instant))
+    }
+
+    fn begin_engine_request(
+        &self,
+        generation: u64,
+        id: Value,
+        method: &str,
+        params: Value,
+        now: u64,
+        in_chat_at: Option<Instant>,
+    ) -> Result<Begun, String> {
         let request = Self::parse_engine_request(method, params, now)?;
         hoh_protocol::approval::validate_host_request(&request)
             .map_err(|_| "Некорректное подтверждение".to_owned())?;
         let Some(via) = self.take_grant(generation, &request, now) else {
             return self
-                .insert(request, Destination::Engine { generation, id }, false)
+                .insert(
+                    request,
+                    Destination::Engine { generation, id },
+                    false,
+                    in_chat_at,
+                )
                 .map(Begun::Window);
         };
         let decision = HostApprovalDecision {
@@ -798,6 +830,7 @@ impl Broker {
         request: HostApprovalRequest,
         destination: Destination,
         blocks_allow: bool,
+        in_chat_at: Option<Instant>,
     ) -> Result<OpenApproval, String> {
         hoh_protocol::approval::validate_host_request(&request)
             .map_err(|_| "Некорректное подтверждение".to_owned())?;
@@ -811,21 +844,28 @@ impl Broker {
             reason: request.reason.clone(),
             details: request.details.clone(),
             expires_at: request.expires_at,
+            folder_trust: (request.tool_name == "hoh/executor/trust/set").then_some(true),
         };
         let mut slot = self
             .pending
             .lock()
             .map_err(|_| "Подтверждение недоступно")?;
-        if slot.is_some() {
+        if slot
+            .iter()
+            .any(|pending| pending.request.approval_id == request.approval_id)
+        {
+            return Err("Подтверждение уже открыто".into());
+        }
+        if in_chat_at.is_none() && slot.iter().any(|pending| !pending.in_chat) {
             return Err("Другое подтверждение уже открыто".into());
         }
-        *slot = Some(Pending {
+        slot.push(Pending {
             label: label.clone(),
             request,
-            shown_at: None,
+            shown_at: in_chat_at,
             destination,
             blocks_allow,
-            in_chat: false,
+            in_chat: in_chat_at.is_some(),
         });
         Ok(OpenApproval { label, view })
     }
@@ -837,7 +877,7 @@ impl Broker {
         let Ok(mut slot) = self.pending.lock() else {
             return false;
         };
-        match slot.as_mut() {
+        match slot.iter_mut().find(|pending| pending.label == label) {
             Some(pending)
                 if pending.label == label
                     && matches!(pending.destination, Destination::Engine { .. }) =>
@@ -865,12 +905,10 @@ impl Broker {
                 .pending
                 .lock()
                 .map_err(|_| "Подтверждение недоступно")?;
-            match slot.as_ref() {
-                Some(pending) if pending.in_chat && pending.request.approval_id == approval_id => {
-                    pending.label.clone()
-                }
-                _ => return Err("Нет такого запроса разрешения в разговоре".into()),
-            }
+            slot.iter()
+                .find(|pending| pending.in_chat && pending.request.approval_id == approval_id)
+                .map(|pending| pending.label.clone())
+                .ok_or("Нет такого запроса разрешения в разговоре")?
         };
         self.decide(&label, approval_id, outcome, now, instant)
     }
@@ -880,10 +918,10 @@ impl Broker {
             .pending
             .lock()
             .map_err(|_| "Подтверждение недоступно")?;
-        let pending = slot.as_mut().ok_or("Нет ожидающего подтверждения")?;
-        if pending.label != label {
-            return Err("Это окно не может открыть подтверждение".into());
-        }
+        let pending = slot
+            .iter_mut()
+            .find(|pending| pending.label == label)
+            .ok_or("Это окно не может открыть подтверждение")?;
         validate_time(&pending.request, now)?;
         pending.shown_at.get_or_insert(instant);
         Ok(ApprovalView {
@@ -893,6 +931,7 @@ impl Broker {
             reason: pending.request.reason.clone(),
             details: pending.request.details.clone(),
             expires_at: pending.request.expires_at,
+            folder_trust: (pending.request.tool_name == "hoh/executor/trust/set").then_some(true),
         })
     }
 
@@ -910,15 +949,15 @@ impl Broker {
         ) {
             return Err("Недопустимый ответ окна".into());
         }
-        {
+        let request = {
             let slot = self
                 .pending
                 .lock()
                 .map_err(|_| "Подтверждение недоступно")?;
-            let pending = slot.as_ref().ok_or("Нет ожидающего подтверждения")?;
-            if pending.label != label {
-                return Err("Это окно не может ответить на подтверждение".into());
-            }
+            let pending = slot
+                .iter()
+                .find(|pending| pending.label == label)
+                .ok_or("Это окно не может ответить на подтверждение")?;
             if pending.request.approval_id != approval_id {
                 return Err("Подтверждение уже сменилось".into());
             }
@@ -937,15 +976,7 @@ impl Broker {
             {
                 return Err("Сначала прочитайте подтверждение".into());
             }
-        }
-        let request = {
-            let slot = self
-                .pending
-                .lock()
-                .map_err(|_| "Подтверждение недоступно")?;
-            slot.as_ref()
-                .map(|pending| pending.request.clone())
-                .ok_or("Нет ожидающего подтверждения")?
+            pending.request.clone()
         };
         let outcome_text = serde_json::to_value(&outcome)
             .expect("approval outcome serializes")
@@ -972,8 +1003,8 @@ impl Broker {
                 .pending
                 .lock()
                 .map_err(|_| "Подтверждение недоступно")?
-                .as_ref()
-                .is_some_and(|pending| pending.label == label && pending.blocks_allow)
+                .iter()
+                .any(|pending| pending.label == label && pending.blocks_allow)
         {
             return Err(
                 "Часть команды скрыта, в ней есть вложенная команда: разрешить один раз нельзя"
@@ -1100,18 +1131,35 @@ impl Broker {
         Some(resolve(pending.destination, verified, false))
     }
 
+    /// Native received approval.resolved: the engine has already decided or withdrawn this ID.
+    pub fn withdraw_chat(&self, approval_id: &str) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.retain(|entry| !entry.in_chat || entry.request.approval_id != approval_id);
+        }
+    }
+
+    pub fn cancel_all(&self) -> Vec<(String, Resolution)> {
+        self.clear_grants();
+        self.pending
+            .lock()
+            .map(|mut pending| pending.drain(..).map(Self::cancel_pending).collect())
+            .unwrap_or_default()
+    }
+
     pub fn cancel(&self) -> Option<(String, Resolution)> {
         self.clear_grants();
-        let pending = self.pending.lock().ok()?.take()?;
-        let label = pending.label;
-        Some((
-            label,
+        self.pending.lock().ok()?.pop().map(Self::cancel_pending)
+    }
+
+    fn cancel_pending(pending: Pending) -> (String, Resolution) {
+        (
+            pending.label,
             resolve(
                 pending.destination,
                 Err("Подтверждение отменено".into()),
                 false,
             ),
-        ))
+        )
     }
 
     fn take_exact(&self, label: &str, approval_id: &str) -> Result<Pending, String> {
@@ -1119,23 +1167,20 @@ impl Broker {
             .pending
             .lock()
             .map_err(|_| "Подтверждение недоступно")?;
-        let pending = slot.as_ref().ok_or("Нет ожидающего подтверждения")?;
-        if pending.label != label {
-            return Err("Это окно не может ответить на подтверждение".into());
-        }
-        if pending.request.approval_id != approval_id {
+        let index = slot
+            .iter()
+            .position(|pending| pending.label == label)
+            .ok_or("Это окно не может ответить на подтверждение")?;
+        if slot[index].request.approval_id != approval_id {
             return Err("Подтверждение уже сменилось".into());
         }
-        slot.take()
-            .ok_or_else(|| "Нет ожидающего подтверждения".into())
+        Ok(slot.remove(index))
     }
 
     fn take_label(&self, label: &str) -> Option<Pending> {
         let mut slot = self.pending.lock().ok()?;
-        if slot.as_ref()?.label != label {
-            return None;
-        }
-        slot.take()
+        let index = slot.iter().position(|pending| pending.label == label)?;
+        Some(slot.remove(index))
     }
 }
 
@@ -1306,12 +1351,12 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                     .map_err(|_| "Некорректное доверие к папке")?;
             Ok(if request.trust {
                 format!(
-                    "Доверять настройкам проекта в папке {} (Claude и Codex)? Они могут запускать программы.",
+                    "Trust project settings in {} (Claude and Codex)? These settings can run programs.",
                     quoted(&request.cwd)
                 )
             } else {
                 format!(
-                    "Отозвать доверие к настройкам проекта в папке {} (Claude и Codex)?",
+                    "Revoke trust for project settings in {} (Claude and Codex)?",
                     quoted(&request.cwd)
                 )
             })
@@ -1645,7 +1690,7 @@ mod tests {
             assert!(!encoded.contains(forbidden), "view leaked {forbidden}");
         }
         let stored = broker.pending.lock().unwrap();
-        let action = serde_json::to_string(&stored.as_ref().unwrap().request.action).unwrap();
+        let action = serde_json::to_string(&stored.first().unwrap().request.action).unwrap();
         assert!(!action.contains("private-test-key"));
         assert!(!action.contains("apiKey"));
         assert!(action.contains("keyHash"));
@@ -1669,8 +1714,11 @@ mod tests {
                     &json!({"executor": executor, "cwd": "/work/project", "trust": trust}),
                 )
                 .unwrap();
-                assert!(text.contains("настройкам проекта"), "{text}");
-                assert!(text.contains("«/work/project» (Claude и Codex)"), "{text}");
+                assert!(text.contains("project settings"), "{text}");
+                assert!(
+                    text.contains("«/work/project» (Claude and Codex)"),
+                    "{text}"
+                );
             }
         }
     }
@@ -1726,7 +1774,7 @@ mod tests {
             (
                 "hoh/executor/trust/set",
                 json!({"executor":"claude","cwd":"/work/project","trust":true}),
-                "Доверять настройкам проекта в папке «/work/project» (Claude и Codex)?",
+                "Trust project settings in «/work/project» (Claude and Codex)?",
             ),
             (
                 "hoh/executor/access/set",

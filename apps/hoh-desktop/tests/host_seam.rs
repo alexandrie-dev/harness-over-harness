@@ -67,6 +67,44 @@ while True:
     write({"type": "system", "subtype": "init", "session_id": session,
            "model": "claude-seam", "cwd": os.getcwd(), "tools": ["Bash"],
            "permissionMode": value("--permission-mode")})
+    if "subagent-permissions" in json.dumps(message["message"]["content"]):
+        parent = "subagent-1"
+        write({"type": "assistant", "session_id": session, "parent_tool_use_id": None,
+               "message": {"id": "agent-1", "role": "assistant", "model": "claude-seam",
+                           "content": [{"type": "tool_use", "id": parent, "name": "Agent",
+                                        "input": {"description": "Write two files", "prompt": "Write files"}}]}})
+        pending = {}
+        for name in ("sub-first.txt", "sub-second.txt"):
+            tool = "tool-" + name
+            data = {"file_path": os.path.join(os.getcwd(), name), "content": "approved"}
+            request = "permission-" + name
+            pending[request] = (tool, data)
+            write({"type": "control_request", "request_id": request, "parent_tool_use_id": parent,
+                   "request": {"subtype": "can_use_tool", "tool_name": "Write", "input": data,
+                               "tool_use_id": tool, "parent_tool_use_id": parent}})
+            write({"type": "assistant", "session_id": session, "parent_tool_use_id": parent,
+                   "message": {"id": "assistant-" + name, "role": "assistant", "model": "claude-seam",
+                               "content": [{"type": "tool_use", "id": tool, "name": "Write", "input": data}]}})
+        while pending:
+            answer = read()
+            if answer.get("type") == "control_request":
+                control(answer)
+                continue
+            response = answer.get("response") or {}
+            request = response.get("request_id")
+            if answer.get("type") != "control_response" or request not in pending:
+                continue
+            tool, data = pending.pop(request)
+            allowed = (response.get("response") or {}).get("behavior") == "allow"
+            if allowed:
+                with open(data["file_path"], "w") as file:
+                    file.write(data["content"])
+            write({"type": "user", "session_id": session, "parent_tool_use_id": parent,
+                   "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool,
+                               "content": "allowed" if allowed else "denied", "is_error": not allowed}]}})
+        write({"type": "result", "subtype": "success", "is_error": False,
+               "result": "subagent complete", "session_id": session, "duration_ms": 1, "num_turns": 1})
+        continue
     tool_id = "toolu-%d" % counter
     write({"type": "assistant", "session_id": session, "parent_tool_use_id": None,
            "message": {"id": "assistant-%d" % counter, "role": "assistant", "model": "claude-seam",
@@ -260,9 +298,17 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
             while let Ok(event) = event_rx.recv() {
                 match event {
                     HostEvent::Notification(frame) => {
+                        if frame["method"] == "approval.resolved"
+                            && let Some(id) = frame["params"]["approvalId"].as_str()
+                        {
+                            broker.withdraw_chat(id);
+                        }
                         let _ = to_node.send(json!({"type":"notification","method":frame["method"],"params":frame["params"]}));
                     }
                     HostEvent::Status(status) => {
+                        if status["state"] != "ready" {
+                            broker.cancel_all();
+                        }
                         let _ = to_node.send(json!({"type":"status","status":status}));
                     }
                     HostEvent::Request {
@@ -272,13 +318,18 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
                         params,
                     } => {
                         match broker
-                            .begin_engine_or_grant(generation, id, &method, params, now_ms())
+                            .begin_engine_in_chat(
+                                generation,
+                                id,
+                                &method,
+                                params,
+                                now_ms(),
+                                Instant::now(),
+                            )
                             .unwrap()
                         {
                             Begun::Signed(resolution) => respond(&engine, resolution),
-                            Begun::Window(open) => {
-                                assert!(broker.show_in_chat(&open.label, Instant::now()))
-                            }
+                            Begun::Window(_) => {}
                         }
                     }
                 }
@@ -300,11 +351,21 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
                 );
                 let response = match answer {
                     Ok(value) => json!({"type":"response","id":id,"result":value}),
-                    Err(error) => json!({"type":"response","id":id,"error":error}),
+                    Err(error) => {
+                        json!({"type":"response","id":id,"error":hoh_desktop::errors::host_error(error)})
+                    }
                 };
                 if to_node.send(response).is_err() {
                     break;
                 }
+            }
+            Some("restart") => {
+                let answer = engine.restart_in(&work);
+                let response = match answer {
+                    Ok(()) => json!({"type":"response","id":frame["id"],"result":null}),
+                    Err(error) => json!({"type":"response","id":frame["id"],"error":error}),
+                };
+                to_node.send(response).unwrap();
             }
             Some("decide") => {
                 let id = frame["id"].clone();
@@ -369,6 +430,11 @@ fn production_host_crosses_main_window_and_chat_approval_on_the_real_engine() {
             .is_some_and(|text| !text.is_empty()),
         "{result}"
     );
+    assert_eq!(
+        std::fs::read_to_string(work.join("sub-second.txt")).unwrap(),
+        "approved"
+    );
+    assert!(!work.join("sub-first.txt").exists());
     let audit = broker.audit_log();
     assert!(
         audit

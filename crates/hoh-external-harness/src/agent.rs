@@ -238,13 +238,7 @@ pub(crate) fn display_name(executor: &str) -> String {
 
 /// What `approval: never` lets pass without a question, word for word as the consent question
 /// says it (see [`ExternalAgent::within_workspace`] and the classifier).
-const NEVER_RULE: &str = "Без вопроса пройдут только: команда, у которой рабочая папка и все \
-    пути в аргументах, значениях флагов и перенаправлениях лежат в папке сессии, без сетевых \
-    программ (curl, ssh, git push, npm install и т. п.), без переменных, подстановок, шаблонов, \
-    cd, обёрток (sudo, env, xargs) и кода в аргументах (sh -c, python -c, awk), и которую \
-    классификатор не считает удаляющей или перезаписывающей файлы; создание и правка файлов в \
-    папке сессии без удаления и без переноса поверх существующего файла. Удаления, пути вне \
-    папки, сеть, другие инструменты исполнителя и запросы прав он спросит";
+const NEVER_RULE: &str = "This applies only to commands whose working folder, argument paths, flag values and redirects stay inside the session folder. It excludes network programs, variables, substitutions, patterns, cd, wrappers and code passed as arguments. The classifier must also find no risk of deletion or overwrite. Creating or editing files inside the session folder can proceed unless it deletes a file or moves a file over an existing one. Other tools, paths outside the folder and requests for more permissions still require approval";
 /// How long the end of a turn waits for its approval and question tasks to settle.
 const TASK_SETTLE: Duration = Duration::from_secs(10);
 /// The `turn/end` error code of a turn whose opening events could not be written.
@@ -1163,17 +1157,15 @@ impl ExternalAgent {
             return Err(HarnessFailure::new(code::CLOSED, "agent is gone"));
         };
         let headline = format!(
-            "Разрешить исполнителю «{}» работать без вопросов только о командах и правках файлов, \
-             которые остаются в папке сессии: всё, что удаляет или перезаписывает файлы, касается \
-             путей вне папки или сети, он спросит",
+            "Allow {} to run commands and edit files within the session folder without asking? Deletions, overwrites, paths outside the folder and network access still require approval.",
             self.shared.name
         );
         let mut request = ApprovalRequest::new(agent, "external-harness");
         request.reason = Some(format!(
-            "{headline}. {NEVER_RULE}. Разрешение действует до конца этого запуска исполнителя"
+            "{headline}. {NEVER_RULE}. Approval lasts until this executor run ends"
         ));
         request.details = Some(format!(
-            "Режим исполнителя: {}",
+            "Executor policy: {}",
             js_json_stringify(&json!(*policy))
         ));
         request.display_reason = Some(DisplayReason::new(one_line(&headline)));
@@ -1393,33 +1385,32 @@ fn flag_incomplete(mut question: Question, action: &HarnessAction) -> Question {
     let (complete, size) = match action {
         HarnessAction::Command { command, .. } => (
             question.details.contains(command.as_str()),
-            format!("{} знаков", command.chars().count()),
+            format!("{} characters", command.chars().count()),
         ),
         HarnessAction::Tool { input, .. } => {
             let input = js_json_stringify(input);
             (
                 question.details.contains(&input),
-                format!("{} знаков", input.chars().count()),
+                format!("{} characters", input.chars().count()),
             )
         }
         HarnessAction::Permission { description } => (
             question.details.contains(description.as_str()),
-            format!("{} знаков", description.chars().count()),
+            format!("{} characters", description.chars().count()),
         ),
         HarnessAction::FileChange { changes } => (
             question.details.contains(&change_list(changes)),
-            format!("изменений в файлах: {}", changes.len()),
+            format!("{} file changes", changes.len()),
         ),
     };
     if complete {
         return question;
     }
-    const SUFFIX: &str = " (показано не полностью)";
+    const SUFFIX: &str = " (partially shown)";
     let room = MAX_HEADLINE_CHARS - SUFFIX.chars().count();
     question.headline = format!("{}{SUFFIX}", truncate_chars(&question.headline, room));
     question.details.push_str(&format!(
-        "\n[Показано не полностью, всего {size}. Одобряйте, только если доверяете исполнителю \
-         целиком.]"
+        "\n[Partially shown, {size} in total. Approve only if you trust the executor with the entire action.]"
     ));
     question
 }
@@ -1475,44 +1466,40 @@ fn plain_question(harness: &str, action: &HarnessAction, reason: Option<&str>) -
     let who = display_name(harness);
     let (headline, details) = match action {
         HarnessAction::Command { command, .. } => (
-            format!("{who} просит выполнить команду: {command}"),
-            format!("Команда: {command}"),
+            format!("{who} asks to run: {command}"),
+            format!("Command: {command}"),
         ),
         HarnessAction::FileChange { changes } => {
             let shown = match changes.as_slice() {
                 [only] => match (&only.move_path, only.kind) {
-                    (Some(_), _) => format!("переместить файл {}", only.path),
-                    (None, FileChangeKind::Add) => format!("создать файл {}", only.path),
-                    (None, FileChangeKind::Update) => format!("изменить файл {}", only.path),
-                    (None, FileChangeKind::Delete) => format!("удалить файл {}", only.path),
+                    (Some(_), _) => format!("move file {}", only.path),
+                    (None, FileChangeKind::Add) => format!("create file {}", only.path),
+                    (None, FileChangeKind::Update) => format!("edit file {}", only.path),
+                    (None, FileChangeKind::Delete) => format!("delete file {}", only.path),
                 },
                 _ => {
                     let names: Vec<&str> =
                         changes.iter().map(|change| change.path.as_str()).collect();
-                    let more = if names.len() > 4 {
-                        " и другие"
-                    } else {
-                        ""
-                    };
+                    let more = if names.len() > 4 { " and more" } else { "" };
                     format!(
-                        "изменить файлы: {}{more}",
+                        "edit files: {}{more}",
                         names.iter().take(4).copied().collect::<Vec<_>>().join(", ")
                     )
                 }
             };
-            (format!("{who} просит {shown}"), change_list(changes))
+            (format!("{who} asks to {shown}"), change_list(changes))
         }
         HarnessAction::Tool { name, input } => (
-            format!("{who} просит разрешения на действие «{name}»"),
-            format!("Данные: {}", js_json_stringify(input)),
+            format!("{who} asks to use {name}"),
+            format!("Input: {}", js_json_stringify(input)),
         ),
         HarnessAction::Permission { description } => (
-            format!("{who} просит дополнительное разрешение"),
+            format!("{who} asks for additional permission"),
             description.clone(),
         ),
     };
     let details = match reason {
-        Some(reason) => format!("{details}\nОбоснование исполнителя: {reason}"),
+        Some(reason) => format!("{details}\nExecutor justification: {reason}"),
         None => details,
     };
     // Nothing to add to the headline: the explanation stays empty (the window shows no block).
@@ -1528,13 +1515,13 @@ fn change_list(changes: &[FileChange]) -> String {
     let lines: Vec<String> = changes
         .iter()
         .map(|change| match (&change.move_path, change.kind) {
-            (Some(target), _) => format!("переместить: {} → {target}", change.path),
-            (None, FileChangeKind::Add) => format!("создать: {}", change.path),
-            (None, FileChangeKind::Update) => format!("изменить: {}", change.path),
-            (None, FileChangeKind::Delete) => format!("удалить: {}", change.path),
+            (Some(target), _) => format!("move: {} → {target}", change.path),
+            (None, FileChangeKind::Add) => format!("create: {}", change.path),
+            (None, FileChangeKind::Update) => format!("edit: {}", change.path),
+            (None, FileChangeKind::Delete) => format!("delete: {}", change.path),
         })
         .collect();
-    format!("Изменения:\n{}", lines.join("\n"))
+    format!("Changes:\n{}", lines.join("\n"))
 }
 
 /// The tool name an approval request carries for an action.

@@ -11,6 +11,7 @@ export interface ApprovalView {
   risk: Risk | 'unassessed';
   /** Текст на языке пользователя, собран движком из структуры действия. */
   humanText: string;
+  folderTrust?: boolean;
   /** Объяснение, написанное моделью. Недоверенный текст: только показывать. */
   reason?: string;
   details?: string;

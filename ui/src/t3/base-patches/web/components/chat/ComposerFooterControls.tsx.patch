@@ -35,5 +35,11 @@
 +            {chipLabel}
 @@ -88,0 +104 @@
 +        {props.planAvailable ? <MenuPrimitive.Item onClick={props.onPlanToggle}>Plan {props.planActive ? "✓" : ""}</MenuPrimitive.Item> : null}
-@@ -120,0 +137 @@
+@@ -92,0 +109 @@
++          onReselect={props.planActive ? props.onPlanToggle : undefined}
+@@ -110,0 +128 @@
++  onReselect?: (() => void) | undefined;
+@@ -120,0 +139 @@
 +  if (props.runtimeModeOptions.length === 0) return null;
+@@ -157,0 +177 @@
++              onClick={option.mode === props.runtimeMode ? props.onReselect : undefined}

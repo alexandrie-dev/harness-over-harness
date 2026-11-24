@@ -393,8 +393,7 @@ fn supervise(
                     on_send,
                 }) => {
                     if !ready {
-                        let _ =
-                            reply.send(Err("Помощник ещё подключается. Повторите запрос".into()));
+                        let _ = reply.send(Err(crate::errors::CONNECTING.into()));
                         continue;
                     }
                     if pending.len() >= 64 {
@@ -515,7 +514,7 @@ fn supervise(
         for (_, p) in pending.drain() {
             let _ = p
                 .reply
-                .send(Err("Связь с Помощником прервана. Запрос не повторён".into()));
+                .send(Err(crate::errors::CONNECTION_INTERRUPTED.into()));
         }
         transport.close();
         sink(HostEvent::Status(
@@ -532,7 +531,7 @@ fn drain_backoff(rx: &mpsc::Receiver<Message>) -> bool {
         match rx.recv_timeout(wait) {
             Ok(Message::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return true,
             Ok(Message::Request { reply, .. }) => {
-                let _ = reply.send(Err("Помощник переподключается".into()));
+                let _ = reply.send(Err(crate::errors::RECONNECTING.into()));
             }
             _ => {}
         }

@@ -22,7 +22,7 @@ import {
 } from './config.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
-import { englishError } from './errors.ts';
+import { englishError, hostFailure } from './errors.ts';
 import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 import { ThreadMetadataStore } from './thread-metadata.ts';
@@ -1343,6 +1343,31 @@ export class HohHost {
     if (dispositionChanged) this.save();
   }
 
+  /** A cached conversation can be opened before the desktop transport finishes connecting. */
+  private async readThreadHistory(thread: ThreadModel) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        try { await this.engine.request('session/resume', { sessionId: thread.id }); }
+        catch (error) {
+          if (hostFailure(error).code === 'connecting') throw error;
+          // Already open, or recoverable as a read-only log.
+        }
+        let afterSeq: number | undefined;
+        for (;;) {
+          const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
+          const events: any[] = Array.isArray(page?.events) ? page.events : [];
+          for (const event of events) thread.applyEvent(event);
+          if (events.length < PAGE || (afterSeq !== undefined && page.nextSeq <= afterSeq)) return;
+          afterSeq = page.nextSeq;
+        }
+      } catch (error) {
+        if (this.stopped || attempt >= this.loadRetries || hostFailure(error).code !== 'connecting') throw error;
+        await new Promise<void>(resolve => setTimeout(resolve, this.loadRetryMs));
+        if (this.stopped) throw error;
+      }
+    }
+  }
+
   /** The chat's history, read once from the engine (after a restart too: the engine keeps it on disk). */
   private async loaded(threadId: string): Promise<ThreadModel | undefined> {
     const thread = this.threads.get(threadId);
@@ -1351,17 +1376,7 @@ export class HohHost {
     let pending = this.loading.get(threadId);
     if (!pending) {
       pending = (async () => {
-        // After a restart the chat is on disk but not open: it is resumed before anything else.
-        try { await this.engine.request('session/resume', { sessionId: threadId }); } catch { /* new or already open */ }
-        let afterSeq: number | undefined;
-        for (;;) {
-          const page = await this.engine.request('session/events', { sessionId: threadId, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
-          const events: any[] = Array.isArray(page?.events) ? page.events : [];
-          for (const event of events) thread.applyEvent(event);
-          if (events.length < PAGE) break;
-          if (afterSeq !== undefined && page.nextSeq <= afterSeq) break;
-          afterSeq = page.nextSeq;
-        }
+        await this.readThreadHistory(thread);
         thread.settleUnfinished(this.now());
         // The model this chat is bound to (a chat that has had a turn keeps its own).
         const modeGeneration = this.modeGenerations.get(threadId) ?? 0;
@@ -2208,11 +2223,11 @@ ${message.slice(0, 8000)}`;
     // Window-owned list actions do not require opening the engine history. They remain usable
     // while a cold conversation's history or access lookup is slow or unavailable.
     const listAction = ['thread.metadata.update', 'thread.pin', 'thread.unpin', 'thread.pin.reorder', 'thread.archive', 'thread.unarchive'].includes(type);
-    const thread = typeof command.threadId === 'string'
-      ? listAction ? this.threads.get(command.threadId) : await this.loaded(command.threadId)
-      : undefined;
-    const needThread = () => { if (!thread) throw dispatchError(command, 'This thread does not exist.'); return thread; };
     try {
+      const thread = typeof command.threadId === 'string'
+        ? listAction ? this.threads.get(command.threadId) : await this.loaded(command.threadId)
+        : undefined;
+      const needThread = () => { if (!thread) throw dispatchError(command, 'This thread does not exist.'); return thread; };
       switch (type) {
         case 'thread.create':
           if (thread && typeof command.projectId === 'string' && command.projectId !== thread.projectId) throw new Error('A conversation cannot change its project folder. Start a new thread.');

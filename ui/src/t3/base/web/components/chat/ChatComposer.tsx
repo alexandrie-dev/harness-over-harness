@@ -2531,7 +2531,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onPlanToggle={() => setComposerDraftInteractionMode(composerDraftTarget, (composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan" ? "default" : "plan")}
       defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
-      handleRuntimeModeChange={handleRuntimeModeChange}
+      handleRuntimeModeChange={(mode) => {
+        setComposerDraftInteractionMode(composerDraftTarget, "default");
+        handleRuntimeModeChange(mode);
+      }}
       composerControlsCollapsed={composerControlsCollapsed}
       effortDisplay={settings.effortDisplay}
       permissionsShownInStrip={props.permissionsShownInStrip}

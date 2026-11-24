@@ -244,6 +244,11 @@ fn handle_event(
 ) {
     match event {
         HostEvent::Notification(frame) => {
+            if frame["method"] == "approval.resolved"
+                && let Some(id) = frame["params"]["approvalId"].as_str()
+            {
+                approvals.withdraw_chat(id);
+            }
             if frame["method"] == "user-question.cancelled"
                 && let Some(id) = frame["params"]["requestId"].as_str()
             {
@@ -264,7 +269,7 @@ fn handle_event(
             if !is_ready {
                 questions.clear();
             }
-            if let Some((label, resolution)) = cancel_for_status(approvals, is_ready) {
+            for (label, resolution) in cancel_for_status(approvals, is_ready) {
                 dispatch_resolution(handle, resolution);
                 destroy_window(handle, &label);
             }
@@ -301,13 +306,22 @@ fn handle_event(
             method,
             params,
         } => {
-            match approvals.begin_engine_or_grant(generation, id.clone(), &method, params, now_ms())
-            {
-                // The main window shows it in the conversation (its `approval.pending` notification).
+            let now = now_ms();
+            let begun = if in_chat {
+                approvals.begin_engine_in_chat(
+                    generation,
+                    id.clone(),
+                    &method,
+                    params,
+                    now,
+                    Instant::now(),
+                )
+            } else {
+                approvals.begin_engine_or_grant(generation, id.clone(), &method, params, now)
+            };
+            match begun {
                 Ok(Begun::Window(open)) if in_chat => {
-                    if approvals.show_in_chat(&open.label, Instant::now()) {
-                        schedule_expiry(handle, approvals, open.label, open.view.expires_at);
-                    }
+                    schedule_expiry(handle, approvals, open.label, open.view.expires_at);
                 }
                 Ok(Begun::Window(open)) => schedule_window(handle, approvals, open),
                 // Confirmed by the person a moment ago in the settings window: no second window.
@@ -362,7 +376,11 @@ fn open_window(
         &label,
         tauri::WebviewUrl::App("approval.html".into()),
     )
-    .title("HoH — Подтверждение")
+    .title(if open.view.folder_trust == Some(true) {
+        "HoH — Confirmation"
+    } else {
+        "HoH — Подтверждение"
+    })
     .inner_size(640.0, 620.0)
     .min_inner_size(520.0, 520.0)
     .resizable(true)
@@ -684,8 +702,12 @@ fn approval_window_resolution(
     }
 }
 
-fn cancel_for_status(approvals: &Broker, is_ready: bool) -> Option<(String, Resolution)> {
-    if is_ready { None } else { approvals.cancel() }
+fn cancel_for_status(approvals: &Broker, is_ready: bool) -> Vec<(String, Resolution)> {
+    if is_ready {
+        Vec::new()
+    } else {
+        approvals.cancel_all()
+    }
 }
 
 fn expire_approval(approvals: &Broker, label: &str, now: u64) -> Option<Resolution> {
@@ -936,7 +958,7 @@ pub fn approval_decide(
 }
 
 pub fn shutdown(handle: &tauri::AppHandle, host: &Host) {
-    if let Some((label, resolution)) = host.approvals.cancel() {
+    for (label, resolution) in host.approvals.cancel_all() {
         dispatch_resolution(handle, resolution);
         destroy_window(handle, &label);
     }
@@ -1234,7 +1256,7 @@ mod tests {
     fn non_ready_status_cancels_waiter_and_frees_slot() {
         let broker = Broker::new([0x42; 32]).unwrap();
         let (_open, receiver) = begin(&broker, 10_000);
-        let (_label, resolution) = cancel_for_status(&broker, false).unwrap();
+        let (_label, resolution) = cancel_for_status(&broker, false).pop().unwrap();
         deliver_preflight(resolution);
         assert!(!receiver.recv_timeout(Duration::from_millis(50)).unwrap());
         let _next = begin(&broker, 10_000);

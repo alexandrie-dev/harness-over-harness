@@ -287,6 +287,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `client-runtime/operations/commands.ts` | правка (`ui/src/t3/base-patches/client-runtime/operations/commands.ts.patch`) | режим композера сопровождает каждое отправленное и поставленное в очередь сообщение |
 | `web/components/ChatView.tsx` | правка (`ui/src/t3/base-patches/web/components/ChatView.tsx.patch`) | текущий режим хода и выбор следующего показаны раздельно; неизвестный режим не скрывает известного исполнителя |
 | `web/components/chat/ComposerControlsBar.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ComposerControlsBar.tsx.patch`) | режим всегда остаётся в строке ввода, включая значение по умолчанию |
+| `web/hooks/useHandleNewThread.ts` | правка (`ui/src/t3/base-patches/web/hooks/useHandleNewThread.ts.patch`) | новый разговор открывается без Plan предыдущего разговора |
 | `web/components/chat/ComposerFooterControls.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ComposerFooterControls.tsx.patch`) | чип показывает фактический режим и выбранный для следующего хода |
 | `contracts/assets.ts` | правка (`ui/src/t3/base-patches/contracts/assets.ts.patch`) | превью изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP; отказ нативной политики несёт ограниченную безопасную причину |
 | `client-runtime/markdownImages.ts` | правка (`ui/src/t3/base-patches/client-runtime/markdownImages.ts.patch`) | безопасность превью: data URI из ответа ассистента не передаётся напрямую в img |
@@ -428,7 +429,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 Во время хода патч `ChatView.tsx` показывает действующий режим разрешений и, если выбор композера отличается, режим следующего сообщения; выбор композера передаётся вместе с сообщением.
 Патчи `contracts/orchestrationV2.ts` и `client-runtime/operations/commands.ts` передают режим композера вместе с каждым `message.dispatch`, чтобы подготовка вложений не связывала сообщение с последующим выбором.
 
-Plan mode восстановлен патчами `components/chat/ChatComposer.tsx` и `useComposerSend.ts`: провайдер с `showInteractionModeToggle` получает кнопку Plan, а выбранный `interactionMode` уходит и при создании разговора, и в следующих ходах.
+Plan mode восстановлен патчами `components/chat/ChatComposer.tsx` и `useComposerSend.ts`: провайдер с `showInteractionModeToggle` получает кнопку Plan, а выбранный `interactionMode` уходит и при создании разговора, и в следующих ходах. Выбор обычного режима снимает Plan.
 
 Уточнение HOH-43/45: скрыта только кнопка общей правой панели («Toggle right panel»); «Toggle thread details panel» остаётся видимой и открывает штатную ThreadDetailsCard со статистикой HoH.
 

@@ -918,7 +918,7 @@ async fn a_harmless_command_is_asked_plainly_and_recorded_as_a_step() {
     let asked = env.asked();
     assert_eq!(asked.len(), 1, "{asked:?}");
     assert_eq!(asked[0].tool, "bash");
-    assert_eq!(asked[0].headline, "Stub просит выполнить команду: ls");
+    assert_eq!(asked[0].headline, "Stub asks to run: ls");
     assert_eq!(last_answer(&agent), "decision allow");
     let call = &of_type(&agent, "tool/call")[0];
     assert_eq!(call["callId"], "c1");
@@ -1889,14 +1889,17 @@ async fn a_mixed_change_question_lists_every_change() {
     assert_eq!(asked.len(), 2, "{asked:?}");
     assert_eq!(
         asked[0].details,
-        "Изменения:\nудалить: a.txt\nизменить: /home/u/.ssh/authorized_keys"
+        "Changes:\ndelete: a.txt\nedit: /home/u/.ssh/authorized_keys"
     );
     assert_eq!(
         asked[1].details,
-        "Изменения:\nпереместить: new.txt → b.txt\nсоздать: /etc/profile"
+        "Changes:\nmove: new.txt → b.txt\ncreate: /etc/profile"
     );
     for question in &asked {
-        assert!(!question.headline.contains("не полностью"), "{question:?}");
+        assert!(
+            !question.headline.contains("partially shown"),
+            "{question:?}"
+        );
     }
     env.close().await;
 }
@@ -1934,7 +1937,7 @@ async fn a_command_over_the_details_limit_is_flagged_in_the_question() {
     let asked = env.asked();
     assert_eq!(asked.len(), 1, "{asked:?}");
     assert!(
-        asked[0].headline.ends_with("(показано не полностью)"),
+        asked[0].headline.ends_with("(partially shown)"),
         "{}",
         asked[0].headline
     );
@@ -1942,13 +1945,13 @@ async fn a_command_over_the_details_limit_is_flagged_in_the_question() {
     assert!(
         asked[0]
             .details
-            .contains(&format!("всего {} знаков", command.chars().count())),
+            .contains(&format!("{} characters in total", command.chars().count())),
         "{}",
         &asked[0].details[asked[0].details.len() - 200..]
     );
     // A command that fits is not flagged.
     turn(&agent, "run: ls").await;
-    assert!(!env.asked()[1].headline.contains("не полностью"));
+    assert!(!env.asked()[1].headline.contains("partially shown"));
     env.close().await;
 }
 
@@ -2113,14 +2116,14 @@ async fn under_never_only_commands_that_stay_in_the_folder_pass_without_a_questi
     assert!(
         asked[0]
             .headline
-            .contains("без вопросов только о командах и правках файлов, которые остаются в папке"),
+            .contains("run commands and edit files within the session folder without asking"),
         "{}",
         asked[0].headline
     );
     assert!(
-        asked[0].reason.contains(
-            "Без вопроса пройдут только: команда, у которой рабочая папка и все пути в аргументах"
-        ),
+        asked[0]
+            .reason
+            .contains("This applies only to commands whose working folder, argument paths"),
         "{}",
         asked[0].reason
     );

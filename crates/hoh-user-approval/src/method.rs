@@ -22,8 +22,11 @@ mod trust_tests {
                     }),
                 )
                 .unwrap();
-                assert!(text.contains("«/work/project» (Claude и Codex)"), "{text}");
-                assert!(text.contains("настройкам проекта"), "{text}");
+                assert!(
+                    text.contains("«/work/project» (Claude and Codex)"),
+                    "{text}"
+                );
+                assert!(text.contains("project settings"), "{text}");
             }
         }
     }
@@ -37,12 +40,12 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
                 serde_json::from_value(params.clone()).map_err(|_| "invalid folder trust")?;
             Ok(if request.trust {
                 format!(
-                    "Доверять настройкам проекта в папке {} (Claude и Codex)? Они могут запускать программы.",
+                    "Trust project settings in {} (Claude and Codex)? These settings can run programs.",
                     quoted(&request.cwd)
                 )
             } else {
                 format!(
-                    "Отозвать доверие к настройкам проекта в папке {} (Claude и Codex)?",
+                    "Revoke trust for project settings in {} (Claude and Codex)?",
                     quoted(&request.cwd)
                 )
             })

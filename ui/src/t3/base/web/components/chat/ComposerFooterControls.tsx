@@ -106,6 +106,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
           runtimeMode={props.runtimeMode}
           runtimeModeOptions={props.runtimeModeOptions}
           onRuntimeModeChange={props.onRuntimeModeChange}
+          onReselect={props.planActive ? props.onPlanToggle : undefined}
         />
       </MenuPopup>
     </Menu>
@@ -124,6 +125,7 @@ export function ComposerPermissionsSection(props: {
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onReselect?: (() => void) | undefined;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -172,6 +174,7 @@ export function ComposerPermissionsSection(props: {
               aria-label={option.label}
               aria-describedby={`${descriptionId}-${option.mode}`}
               closeOnClick
+              onClick={option.mode === props.runtimeMode ? props.onReselect : undefined}
               onPointerEnter={() => setPreviewMode(option.mode)}
               onPointerLeave={() => setPreviewMode(null)}
               onFocus={() => setPreviewMode(option.mode)}

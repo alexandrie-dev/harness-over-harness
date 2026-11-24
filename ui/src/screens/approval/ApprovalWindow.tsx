@@ -82,6 +82,7 @@ export function ApprovalWindow() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const [now, setNow] = useState(() => Date.now());
   const [armed, setArmed] = useState(false);
+  const [folderTrust, setFolderTrust] = useState(false);
   const rejectRef = useRef<HTMLButtonElement>(null);
   const total = useRef(1);
   const sent = useRef(false);
@@ -96,7 +97,7 @@ export function ApprovalWindow() {
   useEffect(() => {
     let alive = true;
     approvalHost().current().then(
-      v => { if (alive) { total.current = Math.max(1, v.expiresAt - Date.now()); setNow(Date.now()); setPhase({ kind: 'pending', view: v }); } },
+      v => { if (alive) { setFolderTrust(v.folderTrust === true); total.current = Math.max(1, v.expiresAt - Date.now()); setNow(Date.now()); setPhase({ kind: 'pending', view: v }); } },
       e => { if (alive) setPhase({ kind: 'error', text: errorText(e, 'Не удалось получить запрос.') }); },
     );
     return () => { alive = false; };
@@ -129,11 +130,11 @@ export function ApprovalWindow() {
     try {
       await approvalHost().decide(view.approvalId, outcome);
       setPhase(outcome === 'allowed-once'
-        ? { kind: 'done', title: 'Разрешено один раз', note: own ? 'Настройка будет сохранена. В следующий раз окно спросит снова.' : 'Помощник выполнит это действие. В следующий раз он спросит снова.' }
-        : { kind: 'done', title: 'Отклонено', note: own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.' });
+        ? { kind: 'done', title: folderTrust ? 'Allowed once' : 'Разрешено один раз', note: folderTrust ? 'Your choice was saved.' : own ? 'Настройка будет сохранена. В следующий раз окно спросит снова.' : 'Помощник выполнит это действие. В следующий раз он спросит снова.' }
+        : { kind: 'done', title: folderTrust ? 'Declined' : 'Отклонено', note: folderTrust ? 'Nothing changed.' : own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.' });
     } catch (e) {
       sent.current = false;
-      setPhase({ kind: 'error', view, text: errorText(e, 'Не удалось передать ответ.') });
+      setPhase({ kind: 'error', view, text: folderTrust ? 'Could not send your answer.' : errorText(e, 'Не удалось передать ответ.') });
     } finally {
       setSending(false);
     }
@@ -163,23 +164,23 @@ export function ApprovalWindow() {
   return (
     <div className="hoh-page ap-page" data-screen="approval" data-phase={expired ? 'done' : phase.kind}>
       <div className="ap-guard" role="alertdialog" aria-labelledby="ap-what" aria-describedby="ap-why">
-        <div className="ap-title"><Icon name="alert" small />Защита HoH<small>Отдельное окно, не часть чата</small></div>
+        <div className="ap-title"><Icon name="alert" small />{folderTrust ? 'HoH confirmation' : 'Защита HoH'}<small>{folderTrust ? 'Separate from the conversation' : 'Отдельное окно, не часть чата'}</small></div>
 
         {phase.kind === 'loading' && <div className="ap-done" role="status">Загружаю запрос…</div>}
-        {!expired && phase.kind === 'error' && <div className="ap-done" role="alert">{phase.text}<small>Ответ не отправлен. Закройте окно: это отказ.</small></div>}
-        {expired && <div className="ap-done" role="status">Время вышло, действие отклонено<small>{own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.'}</small></div>}
+        {!expired && phase.kind === 'error' && <div className="ap-done" role="alert">{phase.text}<small>{folderTrust ? 'Close this window to decline.' : 'Ответ не отправлен. Закройте окно: это отказ.'}</small></div>}
+        {expired && <div className="ap-done" role="status">{folderTrust ? 'Confirmation expired' : 'Время вышло, действие отклонено'}<small>{folderTrust ? 'Nothing changed.' : own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.'}</small></div>}
         {phase.kind === 'done' && <div className="ap-done" role="status">{phase.title}<small>{phase.note}</small></div>}
 
         {view && !expired && (
           <>
             <div className="ap-body">
               {own
-                ? <p className="ap-ask" data-own-action>Подтвердите своё действие</p>
+                ? <p className="ap-ask" data-own-action>{folderTrust ? 'Confirm your choice' : 'Подтвердите своё действие'}</p>
                 : <p className="ap-ask">Помощник просит разрешение <span className="ap-risk" data-risk={view.risk}>{RISK_LABEL[view.risk]}</span></p>}
               <h1 className="ap-what" id="ap-what">{headline}</h1>
               <div className="ap-why" id="ap-why" data-risk={own ? 'own' : view.risk}>
                 <Icon name={own ? 'shield' : 'alert'} />
-                {own ? <div>{OWN_WHY}</div> : <div><h2>{why.title}</h2>{why.text}</div>}
+                {own ? <div>{folderTrust ? 'HoH asks you to confirm changes to folder trust.' : OWN_WHY}</div> : <div><h2>{why.title}</h2>{why.text}</div>}
               </div>
               {showSaid && <div className="ap-said">
                 <h2>Объяснение Помощника</h2>
@@ -187,21 +188,21 @@ export function ApprovalWindow() {
               </div>}
               {view.details?.trim() && <details className="ap-details" open={detailsOpen ?? executorAsks} data-details-open={(detailsOpen ?? executorAsks) ? 'true' : 'false'} onToggle={event => setDetailsOpen(event.currentTarget.open)}><summary>Подробности</summary><pre>{view.details}</pre></details>}
               {left > LAST_MINUTE_S
-                ? <p className="ap-timer-note" data-calm>Можно не спешить. Если не ответить, действие отклонится само.</p>
+                ? <p className="ap-timer-note" data-calm>{folderTrust ? 'This request expires if you leave it unanswered.' : 'Можно не спешить. Если не ответить, действие отклонится само.'}</p>
                 : <>
-                  <div className="ap-timer"><Icon name="clock" small /><span>Осталось <b data-testid="timer">{clock(left)}</b></span></div>
+                  <div className="ap-timer"><Icon name="clock" small /><span>{folderTrust ? 'Time left' : 'Осталось'} <b data-testid="timer">{clock(left)}</b></span></div>
                   <div className="ap-bar" aria-hidden="true"><i style={{ '--share': share } as CSSProperties} /></div>
-                  <p className="ap-timer-note">Если не ответить, действие отклонится само.</p>
+                  <p className="ap-timer-note">{folderTrust ? 'This request expires if you leave it unanswered.' : 'Если не ответить, действие отклонится само.'}</p>
                 </>}
             </div>
             <div className="ap-actions">
-              <button ref={rejectRef} type="button" className="btn ap-safe" disabled={sending} onClick={() => void decide('rejected')}>Отклонить</button>
-              <button type="button" className="btn ap-risky" disabled={!armed || sending} onClick={() => void decide('allowed-once')}>Разрешить один раз</button>
+              <button ref={rejectRef} type="button" className="btn ap-safe" disabled={sending} onClick={() => void decide('rejected')}>{folderTrust ? 'Decline' : 'Отклонить'}</button>
+              <button type="button" className="btn ap-risky" disabled={!armed || sending} onClick={() => void decide('allowed-once')}>{folderTrust ? 'Allow once' : 'Разрешить один раз'}</button>
             </div>
           </>
         )}
 
-        <div className="ap-foot"><Icon name="shield" small /><span>Это окно защиты HoH. Чат не может его открыть, нажать за вас или изменить. Закрыть окно — то же, что отклонить.</span></div>
+        <div className="ap-foot"><Icon name="shield" small /><span>{folderTrust ? 'Only you can confirm this request. Closing the window declines it.' : 'Это окно защиты HoH. Чат не может его открыть, нажать за вас или изменить. Закрыть окно — то же, что отклонить.'}</span></div>
       </div>
     </div>
   );

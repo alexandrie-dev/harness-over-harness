@@ -107,7 +107,7 @@ impl DestructiveClassifierService {
 /// `details` of a file-change question: the paths, one per line, as the harness wrote them.
 fn file_list(paths: &[String]) -> String {
     const MAX_DETAILS_CHARS: usize = 2000;
-    let text = format!("Файлы:\n{}", paths.join("\n"));
+    let text = format!("Files:\n{}", paths.join("\n"));
     match text.char_indices().nth(MAX_DETAILS_CHARS) {
         Some((end, _)) => format!("{}…", &text[..end]),
         None => text,

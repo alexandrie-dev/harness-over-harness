@@ -29,7 +29,7 @@ async fn a_command_is_judged_like_the_window_guard() {
         .expect("a removal is asked");
     assert!(asked.details.contains("rm old.txt"), "{}", asked.details);
     // The whole folder path, not its last two names (QA P2: «Documents/HoH»).
-    let folder = format!("(папка {})", dir.path().display());
+    let folder = format!("(folder {})", dir.path().display());
     assert!(asked.headline.contains(&folder), "{}", asked.headline);
     let risks = service().command_risks("rm old.txt", cwd).await;
     assert!(
@@ -44,7 +44,7 @@ fn a_deletion_is_always_asked_and_lists_the_files() {
     assert!(service().deletion(&[], Some(dir.path())).is_none());
     let paths = ["old.txt".to_owned(), "missing.txt".to_owned()];
     let asked = service().deletion(&paths, Some(dir.path())).expect("asked");
-    assert_eq!(asked.details, "Файлы:\nold.txt\nmissing.txt");
+    assert_eq!(asked.details, "Files:\nold.txt\nmissing.txt");
     assert!(!asked.headline.is_empty());
 }
 
@@ -55,7 +55,7 @@ fn an_overwrite_is_asked_only_for_existing_files() {
     assert!(service().overwrite(&new, Some(dir.path())).is_none());
     let both = ["new.txt".to_owned(), "old.txt".to_owned()];
     let asked = service().overwrite(&both, Some(dir.path())).expect("asked");
-    assert_eq!(asked.details, "Файлы:\nold.txt");
+    assert_eq!(asked.details, "Files:\nold.txt");
     let absolute = [dir.path().join("old.txt").to_string_lossy().into_owned()];
     assert!(service().overwrite(&absolute, None).is_some());
 }

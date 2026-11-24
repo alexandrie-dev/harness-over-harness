@@ -18,3 +18,9 @@
 +      planActive={(composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan"}
 +      currentPlanActive={props.currentRuntimeMode !== undefined && activeThread?.interactionMode === "plan"}
 +      onPlanToggle={() => setComposerDraftInteractionMode(composerDraftTarget, (composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan" ? "default" : "plan")}
+@@ -2523 +2534,4 @@
+-      handleRuntimeModeChange={handleRuntimeModeChange}
++      handleRuntimeModeChange={(mode) => {
++        setComposerDraftInteractionMode(composerDraftTarget, "default");
++        handleRuntimeModeChange(mode);
++      }}

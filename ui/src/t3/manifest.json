@@ -232,6 +232,7 @@
       "web/appInit.tsx": "не запускает скрытый просмотр устройств и неподдерживаемую подписку на них",
       "web/components/settings/ArchivedThreadsPanel.tsx": "в архиве удаление обозначено Coming Soon до поддержки движком",
       "web/components/chat/ComposerControlsBar.tsx": "режим доступа всегда виден в строке ввода; при активном ходе чип показывает фактический режим и выбор следующего хода",
+      "web/hooks/useHandleNewThread.ts": "новый разговор открывается без Plan предыдущего разговора",
       "web/components/chat/ComposerFooterControls.tsx": "режим доступа всегда виден в строке ввода; при активном ходе чип показывает фактический режим и выбор следующего хода",
       "web/components/ComposerContextPermissions.tsx": "при неизвестном режиме доступа явный пустой список провайдера скрывает контекстный переключатель прав",
       "web/components/chat/ThreadDetailsPanel.tsx": "HOH-43: содержимое панели разговора — цель и план, токены и контекст, все субагенты, навыки, фоновые работы, модель и MCP; каркас ThreadDetailsCard и кнопка T3 без изменений",

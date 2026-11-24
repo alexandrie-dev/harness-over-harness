@@ -225,19 +225,17 @@ async fn an_escalation_ask_reaching_the_host_is_worded_by_the_engine_and_the_jus
 
     let requests = lock(&peer.requests).clone();
     assert_eq!(requests.len(), 2);
-    for (value, what) in [(&requests[0], "команду"), (&requests[1], "действие")] {
+    for (value, what) in [(&requests[0], "the command"), (&requests[1], "the action")] {
         let host: HostApprovalRequest = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
             host.human_text,
-            format!(
-                "Помощник просит разрешения работать за пределами своей папки: выполнить {what}"
-            )
+            format!("The assistant asks to run {what} outside its folder")
         );
         assert_eq!(
             host.reason.as_deref(),
             Some(
                 format!(
-                    "{}. Обоснование Помощника — в подробностях",
+                    "{}. See details for the assistant’s justification",
                     host.human_text
                 )
                 .as_str()
@@ -245,7 +243,7 @@ async fn an_escalation_ask_reaching_the_host_is_worded_by_the_engine_and_the_jus
         );
         assert_eq!(
             host.details.as_deref(),
-            Some(format!("Обоснование Помощника: {justification}").as_str())
+            Some(format!("Assistant justification: {justification}").as_str())
         );
         let window_text = format!("{} {}", host.human_text, host.reason.as_deref().unwrap());
         for word in ["old.txt", "RM", "rm", "двоеточие", "выполнить RM", "Allow"]
@@ -294,11 +292,11 @@ async fn escalation_wording_covers_other_modes_and_an_overlong_justification() {
     let second: HostApprovalRequest = serde_json::from_value(requests[1].clone()).unwrap();
     assert_eq!(
         first.human_text,
-        "Помощник просит выполнить команду с правом записи в рабочую папку"
+        "The assistant asks to run the command with write access to its working folder"
     );
     assert_eq!(
         second.human_text,
-        "Помощник просит выполнить команду с дополнительными правами"
+        "The assistant asks to run the command with additional permissions"
     );
     for host in [&first, &second] {
         let details = host.details.as_deref().unwrap();

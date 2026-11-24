@@ -1432,7 +1432,11 @@ async fn handle_control_request(inner: &Inner, message: &Value) {
         return;
     };
     match text(request, "subtype") {
-        Some("can_use_tool") => can_use_tool(inner, request_id, request).await,
+        Some("can_use_tool") => {
+            let parent =
+                text(request, "parent_tool_use_id").or_else(|| text(message, "parent_tool_use_id"));
+            can_use_tool(inner, request_id, request, parent).await;
+        }
         _ => {
             inner
                 .reply_error(request_id, "unsupported control request")
@@ -1454,7 +1458,7 @@ fn signed_out_message(cwd: &std::path::Path, config_dir: Option<&str>) -> String
 
 /// `can_use_tool`: T3 `ClaudeAdapterV2.ts` `canUseToolEffect`. `AskUserQuestion` becomes a
 /// question; everything else a permission request.
-async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
+async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value, parent: Option<&str>) {
     let name = text(request, "tool_name").unwrap_or("tool");
     let input = request.get("input").cloned().unwrap_or_else(|| json!({}));
     let native_id = text(request, "tool_use_id")
@@ -1465,7 +1469,8 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
         let state = lock(&inner.state);
         let parent_item_id = tool_use_id
             .as_deref()
-            .and_then(|id| state.item_parents.get(id).cloned());
+            .and_then(|id| state.item_parents.get(id).cloned())
+            .or_else(|| parent.map(str::to_owned));
         let origin_turn = tool_use_id
             .as_deref()
             .and_then(|id| state.item_turns.get(id).cloned())
