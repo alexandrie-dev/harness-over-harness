@@ -7,7 +7,8 @@
     "build": "/bin/bash -p scripts/build.sh",
     "snapshot": "python3 scripts/offline.py node scripts/snapshot.mjs",
     "supply": "../scripts/ui-supply-check.sh",
-    "build:offline": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py /bin/sh -c 'pnpm install --frozen-lockfile --offline && ../scripts/ui-supply-check.sh && ./node_modules/.bin/tsc --noEmit && ./node_modules/.bin/vite build && node scripts/check-dist.mjs'",
+    "build:offline": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py /bin/sh -c 'pnpm install --frozen-lockfile --offline && ../scripts/ui-supply-check.sh && ./node_modules/.bin/tsc --noEmit && pnpm run test:unit && ./node_modules/.bin/vite build && node scripts/check-dist.mjs'",
+    "test:unit": "TMPDIR=${TMPDIR:-${XDG_RUNTIME_DIR:-/tmp}} node --test --test-concurrency=2 tests/hoh-host/*.test.mjs tests/*.test.mjs tests/chat/*.test.mjs tests/screens-a/core.test.mjs tests/screens-a/folder-trust.test.mjs",
     "test:chat:core": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py node tests/chat/run.mjs",
     "test:chat": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py node tests/chat/behavior.mjs"
   },

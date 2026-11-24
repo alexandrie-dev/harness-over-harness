@@ -1,6 +1,6 @@
 // Node-only component logic runner. Executes the authored TSX with deterministic
 // hook commits, refs, clock and effects; this is not a DOM/browser renderer.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve, dirname, extname } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -36,13 +36,19 @@ export function componentHarness(file, name, mocks = {}, props = {}) {
   function load(path) {
     if (modules.has(path)) return modules.get(path);
     const module = { exports: {} }; modules.set(path, module.exports);
-    const source = ts.transpileModule(readFileSync(path, 'utf8'), { fileName: path, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+    // TypeScript preserves ESM for .mjs regardless of the requested module kind.
+    const source = ts.transpileModule(readFileSync(path, 'utf8'), { fileName: path.endsWith('.mjs') ? path.slice(0, -4) + '.ts' : path, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
     const localRequire = id => {
       if (id === 'react') return hooks;
       if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'fragment' };
       if (id in mocks) return mocks[id];
       if (id.endsWith('.css')) return {};
-      if (id.startsWith('.')) return load(resolve(dirname(path), extname(id) ? id : id + '.tsx'));
+      if (id.startsWith('.')) {
+        const base = resolve(dirname(path), id);
+        const resolved = extname(id) ? base : ['.ts', '.tsx', '.mjs', '.js'].map(ext => base + ext).find(existsSync);
+        if (!resolved) throw new Error(`Cannot resolve ${id} from ${path}`);
+        return load(resolved);
+      }
       return require(id);
     };
     const setTimer = (fn, delay, repeat = false) => { const id = ++nextTimer; timers.set(id, { fn, at: clock + delay, delay, repeat }); return id; };

@@ -10,6 +10,7 @@ const SECRET = 'sk-node-test-secret';
 const modelEngine = {
   MethodMissing: class extends Error {},
   loadModelSettings: async () => ({ model: 'saved' }),
+  loadWorkFolder: async () => '/work',
   storeApiKey: async () => {},
   probeModel: async () => ({ ok: true, latencyMs: 20, toolCalls: true, models: ['first', 'second'] }),
   modelsFromProbe: result => result.models ?? [],
@@ -30,9 +31,9 @@ async function approval({ expires = 105000, decide = async () => {}, humanText =
 test('failed key saving leaves the secret only in the uncontrolled input and can be retried', async () => {
   let fail = true; const keys = [], saving = deferred();
   const h = firstRun({ storeApiKey: async value => { keys.push(value); if (fail) await saving.promise; } });
-  await h.settle(); await h.click('Облачный сервис'); await h.input('fr-address', 'https://service.test/v1');
+  await h.settle(); await h.click('Сервис в интернете (по ключу)'); await h.input('fr-address', 'https://service.test/v1');
   await h.input('fr-key', SECRET);
-  const check = h.button('Проверить'); check.props.onClick(); check.props.onClick(); await h.settle();
+  const check = h.button('Дальше'); check.props.onClick(); check.props.onClick(); await h.settle();
   assert.equal(keys.length, 1); assert(h.byId('fr-address').disabled); assert(h.byId('fr-key').disabled);
   assert(!h.slots.filter(slot => slot.kind === 'state').some(slot => JSON.stringify(slot.value)?.includes(SECRET)));
   saving.reject(new Error(SECRET)); await h.settle();
@@ -41,9 +42,9 @@ test('failed key saving leaves the secret only in the uncontrolled input and can
   assert(!h.slots.filter(slot => slot.kind === 'state').some(slot => JSON.stringify(slot.value)?.includes(SECRET)));
   assert.equal(h.inputs.get('fr-key').value, SECRET);
   assert.equal(h.byId('fr-key').props.value, undefined);
-  fail = false; await h.click('Проверить');
+  fail = false; await h.click('Дальше');
   assert.deepEqual(keys, [SECRET, SECRET]); assert.equal(h.inputs.get('fr-key').value, '');
-  assert(h.text().includes('Отвечает за')); h.unmount();
+  assert(h.text().includes('Правила работы')); h.unmount();
 });
 
 test('probe selects the first returned model; manual override stays inside closed Advanced', async () => {
@@ -52,27 +53,30 @@ test('probe selects the first returned model; manual override stays inside close
   const advanced = h.nodes().find(node => node.type === 'details');
   assert.equal(advanced.props.open, undefined);
   assert(textOf(advanced).includes('Название модели'));
-  await h.click('Проверить'); await h.click('Дальше');
+  await h.click('Дальше');
   assert.equal(saves[0][1], 'first'); assert.equal(probes[0][1], '', 'автообнаружение не навязывает сохранённое имя');
-  await h.click('Назад'); await h.input('fr-model', 'manual'); await h.click('Проверить'); await h.click('Дальше');
+  await h.click('Назад'); await h.input('fr-model', 'manual'); await h.click('Дальше');
   assert.equal(saves[1][1], 'manual'); assert.equal(probes[1][1], 'manual'); h.unmount();
 });
 
 test('an old probe response without models asks for Advanced when no saved model exists', async () => {
-  const h = firstRun({ loadModelSettings: async () => null, probeModel: async () => ({ ok: true, latencyMs: 1, toolCalls: true }) });
-  await h.click('Проверить'); assert(h.text().includes('Укажите название в «Дополнительно»'));
-  assert(h.button('Дальше').disabled); h.unmount();
+  const saves = [];
+  const h = firstRun({ loadModelSettings: async () => null, probeModel: async () => ({ ok: true, latencyMs: 1, toolCalls: true }), saveModel: async (...args) => saves.push(args) });
+  await h.click('Дальше'); assert(h.text().includes('Укажите название в «Дополнительно»'));
+  assert(h.text().includes('Кто будет отвечать')); assert(!h.button('Дальше').disabled); assert.deepEqual(saves, []); h.unmount();
 });
 
 test('model and rules saves disable all conflicting fields and navigation until settled', async () => {
   const savingModel = deferred(), savingRules = deferred();
   const h = firstRun({ saveModel: () => savingModel.promise, saveRules: () => savingRules.promise });
-  await h.settle(); await h.click('Проверить'); await h.click('Дальше');
+  await h.settle(); await h.click('Сервис в интернете (по ключу)');
+  await h.input('fr-address', 'https://service.test/v1'); await h.input('fr-key', SECRET);
+  await h.click('Дальше');
   for (const id of ['fr-address', 'fr-model', 'fr-key']) assert(h.byId(id).disabled, id);
   assert(h.button('Назад').disabled); assert(h.button('Дальше').disabled);
-  await h.click('Назад'); assert(h.text().includes('Подключите модель'));
+  await h.click('Назад'); assert(h.text().includes('Кто будет отвечать'));
   savingModel.resolve(); await h.settle(); assert(h.text().includes('Правила работы'));
-  await h.click('Дальше');
+  await h.click('Открыть чат');
   for (const node of h.nodes().filter(node => ['input', 'button'].includes(node.type))) assert(node.disabled, textOf(node));
   savingRules.reject(new Error('Не сохранено')); await h.settle();
   assert(h.text().includes('Правила работы')); assert(!h.button('Назад').disabled); h.unmount();
