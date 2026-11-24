@@ -349,6 +349,7 @@ export class HohHost {
   private readonly titles = new Map<string, string>();
   private readonly titleRequests = new Map<string, string>();
   /** A completed Claude turn waits for the person until they explicitly mark that exact turn done. */
+  private readonly deletedThreads = new Set<string>();
   private readonly homeDispositions = new Map<string, HomeDisposition>();
   /** Last engine-history timestamp classified for Home; a session changed while the window was away is read next start. */
   private readonly homeObservedAt = new Map<string, number>();
@@ -1169,7 +1170,7 @@ export class HohHost {
     // Publish every row before access/get: an unanswered read must not hide other conversations
     // or an approval that arrives for one of them.
     for (const session of sessions) {
-      if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
+      if (typeof session?.id !== 'string' || !session.id || this.deletedThreads.has(session.id) || this.threads.has(session.id)) continue;
       const at = Number(session.updatedAt) || this.startedAt;
       const provisional = new ThreadModel({
         id: session.id, title: this.titles.get(session.id) ?? (typeof session.title === 'string' ? session.title : ''),
@@ -1192,7 +1193,7 @@ export class HohHost {
     }, 0);
     bootstrapTimer?.unref?.();
     await Promise.all(sessions.map(async session => {
-      if (typeof session?.id !== 'string' || !session.id) return;
+      if (typeof session?.id !== 'string' || !session.id || this.deletedThreads.has(session.id)) return;
       const at = Number(session.updatedAt) || this.startedAt;
       const previous = this.threads.get(session.id);
       let executor = previous?.executor ?? this.selectedExecutor;
@@ -1225,6 +1226,7 @@ export class HohHost {
         await this.discoveryInFlight.promise;
       model ??= this.model(executor);
 
+      if (this.deletedThreads.has(session.id)) return;
       const existing = this.threads.get(session.id);
       if (existing) {
         if (modeRevision !== this.modeRevision) return;
@@ -1396,6 +1398,7 @@ export class HohHost {
 
   /** Only a successful resume or a live engine notification proves a cached session is open. */
   private async ensureSessionResumed(threadId: string): Promise<void> {
+    if (this.deletedThreads.has(threadId)) throw new Error('This chat is being deleted.');
     if (this.resumedSessions.has(threadId)) return;
     let pending = this.resumingSessions.get(threadId);
     if (!pending) {
@@ -1452,6 +1455,7 @@ export class HohHost {
     if (!pending) {
       pending = (async () => {
         await this.readThreadHistory(thread);
+        if (this.deletedThreads.has(threadId)) return undefined;
         thread.settleUnfinished(this.now());
         // The model this chat is bound to (a chat that has had a turn keeps its own).
         const modeGeneration = this.modeGenerations.get(threadId) ?? 0;
@@ -1473,6 +1477,7 @@ export class HohHost {
             if (own?.runningRuntimeMode != null) thread.setRunningInteractionMode(own.runningRuntimeMode === 'plan' ? 'plan' : 'default');
           }
         } catch { /* the chat follows the choice for new chats */ }
+        if (this.deletedThreads.has(threadId)) return undefined;
         thread.loaded = true;
         // Place the chat before publishing what its history taught us. Otherwise the first
         // `thread.updated` briefly assigns a chat with a known cwd to "No project".
@@ -1493,7 +1498,7 @@ export class HohHost {
   }
 
   private threadFor(sessionId: unknown): ThreadModel | undefined {
-    if (typeof sessionId !== 'string' || !sessionId) return undefined;
+    if (typeof sessionId !== 'string' || !sessionId || this.deletedThreads.has(sessionId)) return undefined;
     // A notification comes from an already-open session, including one started elsewhere.
     this.resumedSessions.add(sessionId);
     let thread = this.threads.get(sessionId);
@@ -2334,7 +2339,7 @@ ${message.slice(0, 8000)}`;
     await this.start();
     // Window-owned list actions do not require opening the engine history. They remain usable
     // while a cold conversation's history or access lookup is slow or unavailable.
-    const listAction = ['thread.metadata.update', 'thread.pin', 'thread.unpin', 'thread.pin.reorder', 'thread.archive', 'thread.unarchive'].includes(type);
+    const listAction = ['thread.metadata.update', 'thread.pin', 'thread.unpin', 'thread.pin.reorder', 'thread.archive', 'thread.unarchive', 'thread.delete'].includes(type);
     try {
       const thread = typeof command.threadId === 'string'
         ? listAction ? this.threads.get(command.threadId) : await this.loaded(command.threadId)
@@ -2402,6 +2407,23 @@ ${message.slice(0, 8000)}`;
           target.pinnedAt = pinnedAt;
           target.pinOrderKey = pinOrderKey;
           this.changed(target.id);
+          break;
+        }
+        case 'thread.delete': {
+          const target = needThread();
+          if (this.deletedThreads.has(target.id)) throw dispatchError(command, 'This chat is being deleted.');
+          this.deletedThreads.add(target.id);
+          try { await this.engine.request('session/delete', { sessionId: target.id }); }
+          catch (error) { this.deletedThreads.delete(target.id); throw error; }
+          this.threads.delete(target.id);
+          this.dirty.delete(target.id);
+          // Preserve window-owned project, title and preferences for manual recovery from trash.
+          this.homePrompts.delete(target.id); this.failedHomePrompts.delete(target.id);
+          this.resumedSessions.delete(target.id); this.restored.delete(target.id);
+          this.save();
+          this.sequence++;
+          for (const sink of this.shellSinks) sink.emit({ kind: 'thread.removed', sequence: this.sequence, location: target.archivedAt === null ? 'active' : 'archive', threadId: target.id });
+          this.homeChanged();
           break;
         }
         case 'thread.archive': case 'thread.unarchive': {

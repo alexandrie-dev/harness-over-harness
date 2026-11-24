@@ -295,7 +295,7 @@ export function buildThreadActionMenuItems(
     },
     {
       id: "delete",
-      label: resolve(msg("Delete · Coming Soon")),
+      label: resolve(msg("Delete")),
       destructive: true,
       icon: "trash",
     },

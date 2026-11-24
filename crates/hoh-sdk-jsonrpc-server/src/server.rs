@@ -225,6 +225,8 @@ struct State {
     shutting_down: bool,
     approval_requests: bool,
     sessions: IndexMap<SessionId, Arc<SessionRecord>>,
+    deleting: std::collections::HashSet<SessionId>,
+    prompt_admissions: std::collections::HashMap<SessionId, usize>,
     creations: IndexMap<SessionId, Creation>,
     scheduled: IndexMap<SessionId, Creation>,
     activities: IndexMap<u64, Arc<QueryActivity>>,
@@ -279,6 +281,8 @@ impl HarnessSdkJsonRpcServer {
                     shutting_down: false,
                     approval_requests: false,
                     sessions: IndexMap::new(),
+                    deleting: std::collections::HashSet::new(),
+                    prompt_admissions: std::collections::HashMap::new(),
                     creations: IndexMap::new(),
                     scheduled: IndexMap::new(),
                     activities: IndexMap::new(),
@@ -667,7 +671,33 @@ impl HarnessSdkJsonRpcServer {
             source: MessageSource::new("user"),
             id: message_id.clone(),
         };
-        rec.handle.agent.followup(message)?;
+        {
+            let mut state = lock(&self.inner.state);
+            if state.deleting.contains(&session_id)
+                || !state
+                    .sessions
+                    .get(&session_id)
+                    .is_some_and(|live| Arc::ptr_eq(live, &rec))
+            {
+                return Err(error("Chat is being deleted"));
+            }
+            *state
+                .prompt_admissions
+                .entry(session_id.clone())
+                .or_default() += 1;
+        }
+        // followup emits synchronous events that themselves need the server lock.
+        let sent = rec.handle.agent.followup(message);
+        {
+            let mut state = lock(&self.inner.state);
+            if let Some(count) = state.prompt_admissions.get_mut(&session_id) {
+                *count -= 1;
+                if *count == 0 {
+                    state.prompt_admissions.remove(&session_id);
+                }
+            }
+        }
+        sent?;
         Ok(SessionPromptResult {
             message_id: message_id.to_string(),
         })
@@ -713,9 +743,24 @@ impl HarnessSdkJsonRpcServer {
                         }
                     },
                 )?;
-                lock(&self.inner.state)
-                    .activities
-                    .insert(activity.id(), activity.clone());
+                let admitted = {
+                    let mut state = lock(&self.inner.state);
+                    if state.deleting.contains(&session_id)
+                        || !state
+                            .sessions
+                            .get(&session_id)
+                            .is_some_and(|live| Arc::ptr_eq(live, &rec))
+                    {
+                        false
+                    } else {
+                        state.activities.insert(activity.id(), activity.clone());
+                        true
+                    }
+                };
+                if !admitted {
+                    activity.close();
+                    return Err(error("Chat is being deleted"));
+                }
                 let id = {
                     let mut state = lock(&self.inner.state);
                     state.next_task += 1;
@@ -791,6 +836,9 @@ impl HarnessSdkJsonRpcServer {
             let mut state = lock(&self.inner.state);
             if state.shutting_down {
                 return Err(error("SDK server is shutting down"));
+            }
+            if state.deleting.contains(&id) {
+                return Err(error("Chat is being deleted"));
             }
             if let Some(pending) = state.scheduled.shift_remove(&id) {
                 (pending, true)
@@ -964,6 +1012,9 @@ impl HarnessSdkJsonRpcServer {
             let mut state = lock(&self.inner.state);
             if state.shutting_down {
                 return Err(error("SDK server is shutting down"));
+            }
+            if state.deleting.contains(&id) {
+                return Err(error("Chat is being deleted"));
             }
             state.scheduled.shift_remove(&id);
             if let Some(rec) = state.sessions.get(&id) {
@@ -1371,6 +1422,7 @@ impl HarnessSdkJsonRpcServer {
                 };
                 serde_json::to_value(result).map_err(Into::into)
             }
+            "session/delete" => self.session_delete(params).await,
             "session/list" => self.session_list(params).await,
             "session/events" => self.session_events(params).await,
             "session/cancel" => self.session_cancel(params),

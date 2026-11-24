@@ -78,7 +78,7 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::to_value(serde_json::from_value::<SessionEventsResult>(value).unwrap())
                 .unwrap()
         }
-        "session/cancel" => {
+        "session/cancel" | "session/delete" => {
             serde_json::to_value(serde_json::from_value::<Empty>(value).unwrap()).unwrap()
         }
         "hoh/employee/list" => {

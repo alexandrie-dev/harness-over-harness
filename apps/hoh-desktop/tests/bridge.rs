@@ -585,7 +585,7 @@ fn window_may_call_exactly_the_eight_executor_methods_and_no_new_ones() {
     );
     // 47 methods before the executor ones, the eight executor ones, `hoh/workspace/entries` and
     // `hoh/workspace/add` (HOH-41); a new window method must be a deliberate change of this number.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 8 + 2);
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 8 + 2 + 1);
     for method in [
         "hoh/executor/access/get",
         "hoh/executor/discover",
@@ -833,4 +833,11 @@ fn commands_and_folder_entries_go_only_from_the_main_window() {
         assert_eq!(sent(method), 1, "{method} from the main window");
     }
     engine.stop();
+}
+
+#[test]
+fn session_delete_is_confined_to_main_and_requires_the_typed_session_id() {
+    assert!(bridge::check_main("main", "session/delete", &json!({"sessionId":"chat"})).is_ok());
+    assert!(bridge::check_main("other", "session/delete", &json!({"sessionId":"chat"})).is_err());
+    assert!(bridge::check_main("main", "session/delete", &json!({"sessionId":null})).is_err());
 }

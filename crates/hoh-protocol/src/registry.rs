@@ -28,6 +28,8 @@ pub enum Request {
     SessionEvents(SessionEventsParams),
     #[serde(rename = "session/cancel")]
     SessionCancel(SessionResumeParams),
+    #[serde(rename = "session/delete")]
+    SessionDelete(SessionResumeParams),
     #[serde(rename = "hoh/employee/list")]
     EmployeeList(Empty),
     #[serde(rename = "hoh/employee/get")]
@@ -143,6 +145,7 @@ impl Request {
             Self::SessionList(_) => "session/list",
             Self::SessionEvents(_) => "session/events",
             Self::SessionCancel(_) => "session/cancel",
+            Self::SessionDelete(_) => "session/delete",
             Self::EmployeeList(_) => "hoh/employee/list",
             Self::EmployeeGet(_) => "hoh/employee/get",
             Self::EmployeeCreate(_) => "hoh/employee/create",
@@ -246,6 +249,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "session/list",
     "session/events",
     "session/cancel",
+    "session/delete",
     "hoh/employee/list",
     "hoh/employee/get",
     "hoh/employee/create",
@@ -333,7 +337,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "shutdown" => admit::<Empty>(value),
         "session/list" => admit::<SessionListParams>(value),
         "session/events" => admit::<SessionEventsParams>(value),
-        "session/cancel" => admit::<SessionResumeParams>(value),
+        "session/cancel" | "session/delete" => admit::<SessionResumeParams>(value),
         "hoh/employee/list" => admit::<Empty>(value),
         "hoh/employee/get" => admit::<IdParams>(value),
         "hoh/employee/create" => admit::<EmployeeCreateParams>(value),
@@ -406,7 +410,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "shutdown" => admit::<Empty>(value),
         "session/list" => admit::<SessionListResult>(value),
         "session/events" => admit::<SessionEventsResult>(value),
-        "session/cancel" => admit::<Empty>(value),
+        "session/cancel" | "session/delete" => admit::<Empty>(value),
         "hoh/employee/list" => admit::<Vec<Employee>>(value),
         "hoh/employee/get" => admit::<Employee>(value),
         "hoh/employee/create" => admit::<IdRev>(value),
@@ -643,6 +647,18 @@ pub fn schemas() -> Vec<(String, Value)> {
             .unwrap()
             .insert("x-method".into(), Value::String("session/cancel".into()));
         schemas.push(("SessionCancelResult".into(), schema));
+    }
+    schemas.push((
+        "SessionDeleteParams".into(),
+        serde_json::to_value(schema_for!(SessionResumeParams)).unwrap(),
+    ));
+    {
+        let mut schema = serde_json::to_value(schema_for!(Empty)).unwrap();
+        schema
+            .as_object_mut()
+            .unwrap()
+            .insert("x-method".into(), Value::String("session/delete".into()));
+        schemas.push(("SessionDeleteResult".into(), schema));
     }
     schemas.push((
         "EmployeeListParams".into(),
@@ -1221,6 +1237,8 @@ enum RequestDecode {
     SessionEvents(SessionEventsParams),
     #[serde(rename = "session/cancel")]
     SessionCancel(SessionResumeParams),
+    #[serde(rename = "session/delete")]
+    SessionDelete(SessionResumeParams),
     #[serde(rename = "hoh/employee/list")]
     EmployeeList(Empty),
     #[serde(rename = "hoh/employee/get")]

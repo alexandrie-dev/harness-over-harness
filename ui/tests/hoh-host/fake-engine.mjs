@@ -142,6 +142,7 @@ export class FakeEngine {
         }, 0);
         return { messageId };
       }
+      case 'session/delete': this.store.delete(params.sessionId); return {};
       case 'session/cancel': this.cancelled = (this.cancelled ?? 0) + 1; return {};
       // HOH-41: the person's "Add project" (confirmed by that action in the main window): the engine resolves `~`
       // and keeps the folder as a project folder.

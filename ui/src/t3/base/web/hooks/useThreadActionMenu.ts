@@ -91,6 +91,7 @@ export function useThreadActionMenu(input: {
     confirmAndUnpinThread,
     setThreadAutoSettle,
     archiveThread,
+    deleteThread,
     markThreadUnread,
     turnThreadIntoProject,
   } = useThreadActions();
@@ -99,6 +100,7 @@ export function useThreadActionMenu(input: {
   });
   const handleNewThread = useNewThreadHandler();
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
+  const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onError: (error) => failureToast(m(msg("Failed to copy path")), error),
@@ -346,7 +348,16 @@ export function useThreadActionMenu(input: {
           return;
         }
         case "delete": {
-          toastManager.add({ title: "Coming Soon" });
+          if (confirmThreadDelete) {
+            const confirmed = await settlePromise(() => api.dialogs.confirm(
+              [m(msg('Delete chat "{title}"?', { title: thread.title })), m(msg("This moves the chat to the trash."))].join("\n"),
+              { variant: "destructive" },
+            ));
+            if (confirmed._tag === "Failure" || !confirmed.value) return;
+          }
+          const deleted = await deleteThread(threadRef);
+          if (deleted._tag === "Failure" && !isAtomCommandInterrupted(deleted) && readThreadShell(threadRef) !== null)
+            failureToast(m(msg("Failed to delete chat")), squashAtomCommandFailure(deleted));
           return;
         }
         default:

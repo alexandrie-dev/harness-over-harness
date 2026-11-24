@@ -2524,7 +2524,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               gt("{count, plural, one {Delete {count} chat?} other {Delete {count} chats?}}", {
                 count,
               }),
-              gt("This permanently clears conversation history for these chats."),
+              gt("This moves these chats to the trash."),
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -2884,7 +2884,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           }
           case "delete": {
-            toastManager.add({ title: "Coming Soon" });
+            if (confirmThreadDelete) {
+              const confirmed = await settlePromise(() => api.dialogs.confirm(
+                [gt('Delete chat "{title}"?', { title: thread.title }), gt("This moves the chat to the trash.")].join("\n"),
+                { variant: "destructive" },
+              ));
+              if (confirmed._tag === "Failure" || !confirmed.value) return;
+            }
+            const result = await deleteThread(threadRef);
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              toastManager.add(stackedThreadToast({ type: "error", title: gt("Failed to delete chat"),
+                description: thrownErrorMessage(squashAtomCommandFailure(result), m) ?? gt("An error occurred.") }));
+            }
             return;
           }
           default:

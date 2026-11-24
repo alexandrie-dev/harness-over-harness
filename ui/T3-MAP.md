@@ -487,3 +487,7 @@ C8: панель пустого чата показывает его стату�
 | `web/components/chat/ProviderModelPicker.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ProviderModelPicker.tsx.patch`) | скрывает временную подмену имени модели именем Claude |
 
 C11: переход Starting → Thinking не откатывается при оптимистичной отправке; композер сохраняет последнее известное имя модели на время обновления каталога.
+
+U2: Delete removes a chat through the engine trash; menu and confirmation follow T3.
+
+U2: sidebar deletion and multi-delete use the same trash-backed operation.

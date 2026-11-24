@@ -1,6 +1,6 @@
 mod common;
 use common::*;
-use hoh_session::{SessionEvent, SessionLogOffset, SessionSeedEventState};
+use hoh_session::{SessionEvent, SessionId, SessionLogOffset, SessionSeedEventState};
 use hoh_session_format::SessionFormatRecovery;
 use hoh_session_persistence::*;
 use hoh_session_persistence_jsonl::{
@@ -2356,5 +2356,56 @@ async fn tracks_a_disappearing_corpus_member_and_propagates_storage_faults_in_hi
             .ptr_eq(&reason)
     );
     mode.store(0, Ordering::SeqCst);
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn trash_moves_complete_directory_and_excludes_it_from_list() {
+    let f = Fixture::new(JsonlCompression::None).await;
+    let id = SessionId::from("delete-me");
+    let (path, bytes) = f.store(&meta("delete-me"), &close_turn()).await;
+    let dir = std::path::Path::new(&path).parent().unwrap();
+    tokio::fs::write(dir.join("attachment.dat"), b"keep me")
+        .await
+        .unwrap();
+    assert_eq!(f.backend.list(None).await.unwrap().len(), 1);
+    f.backend.trash(&id).await.unwrap();
+    assert!(f.backend.list(None).await.unwrap().is_empty());
+    assert!(f.backend.stat(&id, None).await.unwrap().is_none());
+    let mut entries = tokio::fs::read_dir(f.root.path().join("trash"))
+        .await
+        .unwrap();
+    let trashed = entries.next_entry().await.unwrap().unwrap().path();
+    assert_eq!(
+        tokio::fs::read(trashed.join("attachment.dat"))
+            .await
+            .unwrap(),
+        b"keep me"
+    );
+    assert_eq!(
+        tokio::fs::read(trashed.join(std::path::Path::new(&path).file_name().unwrap()))
+            .await
+            .unwrap(),
+        bytes
+    );
+    assert!(entries.next_entry().await.unwrap().is_none());
+    f.backend.trash(&id).await.unwrap();
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn trash_refuses_a_live_writer() {
+    let f = Fixture::new(JsonlCompression::None).await;
+    f.store(&meta("busy-delete"), &close_turn()).await;
+    let id = SessionId::from("busy-delete");
+    let writer = f
+        .backend
+        .open(&id, SessionAccess::Write, None)
+        .await
+        .unwrap();
+    assert!(f.backend.trash(&id).await.is_err());
+    assert!(f.backend.stat(&id, None).await.unwrap().is_some());
+    writer.close().await.unwrap();
+    f.backend.trash(&id).await.unwrap();
     f.finish().await;
 }
