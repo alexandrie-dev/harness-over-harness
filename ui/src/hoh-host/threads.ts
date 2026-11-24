@@ -144,6 +144,7 @@ export interface ThreadSeed {
   readonly model: string;
   readonly mode: HohAccessMode;
   readonly executor?: HohExecutor;
+  readonly bindingKnown?: boolean;
   readonly interactionMode?: T3InteractionMode;
   /** The T3 project the chat belongs to: "No project" unless it was started in a folder project. */
   readonly projectId?: string;
@@ -157,6 +158,9 @@ export class ThreadModel {
   model: string;
   mode: HohAccessMode;
   executor: HohExecutor;
+  bindingKnown: boolean;
+  /** The engine explicitly reported a built-in agent rather than an external executor. */
+  builtin = false;
   /** Durable `approval/asked` can arrive before the native `approval.pending`; keep its exact id. */
   private readonly approvalDetails = new Map<string, { requestKind: string }>();
   interactionMode: T3InteractionMode;
@@ -201,6 +205,7 @@ export class ThreadModel {
     this.model = seed.model;
     this.mode = seed.mode;
     this.executor = seed.executor ?? 'claude';
+    this.bindingKnown = seed.bindingKnown ?? true;
     this.interactionMode = seed.executor === 'codex' ? 'default' : seed.interactionMode ?? 'default';
     this.projectId = seed.projectId ?? HOH_PROJECT_ID;
   }
@@ -692,8 +697,8 @@ export class ThreadModel {
   userMessageCount() { return this.messages.filter(message => message.role === 'user').length; }
   setInteractionMode(mode: T3InteractionMode) { this.interactionMode = mode; }
 
-  private instanceId() { return this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
-  private modelSelection() { return { instanceId: this.instanceId(), model: this.model, ...(this.options?.length ? { options: this.options } : {}) }; }
+  private instanceId() { return !this.bindingKnown ? 'unknown' : this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
+  private modelSelection() { return { instanceId: this.instanceId(), model: this.bindingKnown ? this.model : 'unknown', ...(this.options?.length ? { options: this.options } : {}) }; }
   private titleText() { return nonBlank(this.title, 'New thread'); }
 
   /** `OrchestrationV2ThreadProjection`, encoded. */
@@ -704,7 +709,7 @@ export class ThreadModel {
       thread: {
         createdBy: 'user', creationSource: 'web',
         id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-        modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
+        modelSelection: this.modelSelection(), runtimeMode: this.bindingKnown ? runtimeModeOf(this.mode) : 'unknown', interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
@@ -805,7 +810,7 @@ export class ThreadModel {
     return {
       createdBy: 'user', creationSource: 'web',
       id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-      modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
+      modelSelection: this.modelSelection(), runtimeMode: this.bindingKnown ? runtimeModeOf(this.mode) : 'unknown', interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
       branch: null, worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
       forkedFrom: null, activeProviderThreadId: null,

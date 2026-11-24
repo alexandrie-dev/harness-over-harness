@@ -23,6 +23,7 @@ export const ProviderSandboxMode = Schema.Literals([
 export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 
 export const RuntimeMode = Schema.Literals([
+  "unknown",
   "approval-required",
   "auto-accept-edits",
   "auto",
@@ -32,6 +33,7 @@ export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
+  unknown: -1,
   "approval-required": 0,
   "auto-accept-edits": 1,
   auto: 2,

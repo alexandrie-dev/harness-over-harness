@@ -516,6 +516,14 @@ choices!(ExecutorRuntimeMode {
     Auto => "auto",
     Full => "full"
 });
+// A running Plan is a Claude process policy, not a selectable access/set value.
+choices!(ExecutorRunningRuntimeMode {
+    Confirm => "confirm",
+    AutoAcceptEdits => "auto-accept-edits",
+    Auto => "auto",
+    Full => "full",
+    Plan => "plan"
+});
 choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
 choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
 object!(ExecutorParams { executor: String });
@@ -580,7 +588,9 @@ optional!(ExecutorSessionAccess {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     runtime_mode: Option<ExecutorRuntimeMode>,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
-    running_runtime_mode: Option<ExecutorRuntimeMode>,
+    running_runtime_mode: Option<ExecutorRunningRuntimeMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    builtin: Option<bool>,
     pending: bool
 });
 optional!(ExecutorAccessGetResult {

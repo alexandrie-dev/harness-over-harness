@@ -14,6 +14,7 @@ export const runtimeModeConfig: Record<
   RuntimeMode,
   { label: string; description: string; icon: LucideIcon }
 > = {
+  unknown: { label: msg("Unknown"), description: msg("Waiting for the conversation access mode."), icon: LockIcon },
   "approval-required": {
     label: msg("Supervised", { $context: "permission mode, agent asks before acting" }),
     description: msg("Ask before commands and file changes."),
@@ -37,7 +38,7 @@ export const runtimeModeConfig: Record<
   },
 };
 
-export const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+export const runtimeModeOptions = (Object.keys(runtimeModeConfig) as RuntimeMode[]).filter((mode) => mode !== "unknown");
 
 /** Undefined keeps T3's legacy "all modes"; an explicit empty list means access is unknown. */
 export function resolveCompatibleRuntimeMode(
@@ -48,7 +49,7 @@ export function resolveCompatibleRuntimeMode(
     supportedRuntimeModes === undefined
       ? runtimeModeOptions
       : runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode));
-  return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
+  return { modes, mode: runtimeMode === "unknown" ? runtimeMode : modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
 }
 
 export function resolveRuntimeModeOption(

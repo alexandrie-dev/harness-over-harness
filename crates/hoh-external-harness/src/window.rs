@@ -713,15 +713,27 @@ impl Window {
             .agents
             .get(&id)
             .and_then(|agent| agent.model().current());
-        let (executor, model) = match live {
+        let (executor, model, builtin) = match live {
             Some(chosen) if self.service().get(&chosen.provider).is_some() => {
-                (Some(chosen.provider), Some(chosen.model))
+                (Some(chosen.provider), Some(chosen.model), None)
             }
-            Some(_) => (None, None),
+            Some(chosen) => {
+                // An unavailable external plugin is not evidence that the agent is built-in.
+                // Preserve an unknown binding for both the standard routes and a recorded
+                // channel plugin whose registration is currently absent.
+                if matches!(chosen.provider.as_str(), "claude" | "codex")
+                    || stored_executor_binding(&self.ctx, &id).await?.is_some()
+                {
+                    (None, None, None)
+                } else {
+                    (None, None, Some(true))
+                }
+            }
             None => (
                 stored_executor_binding(&self.ctx, &id)
                     .await?
                     .filter(|name| self.service().get(name).is_some()),
+                None,
                 None,
             ),
         };
@@ -734,6 +746,7 @@ impl Window {
                 running: None,
                 runtime_mode: None,
                 running_runtime_mode: None,
+                builtin,
                 pending: false,
             });
         };
@@ -742,7 +755,8 @@ impl Window {
             .shared(&name)
             .ok_or_else(|| format!("no external harness named \"{name}\""))?;
         let mode = shared.access_for(id.as_ref());
-        let running = shared.running_launch_of(id.as_ref()).map(|(mode, _)| mode);
+        let running_details = shared.running_mode_of(id.as_ref());
+        let running = running_details.map(|(mode, _)| mode);
         Ok(ExecutorSessionAccess {
             executor: Some(name),
             model: model.map(|model| redact(&model)),
@@ -751,7 +765,21 @@ impl Window {
             mode: Some(wire(mode)),
             running: running.map(wire),
             runtime_mode: Some(runtime_wire(mode)),
-            running_runtime_mode: running.map(runtime_wire),
+            running_runtime_mode: running_details.map(|(mode, plan)| {
+                if plan {
+                    hoh_protocol::ExecutorRunningRuntimeMode::Plan
+                } else {
+                    match mode {
+                        AccessMode::Confirm => hoh_protocol::ExecutorRunningRuntimeMode::Confirm,
+                        AccessMode::AcceptEdits | AccessMode::AutoAcceptEdits => {
+                            hoh_protocol::ExecutorRunningRuntimeMode::AutoAcceptEdits
+                        }
+                        AccessMode::Auto => hoh_protocol::ExecutorRunningRuntimeMode::Auto,
+                        AccessMode::Full => hoh_protocol::ExecutorRunningRuntimeMode::Full,
+                    }
+                }
+            }),
+            builtin: None,
             pending: running.is_some_and(|running| running != mode),
         })
     }

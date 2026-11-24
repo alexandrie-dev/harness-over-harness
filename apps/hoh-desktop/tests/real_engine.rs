@@ -582,6 +582,9 @@ fn first_run_destructive_action_inside_the_folder_waits_for_the_person() {
 #[test]
 fn an_existing_session_keeps_its_folder_identity_and_a_new_session_uses_the_new_choice() {
     let h = launch(WINDOW_SCENARIO, "folder");
+    // A read alone does not persist a conversation or append a directory change. Make the
+    // existing conversation durable before restarting the engine in another workspace.
+    h.prompt_and_wait("hello");
     let first = h.request(
         "session/working-directory/get",
         json!({"sessionId":"window-main"}),

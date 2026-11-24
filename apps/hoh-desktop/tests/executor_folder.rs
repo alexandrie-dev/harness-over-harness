@@ -130,6 +130,12 @@ fn a_folder_change_of_a_claude_chat_reaches_the_window_as_folder_fixed_with_the_
     let engine_bin = PathBuf::from(
         std::env::var_os("HOH_REAL_ENGINE").expect("set HOH_REAL_ENGINE to the built hoh"),
     );
+    let supplied_stub = std::env::var_os("HOH_CLAUDE_STUB");
+    let claude_stub = PathBuf::from(
+        supplied_stub
+            .as_deref()
+            .unwrap_or_else(|| std::ffi::OsStr::new(FAKE_CLAUDE)),
+    );
     let root = std::env::temp_dir().join(format!("hoh-desktop-folder-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let (data, work, other) = (
@@ -162,7 +168,7 @@ fn a_folder_change_of_a_claude_chat_reaches_the_window_as_folder_fixed_with_the_
         profile.join("cordis.patch.yml"),
         format!(
             "- id: model-host\n  config:\n    baseUrl: http://127.0.0.1:9/v1\n    model: window-mock\n\
-             - id: harness-claude\n  config:\n    executable: {FAKE_CLAUDE}\n"
+             - id: harness-claude\n  config:\n    executable: {}\n", claude_stub.display()
         ),
     )
     .unwrap();
@@ -177,6 +183,8 @@ fn a_folder_change_of_a_claude_chat_reaches_the_window_as_folder_fixed_with_the_
                 ("DSH_TELEMETRY_DISABLED".into(), "1".into()),
                 ("HOME".into(), home.to_str().unwrap().into()),
                 ("FAKE_STATE".into(), state.to_str().unwrap().into()),
+                ("STUB_STATE".into(), state.to_str().unwrap().into()),
+                ("STUB_MODE".into(), "delay-reload".into()),
             ],
             stderr_file: Some(root.join("engine-stderr.log")),
             cwd: work.clone(),
@@ -217,6 +225,15 @@ fn a_folder_change_of_a_claude_chat_reaches_the_window_as_folder_fixed_with_the_
     )
     .unwrap_or_else(|error| panic!("executor/select: {error}\n{}", stderr()));
     assert_eq!(selected["executor"], "claude", "{selected}");
+    if supplied_stub.is_some() {
+        window_request(
+            &engine,
+            &broker,
+            "hoh/executor/access/set",
+            json!({"executor":"claude","mode":"full","runtimeMode":"full"}),
+        )
+        .expect("select Full");
+    }
 
     // One turn, so the chat is Claude's conversation (the stand-in keeps the word under its id).
     let idle = |notifications: &Mutex<Vec<Value>>| {
@@ -236,17 +253,72 @@ fn a_folder_change_of_a_claude_chat_reaches_the_window_as_folder_fixed_with_the_
         &engine,
         &broker,
         "session/prompt",
-        json!({"sessionId":SESSION,"contentBlocks":[{"type":"text","text":"Remember the word HOHFI7. Reply with ok."}]}),
+        json!({"sessionId":SESSION,"interactionMode":if supplied_stub.is_some() {"plan"} else {"default"},"contentBlocks":[{"type":"text","text":"hello"}]}),
     )
     .unwrap_or_else(|error| panic!("session/prompt: {error}\n{}", stderr()));
     assert!(prompt["messageId"].is_string(), "{prompt}");
+    if supplied_stub.is_some() {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !state.join("reload-waiting").exists() {
+            assert!(
+                Instant::now() < deadline,
+                "Claude did not reach reload_skills: {}",
+                stderr()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !state.join("prompt-sessions").exists(),
+            "the message was sent before the race"
+        );
+        let during_launch = window_request(
+            &engine,
+            &broker,
+            "session/working-directory/set",
+            json!({"sessionId":SESSION,"path":other}),
+        );
+        assert!(
+            during_launch.is_err(),
+            "directory change during Claude startup must be refused: {during_launch:?}"
+        );
+        std::fs::write(state.join("reload-release"), b"continue").unwrap();
+    }
     let until = Instant::now() + Duration::from_secs(60);
     while idle(&notifications) <= before {
         assert!(Instant::now() < until, "the turn did not end: {}", stderr());
         thread::sleep(Duration::from_millis(50));
     }
-    let kept = std::fs::read_dir(&state).unwrap().count();
-    assert_eq!(kept, 1, "the stand-in claude did not run the turn");
+    if supplied_stub.is_some() {
+        assert!(
+            state.join("prompt-sessions").exists(),
+            "the stand-in claude did not run the turn"
+        );
+        let access = window_request(
+            &engine,
+            &broker,
+            "hoh/executor/access/get",
+            json!({"executor":"claude","sessionId":SESSION}),
+        )
+        .unwrap();
+        assert_eq!(access["session"]["runningRuntimeMode"], "plan", "{access}");
+        let flags = access["effective"]["flags"].as_array().unwrap();
+        assert!(
+            flags
+                .windows(2)
+                .any(|pair| pair[0] == "--permission-mode" && pair[1] == "plan"),
+            "{flags:?}"
+        );
+        assert!(
+            !flags.iter().any(|flag| flag == "bypassPermissions"),
+            "{flags:?}"
+        );
+    } else {
+        assert_eq!(
+            std::fs::read_dir(&state).unwrap().count(),
+            1,
+            "the stand-in claude did not run the turn"
+        );
+    }
     let folder = |engine: &Arc<Engine>| {
         window_request(
             engine,

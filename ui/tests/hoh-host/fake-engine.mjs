@@ -25,7 +25,7 @@ export class FakeEngine {
   }
   tick() { return this.clock += 1000; }
   seed(id, title, events) {
-    const session = { title, events: [], updatedAt: this.tick() };
+    const session = { title, events: [], updatedAt: this.tick(), executor: this.access.selected.executor };
     this.store.set(id, session);
     for (const [type, data] of events) this.persist(id, type, data);
     return session;
@@ -84,7 +84,7 @@ export class FakeEngine {
         const running = session?.runningRuntimeMode;
         return session?.executor || session?.model ? { ...answer, session: {
           executor: session.executor ?? 'claude', model: session.model, privacy: 'remote',
-          mode: chosen === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? 'confirm',
+          mode: (chosen ?? this.access.mode) === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? this.access.mode,
           running: running == null ? null : running === 'full' ? 'full' : 'confirm',
           runningRuntimeMode: running ?? null, pending: running != null && running !== chosen,
         } } : answer;

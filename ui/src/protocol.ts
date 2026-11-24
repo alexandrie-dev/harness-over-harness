@@ -131,6 +131,8 @@ export type ExecutorModel = { "id": string; "displayName"?: (string | null); "is
 
 export type ExecutorParams = { "executor": string; };
 
+export type ExecutorRunningRuntimeMode = "confirm" | "auto-accept-edits" | "auto" | "full" | "plan";
+
 export type ExecutorRuntimeMode = "confirm" | "auto-accept-edits" | "auto" | "full";
 
 export type ExecutorSelectParams = { "executor"?: (string | null); "model": string; };
@@ -139,7 +141,7 @@ export type ExecutorSelectResult = { "executor"?: (string | null); "model"?: (st
 
 export type ExecutorSelection = { "executor"?: (string | null); "model"?: (string | null); };
 
-export type ExecutorSessionAccess = { "executor"?: (string | null); "model"?: (string | null); "privacy"?: (string | null); "mode"?: (ExecutorAccessMode | null); "running"?: (ExecutorAccessMode | null); "runtimeMode"?: (ExecutorRuntimeMode | null); "runningRuntimeMode"?: (ExecutorRuntimeMode | null); "pending": boolean; };
+export type ExecutorSessionAccess = { "executor"?: (string | null); "model"?: (string | null); "privacy"?: (string | null); "mode"?: (ExecutorAccessMode | null); "running"?: (ExecutorAccessMode | null); "runtimeMode"?: (ExecutorRuntimeMode | null); "runningRuntimeMode"?: (ExecutorRunningRuntimeMode | null); "builtin"?: (boolean | null); "pending": boolean; };
 
 export type ExecutorTitleGenerateParams = { "executor": string; "prompt": string; };
 

@@ -30,7 +30,8 @@ export async function buildContracts() {
   await mkdir(join(out, 'contracts'));
   for (const name of await readdir(T3_CONTRACTS)) {
     if (!name.endsWith('.ts') || name.endsWith('.test.ts')) continue;
-    const source = await readFile(join(T3_CONTRACTS, name), 'utf8');
+    // The desktop contract carries HoH's explicit unknown runtime state.
+    const source = await readFile(name === 'providerPolicy.ts' ? new URL('../../src/t3/base/contracts/providerPolicy.ts', import.meta.url) : join(T3_CONTRACTS, name), 'utf8');
     const { outputText } = ts.transpileModule(source, {
       fileName: name,
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, rewriteRelativeImportExtensions: true, useDefineForClassFields: true },

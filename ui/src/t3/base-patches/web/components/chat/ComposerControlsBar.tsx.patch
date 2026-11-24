@@ -1,27 +1,19 @@
 --- a/web/components/chat/ComposerControlsBar.tsx
 +++ b/web/components/chat/ComposerControlsBar.tsx
-@@ -132,7 +132,9 @@
-     modelPickerIconClassName,
-     getModelDisabledReason,
-   } = props;
+@@ -135 +135,3 @@
 -  const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
 +  const runtimeModesAvailable = compatibleRuntimeModeOptions.length > 0;
 +  const accessMatchesDefault =
-+    !runtimeModesAvailable || compatibleRuntimeMode === defaultRuntimeMode;
-   const {
-     accessDisplay,
-     showModeBlock,
-@@ -222,16 +224,20 @@
-       triggerSuffix={effort.suffix}
-       triggerDetail={effort.detail}
-       triggerShortcuts={
++    compatibleRuntimeMode !== "unknown" && (!runtimeModesAvailable || compatibleRuntimeMode === defaultRuntimeMode);
+@@ -144 +146 @@
+-    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
++    matchesDefault: accessMatchesDefault || (props.permissionsShownInStrip && compatibleRuntimeMode !== "unknown"),
+@@ -225 +227,3 @@
 -        pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
 +        runtimeModesAvailable && pickerOwnsModeShortcut
 +          ? "composer.effort composer.mode"
 +          : "composer.effort"
-       }
-       effortColumn={<ComposerEffortColumn traits={traitsInput} />}
-       footer={
+@@ -229,6 +233,8 @@
 -        <ComposerPickerFooter
 -          traits={traitsInput}
 -          runtimeMode={compatibleRuntimeMode}
@@ -36,6 +28,3 @@
 +            onRuntimeModeChange={handleRuntimeModeChange}
 +          />
 +        ) : null
-       }
-       terminalOpen={terminalOpen}
-       open={modelPickerOpen}

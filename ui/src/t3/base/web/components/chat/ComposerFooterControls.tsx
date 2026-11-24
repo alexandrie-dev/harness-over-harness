@@ -36,6 +36,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const composerFloatingLayerProps = useComposerMenuProps();
   const [open, setOpen] = useComposerMenuState(props.hidden);
   const permissionsChipRef = useRef<HTMLButtonElement>(null);
+  if (props.runtimeMode === "unknown") return <span data-composer-access-unknown>Unknown</span>;
   if (props.runtimeModeOptions.length === 0) return null;
   const runtimeModeOption =
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??

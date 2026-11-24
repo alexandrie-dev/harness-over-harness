@@ -1,14 +1,16 @@
 --- a/web/components/ChatView.tsx
 +++ b/web/components/ChatView.tsx
-@@ -3672,6 +3672,11 @@ export default function ChatView(props: ChatViewProps) {
-                                 }
-                               />
-                             ) : null}
+@@ -995,0 +996 @@
++    activeThread?.runtimeMode === "unknown" ? "unknown" :
+@@ -3431,0 +3433,5 @@
++            {activeThread.runtimeMode === "unknown" ? (
++              <span role="status" className="shrink-0 text-xs text-muted-foreground" data-hoh-unknown-access>
++                Executor: <strong>Unknown</strong> · Access: <strong>Unknown</strong>
++              </span>
++            ) : null}
+@@ -3673,0 +3680,5 @@
++                            ) : null}
 +                            {activeRunningTurnId && activeThread?.runtimeMode && activeThread.runtimeMode !== runtimeMode ? (
 +                              <div role="status" className="text-xs text-muted-foreground">
 +                                Current: {activeThread.runtimeMode === "full-access" ? "Full access" : activeThread.runtimeMode === "approval-required" ? "Supervised" : activeThread.runtimeMode} · Next: {runtimeMode === "full-access" ? "Full access" : runtimeMode === "approval-required" ? "Supervised" : runtimeMode}
 +                              </div>
-+                            ) : null}
-                             {!composerMounted ? null : (
-                               <ChatComposer
-                                 canOperateThread={canOperateThread}

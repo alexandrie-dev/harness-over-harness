@@ -1,0 +1,18 @@
+--- a/contracts/providerPolicy.ts
++++ b/contracts/providerPolicy.ts
+@@ -23,6 +23,7 @@
+ export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
+ 
+ export const RuntimeMode = Schema.Literals([
++  "unknown",
+   "approval-required",
+   "auto-accept-edits",
+   "auto",
+@@ -32,6 +33,7 @@
+ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+ 
+ const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
++  unknown: -1,
+   "approval-required": 0,
+   "auto-accept-edits": 1,
+   auto: 2,

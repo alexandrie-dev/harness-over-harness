@@ -134,7 +134,7 @@ export function ComposerControlsBar(props: {
   } = props;
   const runtimeModesAvailable = compatibleRuntimeModeOptions.length > 0;
   const accessMatchesDefault =
-    !runtimeModesAvailable || compatibleRuntimeMode === defaultRuntimeMode;
+    compatibleRuntimeMode !== "unknown" && (!runtimeModesAvailable || compatibleRuntimeMode === defaultRuntimeMode);
   const {
     accessDisplay,
     showModeBlock,
@@ -143,7 +143,7 @@ export function ComposerControlsBar(props: {
     overflowShowsPermissions,
     pickerOwnsModeShortcut,
   } = resolveComposerControlsOwnership({
-    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
+    matchesDefault: accessMatchesDefault || (props.permissionsShownInStrip && compatibleRuntimeMode !== "unknown"),
     collapsed: composerControlsCollapsed,
     measuredHiddenBlockCount,
   });

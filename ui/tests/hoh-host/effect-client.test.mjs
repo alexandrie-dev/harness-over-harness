@@ -92,6 +92,25 @@ test('T3 client: handshake decodes (config stream, getConfig, probe, settings, u
   assert.equal(providers.providers[0].models.length, 2);
 }));
 
+test('T3 schema decodes an unknown conversation and its pending approval', () => {
+  const engine = new FakeEngine();
+  engine.seed('unknown-cold', 'Cold', []);
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/access/get' ? Promise.reject(new Error('unavailable')) : request(method, params);
+  return withClient(engine, async (client, engine) => {
+    const shell = await collect(client['orchestration.subscribeShell']({}));
+    const rows = await shell.until(event => event.kind === 'snapshot' && event.snapshot.threads.some(row => row.id === 'unknown-cold'));
+    const row = rows.snapshot.threads.find(row => row.id === 'unknown-cold');
+    assert.equal(row.providerInstanceId, 'unknown');
+    assert.equal(row.runtimeMode, 'unknown');
+    const thread = await collect(client['orchestration.subscribeThread']({ threadId: 'unknown-cold' }));
+    engine.askApproval('unknown-cold', 'unknown-id', 'Allow?');
+    const approval = await thread.until(event => event.kind === 'snapshot' && event.projection.runtimeRequests.some(request => request.id === 'unknown-id'));
+    assert.equal(approval.projection.thread.runtimeMode, 'unknown');
+    await thread.stop(); await shell.stop();
+  });
+});
+
 test('T3 client: unsupported methods fail with the typed error; hidden streams stay quiet', () => withClient(new FakeEngine(), async client => {
   const exit = await runExit(client['projects.readFile']({ cwd: '/x', relativePath: 'a' }));
   assert(Exit.isFailure(exit));

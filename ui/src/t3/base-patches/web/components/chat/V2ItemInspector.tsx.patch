@@ -1,6 +1,6 @@
 --- a/web/components/chat/V2ItemInspector.tsx
 +++ b/web/components/chat/V2ItemInspector.tsx
-@@ -256,6 +256,21 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspect
+@@ -256,6 +256,22 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspect
    const item = fetched.item;
    const outputState = fetched.output;
    useInitialOutputReady(streamsOutput || outputState.pending, props.onInitialOutputReady);
@@ -23,7 +23,7 @@
    return (
      <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
        {item.type === "reasoning" && item.text ? (
-@@ -399,6 +414,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspect
+@@ -399,5 +415,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspect
            args={item.input}
            {...outputState}
            onImageExpand={props.onImageExpand}

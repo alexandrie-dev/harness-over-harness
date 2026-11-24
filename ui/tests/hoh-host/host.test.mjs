@@ -101,13 +101,32 @@ test('a built-in agent session remains in the inventory when it has no external 
   const original = engine.request.bind(engine);
   engine.request = async (method, params) => {
     if (method === 'hoh/executor/access/get' && params.sessionId === 'built-in')
-      return { session: { executor: null, runtimeMode: null } };
+      return { session: { executor: null, runtimeMode: null, builtin: true } };
     return original(method, params);
   };
   const { client, host } = connect(engine);
   const shell = await client.stream('orchestration.subscribeShell', {});
   const snapshot = await shell.until(value => value.kind === 'snapshot');
   assert(snapshot.snapshot.threads.some(thread => thread.id === 'built-in'));
+  await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'builtin-send', threadId: 'built-in', messageId: 'builtin-message', text: 'hello', attachments: [], runtimeMode: 'approval-required' });
+  assert(engine.requests.some(entry => entry.method === 'session/prompt' && entry.params.sessionId === 'built-in'));
+  assert(!engine.requests.some(entry => entry.method === 'hoh/executor/access/set' && entry.params.sessionId === 'built-in'));
+  host.stop();
+});
+
+test('an unbound session is not treated as a built-in agent', async () => {
+  const engine = new FakeEngine({ access: { mode: 'full', selected: { executor: 'claude', model: 'claude-sonnet' } } });
+  engine.seed('unbound', 'Unbound', []);
+  const original = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/access/get' && params.sessionId === 'unbound'
+    ? Promise.resolve({ session: { executor: null, runtimeMode: null } }) : original(method, params);
+  const { client, host } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(row => row.id === 'unbound'));
+  assert.equal(snapshot.snapshot.threads.find(row => row.id === 'unbound').runtimeMode, 'unknown');
+  const sent = await client.request('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'unbound-send', threadId: 'unbound', messageId: 'm', text: 'hello', attachments: [], runtimeMode: 'approval-required' });
+  assert.equal(sent._tag, 'Failure');
+  assert(!engine.requests.some(entry => entry.method === 'session/prompt' && entry.params.sessionId === 'unbound'));
   host.stop();
 });
 
@@ -162,13 +181,74 @@ test('a delayed running-mode read does not block forced stop', async () => {
 
 test('Claude acceptEdits launch is projected as auto-accept-edits', async () => {
   const engine = new FakeEngine();
-  Object.assign(engine.seed('native-edits', 'Edits', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
+  Object.assign(engine.seed('native-edits', 'Edits', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm', runningRuntimeMode: 'acceptEdits' });
   const { client, host } = connect(engine);
   const stream = await client.stream('orchestration.subscribeThread', { threadId: 'native-edits' });
-  await stream.until(value => value.kind === 'snapshot');
+  await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'auto-accept-edits');
   engine.emitEvent('native-edits', 'plugin:external-harness/launch', { runtimeMode: 'acceptEdits' });
   const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'auto-accept-edits');
   assert.equal(snapshot.projection.thread.runtimeMode, 'auto-accept-edits');
+  host.stop();
+});
+
+test('a running Claude Plan from access/get remains visible as Plan with Full selected', async () => {
+  const engine = new FakeEngine();
+  Object.assign(engine.seed('running-plan', 'Plan', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full', runningRuntimeMode: 'plan' });
+  const { client, host } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'running-plan' });
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.thread.interactionMode === 'plan');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'approval-required');
+  assert.equal(snapshot.projection.thread.interactionMode, 'plan');
+  host.stop();
+});
+
+test('an approval arriving before any access response is visible and answerable with unknown binding', async () => {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/access/get' ? Promise.reject(new Error('unavailable')) : request(method, params);
+  const { client, host } = connect(engine, { loadRetries: 0 });
+  await client.call('server.getConfig', {});
+  engine.askApproval('unknown-approval', 'approval-unknown', 'Allow the command?');
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'unknown-approval' });
+  const snapshot = await stream.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.some(item => item.id === 'approval-unknown'));
+  assert.equal(snapshot.projection.thread.providerInstanceId, 'unknown');
+  assert.equal(snapshot.projection.thread.runtimeMode, 'unknown');
+  assert(snapshot.projection.turnItems.some(item => item.type === 'approval_request' && item.requestId === 'approval-unknown'));
+  await client.call('orchestration.dispatchCommand', { type: 'runtime-request.respond', commandId: 'unknown-answer', threadId: 'unknown-approval', requestId: 'approval-unknown', decision: 'accept' });
+  assert.deepEqual(engine.decisions, [{ approvalId: 'approval-unknown', outcome: 'allowed-once' }]);
+  host.stop();
+});
+
+test('a stalled session access read does not hide its row or other conversations', async () => {
+  const engine = new FakeEngine();
+  engine.seed('stalled-access', 'Stalled', []);
+  engine.seed('other-access', 'Other', []);
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/access/get' && params.sessionId === 'stalled-access' ? new Promise(() => {}) : request(method, params);
+  const { client, host } = connect(engine, { loadRetries: 0 });
+  const lifecycle = await client.stream('subscribeServerLifecycle', {});
+  await lifecycle.until(value => value.type === 'welcome' && value.payload.bootstrapStatus === 'complete');
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const rows = await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.length === 2);
+  assert.equal(rows.snapshot.threads.find(row => row.id === 'stalled-access').runtimeMode, 'unknown');
+  engine.askApproval('stalled-access', 'stalled-approval', 'Allow?');
+  const thread = await client.stream('orchestration.subscribeThread', { threadId: 'stalled-access' });
+  await thread.until(value => value.kind === 'snapshot' && value.projection.runtimeRequests.some(item => item.id === 'stalled-approval'));
+  host.stop();
+});
+
+test('a provisional project conversation does not invent a duplicate scratch project', async () => {
+  const engine = new FakeEngine();
+  engine.seed('project-pending', 'Project chat', []);
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/access/get' && params.sessionId === 'project-pending' ? new Promise(() => {}) : request(method, params);
+  const saved = JSON.stringify({ version: 1, defaultFolder: '/work/project', projects: [{ id: 'p', title: 'Project', workspaceRoot: '/work/project', createdAt: 10, updatedAt: 10 }], threads: { 'project-pending': 'p' } });
+  const storage = { getItem: key => key === mod.host.STORAGE_KEY ? saved : null, setItem() {} };
+  const { client, host } = connect(engine, { storage, loadRetries: 0 });
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const rows = await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(row => row.id === 'project-pending'));
+  assert.deepEqual(rows.snapshot.projects.map(project => project.id), ['p']);
+  assert.equal(rows.snapshot.threads.find(row => row.id === 'project-pending').projectId, 'p');
   host.stop();
 });
 
@@ -338,7 +418,7 @@ test('a failed newer inventory read does not discard a pending exact notificatio
   host.stop();
 });
 
-test('a failed list access read preserves the cached executor and its permissions', async () => {
+test('a failed cold access read does not treat cached executor or mode as current', async () => {
   const engine = new FakeEngine({ access: { mode: 'full', selected: { executor: 'codex', model: 'gpt-6-sol' } } });
   Object.assign(engine.seed('known-claude', 'Known', []), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm' });
   const entries = new Map([[mod.host.STORAGE_KEY, JSON.stringify({ version: 2, sessions: [
@@ -354,10 +434,11 @@ test('a failed list access read preserves the cached executor and its permission
   const shell = await client.stream('orchestration.subscribeShell', {});
   const snapshot = await shell.until(value => value.kind === 'snapshot');
   const row = snapshot.snapshot.threads.find(thread => thread.id === 'known-claude');
-  assert.equal(row.providerInstanceId, 'claudeAgent');
-  assert.equal(row.runtimeMode, 'approval-required');
-  await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'known-message', threadId: 'known-claude', messageId: 'known-message', text: 'hello', attachments: [], runtimeMode: 'approval-required' });
-  assert.equal(engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').at(-1).params.executor, 'claude');
+  assert.equal(row.providerInstanceId, 'unknown');
+  assert.equal(row.runtimeMode, 'unknown');
+  const sent = await client.request('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'known-message', threadId: 'known-claude', messageId: 'known-message', text: 'hello', attachments: [], runtimeMode: 'approval-required' });
+  assert.equal(sent._tag, 'Failure');
+  assert.equal(engine.requests.some(entry => entry.method === 'session/prompt'), false);
   host.stop();
 });
 
@@ -1006,7 +1087,9 @@ test('access mode stays unknown until ready, sends no mode or prompt, then rerea
   const unknown = await config.until(value => value.type === 'snapshot');
   assert.deepEqual(unknown.config.providers[0].supportedRuntimeModes, []);
   assert.equal('defaultRuntimeMode' in unknown.config.settings, false);
-  assert.equal(engine.requests.some(entry => entry.method === 'session/list'), false, 'history is not projected with a guessed mode');
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const rows = await shell.until(value => value.kind === 'snapshot' && value.snapshot.threads.some(row => row.id === 'chat-late'));
+  assert.equal(rows.snapshot.threads.find(row => row.id === 'chat-late').runtimeMode, 'unknown');
 
   const failed = await client.request('orchestration.launchThread', {
     commandId: 'unknown-mode', threadId: 'unknown-mode', projectId: 'hoh-project', title: 'Blocked',

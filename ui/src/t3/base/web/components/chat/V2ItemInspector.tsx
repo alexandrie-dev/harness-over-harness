@@ -257,6 +257,22 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   const item = fetched.item;
   const outputState = fetched.output;
   useInitialOutputReady(streamsOutput || outputState.pending, props.onInitialOutputReady);
+  const agentMarkdown =
+    item.type === "dynamic_tool" &&
+    /^(agent|task)$/i.test(item.toolName ?? "") &&
+    outputState.output ? (
+      <div className="font-sans text-sm text-foreground" data-hoh-agent-markdown>
+        <ChatMarkdown
+          text={outputState.output}
+          cwd={props.cwd}
+          threadRef={{
+            environmentId: props.environmentId,
+            threadId: props.projectedItem.sourceThreadId,
+          }}
+          lineBreaks
+        />
+      </div>
+    ) : undefined;
   return (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
@@ -399,6 +415,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           args={item.input}
           {...outputState}
           onImageExpand={props.onImageExpand}
+          outputSlot={agentMarkdown}
         />
       ) : null}
 

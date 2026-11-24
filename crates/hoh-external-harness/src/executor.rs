@@ -111,6 +111,18 @@ impl Shared {
             .map(|(_, launched)| (launched.visible_access(), launched.flags.clone()))
     }
 
+    pub(crate) fn running_mode_of(&self, session: &str) -> Option<(AccessMode, bool)> {
+        lock(&self.launched)
+            .iter()
+            .find(|(id, launched)| id == session && launched.session.strong_count() > 0)
+            .map(|(_, launched)| {
+                (
+                    launched.visible_access(),
+                    launched.interaction_mode == crate::InteractionMode::Plan,
+                )
+            })
+    }
+
     /// Conversation `session` has worked in its folder: its native session is recorded, or its
     /// process runs. Until then (a new chat) its folder may still change.
     pub(crate) fn started_in_folder(&self, session: &Session) -> bool {

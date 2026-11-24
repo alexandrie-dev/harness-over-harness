@@ -187,7 +187,7 @@ const titleOf = (root: string) => root.split('/').filter(Boolean).at(-1) ?? root
 const timeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 const executorOf = (instanceId: unknown): HohExecutor => instanceId === CODEX_INSTANCE_ID ? 'codex' : 'claude';
 const instanceOf = (executor: HohExecutor) => executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID;
-const exactMode = (value: unknown): HohAccessMode | null => value === 'acceptEdits' ? 'auto-accept-edits' : ['confirm', 'auto-accept-edits', 'auto', 'full'].includes(String(value)) ? value as HohAccessMode : null;
+const exactMode = (value: unknown): HohAccessMode | null => value === 'plan' ? 'confirm' : value === 'acceptEdits' ? 'auto-accept-edits' : ['confirm', 'auto-accept-edits', 'auto', 'full'].includes(String(value)) ? value as HohAccessMode : null;
 /** What the executor is actually running wins over a requested mode waiting for the next turn. */
 const effectiveSessionMode = (session: any, fallback: HohAccessMode): HohAccessMode =>
   exactMode(session?.runningRuntimeMode) ?? exactMode(session?.running)
@@ -426,6 +426,7 @@ export class HohHost {
         model,
         mode: restoredMode,
         executor,
+        bindingKnown: false,
         interactionMode: this.interactions.get(id),
         projectId,
       });
@@ -974,12 +975,12 @@ export class HohHost {
     });
     const sessions = this.readAccess().then(async accessRead => {
       this.configChanged();
-      if (!accessRead) { void this.retryAccessConfiguration(); return; }
-      await this.loadSessions();
+      if (!accessRead) void this.retryAccessConfiguration();
     });
+    const inventory = this.loadSessions();
     // Preserve the single-snapshot fast path when session/list answers immediately, without letting a slow or
     // wedged bridge own startup: after one event-loop turn T3 receives the explicit pending placeholder instead.
-    await Promise.race([sessions, new Promise<void>(resolve => setTimeout(resolve, 0))]);
+    await Promise.race([Promise.all([sessions, inventory]), new Promise<void>(resolve => setTimeout(resolve, 0))]);
     // The first config, lifecycle and empty shell snapshots are usable immediately. Both engine reads reconcile
     // them in the background, so even a stuck session/list cannot hold the T3 window behind a bridge timeout.
   }
@@ -1111,36 +1112,57 @@ export class HohHost {
   private async onEngineReady() {
     await this.readDiscovery();
     const accessRead = await this.readAccess();
-    if (accessRead) await this.readSessions();
+    await this.readSessions();
     this.configChanged();
     if (accessRead) this.flush();
   }
 
   private async readSessions(): Promise<boolean> {
-    const globalMode = this.mode;
-    if (globalMode === null) return false;
+    const globalMode = this.mode ?? 'confirm';
     let sessions: any[] = [];
     try { sessions = (await this.engine.request('session/list', {}))?.sessions ?? []; } catch { return false; }
     let inventoryChanged = false;
+    // Publish every row before access/get: an unanswered read must not hide other conversations
+    // or an approval that arrives for one of them.
     for (const session of sessions) {
-      if (typeof session?.id !== 'string' || !session.id) continue;
+      if (typeof session?.id !== 'string' || !session.id || this.threads.has(session.id)) continue;
+      const at = Number(session.updatedAt) || this.startedAt;
+      this.threads.set(session.id, new ThreadModel({
+        id: session.id, title: this.titles.get(session.id) ?? (typeof session.title === 'string' ? session.title : ''),
+        createdAt: at, updatedAt: at, model: 'unknown', mode: 'confirm', executor: 'claude', bindingKnown: false,
+        projectId: this.homeOf(session.id),
+      }));
+      inventoryChanged = true;
+      if (this.homeOf(session.id) === HOH_PROJECT_ID) this.showProject();
+      if (this.shellSinks.size) this.changed(session.id);
+    }
+    // session/list is authoritative even when an executor never answers its access query.
+    // Give immediate replies a turn to fill the first snapshot, then unblock bootstrap.
+    const bootstrapTimer: any = setTimeout(() => { if (!this.stopped) this.sessionsReady(); }, 0);
+    bootstrapTimer?.unref?.();
+    await Promise.all(sessions.map(async session => {
+      if (typeof session?.id !== 'string' || !session.id) return;
       const at = Number(session.updatedAt) || this.startedAt;
       const previous = this.threads.get(session.id);
       let executor = previous?.executor ?? this.selectedExecutor;
       let model: string | undefined = previous?.model;
       let mode = previous && this.sessionAccessKnown.has(session.id) ? previous.mode : globalMode;
-      let ownKnown = false;
+      let ownKnown = Boolean(previous?.bindingKnown && this.sessionAccessKnown.has(session.id));
+      let builtin = previous?.builtin ?? false;
+      let runningPlan = false;
       const modeRevision = this.modeRevision;
       const modeGeneration = this.modeGenerations.get(session.id) ?? 0;
       try {
         const own = (await this.engine.request('hoh/executor/access/get', { executor: 'codex', sessionId: session.id }))?.session;
         const exact = exactMode(own?.runtimeMode);
-        const builtin = own && own.executor == null && own.runtimeMode == null;
-        if (own && !builtin && (!exact || (own.executor !== 'codex' && own.executor !== 'claude'))) continue;
+        builtin = own?.builtin === true && own?.executor == null && own?.runtimeMode == null;
+        if (own && !builtin && (!exact || (own.executor !== 'codex' && own.executor !== 'claude'))) throw new Error('Conversation access is unavailable.');
+        if (builtin) ownKnown = false;
         if (own && !builtin) ownKnown = true;
         if (own?.executor === 'codex' || own?.executor === 'claude') executor = own.executor;
         model = typeof own?.model === 'string' && own.model ? own.model : undefined;
         mode = effectiveSessionMode(own, mode);
+        runningPlan = own?.runningRuntimeMode === 'plan';
       } catch {
         if (previous) { executor = previous.executor; model = previous.model; mode = previous.mode; }
       }
@@ -1152,15 +1174,21 @@ export class HohHost {
 
       const existing = this.threads.get(session.id);
       if (existing) {
-        if (modeRevision !== this.modeRevision) continue;
-        if ((this.modeGenerations.get(session.id) ?? 0) !== modeGeneration) continue;
+        if (modeRevision !== this.modeRevision) return;
+        if ((this.modeGenerations.get(session.id) ?? 0) !== modeGeneration) return;
         if (ownKnown) this.sessionAccessKnown.add(session.id);
-        if (existing.executor !== executor || existing.model !== model || existing.mode !== mode) {
+        const bindingChanged = existing.bindingKnown !== ownKnown;
+        existing.bindingKnown = ownKnown;
+        const builtinChanged = existing.builtin !== builtin;
+        existing.builtin = builtin;
+        const planChanged = runningPlan && existing.interactionMode !== 'plan';
+        if (runningPlan) existing.setInteractionMode('plan');
+        if (bindingChanged || builtinChanged || planChanged || existing.executor !== executor || existing.model !== model || existing.mode !== mode) {
           existing.executor = executor;
           existing.model = model;
           existing.mode = mode;
           inventoryChanged = true;
-          if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
+          if (this.shellSinks.size) this.changed(session.id);
         }
         if (this.restored.delete(session.id)) {
           // The cache is only continuity for the first snapshot. Once this session is visible on
@@ -1170,7 +1198,7 @@ export class HohHost {
           inventoryChanged = true;
           if (this.sessionsKnown) this.changed(session.id);
         }
-        continue;
+        return;
       }
       if (ownKnown) this.sessionAccessKnown.add(session.id);
       this.threads.set(session.id, new ThreadModel({
@@ -1181,7 +1209,8 @@ export class HohHost {
         model,
         mode,
         executor,
-        interactionMode: this.interactions.get(session.id),
+        bindingKnown: ownKnown,
+        interactionMode: runningPlan ? 'plan' : this.interactions.get(session.id),
         projectId: this.homeOf(session.id),
       }));
       if ((executor === 'codex' ? this.codexDiscovery : this.claudeDiscovery) === null) this.catalogPending.add(session.id);
@@ -1189,7 +1218,8 @@ export class HohHost {
       // During the first load the metadata is already in the forthcoming snapshot. A retry happens after that
       // snapshot, so it needs an update for each conversation that arrived late.
       if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
-    }
+    }));
+    clearTimeout(bootstrapTimer);
     // Reconciliation is deliberately merge-only: an immediately restarted engine may return a
     // temporarily incomplete list, so neither cached rows nor their Waiting/Done state is pruned.
     if (inventoryChanged) this.save();
@@ -1289,11 +1319,23 @@ export class HohHost {
         thread.settleUnfinished(this.now());
         // The model this chat is bound to (a chat that has had a turn keeps its own).
         const modeGeneration = this.modeGenerations.get(threadId) ?? 0;
+        const processGeneration = this.accessProcessGeneration;
         try {
           const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: threadId }))?.session;
-          if (own?.executor === 'codex' || own?.executor === 'claude') thread.executor = own.executor;
-          if (typeof own?.model === 'string' && own.model) thread.model = own.model;
-          if ((this.modeGenerations.get(threadId) ?? 0) === modeGeneration) thread.mode = effectiveSessionMode(own, thread.mode);
+          if ((this.modeGenerations.get(threadId) ?? 0) === modeGeneration && this.accessProcessGeneration === processGeneration) {
+            if ((own?.executor === 'codex' || own?.executor === 'claude') && exactMode(own?.runtimeMode)) {
+              thread.executor = own.executor;
+              thread.bindingKnown = true;
+              thread.builtin = false;
+              this.sessionAccessKnown.add(threadId);
+            } else if (own?.builtin === true && own.executor == null && own.runtimeMode == null) {
+              thread.builtin = true;
+              this.sessionAccessKnown.add(threadId);
+            }
+            if (typeof own?.model === 'string' && own.model) thread.model = own.model;
+            thread.mode = effectiveSessionMode(own, thread.mode);
+            if (own?.runningRuntimeMode === 'plan') thread.setInteractionMode('plan');
+          }
         } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
         // Place the chat before publishing what its history taught us. Otherwise the first
@@ -1319,14 +1361,14 @@ export class HohHost {
     let thread = this.threads.get(sessionId);
     if (!thread) {
       // A chat started elsewhere (another window, a schedule): it joins the list.
-      if (this.mode === null) return undefined;
       thread = new ThreadModel({
         id: sessionId,
         title: this.titles.get(sessionId),
         createdAt: this.now(),
         model: this.model(),
-        mode: this.mode,
-        executor: this.selectedExecutor,
+        mode: 'confirm',
+        executor: 'claude',
+        bindingKnown: false,
         interactionMode: this.interactions.get(sessionId),
       });
       thread.loaded = true;
@@ -1342,11 +1384,15 @@ export class HohHost {
           if (sessionRevision < (this.sessionAccessApplied.get(sessionId) ?? 0)) return;
           const own = result?.session;
           const mode = exactMode(own?.runningRuntimeMode) ?? exactMode(own?.runtimeMode);
-          if (own && own.executor == null && own.runtimeMode == null) {
+          if (own?.builtin === true && own.executor == null && own.runtimeMode == null) {
+            created.builtin = true;
             this.sessionAccessApplied.set(sessionId, sessionRevision); this.sessionAccessKnown.add(sessionId); this.modeRevision++; this.changed(sessionId); return;
           }
           if (!mode || (own?.executor !== 'claude' && own?.executor !== 'codex')) throw new Error('Conversation access is unavailable.');
           created.executor = own.executor; created.mode = mode;
+          created.bindingKnown = true;
+          created.builtin = false;
+          if (own.runningRuntimeMode === 'plan') created.setInteractionMode('plan');
           if (typeof own.model === 'string' && own.model) created.model = own.model;
           this.modeGenerations.set(sessionId, modeGeneration + 1);
           this.sessionAccessApplied.set(sessionId, sessionRevision); this.sessionAccessKnown.add(sessionId); this.modeRevision++; this.changed(sessionId);
@@ -1774,6 +1820,8 @@ export class HohHost {
    */
   private async applyMode(thread: ThreadModel, mode: T3RuntimeMode | undefined) {
     if (!mode) return;
+    if (thread.builtin) return;
+    if (!thread.bindingKnown) throw new Error('Conversation executor and access mode are unavailable.');
     await this.requireAccess();
     const processGeneration = this.accessProcessGeneration;
     const wanted = accessModeOf(mode);
@@ -1803,9 +1851,15 @@ export class HohHost {
         if (thread.mode !== fallback) { thread.mode = fallback; this.changed(thread.id); }
         return;
       }
+      if ((own.executor === 'claude' || own.executor === 'codex') && exactMode(own.runtimeMode)) {
+        thread.executor = own.executor;
+        thread.bindingKnown = true;
+      }
       this.sessionAccessKnown.add(thread.id);
       const actual = effectiveSessionMode(own, fallback);
-      if (thread.mode !== actual) { thread.mode = actual; this.changed(thread.id); }
+      const planChanged = own.runningRuntimeMode === 'plan' && thread.interactionMode !== 'plan';
+      if (planChanged) thread.setInteractionMode('plan');
+      if (thread.mode !== actual || planChanged) { thread.mode = actual; this.changed(thread.id); }
     } catch { /* keep the last engine-reported value until the bridge answers again */ }
   }
 
@@ -1837,8 +1891,9 @@ export class HohHost {
    * written as Claude runs them (`$name` → `/name`, T3's `planClaudeSkillDispatch`).
    */
   private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode) {
-    await this.requireAccess();
+    if (!thread.builtin) await this.requireAccess();
     if (!this.sessionAccessKnown.has(thread.id)) await this.notificationAccess.get(thread.id);
+    if (!thread.bindingKnown && !thread.builtin) throw new Error('Conversation executor and access mode are unavailable.');
     const firstMessage = thread.userMessageCount() === 0;
     const images = this.keptImages(attachments);
     // T3 releases the completed upload immediately after send. Promote its process-local preview
@@ -1871,7 +1926,7 @@ export class HohHost {
       if (this.homeDispositions.delete(thread.id)) this.save();
       for (const image of images) this.uploads.delete(image.id);
       if (typeof result?.messageId === 'string') thread.receipt(result.messageId, messageId);
-      if (firstMessage && thread.executor === 'claude') void this.generateTitle(thread, text);
+      if (firstMessage && !thread.builtin && thread.executor === 'claude') void this.generateTitle(thread, text);
     } catch (error) {
       this.homePrompts.delete(thread.id);
       if (this.homeDispositions.has(thread.id)) this.failedHomePrompts.add(thread.id);
@@ -2087,7 +2142,7 @@ ${message.slice(0, 8000)}`;
           const interaction = command.interactionMode === undefined ? undefined : interactionModeOf(command.interactionMode);
           if (target.executor === 'codex' && interaction === 'plan') throw new Error('Plan mode for Codex is coming soon.');
           if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new thread.');
-          if (command.modelSelection?.model) { await this.applyModel(target.executor, command.modelSelection.model); target.model = command.modelSelection.model; }
+          if (!target.builtin && command.modelSelection?.model) { await this.applyModel(target.executor, command.modelSelection.model); target.model = command.modelSelection.model; }
           this.setLevel(target, command.modelSelection?.options);
           await this.withSelectionMutation(async () => {
             await this.applyMode(target, command.runtimeMode);
@@ -2404,7 +2459,14 @@ ${message.slice(0, 8000)}`;
           if (!sinks) this.threadSinks.set(threadId, sinks = new Set());
           this.registerLocalImageContext(threadId);
           const own = sinks;
-          void this.start().then(() => this.loaded(threadId)).then(thread => {
+          void this.start().then(() => {
+            const provisional = this.threads.get(threadId);
+            if (open && provisional && !provisional.bindingKnown) {
+              own.add(sink);
+              sink.emit(this.threadSnapshot(provisional));
+            }
+            return this.loaded(threadId);
+          }).then(thread => {
             if (!open) return;
             // A thread that does not exist yet (a draft) gets its first snapshot when it is created.
             if (thread) sink.emit(this.threadSnapshot(thread));

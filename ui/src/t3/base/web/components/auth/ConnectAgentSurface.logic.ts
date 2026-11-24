@@ -17,6 +17,7 @@ export function resolveMcpAccess(
   hasCode: boolean,
 ): AuthMcpClientAccess {
   const access = requested ?? (hasCode ? "auto" : "read-only");
+  if (ceiling?.maxRuntimeMode === "unknown") return "read-only";
   return access !== "read-only" &&
     ceiling !== undefined &&
     isRuntimeModeAbove(access, ceiling.maxRuntimeMode)

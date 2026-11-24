@@ -2648,6 +2648,25 @@ async fn unbound_session_keeps_each_executors_mode_across_restart() {
 }
 
 #[tokio::test]
+async fn an_unbound_session_is_not_reported_as_a_builtin_agent() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, |_| {}).await;
+    let access = window
+        .call(
+            "hoh/executor/access/get",
+            json!({"executor": HARNESS, "sessionId":"not-bound"}),
+        )
+        .await
+        .unwrap();
+    assert!(access["session"]["executor"].is_null());
+    assert!(
+        access["session"].get("builtin").is_none(),
+        "unbound is not proof of a builtin agent: {access}"
+    );
+    window.close().await;
+}
+
+#[tokio::test]
 async fn a_different_executor_cannot_replace_a_bound_sessions_access_choice() {
     let dirs = dirs();
     let window = window(&dirs, quick(), Host::Allows, |_| {}).await;

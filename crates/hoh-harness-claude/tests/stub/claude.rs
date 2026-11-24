@@ -174,6 +174,19 @@ impl Stub {
                         }));
                     }
                     Some("reload_skills") => {
+                        if env("STUB_MODE").as_deref() == Some("delay-reload")
+                            && let Some(dir) = env("STUB_STATE")
+                        {
+                            let dir = PathBuf::from(dir);
+                            let _ = std::fs::write(dir.join("reload-waiting"), b"waiting");
+                            let until =
+                                std::time::Instant::now() + std::time::Duration::from_secs(30);
+                            while !dir.join("reload-release").exists()
+                                && std::time::Instant::now() < until
+                            {
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                            }
+                        }
                         let mut skills = vec![
                             json!({ "name": "release-notes", "description": "Write the release notes", "argumentHint": "" }),
                             json!({ "name": "  ", "description": "nameless" }),
