@@ -321,6 +321,14 @@ export class ThreadModel {
     if (!this.title) this.title = value.split('\n')[0].trim().slice(0, 80);
     const run: Run = { id: 'run-' + messageId, ordinal: this.runs.length + 1, model: this.model, userMessageId: messageId, status: 'running', requestedAt: at, startedAt: at, completedAt: null };
     this.runs.push(run);
+    // A stream notification can precede the durable user message that creates its run.
+    for (const live of this.live.values()) {
+      if (live.key.split(':', 1)[0] !== String(run.ordinal)) continue;
+      for (const part of Object.values(live.parts)) {
+        const item = this.item(part.itemId);
+        if (item) item.runId = run.id;
+      }
+    }
     this.messages.push({ id: messageId, runId: run.id, role: 'user', text: value, streaming: false, createdAt: at, updatedAt: at, ...(attachments.length ? { attachments } : {}) });
     this.items.push({
       ...this.base('item-' + messageId, 'user_message', 'completed', at, run.id),
@@ -544,7 +552,8 @@ export class ThreadModel {
     }
     for (const item of this.items) if (isSubagentCall(item)) this.refreshSubagent(item.id);
     for (const live of this.live.values()) this.retired.add(live.attemptId);
-    this.live.clear();
+    // Keep settled parts until their durable assistant/message replaces them. Stop may
+    // publish turn/end before that message; discarding the mapping duplicates the answer.
     for (const request of this.requests) if (request.status === 'pending') { request.status = 'cancelled'; request.resolvedAt = at; }
     // Mark only an explicit Stop: the click supplies it live and the engine's user cause
     // reconstructs it from the journal after a restart.

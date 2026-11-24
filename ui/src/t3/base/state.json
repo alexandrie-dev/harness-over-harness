@@ -31,6 +31,7 @@
     "web/components/chat/DraftHeroHeadline.tsx",
     "web/components/chat/MessagesTimeline.logic.ts",
     "web/components/chat/PanelLayoutControls.tsx",
+    "web/components/chat/ProviderModelPicker.tsx",
     "web/components/chat/SkillInlineText.tsx",
     "web/components/chat/ThreadDetailsPanel.tsx",
     "web/components/chat/V2ItemInspector.tsx",
@@ -40,6 +41,7 @@
     "web/components/settings/ThemeSettings.tsx",
     "web/components/settings/settingsSearch.ts",
     "web/components/sidebar/SidebarChrome.tsx",
+    "web/components/sidebar/SidebarProjectFolderHeader.tsx",
     "web/routeTree.gen.ts",
     "web/terminalUiStateStore.ts"
   ],

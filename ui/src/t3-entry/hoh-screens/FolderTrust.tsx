@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { folderTrustView } from './folder-trust-view.mjs';
+import { folderTrustView, isKnownAbsoluteFolder } from './folder-trust-view.mjs';
 import type { HohEngineLike } from '../host';
 import { readAppliedTrust, writeAppliedTrust } from './folder-trust-record.mjs';
 
@@ -11,11 +11,12 @@ type Trust = { cwd: string; executor: string; trusted: boolean; changed: boolean
 export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadId: string; fallbackCwd: string | null; isServerThread: boolean }) {
   const [state, setState] = useState<Trust | null>(null);
   const [busy, setBusy] = useState(false);
+  const [folderUnknown, setFolderUnknown] = useState(false);
   const [changedNotice, setChangedNotice] = useState(false);
   const generation = useRef(0);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
-    const update = (value: Trust | null) => { if (current === generation.current) setState(value); };
+    const update = (value: Trust | null) => { if (current === generation.current) { setState(value); if (value) setFolderUnknown(false); } };
     const engine = window.__HOH_TRUST_ENGINE__;
     if (!engine) return;
     try {
@@ -33,7 +34,8 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
         const directory = await engine.request('session/working-directory/get', { sessionId: threadId }) as { cwd?: string };
         cwd = directory.cwd || cwd;
       } catch { /* Use the project until an established session is available. */ }
-      if (!cwd) { update(null); return; }
+      // A placeholder such as ~/Documents/HoH is not an authoritative engine folder.
+      if (!isKnownAbsoluteFolder(cwd)) { update(null); if (current === generation.current) setFolderUnknown(true); return; }
       const result = await engine.request('hoh/executor/trust/get', { executor, cwd }) as Trust;
       const flags = access.effective?.flags ?? [];
       const sources = flags.indexOf('--setting-sources');
@@ -58,6 +60,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
   }, [threadId, fallbackCwd, isServerThread]);
   useEffect(() => {
     setState(null);
+    setFolderUnknown(false);
     setChangedNotice(false);
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
@@ -72,7 +75,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     }).then(off => { if (stopped) off(); else unsubscribe = off; }).catch(() => {});
     return () => { stopped = true; unsubscribe?.(); generation.current++; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [refresh]);
-  if (!state) return null;
+  if (!state) return folderUnknown ? <span className="text-xs text-muted-foreground">Project settings in this folder: unknown</span> : null;
   const view = folderTrustView({ running: state.running ?? false, applied: state.applied ?? false, trusted: state.trusted, isolated: state.isolated ?? false, changed: changedNotice });
   return <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
     {view.text}

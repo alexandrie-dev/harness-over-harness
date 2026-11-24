@@ -10,7 +10,7 @@ let built; let mod;
 before(async () => {
   built = await buildHost();
   mod = {
-    host: await built.load('host'), wire: await built.load('wire'), socket: await built.load('socket'),
+    threads: await built.load('threads'), host: await built.load('host'), wire: await built.load('wire'), socket: await built.load('socket'),
     http: await built.load('http'), config: await built.load('config'), index: await built.load('index'),
   };
 });
@@ -3327,4 +3327,81 @@ test('project counts include every unarchived chat, including one with no turns 
   const restarted = connect(new FakeEngine({ store })); await restarted.host.start();
   assert.equal(restarted.host.home.projectCounts()['hoh-project'], 4);
   assert.equal(restarted.host.home.entries().length, 0, 'no invented turn or status for an empty chat');
+});
+
+
+test('early reasoning is assigned to the matching run as soon as its user message arrives', () => {
+  const t = new mod.threads.ThreadModel({ id: 'early', createdAt: 1000, model: 'opus', mode: 'confirm' });
+  t.applyStreamFrame({ type: 'start', attemptId: 'r', turn: 1, step: 1 }, 1100);
+  t.applyStreamFrame({ type: 'chunk', attemptId: 'r', index: 0, chunk: { type: 'reasoning-delta', text: '' } }, 1101);
+  t.applyEvent({ seq: 1, type: 'turn/start', time: 1102, data: { turn: 1 } });
+  t.applyEvent({ seq: 2, type: 'user/message', time: 1103, data: { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] } });
+  const projection = t.projection();
+  assert.equal(projection.turnItems.find(item => item.type === 'reasoning').runId, projection.runs[0].id);
+  t.applyEvent({ seq: 3, type: 'turn/end', time: 1200, data: { reason: { kind: 'completed' } } });
+  t.applyStreamFrame({ type: 'start', attemptId: 'r2', turn: 2, step: 1 }, 1300);
+  t.applyStreamFrame({ type: 'chunk', attemptId: 'r2', index: 0, chunk: { type: 'reasoning-delta', text: '' } }, 1301);
+  t.applyEvent({ seq: 4, type: 'turn/start', time: 1302, data: { turn: 2 } });
+  t.applyEvent({ seq: 5, type: 'user/message', time: 1303, data: { id: 'u2', source: { kind: 'user' }, content: [{ type: 'text', text: 'next' }] } });
+  const next = t.projection();
+  assert.equal(next.turnItems.find(item => item.id === 'item-live-r2-reasoning').runId, next.runs[1].id, 'early frame must not remain on the previous run');
+});
+
+test('a final interrupted answer replaces the live answer even when turn/end arrives first', () => {
+  const t = new mod.threads.ThreadModel({ id: 'stopped', createdAt: 1000, model: 'opus', mode: 'confirm' });
+  t.sendLocal('u1', 'go', 1001);
+  t.applyStreamFrame({ type: 'start', attemptId: 'text', turn: 1, step: 1 }, 1002);
+  t.applyStreamFrame({ type: 'chunk', attemptId: 'text', index: 0, chunk: { type: 'text-delta', text: '1...136' } }, 1003);
+  t.applyEvent({ seq: 1, type: 'turn/end', time: 1004, data: { reason: { kind: 'aborted', reason: { kind: 'user' } } } });
+  t.applyEvent({ seq: 2, type: 'assistant/message', time: 1005, data: { turn: 1, step: 1, message: { id: 'final', content: [{ type: 'text', text: '1...137' }] } } });
+  assert.deepEqual(t.projection().turnItems.filter(item => item.type === 'assistant_message').map(item => item.text), ['1...137']);
+});
+
+test('folder trust session requests wait for resume before accessing a cached session', async () => {
+  const engine = new FakeEngine(); engine.seed('saved', 'saved', []);
+  const original = engine.request.bind(engine); let release; const gate = new Promise(resolve => { release = resolve; });
+  engine.request = async (method, params) => { if (method === 'session/resume') await gate; return original(method, params); };
+  const { host } = connect(engine); await host.start();
+  const request = host.trustRequest('session/working-directory/get', { sessionId: 'saved' });
+  const access = host.trustRequest('hoh/executor/access/get', { sessionId: 'saved', executor: 'claude', trace: 'trust-request' });
+  await tick(5);
+  assert.equal(engine.requests.some(r => r.method === 'session/working-directory/get' && r.params.sessionId === 'saved'), false);
+  assert.equal(engine.requests.some(r => r.method === 'hoh/executor/access/get' && r.params.trace === 'trust-request'), false);
+  release(); await Promise.all([request, access]);
+  const methods = engine.requests.filter(r => r.params?.sessionId === 'saved').map(r => r.method);
+  assert(methods.indexOf('session/resume') < methods.indexOf('session/working-directory/get'));
+  assert(engine.requests.findIndex(r => r.method === 'session/resume' && r.params.sessionId === 'saved') < engine.requests.findIndex(r => r.params?.trace === 'trust-request'));
+});
+
+test('a live session joins its project as soon as the engine reports its folder', async () => {
+  const engine = new FakeEngine(); const { host, client } = connect(engine); await host.start();
+  await client.call('projects.mutate', { type: 'project.create', commandId: 'p', projectId: 'p-live', workspaceRoot: '/home/person/Projects', title: 'Projects' });
+  engine.seed('new-live', 'new-live', []);
+  engine.emitEvent('new-live', 'working-directory/change', { cwd: '/home/person/Projects' });
+  host.flush();
+  assert.equal(host.home.projectCounts()['p-live'], 1);
+});
+
+test('a failed session resume never falls through to a folder lookup that could create the session', async () => {
+  const engine = new FakeEngine(); engine.seed('resume-fails', 'saved', []);
+  const original = engine.request.bind(engine); let blocked = true;
+  engine.request = async (method, params) => { if (blocked && method === 'session/resume' && params.sessionId === 'resume-fails') throw new Error('resume refused'); return original(method, params); };
+  const { host } = connect(engine); await host.start();
+  await assert.rejects(host.trustRequest('session/working-directory/get', { sessionId: 'resume-fails' }));
+  assert.equal(engine.requests.some(r => r.method === 'session/working-directory/get' && r.params.sessionId === 'resume-fails'), false);
+  blocked = false; await host.trustRequest('session/working-directory/get', { sessionId: 'resume-fails' });
+  const methods = engine.requests.filter(r => r.params?.sessionId === 'resume-fails').map(r => r.method);
+  assert(methods.indexOf('session/resume') < methods.indexOf('session/working-directory/get'));
+});
+
+test('an SDK session already open or opening remains usable after restart', async () => {
+  const engine = new FakeEngine(); engine.seed('open-session', 'saved', []);
+  const original = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'session/resume' && params.sessionId === 'open-session') throw new Error('SDK session is already open or opening: open-session');
+    return original(method, params);
+  };
+  const { host } = connect(engine); await host.start();
+  const folder = await host.trustRequest('session/working-directory/get', { sessionId: 'open-session' });
+  assert.equal(folder.cwd, '/home/person/Documents/HoH');
 });

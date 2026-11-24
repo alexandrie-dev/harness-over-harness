@@ -249,6 +249,8 @@ export class HohHost {
   /** Last-known rows wait here until `access/get` supplies their real runtime mode. */
   private readonly savedSessions: any[] = [];
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
+  private readonly resumedSessions = new Set<string>();
+  private readonly resumingSessions = new Map<string, Promise<void>>();
   private readonly questions = new Map<string, EngineQuestion>();
   private readonly shellSinks = new Set<StreamSink>();
   private readonly shellCompletionSinks = new Set<StreamSink>();
@@ -722,6 +724,8 @@ export class HohHost {
     const thread = this.threads.get(threadId);
     if (!thread || this.stopped) return undefined;
     try {
+      await this.loaded(threadId);
+      await this.ensureSessionResumed(threadId);
       const cwd = folderPath((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd);
       if (cwd) {
         thread.cwd = cwd;
@@ -733,6 +737,19 @@ export class HohHost {
     return waitForTransition && (this.threadSinks.has(threadId) || this.creatingThreads.has(threadId))
       ? this.waitForLocalImageContext(threadId, true)
       : undefined;
+  }
+
+  /** Trust UI shares the host's resume barrier for every request scoped to a saved session. */
+  async trustRequest(method: string, params: any) {
+    const id = typeof params?.sessionId === 'string' ? params.sessionId : null;
+    if (id) {
+      await this.start();
+      const thread = this.threads.get(id);
+      if (!thread) throw new Error('Conversation is not ready yet.');
+      await this.loaded(id);
+      await this.ensureSessionResumed(id);
+    }
+    return this.engine.request(method, params);
   }
 
   /** Resolve an optimistic media-file only after its stable thread id owns an authoritative cwd. */
@@ -1376,6 +1393,25 @@ export class HohHost {
     if (dispositionChanged) this.save();
   }
 
+  /** Only a successful resume or a live engine notification proves a cached session is open. */
+  private async ensureSessionResumed(threadId: string): Promise<void> {
+    if (this.resumedSessions.has(threadId)) return;
+    let pending = this.resumingSessions.get(threadId);
+    if (!pending) {
+      const generation = this.accessProcessGeneration;
+      pending = this.engine.request('session/resume', { sessionId: threadId }).catch(error => {
+        // The SDK distinguishes a reserved live/opening session from a disk create collision.
+        // Its folder lookup joins the reserved creation instead of starting a second one.
+        if (hostFailure(error).message !== `SDK session is already open or opening: ${threadId}`) throw error;
+      }).then(() => {
+        if (this.stopped || generation !== this.accessProcessGeneration) throw new Error('The engine changed while resuming the conversation.');
+        this.resumedSessions.add(threadId);
+      }).finally(() => { if (this.resumingSessions.get(threadId) === pending) this.resumingSessions.delete(threadId); });
+      this.resumingSessions.set(threadId, pending);
+    }
+    await pending;
+  }
+
   /** A cached conversation can be opened before the desktop transport finishes connecting. */
   private async readThreadHistory(thread: ThreadModel) {
     const retryable = (error: unknown) => {
@@ -1385,7 +1421,7 @@ export class HohHost {
     };
     for (let attempt = 0; ; attempt++) {
       try {
-        try { await this.engine.request('session/resume', { sessionId: thread.id }); }
+        try { await this.ensureSessionResumed(thread.id); }
         catch (error) {
           if (retryable(error)) throw error;
           // Already open, or recoverable as a read-only log.
@@ -1444,7 +1480,7 @@ export class HohHost {
           this.settleLocalImageContext(threadId, thread);
         }
         else if (!this.workspaceKnown && thread.projectId === HOH_PROJECT_ID) {
-          try { this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }
+          try { await this.ensureSessionResumed(threadId); this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }
         }
         // The list row learns what the history knows (a title from the first message, the last answer).
         this.changed(threadId);
@@ -1457,6 +1493,8 @@ export class HohHost {
 
   private threadFor(sessionId: unknown): ThreadModel | undefined {
     if (typeof sessionId !== 'string' || !sessionId) return undefined;
+    // A notification comes from an already-open session, including one started elsewhere.
+    this.resumedSessions.add(sessionId);
     let thread = this.threads.get(sessionId);
     if (!thread) {
       // A chat started elsewhere (another window, a schedule): it joins the list.
@@ -1604,6 +1642,8 @@ export class HohHost {
   private onEngineLost() {
     this.accessGeneration++;
     this.accessProcessGeneration++;
+    this.resumedSessions.clear();
+    this.resumingSessions.clear();
     this.notificationAccess.clear();
     this.sessionAccessKnown.clear();
     this.mode = null;
@@ -1755,6 +1795,7 @@ export class HohHost {
         // per-session access under this lock: the engine's global selection must not be changed by
         // another Claude/Codex launch in between.
         const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
+        this.resumedSessions.add(threadId);
         this.setWorkspaceRoot(directory?.cwd);
         const bound = await this.engine.request('hoh/executor/access/get', { executor, sessionId: threadId });
         if (bound?.session?.executor !== executor || bound?.session?.model !== chosenModel) {

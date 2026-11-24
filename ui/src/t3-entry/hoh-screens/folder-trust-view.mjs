@@ -1,3 +1,5 @@
+export function isKnownAbsoluteFolder(cwd) { return typeof cwd === 'string' && cwd.startsWith('/'); }
+
 export function folderTrustView({ running, applied, trusted, isolated, changed }) {
   let text = trusted && !isolated && (applied || !running)
     ? 'Project settings in this folder (Claude and Codex): active'

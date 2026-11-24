@@ -337,7 +337,7 @@
       "web/components/settings/TextGeneratorsSettings.tsx": "видимый термин chat вместо thread",
       "web/components/settings/ThreadTitleInstructionsSettings.tsx": "видимый термин chat вместо thread",
       "web/components/sidebar/SidebarFolderDrop.tsx": "видимый термин chat вместо thread",
-      "web/components/sidebar/SidebarProjectFolderHeader.tsx": "видимый термин chat вместо thread",
+      "web/components/sidebar/SidebarProjectFolderHeader.tsx": "видимый термин chat вместо thread; счётчик свёрнутой папки включает открытый разговор",
       "web/components/sidebar/SidebarThreadHeader.tsx": "видимый термин chat вместо thread",
       "web/components/sidebar/SidebarThreadRow.tsx": "видимый термин chat вместо thread",
       "web/components/sidebar/UpdateEverythingDialog.tsx": "видимый термин chat вместо thread",
@@ -385,7 +385,8 @@
       "contracts/terminal.ts": "сообщения пользователю: chat вместо thread",
       "contracts/t3ProjectFile.ts": "описания настроек проекта: chat вместо thread",
       "web/rightPanelStore.ts": "C7f: параметры панели чата",
-      "client-runtime/state/threadExecution.ts": "провайдер больше не запускается после появления кадров ответа или reasoning"
+      "client-runtime/state/threadExecution.ts": "провайдер больше не запускается после появления кадров ответа или reasoning",
+      "web/components/chat/ProviderModelPicker.tsx": "не показывает имя провайдера вместо ещё неизвестной модели"
     },
     "switches": [
       [

@@ -63,3 +63,22 @@ test('ordinary approval translates a known host error without losing its meaning
   assert.doesNotMatch(h.text(), /[А-Яа-яЁё]/u);
   h.unmount();
 });
+
+
+test('FolderTrust does not send a tilde fallback after cwd lookup fails and retries later', async () => {
+  const calls = []; let available = false;
+  const h = componentHarness(resolve(ui, 'src/t3-entry/hoh-screens/FolderTrust.tsx'), 'FolderTrust', {}, { threadId: 'saved', fallbackCwd: '~/Documents/HoH', isServerThread: true });
+  h.window.__HOH_TRUST_ENGINE__ = { request: async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'hoh/executor/access/get') return { session: { executor: 'claude' }, effective: { flags: [] } };
+    if (method === 'session/working-directory/get') { if (!available) throw Error('unavailable'); return { cwd: '/work/project' }; }
+    if (method === 'hoh/executor/trust/get') return { cwd: params.cwd, executor: 'claude', trusted: false, changed: false };
+    throw Error(method);
+  } };
+  await h.event('focus');
+  assert.equal(calls.some(call => call.method === 'hoh/executor/trust/get'), false);
+  assert.match(h.text(), /unknown/i);
+  available = true; await h.event('focus');
+  assert.deepEqual(calls.filter(call => call.method === 'hoh/executor/trust/get').map(call => call.params.cwd), ['/work/project']);
+  h.unmount();
+});
