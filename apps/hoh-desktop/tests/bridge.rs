@@ -750,10 +750,7 @@ fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_ref
     let log = broker.audit_log();
     assert_eq!(log.len(), 5);
     assert_eq!((log[4].who, log[4].via), ("human", "main-window"));
-    assert_eq!(
-        log[4].human_text,
-        "Добавить папку «/home/u/work» как проект?"
-    );
+    assert_eq!(log[4].human_text, "Add folder «/home/u/work» as a project?");
     engine.stop();
 }
 

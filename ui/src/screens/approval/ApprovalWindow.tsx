@@ -1,4 +1,3 @@
-import { errorText } from '../../lib/hostError.mjs';
 import { tidyHuman } from '../../lib/humanText';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Risk } from '../../protocol';
@@ -7,27 +6,42 @@ import { approvalHost, type ApprovalView, type WindowDecision } from './bridge';
 import '../shared/primitives.css';
 import './approval.css';
 
-/** Пока кнопка «Разрешить один раз» не нажимается, мс: нельзя разрешить, не прочитав. */
+/** Пока кнопка «Allow once» не нажимается, мс: нельзя разрешить, не прочитав. */
 export const ALLOW_DELAY_MS = 1000;
 /** Счёт времени показывается только в последнюю минуту: до неё окно человека не торопит. */
 export const LAST_MINUTE_S = 60;
 
+function approvalError(error: unknown, fallback: string): string {
+  const value = typeof error === 'string' ? error : error instanceof Error ? error.message :
+    error && typeof error === 'object' && 'message' in error ? String(error.message) : '';
+  const known: Record<string, string> = {
+    'Подтверждение недоступно': 'Confirmation is unavailable.',
+    'Это окно не может открыть подтверждение': 'This window cannot open the confirmation.',
+    'Это окно не может ответить на подтверждение': 'This window cannot answer the confirmation.',
+    'Подтверждение уже сменилось': 'The confirmation request has changed.',
+    'Сначала прочитайте подтверждение': 'Read the confirmation first.',
+    'Подтверждение истекло': 'The confirmation has expired.',
+    'Часть команды скрыта, в ней есть вложенная команда: разрешить один раз нельзя': 'Part of the command is hidden and contains a nested command; Allow once is unavailable.',
+  };
+  return known[value] ?? (value && value.length <= 160 && !/[А-Яа-яЁё]/u.test(value) ? value : fallback);
+}
+
 const WHY: Record<Risk | 'unassessed', { title: string; text: string }> = {
   unassessed: {
-    title: 'Почему Помощник спрашивает',
-    text: 'Помощник не может заранее оценить это действие. Посмотрите, что именно он собирается сделать, в подробностях ниже. Если вы не просили об этом, нажмите «Отклонить».',
+    title: 'Why the assistant is asking',
+    text: 'The assistant cannot assess this action in advance. Review what it will do in the details below. If you did not request it, select Decline.',
   },
   high: {
-    title: 'Почему это опасно',
-    text: 'Это действие, возможно, нельзя будет отменить, или оно затрагивает ваши данные и права. После «Разрешить один раз» оно выполнится сразу. Если вы не просили об этом, нажмите «Отклонить».',
+    title: 'Why this could be risky',
+    text: 'This action may be irreversible or affect your data and permissions. It runs immediately after you select Allow once. If you did not request it, select Decline.',
   },
   medium: {
-    title: 'Почему это опасно',
-    text: 'Действие меняет что-то на этом компьютере или выходит в интернет. Разрешайте, только если ждали именно этого.',
+    title: 'Why this could be risky',
+    text: 'This action changes something on this computer or accesses the internet. Allow it only if you expected it.',
   },
   low: {
-    title: 'Почему Помощник спрашивает',
-    text: 'Действие обычное, но без вашего слова Помощник его не выполняет.',
+    title: 'Why the assistant is asking',
+    text: 'This is a routine action, but the assistant needs your approval to continue.',
   },
 };
 
@@ -35,36 +49,36 @@ const WHY: Record<Risk | 'unassessed', { title: string; text: string }> = {
 // action wording gets a specific consequence; unknown wording keeps the fallback.
 export function consequence(view: ApprovalView): { title: string; text: string } {
   const text = view.humanText.toLowerCase();
-  const title = 'Почему это опасно';
+  const title = 'Why this could be risky';
   if (view.risk === 'unassessed') return WHY.unassessed;
-  if (/(?:^|[^\p{L}])(?:удалить|удаление|стереть|стирание)(?:$|[^\p{L}])/u.test(text))
-    return { title, text: 'Файлы не попадут в корзину. Восстановить их будет нельзя.' };
-  if (/(?:отправить|передать|отправка)\s+(?:данные|файл|файлы|документ)/u.test(text))
-    return { title, text: 'Данные получит другой сервис. После отправки забрать их обратно нельзя.' };
-  if (/(?:запустить|выполнить)\s+(?:программу|команду)/u.test(text))
-    return { title, text: 'Программа выполнится на этом компьютере и сможет изменить доступные ей файлы.' };
+  if (/(?:\b(?:delete|remove|erase)\s+(?:a\s+)?(?:files?|documents?)\b|(?:^|[^\p{L}])(?:удалить|удаление|стереть|стирание)(?:$|[^\p{L}]))/u.test(text))
+    return { title, text: 'The files will not go to the trash and cannot be restored.' };
+  if (/(?:\b(?:send|upload|transmit)\s+(?:data|files?|documents?)\b|(?:отправить|передать|отправка)\s+(?:данные|файл|файлы|документ))/u.test(text))
+    return { title, text: 'Another service will receive the data. It cannot be recalled after sending.' };
+  if (/(?:\b(?:run|execute)\s+(?:a\s+)?(?:program|command)\b|(?:запустить|выполнить)\s+(?:программу|команду))/u.test(text))
+    return { title, text: 'The program will run on this computer and can change files it can access.' };
   // «Прежний вариант» есть только у файла, который уже существует: слова «изменить» и «перезаписать» его называют, «записать» — нет.
-  if (/(?:изменить|перезаписать)\s+(?:файл|файлы|документ)/u.test(text))
-    return { title, text: 'Содержимое файла изменится. Прежний вариант может быть потерян.' };
-  if (/записать\s+(?:файл|файлы|документ)/u.test(text))
-    return { title, text: 'Файл будет записан. Если такой файл уже есть, его прежнее содержимое заменится.' };
+  if (/(?:\b(?:modify|overwrite|edit)\s+(?:a\s+)?(?:files?|documents?)\b|(?:изменить|перезаписать)\s+(?:файл|файлы|документ))/u.test(text))
+    return { title, text: 'The file content will change. The previous version may be lost.' };
+  if (/(?:\bwrite\s+(?:a\s+)?(?:files?|documents?)\b|записать\s+(?:файл|файлы|документ))/u.test(text))
+    return { title, text: 'The file will be written. If it already exists, its previous contents will be replaced.' };
   return WHY[view.risk];
 }
 
 /** A request the person started themselves (the settings of the first run): it is not dangerous and the assistant did not ask for it. */
 export const isOwnAction = (view: ApprovalView) => view.approvalId.startsWith('native-preflight-');
-const OWN_WHY = 'Это вы меняете настройки. Окно нужно, чтобы никто не поменял их за вас.';
+const OWN_WHY = 'You are changing these settings. This window prevents someone else from changing them for you.';
 
-const RISK_LABEL: Record<Risk | 'unassessed', string> = { high: 'Высокий риск', medium: 'Средний риск', low: 'Низкий риск', unassessed: 'Риск не оценён' };
+const RISK_LABEL: Record<Risk | 'unassessed', string> = { high: 'High risk', medium: 'Medium risk', low: 'Low risk', unassessed: 'Risk not assessed' };
 
 /** Слово «исполнитель» — слово ядра, не человека: в окне защиты вместо «Исполнитель «claude»» стоит имя, как его знает человек. */
 export function plainWords(text: string): string {
   return text
-    .replace(/исполнител[а-яё]*\s*[«"]([^»"]*)[»"]/giu, (_, name: string) => (name.trim().toLowerCase() === 'claude' ? 'Claude' : name.trim() || 'Помощник'))
-    .replace(/исполнител[а-яё]*/giu, 'Помощник');
+    .replace(/исполнител[а-яё]*\s*[«"]([^»"]*)[»"]/giu, (_, name: string) => (name.trim().toLowerCase() === 'claude' ? 'Claude' : name.trim() || 'Assistant'))
+    .replace(/исполнител[а-яё]*/giu, 'Assistant');
 }
 
-/** A request of Claude (the engine's executor): its command is the whole point, so «Подробности» are open and nothing is said twice. */
+/** A request of Claude (the engine's executor): its command is the whole point, so «Details» are open and nothing is said twice. */
 export const fromExecutor = (view: ApprovalView) => view.risk === 'unassessed' || /^(?:исполнитель\s*[«"]?claude|claude\b)/iu.test(view.humanText.trim());
 
 type Phase =
@@ -88,7 +102,7 @@ export function ApprovalWindow() {
   const sent = useRef(false);
   const decideRef = useRef<(outcome: WindowDecision) => void>(() => {});
   const [sending, setSending] = useState(false);
-  // «Подробности» of a request of Claude start open; once the person opens or closes them, their choice stays.
+  // «Details» of a request of Claude start open; once the person opens or closes them, their choice stays.
   const [detailsOpen, setDetailsOpen] = useState<boolean | null>(null);
   const view = phase.kind === 'pending' || phase.kind === 'error' ? phase.view ?? null : null;
   const expired = !!view && Date.now() >= view.expiresAt;
@@ -98,7 +112,7 @@ export function ApprovalWindow() {
     let alive = true;
     approvalHost().current().then(
       v => { if (alive) { setFolderTrust(v.folderTrust === true); total.current = Math.max(1, v.expiresAt - Date.now()); setNow(Date.now()); setPhase({ kind: 'pending', view: v }); } },
-      e => { if (alive) setPhase({ kind: 'error', text: errorText(e, 'Не удалось получить запрос.') }); },
+      e => { if (alive) setPhase({ kind: 'error', text: approvalError(e, 'Could not load the request.') }); },
     );
     return () => { alive = false; };
   }, []);
@@ -130,11 +144,11 @@ export function ApprovalWindow() {
     try {
       await approvalHost().decide(view.approvalId, outcome);
       setPhase(outcome === 'allowed-once'
-        ? { kind: 'done', title: folderTrust ? 'Confirmed' : 'Разрешено один раз', note: folderTrust ? 'Your choice was saved.' : own ? 'Настройка будет сохранена. В следующий раз окно спросит снова.' : 'Помощник выполнит это действие. В следующий раз он спросит снова.' }
-        : { kind: 'done', title: folderTrust ? 'Declined' : 'Отклонено', note: folderTrust ? 'Nothing changed.' : own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.' });
+        ? { kind: 'done', title: folderTrust ? 'Confirmed' : 'Allowed once', note: folderTrust ? 'Your choice was saved.' : own ? 'The setting will be saved. The window will ask again next time.' : 'The assistant will perform this action. It will ask again next time.' }
+        : { kind: 'done', title: folderTrust ? 'Declined' : 'Declined', note: folderTrust ? 'Nothing changed.' : own ? 'Nothing changed.' : 'The assistant was declined. Nothing changed.' });
     } catch (e) {
       sent.current = false;
-      setPhase({ kind: 'error', view, text: folderTrust ? 'Could not send your answer.' : errorText(e, 'Не удалось передать ответ.') });
+      setPhase({ kind: 'error', view, text: folderTrust ? 'Could not send your answer.' : approvalError(e, 'Could not send your answer.') });
     } finally {
       setSending(false);
     }
@@ -164,45 +178,45 @@ export function ApprovalWindow() {
   return (
     <div className="hoh-page ap-page" data-screen="approval" data-phase={expired ? 'done' : phase.kind}>
       <div className="ap-guard" role="alertdialog" aria-labelledby="ap-what" aria-describedby="ap-why">
-        <div className="ap-title"><Icon name="alert" small />{folderTrust ? 'HoH confirmation' : 'Защита HoH'}<small>{folderTrust ? 'Separate from the conversation' : 'Отдельное окно, не часть чата'}</small></div>
+        <div className="ap-title"><Icon name="alert" small />{folderTrust ? 'HoH confirmation' : 'HoH confirmation'}<small>{folderTrust ? 'Separate from the conversation' : 'Separate from the conversation'}</small></div>
 
-        {phase.kind === 'loading' && <div className="ap-done" role="status">Загружаю запрос…</div>}
-        {!expired && phase.kind === 'error' && <div className="ap-done" role="alert">{phase.text}<small>{folderTrust ? 'Close this window to decline.' : 'Ответ не отправлен. Закройте окно: это отказ.'}</small></div>}
-        {expired && <div className="ap-done" role="status">{folderTrust ? 'Confirmation expired' : 'Время вышло, действие отклонено'}<small>{folderTrust ? 'Nothing changed.' : own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.'}</small></div>}
+        {phase.kind === 'loading' && <div className="ap-done" role="status">Loading request…</div>}
+        {!expired && phase.kind === 'error' && <div className="ap-done" role="alert">{phase.text}<small>{folderTrust ? 'Close this window to decline.' : 'Your answer was not sent. Close this window to decline.'}</small></div>}
+        {expired && <div className="ap-done" role="status">{folderTrust ? 'Confirmation expired' : 'Confirmation expired; the action was declined'}<small>{folderTrust ? 'Nothing changed.' : own ? 'Nothing changed.' : 'The assistant was declined. Nothing changed.'}</small></div>}
         {phase.kind === 'done' && <div className="ap-done" role="status">{phase.title}<small>{phase.note}</small></div>}
 
         {view && !expired && (
           <>
             <div className="ap-body">
               {own
-                ? <p className="ap-ask" data-own-action>{folderTrust ? 'Confirm your choice' : 'Подтвердите своё действие'}</p>
-                : <p className="ap-ask">Помощник просит разрешение <span className="ap-risk" data-risk={view.risk}>{RISK_LABEL[view.risk]}</span></p>}
+                ? <p className="ap-ask" data-own-action>{folderTrust ? 'Confirm your choice' : 'Confirm your action'}</p>
+                : <p className="ap-ask">The assistant is requesting permission <span className="ap-risk" data-risk={view.risk}>{RISK_LABEL[view.risk]}</span></p>}
               <h1 className="ap-what" id="ap-what">{headline}</h1>
               <div className="ap-why" id="ap-why" data-risk={own ? 'own' : view.risk}>
                 <Icon name={own ? 'shield' : 'alert'} />
                 {own ? <div>{folderTrust ? 'HoH asks you to confirm changes to folder trust.' : OWN_WHY}</div> : <div><h2>{why.title}</h2>{why.text}</div>}
               </div>
               {showSaid && <div className="ap-said">
-                <h2>Объяснение Помощника</h2>
-                {reason ? <p>{reason}</p> : <p className="ap-said-empty">Помощник не объяснил, зачем ему это нужно.</p>}
+                <h2>Assistant explanation</h2>
+                {reason ? <p>{reason}</p> : <p className="ap-said-empty">The assistant did not explain why this is needed.</p>}
               </div>}
-              {view.details?.trim() && <details className="ap-details" open={detailsOpen ?? executorAsks} data-details-open={(detailsOpen ?? executorAsks) ? 'true' : 'false'} onToggle={event => setDetailsOpen(event.currentTarget.open)}><summary>Подробности</summary><pre>{view.details}</pre></details>}
+              {view.details?.trim() && <details className="ap-details" open={detailsOpen ?? executorAsks} data-details-open={(detailsOpen ?? executorAsks) ? 'true' : 'false'} onToggle={event => setDetailsOpen(event.currentTarget.open)}><summary>Details</summary><pre>{view.details}</pre></details>}
               {left > LAST_MINUTE_S
-                ? <p className="ap-timer-note" data-calm>{folderTrust ? 'This request expires if you leave it unanswered.' : 'Можно не спешить. Если не ответить, действие отклонится само.'}</p>
+                ? <p className="ap-timer-note" data-calm>{folderTrust ? 'This request expires if you leave it unanswered.' : 'Take your time. The action will be declined if you do not answer.'}</p>
                 : <>
-                  <div className="ap-timer"><Icon name="clock" small /><span>{folderTrust ? 'Time left' : 'Осталось'} <b data-testid="timer">{clock(left)}</b></span></div>
+                  <div className="ap-timer"><Icon name="clock" small /><span>{folderTrust ? 'Time left' : 'Time left'} <b data-testid="timer">{clock(left)}</b></span></div>
                   <div className="ap-bar" aria-hidden="true"><i style={{ '--share': share } as CSSProperties} /></div>
-                  <p className="ap-timer-note">{folderTrust ? 'This request expires if you leave it unanswered.' : 'Если не ответить, действие отклонится само.'}</p>
+                  <p className="ap-timer-note">{folderTrust ? 'This request expires if you leave it unanswered.' : 'The action will be declined if you do not answer.'}</p>
                 </>}
             </div>
             <div className="ap-actions">
-              <button ref={rejectRef} type="button" className="btn ap-safe" disabled={sending} onClick={() => void decide('rejected')}>{folderTrust ? 'Decline' : 'Отклонить'}</button>
-              <button type="button" className="btn ap-risky" disabled={!armed || sending} onClick={() => void decide('allowed-once')}>{folderTrust ? (view.humanText.startsWith('Revoke trust for project settings in ') ? 'Revoke trust' : 'Trust folder') : 'Разрешить один раз'}</button>
+              <button ref={rejectRef} type="button" className="btn ap-safe" disabled={sending} onClick={() => void decide('rejected')}>{folderTrust ? 'Decline' : 'Decline'}</button>
+              <button type="button" className="btn ap-risky" disabled={!armed || sending} onClick={() => void decide('allowed-once')}>{folderTrust ? (view.humanText.startsWith('Revoke trust for project settings in ') ? 'Revoke trust' : 'Trust folder') : 'Allow once'}</button>
             </div>
           </>
         )}
 
-        <div className="ap-foot"><Icon name="shield" small /><span>{folderTrust ? 'Only you can confirm this request. Closing the window declines it.' : 'Это окно защиты HoH. Чат не может его открыть, нажать за вас или изменить. Закрыть окно — то же, что отклонить.'}</span></div>
+        <div className="ap-foot"><Icon name="shield" small /><span>{folderTrust ? 'Only you can confirm this request. Closing the window declines it.' : 'This is a separate HoH confirmation window. The conversation cannot open or control it. Closing the window declines the request.'}</span></div>
       </div>
     </div>
   );

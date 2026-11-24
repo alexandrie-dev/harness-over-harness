@@ -754,7 +754,7 @@ fn a_hidden_nested_command_in_the_settings_text_blocks_allow_once() {
     let (open, _receiver) = broker.begin_preflight(KEY_SET, &params, NOW).unwrap();
     let text = &open.view.human_text;
     assert!(
-        text.contains("Часть команды скрыта, в ней есть вложенная команда"),
+        text.contains("Part of the command is hidden and contains a nested command"),
         "{text}"
     );
     assert!(!text.contains("touch"), "{text}");
@@ -811,19 +811,19 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
     let cases = [
         (
             json!({"executor":"claude","mode":"full","runtimeMode":"full"}),
-            "полный доступ",
+            "Full access",
         ),
         (
             json!({"executor":"claude","mode":"confirm","runtimeMode":"auto-accept-edits"}),
-            "Правки без вопросов",
+            "Accept edits",
         ),
         (
             json!({"executor":"claude","mode":"confirm","runtimeMode":"auto"}),
-            "Автоматически",
+            "Auto",
         ),
         (
             json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}),
-            "Спрашивать разрешение",
+            "Supervised",
         ),
     ];
     for (n, (params, _)) in cases.iter().enumerate() {
@@ -862,10 +862,10 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
         );
     }
     for (n, start) in [
-        "Включить полный доступ для Claude?",
-        "Включить режим «Правки без вопросов» для Claude?",
-        "Включить режим «Автоматически» для Claude?",
-        "Вернуть режим «Спрашивать разрешение» для Claude?",
+        "Enable Full access for Claude?",
+        "Enable Accept edits for Claude?",
+        "Enable Auto for Claude?",
+        "Return Claude to Supervised mode?",
     ]
     .into_iter()
     .enumerate()
@@ -1064,11 +1064,8 @@ fn choosing_claude_and_its_folder_in_the_main_window_needs_no_window() {
         (log[0].method.as_str(), log[2].method.as_str()),
         (SELECT, FOLDER_SET)
     );
-    assert_eq!(log[0].human_text, "Отвечать будет Claude (модель default)?");
-    assert_eq!(
-        log[2].human_text,
-        "Разрешить работу в папке «/home/u/work»?"
-    );
+    assert_eq!(log[0].human_text, "Use Claude (model default) to respond?");
+    assert_eq!(log[2].human_text, "Allow work in folder «/home/u/work»?");
     // Not confirmed in the main window: the engine's own request for Claude still gets a window.
     close_window(
         &broker,

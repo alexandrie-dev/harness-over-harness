@@ -180,7 +180,7 @@ pub fn redact_text(text: &str) -> String {
 }
 
 /// The note the window shows when the mask hid a part that holds a nested command.
-const HIDDEN_NESTED_NOTE: &str = "⚠ Часть команды скрыта, в ней есть вложенная команда. Это опасно: «Разрешить один раз» недоступно.";
+const HIDDEN_NESTED_NOTE: &str = "⚠ Part of the command is hidden and contains a nested command. This is dangerous: Allow once is unavailable.";
 
 /// A shell would run something inside this word: a substitution `$(…)`, backticks, a pipe, or a
 /// `;` / `&` outside the query (inside the query they only separate its pairs).
@@ -963,7 +963,7 @@ impl Broker {
             }
             if outcome == ApprovalOutcome::AllowedOnce && pending.blocks_allow {
                 return Err(
-                    "Часть команды скрыта, в ней есть вложенная команда: разрешить один раз нельзя"
+                    "Part of the command is hidden and contains a nested command: разрешить один раз нельзя"
                         .into(),
                 );
             }
@@ -1007,7 +1007,7 @@ impl Broker {
                 .any(|pending| pending.label == label && pending.blocks_allow)
         {
             return Err(
-                "Часть команды скрыта, в ней есть вложенная команда: разрешить один раз нельзя"
+                "Part of the command is hidden and contains a nested command: разрешить один раз нельзя"
                     .into(),
             );
         }
@@ -1232,18 +1232,12 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         "session/working-directory/set" => {
             let request: hoh_protocol::SessionWorkingDirectorySetParams =
                 serde_json::from_value(params.clone()).map_err(|_| "Некорректная рабочая папка")?;
-            Ok(format!(
-                "Разрешить работу в папке {}?",
-                quoted(&request.path)
-            ))
+            Ok(format!("Allow work in folder {}?", quoted(&request.path)))
         }
         "hoh/workspace/add" => {
             let request: hoh_protocol::WorkspaceAddParams =
                 serde_json::from_value(params.clone()).map_err(|_| "Некорректная папка проекта")?;
-            Ok(format!(
-                "Добавить папку {} как проект?",
-                quoted(&request.cwd)
-            ))
+            Ok(format!("Add folder {} as a project?", quoted(&request.cwd)))
         }
         "hoh/settings/set" => {
             let request: hoh_protocol::SettingsSetParams =
@@ -1251,17 +1245,17 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             let mut changes = Vec::new();
             if let Some(model) = request.model {
                 changes.push(format!(
-                    "модель — {}, сервис — {}",
+                    "model — {}, service — {}",
                     quoted(&model.model),
                     quoted(&model.base_url)
                 ));
             }
             if let Some(security) = request.security {
-                changes.push(format!("права: {}", permissions_text(&security)));
+                changes.push(format!("permissions: {}", permissions_text(&security)));
             }
             if let Some(view) = request.view {
                 changes.push(format!(
-                    "вид — {}, размер текста — {}",
+                    "theme — {}, text size — {}",
                     theme_text(&view.theme),
                     view.font_size
                 ));
@@ -1269,14 +1263,14 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             if changes.is_empty() {
                 return Err("Настройки не содержат изменений".into());
             }
-            Ok(format!("Изменить настройки: {}?", changes.join("; ")))
+            Ok(format!("Change settings: {}?", changes.join("; ")))
         }
         "hoh/employee/create" => {
             let request: hoh_protocol::EmployeeCreateParams =
                 serde_json::from_value(params.clone())
                     .map_err(|_| "Некорректный новый сотрудник")?;
             Ok(format!(
-                "Создать сотрудника {} с ролью {}; правила — {}; назначенные задачи — {}; права: {}?",
+                "Create employee {} with role {}; rules — {}; assigned tasks — {}; permissions: {}?",
                 quoted(&request.draft.name),
                 quoted(&request.draft.role),
                 quoted_list(&request.draft.rules),
@@ -1290,25 +1284,25 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                     .map_err(|_| "Некорректное изменение сотрудника")?;
             let mut changes = Vec::new();
             if let Some(name) = request.patch.name {
-                changes.push(format!("имя — {}", quoted(&name)));
+                changes.push(format!("name — {}", quoted(&name)));
             }
             if let Some(role) = request.patch.role {
-                changes.push(format!("роль — {}", quoted(&role)));
+                changes.push(format!("role — {}", quoted(&role)));
             }
             if let Some(rules) = request.patch.rules {
-                changes.push(format!("правила — {}", quoted_list(&rules)));
+                changes.push(format!("rules — {}", quoted_list(&rules)));
             }
             if let Some(task_ids) = request.patch.task_ids {
-                changes.push(format!("назначенные задачи — {}", quoted_list(&task_ids)));
+                changes.push(format!("assigned tasks — {}", quoted_list(&task_ids)));
             }
             if let Some(permissions) = request.patch.permissions {
-                changes.push(format!("права: {}", permissions_text(&permissions)));
+                changes.push(format!("permissions: {}", permissions_text(&permissions)));
             }
             if changes.is_empty() {
                 return Err("Изменение сотрудника не содержит новых прав или задач".into());
             }
             Ok(format!(
-                "Изменить сотрудника {}: {}?",
+                "Change employee {}: {}?",
                 quoted(&request.id),
                 changes.join("; ")
             ))
@@ -1318,7 +1312,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 serde_json::from_value(params.clone())
                     .map_err(|_| "Некорректное решение по черновику")?;
             Ok(format!(
-                "Создать задачу из черновика {}?",
+                "Create a task from draft {}?",
                 quoted(&request.draft_id)
             ))
         }
@@ -1326,7 +1320,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             let request: hoh_protocol::TaskRollbackParams =
                 serde_json::from_value(params.clone()).map_err(|_| "Некорректный откат задачи")?;
             Ok(format!(
-                "Откатить задачу {} к версии {}?",
+                "Roll back task {} to version {}?",
                 quoted(&request.id),
                 request.version
             ))
@@ -1336,11 +1330,11 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 serde_json::from_value(params.clone())
                     .map_err(|_| "Некорректные правила доступа")?;
             let internet = match rules.internet {
-                hoh_protocol::SetupInternetMode::Ask => "с запросом разрешения",
-                hoh_protocol::SetupInternetMode::Public => "к общедоступным сайтам",
+                hoh_protocol::SetupInternetMode::Ask => "with permission requested",
+                hoh_protocol::SetupInternetMode::Public => "to public websites",
             };
             Ok(format!(
-                "Разрешить работу в папке {} и доступ в интернет {internet}?",
+                "Allow work in folder {} and internet access {internet}?",
                 quoted(&rules.folder)
             ))
         }
@@ -1386,29 +1380,29 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             };
             match runtime {
                 hoh_protocol::ExecutorRuntimeMode::Full => Ok(format!(
-                    "Включить полный доступ для {name}? Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить."
+                    "Enable Full access for {name}? The assistant can delete and change files in any folder you can access, run programs, and access the internet without asking. These actions cannot be undone."
                 )),
                 hoh_protocol::ExecutorRuntimeMode::Confirm => {
-                    Ok(format!("Вернуть режим «Спрашивать разрешение» для {name}?"))
+                    Ok(format!("Return {name} to Supervised mode?"))
                 }
                 hoh_protocol::ExecutorRuntimeMode::AutoAcceptEdits => {
                     Ok(if request.executor == "claude" {
                         format!(
-                            "Включить режим «Правки без вопросов» для {name}? Помощник сам меняет файлы в папке разговора, команды и сеть — после вашего подтверждения."
+                            "Enable Accept edits for {name}? The assistant edits files in the conversation folder without asking; commands and network access require your approval."
                         )
                     } else {
                         format!(
-                            "Включить режим «Принимать правки» для {name}? Помощник сам принимает изменения файлов в рабочей папке, но спрашивает перед другими действиями."
+                            "Enable Accept edits for {name}? The assistant automatically accepts file changes in the working folder but asks before other actions."
                         )
                     })
                 }
                 hoh_protocol::ExecutorRuntimeMode::Auto => Ok(if request.executor == "claude" {
                     format!(
-                        "Включить режим «Автоматически» для {name}? Помощник сам решает, какие действия безопасны, и выполняет их без вопросов; остальное — после вашего подтверждения."
+                        "Enable Auto for {name}? The assistant decides which actions are safe and performs them without asking; other actions require your approval."
                     )
                 } else {
                     format!(
-                        "Включить режим «Авто» для {name}? Помощник сам принимает изменения файлов в рабочей папке и автоматически проверяет остальные запросы разрешений."
+                        "Enable Auto for {name}? The assistant automatically accepts file changes in the working folder and reviews other permission requests automatically."
                     )
                 }),
             }
@@ -1417,10 +1411,10 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             let model = params["model"].as_str().ok_or("Некорректная модель")?;
             match params["executor"].as_str() {
                 Some(executor) => Ok(format!(
-                    "Отвечать будет {} (модель {model})?",
+                    "Use {} (model {model}) to respond?",
                     executor_name(executor)
                 )),
-                None => Ok("Отвечать будет модель на этом компьютере?".to_owned()),
+                None => Ok("Use the model on this computer to respond?".to_owned()),
             }
         }
         "hoh/model/key/set" => {
@@ -1429,7 +1423,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 .filter(|value| !value.is_empty())
                 .ok_or("Нет адреса сервиса модели")?;
             Ok(format!(
-                "Сохранить ключ доступа к сервису {}?",
+                "Save the access key for service {}?",
                 quoted(address)
             ))
         }
@@ -1437,7 +1431,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             let probe: hoh_protocol::ModelProbeParams = serde_json::from_value(params.clone())
                 .map_err(|_| "Некорректная проверка модели")?;
             Ok(format!(
-                "Разрешить проверку модели {} у сервиса {}?",
+                "Allow testing model {} at service {}?",
                 quoted(&probe.model),
                 quoted(&probe.base_url)
             ))
@@ -1460,7 +1454,7 @@ fn quoted(value: &str) -> String {
 
 fn quoted_list(values: &[String]) -> String {
     if values.is_empty() {
-        "нет".into()
+        "none".into()
     } else {
         values
             .iter()
@@ -1472,12 +1466,12 @@ fn quoted_list(values: &[String]) -> String {
 
 fn permissions_text(permissions: &hoh_protocol::Permissions) -> String {
     let internet = match &permissions.internet {
-        hoh_protocol::InternetMode::Ask => "с запросом разрешения",
-        hoh_protocol::InternetMode::Public => "общедоступные сайты",
-        hoh_protocol::InternetMode::Deny => "запрещён",
+        hoh_protocol::InternetMode::Ask => "with permission requested",
+        hoh_protocol::InternetMode::Public => "public websites",
+        hoh_protocol::InternetMode::Deny => "denied",
     };
     format!(
-        "интернет — {internet}; сайты — {}; папки — {}; изменение файлов — {}; запуск программ — {}; сеть для программ — {}; действия от вашего имени — {}",
+        "internet — {internet}; websites — {}; folders — {}; file changes — {}; running programs — {}; program network access — {}; actions on your behalf — {}",
         quoted_list(&permissions.domains),
         quoted_list(&permissions.folders),
         allowed(permissions.write_files),
@@ -1488,18 +1482,14 @@ fn permissions_text(permissions: &hoh_protocol::Permissions) -> String {
 }
 
 fn allowed(value: bool) -> &'static str {
-    if value {
-        "разрешено"
-    } else {
-        "запрещено"
-    }
+    if value { "allowed" } else { "denied" }
 }
 
 fn theme_text(theme: &hoh_protocol::Theme) -> &'static str {
     match theme {
-        hoh_protocol::Theme::Light => "светлая тема",
-        hoh_protocol::Theme::Dark => "тёмная тема",
-        hoh_protocol::Theme::System => "как в системе",
+        hoh_protocol::Theme::Light => "light",
+        hoh_protocol::Theme::Dark => "dark",
+        hoh_protocol::Theme::System => "system",
     }
 }
 
@@ -1779,17 +1769,17 @@ mod tests {
             (
                 "hoh/executor/access/set",
                 json!({"executor":"claude","mode":"full"}),
-                "Включить полный доступ для Claude?",
+                "Enable Full access for Claude?",
             ),
             (
                 "hoh/executor/select",
                 json!({"executor":"claude","model":"opus-sample"}),
-                "Claude (модель opus-sample)",
+                "Claude (model opus-sample)",
             ),
             (
                 "hoh/workspace/add",
                 json!({"cwd":"/home/user/project"}),
-                "Добавить папку «/home/user/project» как проект?",
+                "Add folder «/home/user/project» as a project?",
             ),
         ];
         assert_eq!(samples.len(), hoh_protocol::PRIVILEGED_METHODS.len());
@@ -1802,10 +1792,7 @@ mod tests {
                 "{method}: {}",
                 open.view.human_text
             );
-            assert_ne!(
-                open.view.human_text,
-                format!("Разрешить действие {method}?")
-            );
+            assert_ne!(open.view.human_text, format!("Allow action {method}?"));
             assert!(!open.view.human_text.contains("never-show-this"));
             assert!(broker.reject(&open.label, 10_000).is_some());
         }
@@ -1823,15 +1810,12 @@ mod tests {
             json!({"executor":"claude","mode":"confirm"}),
         );
         assert_ne!(full, confirm, "full and confirm are asked differently");
+        assert!(full.starts_with("Enable Full access for Claude?"), "{full}");
         assert!(
-            full.starts_with("Включить полный доступ для Claude?"),
+            full.contains("The assistant can delete and change files in any folder you can access, run programs, and access the internet without asking. These actions cannot be undone."),
             "{full}"
         );
-        assert!(
-            full.contains("Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить."),
-            "{full}"
-        );
-        assert_eq!(confirm, "Вернуть режим «Спрашивать разрешение» для Claude?");
+        assert_eq!(confirm, "Return Claude to Supervised mode?");
         let edits = text(
             "hoh/executor/access/set",
             json!({"executor":"codex","mode":"confirm","runtimeMode":"auto-accept-edits"}),
@@ -1840,25 +1824,25 @@ mod tests {
             "hoh/executor/access/set",
             json!({"executor":"codex","mode":"confirm","runtimeMode":"auto"}),
         );
-        assert!(edits.contains("«Принимать правки» для Codex"), "{edits}");
-        assert!(auto.contains("«Авто» для Codex"), "{auto}");
+        assert!(edits.contains("Accept edits for Codex"), "{edits}");
+        assert!(auto.contains("Auto for Codex"), "{auto}");
         assert_ne!(edits, auto);
         assert_eq!(
             text(
                 "hoh/executor/select",
                 json!({"executor":"claude","model":"opus"})
             ),
-            "Отвечать будет Claude (модель opus)?"
+            "Use Claude (model opus) to respond?"
         );
         assert_eq!(
             text(
                 "hoh/executor/select",
                 json!({"executor":null,"model":"default"})
             ),
-            "Отвечать будет модель на этом компьютере?"
+            "Use the model on this computer to respond?"
         );
         for method in ["hoh/executor/access/set", "hoh/executor/select"] {
-            let generic = format!("Разрешить действие {method}?");
+            let generic = format!("Allow action {method}?");
             assert_ne!(
                 text(
                     method,

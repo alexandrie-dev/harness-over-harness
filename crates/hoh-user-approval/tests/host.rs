@@ -491,7 +491,7 @@ async fn privileged_method_is_asked_with_typed_text_and_runs_only_after_a_verifi
     let host: HostApprovalRequest = serde_json::from_value(requests[0].clone()).unwrap();
     assert_eq!(host.session_id, "s-1");
     assert_eq!(host.tool_name, "session/working-directory/set");
-    assert_eq!(host.human_text, "Разрешить работу в папке «/work/project»?");
+    assert_eq!(host.human_text, "Allow work in folder «/work/project»?");
     assert_eq!(
         host.action,
         json!({"method":"session/working-directory/set","params":params})
@@ -514,7 +514,7 @@ async fn privileged_method_is_asked_with_typed_text_and_runs_only_after_a_verifi
     assert_eq!(requests[1]["sessionId"], "host");
     assert_eq!(
         requests[1]["humanText"],
-        "Разрешить проверку модели «m-1» у провайдера «https://api.example.com/v1»?"
+        "Allow testing model «m-1» at provider «https://api.example.com/v1»?"
     );
     h.close().await;
 }
@@ -535,34 +535,32 @@ async fn executor_choices_are_asked_in_words_that_name_the_executor_and_the_righ
         (
             "hoh/executor/access/set",
             json!({"executor":"claude","mode":"full"}),
-            "Включить полный доступ для Claude? Помощник сам удаляет и меняет файлы в любых \
-             папках, куда есть доступ у вас, запускает программы и выходит в интернет, не \
-             спрашивая. Сделанное нельзя отменить.",
+            "Enable Full access for Claude? The assistant can delete and change files in any folder you can access, run programs, and access the internet without asking. These actions cannot be undone.",
         ),
         (
             "hoh/executor/access/set",
             json!({"executor":"claude","mode":"confirm"}),
-            "Вернуть режим «Спрашивать разрешение» для Claude?",
+            "Return Claude to Supervised mode?",
         ),
         (
             "hoh/executor/access/set",
             json!({"executor":"codex","mode":"confirm","runtimeMode":"auto-accept-edits"}),
-            "Включить режим «Принимать правки» для Codex? Помощник сам принимает изменения файлов в рабочей папке, но спрашивает перед другими действиями.",
+            "Enable Accept edits for Codex? The assistant automatically accepts file changes in the working folder but asks before other actions.",
         ),
         (
             "hoh/executor/access/set",
             json!({"executor":"codex","mode":"confirm","runtimeMode":"auto"}),
-            "Включить режим «Авто» для Codex? Помощник сам принимает изменения файлов в рабочей папке и автоматически проверяет остальные запросы разрешений.",
+            "Enable Auto for Codex? The assistant automatically accepts file changes in the working folder and reviews other permission requests automatically.",
         ),
         (
             "hoh/executor/select",
             json!({"executor":"claude","model":"claude-sonnet-4-5"}),
-            "Отвечать будет Claude (модель claude-sonnet-4-5)?",
+            "Use Claude (model claude-sonnet-4-5) to respond?",
         ),
         (
             "hoh/executor/select",
             json!({"executor":null,"model":"local-model"}),
-            "Отвечать будет модель на этом компьютере?",
+            "Use the model on this computer to respond?",
         ),
     ];
     for (index, (method, params, text)) in cases.iter().enumerate() {
@@ -642,7 +640,7 @@ async fn model_key_never_travels_in_the_approval_and_a_rejection_refuses_the_cal
     );
     assert_eq!(
         requests[0]["humanText"],
-        "Сохранить API-ключ для провайдера «https://api.example.com/v1»?"
+        "Save the API key for provider «https://api.example.com/v1»?"
     );
     h.close().await;
 }

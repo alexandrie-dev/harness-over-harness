@@ -80,35 +80,35 @@ test('model and rules saves disable all conflicting fields and navigation until 
 
 test('already expired approvals render without action buttons on their first pending render', async () => {
   const { h, calls } = await approval({ expires: 99999 });
-  assert.equal(h.button('Отклонить'), undefined); assert.equal(h.button('Разрешить один раз'), undefined);
-  assert(h.text().includes('Время вышло')); await h.event('keydown', { key: 'Escape' });
+  assert.equal(h.button('Decline'), undefined); assert.equal(h.button('Allow once'), undefined);
+  assert(h.text().includes('Confirmation expired')); await h.event('keydown', { key: 'Escape' });
   assert.deepEqual(calls, []); h.unmount();
 });
 
 test('decide checks the wall clock even between interval ticks', async () => {
   const { h, calls } = await approval({ expires: 102000 });
-  await h.advance(1000); const allow = h.button('Разрешить один раз'); assert(!allow.disabled);
+  await h.advance(1000); const allow = h.button('Allow once'); assert(!allow.disabled);
   await h.advance(1001, false); allow.props.onClick(); await h.settle();
-  assert.deepEqual(calls, []); assert.equal(h.button('Разрешить один раз'), undefined); h.unmount();
+  assert.deepEqual(calls, []); assert.equal(h.button('Allow once'), undefined); h.unmount();
 });
 
 for (const event of ['keydown', 'pagehide']) test('after a send failure ' + event + ' still rejects the pending request', async () => {
   let fail = true;
-  const { h, calls } = await approval({ decide: async () => { if (fail) throw new Error('Отправка не удалась'); } });
+  const { h, calls } = await approval({ decide: async () => { if (fail) throw new Error('Could not send your answer.'); } });
   const listener = h.listeners(event)[0];
-  await h.advance(1000); await h.click('Разрешить один раз'); assert(h.text().includes('Отправка не удалась'));
+  await h.advance(1000); await h.click('Allow once'); assert(h.text().includes('Could not send your answer.'));
   assert.equal(h.listeners(event).length, 1);
   assert.equal(h.listeners(event)[0], listener, 'ошибка не пересоздаёт обработчик и не оставляет окно без отказа');
   fail = false; await h.event(event, { key: 'Escape' });
   assert.deepEqual(calls.map(call => call.outcome), ['allowed-once', 'rejected']);
-  assert(h.text().includes('Отклонено'));
+  assert(h.text().includes('Declined'));
   assert.equal(h.listeners(event).length, 0, 'успешный отказ снимает обработчик ожидающего запроса');
   await h.event(event, { key: 'Escape' }); assert.equal(calls.length, 2); h.unmount();
 });
 
 test('deletion consequence is concrete and humanText remains one protocol-valid line', async () => {
   const { h } = await approval();
-  assert(h.text().includes('Файлы не попадут в корзину. Восстановить их будет нельзя.'));
+  assert(h.text().includes('The files will not go to the trash and cannot be restored.'));
   assert(h.text().includes(deletionText));
   const primary = approvalRequest();
   assert(!/[\p{Cc}\p{Cf}]/u.test(primary.humanText));
@@ -116,7 +116,7 @@ test('deletion consequence is concrete and humanText remains one protocol-valid 
   assert(primary.humanText.includes('отчёт-2023.txt, черновик.docx, итог-старый.md'));
   assert.equal(h.nodes().filter(node => node.props.className === 'ap-details').length, 0);
   const unknown = h.exports.consequence({ risk: 'high', humanText: 'Неизвестное действие' });
-  assert(unknown.text.includes('возможно')); h.unmount();
+  assert(unknown.text.includes('may be')); h.unmount();
 });
 
 test('literal guard rejects planted viewport dimensions and accepts the token', async () => {
