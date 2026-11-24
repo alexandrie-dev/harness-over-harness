@@ -153,6 +153,27 @@ async function readyBusy(page, engine, grouped) {
   if (grouped) await page.locator('.hoh-project').first().waitFor({ state: 'attached' }); else await page.locator('.hoh-card').first().waitFor({ state: 'attached' });
 }
 
+function modeEngine(mode, running) {
+  const engine = completedEngine();
+  engine.access = mode;
+  engine.sessionModes.set(CHAT.id, mode);
+  if (running) {
+    const session = engine.sessions.get(CHAT.id);
+    engine.append(session, 'turn/start', { turn: 2 });
+    engine.append(session, 'user/message', { id: 'running-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Keep working' }] });
+    engine.bind(CHAT.id);
+  }
+  return engine;
+}
+
+async function assertModeChip(page, label) {
+  const chip = page.getByRole('button', { name: `Permissions: ${label}`, exact: true });
+  await chip.waitFor({ state: 'visible' });
+  const row = page.locator('[data-chat-composer-stack]');
+  if (!(await chip.evaluate((el, root) => !!el.closest(root), '[data-chat-composer-stack]'))) throw new Error('mode chip is outside composer');
+  if (await row.getByText(label, { exact: true }).count() !== 1) throw new Error('mode must have a single visible chip in composer');
+}
+
 const scenarios = [
   {
     name: 'agent-setup', engine: () => { const e = new FakeEngine(); e.access = 'confirm'; e.claude = { installed: false, version: null, auth: 'unknown', models: [] }; return e; }, stored: () => ({}),
@@ -358,6 +379,31 @@ const scenarios = [
       await page.locator('[data-plugin-empty]').waitFor(); await setSidebar(page, sidebar);
     }, blocks: ['plugins'],
   },
+  ...['full', 'confirm'].flatMap(mode => {
+    const label = mode === 'full' ? 'Full access' : 'Supervised';
+    return [
+      { name: `mode-home-${mode}`, engine: () => modeEngine(mode, false), stored: () => storage(false), blocks: ['home'],
+        prepare: async (page, _engine, sidebar) => {
+          await page.locator('.hoh-card').first().waitFor(); await setSidebar(page, sidebar);
+          if (mode === 'confirm') {
+            await page.getByRole('button', { name: 'Permissions: Full access', exact: true }).click();
+            await page.getByRole('menuitemradio', { name: 'Supervised', exact: true }).click();
+          }
+          await assertModeChip(page, label);
+        } },
+      { name: `mode-thread-${mode}`, engine: () => modeEngine(mode, false), path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage, blocks: ['conversation'],
+        prepare: async (page, _engine, sidebar) => { await page.getByText('The measured conversation lane is ready.').waitFor(); await setSidebar(page, sidebar); await assertModeChip(page, label); } },
+      { name: `mode-running-${mode}`, engine: () => modeEngine(mode, true), path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage, blocks: ['conversation'],
+        prepare: async (page, _engine, sidebar) => {
+          await page.getByText('Keep working').waitFor(); await setSidebar(page, sidebar); await assertModeChip(page, label);
+          const chip = page.getByRole('button', { name: `Permissions: ${label}`, exact: true });
+          await chip.click();
+          const next = mode === 'full' ? 'Supervised' : 'Full access';
+          await page.getByRole('menuitemradio', { name: next, exact: true }).click();
+          await assertModeChip(page, `Current: ${label} · Next: ${next}`);
+        } },
+    ];
+  }),
 ].filter(scenario => !process.env.ALIGN_SCREEN || process.env.ALIGN_SCREEN === scenario.name);
 
 async function rectangles(page) {

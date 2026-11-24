@@ -20,6 +20,7 @@ export type RuntimeModeOption = {
 } & (typeof runtimeModeConfig)[RuntimeMode];
 export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   runtimeMode: RuntimeMode;
+  currentRuntimeMode?: RuntimeMode | undefined;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   size?: "sm" | "xs";
   hidden?: boolean;
@@ -38,12 +39,18 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const permissionsChipRef = useRef<HTMLButtonElement>(null);
   const runtimeModeOption =
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
-    resolveRuntimeModeOption("approval-required", messages);
-  const RuntimeModeIcon = runtimeModeOption.icon;
+    resolveRuntimeModeOption(props.runtimeMode, messages);
+  const currentModeOption = props.currentRuntimeMode
+    ? resolveRuntimeModeOption(props.currentRuntimeMode, messages)
+    : runtimeModeOption;
+  const chipLabel = props.currentRuntimeMode && props.currentRuntimeMode !== props.runtimeMode
+    ? `Current: ${currentModeOption.label} · Next: ${runtimeModeOption.label}`
+    : currentModeOption.label;
+  const RuntimeModeIcon = currentModeOption.icon;
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
   const permissionsTooltip = gt("Permissions: {mode}. {description}", {
-    mode: runtimeModeOption.label,
-    description: runtimeModeOption.description,
+    mode: chipLabel,
+    description: currentModeOption.description,
   });
   const permissionsChip = (
     <Menu
@@ -64,7 +71,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
                   size={size}
                   // Mirrors the model trigger's trailing pe-1 so the gaps on both sides of the chip match.
                   className="ps-1.5"
-                  aria-label={gt("Permissions: {mode}", { mode: runtimeModeOption.label })}
+                  aria-label={gt("Permissions: {mode}", { mode: chipLabel })}
                 />
               }
             />
@@ -80,7 +87,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
             data-composer-control-label
             className={accessDisplay === "icon" ? "sr-only" : undefined}
           >
-            {runtimeModeOption.label}
+            {chipLabel}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="top">{permissionsTooltip}</TooltipPopup>

@@ -201,7 +201,6 @@ import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
-import { ComposerContextPermissions } from "./ComposerContextPermissions";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -3672,11 +3671,6 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                               />
                             ) : null}
-                            {activeRunningTurnId && activeThread?.runtimeMode && activeThread.runtimeMode !== runtimeMode ? (
-                              <div role="status" className="text-xs text-muted-foreground">
-                                Current: {activeThread.runtimeMode === "full-access" ? "Full access" : activeThread.runtimeMode === "approval-required" ? "Supervised" : activeThread.runtimeMode} · Next: {runtimeMode === "full-access" ? "Full access" : runtimeMode === "approval-required" ? "Supervised" : runtimeMode}
-                              </div>
-                            ) : null}
                             {!composerMounted ? null : (
                               <ChatComposer
                                 canOperateThread={canOperateThread}
@@ -3763,6 +3757,7 @@ export default function ChatView(props: ChatViewProps) {
                                 activePendingIsResponding={activePendingIsResponding}
                                 respondingRequestIds={respondingRequestIds}
                                 runtimeMode={runtimeMode}
+                                currentRuntimeMode={activeRunningTurnId ? activeThread?.runtimeMode : undefined}
                                 defaultRuntimeMode={defaultRuntimeMode}
                                 lockedProvider={modelPickerLockedProvider}
                                 providerStatuses={providerStatuses as ServerProvider[]}
@@ -3881,20 +3876,6 @@ export default function ChatView(props: ChatViewProps) {
                                       : undefined
                                   }
                                   availableEnvironments={logicalProjectEnvironments}
-                                  {...(isServerThread
-                                    ? {}
-                                    : {
-                                        trailing: (
-                                          <ComposerContextPermissions
-                                            environmentId={environmentId}
-                                            runtimeMode={runtimeMode}
-                                            supportedRuntimeModes={
-                                              activeProviderStatus?.supportedRuntimeModes
-                                            }
-                                            onRuntimeModeChange={handleRuntimeModeChangeStable}
-                                          />
-                                        ),
-                                      })}
                                 />
                               </div>
                             )}

@@ -1,0 +1,26 @@
+--- a/web/components/chat/ComposerFooterControls.tsx
++++ b/web/components/chat/ComposerFooterControls.tsx
+@@ -22,0 +23 @@
++  currentRuntimeMode?: RuntimeMode | undefined;
+@@ -41,2 +42,8 @@
+-    resolveRuntimeModeOption("approval-required", messages);
+-  const RuntimeModeIcon = runtimeModeOption.icon;
++    resolveRuntimeModeOption(props.runtimeMode, messages);
++  const currentModeOption = props.currentRuntimeMode
++    ? resolveRuntimeModeOption(props.currentRuntimeMode, messages)
++    : runtimeModeOption;
++  const chipLabel = props.currentRuntimeMode && props.currentRuntimeMode !== props.runtimeMode
++    ? `Current: ${currentModeOption.label} · Next: ${runtimeModeOption.label}`
++    : currentModeOption.label;
++  const RuntimeModeIcon = currentModeOption.icon;
+@@ -45,2 +52,2 @@
+-    mode: runtimeModeOption.label,
+-    description: runtimeModeOption.description,
++    mode: chipLabel,
++    description: currentModeOption.description,
+@@ -67 +74 @@
+-                  aria-label={gt("Permissions: {mode}", { mode: runtimeModeOption.label })}
++                  aria-label={gt("Permissions: {mode}", { mode: chipLabel })}
+@@ -83 +90 @@
+-            {runtimeModeOption.label}
++            {chipLabel}

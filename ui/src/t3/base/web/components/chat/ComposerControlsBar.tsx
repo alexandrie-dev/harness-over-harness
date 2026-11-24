@@ -58,6 +58,7 @@ export function ComposerControlsBar(props: {
   /** The strip under a new thread names the permissions, so the row does not repeat them. */
   permissionsShownInStrip: boolean;
   compatibleRuntimeMode: RuntimeMode;
+  currentRuntimeMode?: RuntimeMode | undefined;
   defaultRuntimeMode: RuntimeMode | undefined;
   compatibleRuntimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
@@ -107,8 +108,6 @@ export function ComposerControlsBar(props: {
     handleRuntimeModeChange,
     composerControlsCollapsed,
     composerControlsHidden,
-    restingHiddenBlockCount: measuredHiddenBlockCount,
-    iconOnlyBlockCount,
     showProviderUnavailable,
     providerSetupInstanceId,
     onOpenProviderSetup,
@@ -141,9 +140,9 @@ export function ComposerControlsBar(props: {
     overflowShowsPermissions,
     pickerOwnsModeShortcut,
   } = resolveComposerControlsOwnership({
-    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
-    collapsed: composerControlsCollapsed,
-    measuredHiddenBlockCount,
+    matchesDefault: false,
+    collapsed: false,
+    measuredHiddenBlockCount: 0,
   });
   const controlSize = composerControlsCollapsed ? "xs" : "sm";
   const gt = useGT();
@@ -172,6 +171,7 @@ export function ComposerControlsBar(props: {
           content: (
             <ComposerFooterModeControls
               runtimeMode={compatibleRuntimeMode}
+              currentRuntimeMode={props.currentRuntimeMode}
               runtimeModeOptions={compatibleRuntimeModeOptions}
               size={controlSize}
               hidden={composerControlsHidden || restingHiddenBlockCount > 0}
@@ -248,8 +248,9 @@ export function ComposerControlsBar(props: {
       onOpenProviderSetup={onOpenProviderSetup}
     />
   );
-  return showProviderUnavailable ? (
-    <ComposerControl
+  return (
+    <>
+      {showProviderUnavailable ? <ComposerControl
       type="button"
       disabled={!providerSetupInstanceId}
       onClick={() => {
@@ -262,10 +263,7 @@ export function ComposerControlsBar(props: {
     >
       <CircleAlertIcon className="size-4" />
       {providerSetupInstanceId ? gt("Open provider settings") : gt("No provider available")}
-    </ComposerControl>
-  ) : (
-    <>
-      {composerModelPicker}
+    </ComposerControl> : composerModelPicker}
 
       <>
         {restingBlockDefs.map((def, index) => {
@@ -274,16 +272,12 @@ export function ComposerControlsBar(props: {
             <div
               key={def.id}
               data-resting-block={def.id}
-              data-composer-block-icon-only={
-                index >= restingBlockDefs.length - iconOnlyBlockCount ? "true" : "false"
-              }
+              data-composer-block-icon-only="false"
               aria-hidden={hidden || undefined}
               inert={hidden || undefined}
               className={cn(
                 "flex w-max min-w-max shrink-0 items-center gap-1",
                 hidden && "pointer-events-none invisible absolute",
-                index >= restingBlockDefs.length - iconOnlyBlockCount &&
-                  "[&_[data-composer-control-label]]:pointer-events-none [&_[data-composer-control-label]]:invisible [&_[data-composer-control-label]]:absolute [&_[data-composer-control-label]]:w-max [&_[data-composer-control-label]]:max-w-none [&_[data-composer-control-compact-icon]]:[visibility:inherit] [&_[data-composer-control-compact-icon]]:relative",
               )}
             >
               {def.content}
