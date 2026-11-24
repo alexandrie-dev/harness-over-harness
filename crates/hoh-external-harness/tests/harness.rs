@@ -40,6 +40,43 @@ const STUB: &str = env!("CARGO_BIN_EXE_hoh-external-harness-stub");
 /// the supervised process group immediately and resume the native session on the next turn.
 struct StopEndsProcessHarness(StdioHarness);
 
+struct TrustCaptureHarness {
+    inner: StdioHarness,
+    decisions: Arc<Mutex<Vec<bool>>>,
+}
+
+impl hoh_external_harness::ExternalHarness for TrustCaptureHarness {
+    fn discover(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<Discovery>>
+    {
+        self.inner.discover()
+    }
+
+    fn start_or_resume(
+        &self,
+        params: hoh_external_harness::StartParams,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        self.inner.start_or_resume(params)
+    }
+
+    fn start_with_folder_trust(
+        &self,
+        params: hoh_external_harness::StartParams,
+        access: hoh_external_harness::AccessMode,
+        trusted: bool,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        lock(&self.decisions).push(trusted);
+        self.inner.start_with_access(params, access)
+    }
+}
+
 impl hoh_external_harness::ExternalHarness for StopEndsProcessHarness {
     fn discover(
         &self,
@@ -118,10 +155,9 @@ struct Dirs {
 }
 
 fn dirs() -> Dirs {
-    std::fs::create_dir_all("/dev/shm/hoh").expect("scratch root");
     let temp = tempfile::Builder::new()
         .prefix("o1-harness-")
-        .tempdir_in("/dev/shm/hoh")
+        .tempdir()
         .expect("temp dir");
     let (store, state, work, profile) = (
         temp.path().join("store"),
@@ -2578,6 +2614,135 @@ async fn access_and_select_need_the_hosts_approval() {
         assert_eq!(stub_argv(&dirs), base_argv(&dirs));
         window.close().await;
     }
+}
+
+#[tokio::test]
+async fn folder_trust_requires_host_approval_and_is_revoked_on_change() {
+    let dirs = dirs();
+    let request = json!({"executor": "claude", "cwd": dirs.work, "trust": true});
+    let query = json!({"executor": "claude", "cwd": dirs.work});
+    for host in [Host::Absent, Host::Refuses] {
+        let window = window(&dirs, quick(), host, full_access_args).await;
+        mount::<hoh_fs_local::FsLocalPlugin>(&window.base.ctx, json!({"cwd": dirs.work})).await;
+        mount::<hoh_system_prompt::SystemPrompt>(
+            &window.base.ctx,
+            json!({"includeRuntimeContext": false}),
+        )
+        .await;
+        mount::<hoh_working_directory::WorkingDirectory>(
+            &window.base.ctx,
+            json!({"defaultDirectory": dirs.work}),
+        )
+        .await;
+        assert!(
+            window
+                .call("hoh/executor/trust/set", request.clone())
+                .await
+                .is_err()
+        );
+        let result = window
+            .call("hoh/executor/trust/get", query.clone())
+            .await
+            .unwrap();
+        assert_eq!(result["trusted"], false);
+        window.close().await;
+    }
+    let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    mount::<hoh_fs_local::FsLocalPlugin>(&window.base.ctx, json!({"cwd": dirs.work})).await;
+    mount::<hoh_system_prompt::SystemPrompt>(
+        &window.base.ctx,
+        json!({"includeRuntimeContext": false}),
+    )
+    .await;
+    mount::<hoh_working_directory::WorkingDirectory>(
+        &window.base.ctx,
+        json!({"defaultDirectory": dirs.work}),
+    )
+    .await;
+    let agent = window.base.create("trust-change-event").await;
+    let result = window
+        .call("hoh/executor/trust/set", request)
+        .await
+        .unwrap();
+    assert_eq!(result["trusted"], true);
+    assert_eq!(
+        window
+            .call("hoh/executor/trust/get", query.clone())
+            .await
+            .unwrap()["trusted"],
+        true
+    );
+    std::fs::create_dir_all(dirs.work.join(".claude")).unwrap();
+    std::fs::write(dirs.work.join(".claude/settings.json"), "{}").unwrap();
+    let result = window.call("hoh/executor/trust/get", query).await.unwrap();
+    assert_eq!(result["trusted"], false);
+    assert_eq!(result["changed"], true);
+    assert!(
+        agent
+            .session()
+            .snapshot_events(None, None)
+            .iter()
+            .any(|event| event.event_type() == "plugin:external-harness/folder-trust-changed")
+    );
+    window.close().await;
+}
+
+#[tokio::test]
+async fn host_trust_reaches_each_native_start_and_changed_settings_revoke_it() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    mount::<hoh_fs_local::FsLocalPlugin>(&window.base.ctx, json!({"cwd": dirs.work})).await;
+    mount::<hoh_system_prompt::SystemPrompt>(
+        &window.base.ctx,
+        json!({"includeRuntimeContext": false}),
+    )
+    .await;
+    mount::<hoh_working_directory::WorkingDirectory>(
+        &window.base.ctx,
+        json!({"defaultDirectory": dirs.work}),
+    )
+    .await;
+    let decisions = Arc::new(Mutex::new(Vec::new()));
+    let config = StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_string_lossy().into_owned()],
+        ..ProcessSpec::default()
+    });
+    let _registration = window
+        .base
+        .harnesses
+        .register(
+            &window.base.ctx,
+            "claude",
+            Arc::new(TrustCaptureHarness {
+                inner: StdioHarness::new(config),
+                decisions: decisions.clone(),
+            }),
+        )
+        .unwrap();
+    let options = || AgentOptions {
+        provider: Some(Live::Value("claude".into())),
+        model: Some(Live::Value("stub-small".into())),
+        ..AgentOptions::default()
+    };
+    let first = window.base.create_with("trust-before", options()).await;
+    turn(&first, "hello").await;
+    assert_eq!(&*lock(&decisions), &[false]);
+    window
+        .call(
+            "hoh/executor/trust/set",
+            json!({"executor": "claude", "cwd": dirs.work, "trust": true}),
+        )
+        .await
+        .unwrap();
+    turn(&first, "hello").await;
+    assert_eq!(&*lock(&decisions), &[false, true]);
+    std::fs::create_dir_all(dirs.work.join(".claude")).unwrap();
+    std::fs::write(dirs.work.join(".claude/settings.json"), "{}").unwrap();
+    turn(&first, "hello").await;
+    assert_eq!(&*lock(&decisions), &[false, true, false]);
+    assert!(!of_type(&first, "plugin:external-harness/folder-trust-changed").is_empty());
+    window.close().await;
 }
 
 /// Nothing in a session turns full access on or picks the executor: not the chat, not a tool

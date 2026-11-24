@@ -21,6 +21,7 @@ mod harness;
 pub mod redact;
 mod stdio;
 pub mod supervisor;
+mod trust;
 mod window;
 
 use std::collections::{HashMap, VecDeque};

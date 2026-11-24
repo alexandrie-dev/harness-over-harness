@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/executor/trust/set","result":{"executor":"claude","cwd":"/work","trusted":true,"changed":false}}

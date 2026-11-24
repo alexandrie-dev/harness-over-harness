@@ -42,6 +42,7 @@ rustix = { workspace = true, features = ["process"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -50,6 +51,8 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 hoh-session-persistence-jsonl = { path = "../hoh-session-persistence-jsonl" }
 hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-fs-local = { path = "../hoh-fs-local" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
 tempfile.workspace = true
 
 # The stub harness of the tests: a program that speaks the contract over stdio (tests/stub/).

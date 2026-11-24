@@ -30,10 +30,7 @@ use crate::version;
 )]
 #[serde(rename_all = "lowercase")]
 pub enum SettingSources {
-    /// The settings Claude Code reads in the human's terminal, those of
-    /// [`PERSONAL_SETTING_SOURCES`]: their own (permission rules, hooks, plugins, `CLAUDE.md`) and
-    /// the working folder's (`CLAUDE.md`, `.claude/settings.json`, `.claude/settings.local.json`,
-    /// `.mcp.json`); no MCP server is turned off.
+    /// The human's settings; project and local settings are included only for a trusted folder.
     Personal,
     /// Nothing of the human's: no settings file (`--setting-sources ""`) and no MCP server
     /// (`--strict-mcp-config`, none given). What the organization manages still applies.
@@ -44,14 +41,8 @@ pub enum SettingSources {
 /// the CEO, 21.11). [`SettingSources::Isolated`] stays available in the profile.
 pub const DEFAULT_SETTING_SOURCES: SettingSources = SettingSources::Personal;
 
-/// The setting sources of [`SettingSources::Personal`], the only place they are named: all three,
-/// as T3 runs Claude ("так же, как в T3", the founder, HOH-40, 22.11; it replaces the CEO's
-/// "user only" of 21.11). T3 gives its SDK no `settingSources`, and reads the same three itself
-/// when it needs to know what the session obeys (`ClaudeAdapterV2.ts:5595`, `:5628`,
-/// `ClaudeDriver.ts:164`; with a home of its own, `CLAUDE_CONFIG_DIR`, only the folder's two: we
-/// have none). The folder's `allow` rules and hooks then answer before the window's question, as
-/// they do in the human's terminal; the mode is still only the window's (`--permission-mode`).
-const PERSONAL_SETTING_SOURCES: &str = "user,project,local";
+/// Default for a folder without host-approved trust.
+const PERSONAL_SETTING_SOURCES: &str = "user";
 
 /// The effort levels of Claude Code, lowest first: `claude --help` (`--effort <level>`) and T3
 /// (`CLAUDE_EFFORT_LEVELS`, `ClaudeModelCatalog.ts:366`).
@@ -172,7 +163,7 @@ impl ClaudeConfig {
     ) -> Vec<String> {
         let mut argv = self.argv(policy, access, model, effort, resume, native_id);
         if self.setting_sources == SettingSources::Personal {
-            channel_plugins::append_disabled_channels(&mut argv, &self.extra_env, cwd, None);
+            channel_plugins::append_disabled_user_channels(&mut argv, &self.extra_env, cwd);
         }
         argv
     }
@@ -869,6 +860,15 @@ impl ExternalHarness for ClaudeHarness {
         params: StartParams,
         access: AccessMode,
     ) -> BoxFuture<'static, HarnessResult<Started>> {
+        self.start_with_folder_trust(params, access, false)
+    }
+
+    fn start_with_folder_trust(
+        &self,
+        params: StartParams,
+        access: AccessMode,
+        trusted: bool,
+    ) -> BoxFuture<'static, HarnessResult<Started>> {
         let config = self.config.clone();
         Box::pin(async move {
             // In full access nothing is asked by definition, so `never` changes nothing there.
@@ -920,13 +920,20 @@ impl ExternalHarness for ClaudeHarness {
                 resume.as_deref(),
                 &native,
             );
-            if config.setting_sources == SettingSources::Personal {
+            if config.setting_sources == SettingSources::Personal && trusted {
+                if let Some(index) = args.iter().position(|arg| arg == "--setting-sources") {
+                    args[index + 1] = "user,project,local".to_owned();
+                }
+            }
+            if config.setting_sources == SettingSources::Personal && trusted {
                 channel_plugins::append_disabled_channels(
                     &mut args,
                     &config.extra_env,
                     &cwd,
                     params.cwd_identity,
                 );
+            } else if config.setting_sources == SettingSources::Personal {
+                channel_plugins::append_disabled_user_channels(&mut args, &config.extra_env, &cwd);
             }
             let mut process = spec(&config, args, cwd.clone(), false);
             process.cwd_identity = params.cwd_identity;
@@ -953,6 +960,22 @@ impl ExternalHarness for ClaudeHarness {
     /// The same switches [`start_with_access`](Self::start_with_access) passes (for the window).
     fn launch_flags(&self, policy: &HarnessPolicy, access: AccessMode) -> Vec<String> {
         self.config.launch_flags(policy, access)
+    }
+
+    fn launch_flags_for_folder_trust(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        trusted: bool,
+    ) -> Vec<String> {
+        let mut flags = self.config.launch_flags(policy, access);
+        if trusted
+            && self.config.setting_sources == SettingSources::Personal
+            && let Some(at) = flags.iter().position(|flag| flag == "--setting-sources")
+        {
+            flags[at + 1] = "user,project,local".to_owned();
+        }
+        flags
     }
 }
 
@@ -1162,8 +1185,7 @@ mod tests {
                 }
             }
         }
-        // What the window shows for each mode, with the default sources (the human's and the
-        // folder's settings).
+        // What the window shows for each mode before a folder has been trusted.
         let config = ClaudeConfig::default();
         assert_eq!(config.setting_sources, SettingSources::Personal);
         assert_eq!(
@@ -1172,7 +1194,7 @@ mod tests {
                 "--permission-mode",
                 "default",
                 "--setting-sources",
-                "user,project,local",
+                "user",
                 "--permission-prompt-tool",
                 "stdio"
             ]
@@ -1183,7 +1205,7 @@ mod tests {
                 "--permission-mode",
                 "bypassPermissions",
                 "--setting-sources",
-                "user,project,local",
+                "user",
                 "--permission-prompt-tool",
                 "stdio",
                 "--allow-dangerously-skip-permissions"
@@ -1195,7 +1217,7 @@ mod tests {
                 "--permission-mode",
                 "dontAsk",
                 "--setting-sources",
-                "user,project,local",
+                "user",
                 "--tools",
                 "Read,Glob,Grep,LS,NotebookRead,TodoWrite"
             ]

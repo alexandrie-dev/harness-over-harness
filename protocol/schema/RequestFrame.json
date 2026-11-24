@@ -864,6 +864,38 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/executor/trust/get"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorTrustGetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/executor/trust/set"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorTrustSetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/executor/commands"
         },
         "params": {
@@ -2427,6 +2459,40 @@
         "auto-accept-edits",
         "auto",
         "full"
+      ]
+    },
+    "ExecutorTrustGetParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "executor",
+        "cwd"
+      ]
+    },
+    "ExecutorTrustSetParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "trust": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "executor",
+        "cwd",
+        "trust"
       ]
     },
     "ExecutorCommandsParams": {

@@ -40,6 +40,16 @@ pub trait ExternalHarness: Send + Sync + 'static {
         self.start_or_resume(params)
     }
 
+    /// Start with folder trust determined by the host, never by a prompt or session parameters.
+    fn start_with_folder_trust(
+        &self,
+        params: StartParams,
+        access: AccessMode,
+        _trusted: bool,
+    ) -> BoxFuture<'static, HarnessResult<Started>> {
+        self.start_with_access(params, access)
+    }
+
     /// The command-line switches that decide what a native session started with `policy` under
     /// `access` may do without asking (permission mode, permission prompt, tool limits), exactly
     /// as [`start_with_access`](Self::start_with_access) passes them: the window shows the mode
@@ -47,6 +57,15 @@ pub trait ExternalHarness: Send + Sync + 'static {
     fn launch_flags(&self, policy: &HarnessPolicy, access: AccessMode) -> Vec<String> {
         let _ = (policy, access);
         Vec::new()
+    }
+
+    fn launch_flags_for_folder_trust(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        _trusted: bool,
+    ) -> Vec<String> {
+        self.launch_flags(policy, access)
     }
 
     /// Whether «Стоп» ends the process of the session, with every process under it, instead of

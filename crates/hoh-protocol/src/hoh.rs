@@ -518,6 +518,21 @@ choices!(ExecutorRuntimeMode {
 choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
 choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
 object!(ExecutorParams { executor: String });
+object!(ExecutorTrustGetParams {
+    executor: String,
+    cwd: String
+});
+object!(ExecutorTrustSetParams {
+    executor: String,
+    cwd: String,
+    trust: bool
+});
+object!(ExecutorTrustResult {
+    executor: String,
+    cwd: String,
+    trusted: bool,
+    changed: bool
+});
 optional!(ExecutorAccessSetParams {
     executor: String,
     mode: ExecutorAccessMode,

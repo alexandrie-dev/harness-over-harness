@@ -115,6 +115,54 @@ async fn start(env: &Env, resume: Option<&str>) -> Started {
         .unwrap()
 }
 
+#[tokio::test]
+async fn folder_trust_changes_settings_and_project_mcp_switches() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut env = Env::new();
+    env.mode = Some("test-project-mcp");
+    let script = env.dir.path().join("server");
+    let marker = env.dir.path().join("mcp-started");
+    std::fs::write(&script, "#!/bin/sh\ntouch mcp-started\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(
+        env.dir.path().join(".mcp.json"),
+        serde_json::json!({"mcpServers":{"project":{"command":script}}}).to_string(),
+    )
+    .unwrap();
+    for (trusted, expected, strict) in [(false, "user", false), (true, "user,project,local", false)]
+    {
+        let started = env
+            .harness()
+            .start_with_folder_trust(
+                params(env.dir.path(), None, HarnessPolicy::default()),
+                AccessMode::Confirm,
+                trusted,
+            )
+            .await
+            .unwrap();
+        let args = env.args();
+        let at = args
+            .iter()
+            .position(|arg| arg == "--setting-sources")
+            .unwrap();
+        assert_eq!(args[at + 1], expected);
+        assert_eq!(args.iter().any(|arg| arg == "--strict-mcp-config"), strict);
+        assert!(!args.iter().any(|arg| arg == "--mcp-config"));
+        let flags = env.harness().launch_flags_for_folder_trust(
+            &HarnessPolicy::default(),
+            AccessMode::Confirm,
+            trusted,
+        );
+        let permission = args
+            .iter()
+            .position(|arg| arg == "--permission-mode")
+            .unwrap();
+        assert_eq!(&args[permission..permission + flags.len()], flags);
+        assert_eq!(marker.exists(), trusted);
+        started.session.terminate(Duration::from_millis(500)).await;
+    }
+}
+
 fn prompt(session: &Arc<dyn HarnessSession>, turn: &str, text: &str) {
     let fut = session.prompt(PromptParams {
         session_id: "hoh-1".into(),
@@ -845,9 +893,9 @@ async fn approval_never_is_refused_and_no_mode_gets_a_way_around_the_questions()
             .iter()
             .any(|a| a.contains("bypass") || a.contains("dangerously"))
     );
-    // By default the human's settings and the working folder's, as T3 (HOH-40).
+    // Without folder trust, only the human's settings apply.
     let at = args.iter().position(|a| a == "--setting-sources").unwrap();
-    assert_eq!(args[at + 1], "user,project,local");
+    assert_eq!(args[at + 1], "user");
     started.session.terminate(Duration::from_millis(500)).await;
 
     // Read-only: `default` (a read outside the folder is a question), only the read tools, and no
@@ -1700,7 +1748,7 @@ async fn a_command_is_shown_with_the_folder_the_session_runs_in() {
 #[tokio::test]
 async fn the_setting_sources_are_the_same_for_every_policy() {
     for (setting_sources, value, strict) in [
-        (SettingSources::Personal, "user,project,local", false),
+        (SettingSources::Personal, "user", false),
         (SettingSources::Isolated, "", true),
     ] {
         let mut env = Env::new();

@@ -648,6 +648,27 @@ impl ExternalAgent {
         signal: &AbortSignal,
     ) -> Result<(), HarnessFailure> {
         let effort = lock(&self.state).effort.clone();
+        let current_trust = if live.is_some() && self.shared.name == "claude" {
+            let cwd = self.cwd();
+            let (trusted, changed) =
+                if let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>() {
+                    crate::trust::status(&profile.dir, std::path::Path::new(&cwd))
+                        .await
+                        .unwrap_or((false, false))
+                } else {
+                    (false, false)
+                };
+            if changed {
+                let _ = append_plugin_record(
+                    &self.session,
+                    "plugin:external-harness/folder-trust-changed",
+                    json!({"cwd": cwd, "executor": "claude"}),
+                );
+            }
+            Some(trusted)
+        } else {
+            None
+        };
         if let Some(session) = live.as_mut() {
             while let Ok(event) = session.events.try_recv() {
                 match event {
@@ -678,10 +699,13 @@ impl ExternalAgent {
             let retired = self.shared.running_launch_of(self.id.as_ref()).is_none();
             // Another effort level is another process on the same native session, as in T3.
             let other_effort = session.effort != effort;
+            let other_trust =
+                current_trust.is_some_and(|trusted| trusted != session.folder_trusted);
             if session.dead
                 || chosen
                 || retired
                 || other_effort
+                || other_trust
                 || self.model.restart.swap(false, Ordering::SeqCst)
             {
                 if let Some(old) = live.take() {
@@ -705,7 +729,6 @@ impl ExternalAgent {
         } else {
             false
         };
-        let flags = self.shared.harness.launch_flags(&policy, access);
         let resume = lock(&self.state).native.clone();
         let checked_cwd = || -> Result<(String, [u64; 2]), HarnessFailure> {
             match self
@@ -729,7 +752,28 @@ impl ExternalAgent {
             resume: resume.clone(),
         };
         let harness = &self.shared.harness;
-        let (started, lost) = match harness.start_with_access(params.clone(), access).await {
+        let (trusted, changed) = if self.shared.name == "claude"
+            && let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>()
+        {
+            crate::trust::status(&profile.dir, std::path::Path::new(&params.cwd))
+                .await
+                .unwrap_or((false, false))
+        } else {
+            (false, false)
+        };
+        if changed {
+            let _ = append_plugin_record(
+                &self.session,
+                "plugin:external-harness/folder-trust-changed",
+                json!({"cwd": params.cwd, "executor": self.shared.name}),
+            );
+        }
+        let mut flags = harness.launch_flags_for_folder_trust(&params.policy, access, trusted);
+        let mut launched_trusted = trusted;
+        let (started, lost) = match harness
+            .start_with_folder_trust(params.clone(), access, trusted)
+            .await
+        {
             Err(failure) if failure.code == code::SESSION_NOT_FOUND && params.resume.is_some() => {
                 self.ctx.logger().warn(format_args!(
                     "harness \"{}\" lost native session {:?}: starting a new one",
@@ -739,7 +783,24 @@ impl ExternalAgent {
                 let (cwd, identity) = checked_cwd()?;
                 params.cwd = cwd;
                 params.cwd_identity = Some(identity);
-                (harness.start_with_access(params, access).await?, resume)
+                let trusted = if self.shared.name == "claude"
+                    && let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>()
+                {
+                    crate::trust::status(&profile.dir, std::path::Path::new(&params.cwd))
+                        .await
+                        .map(|v| v.0)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                flags = harness.launch_flags_for_folder_trust(&params.policy, access, trusted);
+                launched_trusted = trusted;
+                (
+                    harness
+                        .start_with_folder_trust(params, access, trusted)
+                        .await?,
+                    resume,
+                )
             }
             started => {
                 let started = started?;
@@ -780,6 +841,7 @@ impl ExternalAgent {
             dead: false,
             access,
             effort,
+            folder_trusted: launched_trusted,
         });
         Ok(())
     }
@@ -1259,6 +1321,7 @@ pub(crate) struct LiveSession {
     access: AccessMode,
     /// The effort level it was started with: another one in a prompt restarts it.
     effort: Option<String>,
+    folder_trusted: bool,
 }
 
 enum TurnOutcome {

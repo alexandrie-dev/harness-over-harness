@@ -26,8 +26,8 @@ use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
     ExecutorEffectiveAccess, ExecutorParams, ExecutorRuntimeMode, ExecutorSelectParams,
-    ExecutorSessionAccess, WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams,
-    WorkspaceEntriesResult,
+    ExecutorSessionAccess, ExecutorTrustGetParams, ExecutorTrustResult, ExecutorTrustSetParams,
+    WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -57,11 +57,13 @@ const SELECT: &str = "hoh/executor/select";
 const ACCESS_GET: &str = "hoh/executor/access/get";
 const ACCESS_SET: &str = "hoh/executor/access/set";
 const COMMANDS: &str = "hoh/executor/commands";
+const TRUST_GET: &str = "hoh/executor/trust/get";
+const TRUST_SET: &str = "hoh/executor/trust/set";
 const ENTRIES: &str = "hoh/workspace/entries";
 const ADD: &str = "hoh/workspace/add";
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(30);
-const METHODS: [&str; 7] = [
-    DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, COMMANDS, ENTRIES, ADD,
+const METHODS: [&str; 9] = [
+    DISCOVER, SELECT, ACCESS_GET, ACCESS_SET, COMMANDS, ENTRIES, ADD, TRUST_GET, TRUST_SET,
 ];
 
 /// The saved choices.
@@ -240,6 +242,48 @@ impl Window {
             ACCESS_SET => Ok(serde_json::to_value(
                 self.access_set(parse(method, params)?).await?,
             )?),
+            TRUST_GET => {
+                let params: ExecutorTrustGetParams = parse(method, params)?;
+                if params.executor != "claude" {
+                    return Err("unknown executor".into());
+                }
+                let folder = self.known_folder(&params.cwd).await?;
+                let profile = self.path.parent().ok_or("missing profile")?;
+                let (trusted, changed) = crate::trust::status(profile, &folder).await?;
+                if changed && let Some(directories) = self.ctx.get::<WorkingDirectoryKey>() {
+                    for agent in self.agents.list() {
+                        let cwd = directories.get(agent.session());
+                        if std::fs::canonicalize(cwd).is_ok_and(|path| path == folder) {
+                            let _ = hoh_session::append_plugin_record(
+                                agent.session(),
+                                "plugin:external-harness/folder-trust-changed",
+                                json!({"cwd": folder, "executor": "claude"}),
+                            );
+                        }
+                    }
+                }
+                Ok(serde_json::to_value(ExecutorTrustResult {
+                    executor: params.executor,
+                    cwd: folder.to_string_lossy().into_owned(),
+                    trusted,
+                    changed,
+                })?)
+            }
+            TRUST_SET => {
+                let params: ExecutorTrustSetParams = parse(method, params)?;
+                if params.executor != "claude" {
+                    return Err("unknown executor".into());
+                }
+                let folder = self.known_folder(&params.cwd).await?;
+                let profile = self.path.parent().ok_or("missing profile")?;
+                crate::trust::set(profile, &folder, params.trust).await?;
+                Ok(serde_json::to_value(ExecutorTrustResult {
+                    executor: params.executor,
+                    cwd: folder.to_string_lossy().into_owned(),
+                    trusted: params.trust,
+                    changed: false,
+                })?)
+            }
             COMMANDS => Ok(serde_json::to_value(
                 self.commands(parse(method, params)?).await?,
             )?),

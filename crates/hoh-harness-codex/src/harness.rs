@@ -157,6 +157,26 @@ fn app_server_spec(config: &CodexConfig, cwd: &Path) -> ProcessSpec {
     }
 }
 
+#[cfg(test)]
+mod folder_trust_tests {
+    use super::*;
+
+    #[test]
+    fn app_server_does_not_set_codex_project_trust() {
+        let spec = app_server_spec(&CodexConfig::default(), Path::new("/project"));
+        assert_eq!(
+            spec.args,
+            ["app-server", "-c", "thread_unload_delay_secs=0"]
+        );
+        assert!(
+            !spec
+                .args
+                .iter()
+                .any(|arg| arg.contains("trust_level") || arg.contains("projects."))
+        );
+    }
+}
+
 fn spawn(config: &CodexConfig, cwd: &Path) -> HarnessResult<Supervisor> {
     Supervisor::spawn(&app_server_spec(config, cwd), config.limits, None)
 }
