@@ -385,7 +385,7 @@ function projectedWorkEntry(
     case "thread_created":
       return {
         ...common,
-        label: resolve(msg("Created thread")),
+        label: resolve(msg("Created chat")),
       };
     case "compaction":
       return {

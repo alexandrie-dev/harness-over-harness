@@ -1,0 +1,26 @@
+--- a/web/components/chat/ThreadRelationshipsControl.tsx
++++ b/web/components/chat/ThreadRelationshipsControl.tsx
+@@ -124 +124 @@
+-        aria-label={gt("Related threads")}
++        aria-label={gt("Related chats")}
+@@ -229 +229 @@
+-    : resolve(msg("Open parent thread in this chat"));
++    : resolve(msg("Open parent chat in this chat"));
+@@ -353 +353 @@
+-                ? gt("Runs on {label}. Connect to it to open the thread there.", {
++                ? gt("Runs on {label}. Connect to it to open the chat there.", {
+@@ -400 +400 @@
+-      toastManager.add({ type: "error", title: gt("Could not open the parent thread") });
++      toastManager.add({ type: "error", title: gt("Could not open the parent chat") });
+@@ -405 +405 @@
+-      toastManager.add({ type: "info", title: gt("The parent thread was deleted") });
++      toastManager.add({ type: "info", title: gt("The parent chat was deleted") });
+@@ -455 +455 @@
+-                  ? gt("Delegated from {label}. Connect to it to open the parent thread.", {
++                  ? gt("Delegated from {label}. Connect to it to open the parent chat.", {
+@@ -459 +459 @@
+-                      "Delegated from a linked environment. Connect to it to open the parent thread.",
++                      "Delegated from a linked environment. Connect to it to open the parent chat.",
+@@ -1055 +1055 @@
+-                      aria-label={gt("More thread actions")}
++                      aria-label={gt("More chat actions")}

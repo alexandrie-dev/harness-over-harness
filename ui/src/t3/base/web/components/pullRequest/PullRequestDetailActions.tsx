@@ -139,7 +139,7 @@ export function PullRequestCheckoutMenu({
               <T>In a separate worktree</T>
             </span>
             <span className="text-xs text-muted-foreground">
-              <T>Its own folder and thread. Nothing you have open moves.</T>
+              <T>Its own folder and chat. Nothing you have open moves.</T>
             </span>
           </span>
         </MenuItem>

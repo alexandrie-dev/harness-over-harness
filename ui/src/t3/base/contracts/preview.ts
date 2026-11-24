@@ -363,7 +363,7 @@ export class PreviewSessionLookupError extends Schema.TaggedError<PreviewSession
   },
 ) {
   override get message() {
-    return `Unknown preview session: thread=${this.threadId}, tab=${this.tabId}`;
+    return `Unknown preview session: chat=${this.threadId}, tab=${this.tabId}`;
   }
 }
 

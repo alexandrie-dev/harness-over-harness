@@ -18,10 +18,10 @@ export function startLegacyThreadMigrationToast(): () => void {
         if (toastId !== null) return;
         toastId = toastManager.add({
           type: "loading",
-          title: m(msg("Restoring your threads…")),
+          title: m(msg("Restoring your chats…")),
           description: m(
             msg(
-              "{count, plural, one {Migrating {total} thread from the previous version. You can keep working while this finishes.} other {Migrating {total} threads from the previous version. You can keep working while this finishes.}}",
+              "{count, plural, one {Migrating {total} chat from the previous version. You can keep working while this finishes.} other {Migrating {total} chats from the previous version. You can keep working while this finishes.}}",
               {
                 count: migration.totalThreadCount,
                 total: migration.totalThreadCount.toLocaleString(),

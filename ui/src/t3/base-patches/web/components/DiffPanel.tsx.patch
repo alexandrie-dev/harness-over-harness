@@ -1,0 +1,5 @@
+--- a/web/components/DiffPanel.tsx
++++ b/web/components/DiffPanel.tsx
+@@ -1367 +1367 @@
+-          <T>Select a thread to inspect turn diffs.</T>
++          <T>Select a chat to inspect turn diffs.</T>

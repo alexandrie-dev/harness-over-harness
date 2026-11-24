@@ -1,0 +1,8 @@
+--- a/web/components/guest/GuestPage.tsx
++++ b/web/components/guest/GuestPage.tsx
+@@ -328 +328 @@
+-        detail={gt("The owner stopped sharing this thread.")}
++        detail={gt("The owner stopped sharing this chat.")}
+@@ -385 +385 @@
+-        <T>Join a shared thread</T>
++        <T>Join a shared chat</T>

@@ -451,7 +451,7 @@ function PullRequestCodeTab({
 }) {
   const gt = useGT();
   const messages = useMessages();
-  const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a thread");
+  const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a chat");
   const resolvedTheme = useRenderedAppearance();
   // Initialize the shared tokenizer and workers while the diff request is still pending.
   useDiffWorkerPool();

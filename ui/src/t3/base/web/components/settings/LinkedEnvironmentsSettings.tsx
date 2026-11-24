@@ -100,7 +100,7 @@ export function LinkedEnvironmentsSettings({
         <SettingsRow
           title={gt("No linked environments")}
           description={gt(
-            "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there.",
+            "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive chats there.",
           )}
         />
       ) : (
@@ -318,7 +318,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
           </DialogTitle>
           <DialogDescription>
             <T>
-              Agents here can then launch, message and wait on threads there. It appears under
+              Agents here can then launch, message and wait on chats there. It appears under
               Authorized clients in that environment's Sharing & access, where it can be revoked.
             </T>
           </DialogDescription>

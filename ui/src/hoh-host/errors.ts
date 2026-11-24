@@ -23,7 +23,7 @@ const BY_CODE: Readonly<Record<string, string>> = {
   expired: 'The confirmation was not answered in time. Try again.',
   connecting: 'HoH is still starting. Try again in a moment.',
   unavailable: 'Not available in HoH.',
-  'folder-fixed': 'A Claude thread works in one folder. Start a new thread to work in another.',
+  'folder-fixed': 'A Claude chat works in one folder. Start a new chat to work in another.',
   refused: 'HoH refused this request.',
 };
 

@@ -41,7 +41,7 @@ function BoringSidebarRow() {
     <SettingsRow
       {...searchableSetting("boring-sidebar")}
       description={gt(
-        "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
+        "Group sidebar chats into project folders. Pinned chats stay on top, and Snoozed and Settled stay below the folders.",
       )}
       control={
         <Switch
@@ -70,7 +70,7 @@ function BoringSidebarMultilineRow() {
       {...searchableSetting("boring-sidebar-multiline")}
       className="px-0 py-2 sm:px-0"
       description={gt(
-        "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
+        "Show folder chats on two lines: the title, then the branch, pull request, and agent.",
       )}
       control={
         <Switch
@@ -97,7 +97,7 @@ function GuestLinksRowWithSignIn() {
     <SettingsRow
       {...searchableSetting("guest-links")}
       description={gt(
-        "Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
+        "Share a chat with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
       )}
       control={
         <Button size="sm" variant="outline" onClick={openAuthPrompt}>
@@ -132,7 +132,7 @@ function GuestLinksRow() {
       managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <T>
-          Share a thread with a guest who watches it live in a browser and sends messages you
+          Share a chat with a guest who watches it live in a browser and sends messages you
           approve. Needs T3 Connect: sign in and link this machine in{" "}
           <Link to="/settings/access" className="underline underline-offset-2">
             Sharing & access
@@ -197,7 +197,7 @@ function PromptSuggestionsRow() {
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
       description={gt(
-        "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+        "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude chats update on restart.",
       )}
       control={
         <ScopedSwitch

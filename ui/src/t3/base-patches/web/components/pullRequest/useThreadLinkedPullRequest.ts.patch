@@ -1,0 +1,5 @@
+--- a/web/components/pullRequest/useThreadLinkedPullRequest.ts
++++ b/web/components/pullRequest/useThreadLinkedPullRequest.ts
+@@ -95 +95 @@
+-          title: m(msg("Unable to update the thread pull request")),
++          title: m(msg("Unable to update the chat pull request")),

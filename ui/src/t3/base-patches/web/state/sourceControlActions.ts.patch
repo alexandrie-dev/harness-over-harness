@@ -1,0 +1,8 @@
+--- a/web/state/sourceControlActions.ts
++++ b/web/state/sourceControlActions.ts
+@@ -342 +342 @@
+-            message: m(msg("This connection cannot change threads.")),
++            message: m(msg("This connection cannot change chats.")),
+@@ -359 +359 @@
+-    label: msg("Preparing pull request thread"),
++    label: msg("Preparing pull request chat"),

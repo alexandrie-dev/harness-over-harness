@@ -1270,7 +1270,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentUnavailable !== null ||
     (!composerSendState.hasSendableContent && !showResumeAction);
   const collapsedComposerPrimaryActionLabel = showResumeAction
-    ? gt("Resume thread")
+    ? gt("Resume chat")
     : props.resumeCompactionTokens !== null && !props.keepFullHistory
       ? gt("Open composer to compact and send")
       : gt("Send message");
@@ -2920,7 +2920,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       pendingDraftWork.begin(targetKey);
       const loadingToast = toastManager.add({
         type: "loading",
-        title: gt("Loading thread context…"),
+        title: gt("Loading chat context…"),
         timeout: 0,
         data: { threadRef: routeThreadRef, hideCopyButton: true },
       });
@@ -2960,11 +2960,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const error = squashAtomCommandFailure(importResult);
         toastManager.add({
           type: "error",
-          title: gt("Unable to read the dropped thread"),
+          title: gt("Unable to read the dropped chat"),
           description:
             isEnvironmentRequestInvalidError(error) &&
             error.reason === "thread_transcript_too_large"
-              ? gt("This thread exceeds the attachment size limit. Try a shorter thread.")
+              ? gt("This chat exceeds the attachment size limit. Try a shorter chat.")
               : gt("Check that its environment is connected and up to date, then try again."),
         });
       }
@@ -3009,7 +3009,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!inserted) {
         toastManager.add({
           type: "error",
-          title: gt("Unable to add thread"),
+          title: gt("Unable to add chat"),
           description: gt("The composer is busy; try again once it is ready."),
         });
         return;
@@ -3753,7 +3753,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   "Type your own answer, or leave this blank to use the selected option",
                                 )
                           : projectSelectionRequired
-                            ? gt("Choose a project above to start a thread")
+                            ? gt("Choose a project above to start a chat")
                             : showProviderUnavailable
                               ? gt("Enable a provider in Settings to send a message")
                               : (offeredPromptSuggestion ?? m(DEFAULT_COMPOSER_PLACEHOLDER))

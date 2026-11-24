@@ -1,0 +1,13 @@
+--- a/web/components/pullRequest/pullRequestDetail.logic.ts
++++ b/web/components/pullRequest/pullRequestDetail.logic.ts
+@@ -261,2 +261,2 @@
+-        fixCheck: resolve(msg("Fix in this thread")),
+-        fixFindings: resolve(msg("Fix findings in this thread")),
++        fixCheck: resolve(msg("Fix in this chat")),
++        fixFindings: resolve(msg("Fix findings in this chat")),
+@@ -265 +265 @@
+-        fixFinding: resolve(msg("Fix in a thread")),
++        fixFinding: resolve(msg("Fix in a chat")),
+@@ -267 +267 @@
+-        fixFindings: resolve(msg("Fix findings in a thread")),
++        fixFindings: resolve(msg("Fix findings in a chat")),

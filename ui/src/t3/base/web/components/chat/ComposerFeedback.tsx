@@ -31,15 +31,15 @@ export function feedbackBannerItem(
           variant="ghost"
           onClick={() => {
             void writeTextToClipboard(submission.feedbackId, {
-              target: "Codex feedback thread ID",
+              target: "Codex feedback chat ID",
               unavailableMessage: msg(
-                "Clipboard API is unavailable while copying Codex feedback thread ID.",
+                "Clipboard API is unavailable while copying Codex feedback chat ID.",
               ),
-              failureMessage: msg("Failed to copy Codex feedback thread ID to the clipboard."),
+              failureMessage: msg("Failed to copy Codex feedback chat ID to the clipboard."),
             }).catch((error: unknown) => {
               toastManager.add({
                 type: "error",
-                title: m(msg("Could not copy thread ID")),
+                title: m(msg("Could not copy chat ID")),
                 description: error instanceof Error ? error.message : m(msg("An error occurred.")),
               });
             });

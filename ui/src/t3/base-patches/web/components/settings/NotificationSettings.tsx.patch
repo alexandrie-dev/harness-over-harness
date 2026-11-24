@@ -1,0 +1,8 @@
+--- a/web/components/settings/NotificationSettings.tsx
++++ b/web/components/settings/NotificationSettings.tsx
+@@ -31 +31 @@
+-          "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
++          "System alerts when a chat finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
+@@ -83 +83 @@
+-            aria-label={gt("Thread notifications")}
++            aria-label={gt("Chat notifications")}

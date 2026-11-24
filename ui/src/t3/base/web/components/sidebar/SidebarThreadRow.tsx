@@ -418,7 +418,7 @@ function SnoozeMenuButton(props: {
               render={
                 <button
                   type="button"
-                  aria-label={gt("Snooze thread")}
+                  aria-label={gt("Snooze chat")}
                   onClick={(event) => event.stopPropagation()}
                   onDoubleClick={(event) => event.stopPropagation()}
                   className="inline-flex h-full cursor-pointer items-center gap-0.5 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
@@ -430,7 +430,7 @@ function SnoozeMenuButton(props: {
           <ClockIcon className="size-3" />
         </TooltipTrigger>
         <TooltipPopup>
-          <T>Snooze thread</T>
+          <T>Snooze chat</T>
         </TooltipPopup>
       </Tooltip>
       <MenuPopup side="bottom" align="end">
@@ -661,7 +661,7 @@ function ThreadRenameInput(props: {
       autoFocus
       value={props.title}
       dir="auto"
-      aria-label={gt("Thread title")}
+      aria-label={gt("Chat title")}
       onChange={(event) => props.onTitleChange(event.target.value)}
       onFocus={(event) => event.currentTarget.select()}
       onKeyDown={handleKeyDown}
@@ -1229,7 +1229,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           render={
             <button
               type="button"
-              aria-label={gt("Unpin thread")}
+              aria-label={gt("Unpin chat")}
               onClick={handleUnpinClick}
               className="group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             />
@@ -1245,7 +1245,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           />
         </TooltipTrigger>
         <TooltipPopup>
-          <T>Unpin thread</T>
+          <T>Unpin chat</T>
         </TooltipPopup>
       </Tooltip>
     ) : (
@@ -1462,7 +1462,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     !props.snoozeSupported ? null : (
                       <button
                         type="button"
-                        aria-label={gt("Wake thread now")}
+                        aria-label={gt("Wake chat now")}
                         onClick={handleUnsnoozeClick}
                         onPointerDown={handleActionPointerDown}
                         className={cn(
@@ -1479,7 +1479,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         render={
                           <button
                             type="button"
-                            aria-label={gt("Un-settle thread")}
+                            aria-label={gt("Un-settle chat")}
                             onClick={handleUnsettleClick}
                             onPointerDown={handleActionPointerDown}
                             className={cn(
@@ -1492,7 +1492,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <Undo2Icon className="mb-px size-3.5" />
                       </TooltipTrigger>
                       <TooltipPopup side="top">
-                        <T>Un-settle thread</T>
+                        <T>Un-settle chat</T>
                       </TooltipPopup>
                     </Tooltip>
                   ) : (
@@ -1501,7 +1501,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         render={
                           <button
                             type="button"
-                            aria-label={gt("Settle thread")}
+                            aria-label={gt("Settle chat")}
                             onClick={handleSettleClick}
                             onPointerDown={handleActionPointerDown}
                             className={cn(
@@ -1514,7 +1514,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <CheckIcon className="size-3" />
                       </TooltipTrigger>
                       <TooltipPopup side="top">
-                        <T>Settle thread</T>
+                        <T>Settle chat</T>
                       </TooltipPopup>
                     </Tooltip>
                   )}
@@ -1706,7 +1706,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             render={
                               <button
                                 type="button"
-                                aria-label={gt("Settle thread")}
+                                aria-label={gt("Settle chat")}
                                 onClick={handleSettleClick}
                                 onPointerDown={handleActionPointerDown}
                                 className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
@@ -1717,7 +1717,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             <T>Settle</T>
                           </TooltipTrigger>
                           <TooltipPopup>
-                            <T>Settle thread</T>
+                            <T>Settle chat</T>
                           </TooltipPopup>
                         </Tooltip>
                       ) : null}

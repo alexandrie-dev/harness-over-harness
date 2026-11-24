@@ -1534,7 +1534,7 @@ export class OrchestrationV2CheckpointUnavailableError extends Schema.TaggedErro
   },
 ) {
   override get message(): string {
-    return `Rollback target ${this.target} is unavailable for thread ${this.threadId}.`;
+    return `Rollback target ${this.target} is unavailable for chat ${this.threadId}.`;
   }
 }
 
@@ -4200,7 +4200,7 @@ const OrchestrationV2UnknownThreadStreamEvent = Schema.Struct({
         sequence: item.sequence,
         eventType: item.event.type,
       })),
-      encode: SchemaGetter.forbidden(() => "Servers never send unknown thread events."),
+      encode: SchemaGetter.forbidden(() => "Servers never send unknown chat events."),
     },
   ),
 );

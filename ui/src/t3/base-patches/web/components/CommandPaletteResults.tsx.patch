@@ -1,0 +1,8 @@
+--- a/web/components/CommandPaletteResults.tsx
++++ b/web/components/CommandPaletteResults.tsx
+@@ -47 +47 @@
+-          <T>No matching commands, projects, or threads.</T>
++          <T>No matching commands, projects, or chats.</T>
+@@ -265 +265 @@
+-              (typeof props.item.title === "string" ? props.item.title : "Thread"),
++              (typeof props.item.title === "string" ? props.item.title : "Chat"),

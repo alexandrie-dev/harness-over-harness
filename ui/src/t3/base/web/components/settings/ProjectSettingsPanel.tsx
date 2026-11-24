@@ -556,7 +556,7 @@ function ProjectDetail({
           <SettingsRow
             title={gt("Name")}
             description={gt(
-              "The shared name for this project group in the sidebar and thread lists.",
+              "The shared name for this project group in the sidebar and chat lists.",
             )}
             resetAction={
               canResetScratchTitle ? (
@@ -664,8 +664,8 @@ function ProjectDetail({
                 title={gt("Archive")}
                 description={
                   group.archived
-                    ? gt("Hidden from project pickers. Threads and files are kept.")
-                    : gt("Hides the project from project pickers. Threads and files are kept.")
+                    ? gt("Hidden from project pickers. Chats and files are kept.")
+                    : gt("Hides the project from project pickers. Chats and files are kept.")
                 }
                 control={
                   <Button
@@ -705,14 +705,14 @@ function ProjectDetail({
             description={
               hasOtherMembers
                 ? gt(
-                    "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched.",
+                    "Deletes the selected machine's checkout entries and their chats. Other machines and files on disk are not touched.",
                   )
                 : group.memberProjects.length > 1
                   ? gt(
-                      "{count, plural, other {Deletes all {count} checkout entries and their threads on every machine. Files on disk are not touched.}}",
+                      "{count, plural, other {Deletes all {count} checkout entries and their chats on every machine. Files on disk are not touched.}}",
                       { count: group.memberProjects.length },
                     )
-                  : gt("Deletes the project entry and its threads. Files on disk are not touched.")
+                  : gt("Deletes the project entry and its chats. Files on disk are not touched.")
             }
             control={
               <Button

@@ -44,7 +44,7 @@ export function pickSnoozePreset(
   if (!picked) {
     toastManager.add({
       type: "warning",
-      title: resolve(msg("Could not snooze thread")),
+      title: resolve(msg("Could not snooze chat")),
       description: resolve(msg("That snooze time has passed. Choose another time.")),
     });
   }

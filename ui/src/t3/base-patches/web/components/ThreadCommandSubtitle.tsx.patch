@@ -1,0 +1,5 @@
+--- a/web/components/ThreadCommandSubtitle.tsx
++++ b/web/components/ThreadCommandSubtitle.tsx
+@@ -108 +108 @@
+-            <T>Current thread</T>
++            <T>Current chat</T>

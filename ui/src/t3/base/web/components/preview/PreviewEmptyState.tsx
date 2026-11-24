@@ -45,7 +45,7 @@ export function PreviewEmptyState({
         </EmptyTitle>
         <EmptyDescription>
           <T>
-            Type a URL above, or run a dev script. Local servers this thread starts will show up
+            Type a URL above, or run a dev script. Local servers this chat starts will show up
             here automatically.
           </T>
         </EmptyDescription>

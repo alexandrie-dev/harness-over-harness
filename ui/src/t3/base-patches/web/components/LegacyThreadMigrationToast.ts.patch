@@ -1,0 +1,8 @@
+--- a/web/components/LegacyThreadMigrationToast.ts
++++ b/web/components/LegacyThreadMigrationToast.ts
+@@ -21 +21 @@
+-          title: m(msg("Restoring your threads…")),
++          title: m(msg("Restoring your chats…")),
+@@ -24 +24 @@
+-              "{count, plural, one {Migrating {total} thread from the previous version. You can keep working while this finishes.} other {Migrating {total} threads from the previous version. You can keep working while this finishes.}}",
++              "{count, plural, one {Migrating {total} chat from the previous version. You can keep working while this finishes.} other {Migrating {total} chats from the previous version. You can keep working while this finishes.}}",

@@ -37,19 +37,19 @@ export const T3ProjectFileScript = Schema.Struct({
   runOnWorktreeCreate: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "When true, the script runs automatically after a worktree is created for a new thread.",
+        "When true, the script runs automatically after a worktree is created for a new chat.",
     }),
   ),
   runOnSettle: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "When true, the script runs in the thread's worktree each time the thread settles, for example to delete build output. Threads without their own worktree skip it.",
+        "When true, the script runs in the chat's worktree each time the chat settles, for example to delete build output. Chats without their own worktree skip it.",
     }),
   ),
   stopOnSettle: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "When true, T3 stops this action's terminal and child processes when its thread settles.",
+        "When true, T3 stops this action's terminal and child processes when its chat settles.",
     }),
   ),
   async: Schema.optionalKey(
@@ -93,7 +93,7 @@ export const T3ProjectFile = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(
     ThreadEnvMode.annotate({
       description:
-        'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in T3 Code overrides this; when neither is set, the global default applies.',
+        'Where new chats start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in T3 Code overrides this; when neither is set, the global default applies.',
     }),
   ),
   worktreeSubmodules: Schema.optionalKey(

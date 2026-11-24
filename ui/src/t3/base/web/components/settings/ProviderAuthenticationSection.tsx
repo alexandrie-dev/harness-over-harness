@@ -340,7 +340,7 @@ export function ProviderAuthenticationSection({
                   void ensureLocalApi()
                     .dialogs.confirm(
                       gt(
-                        "Sign out of {provider} on {environment}? This stops running threads that share this sign-in. Thread history is kept.",
+                        "Sign out of {provider} on {environment}? This stops running chats that share this sign-in. Chat history is kept.",
                         {
                           provider: provider.displayName ?? provider.driver,
                           environment: environmentLabel,

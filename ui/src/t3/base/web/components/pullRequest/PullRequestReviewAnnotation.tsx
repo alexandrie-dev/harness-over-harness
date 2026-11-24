@@ -343,7 +343,7 @@ export function ReviewThreadCard({
             onClick={onFix}
           >
             <HammerIcon className="size-3" />
-            {fixPending ? gt("Preparing...") : (fixLabel ?? gt("Fix in a thread"))}
+            {fixPending ? gt("Preparing...") : (fixLabel ?? gt("Fix in a chat"))}
           </Button>
         ) : null}
         {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (

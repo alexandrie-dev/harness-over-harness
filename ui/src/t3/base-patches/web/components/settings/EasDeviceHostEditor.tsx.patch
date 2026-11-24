@@ -1,0 +1,11 @@
+--- a/web/components/settings/EasDeviceHostEditor.tsx
++++ b/web/components/settings/EasDeviceHostEditor.tsx
+@@ -311 +311 @@
+-                        ? gt("From the thread's project")
++                        ? gt("From the chat's project")
+@@ -318 +318 @@
+-                    <T>From the thread's project</T>
++                    <T>From the chat's project</T>
+@@ -332 +332 @@
+-                  Sessions bill the project's Expo account. "From the thread's project" reads
++                  Sessions bill the project's Expo account. "From the chat's project" reads

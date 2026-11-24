@@ -172,7 +172,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           size="xs"
           variant="ghost"
           disabled={disconnectingEnvironment}
-          title={gt("Hide this server's threads. Switch it on again in Environments.")}
+          title={gt("Hide this server's chats. Switch it on again in Environments.")}
           onClick={() =>
             void handleDisconnectActiveEnvironmentStable(
               activeEnvironmentUnavailableState.environmentId,

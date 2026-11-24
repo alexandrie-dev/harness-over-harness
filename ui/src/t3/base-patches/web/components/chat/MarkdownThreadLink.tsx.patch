@@ -1,0 +1,5 @@
+--- a/web/components/chat/MarkdownThreadLink.tsx
++++ b/web/components/chat/MarkdownThreadLink.tsx
+@@ -66 +66 @@
+-  const title = resolved?.metadata.title.trim() || props.label || gt("Thread");
++  const title = resolved?.metadata.title.trim() || props.label || gt("Chat");

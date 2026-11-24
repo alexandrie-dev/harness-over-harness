@@ -36,7 +36,7 @@ export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean
           onClick={() => target.open?.()}
           className="min-w-0 shrink"
         >
-          <span className="truncate">{target.label ?? gt("Untitled thread")}</span>
+          <span className="truncate">{target.label ?? gt("Untitled chat")}</span>
         </Button>
         <ComposerSpeechRecordingPill
           state={state}

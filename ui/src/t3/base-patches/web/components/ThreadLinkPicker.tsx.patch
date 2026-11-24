@@ -1,0 +1,13 @@
+--- a/web/components/ThreadLinkPicker.tsx
++++ b/web/components/ThreadLinkPicker.tsx
+@@ -48,2 +48,2 @@
+-    <Command mode="none" value={query} onValueChange={setQuery} aria-label={gt("Choose a thread")}>
+-      <CommandInput placeholder={gt("Search threads or projects...")} disabled={pending} />
++    <Command mode="none" value={query} onValueChange={setQuery} aria-label={gt("Choose a chat")}>
++      <CommandInput placeholder={gt("Search chats or projects...")} disabled={pending} />
+@@ -53 +53 @@
+-            <T>No active threads found.</T>
++            <T>No active chats found.</T>
+@@ -67 +67 @@
+-                  <span className="truncate">{thread.title || gt("Untitled thread")}</span>
++                  <span className="truncate">{thread.title || gt("Untitled chat")}</span>

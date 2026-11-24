@@ -1,5 +1,17 @@
 --- a/web/components/chat/useThreadLifecycle.tsx
 +++ b/web/components/chat/useThreadLifecycle.tsx
+@@ -268 +268 @@
+-          title: m(msg("Failed to un-settle thread")),
++          title: m(msg("Failed to un-settle chat")),
+@@ -313 +313 @@
+-          title: m(msg("Failed to wake thread")),
++          title: m(msg("Failed to wake chat")),
+@@ -405 +405 @@
+-              title: m(msg("Checkout switched, but the thread could not be updated")),
++              title: m(msg("Checkout switched, but the chat could not be updated")),
+@@ -504 +504 @@
+-      toastManager.add({ type: "info", title: m(msg("This thread is no longer available")) });
++      toastManager.add({ type: "info", title: m(msg("This chat is no longer available")) });
 @@ -692,12 +691,0 @@
 -    "thread.settle": () => {
 -      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
@@ -13,6 +25,9 @@
 -        toastThreadActionFailure(m(msg("Failed to settle thread"))),
 -      );
 -    },
+@@ -718 +706 @@
+-          activeThreadPinned ? m(msg("Failed to unpin thread")) : m(msg("Failed to pin thread")),
++          activeThreadPinned ? m(msg("Failed to unpin chat")) : m(msg("Failed to pin chat")),
 @@ -721,12 +708,0 @@
 -    },
 -    "thread.regenerateTitle": () => {

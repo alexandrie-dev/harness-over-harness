@@ -146,13 +146,13 @@ export function buildThreadActionMenuItems(
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
-      ? [{ id: "find" as const, label: resolve(msg("Find in thread")), icon: "text-search" }]
+      ? [{ id: "find" as const, label: resolve(msg("Find in chat")), icon: "text-search" }]
       : []),
     ...(state.branch
       ? [
           {
             id: "new-thread-on-branch" as const,
-            label: resolve(msg("New thread on {branch}", { branch: state.branch })),
+            label: resolve(msg("New chat on {branch}", { branch: state.branch })),
             icon: "message-square-plus",
           },
         ]
@@ -160,8 +160,8 @@ export function buildThreadActionMenuItems(
     ...(state.supports.pinning
       ? [
           state.isPinned
-            ? { id: "unpin" as const, label: resolve(msg("Unpin thread")), icon: "pin-off" }
-            : { id: "pin" as const, label: resolve(msg("Pin thread")), icon: "pin" },
+            ? { id: "unpin" as const, label: resolve(msg("Unpin chat")), icon: "pin-off" }
+            : { id: "pin" as const, label: resolve(msg("Pin chat")), icon: "pin" },
         ]
       : []),
     ...(state.supports.settlement
@@ -169,16 +169,16 @@ export function buildThreadActionMenuItems(
           state.isSettled
             ? {
                 id: "unsettle" as const,
-                label: resolve(msg("Un-settle thread")),
+                label: resolve(msg("Un-settle chat")),
                 icon: "circle-check",
               }
-            : { id: "settle" as const, label: resolve(msg("Settle thread")), icon: "circle-check" },
+            : { id: "settle" as const, label: resolve(msg("Settle chat")), icon: "circle-check" },
         ]
       : []),
     ...(state.supports.snooze
       ? [
           state.isSnoozed
-            ? { id: "unsnooze" as const, label: resolve(msg("Wake thread")), icon: "clock" }
+            ? { id: "unsnooze" as const, label: resolve(msg("Wake chat")), icon: "clock" }
             : {
                 id: "snooze" as const,
                 label: resolve(msg("Snooze", { $context: "verb, snooze the thread" })),
@@ -199,7 +199,7 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    { id: "rename", label: resolve(msg("Rename thread")), icon: "pencil", separatorBefore: true },
+    { id: "rename", label: resolve(msg("Rename chat")), icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [
           {
@@ -279,16 +279,16 @@ export function buildThreadActionMenuItems(
           : []),
         {
           id: "copy-thread",
-          label: resolve(msg("Thread", { $context: "copy the thread contents" })),
+          label: resolve(msg("Chat", { $context: "copy the thread contents" })),
           icon: "message-square",
         },
-        { id: "copy-thread-id", label: resolve(msg("Thread ID")), icon: "hash" },
+        { id: "copy-thread-id", label: resolve(msg("Chat ID")), icon: "hash" },
       ],
     },
     ...(state.hasProject ? [{ id: "project-settings" as const, label: resolve(msg("Project settings")), icon: "settings" }] : []),
     {
       id: "archive",
-      label: resolve(msg("Archive thread")),
+      label: resolve(msg("Archive chat")),
       icon: "archive",
       disabled: state.isRunning,
       separatorBefore: true,

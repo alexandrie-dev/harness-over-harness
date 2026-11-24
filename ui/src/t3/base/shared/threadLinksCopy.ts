@@ -16,8 +16,8 @@ export function unknownThreadLinkLabel(
   resolve: MFunctionType = mFallback,
 ): string {
   return link.environmentId === null || link.environmentId === messageEnvironmentId
-    ? resolve(msg("Thread no longer available"))
-    : resolve(msg("Thread on another machine"));
+    ? resolve(msg("Chat no longer available"))
+    : resolve(msg("Chat on another machine"));
 }
 
 /**

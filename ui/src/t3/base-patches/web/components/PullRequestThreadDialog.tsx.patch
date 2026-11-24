@@ -1,0 +1,11 @@
+--- a/web/components/PullRequestThreadDialog.tsx
++++ b/web/components/PullRequestThreadDialog.tsx
+@@ -166 +166 @@
+-              "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
++              "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} chat.",
+@@ -205 +205 @@
+-            "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
++            "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} chat.",
+@@ -237 +237 @@
+-              "Resolve a {provider} {term, select, mr {merge request} cr {change request} other {pull request}}, then create the draft thread in the main repo or in a dedicated worktree.",
++              "Resolve a {provider} {term, select, mr {merge request} cr {change request} other {pull request}}, then create the draft chat in the main repo or in a dedicated worktree.",

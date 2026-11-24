@@ -38,7 +38,7 @@ type HistoryPageResult = AtomCommandSuccess<
 >;
 
 const MAX_CITATION_PAGES = 20;
-const HISTORY_COMMAND_LABEL = "load cited thread history";
+const HISTORY_COMMAND_LABEL = "load cited chat history";
 const HISTORY_LOAD_ERROR = "Could not load history.";
 
 const COULD_NOT_LOAD = {

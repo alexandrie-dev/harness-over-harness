@@ -110,7 +110,7 @@ export function secretRequestDisplay(
         ? PENDING_DISPLAY
         : {
             kind: "pending-elsewhere",
-            label: resolve(msg("Waiting for an answer in the original thread")),
+            label: resolve(msg("Waiting for an answer in the original chat")),
           };
     case "saved":
       return {

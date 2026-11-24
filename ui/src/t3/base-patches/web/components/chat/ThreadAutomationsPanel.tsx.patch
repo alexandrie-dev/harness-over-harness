@@ -1,0 +1,8 @@
+--- a/web/components/chat/ThreadAutomationsPanel.tsx
++++ b/web/components/chat/ThreadAutomationsPanel.tsx
+@@ -85 +85 @@
+-    label: "thread automation toggle",
++    label: "chat automation toggle",
+@@ -88 +88 @@
+-    label: "thread automation run now",
++    label: "chat automation run now",

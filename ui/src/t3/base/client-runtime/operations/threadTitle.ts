@@ -75,5 +75,5 @@ export function deriveThreadTitleSeed(
     }
   }
 
-  return resolve(msg("New thread"));
+  return resolve(msg("New chat"));
 }

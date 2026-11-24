@@ -1,0 +1,7 @@
+--- a/web/hooks/useSidebarProjectGroups.ts
++++ b/web/hooks/useSidebarProjectGroups.ts
+@@ -40 +40,3 @@
+-      projects: sortOrder === "manual" ? orderedProjects : projects,
++      projects: (sortOrder === "manual" ? orderedProjects : projects).filter((project) =>
++        project.id !== "hoh-project" || threads.some((thread) =>
++          thread.projectId === project.id && thread.environmentId === project.environmentId && thread.latestUserMessageAt != null)),

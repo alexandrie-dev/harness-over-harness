@@ -1828,7 +1828,7 @@ export default function ThreadTerminalDrawer({
         {resizeHandle}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
           <p>
-            <T>No terminal sessions for this thread yet.</T>
+            <T>No terminal sessions for this chat yet.</T>
           </p>
           <Button
             size="xs"

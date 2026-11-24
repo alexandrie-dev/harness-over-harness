@@ -55,8 +55,8 @@ export function SidebarThreadHeader({
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
   const newThreadLabel = newThreadShortcutLabel
-    ? gt("New thread ({shortcut})", { shortcut: newThreadShortcutLabel })
-    : gt("New thread");
+    ? gt("New chat ({shortcut})", { shortcut: newThreadShortcutLabel })
+    : gt("New chat");
 
   return (
     <div className="flex items-center gap-1">
@@ -70,7 +70,7 @@ export function SidebarThreadHeader({
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           onKeyDown={onSearchKeyDown}
           placeholder={gt("Search", { $context: "search field placeholder" })}
-          aria-label={gt("Search threads")}
+          aria-label={gt("Search chats")}
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={resultsVisible}
@@ -88,7 +88,7 @@ export function SidebarThreadHeader({
             size="icon-micro"
             variant="ghost-muted"
             className="shrink-0"
-            aria-label={gt("Clear thread search")}
+            aria-label={gt("Clear chat search")}
             onClick={() => {
               onClearSearch();
               searchInputRef.current?.focus();
@@ -108,17 +108,17 @@ export function SidebarThreadHeader({
           </>
         ) : null}
         <SidebarHeaderIconButton
-          label={gt("New thread")}
+          label={gt("New chat")}
           tooltip={
             showNewThreadInProjectHint ? (
               <span className="flex flex-col gap-0.5">
                 <span>{newThreadLabel}</span>
                 <span className="text-muted-foreground">
                   {newThreadInProjectShortcutLabel
-                    ? gt("New thread in current project: Shift+click ({shortcut})", {
+                    ? gt("New chat in current project: Shift+click ({shortcut})", {
                         shortcut: newThreadInProjectShortcutLabel,
                       })
-                    : gt("New thread in current project: Shift+click")}
+                    : gt("New chat in current project: Shift+click")}
                 </span>
               </span>
             ) : (

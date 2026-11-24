@@ -39,7 +39,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
       const isolated = sources >= 0 && flags[sources + 1] === '';
       const running = !!access.session?.running;
       const selectedSources = sources >= 0 ? flags[sources + 1]?.split(',') ?? [] : [];
-      const applied = running && (executor === 'codex' ? flags.includes('project-trust=trusted') : selectedSources.includes('project') && selectedSources.includes('local'));
+      const applied = running && (executor === 'codex' ? flags.includes('project-trust=trusted') : selectedSources.includes('user') && selectedSources.includes('project') && selectedSources.includes('local'));
       if (result.changed && current === generation.current) setChangedNotice(true);
       update({ ...result, trusted: isolated ? false : result.trusted, isolated, running, applied });
     } catch { update(null); }

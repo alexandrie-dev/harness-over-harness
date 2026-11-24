@@ -1,0 +1,5 @@
+--- a/web/components/BranchToolbarBranchSelector.tsx
++++ b/web/components/BranchToolbarBranchSelector.tsx
+@@ -437 +437 @@
+-          description: gt("This connection cannot change the thread's branch."),
++          description: gt("This connection cannot change the chat's branch."),

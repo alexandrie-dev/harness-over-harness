@@ -557,7 +557,7 @@ function toolGroupActionLabel(
       );
     case "thread-create":
       return resolve(
-        msg("{count, plural, one {Created {count} thread} other {Created {count} threads}}", {
+        msg("{count, plural, one {Created {count} chat} other {Created {count} chats}}", {
           count,
         }),
       );

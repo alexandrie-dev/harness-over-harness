@@ -563,7 +563,7 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: m(msg("Attached thread is on another machine")),
+          title: m(msg("Attached chat is on another machine")),
           description:
             owner === null
               ? m(
@@ -753,7 +753,7 @@ export function useComposerSend(input: ComposerSendInput) {
           type: "warning",
           title: m(msg("Choose models and a base branch")),
           description: m(
-            msg("Multiple models need a new thread in a Git project. Each gets its own worktree."),
+            msg("Multiple models need a new chat in a Git project. Each gets its own worktree."),
           ),
         }),
       );
@@ -855,7 +855,7 @@ export function useComposerSend(input: ComposerSendInput) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
-            title: m(msg("Start a Codex thread first")),
+            title: m(msg("Start a Codex chat first")),
             description: m(msg("Send a message before you submit feedback.")),
           }),
         );
@@ -1105,7 +1105,7 @@ export function useComposerSend(input: ComposerSendInput) {
       setThreadError(
         threadIdForSend,
         attachmentCapabilitiesBeforeDispatch.fileBlockReason ??
-          m(msg("This connection cannot change threads.")),
+          m(msg("This connection cannot change chats.")),
       );
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
@@ -1673,7 +1673,7 @@ export function useComposerSend(input: ComposerSendInput) {
               title:
                 submissionIntent === "background"
                   ? m(msg("Background task failed"))
-                  : m(msg("Could not start thread")),
+                  : m(msg("Could not start chat")),
               description: thrownErrorMessage(error, m) ?? m(msg("Failed to send message.")),
               actionProps: {
                 children: m(msg("Open draft")),

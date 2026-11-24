@@ -120,7 +120,7 @@ export function threadReadLabel(
     status,
     text: resolve(
       msg(
-        "{status, select, inProgress {Reading thread “{title}”} completed {Read thread “{title}”} failed {Failed to read thread “{title}”} declined {Declined to read thread “{title}”} stopped {Stopped reading thread “{title}”} other {Reading thread “{title}”}}",
+        "{status, select, inProgress {Reading chat “{title}”} completed {Read chat “{title}”} failed {Failed to read chat “{title}”} declined {Declined to read chat “{title}”} stopped {Stopped reading chat “{title}”} other {Reading chat “{title}”}}",
         { status, title: target.title },
       ),
     ),
@@ -153,31 +153,31 @@ export function ThreadReadLabel({
     <span className="flex min-w-0">
       {label.status === "completed" ? (
         <T>
-          <span className="shrink-0">Read thread “</span>
+          <span className="shrink-0">Read chat “</span>
           <Var>{title}</Var>
           <span className="shrink-0">”</span>
         </T>
       ) : label.status === "failed" ? (
         <T>
-          <span className="shrink-0">Failed to read thread “</span>
+          <span className="shrink-0">Failed to read chat “</span>
           <Var>{title}</Var>
           <span className="shrink-0">”</span>
         </T>
       ) : label.status === "declined" ? (
         <T>
-          <span className="shrink-0">Declined to read thread “</span>
+          <span className="shrink-0">Declined to read chat “</span>
           <Var>{title}</Var>
           <span className="shrink-0">”</span>
         </T>
       ) : label.status === "stopped" ? (
         <T>
-          <span className="shrink-0">Stopped reading thread “</span>
+          <span className="shrink-0">Stopped reading chat “</span>
           <Var>{title}</Var>
           <span className="shrink-0">”</span>
         </T>
       ) : (
         <T>
-          <span className="shrink-0">Reading thread “</span>
+          <span className="shrink-0">Reading chat “</span>
           <Var>{title}</Var>
           <span className="shrink-0">”</span>
         </T>
@@ -596,7 +596,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               aria-label={
                 createdThread.title != null
                   ? gt("Open {title}", { title: createdThread.title })
-                  : gt("Open created thread")
+                  : gt("Open created chat")
               }
               onClick={(event) => {
                 event.stopPropagation();
@@ -609,7 +609,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           ) : null}
           {notifiedSubagentThreadId ? (
             <InlineButton
-              aria-label={gt("Open subagent thread")}
+              aria-label={gt("Open subagent chat")}
               onClick={(event) => {
                 event.stopPropagation();
                 ctx.onOpenThread(notifiedSubagentThreadId);

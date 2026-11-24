@@ -31,14 +31,14 @@ const ARCHIVE_ACTIONS = [
     action: "unarchive",
     label: msg("Unarchive"),
     threadLabel: msg("Unarchive {title}"),
-    failureTitle: msg("Failed to unarchive thread"),
+    failureTitle: msg("Failed to unarchive chat"),
     Icon: ArchiveX,
   },
   {
     action: "delete",
     label: msg("Delete · Coming Soon"),
     threadLabel: msg("Delete {title} · Coming Soon"),
-    failureTitle: msg("Failed to delete thread"),
+    failureTitle: msg("Failed to delete chat"),
     Icon: Trash2Icon,
   },
 ] as const;
@@ -211,7 +211,7 @@ export function ArchivedThreadsPanel() {
       if (clicked === "unarchive" || clicked === "delete")
         await handleThreadAction(clicked, thread);
     });
-    reportFailure(result, gt("Archived thread action failed"));
+    reportFailure(result, gt("Archived chat action failed"));
   };
 
   return (
@@ -230,16 +230,16 @@ export function ArchivedThreadsPanel() {
                   <ArchiveIcon className="size-3.5 text-muted-foreground" />
                 )}
                 {isLoadingArchive
-                  ? gt("Loading archived threads")
+                  ? gt("Loading archived chats")
                   : archiveError
-                    ? gt("Could not load archived threads")
-                    : gt("No archived threads")}
+                    ? gt("Could not load archived chats")
+                    : gt("No archived chats")}
               </span>
             }
             description={
               isLoadingArchive
                 ? gt("Checking connected environments.")
-                : (archiveError ?? gt("Archived threads will appear here."))
+                : (archiveError ?? gt("Archived chats will appear here."))
             }
           />
         </SettingsSection>

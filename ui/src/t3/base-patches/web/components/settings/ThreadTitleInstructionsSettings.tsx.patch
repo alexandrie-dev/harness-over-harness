@@ -1,0 +1,11 @@
+--- a/web/components/settings/ThreadTitleInstructionsSettings.tsx
++++ b/web/components/settings/ThreadTitleInstructionsSettings.tsx
+@@ -29 +29 @@
+-      description={gt("Appended to the prompt for new and regenerated thread titles.")}
++      description={gt("Appended to the prompt for new and regenerated chat titles.")}
+@@ -33 +33 @@
+-            ariaLabel={gt("Reset thread title instructions to default")}
++            ariaLabel={gt("Reset chat title instructions to default")}
+@@ -42 +42 @@
+-          aria-label={gt("Thread title instructions")}
++          aria-label={gt("Chat title instructions")}

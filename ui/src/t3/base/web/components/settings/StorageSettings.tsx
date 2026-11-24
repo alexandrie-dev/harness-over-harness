@@ -338,7 +338,7 @@ function CleanupResults({
                   {entry.threadTitle && (
                     <>
                       <span>
-                        <T>Thread</T>
+                        <T>Chat</T>
                       </span>
                       <span>{entry.threadTitle}</span>
                     </>
@@ -711,16 +711,16 @@ export function WorktreeCleanupSection() {
         {(!isProjectScope || (!mixedModes && mode === "custom")) && (
           <>
             <SettingsRow
-              title={gt("Delete worktrees with deleted threads")}
+              title={gt("Delete worktrees with deleted chats")}
               status={ruleStatus("worktreeOnDelete")}
               managedPaths={lockablePath("worktreeOnDelete")}
               description={gt(
-                "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.",
+                "Remove unused worktrees when active or archived chats are deleted. Worktrees with local changes are kept.",
               )}
               serverScoped={!isProjectScope}
               control={
                 <Switch
-                  aria-label={gt("Delete worktrees with deleted threads")}
+                  aria-label={gt("Delete worktrees with deleted chats")}
                   checked={settings.worktreeOnDelete}
                   onCheckedChange={(worktreeOnDelete) => updateWorktree({ worktreeOnDelete })}
                 />
@@ -747,7 +747,7 @@ export function WorktreeCleanupSection() {
               status={ruleStatus("worktreeAfterDays")}
               managedPaths={lockablePath("worktreeAfterDays")}
               description={gt(
-                "Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept.",
+                "Remove worktrees after their chats have been inactive for this many days. Branches and chat history are kept.",
               )}
               serverScoped={!isProjectScope}
               control={
@@ -782,7 +782,7 @@ export function WorktreeCleanupSection() {
                       .filter(Boolean)
                       .join(". ")}
                     description={gt(
-                      "Remove worktrees this many days after their thread settles. Set 0 days to remove them at the next cleanup. Branches and thread history are kept.",
+                      "Remove worktrees this many days after their chat settles. Set 0 days to remove them at the next cleanup. Branches and chat history are kept.",
                     )}
                     serverScoped={!isProjectScope}
                     control={

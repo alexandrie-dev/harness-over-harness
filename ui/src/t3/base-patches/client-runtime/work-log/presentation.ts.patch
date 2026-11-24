@@ -1,0 +1,5 @@
+--- a/client-runtime/work-log/presentation.ts
++++ b/client-runtime/work-log/presentation.ts
+@@ -560 +560 @@
+-        msg("{count, plural, one {Created {count} thread} other {Created {count} threads}}", {
++        msg("{count, plural, one {Created {count} chat} other {Created {count} chats}}", {

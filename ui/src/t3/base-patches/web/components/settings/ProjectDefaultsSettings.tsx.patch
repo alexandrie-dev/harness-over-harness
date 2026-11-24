@@ -1,0 +1,26 @@
+--- a/web/components/settings/ProjectDefaultsSettings.tsx
++++ b/web/components/settings/ProjectDefaultsSettings.tsx
+@@ -148 +148 @@
+-          ? gt("Model for new threads in this project.")
++          ? gt("Model for new chats in this project.")
+@@ -150,2 +150,2 @@
+-            ? gt("Default model for new threads, selected automatically. Projects can override it.")
+-            : gt("Default model for new threads. Projects can override it.")
++            ? gt("Default model for new chats, selected automatically. Projects can override it.")
++            : gt("Default model for new chats. Projects can override it.")
+@@ -233,2 +233,2 @@
+-          ? gt("Where new threads in this project start.")
+-          : gt("Where new threads start. Projects and their t3.json can override it.")
++          ? gt("Where new chats in this project start.")
++          : gt("Where new chats start. Projects and their t3.json can override it.")
+@@ -278 +278 @@
+-      description={gt("Used for new threads when the default model's provider is out of usage.")}
++      description={gt("Used for new chats when the default model's provider is out of usage.")}
+@@ -356 +356 @@
+-      title={category === "source-control" ? gt("Repositories") : gt("New threads")}
++      title={category === "source-control" ? gt("Repositories") : gt("New chats")}
+@@ -375,2 +375,2 @@
+-                ? gt("Permissions for new threads in this project.")
+-                : gt("Default permissions for new threads. Projects can override them.")
++                ? gt("Permissions for new chats in this project.")
++                : gt("Default permissions for new chats. Projects can override them.")

@@ -131,7 +131,8 @@ import {
 } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
-import { useProjectPin } from "../hooks/useProjectGroupUpdate";
+import { useProjectPin, useProjectGroupUpdate } from "../hooks/useProjectGroupUpdate";
+import { Dialog, DialogPopup, DialogTitle, DialogFooter } from "./ui/dialog";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
@@ -880,8 +881,8 @@ function checkThreadOperations(
   if (canOperateThreads(threads)) return true;
   toastManager.add({
     type: "error",
-    title: m(msg("Thread action unavailable")),
-    description: m(msg("This connection cannot change one or more selected threads.")),
+    title: m(msg("Chat action unavailable")),
+    description: m(msg("This connection cannot change one or more selected chats.")),
   });
   return false;
 }
@@ -909,6 +910,9 @@ function readRouteThreadKey(router: AnyRouter): string | null {
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const gt = useGT();
   const messages = useMessages();
+  const [renameProject, setRenameProject] = useState<SidebarProjectSnapshot | null>(null);
+  const [renameProjectTitle, setRenameProjectTitle] = useState("");
+  const { updateProjectGroup } = useProjectGroupUpdate();
   const {
     projects,
     serverConfigs,
@@ -982,7 +986,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: gt("Failed to copy thread ID"),
+          title: gt("Failed to copy chat ID"),
           description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         }),
       );
@@ -1272,7 +1276,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
-              { id: "new-thread", label: gt("New thread") },
+              { id: "new-thread", label: gt("New chat") },
+              ...(!group.isScratch ? [{ id: "rename-project", label: gt("Rename project") }] : []),
               { id: "copy-path", label: gt("Copy path") },
               ...(canPinProject(group)
                 ? [
@@ -1291,6 +1296,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         switch (clicked.value) {
           case "new-thread":
             startThreadInProjectFolder(group);
+            return;
+          case "rename-project":
+            setRenameProject(group);
+            setRenameProjectTitle(group.displayName);
             return;
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
@@ -1552,7 +1561,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const trimmed = title.trim();
       setRenamingThreadRef(null);
       if (trimmed.length === 0) {
-        toastManager.add({ type: "warning", title: gt("Thread title cannot be empty") });
+        toastManager.add({ type: "warning", title: gt("Chat title cannot be empty") });
         return;
       }
       if (trimmed === originalTitle) return;
@@ -1565,7 +1574,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: gt("Failed to rename thread"),
+            title: gt("Failed to rename chat"),
             description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
@@ -1637,7 +1646,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: gt("Failed to settle thread"),
+              title: gt("Failed to settle chat"),
               description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             }),
           );
@@ -1675,7 +1684,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: gt("Failed to un-settle thread"),
+            title: gt("Failed to un-settle chat"),
             description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
@@ -1690,7 +1699,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: gt("Failed to wake thread"),
+            title: gt("Failed to wake chat"),
             description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
@@ -1790,7 +1799,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     restoreDragScroll();
     const threads = contextDragThreads();
     const threadRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
-    const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || gt("Thread");
+    const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || gt("Chat");
     moveThreadContextDragGhost(point, { title, count: threads.length });
     return true;
   };
@@ -1893,7 +1902,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: gt("Failed to pin thread"),
+            title: gt("Failed to pin chat"),
             description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
@@ -1908,7 +1917,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: gt("Failed to unpin thread"),
+            title: gt("Failed to unpin chat"),
             description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
@@ -2187,7 +2196,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         case "settle": {
           settlingThreadKeysRef.current.add(activeKey);
           const navigateAfterSettle = planForwardNavigation(activeKey);
-          const settled = await run(settleThread(threadRef), gt("Failed to settle thread")).finally(
+          const settled = await run(settleThread(threadRef), gt("Failed to settle chat")).finally(
             () => settlingThreadKeysRef.current.delete(activeKey),
           );
           if (
@@ -2204,21 +2213,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         case "move-active":
-          if (plan.unpin && !(await run(unpinThread(threadRef), gt("Failed to unpin thread"))))
+          if (plan.unpin && !(await run(unpinThread(threadRef), gt("Failed to unpin chat"))))
             return;
           if (
             plan.unsettle &&
-            !(await run(unsettleThread(threadRef), gt("Failed to un-settle thread")))
+            !(await run(unsettleThread(threadRef), gt("Failed to un-settle chat")))
           )
             return;
-          if (plan.unsnooze && !(await run(unsnoozeThread(threadRef), gt("Failed to wake thread"))))
+          if (plan.unsnooze && !(await run(unsnoozeThread(threadRef), gt("Failed to wake chat"))))
             return;
           break;
         case "pin":
           if (
             !(await run(
               pinThread(threadRef, plan.orderKey === undefined ? {} : { orderKey: plan.orderKey }),
-              gt("Failed to pin thread"),
+              gt("Failed to pin chat"),
             ))
           )
             return;
@@ -2237,8 +2246,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               assignment.orderKey,
             ),
             plan.kind === "move-active"
-              ? gt("Failed to reorder active threads")
-              : gt("Failed to reorder pinned threads"),
+              ? gt("Failed to reorder active chats")
+              : gt("Failed to reorder pinned chats"),
           ))
         )
           return;
@@ -2288,7 +2297,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: gt("Failed to snooze thread"),
+              title: gt("Failed to snooze chat"),
               description: thrownErrorMessage(outcome.error, m) ?? gt("An error occurred."),
             }),
           );
@@ -2450,10 +2459,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 title:
                   snoozedThreadRefs.length > 0
                     ? gt(
-                        "{count, plural, one {Failed to snooze {count} thread} other {Failed to snooze {count} threads}}",
+                        "{count, plural, one {Failed to snooze {count} chat} other {Failed to snooze {count} chats}}",
                         { count: failures.length },
                       )
-                    : gt("Failed to snooze threads"),
+                    : gt("Failed to snooze chats"),
                 description: thrownErrorMessage(firstError, m) ?? gt("An error occurred."),
               }),
             );
@@ -2505,10 +2514,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const confirmed = await settlePromise(() =>
           api.dialogs.confirm(
             [
-              gt("{count, plural, one {Delete {count} thread?} other {Delete {count} threads?}}", {
+              gt("{count, plural, one {Delete {count} chat?} other {Delete {count} chats?}}", {
                 count,
               }),
-              gt("This permanently clears conversation history for these threads."),
+              gt("This permanently clears conversation history for these chats."),
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -2539,7 +2548,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: gt("Failed to delete threads"),
+            title: gt("Failed to delete chats"),
             description: thrownErrorMessage(firstError, m) ?? gt("An error occurred."),
           }),
         );
@@ -2733,7 +2742,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: gt("Could not create thread"),
+                  title: gt("Could not create chat"),
                   description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                 }),
               );
@@ -2768,7 +2777,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: gt("Could not turn thread into a project"),
+                  title: gt("Could not turn chat into a project"),
                   description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                 }),
               );
@@ -2819,7 +2828,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 stackedThreadToast({
                   type: "error",
                   title: gt("Path unavailable"),
-                  description: gt("This thread does not have a workspace path to copy."),
+                  description: gt("This chat does not have a workspace path to copy."),
                 }),
               );
               return;
@@ -2842,7 +2851,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "archive": {
             if (confirmThreadArchive) {
               const confirmed = await settlePromise(() =>
-                api.dialogs.confirm(gt('Archive thread "{title}"?', { title: thread.title })),
+                api.dialogs.confirm(gt('Archive chat "{title}"?', { title: thread.title })),
               );
               if (confirmed._tag === "Failure" || !confirmed.value) return;
             }
@@ -2858,8 +2867,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 stackedThreadToast({
                   type: "error",
                   title: didArchive
-                    ? gt("Thread archived, but navigation failed")
-                    : gt("Failed to archive thread"),
+                    ? gt("Chat archived, but navigation failed")
+                    : gt("Failed to archive chat"),
                   description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                 }),
               );
@@ -3007,12 +3016,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       <SidebarHeaderIconButton
                         label={
                           scopedProjectGroups.length > 0
-                            ? gt("Filter threads by project: {projects}", {
+                            ? gt("Filter chats by project: {projects}", {
                                 projects: scopedProjectGroups
                                   .map((project) => project.displayName)
                                   .join(", "),
                               })
-                            : gt("Filter threads by project")
+                            : gt("Filter chats by project")
                         }
                       />
                     }
@@ -3221,7 +3230,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     ref={searchResultsListRef}
                     id="sidebar-thread-search-results"
                     role="listbox"
-                    aria-label={gt("Thread search results")}
+                    aria-label={gt("Chat search results")}
                     className="flex flex-col gap-px"
                   >
                     {threadSearchResults.map((thread, index) => {
@@ -3277,10 +3286,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
                 {threadSearch.isPending
-                  ? gt("Searching thread messages…")
+                  ? gt("Searching chat messages…")
                   : threadSearch.failed
-                    ? gt("Couldn't search thread messages")
-                    : gt("No threads found")}
+                    ? gt("Couldn't search chat messages")
+                    : gt("No chats found")}
               </p>
             )
           ) : null}
@@ -3314,13 +3323,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   <span>
                     {settledCount > 0
                       ? scopedProjectGroups.length > 1
-                        ? gt("No active threads in these projects")
-                        : gt("No active threads in {project}", {
+                        ? gt("No active chats in these projects")
+                        : gt("No active chats in {project}", {
                             project: scopedProjectGroups[0]!.displayName,
                           })
                       : scopedProjectGroups.length > 1
-                        ? gt("No threads in these projects yet")
-                        : gt("No threads in {project} yet", {
+                        ? gt("No chats in these projects yet")
+                        : gt("No chats in {project} yet", {
                             project: scopedProjectGroups[0]!.displayName,
                           })}
                   </span>
@@ -3333,7 +3342,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   </button>
                 </>
               ) : (
-                <T>No threads yet</T>
+                <T>No chats yet</T>
               )}
             </div>
           ) : null}
@@ -3666,7 +3675,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           {olderSettledShelf.loading
                             ? gt("Loading")
                             : olderSettledShelf.failed
-                              ? gt("Could not load older threads. Retry")
+                              ? gt("Could not load older chats. Retry")
                               : gt(
                                   "{count, plural, one {Show {count} more} other {Show {count} more}}",
                                   {
@@ -3684,6 +3693,26 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         </SidebarGroup>
       </SidebarContent>
       <SidebarChromeFooter />
+      <Dialog open={renameProject !== null} onOpenChange={(open) => { if (!open) setRenameProject(null); }}>
+        <DialogPopup className="max-w-md">
+          <DialogTitle>{gt("Rename project")}</DialogTitle>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            const title = renameProjectTitle.trim();
+            if (!renameProject || !title) return;
+            void updateProjectGroup(renameProject.memberProjects, { title }, gt("Failed to rename project"))
+              .then((result) => { if (result._tag === "Success") setRenameProject(null); });
+          }}>
+            <input autoFocus aria-label={gt("Project name")} value={renameProjectTitle}
+              onChange={(event) => setRenameProjectTitle(event.currentTarget.value)}
+              className="mt-4 w-full rounded border bg-background px-3 py-2" />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRenameProject(null)}>{gt("Cancel")}</Button>
+              <Button type="submit" disabled={!renameProjectTitle.trim()}>{gt("Save")}</Button>
+            </DialogFooter>
+          </form>
+        </DialogPopup>
+      </Dialog>
     </SidebarFolderDrop>
   );
 }

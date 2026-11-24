@@ -73,8 +73,8 @@ export function matchComposerThreadItems(
         label: shell.title,
         description:
           machine === undefined
-            ? resolve(msg("Thread", { $context: "noun, search result type" }))
-            : resolve(msg("Thread on {machine}", { machine })),
+            ? resolve(msg("Chat", { $context: "noun, search result type" }))
+            : resolve(msg("Chat on {machine}", { machine })),
       };
     });
 }

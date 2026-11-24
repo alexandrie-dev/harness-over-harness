@@ -59,7 +59,7 @@ export function LinkAccessPicker({
         {m(selected.description)}{" "}
         <T>
           An agent never gets more access there than its own mode here. Below full access, it can
-          change only threads this link started, not that machine's own threads, projects or
+          change only chats this link started, not that machine's own chats, projects or
           settings.
         </T>
       </p>

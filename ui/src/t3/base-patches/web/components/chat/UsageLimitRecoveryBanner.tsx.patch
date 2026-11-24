@@ -1,0 +1,10 @@
+--- a/web/components/chat/UsageLimitRecoveryBanner.tsx
++++ b/web/components/chat/UsageLimitRecoveryBanner.tsx
+@@ -148,2 +148,2 @@
+-        title: m(msg("Could not snooze thread")),
+-        description: m(msg("The reset time has passed. Retry the thread manually.")),
++        title: m(msg("Could not snooze chat")),
++        description: m(msg("The reset time has passed. Retry the chat manually.")),
+@@ -168 +168 @@
+-            : m(msg("Could not snooze thread")),
++            : m(msg("Could not snooze chat")),

@@ -40,8 +40,8 @@ export function threadChipCopyTarget(
     description: record.title,
     fragment: { version: 1, source: { environmentId: threadRef.environmentId }, records: [record] },
     clipboardTarget: "thread",
-    successTitle: resolve(msg("Thread copied")),
-    failureTitle: resolve(msg("Failed to copy thread")),
+    successTitle: resolve(msg("Chat copied")),
+    failureTitle: resolve(msg("Failed to copy chat")),
   };
 }
 

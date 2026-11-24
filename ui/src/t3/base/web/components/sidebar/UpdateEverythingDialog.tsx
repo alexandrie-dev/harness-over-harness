@@ -254,16 +254,16 @@ function UpdateEverythingDialogContent({
           <p className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
             {stopped === 0
               ? gt(
-                  "{count, plural, one {{count} running thread will be interrupted and can resume after the restart.} other {{count} running threads will be interrupted and can resume after the restart.}}",
+                  "{count, plural, one {{count} running chat will be interrupted and can resume after the restart.} other {{count} running chats will be interrupted and can resume after the restart.}}",
                   { count: running },
                 )
               : continuing === 0
                 ? gt(
-                    "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
+                    "{count, plural, one {{count} running chat will be interrupted.} other {{count} running chats will be interrupted.}}",
                     { count: running },
                   )
                 : `${gt(
-                    "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
+                    "{count, plural, one {{count} running chat will be interrupted.} other {{count} running chats will be interrupted.}}",
                     { count: running },
                   )} ${gt(
                     "{count, plural, one {{count} can resume after the restart.} other {{count} can resume after the restart.}}",

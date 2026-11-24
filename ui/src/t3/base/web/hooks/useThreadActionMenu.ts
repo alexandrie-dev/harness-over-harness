@@ -112,7 +112,7 @@ export function useThreadActionMenu(input: {
     onError: (error) => failureToast(m(msg("Failed to copy branch")), error),
   });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
-    onError: (error) => failureToast(m(msg("Failed to copy thread ID")), error),
+    onError: (error) => failureToast(m(msg("Failed to copy chat ID")), error),
   });
 
   const openMenu = (position: { x: number; y: number }) => {
@@ -123,8 +123,8 @@ export function useThreadActionMenu(input: {
       const thread = readThreadShell(threadRef);
       if (!thread) {
         failureToast(
-          m(msg("Thread actions unavailable")),
-          new Error(m(msg("This thread has not loaded yet."))),
+          m(msg("Chat actions unavailable")),
+          new Error(m(msg("This chat has not loaded yet."))),
         );
         return;
       }
@@ -168,8 +168,8 @@ export function useThreadActionMenu(input: {
         !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
       ) {
         failureToast(
-          m(msg("Thread action unavailable")),
-          new Error(m(msg("This connection cannot change threads."))),
+          m(msg("Chat action unavailable")),
+          new Error(m(msg("This connection cannot change chats."))),
         );
         return;
       }
@@ -186,7 +186,7 @@ export function useThreadActionMenu(input: {
         if (!preset) return;
         const result = await snoozeThread(threadRef, preset.snoozedUntil);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          failureToast(m(msg("Failed to snooze thread")), squashAtomCommandFailure(result));
+          failureToast(m(msg("Failed to snooze chat")), squashAtomCommandFailure(result));
         }
         return;
       }
@@ -228,26 +228,26 @@ export function useThreadActionMenu(input: {
             }),
           );
           if (result._tag === "Failure") {
-            failureToast(m(msg("Could not create thread")), squashAtomCommandFailure(result));
+            failureToast(m(msg("Could not create chat")), squashAtomCommandFailure(result));
           }
           return;
         }
         case "settle":
-          await reportFailure(m(msg("Failed to settle thread")), () => settleThread(threadRef));
+          await reportFailure(m(msg("Failed to settle chat")), () => settleThread(threadRef));
           return;
         case "unsettle":
-          await reportFailure(m(msg("Failed to un-settle thread")), () =>
+          await reportFailure(m(msg("Failed to un-settle chat")), () =>
             unsettleThread(threadRef),
           );
           return;
         case "unsnooze":
-          await reportFailure(m(msg("Failed to wake thread")), () => unsnoozeThread(threadRef));
+          await reportFailure(m(msg("Failed to wake chat")), () => unsnoozeThread(threadRef));
           return;
         case "pin":
-          await reportFailure(m(msg("Failed to pin thread")), () => pinThread(threadRef));
+          await reportFailure(m(msg("Failed to pin chat")), () => pinThread(threadRef));
           return;
         case "unpin": {
-          await reportFailure(m(msg("Failed to unpin thread")), () =>
+          await reportFailure(m(msg("Failed to unpin chat")), () =>
             confirmAndUnpinThread(threadRef),
           );
           return;
@@ -288,7 +288,7 @@ export function useThreadActionMenu(input: {
             });
           } else if (!isAtomCommandInterrupted(result)) {
             failureToast(
-              m(msg("Could not turn thread into a project")),
+              m(msg("Could not turn chat into a project")),
               squashAtomCommandFailure(result),
             );
           }
@@ -301,7 +301,7 @@ export function useThreadActionMenu(input: {
               stackedThreadToast({
                 type: "error",
                 title: m(msg("Path unavailable")),
-                description: m(msg("This thread does not have a workspace path to copy.")),
+                description: m(msg("This chat does not have a workspace path to copy.")),
               }),
             );
             return;
@@ -325,7 +325,7 @@ export function useThreadActionMenu(input: {
         case "archive": {
           if (confirmThreadArchive) {
             const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(m(msg('Archive thread "{title}"?', { title: thread.title }))),
+              api.dialogs.confirm(m(msg('Archive chat "{title}"?', { title: thread.title }))),
             );
             if (confirmed._tag === "Failure" || !confirmed.value) return;
           }
@@ -338,8 +338,8 @@ export function useThreadActionMenu(input: {
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast(
               didArchive
-                ? m(msg("Thread archived, but navigation failed"))
-                : m(msg("Failed to archive thread")),
+                ? m(msg("Chat archived, but navigation failed"))
+                : m(msg("Failed to archive chat")),
               squashAtomCommandFailure(result),
             );
           }

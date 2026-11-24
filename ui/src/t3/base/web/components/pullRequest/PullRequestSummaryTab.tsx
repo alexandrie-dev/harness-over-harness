@@ -506,7 +506,7 @@ export function PullRequestSummaryTab({
 }) {
   const gt = useGT();
   const resolve = useMessages();
-  const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a thread");
+  const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a chat");
   const fixCheckLabel =
     requestedFixCheckLabel ?? gt("Fix", { $context: "verb, fix a review finding" });
   const terminology = sourceControlClients.get(detail.provider).changeRequest;

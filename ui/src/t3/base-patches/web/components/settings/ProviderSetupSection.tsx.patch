@@ -1,0 +1,5 @@
+--- a/web/components/settings/ProviderSetupSection.tsx
++++ b/web/components/settings/ProviderSetupSection.tsx
+@@ -206 +206 @@
+-        "Remove the downloaded Antigravity runtime from {environment}? Google sign-in and thread history are kept.",
++        "Remove the downloaded Antigravity runtime from {environment}? Google sign-in and chat history are kept.",

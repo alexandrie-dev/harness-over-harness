@@ -201,7 +201,7 @@ export function buildSidebarProjectSnapshots(
     return {
       ...representative,
       projectKey: group.key,
-      displayName: group.label,
+      displayName: members.some((member) => member.id === "hoh-project") ? "Chats" : group.label,
       groupedProjectCount: members.length,
       environmentPresence:
         hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",

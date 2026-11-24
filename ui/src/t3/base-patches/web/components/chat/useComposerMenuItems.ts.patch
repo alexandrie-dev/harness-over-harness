@@ -1,0 +1,5 @@
+--- a/web/components/chat/useComposerMenuItems.ts
++++ b/web/components/chat/useComposerMenuItems.ts
+@@ -260 +260 @@
+-          description: gt("Switch response model for this thread"),
++          description: gt("Switch response model for this chat"),

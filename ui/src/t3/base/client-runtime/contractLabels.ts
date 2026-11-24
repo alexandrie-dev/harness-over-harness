@@ -103,15 +103,15 @@ export function managedRuntimeModeCeilingMessage(
 ): string {
   switch (ceiling) {
     case "unknown":
-      return resolve(msg("{organization} has an unknown thread permission limit.", { organization }));
+      return resolve(msg("{organization} has an unknown chat permission limit.", { organization }));
     case "approval-required":
-      return resolve(msg("{organization} limits threads to Supervised.", { organization }));
+      return resolve(msg("{organization} limits chats to Supervised.", { organization }));
     case "auto-accept-edits":
-      return resolve(msg("{organization} limits threads to Auto-accept edits.", { organization }));
+      return resolve(msg("{organization} limits chats to Auto-accept edits.", { organization }));
     case "auto":
-      return resolve(msg("{organization} limits threads to Auto.", { organization }));
+      return resolve(msg("{organization} limits chats to Auto.", { organization }));
     case "full-access":
-      return resolve(msg("{organization} limits threads to Full access.", { organization }));
+      return resolve(msg("{organization} limits chats to Full access.", { organization }));
   }
 }
 

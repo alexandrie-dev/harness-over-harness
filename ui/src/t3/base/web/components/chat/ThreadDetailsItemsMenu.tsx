@@ -21,7 +21,7 @@ export function ThreadDetailsItemsMenuItems() {
     <>
       <MenuGroup>
         <MenuGroupLabel>
-          <T>Show in thread details</T>
+          <T>Show in chat details</T>
         </MenuGroupLabel>
         {THREAD_DETAILS_ITEMS.filter((item) => item.id === "context").map((item) => (
           <MenuCheckboxItem

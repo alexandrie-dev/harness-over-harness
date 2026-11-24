@@ -1,0 +1,5 @@
+--- a/web/components/NoProjectsHero.tsx
++++ b/web/components/NoProjectsHero.tsx
+@@ -38 +38 @@
+-                  ? gt("Add a project to start your first thread.")
++                  ? gt("Add a project to start your first chat.")

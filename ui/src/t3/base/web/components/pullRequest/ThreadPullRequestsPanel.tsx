@@ -67,7 +67,7 @@ import { changeRequestTermKind } from "./changeRequestTerm";
 
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: msg("Linked by you"),
-  created: msg("Created from this thread"),
+  created: msg("Created from this chat"),
   agent: msg("Linked by the agent"),
   stack: msg("Found in the stack"),
   "stack-dismissed": msg("Dismissed", { $context: "pull request link source" }),
@@ -380,7 +380,7 @@ function LinkRowImpl({
             ) : null}
             <MenuItem onClick={() => onUnlink(link)}>
               <PullRequestGlyph.unlink className="size-3.5" />
-              {link.source === "stack" ? gt("Dismiss from thread") : gt("Unlink from thread")}
+              {link.source === "stack" ? gt("Dismiss from chat") : gt("Unlink from chat")}
             </MenuItem>
           </MenuPopup>
         </Menu>
@@ -410,7 +410,7 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
     return (
       <PullRequestsUnavailableState
         title={gt("Linked items unavailable")}
-        error={gt("The thread's environment is not available.")}
+        error={gt("The chat's environment is not available.")}
       />
     );
   }
@@ -519,7 +519,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
         </p>
         <p className="max-w-60 text-xs text-muted-foreground">
           <T>
-            Pull requests the agent opens from this thread land here. Link one yourself from a URL
+            Pull requests the agent opens from this chat land here. Link one yourself from a URL
             or a number.
           </T>
         </p>

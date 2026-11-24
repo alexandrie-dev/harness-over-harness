@@ -45,6 +45,6 @@ export class ProviderUploadFeedbackError extends Schema.TaggedError<ProviderUplo
   },
 ) {
   override get message(): string {
-    return `Failed to upload feedback for thread ${this.threadId}.`;
+    return `Failed to upload feedback for chat ${this.threadId}.`;
   }
 }

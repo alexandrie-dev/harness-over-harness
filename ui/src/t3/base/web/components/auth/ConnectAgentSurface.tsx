@@ -41,7 +41,7 @@ export const accessConfig: Record<
 > = {
   "read-only": {
     label: msg("Read only"),
-    description: msg("Read projects and threads. Cannot start, message or change anything."),
+    description: msg("Read projects and chats. Cannot start, message or change anything."),
     icon: EyeIcon,
   },
   ...runtimeModeConfig,
@@ -271,7 +271,7 @@ export function McpConsent({
         description={
           environmentLabel ? (
             <T>
-              This agent wants to use the threads in every project on{" "}
+              This agent wants to use the chats in every project on{" "}
               <span className="font-medium text-foreground">
                 <Var>{environmentLabel}</Var>
               </span>{" "}
@@ -279,7 +279,7 @@ export function McpConsent({
             </T>
           ) : (
             <T>
-              This agent wants to use the threads in every project on{" "}
+              This agent wants to use the chats in every project on{" "}
               <span className="font-medium text-foreground">
                 <Var>{environmentLabel ?? details.environmentHost}</Var>
               </span>
@@ -386,7 +386,7 @@ export function McpConsent({
             </RadioGroup>
             <p className="text-xs text-muted-foreground">
               <T>
-                Beyond read only, it can start, message and stop threads, and none of them can run
+                Beyond read only, it can start, message and stop chats, and none of them can run
                 with more than the mode you pick.
               </T>
             </p>

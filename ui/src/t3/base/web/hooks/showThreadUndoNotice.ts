@@ -32,18 +32,18 @@ type UndoNotice = {
 export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => ({ notice: null }));
 
 const SUMMARY = {
-  Settled: msg("Settled {count, plural, one {{count} thread} other {{count} threads}}"),
-  Snoozed: msg("Snoozed {count, plural, one {{count} thread} other {{count} threads}}"),
-  Unpinned: msg("Unpinned {count, plural, one {{count} thread} other {{count} threads}}"),
-  Archived: msg("Archived {count, plural, one {{count} thread} other {{count} threads}}"),
+  Settled: msg("Settled {count, plural, one {{count} chat} other {{count} chats}}"),
+  Snoozed: msg("Snoozed {count, plural, one {{count} chat} other {{count} chats}}"),
+  Unpinned: msg("Unpinned {count, plural, one {{count} chat} other {{count} chats}}"),
+  Archived: msg("Archived {count, plural, one {{count} chat} other {{count} chats}}"),
   Discarded: msg("Discarded {count, plural, one {{count} draft} other {{count} drafts}}"),
 } satisfies Record<UndoOptions["action"], string>;
 
 const UNDONE = {
-  Settled: msg("Undid settle of {count, plural, one {{count} thread} other {{count} threads}}"),
-  Snoozed: msg("Undid snooze of {count, plural, one {{count} thread} other {{count} threads}}"),
-  Unpinned: msg("Undid unpin of {count, plural, one {{count} thread} other {{count} threads}}"),
-  Archived: msg("Undid archive of {count, plural, one {{count} thread} other {{count} threads}}"),
+  Settled: msg("Undid settle of {count, plural, one {{count} chat} other {{count} chats}}"),
+  Snoozed: msg("Undid snooze of {count, plural, one {{count} chat} other {{count} chats}}"),
+  Unpinned: msg("Undid unpin of {count, plural, one {{count} chat} other {{count} chats}}"),
+  Archived: msg("Undid archive of {count, plural, one {{count} chat} other {{count} chats}}"),
   Discarded: msg("Undid discard of {count, plural, one {{count} draft} other {{count} drafts}}"),
 } satisfies Record<UndoOptions["action"], string>;
 

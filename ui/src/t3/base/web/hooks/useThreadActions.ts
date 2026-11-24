@@ -118,7 +118,7 @@ export class ThreadSnoozeBlockedError extends Schema.TaggedError<ThreadSnoozeBlo
 ) {
   override get message(): string {
     return m(
-      msg("This thread is waiting on you. Respond to the pending request before snoozing it."),
+      msg("This chat is waiting on you. Respond to the pending request before snoozing it."),
     );
   }
 }
@@ -142,7 +142,7 @@ export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<T
   override get message(): string {
     return m(
       msg(
-        "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.",
+        "This environment's server does not support turning auto-settle off per chat yet. Update the server to use it.",
       ),
     );
   }
@@ -172,7 +172,7 @@ export class ThreadPinReorderUnsupportedError extends Schema.TaggedError<ThreadP
   override get message(): string {
     return m(
       msg(
-        "This environment's server does not support reordering pinned threads yet. Update the server to reorder pins.",
+        "This environment's server does not support reordering pinned chats yet. Update the server to reorder pins.",
       ),
     );
   }
@@ -186,7 +186,7 @@ export class ThreadActiveReorderUnsupportedError extends Schema.TaggedError<Thre
   },
 ) {
   override get message(): string {
-    return m(msg("Update this environment's server to reorder active threads."));
+    return m(msg("Update this environment's server to reorder active chats."));
   }
 }
 
@@ -204,9 +204,9 @@ async function requestThreadUnpinConfirmation(input: {
     confirm(
       [
         input.title === null
-          ? m(msg('Unpin thread "this thread"?'))
-          : m(msg('Unpin thread "{title}"?', { title: input.title })),
-        m(msg("This will move the thread out of your pinned section.")),
+          ? m(msg('Unpin chat "this chat"?'))
+          : m(msg('Unpin chat "{title}"?', { title: input.title })),
+        m(msg("This will move the chat out of your pinned section.")),
       ].join("\n"),
     ),
   );
@@ -219,7 +219,7 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: m(msg("Thread deleted, but navigation failed")),
+        title: m(msg("Chat deleted, but navigation failed")),
         description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
       }),
     );
@@ -293,7 +293,7 @@ function threadOperationFailure(target: ScopedThreadRef) {
     : AsyncResult.failure(
         Cause.fail(
           new EnvironmentAuthorizationError({
-            message: m(msg("This connection cannot change threads.")),
+            message: m(msg("This connection cannot change chats.")),
             requiredScope: AuthOrchestrationOperateScope,
           }),
         ),
@@ -587,7 +587,7 @@ export function useThreadActions() {
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
           [
-            m(msg("This thread is the only one linked to this worktree:")),
+            m(msg("This chat is the only one linked to this worktree:")),
             displayWorktreePath ?? orphanedWorktreePath,
             "",
             m(msg("Delete the worktree too?")),
@@ -803,7 +803,7 @@ export function useThreadActions() {
 
   const pinThread = async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
     const result = await sendPin(target, opts);
-    if (result._tag === "Success") announce(m(msg("Pinned 1 thread")));
+    if (result._tag === "Success") announce(m(msg("Pinned 1 chat")));
     return result;
   };
 
@@ -987,7 +987,7 @@ export function useThreadActions() {
       action: "Snoozed",
       claim: action,
       undo: () => runUndoPlan(target, ThreadUndo.planThreadUndo("snooze")),
-      failureTitle: m(msg("Failed to wake thread")),
+      failureTitle: m(msg("Failed to wake chat")),
     });
     return result;
   };
@@ -1027,9 +1027,9 @@ export function useThreadActions() {
         localApi.dialogs.confirm(
           [
             title === null
-              ? m(msg('Delete thread "this thread"?'))
-              : m(msg('Delete thread "{title}"?', { title })),
-            m(msg("This permanently clears conversation history for this thread.")),
+              ? m(msg('Delete chat "this chat"?'))
+              : m(msg('Delete chat "{title}"?', { title })),
+            m(msg("This permanently clears conversation history for this chat.")),
           ].join("\n"),
           { variant: "destructive" },
         ),

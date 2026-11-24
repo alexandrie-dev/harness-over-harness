@@ -181,12 +181,12 @@ function shouldOpenDefaultBrowserProfileFromMenuClick(pointerType: string | unde
 
 const SURFACE_DISABLED_REASONS = {
   browser: msg("Browser previews are only available in the T3 Code desktop app."),
-  terminal: msg("Terminal surfaces are only available from a project thread."),
+  terminal: msg("Terminal surfaces are only available from a project chat."),
   files: msg("Files are only available when a project is open."),
-  diff: msg("Diff is only available for server threads in Git repositories."),
-  pullRequest: msg("This thread's branch has no pull request yet."),
-  pullRequests: msg("This thread has no linked items."),
-  device: msg("Devices are only available from a thread."),
+  diff: msg("Diff is only available for server chats in Git repositories."),
+  pullRequest: msg("This chat's branch has no pull request yet."),
+  pullRequests: msg("This chat has no linked items."),
+  device: msg("Devices are only available from a chat."),
   sideChat: msg("Side chats start after the first message."),
 } as const;
 
@@ -211,7 +211,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: msg("Available for Git repositories."),
   pullRequest: msg("No pull request on this branch yet."),
   pullRequests: msg("No linked items available."),
-  device: msg("Available from a thread."),
+  device: msg("Available from a chat."),
   sideChat: msg("Available after the first message."),
 } as const;
 
@@ -411,7 +411,7 @@ function RightPanelEmptyState(props: {
       ? [
           {
             label: msg("Side chat"),
-            description: msg("Ask a side question while this thread keeps working."),
+            description: msg("Ask a side question while this chat keeps working."),
             icon: MessagesSquare,
             shortcut: "S",
             available: props.sideChatAvailable && !props.sideChatDisabledReason,

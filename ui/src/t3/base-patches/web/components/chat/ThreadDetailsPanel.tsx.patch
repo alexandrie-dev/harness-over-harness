@@ -1,18 +1,8 @@
 --- a/web/components/chat/ThreadDetailsPanel.tsx
 +++ b/web/components/chat/ThreadDetailsPanel.tsx
-@@ -45,6 +45,7 @@
-   THREAD_DETAILS_PANEL_LABEL_CLASS,
- } from "./threadDetailsPanelStyles";
- import { Menu, MenuPopup } from "../ui/menu";
+@@ -47,0 +48 @@
 +import { getHohSessionStatsSnapshot } from "../../../../../t3-entry/session-stats";
- 
- const GitActionsControl = memo(BaseGitActionsControl);
- 
-@@ -95,245 +96,201 @@
- }
- 
- export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
--  const visible = useClientSettings(resolveThreadDetailsVisibility);
+@@ -99,40 +100,13 @@
 -  const gt = useGT();
 -  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
 -  const fileScripts = useT3ProjectFileScripts(
@@ -66,7 +56,7 @@
 +    const seconds = Math.floor(value / 1_000);
 +    const minutes = Math.floor(seconds / 60);
 +    return `${minutes} мин ${seconds % 60} с`;
-   };
+@@ -139,0 +114,33 @@
 +  const total = snapshot.tokens.providerTotal ?? snapshot.tokens.conversation;
 +  const context = snapshot.context;
 +  const contextFill =
@@ -100,12 +90,7 @@
 +      </span>
 +    </ThreadDetailsControl>
 +  );
- 
-   return (
-     <ThreadDetailsCard
-       threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
-       anchor={props.anchor}
-       handle={props.handle}
+@@ -146,21 +153 @@
 -      contentKey={THREAD_DETAILS_ITEMS.filter((item) => visible[item.id])
 -        .map((item) => item.id)
 -        .join(",")}
@@ -128,7 +113,7 @@
 -        setMenuPosition({ x: event.clientX, y: event.clientY });
 -      }}
 +      contentKey={`hoh-session-stats:${snapshot.revision}`}
-     >
+@@ -168,66 +155,20 @@
 -      {(density) => {
 -        // Section flags follow the rows that will render, so no empty section steals the divider rule.
 -        const show = {
@@ -215,7 +200,7 @@
 +              )}
 +            </div>
 +          </ThreadDetailsSection>
- 
+@@ -235,6 +176,15 @@
 -              {show.branch || show.pullRequests || show.git ? (
 -                <ThreadDetailsSection
 -                  headingId="thread-details-version-control-heading"
@@ -237,7 +222,7 @@
 +                <div
 +                  key={String(label)}
 +                  className="col-span-3 grid h-6 grid-cols-subgrid items-center"
-                 >
+@@ -242,37 +192,20 @@
 -                  <div className="flex flex-col">
 -                    {show.branch ? (
 -                      <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
@@ -295,7 +280,7 @@
 +                : null}
 +            </div>
 +          </ThreadDetailsSection>
- 
+@@ -280,8 +213,25 @@
 -              {density === "full" && !props.draftId && (visible.lineage || visible.sideChats) ? (
 -                <ThreadRelationshipsPanel
 -                  environmentId={props.environmentId}
@@ -304,7 +289,7 @@
 -                  showSideChats={visible.sideChats}
 -                />
 -              ) : null}
-+          <ThreadDetailsSection headingId="thread-details-context-heading" title="Контекст">
++          {visible.context ? <ThreadDetailsSection headingId="thread-details-context-heading" title="Контекст">
 +            <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] items-center gap-x-3 px-2.5 text-xs">
 +              <span className="text-muted-foreground">Заполнено</span>
 +              <span className="relative h-[3px] rounded-full bg-muted-foreground/30 dark:bg-muted-foreground/20">
@@ -328,8 +313,8 @@
 +                  : `${number(context.usedTokens)}${context.maxTokens === undefined ? "" : ` / ${number(context.maxTokens)}`}`}
 +              </span>
 +            </div>
-+          </ThreadDetailsSection>
- 
++          </ThreadDetailsSection> : null}
+@@ -289 +239,14 @@
 -              {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
 +          <ThreadDetailsSection headingId="thread-details-subagents-heading" title="Субагенты">
 +            <div className="flex flex-col">
@@ -345,7 +330,7 @@
 +                : row("Субагенты", noData)}
 +            </div>
 +          </ThreadDetailsSection>
- 
+@@ -291,3 +254,9 @@
 -              {visible.context && props.usage.contextWindow ? (
 -                <ThreadDetailsContext usage={props.usage.contextWindow} />
 -              ) : null}
@@ -358,7 +343,7 @@
 +              )}
 +            </div>
 +          </ThreadDetailsSection>
- 
+@@ -295,18 +264,10 @@
 -              {/* Shown only when no section above has content, so an emptied card can be refilled. */}
 -              <div className="p-2 group-has-[>section>:last-child:not(:empty)]/details-items:hidden">
 -                <ThreadDetailsControl
@@ -387,9 +372,9 @@
 +                    row(job.label, status(job.status), job.kind, job.id),
 +                  )
 +                : row("Работы", noData)}
-             </div>
+@@ -313,0 +275 @@
 +          </ThreadDetailsSection>
- 
+@@ -315,22 +277,18 @@
 -            <Menu
 -              open={menuPosition !== null}
 -              onOpenChange={(open) => !open && setMenuPosition(null)}
@@ -430,6 +415,3 @@
 +          </ThreadDetailsSection>
 +        </div>
 +      )}
-     </ThreadDetailsCard>
-   );
- }

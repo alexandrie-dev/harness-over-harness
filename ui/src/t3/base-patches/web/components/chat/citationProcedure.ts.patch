@@ -1,0 +1,5 @@
+--- a/web/components/chat/citationProcedure.ts
++++ b/web/components/chat/citationProcedure.ts
+@@ -41 +41 @@
+-const HISTORY_COMMAND_LABEL = "load cited thread history";
++const HISTORY_COMMAND_LABEL = "load cited chat history";

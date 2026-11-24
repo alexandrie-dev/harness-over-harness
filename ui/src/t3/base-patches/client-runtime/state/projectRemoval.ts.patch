@@ -1,0 +1,14 @@
+--- a/client-runtime/state/projectRemoval.ts
++++ b/client-runtime/state/projectRemoval.ts
+@@ -43 +43 @@
+-              '{count, plural, one {Remove checkout "{label}" and delete its {count} thread?} other {Remove checkout "{label}" and delete its {count} threads?}}',
++              '{count, plural, one {Remove checkout "{label}" and delete its {count} chat?} other {Remove checkout "{label}" and delete its {count} chats?}}',
+@@ -49 +49 @@
+-              '{count, plural, one {Remove project "{label}" and delete its {count} thread?} other {Remove project "{label}" and delete its {count} threads?}}',
++              '{count, plural, one {Remove project "{label}" and delete its {count} chat?} other {Remove project "{label}" and delete its {count} chats?}}',
+@@ -74 +74 @@
+-              "Those threads and any archived threads are deleted from T3 Code. Provider sessions are kept.",
++              "Those chats and any archived chats are deleted from T3 Code. Provider sessions are kept.",
+@@ -80 +80 @@
+-            msg("Any archived threads are deleted from T3 Code. Provider sessions are kept."),
++            msg("Any archived chats are deleted from T3 Code. Provider sessions are kept."),

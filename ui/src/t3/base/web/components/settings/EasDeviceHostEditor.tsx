@@ -308,14 +308,14 @@ export function EasDeviceHostEditor(props: {
                   <SelectValue>
                     {(value: string) =>
                       value === FROM_THREAD_PROJECT
-                        ? gt("From the thread's project")
+                        ? gt("From the chat's project")
                         : (apps.find((app) => app.id === value)?.fullName ?? value)
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   <SelectItem value={FROM_THREAD_PROJECT}>
-                    <T>From the thread's project</T>
+                    <T>From the chat's project</T>
                   </SelectItem>
                   {draft.appId && !apps.some((app) => app.id === draft.appId) ? (
                     <SelectItem value={draft.appId}>{draft.appId}</SelectItem>
@@ -329,7 +329,7 @@ export function EasDeviceHostEditor(props: {
               </Select>
               <p className="text-xs text-muted-foreground">
                 <T>
-                  Sessions bill the project's Expo account. "From the thread's project" reads
+                  Sessions bill the project's Expo account. "From the chat's project" reads
                   extra.eas.projectId from the project's app config.
                 </T>
               </p>

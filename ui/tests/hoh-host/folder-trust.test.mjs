@@ -7,7 +7,7 @@ test('folder trust describes the running process and pending change independentl
   assert.match(off.text, /Claude and Codex.*inactive/);
   assert.equal(off.canTrust, true);
   const pending = folderTrustView({ running: true, applied: false, trusted: true, changed: false });
-  assert.match(pending.text, /inactive.*next turn/);
+  assert.match(pending.text, /will be enabled from the next message/);
   assert.equal(pending.canTrust, false);
   const changed = folderTrustView({ running: true, applied: true, trusted: false, changed: true });
   assert.match(changed.text, /active.*settings changed/);
@@ -15,9 +15,8 @@ test('folder trust describes the running process and pending change independentl
   const active = folderTrustView({ running: true, applied: true, trusted: true, changed: false });
   assert.match(active.text, /Claude and Codex.*active/);
   for (const trusted of [false, true]) {
-    const stopped = folderTrustView({ running: false, applied: true, trusted, changed: false });
-    assert.match(stopped.text, /^No process running;/);
-    assert.equal(stopped.text.includes(trusted ? 'will be active' : 'will be inactive'), true);
+    const stopped = folderTrustView({ running: false, applied: false, trusted, changed: false });
+    assert.match(stopped.text, trusted ? /enabled from the next message/ : /^No process running;.*will be inactive/);
   }
   const isolated = folderTrustView({ applied: false, trusted: false, isolated: true, changed: false });
   assert.equal(isolated.canTrust, false);

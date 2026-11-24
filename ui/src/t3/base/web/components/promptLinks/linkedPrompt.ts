@@ -43,7 +43,7 @@ export function placeLinkedPrompt(
   const id = toastManager.add({
     type: "info",
     title: m(msg("Linked prompt ready")),
-    description: m(msg("This thread already has a draft. Replace it with the linked prompt?")),
+    description: m(msg("This chat already has a draft. Replace it with the linked prompt?")),
     timeout: 0,
     actionProps: {
       children: m(msg("Replace draft")),

@@ -109,7 +109,7 @@ function CustomSnoozeDialog() {
               <T>Custom snooze</T>
             </DialogTitle>
             <DialogDescription>
-              <T>Choose when snoozed threads return to your inbox.</T>
+              <T>Choose when snoozed chats return to your inbox.</T>
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>

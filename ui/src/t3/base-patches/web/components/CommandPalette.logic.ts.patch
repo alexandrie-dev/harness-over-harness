@@ -1,0 +1,20 @@
+--- a/web/components/CommandPalette.logic.ts
++++ b/web/components/CommandPalette.logic.ts
+@@ -58 +58 @@
+-    title: thread.title || resolve(msg("Untitled thread")),
++    title: thread.title || resolve(msg("Untitled chat")),
+@@ -60 +60 @@
+-      thread.archivedAt === null ? resolve(msg("Linked thread")) : resolve(msg("Archived thread")),
++      thread.archivedAt === null ? resolve(msg("Linked chat")) : resolve(msg("Archived chat")),
+@@ -484 +484 @@
+-      descriptionParts.push(resolve(msg("Current thread")));
++      descriptionParts.push(resolve(msg("Current chat")));
+@@ -641 +641 @@
+-        label: resolve(msg("Threads")),
++        label: resolve(msg("Chats")),
+@@ -825 +825 @@
+-      label: resolve(msg("Recent Threads")),
++      label: resolve(msg("Recent Chats")),
+@@ -838 +838 @@
+-      return resolve(msg("Search commands, projects, and threads..."));
++      return resolve(msg("Search commands, projects, and chats..."));

@@ -1,0 +1,5 @@
+--- a/web/components/preview/PreviewEmptyState.tsx
++++ b/web/components/preview/PreviewEmptyState.tsx
+@@ -48 +48 @@
+-            Type a URL above, or run a dev script. Local servers this thread starts will show up
++            Type a URL above, or run a dev script. Local servers this chat starts will show up

@@ -1,0 +1,5 @@
+--- a/web/components/ThreadTerminalDrawer.tsx
++++ b/web/components/ThreadTerminalDrawer.tsx
+@@ -1831 +1831 @@
+-            <T>No terminal sessions for this thread yet.</T>
++            <T>No terminal sessions for this chat yet.</T>

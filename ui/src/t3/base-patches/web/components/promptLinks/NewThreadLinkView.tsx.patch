@@ -1,0 +1,8 @@
+--- a/web/components/promptLinks/NewThreadLinkView.tsx
++++ b/web/components/promptLinks/NewThreadLinkView.tsx
+@@ -148 +148 @@
+-      setState({ status: "failed", message: gt("T3 Code could not open a new thread.") });
++      setState({ status: "failed", message: gt("T3 Code could not open a new chat.") });
+@@ -197 +197 @@
+-        message: gt("None of your machines can start a thread without a project right now."),
++        message: gt("None of your machines can start a chat without a project right now."),

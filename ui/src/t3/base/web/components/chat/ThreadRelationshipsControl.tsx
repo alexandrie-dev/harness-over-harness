@@ -121,7 +121,7 @@ function ThreadLineageRowList(props: {
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
-        aria-label={gt("Related threads")}
+        aria-label={gt("Related chats")}
         className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
@@ -226,7 +226,7 @@ function relationshipHint(
   }
   return edge.sourceThreadId === currentThreadId
     ? resolve(msg("Open fork in this chat"))
-    : resolve(msg("Open parent thread in this chat"));
+    : resolve(msg("Open parent chat in this chat"));
 }
 
 function relationshipThreadTitle(input: {
@@ -350,7 +350,7 @@ function RemoteSubagentRow(props: {
             title={title}
             hint={
               environment === null
-                ? gt("Runs on {label}. Connect to it to open the thread there.", {
+                ? gt("Runs on {label}. Connect to it to open the chat there.", {
                     label: remoteChild.label,
                   })
                 : gt("Open on {label}", { label: remoteChild.label })
@@ -397,12 +397,12 @@ function DelegatedFromRow(props: {
     // The read can outlast the user's stay on this thread; a late answer must not pull them back.
     if (router.latestLocation !== location) return;
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: gt("Could not open the parent thread") });
+      toastManager.add({ type: "error", title: gt("Could not open the parent chat") });
       return;
     }
     // Deleted and unknown threads are absent from the titles.
     if (result.value[delegatedFrom.threadId] === undefined) {
-      toastManager.add({ type: "info", title: gt("The parent thread was deleted") });
+      toastManager.add({ type: "info", title: gt("The parent chat was deleted") });
       return;
     }
     void navigate({
@@ -452,11 +452,11 @@ function DelegatedFromRow(props: {
             hint={
               environment === null
                 ? label
-                  ? gt("Delegated from {label}. Connect to it to open the parent thread.", {
+                  ? gt("Delegated from {label}. Connect to it to open the parent chat.", {
                       label,
                     })
                   : gt(
-                      "Delegated from a linked environment. Connect to it to open the parent thread.",
+                      "Delegated from a linked environment. Connect to it to open the parent chat.",
                     )
                 : gt("Open parent agent on {label}", { label: environment.label })
             }
@@ -1052,7 +1052,7 @@ export function ThreadRelationshipsPanel(props: {
                       size="icon-xs"
                       variant="ghost"
                       part="icon"
-                      aria-label={gt("More thread actions")}
+                      aria-label={gt("More chat actions")}
                       disabled={busyAction !== null}
                     />
                   }

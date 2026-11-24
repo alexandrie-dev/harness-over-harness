@@ -25,3 +25,6 @@
 +  return mode === "auto-accept-edits" || mode === "auto"
 +    ? { ...option, disabledReason: resolve(msg("Coming Soon")) }
 +    : option;
+@@ -84 +89 @@
+-    msg("{organization} limits threads to {mode}.", {
++    msg("{organization} limits chats to {mode}.", {

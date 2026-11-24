@@ -126,7 +126,7 @@ export function threadLinkContextReferences(
         const known = title(ref);
         return known === undefined ? [] : [threadContextRecord(ref, known)];
       })[0] ??
-      threadContextRecord(candidates[0]!, label?.trim() || "Thread");
+      threadContextRecord(candidates[0]!, label?.trim() || "Chat");
     const contextId = accept(record);
     if (contextId === undefined) return undefined;
     records.set(record.contextId, record);

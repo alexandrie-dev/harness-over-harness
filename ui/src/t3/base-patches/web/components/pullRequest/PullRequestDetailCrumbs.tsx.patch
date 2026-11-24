@@ -1,0 +1,5 @@
+--- a/web/components/pullRequest/PullRequestDetailCrumbs.tsx
++++ b/web/components/pullRequest/PullRequestDetailCrumbs.tsx
+@@ -47 +47 @@
+-            aria-label={gt("Back to this thread's pull requests")}
++            aria-label={gt("Back to this chat's pull requests")}

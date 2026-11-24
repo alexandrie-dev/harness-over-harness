@@ -257,7 +257,7 @@ export function useComposerMenuItems({
           type: "slash-command",
           command: "model",
           label: "/model",
-          description: gt("Switch response model for this thread"),
+          description: gt("Switch response model for this chat"),
         },
         ...(sideChatAvailable
           ? ([

@@ -1,0 +1,5 @@
+--- a/web/components/chat/ComposerFreshSession.tsx
++++ b/web/components/chat/ComposerFreshSession.tsx
+@@ -18 +18 @@
+-    description: resolve(msg("The agent won't see earlier messages in this thread.")),
++    description: resolve(msg("The agent won't see earlier messages in this chat.")),

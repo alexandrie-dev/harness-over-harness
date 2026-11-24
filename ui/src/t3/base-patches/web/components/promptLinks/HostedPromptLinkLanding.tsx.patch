@@ -1,0 +1,8 @@
+--- a/web/components/promptLinks/HostedPromptLinkLanding.tsx
++++ b/web/components/promptLinks/HostedPromptLinkLanding.tsx
+@@ -51 +51 @@
+-              title: resolve(msg("Open this thread")),
++              title: resolve(msg("Open this chat")),
+@@ -61 +61 @@
+-              details: [resolve(msg("Opens one of your threads."))],
++              details: [resolve(msg("Opens one of your chats."))],

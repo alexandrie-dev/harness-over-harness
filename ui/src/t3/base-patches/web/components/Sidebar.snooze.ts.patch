@@ -1,0 +1,5 @@
+--- a/web/components/Sidebar.snooze.ts
++++ b/web/components/Sidebar.snooze.ts
+@@ -47 +47 @@
+-      title: resolve(msg("Could not snooze thread")),
++      title: resolve(msg("Could not snooze chat")),

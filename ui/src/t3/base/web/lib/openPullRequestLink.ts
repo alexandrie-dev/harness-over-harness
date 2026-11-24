@@ -231,7 +231,7 @@ export function useOpenChangeRequestLink(
             const toastId = toastManager.add(
               stackedThreadToast({
                 type: "info",
-                title: m(msg("This commit is not in the thread's workspace")),
+                title: m(msg("This commit is not in the chat's workspace")),
                 actionProps: {
                   children: m(msg("Open link")),
                   onClick: () => {

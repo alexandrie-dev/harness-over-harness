@@ -1,0 +1,5 @@
+--- a/client-runtime/state/threads.ts
++++ b/client-runtime/state/threads.ts
+@@ -74 +74 @@
+-const THREAD_SYNC_ERROR = msg("Could not synchronize the thread.");
++const THREAD_SYNC_ERROR = msg("Could not synchronize the chat.");

@@ -1,0 +1,7 @@
+--- a/client-runtime/composerThreadItems.ts
++++ b/client-runtime/composerThreadItems.ts
+@@ -76,2 +76,2 @@
+-            ? resolve(msg("Thread", { $context: "noun, search result type" }))
+-            : resolve(msg("Thread on {machine}", { machine })),
++            ? resolve(msg("Chat", { $context: "noun, search result type" }))
++            : resolve(msg("Chat on {machine}", { machine })),

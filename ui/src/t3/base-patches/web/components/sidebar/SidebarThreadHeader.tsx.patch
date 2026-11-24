@@ -1,0 +1,22 @@
+--- a/web/components/sidebar/SidebarThreadHeader.tsx
++++ b/web/components/sidebar/SidebarThreadHeader.tsx
+@@ -58,2 +58,2 @@
+-    ? gt("New thread ({shortcut})", { shortcut: newThreadShortcutLabel })
+-    : gt("New thread");
++    ? gt("New chat ({shortcut})", { shortcut: newThreadShortcutLabel })
++    : gt("New chat");
+@@ -73 +73 @@
+-          aria-label={gt("Search threads")}
++          aria-label={gt("Search chats")}
+@@ -91 +91 @@
+-            aria-label={gt("Clear thread search")}
++            aria-label={gt("Clear chat search")}
+@@ -111 +111 @@
+-          label={gt("New thread")}
++          label={gt("New chat")}
+@@ -118 +118 @@
+-                    ? gt("New thread in current project: Shift+click ({shortcut})", {
++                    ? gt("New chat in current project: Shift+click ({shortcut})", {
+@@ -121 +121 @@
+-                    : gt("New thread in current project: Shift+click")}
++                    : gt("New chat in current project: Shift+click")}

@@ -1885,7 +1885,7 @@ test('home screen data: working chats with real steps, a chat waiting for the pe
   // A new chat from the home screen's input.
   const id = await host.home.start('Plan the week');
   assert.equal(host.home.entries().find(entry => entry.id === id).state, 'working');
-  assert.equal(host.home.projectTitle('hoh-project'), 'No project');
+  assert.equal(host.home.projectTitle('hoh-project'), 'Chats');
 });
 
 test('home turn lifecycle: Claude reply waits for the person, Mark done survives replay, the next human turn waits again, and old waiting turns are restored', async () => {

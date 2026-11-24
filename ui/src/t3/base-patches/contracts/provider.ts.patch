@@ -1,0 +1,5 @@
+--- a/contracts/provider.ts
++++ b/contracts/provider.ts
+@@ -48 +48 @@
+-    return `Failed to upload feedback for thread ${this.threadId}.`;
++    return `Failed to upload feedback for chat ${this.threadId}.`;

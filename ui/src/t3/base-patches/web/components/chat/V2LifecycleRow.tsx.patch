@@ -1,0 +1,17 @@
+--- a/web/components/chat/V2LifecycleRow.tsx
++++ b/web/components/chat/V2LifecycleRow.tsx
+@@ -127 +127 @@
+-            {item.title ?? gt("Created thread")}
++            {item.title ?? gt("Created chat")}
+@@ -135 +135 @@
+-                : gt("Open created thread")
++                : gt("Open created chat")
+@@ -151 +151 @@
+-              Created thread · <Var>{item.title}</Var>
++              Created chat · <Var>{item.title}</Var>
+@@ -154 +154 @@
+-            <T>Created thread</T>
++            <T>Created chat</T>
+@@ -162 +162 @@
+-                : gt("Open created thread")
++                : gt("Open created chat")
