@@ -1341,7 +1341,7 @@ export class HohHost {
         const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor, projectId: folder?.id ?? HOH_PROJECT_ID });
         thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;
         thread.loaded = true;
-        await this.applyMode(thread, mode ?? runtimeModeOf(this.defaultMode), true);
+        await this.applyMode(thread, mode ?? runtimeModeOf(this.defaultMode));
         const verified = await this.engine.request('hoh/executor/access/get', { executor, sessionId: threadId });
         if (verified?.session?.executor !== executor || verified?.session?.model !== chosenModel || verified?.session?.runtimeMode !== thread.mode) {
           throw new Error('The engine did not retain the requested executor, model, and access mode. The message was not sent.');
@@ -1487,11 +1487,12 @@ export class HohHost {
    * else the default setting this host reports; useComposerSend.ts). The privileged call names the
    * concrete session and carries the exact four-state mode as well as its downgrade-safe projection.
    */
-  private async applyMode(thread: ThreadModel, mode: T3RuntimeMode | undefined, force = false) {
+  private async applyMode(thread: ThreadModel, mode: T3RuntimeMode | undefined) {
     if (!mode) return;
     const wanted = accessModeOf(mode);
     this.modeRevision++;
-    if (!force && wanted === thread.mode) return;
+    // thread.mode describes the running launch; the engine may have a different pending choice.
+    // Always submit the person's choice, including a return to the currently displayed mode.
     await this.engine.request('hoh/executor/access/set', {
       executor: thread.executor,
       sessionId: thread.id,

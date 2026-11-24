@@ -387,6 +387,13 @@ test('the thread always shows the engine running mode while a different choice i
   });
   assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'running-mode' })).thread.runtimeMode, 'full-access');
 
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.runtime-mode.set', commandId: 'return-full', threadId: 'running-mode', runtimeMode: 'full-access',
+  });
+  assert.equal(engine.sessionAccess.get('running-mode'), 'full', 'returning to the running mode replaces the pending choice');
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.runtime-mode.set', commandId: 'pending-confirm-again', threadId: 'running-mode', runtimeMode: 'approval-required',
+  });
   delete engine.store.get('running-mode').runningRuntimeMode;
   engine.emitStatus('running-mode', 'idle');
   await tick(5);
