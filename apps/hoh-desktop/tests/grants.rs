@@ -814,16 +814,16 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
             "полный доступ",
         ),
         (
-            json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}),
-            "Спрашивать разрешение",
-        ),
-        (
             json!({"executor":"claude","mode":"confirm","runtimeMode":"auto-accept-edits"}),
-            "Принимать правки",
+            "Правки без вопросов",
         ),
         (
             json!({"executor":"claude","mode":"confirm","runtimeMode":"auto"}),
-            "Авто",
+            "Автоматически",
+        ),
+        (
+            json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}),
+            "Спрашивать разрешение",
         ),
     ];
     for (n, (params, _)) in cases.iter().enumerate() {
@@ -861,11 +861,21 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
             human.human_text
         );
     }
-    assert!(
-        log[0]
-            .human_text
-            .starts_with("Включить полный доступ для Claude?")
-    );
+    for (n, start) in [
+        "Включить полный доступ для Claude?",
+        "Включить режим «Правки без вопросов» для Claude?",
+        "Включить режим «Автоматически» для Claude?",
+        "Вернуть режим «Спрашивать разрешение» для Claude?",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            log[2 * n].human_text.starts_with(start),
+            "{}",
+            log[2 * n].human_text
+        );
+    }
     // The person reads it in the history as their own decision.
     let history = broker.history(10);
     assert_eq!(history.len(), 4);

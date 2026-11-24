@@ -133,11 +133,17 @@
         "runningRuntimeMode": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ExecutorRuntimeMode"
+              "$ref": "#/$defs/ExecutorRunningRuntimeMode"
             },
             {
               "type": "null"
             }
+          ]
+        },
+        "builtin": {
+          "type": [
+            "boolean",
+            "null"
           ]
         },
         "pending": {
@@ -155,6 +161,16 @@
         "auto-accept-edits",
         "auto",
         "full"
+      ]
+    },
+    "ExecutorRunningRuntimeMode": {
+      "type": "string",
+      "enum": [
+        "confirm",
+        "auto-accept-edits",
+        "auto",
+        "full",
+        "plan"
       ]
     }
   },

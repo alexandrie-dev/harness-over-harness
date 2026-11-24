@@ -365,6 +365,12 @@ impl ExternalHarness for CodexHarness {
     ) -> BoxFuture<'static, HarnessResult<Started>> {
         let config = self.config.clone();
         Box::pin(async move {
+            if params.interaction_mode == hoh_external_harness::InteractionMode::Plan {
+                return Err(HarnessFailure::new(
+                    code::POLICY_UNAVAILABLE,
+                    "Plan mode for Codex is coming soon",
+                ));
+            }
             let version = match check_version(&config).await {
                 VersionCheck::Supported(version) => version,
                 VersionCheck::NotInstalled => {

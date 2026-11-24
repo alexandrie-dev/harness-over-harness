@@ -21,6 +21,10 @@ export type RuntimeModeOption = {
 export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   runtimeMode: RuntimeMode;
   currentRuntimeMode?: RuntimeMode | undefined;
+  planAvailable?: boolean;
+  planActive?: boolean;
+  currentPlanActive?: boolean;
+  onPlanToggle?: () => void;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   size?: "sm" | "xs";
   hidden?: boolean;
@@ -37,15 +41,19 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const composerFloatingLayerProps = useComposerMenuProps();
   const [open, setOpen] = useComposerMenuState(props.hidden);
   const permissionsChipRef = useRef<HTMLButtonElement>(null);
+  if (props.runtimeMode === "unknown") return <span data-composer-access-unknown>Unknown</span>;
+  if (props.runtimeModeOptions.length === 0) return null;
   const runtimeModeOption =
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
     resolveRuntimeModeOption(props.runtimeMode, messages);
   const currentModeOption = props.currentRuntimeMode
     ? resolveRuntimeModeOption(props.currentRuntimeMode, messages)
     : runtimeModeOption;
-  const chipLabel = props.currentRuntimeMode && props.currentRuntimeMode !== props.runtimeMode
-    ? `Current: ${currentModeOption.label} · Next: ${runtimeModeOption.label}`
-    : currentModeOption.label;
+  const currentLabel = props.currentPlanActive ? "Plan" : currentModeOption.label;
+  const nextLabel = props.planActive ? "Plan" : runtimeModeOption.label;
+  const chipLabel = props.currentRuntimeMode && currentLabel !== nextLabel
+    ? `Current: ${currentLabel} · Next: ${nextLabel}`
+    : nextLabel;
   const RuntimeModeIcon = currentModeOption.icon;
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
   const permissionsTooltip = gt("Permissions: {mode}. {description}", {
@@ -93,6 +101,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
         <TooltipPopup side="top">{permissionsTooltip}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" {...composerFloatingLayerProps}>
+        {props.planAvailable ? <MenuPrimitive.Item onClick={props.onPlanToggle}>Plan {props.planActive ? "✓" : ""}</MenuPrimitive.Item> : null}
         <ComposerPermissionsSection
           runtimeMode={props.runtimeMode}
           runtimeModeOptions={props.runtimeModeOptions}
@@ -125,6 +134,7 @@ export function ComposerPermissionsSection(props: {
     props.runtimeModeOptions.find((option) => option.mode === shownMode) ??
     resolveRuntimeModeOption("approval-required", messages);
   const descriptionId = useId();
+  if (props.runtimeModeOptions.length === 0) return null;
   return (
     <div data-composer-permissions className="grid w-72 gap-1.5 px-2 py-1.5">
       <div className="font-medium text-muted-foreground text-xs">

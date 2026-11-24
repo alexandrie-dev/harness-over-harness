@@ -36,6 +36,22 @@ pub struct ImageAsset {
     pub size_bytes: u64,
     pub source_path: String,
     pub file_revision: String,
+    pub decode_profile: ImageDecodeProfile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectRootIdentity {
+    pub device: u64,
+    pub inode: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageDecodeProfile {
+    pub canvas_pixels: u64,
+    pub decoded_frame_pixels: u64,
+    pub animation_pixels_per_second: u64,
+    pub frame_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,13 +60,6 @@ enum ImageKind {
     Jpeg,
     Png,
     Webp,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ImageProfile {
-    width: u32,
-    height: u32,
-    frames: u32,
 }
 
 impl ImageKind {
@@ -105,7 +114,7 @@ fn invalid_header() -> String {
     unavailable("the image header is invalid")
 }
 
-fn validate_profile(width: u32, height: u32, frames: u32) -> Result<ImageProfile, String> {
+fn validate_profile(width: u32, height: u32, frames: u32) -> Result<ImageDecodeProfile, String> {
     if width == 0 || height == 0 || frames == 0 {
         return Err(invalid_header());
     }
@@ -120,10 +129,12 @@ fn validate_profile(width: u32, height: u32, frames: u32) -> Result<ImageProfile
     if frames > MAX_IMAGE_FRAMES {
         return Err(unavailable("the image has more than 300 frames"));
     }
-    Ok(ImageProfile {
-        width,
-        height,
-        frames,
+    let canvas_pixels = u64::from(width) * u64::from(height);
+    Ok(ImageDecodeProfile {
+        canvas_pixels,
+        decoded_frame_pixels: canvas_pixels,
+        animation_pixels_per_second: 0,
+        frame_count: frames,
     })
 }
 
@@ -158,7 +169,7 @@ fn milliseconds_delay_ns(milliseconds: u64) -> u64 {
         .max(MIN_FRAME_DELAY_NS)
 }
 
-fn validate_animation_rate(decoded_pixels: u64, duration_ns: u64) -> Result<(), String> {
+fn animation_rate(decoded_pixels: u64, duration_ns: u64) -> Result<u64, String> {
     if u128::from(decoded_pixels) * u128::from(NANOS_PER_SECOND)
         > u128::from(MAX_ANIMATION_PIXELS_PER_SECOND) * u128::from(duration_ns)
     {
@@ -166,7 +177,29 @@ fn validate_animation_rate(decoded_pixels: u64, duration_ns: u64) -> Result<(), 
             "the animation exceeds 200 million frame-pixels per second",
         ));
     }
-    Ok(())
+    let rate = (u128::from(decoded_pixels) * u128::from(NANOS_PER_SECOND))
+        .div_ceil(u128::from(duration_ns));
+    u64::try_from(rate).map_err(|_| invalid_header())
+}
+
+fn finalize_profile(
+    width: u32,
+    height: u32,
+    frames: u32,
+    decoded_frame_pixels: u64,
+    animation_duration_ns: u64,
+    animated: bool,
+) -> Result<ImageDecodeProfile, String> {
+    let mut profile = validate_profile(width, height, frames)?;
+    if decoded_frame_pixels == 0 || decoded_frame_pixels > MAX_DECODED_PIXELS {
+        return Err(invalid_header());
+    }
+    profile.decoded_frame_pixels = decoded_frame_pixels;
+    if animated {
+        profile.animation_pixels_per_second =
+            animation_rate(decoded_frame_pixels, animation_duration_ns)?;
+    }
+    Ok(profile)
 }
 
 fn be_u16(bytes: &[u8]) -> Option<u16> {
@@ -190,7 +223,7 @@ fn le_u32(bytes: &[u8]) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?))
 }
 
-fn png_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
+fn png_profile(bytes: &[u8]) -> Result<ImageDecodeProfile, String> {
     if bytes.len() < 45 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err(invalid_header());
     }
@@ -349,20 +382,27 @@ fn png_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
     if !has_iend {
         return Err(invalid_header());
     }
+    let animated = animation_frames.is_some();
     let frames = if let Some(declared) = animation_frames {
         if frame_count != declared {
             return Err(invalid_header());
         }
-        validate_animation_rate(decoded_pixels, animation_duration_ns)?;
         declared
     } else {
         add_frame_pixels(&mut decoded_pixels, width, height)?;
         1
     };
-    validate_profile(width, height, frames)
+    finalize_profile(
+        width,
+        height,
+        frames,
+        decoded_pixels,
+        animation_duration_ns,
+        animated,
+    )
 }
 
-fn jpeg_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
+fn jpeg_profile(bytes: &[u8]) -> Result<ImageDecodeProfile, String> {
     if !bytes.starts_with(b"\xff\xd8") {
         return Err(invalid_header());
     }
@@ -428,7 +468,7 @@ fn skip_gif_sub_blocks(bytes: &[u8], offset: &mut usize) -> Result<(), String> {
     }
 }
 
-fn gif_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
+fn gif_profile(bytes: &[u8]) -> Result<ImageDecodeProfile, String> {
     if bytes.len() < 13 || !(bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
         return Err(invalid_header());
     }
@@ -509,10 +549,14 @@ fn gif_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
     if !trailer {
         return Err(invalid_header());
     }
-    if frames > 1 {
-        validate_animation_rate(decoded_pixels, animation_duration_ns)?;
-    }
-    validate_profile(width, height, frames)
+    finalize_profile(
+        width,
+        height,
+        frames,
+        decoded_pixels,
+        animation_duration_ns,
+        frames > 1,
+    )
 }
 
 fn vp8_dimensions(data: &[u8]) -> Option<(u32, u32)> {
@@ -555,7 +599,7 @@ fn webp_frame_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     (offset == data.len()).then_some(dimensions).flatten()
 }
 
-fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
+fn webp_profile(bytes: &[u8]) -> Result<ImageDecodeProfile, String> {
     if bytes.len() < 12 || !bytes.starts_with(b"RIFF") || bytes.get(8..12) != Some(b"WEBP") {
         return Err(invalid_header());
     }
@@ -682,13 +726,17 @@ fn webp_profile(bytes: &[u8]) -> Result<ImageProfile, String> {
         return Err(invalid_header());
     }
     let (width, height) = dimensions.ok_or_else(invalid_header)?;
-    if animation_flag {
-        validate_animation_rate(decoded_pixels, animation_duration_ns)?;
-    }
-    validate_profile(width, height, if animation_flag { frames } else { 1 })
+    finalize_profile(
+        width,
+        height,
+        if animation_flag { frames } else { 1 },
+        decoded_pixels,
+        animation_duration_ns,
+        animation_flag,
+    )
 }
 
-fn inspect_image(kind: ImageKind, bytes: &[u8]) -> Result<ImageProfile, String> {
+fn inspect_image(kind: ImageKind, bytes: &[u8]) -> Result<ImageDecodeProfile, String> {
     match kind {
         ImageKind::Png => png_profile(bytes),
         ImageKind::Jpeg => jpeg_profile(bytes),
@@ -721,7 +769,10 @@ struct RootDirectory {
 }
 
 #[cfg(target_os = "linux")]
-fn open_root_directory(path: &Path) -> Result<RootDirectory, String> {
+fn open_root_directory(
+    path: &Path,
+    expected: ProjectRootIdentity,
+) -> Result<RootDirectory, String> {
     if !path.is_absolute()
         || path
             .components()
@@ -790,6 +841,11 @@ fn open_root_directory(path: &Path) -> Result<RootDirectory, String> {
     if !metadata.is_dir() || metadata.nlink() == 0 {
         return Err(unavailable(
             "the conversation project folder is not available",
+        ));
+    }
+    if metadata.dev() != expected.device || metadata.ino() != expected.inode {
+        return Err(unavailable(
+            "the conversation project folder was replaced before it could be opened",
         ));
     }
     Ok(RootDirectory { file, metadata })
@@ -950,7 +1006,7 @@ fn read_project_image_from_root(
     if sniff_kind(&bytes) != Some(expected) {
         return Err(unavailable("the file contents do not match its image type"));
     }
-    inspect_image(expected, &bytes)?;
+    let decode_profile = inspect_image(expected, &bytes)?;
 
     // An in-place writer can keep the inode while changing the bytes. Require stable metadata
     // across the whole read, then verify once more that the name still resolves to this handle.
@@ -994,6 +1050,7 @@ fn read_project_image_from_root(
         size_bytes: bytes.len() as u64,
         source_path: canonical.to_string_lossy().into_owned(),
         file_revision: revision,
+        decode_profile,
     })
 }
 
@@ -1001,10 +1058,11 @@ fn read_project_image_from_root(
 #[cfg(target_os = "linux")]
 pub fn read_project_image(
     project_root: &Path,
+    expected_root: ProjectRootIdentity,
     requested: &str,
     home: &Path,
 ) -> Result<ImageAsset, String> {
-    let root_directory = open_root_directory(project_root)?;
+    let root_directory = open_root_directory(project_root, expected_root)?;
     read_project_image_from_root(&root_directory, requested, home)
 }
 
@@ -1012,6 +1070,7 @@ pub fn read_project_image(
 #[cfg(not(target_os = "linux"))]
 pub fn read_project_image(
     _project_root: &Path,
+    _expected_root: ProjectRootIdentity,
     _requested: &str,
     _home: &Path,
 ) -> Result<ImageAsset, String> {
@@ -1083,6 +1142,38 @@ mod tests {
     fn assert_refused<T: Debug>(result: Result<T, String>, words: &str) {
         let error = result.unwrap_err();
         assert!(error.contains(words), "{error:?} did not contain {words:?}");
+    }
+
+    fn project_identity(path: &Path) -> ProjectRootIdentity {
+        #[cfg(unix)]
+        {
+            let metadata = std::fs::metadata(path).unwrap();
+            ProjectRootIdentity {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            ProjectRootIdentity {
+                device: 0,
+                inode: 0,
+            }
+        }
+    }
+
+    fn read_project_image(
+        project_root: &Path,
+        requested: &str,
+        home: &Path,
+    ) -> Result<ImageAsset, String> {
+        super::read_project_image(
+            project_root,
+            project_identity(project_root),
+            requested,
+            home,
+        )
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -1292,6 +1383,15 @@ mod tests {
         assert_eq!(image.mime_type, "image/png");
         assert_eq!(image.size_bytes, png.len() as u64);
         assert_eq!(image.data_base64, encode_base64(&png));
+        assert_eq!(
+            image.decode_profile,
+            ImageDecodeProfile {
+                canvas_pixels: 4,
+                decoded_frame_pixels: 4,
+                animation_pixels_per_second: 0,
+                frame_count: 1,
+            }
+        );
         assert!(Path::new(&image.source_path).starts_with(project.canonicalize().unwrap()));
         let mut changed = png;
         *changed.last_mut().unwrap() ^= 1;
@@ -1363,7 +1463,7 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         let original = png(2, 2);
         std::fs::write(project.join("shown.png"), &original).unwrap();
-        let root = open_root_directory(&project).unwrap();
+        let root = open_root_directory(&project, project_identity(&project)).unwrap();
 
         std::fs::rename(&project, &held).unwrap();
         std::fs::create_dir_all(&project).unwrap();
@@ -1372,6 +1472,30 @@ mod tests {
         let image = read_project_image_from_root(&root, "shown.png", &scratch.0).unwrap();
         assert_eq!(image.data_base64, encode_base64(&original));
         assert!(Path::new(&image.source_path).starts_with(&held));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rejects_a_project_directory_replaced_before_native_open() {
+        let scratch = Scratch::new("root-pre-open-substitution");
+        let project = scratch.0.join("project");
+        let held = scratch.0.join("held-project");
+        let replacement = scratch.0.join("replacement");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&replacement).unwrap();
+        std::fs::write(project.join("shown.png"), png(2, 2)).unwrap();
+        std::fs::write(replacement.join("private.png"), png(3, 3)).unwrap();
+        let selected_identity = project_identity(&project);
+
+        // Equivalent to an exchange for the checked name: the path now names a different ordinary
+        // directory before native open, without a symlink for RESOLVE_NO_SYMLINKS to reject.
+        std::fs::rename(&project, &held).unwrap();
+        std::fs::rename(&replacement, &project).unwrap();
+
+        assert_refused(
+            super::read_project_image(&project, selected_identity, "private.png", &scratch.0),
+            "replaced before it could be opened",
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -1484,39 +1608,46 @@ mod tests {
 
     #[test]
     fn validates_bounded_headers_for_every_supported_format() {
-        assert_eq!(inspect_image(ImageKind::Png, &png(2, 3)).unwrap().width, 2);
         assert_eq!(
-            inspect_image(ImageKind::Jpeg, &jpeg(4, 5)).unwrap().height,
-            5
+            inspect_image(ImageKind::Png, &png(2, 3))
+                .unwrap()
+                .canvas_pixels,
+            6
         );
         assert_eq!(
-            inspect_image(ImageKind::Gif, &gif(6, 7, 2)).unwrap().frames,
+            inspect_image(ImageKind::Jpeg, &jpeg(4, 5))
+                .unwrap()
+                .decoded_frame_pixels,
+            20
+        );
+        assert_eq!(
+            inspect_image(ImageKind::Gif, &gif(6, 7, 2))
+                .unwrap()
+                .frame_count,
             2
         );
         assert_eq!(
             inspect_image(ImageKind::Webp, &webp_lossless(8, 9))
                 .unwrap()
-                .height,
-            9
+                .canvas_pixels,
+            72
         );
         assert_eq!(
             inspect_image(ImageKind::Webp, &webp_lossy(12, 13))
                 .unwrap()
-                .width,
-            12
+                .canvas_pixels,
+            156
         );
         assert_eq!(
             inspect_image(ImageKind::Webp, &webp_extended_static(14, 15))
                 .unwrap()
-                .height,
-            15
+                .canvas_pixels,
+            210
         );
-        assert_eq!(
-            inspect_image(ImageKind::Webp, &webp_animation(10, 11, 2))
-                .unwrap()
-                .frames,
-            2
-        );
+        let animated = inspect_image(ImageKind::Webp, &webp_animation(10, 11, 2)).unwrap();
+        assert_eq!(animated.frame_count, 2);
+        assert_eq!(animated.decoded_frame_pixels, 220);
+        assert_eq!(animated.animation_pixels_per_second, 1_100);
 
         for (kind, bytes) in [
             (ImageKind::Png, b"\x89PNG\r\n\x1a\n".as_slice()),
@@ -1614,19 +1745,19 @@ mod tests {
         assert_eq!(
             inspect_image(ImageKind::Png, &apng(1_000, 1_000, 10))
                 .unwrap()
-                .frames,
+                .frame_count,
             10
         );
         assert_eq!(
             inspect_image(ImageKind::Gif, &gif_with_delay(500, 500, 10, 10))
                 .unwrap()
-                .frames,
+                .frame_count,
             10
         );
         assert_eq!(
             inspect_image(ImageKind::Webp, &webp_animation(1_000, 1_000, 10))
                 .unwrap()
-                .frames,
+                .frame_count,
             10
         );
     }
@@ -1675,7 +1806,7 @@ mod tests {
         assert_eq!(
             inspect_image(ImageKind::Gif, &gif_with_delay(500, 500, 10, 10))
                 .unwrap()
-                .frames,
+                .frame_count,
             10
         );
     }

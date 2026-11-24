@@ -2,9 +2,17 @@
 +++ b/web/components/ChatView.tsx
 @@ -204 +203,0 @@
 -import { ComposerContextPermissions } from "./ComposerContextPermissions";
-@@ -3760,0 +3760 @@
+@@ -995,0 +995 @@
++    activeThread?.runtimeMode === "unknown" ? "unknown" :
+@@ -3431,0 +3432,5 @@
++            {activeThread.runtimeMode === "unknown" ? (
++              <span role="status" className="shrink-0 text-xs text-muted-foreground" data-hoh-unknown-access>
++                Executor: <strong>Unknown</strong> · Access: <strong>Unknown</strong>
++              </span>
++            ) : null}
+@@ -3760,0 +3766 @@
 +                                currentRuntimeMode={activeRunningTurnId ? activeThread?.runtimeMode : undefined}
-@@ -3879,14 +3878,0 @@
+@@ -3879,14 +3884,0 @@
 -                                  {...(isServerThread
 -                                    ? {}
 -                                    : {

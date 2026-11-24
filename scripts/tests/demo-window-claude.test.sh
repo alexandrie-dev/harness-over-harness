@@ -14,6 +14,7 @@ cat >"$REL/hoh-desktop-$C" <<'SH'
 # подделка окна: пишет туда, куда пишет окно (по тем же правилам выбора папок), и зовёт claude как движок
 echo "HOME=$HOME" >"$DEMO_OUT/app-env"; echo "HOH_ENGINE_PATH=${HOH_ENGINE_PATH:-}" >>"$DEMO_OUT/app-env"; echo "XDG_DATA_HOME=$XDG_DATA_HOME" >>"$DEMO_OUT/app-env"
 echo "DSH_AGENTS_HOME=${DSH_AGENTS_HOME:-}" >>"$DEMO_OUT/app-env"
+echo "HOH_WINDOW_HOME=${HOH_WINDOW_HOME:-}" >>"$DEMO_OUT/app-env"
 mkdir -p "$XDG_DATA_HOME/engine" "$XDG_CONFIG_HOME/app" "${DSH_AGENTS_HOME:-$HOME/.agents}"
 docs=$(sed -n 's/^XDG_DOCUMENTS_DIR="\(.*\)"$/\1/p' "$XDG_CONFIG_HOME/user-dirs.dirs" 2>/dev/null); docs=${docs:-$HOME/Documents}
 mkdir -p "$docs/HoH"; : >"$XDG_DATA_HOME/engine/journal"; : >"${DSH_AGENTS_HOME:-$HOME/.agents}/state"
@@ -44,6 +45,7 @@ for x in "XDG_CONFIG_HOME=$H/.config" "XDG_DATA_HOME=$H/.local/share" "XDG_CACHE
   grep -qx "$x" "$D.out/claude-env" && ok "claude получил настоящий $x" || bad "claude $x" "$(cat "$D.out/claude-env")"
 done
 grep -q "^XDG_DATA_HOME=$D/data" "$D.out/app-env" && ok "окно получило XDG_DATA_HOME папки показа" || bad "окно XDG" "$(cat "$D.out/app-env")"
+grep -qx "HOH_WINDOW_HOME=$D/home" "$D.out/app-env" && ok "файловый браузер окна изолирован папкой показа" || bad "window home" "$(cat "$D.out/app-env")"
 grep -qx "HOH_ENGINE_PATH=$REL/hoh-$C" "$D.out/app-env" && ok "окно знает путь движка кандидата" || bad "engine path" "$(cat "$D.out/app-env")"
 [[ $(listing "$H") == $'.\n./.claude\n./.claude/claude-wrote' ]] && ok "в заданный дом пишет только claude" || bad "дом" "$(listing "$H" | tr '\n' ' ')"
 [[ -f $D/data/engine/journal && -f $D/agents/state && -d $D/home/Documents/HoH ]] && ok "данные HoH (движок, .agents, Documents) в папке показа" || bad "папка показа" "$(listing "$D" | tr '\n' ' ')"

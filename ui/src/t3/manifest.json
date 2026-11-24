@@ -232,7 +232,15 @@
       "web/appInit.tsx": "не запускает скрытый просмотр устройств и неподдерживаемую подписку на них",
       "web/components/settings/ArchivedThreadsPanel.tsx": "в архиве удаление обозначено Coming Soon до поддержки движком",
       "web/components/chat/ComposerControlsBar.tsx": "режим доступа всегда виден в строке ввода; при активном ходе чип показывает фактический режим и выбор следующего хода",
-      "web/components/chat/ComposerFooterControls.tsx": "режим доступа всегда виден в строке ввода; при активном ходе чип показывает фактический режим и выбор следующего хода"
+      "web/components/chat/ComposerFooterControls.tsx": "режим доступа всегда виден в строке ввода; при активном ходе чип показывает фактический режим и выбор следующего хода",
+      "web/components/ComposerContextPermissions.tsx": "при неизвестном режиме доступа явный пустой список провайдера скрывает контекстный переключатель прав",
+      "web/components/chat/ThreadDetailsPanel.tsx": "HOH-43: содержимое панели разговора — цель и план, токены и контекст, все субагенты, навыки, фоновые работы, модель и MCP; каркас ThreadDetailsCard и кнопка T3 без изменений",
+      "web/components/chat/V2ItemInspector.tsx": "вывод Agent и Task использует штатный Markdown/code renderer T3 вместо сырого текста и растёт в прокручиваемой ленте",
+      "web/components/chat/useComposerSend.ts": "Plan mode: composer передаёт выбранный interactionMode при создании разговора и следующих ходах вместо жёсткого default",
+      "contracts/providerPolicy.ts": "неизвестный режим разговора отображается до ответа движка",
+      "contracts/managedPolicy.ts": "неизвестный режим разговора отображается до ответа движка",
+      "client-runtime/contractLabels.ts": "неизвестный лимит прав не повышает доступ",
+      "web/components/auth/ConnectAgentSurface.logic.ts": "неизвестный лимит прав не повышает доступ"
     },
     "switches": [
       [
@@ -324,6 +332,11 @@
         "импорт сессий агентов",
         "раздел «Интеграции» не регистрируется; импорт сессий остаётся в карточке провайдера (AcpSessionManagementSection.tsx из ProviderInstanceCard.tsx) и на странице приветствия (WelcomePage.tsx) — выключит хост, не объявив сессий агентов",
         "правка; остаток — э3/э4"
+      ],
+      [
+        "разделы настроек, кроме общих, вида, чата, провайдеров и доступа",
+        "не регистрируются (routeTree.gen.ts), не показываются и не ищутся (settingsSearch.ts, HOH_SETTINGS_PATHS)",
+        "правка"
       ]
     ],
     "exclude": {

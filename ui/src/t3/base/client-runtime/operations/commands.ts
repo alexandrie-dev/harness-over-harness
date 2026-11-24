@@ -841,6 +841,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
           : { idleCompaction: input.message.idleCompaction }),
         attachments,
         runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         ...(input.sourceProposedPlan === undefined
           ? {}
@@ -871,6 +872,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         : { idleCompaction: input.message.idleCompaction }),
       attachments,
       runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
       ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.sourceProposedPlan === undefined

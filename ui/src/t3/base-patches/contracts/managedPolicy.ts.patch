@@ -1,0 +1,10 @@
+--- a/contracts/managedPolicy.ts
++++ b/contracts/managedPolicy.ts
+@@ -168,6 +168,7 @@
+ }
+ 
+ const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
++  unknown: "Unknown",
+   "approval-required": "Supervised",
+   "auto-accept-edits": "Auto-accept edits",
+   auto: "Auto",

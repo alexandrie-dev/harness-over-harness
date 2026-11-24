@@ -17,8 +17,14 @@ const SITE = '/home/person/Projects/site';
 /** A red 2×2 PNG. */
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==';
 const PNG_BYTES = Buffer.from(PNG, 'base64').length;
+const STATIC_PROFILE = { canvasPixels: 4, decodedFramePixels: 4, animationPixelsPerSecond: 0, frameCount: 1 };
 
 function connect(engine, options = {}) {
+  const readImageAsset = engine.readImageAsset?.bind(engine);
+  if (readImageAsset) engine.readImageAsset = async input => {
+    const image = await readImageAsset(input);
+    return { decodeProfile: STATIC_PROFILE, ...image };
+  };
   const host = new mod.host.HohHost({ engine, throttleMs: 0, storage: null, ...options });
   const client = new WireClient(mod.socket.HohWebSocket, new mod.wire.WireServer(host.handlers()));
   return { host, client };
@@ -112,7 +118,17 @@ test('a picture too big, of another type, or not what it says is refused with T3
 
 test('@ lists a folder project\'s files by relative path from the engine; "No project" and a folder the engine refuses give T3\'s empty menu', async () => {
   const engine = new FakeEngine();
-  engine.files = [{ path: 'src', kind: 'directory' }, { path: 'src/main.ts', kind: 'file' }, { path: 'logo.png', kind: 'file' }];
+  engine.files = [
+    { path: 'src', kind: 'directory' },
+    { path: 'src/main.ts', kind: 'file' },
+    { path: 'logo.png', kind: 'file' },
+    { path: '../.env', kind: 'file' },
+    { path: 'src/../.env', kind: 'file' },
+    { path: '/etc/passwd', kind: 'file' },
+    { path: ' /etc/passwd', kind: 'file' },
+    { path: 'src/main.ts ', kind: 'file' },
+    { path: '\\etc\\passwd', kind: 'file' },
+  ];
   const { client } = connect(engine);
   // No project: nothing is asked of the engine.
   assert.deepEqual(await client.call('projects.searchEntries', { cwd: DEFAULT_FOLDER, query: '', limit: 80 }), { entries: [], truncated: false });
@@ -130,6 +146,9 @@ test('@ lists a folder project\'s files by relative path from the engine; "No pr
   assert.deepEqual(sent(engine, 'hoh/workspace/entries').at(-1).params, { cwd: SITE, query: 'src', limit: 80 });
   assert.deepEqual((await client.call('projects.searchEntries', { cwd: SITE, query: '', limit: 80, kind: 'directory' })).entries, [{ path: 'src', kind: 'directory' }]);
   assert.deepEqual((await client.call('projects.searchEntries', { cwd: SITE, query: '', limit: 80, imageOnly: true })).entries, [{ path: 'logo.png', kind: 'file' }]);
+  assert.deepEqual((await client.call('projects.searchEntries', { cwd: SITE, query: '', limit: 80 })).entries, [
+    { path: 'src', kind: 'directory' }, { path: 'src/main.ts', kind: 'file' }, { path: 'logo.png', kind: 'file' },
+  ]);
   // A folder that is not a project is not passed on.
   const before = sent(engine, 'hoh/workspace/entries').length;
   assert.deepEqual(await client.call('projects.searchEntries', { cwd: '/home/person/.config', query: '', limit: 80 }), { entries: [], truncated: false });
@@ -709,6 +728,7 @@ test('local reply image retention is bounded per conversation with a visible fai
     byteHost.localImageUrls.set(`${byteThread}\0${sourcePath}`, {
       url: `blob:retained-${index}`, revision: 'old', sourcePath,
       sizeBytes: 16 * 1024 * 1024, threadId: byteThread,
+      decodeProfile: STATIC_PROFILE,
       requestKeys: new Set(index === 0 ? [`${byteThread}\0shots/0.png`] : []),
     });
   }
@@ -719,6 +739,58 @@ test('local reply image retention is bounded per conversation with a visible fai
   assert.match(byteRefresh.relativeUrl, /^blob:/);
   assert.equal(byteReads, 1, 'a retained key refreshes without speculative byte growth at the byte cap');
   byteHost.stop();
+});
+
+test('verified decoded and animation costs are retained before minting another project-image Blob', async () => {
+  const zero = { canvasPixels: 0, decodedFramePixels: 0, animationPixelsPerSecond: 0, frameCount: 0 };
+  const one = { canvasPixels: 1, decodedFramePixels: 1, animationPixelsPerSecond: 1, frameCount: 2 };
+  assert.equal(mod.host.localImageDecodeRetentionFits({
+    global: zero,
+    thread: { ...zero, canvasPixels: 80_000_000 },
+    replaced: zero, incoming: one,
+  }), false, 'conversation canvas budget');
+  assert.equal(mod.host.localImageDecodeRetentionFits({
+    global: zero,
+    thread: { ...zero, decodedFramePixels: 200_000_000 },
+    replaced: zero, incoming: one,
+  }), false, 'conversation aggregate frame-pixel budget');
+  assert.equal(mod.host.localImageDecodeRetentionFits({
+    global: zero,
+    thread: { ...zero, animationPixelsPerSecond: 200_000_000 },
+    replaced: zero, incoming: one,
+  }), false, 'conversation animation-rate budget');
+
+  const engine = new FakeEngine();
+  let reads = 0;
+  engine.readImageAsset = async ({ path, sessionId }) => ({
+    dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+    sourcePath: `${DEFAULT_FOLDER}/${sessionId}/${path}`, fileRevision: `revision:${sessionId}:${path}`,
+    decodeProfile: { canvasPixels: 40_000_000, decodedFramePixels: 40_000_000, animationPixelsPerSecond: 0, frameCount: 1 },
+    readNumber: ++reads,
+  });
+  const { host, client } = connect(engine);
+  for (const threadId of ['decode-a', 'decode-b', 'decode-c']) await newThread(client, threadId);
+  let minted = 0;
+  const createObjectURL = URL.createObjectURL;
+  URL.createObjectURL = blob => { minted++; return createObjectURL(blob); };
+  try {
+    const payload = (threadId, path) => ({ resource: {
+      _tag: 'media-file', threadId, path, hostOnly: true,
+    } });
+    const open = (threadId, path) => client.call('assets.createUrl', payload(threadId, path));
+    const request = (threadId, path) => client.request('assets.createUrl', payload(threadId, path));
+    for (const path of ['a.png', 'b.png']) assert.match((await open('decode-a', path)).relativeUrl, /^blob:/);
+    const threadOverflow = await request('decode-a', 'c.png');
+    assert.match(failureOf(threadOverflow).detail, /decoded-image or animation budget/i);
+    for (const path of ['a.png', 'b.png']) assert.match((await open('decode-b', path)).relativeUrl, /^blob:/);
+    const globalOverflow = await request('decode-c', 'a.png');
+    assert.match(failureOf(globalOverflow).detail, /decoded-image or animation budget/i);
+    assert.equal(minted, 4, 'over-budget native responses are rejected before Blob URL minting');
+    assert.equal(reads, 6, 'compressed-byte and native-read budgets remain independent');
+  } finally {
+    URL.createObjectURL = createObjectURL;
+    host.stop();
+  }
 });
 
 test('identical local image reads in flight are combined and failure history is a bounded LRU', async () => {

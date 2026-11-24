@@ -502,7 +502,7 @@ async fn registry_refuses_undeclared_and_duplicate_methods_and_unregisters_on_di
 
 /// HOH-40: the one `session/prompt` listener hears each prompt's session, the id of the message
 /// it queued and the whole params (the window's `effort`, which the server itself does not read),
-/// until it is disposed; `session/query` says nothing to it.
+/// until it is disposed; text queries also notify it before the prompt is queued.
 #[tokio::test]
 async fn a_prompt_listener_hears_the_params_of_every_prompt() {
     let env = Env::new().await;
@@ -546,14 +546,52 @@ async fn a_prompt_listener_hears_the_params_of_every_prompt() {
         .await
         .unwrap();
     env.wait("s1").await;
-    assert_eq!(heard.lock().unwrap().len(), 1);
+    assert_eq!(heard.lock().unwrap().len(), 2);
     guard.dispose().await;
     env.server
         .handle_request("session/prompt", prompt("max"))
         .await
         .unwrap();
     env.wait("s1").await;
-    assert_eq!(heard.lock().unwrap().len(), 1);
+    assert_eq!(heard.lock().unwrap().len(), 2);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn invalid_interaction_mode_is_rejected_before_session_message_and_listener() {
+    let env = Env::new().await;
+    let registry = registry(&env).await;
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let _guard = registry
+        .on_prompt(&env.ctx, move |session, message, _| {
+            log.lock()
+                .unwrap()
+                .push((session.to_owned(), message.to_owned()));
+        })
+        .unwrap();
+    env.initialize().await;
+    for interaction_mode in [json!("future-mode"), Value::Null] {
+        let result = env
+            .server
+            .handle_request(
+                "session/prompt",
+                json!({
+                    "sessionId":"invalid-mode-session",
+                    "contentBlocks":[{"type":"text","text":"must not be stored"}],
+                    "interactionMode":interaction_mode,
+                }),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+    assert!(heard.lock().unwrap().is_empty());
+    let listed = env
+        .server
+        .handle_request("session/list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(listed["sessions"], json!([]));
     env.close().await;
 }
 

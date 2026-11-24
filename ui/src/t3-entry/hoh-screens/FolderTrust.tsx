@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { folderTrustView } from './folder-trust-view.mjs';
+import type { HohEngineLike } from '../host';
+
+declare global { interface Window { __HOH_TRUST_ENGINE__?: HohEngineLike } }
 
 type Trust = { cwd: string; executor: string; trusted: boolean; changed: boolean; isolated?: boolean; running?: boolean; applied?: boolean };
 
@@ -58,7 +61,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     return () => { stopped = true; unsubscribe?.(); generation.current++; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [refresh]);
   if (!state) return null;
-  const view = folderTrustView({ running: state.running, applied: state.applied, trusted: state.trusted, isolated: state.isolated, changed: changedNotice });
+  const view = folderTrustView({ running: state.running ?? false, applied: state.applied ?? false, trusted: state.trusted, isolated: state.isolated ?? false, changed: changedNotice });
   return <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
     {view.text}
     {view.canTrust && <button type="button" disabled={busy} className="underline hover:text-foreground" onClick={async () => {

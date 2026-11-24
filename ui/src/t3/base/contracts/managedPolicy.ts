@@ -168,6 +168,7 @@ export function managedPolicyDeniedMessage(organization: string, capability: str
 }
 
 const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
+  unknown: "Unknown",
   "approval-required": "Supervised",
   "auto-accept-edits": "Auto-accept edits",
   auto: "Auto",

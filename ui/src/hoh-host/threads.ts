@@ -2,7 +2,7 @@
 // ui/src/screens/chat/projection.mjs) are folded into T3's `OrchestrationV2ThreadProjection` and
 // `OrchestrationV2ThreadShell` (packages/contracts/src/orchestrationV2.ts), in their encoded JSON form.
 // One user message is one run; answers, tool steps, permission requests and questions are turn items.
-import { CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, runtimeModeOf, type HohAccessMode, type HohExecutor } from './config.ts';
+import { CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, runtimeModeOf, type HohAccessMode, type HohExecutor, type T3InteractionMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
 
@@ -25,7 +25,8 @@ function argumentsOf(value: unknown): Record<string, any> {
 
 type Status = 'idle' | 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 type RunStatus = 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'cancelled';
-interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null }
+interface TokenUsage { usedTokens: number; maxTokens?: number; inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; updatedAt: string }
+interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; tokenUsage?: TokenUsage }
 type Item = Record<string, any> & { id: string; type: string; status: Status; runId: string | null; ordinal: number };
 /** A picture of a message as T3 lists it (`ChatImageAttachment`): its bytes went to the engine, not into the thread. */
 export interface ShownAttachment { readonly type: 'image'; readonly id: string; readonly name: string; readonly mimeType: string; readonly sizeBytes: number }
@@ -143,6 +144,8 @@ export interface ThreadSeed {
   readonly model: string;
   readonly mode: HohAccessMode;
   readonly executor?: HohExecutor;
+  readonly bindingKnown?: boolean;
+  readonly interactionMode?: T3InteractionMode;
   /** The T3 project the chat belongs to: "No project" unless it was started in a folder project. */
   readonly projectId?: string;
 }
@@ -155,6 +158,12 @@ export class ThreadModel {
   model: string;
   mode: HohAccessMode;
   executor: HohExecutor;
+  bindingKnown: boolean;
+  /** The engine explicitly reported a built-in agent rather than an external executor. */
+  builtin = false;
+  /** Durable `approval/asked` can arrive before the native `approval.pending`; keep its exact id. */
+  private readonly approvalDetails = new Map<string, { requestKind: string }>();
+  interactionMode: T3InteractionMode;
   projectId: string;
   /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
   cwd: string | null = null;
@@ -177,6 +186,7 @@ export class ThreadModel {
   private readonly items: Item[] = [];
   private readonly messages: Message[] = [];
   private readonly requests: Request[] = [];
+  private readonly plans: Record<string, any>[] = [];
   private readonly live = new Map<string, Live>();
   private readonly retired = new Set<string>();
   private readonly calls = new Map<string, string>();
@@ -201,6 +211,8 @@ export class ThreadModel {
     this.model = seed.model;
     this.mode = seed.mode;
     this.executor = seed.executor ?? 'claude';
+    this.bindingKnown = seed.bindingKnown ?? true;
+    this.interactionMode = seed.executor === 'codex' ? 'default' : seed.interactionMode ?? 'default';
     this.projectId = seed.projectId ?? HOH_PROJECT_ID;
   }
 
@@ -379,6 +391,17 @@ export class ThreadModel {
     const name = text(data.name); const args = argumentsOf(data.arguments);
     const id = 'item-tool-' + callId.replace(/[^A-Za-z0-9_.:-]/g, '_');
     const parentItemId = this.parentItem(data);
+    if (name === 'ExitPlanMode' && text(args.plan).trim()) {
+      const markdown = text(args.plan).trim();
+      const planId = 'plan-' + callId.replace(/[^A-Za-z0-9_.:-]/g, '_');
+      const runId = this.currentRun()?.id ?? null;
+      for (const plan of this.plans) {
+        if (plan.status === 'active') plan.status = 'superseded';
+      }
+      this.plans.push({ id: planId, threadId: this.id, runId, nodeId: NODE_ID, kind: 'proposed_plan', status: 'active', markdown });
+      this.items.push({ ...this.base(id, 'proposed_plan', 'completed', at, runId, parentItemId), planId, markdown, streaming: false });
+      return;
+    }
     const path = text(args.file_path ?? args.path ?? args.filePath ?? args.notebook_path);
     const kind = toolKind(name);
     let item: Item;
@@ -420,7 +443,17 @@ export class ThreadModel {
     if (item.parentItemId) this.refreshSubagent(item.parentItemId);
   }
 
-  private endTurn(reason: string, at: number, error?: unknown, cause?: unknown) {
+  private updateUsage(rawUsage: unknown, at: number) {
+    const run = this.currentRun(); const usage = record(rawUsage);
+    const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    const input = count(usage.inputTokens); const created = count(usage.cacheCreationInputTokens); const cached = count(usage.cacheReadInputTokens); const output = count(usage.outputTokens); const max = count(usage.maxTokens);
+    if (run && input !== null && created !== null && cached !== null && output !== null) {
+      const inputTokens = input + created + cached; const maxTokens = max !== null && max > 0 ? max : run.tokenUsage?.maxTokens;
+      run.tokenUsage = { usedTokens: inputTokens + output, ...(maxTokens ? { maxTokens } : {}), inputTokens, cachedInputTokens: cached, outputTokens: output, reasoningOutputTokens: 0, updatedAt: iso(at) };
+    }
+  }
+
+  private endTurn(reason: string, at: number, error?: unknown, cause?: unknown, rawUsage?: unknown) {
     this.reopened = null;
     const run = this.currentRun();
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
@@ -428,6 +461,7 @@ export class ThreadModel {
     const open = run?.status === 'running' || run?.status === 'waiting';
     const lateCompletedGuess = run?.status === 'interrupted' && this.settledByGuess && status === 'completed';
     if (run && (open || lateCompletedGuess)) { run.status = status; run.completedAt = at; }
+    this.updateUsage(rawUsage, at);
     for (const item of this.items) {
       if (item.status === 'running' || item.status === 'waiting' || item.status === 'pending')
         this.settleItem(item, item.type === 'assistant_message' ? 'completed' : status === 'completed' ? 'completed' : 'interrupted', at);
@@ -481,9 +515,10 @@ export class ThreadModel {
         this.running = true; this.settledByGuess = false;
         break;
       }
+      case 'turn/usage': this.updateUsage(data.usage, at); break;
       case 'turn/end': {
         const reason = record(data.reason);
-        this.endTurn(text(reason.kind), at, reason.error, reason.reason);
+        this.endTurn(text(reason.kind), at, reason.error, reason.reason, data.usage);
         this.engineRunning = false; this.settledByGuess = false;
         break;
       }
@@ -499,13 +534,16 @@ export class ThreadModel {
       case 'tool/call': this.toolCall(data, at); break;
       // The permission request of a tool call: the card shows that call as T3 shows a Claude request.
       case 'approval/asked': {
-        const item = this.item('item-approval-' + text(data.id));
+        const id = text(data.id);
+        if (!id) return false;
         const tool = this.toolInputs.get(text(data.callId));
-        if (!item || !tool) return false;
-        const request = toolRequest(tool.name, tool.args, this.cwd);
-        item.requestKind = request.requestKind; delete item.prompt;
-        if (request.prompt) item.prompt = request.prompt;
-        const entry = this.requests.find(candidate => candidate.id === text(data.id));
+        const request = tool
+          ? toolRequest(tool.name, tool.args, this.cwd)
+          : toolRequest(text(data.toolName), {}, this.cwd);
+        this.approvalDetails.set(id, { requestKind: request.requestKind });
+        const item = this.item('item-approval-' + id);
+        if (item) item.requestKind = request.requestKind;
+        const entry = this.requests.find(candidate => candidate.id === id);
         if (entry) entry.kind = request.requestKind;
         break;
       }
@@ -558,7 +596,11 @@ export class ThreadModel {
       return true;
     }
     // The engine says idle: no run stays open, whatever this flag held (the sidebar lists a thread with an open run as working).
-    const open = !running && !!run && (run.status === 'running' || run.status === 'waiting') && this.outgoing.length === 0;
+    // Some harnesses report the process as idle while it is synchronously waiting for the person's
+    // answer. The typed pending request is stronger evidence that the turn is still open; closing it
+    // here would cancel the card before the native Broker's one-second read delay has elapsed.
+    const open = !running && !!run && (run.status === 'running' || run.status === 'waiting')
+      && this.outgoing.length === 0 && !this.requests.some(request => request.status === 'pending');
     if (this.running === running && !open) return false;
     this.running = running;
     if (open) this.endTurn('completed', at);
@@ -583,20 +625,18 @@ export class ThreadModel {
   }
 
   /**
-   * A permission request of the assistant (`approval.pending`), answered in the chat. The engine's own text
-   * (`humanText`) is not English; the request is the tool call waiting for it, which `approval/asked` names.
+   * A permission request of the assistant (`approval.pending`), answered in the chat. Its visible text is
+   * the engine's `humanText` for this approval id; the durable `approval/asked` only supplies the card kind.
    */
   approvalPending(params: { approvalId: string; humanText?: string; risk?: string }, at = Date.now()) {
     if (!text(params.approvalId) || this.requests.some(request => request.id === params.approvalId)) return false;
     const run = this.currentRun();
-    // Until `approval/asked` names it: the latest call still running is the one that waits.
-    const waiting = [...this.toolInputs.values()].reverse().find(tool => this.item(tool.itemId)?.status === 'running');
-    const request = waiting ? toolRequest(waiting.name, waiting.args, this.cwd) : { requestKind: 'command' };
+    const request = this.approvalDetails.get(params.approvalId) ?? { requestKind: 'command' };
     this.requests.push({ id: params.approvalId, kind: request.requestKind, status: 'pending', createdAt: at, resolvedAt: null });
     this.items.push({
       ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at),
       requestId: params.approvalId, requestKind: request.requestKind,
-      ...(request.prompt ? { prompt: request.prompt } : {}),
+      ...(text(params.humanText) ? { prompt: text(params.humanText) } : {}),
       // T3's own set for a Claude request without a standing grant (apps/server ClaudeAdapterV2.ts
       // `CLAUDE_NO_STANDING_GRANT_OPTIONS`): HoH allows one action at a time.
       options: [{ decision: 'decline', label: 'Decline' }, { decision: 'accept', label: 'Approve' }],
@@ -615,6 +655,7 @@ export class ThreadModel {
     if (request.status === 'resolved') request.decision = allowed ? 'accept' : 'decline';
     const item = this.item('item-approval-' + params.approvalId);
     if (item) this.settleItem(item, request.status === 'resolved' ? 'completed' : 'cancelled', at);
+    this.approvalDetails.delete(params.approvalId);
     const run = this.currentRun();
     if (run && run.status === 'waiting' && !this.requests.some(entry => entry.status === 'pending')) run.status = 'running';
     this.touch(at);
@@ -660,9 +701,11 @@ export class ThreadModel {
 
   pendingRequest(id: string) { return this.requests.find(request => request.id === id && request.status === 'pending'); }
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
+  userMessageCount() { return this.messages.filter(message => message.role === 'user').length; }
+  setInteractionMode(mode: T3InteractionMode) { this.interactionMode = mode; }
 
-  private instanceId() { return this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
-  private modelSelection() { return { instanceId: this.instanceId(), model: this.model, ...(this.options?.length ? { options: this.options } : {}) }; }
+  private instanceId() { return !this.bindingKnown ? 'unknown' : this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
+  private modelSelection() { return { instanceId: this.instanceId(), model: this.bindingKnown ? this.model : 'unknown', ...(this.options?.length ? { options: this.options } : {}) }; }
   private titleText() { return nonBlank(this.title, 'New thread'); }
 
   /** `OrchestrationV2ThreadProjection`, encoded. */
@@ -673,7 +716,7 @@ export class ThreadModel {
       thread: {
         createdBy: 'user', creationSource: 'web',
         id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-        modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: 'default',
+        modelSelection: this.modelSelection(), runtimeMode: this.bindingKnown ? runtimeModeOf(this.mode) : 'unknown', interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
@@ -687,7 +730,12 @@ export class ThreadModel {
         startedAt: run.startedAt === null ? null : iso(run.startedAt), completedAt: run.completedAt === null ? null : iso(run.completedAt),
         checkpointId: null, contextHandoffId: null,
       })),
-      attempts: [], nodes: [], subagents: [], providerSessions: [], providerThreads: [], providerTurns: [],
+      attempts: [], nodes: [], subagents: [], providerSessions: [], providerThreads: [],
+      providerTurns: this.runs.filter(run => run.tokenUsage).map(run => ({
+        id: 'provider-turn-' + run.id, providerThreadId: 'hoh-' + this.id, nodeId: NODE_ID, runAttemptId: null,
+        nativeTurnRef: null, ordinal: run.ordinal, status: run.status, startedAt: run.startedAt === null ? null : iso(run.startedAt),
+        completedAt: run.completedAt === null ? null : iso(run.completedAt), tokenUsage: { ...run.tokenUsage! }, model: run.model,
+      })),
       runtimeRequests: this.requests.map(request => ({
         id: request.id, nodeId: NODE_ID, providerTurnId: null, nativeRequestRef: null, kind: request.kind, status: request.status,
         responseCapability: { type: 'live', providerSessionId: 'hoh-' + this.id },
@@ -699,7 +747,7 @@ export class ThreadModel {
         id: message.id, threadId: this.id, runId: message.runId, nodeId: null, role: message.role, text: message.text,
         attachments: message.attachments ?? [], streaming: message.streaming, createdAt: iso(message.createdAt), updatedAt: iso(message.updatedAt),
       })),
-      plans: [],
+      plans: this.plans.map(plan => ({ ...plan })),
       turnItems: this.items.map(item => ({ ...item })),
       checkpointScopes: [], checkpoints: [], contextHandoffs: [], contextTransfers: [],
       // Native subagent items stay in turnItems for state and attribution, while T3 displays their folded
@@ -770,7 +818,7 @@ export class ThreadModel {
     return {
       createdBy: 'user', creationSource: 'web',
       id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
-      modelSelection: this.modelSelection(), runtimeMode: runtimeModeOf(this.mode), interactionMode: 'default',
+      modelSelection: this.modelSelection(), runtimeMode: this.bindingKnown ? runtimeModeOf(this.mode) : 'unknown', interactionMode: this.executor === 'codex' ? 'default' : this.interactionMode,
       branch: null, worktreePath: null,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
       forkedFrom: null, activeProviderThreadId: null,
@@ -781,7 +829,7 @@ export class ThreadModel {
       // Null only for a chat made here that has no message yet (an empty draft): the window keeps it out of «Recent chats»
       // until the first message. A chat of the engine's history not read yet (older than today) is stamped by its last activity.
       latestUserMessageAt: lastUser ? iso(lastUser.createdAt) : this.loaded ? null : iso(this.updatedAt),
-      hasActionableProposedPlan: false,
+      hasActionableProposedPlan: this.plans.some(plan => plan.kind === 'proposed_plan' && plan.status === 'active'),
       itemCount: this.items.length, visibleItemCount: this.items.filter(item => item.parentItemId === null).length,
       createdAt: iso(this.createdAt), updatedAt: iso(this.updatedAt),
       pinnedAt: this.pinnedAt === null ? null : iso(this.pinnedAt), pinOrderKey: this.pinOrderKey,

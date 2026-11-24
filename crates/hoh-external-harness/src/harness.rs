@@ -68,6 +68,27 @@ pub trait ExternalHarness: Send + Sync + 'static {
         self.launch_flags(policy, access)
     }
 
+    fn launch_flags_for_turn(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        interaction: crate::InteractionMode,
+    ) -> Vec<String> {
+        let _ = interaction;
+        self.launch_flags(policy, access)
+    }
+
+    fn launch_flags_for_turn_and_trust(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        interaction: crate::InteractionMode,
+        trusted: bool,
+    ) -> Vec<String> {
+        let _ = interaction;
+        self.launch_flags_for_folder_trust(policy, access, trusted)
+    }
+
     /// Whether «Стоп» ends the process of the session, with every process under it, instead of
     /// trusting the native interrupt: for a harness whose interrupt may leave a command running.
     /// The next turn starts the process again on the same native session. Default: no.
@@ -97,6 +118,23 @@ pub trait ExternalHarness: Send + Sync + 'static {
     ) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
         let _ = cwd;
         Box::pin(std::future::ready(Ok(HarnessCommands::default())))
+    }
+
+    /// The revision of [`commands`](Self::commands) available without starting a probe. A harness
+    /// increments it when a real session supplies a newer snapshot for `cwd`, so the window can
+    /// replace its short-lived pre-turn cache immediately. Default: no revisions.
+    fn commands_revision(&self, cwd: &std::path::Path) -> u64 {
+        let _ = cwd;
+        0
+    }
+
+    /// One isolated, no-tools title request. The default harness does not provide it.
+    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+        let _ = prompt;
+        Box::pin(std::future::ready(Err(HarnessFailure::new(
+            code::HARNESS,
+            "this harness cannot generate conversation titles",
+        ))))
     }
 
     /// [`discover`](Self::discover), and where the found version stands against the range the

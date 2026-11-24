@@ -157,6 +157,7 @@ impl Slot {
             cwd_identity: None,
             model: None,
             effort: None,
+            interaction_mode: hoh_external_harness::InteractionMode::Default,
             policy,
             resume: None,
         }

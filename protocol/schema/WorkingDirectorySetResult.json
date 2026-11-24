@@ -5,6 +5,21 @@
   "properties": {
     "cwd": {
       "type": "string"
+    },
+    "rootIdentity": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "inode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "device",
+        "inode"
+      ]
     }
   },
   "required": [

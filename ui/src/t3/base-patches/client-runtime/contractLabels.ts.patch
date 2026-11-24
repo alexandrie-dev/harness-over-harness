@@ -1,0 +1,5 @@
+--- a/client-runtime/contractLabels.ts
++++ b/client-runtime/contractLabels.ts
+@@ -104,0 +105,2 @@
++    case "unknown":
++      return resolve(msg("{organization} has an unknown thread permission limit.", { organization }));

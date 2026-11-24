@@ -59,6 +59,10 @@ export function ComposerControlsBar(props: {
   permissionsShownInStrip: boolean;
   compatibleRuntimeMode: RuntimeMode;
   currentRuntimeMode?: RuntimeMode | undefined;
+  planAvailable: boolean;
+  planActive: boolean;
+  currentPlanActive: boolean;
+  onPlanToggle: () => void;
   defaultRuntimeMode: RuntimeMode | undefined;
   compatibleRuntimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
@@ -131,7 +135,9 @@ export function ComposerControlsBar(props: {
     modelPickerIconClassName,
     getModelDisabledReason,
   } = props;
-  const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
+  const runtimeModesAvailable = compatibleRuntimeModeOptions.length > 0;
+  const accessMatchesDefault =
+    compatibleRuntimeMode !== "unknown" && (!runtimeModesAvailable || compatibleRuntimeMode === defaultRuntimeMode);
   const {
     accessDisplay,
     showModeBlock,
@@ -172,6 +178,10 @@ export function ComposerControlsBar(props: {
             <ComposerFooterModeControls
               runtimeMode={compatibleRuntimeMode}
               currentRuntimeMode={props.currentRuntimeMode}
+              planAvailable={props.planAvailable}
+              planActive={props.planActive}
+              currentPlanActive={props.currentPlanActive}
+              onPlanToggle={props.onPlanToggle}
               runtimeModeOptions={compatibleRuntimeModeOptions}
               size={controlSize}
               hidden={composerControlsHidden || restingHiddenBlockCount > 0}
@@ -222,16 +232,20 @@ export function ComposerControlsBar(props: {
       triggerSuffix={effort.suffix}
       triggerDetail={effort.detail}
       triggerShortcuts={
-        pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
+        runtimeModesAvailable && pickerOwnsModeShortcut
+          ? "composer.effort composer.mode"
+          : "composer.effort"
       }
       effortColumn={<ComposerEffortColumn traits={traitsInput} />}
       footer={
-        <ComposerPickerFooter
-          traits={traitsInput}
-          runtimeMode={compatibleRuntimeMode}
-          runtimeModeOptions={compatibleRuntimeModeOptions}
-          onRuntimeModeChange={handleRuntimeModeChange}
-        />
+        traitsInput || runtimeModesAvailable ? (
+          <ComposerPickerFooter
+            traits={traitsInput}
+            runtimeMode={compatibleRuntimeMode}
+            runtimeModeOptions={compatibleRuntimeModeOptions}
+            onRuntimeModeChange={handleRuntimeModeChange}
+          />
+        ) : null
       }
       terminalOpen={terminalOpen}
       open={modelPickerOpen}

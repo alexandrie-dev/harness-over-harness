@@ -163,7 +163,7 @@ pub(crate) fn mode_settings(access: hoh_external_harness::AccessMode) -> ModeSet
             sandbox: "read-only",
             sandbox_policy: json!({"type":"readOnly"}),
         },
-        AccessMode::AutoAcceptEdits => ModeSettings {
+        AccessMode::AutoAcceptEdits | AccessMode::AcceptEdits => ModeSettings {
             approval_policy: json!("on-request"),
             reviewer: "user",
             sandbox: "workspace-write",

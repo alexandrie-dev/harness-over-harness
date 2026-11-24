@@ -8,8 +8,12 @@ import { join, relative, resolve } from 'node:path';
 const UI = resolve(import.meta.dirname, '../..');
 const ROOT = resolve(UI, '..');
 const FORBIDDEN = [/API-ключ/i, /\/v1/, /провайдер/i, /движок|движк/i, /песочниц/i, /Только чтение/i, /Команда завершена/i, /Неизвестная ошибка/i, /код /i];
-/** The only places where a listed word is a value, not a text: the default address of a model on this computer, the form of an address in a pattern. */
-const ALLOWED = [{ file: 'screens/firstrun/FirstRun.tsx', line: /const LOCAL_ADDRESS = /}, { file: 'lib/providers.mjs', line: /v1/ }];
+/** The only places where a listed word is a value, not a text: model addresses and the exact local image-reference namespace pattern. */
+const ALLOWED = [
+  { file: 'screens/firstrun/FirstRun.tsx', line: /const LOCAL_ADDRESS = /},
+  { file: 'lib/providers.mjs', line: /v1/ },
+  { file: 'hoh-host/composer.ts', line: /^const IMAGE_CONTEXT_REFERENCE = / },
+];
 
 function files(dir) {
   return readdirSync(dir).flatMap(name => {

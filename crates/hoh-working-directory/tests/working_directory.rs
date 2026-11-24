@@ -201,6 +201,26 @@ async fn serializes_concurrent_relative_changes_and_recovers_after_a_rejected_ch
 }
 
 #[tokio::test]
+async fn reading_a_legacy_directory_never_appends_a_change() {
+    let f = Fixture::new().await;
+    let session = f.agent.session();
+    let old = f.path(&["legacy"]);
+    let next = f.path(&["next"]);
+    std::fs::create_dir(&old).unwrap();
+    std::fs::create_dir(&next).unwrap();
+    session
+        .append("working-directory/change", json!({"cwd":old}), None)
+        .unwrap();
+    let before = session.seq();
+    f.service.ensure(&f.agent.agent, None).await.unwrap();
+    f.service.verify_for_read(&session).unwrap();
+    assert_eq!(session.seq(), before);
+    f.service.set(&f.agent.agent, &next, None).await.unwrap();
+    assert_eq!(f.service.get(&session), next);
+    f.shutdown().await;
+}
+
+#[tokio::test]
 async fn refuses_when_the_selected_directory_disappears_without_recovery() {
     let f = Fixture::new().await;
     let child = f.path(&["temporary"]);
@@ -218,6 +238,33 @@ async fn refuses_when_the_selected_directory_disappears_without_recovery() {
     );
     assert_eq!(f.service.get(&f.agent.session()), child);
     assert!(f.agent.claim().is_empty());
+    f.shutdown().await;
+}
+
+#[tokio::test]
+async fn refuses_an_ordinary_directory_replacement_after_selection() {
+    let f = Fixture::new().await;
+    let selected = f.path(&["selected"]);
+    let held = f.path(&["held"]);
+    let replacement = f.path(&["replacement"]);
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::create_dir(&replacement).unwrap();
+    f.service
+        .set(&f.agent.agent, &selected, None)
+        .await
+        .unwrap();
+    let identity = f.service.verify_for_spawn(&f.agent.session()).unwrap().1;
+
+    std::fs::rename(&selected, &held).unwrap();
+    std::fs::rename(&replacement, &selected).unwrap();
+    let error = f.service.verify_for_spawn(&f.agent.session()).unwrap_err();
+    assert!(error.to_string().contains("changed"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let replacement = std::fs::metadata(&selected).unwrap();
+        assert_ne!(identity, [replacement.dev(), replacement.ino()]);
+    }
     f.shutdown().await;
 }
 
@@ -316,7 +363,7 @@ async fn refuses_to_assemble_context_for_a_disappeared_directory() {
 }
 
 #[tokio::test]
-async fn uses_and_records_the_configured_launch_fallback_for_a_session_without_origin_metadata() {
+async fn reads_the_configured_fallback_without_recording_it_until_launch() {
     let f = Fixture::new().await;
     let agent = f.create("without-origin", None).await;
     let fallback = f.service.default_directory().to_owned();
@@ -324,6 +371,8 @@ async fn uses_and_records_the_configured_launch_fallback_for_a_session_without_o
         f.service.ensure(&agent.agent, None).await.unwrap(),
         fallback
     );
+    assert!(change_events(&agent.session()).is_empty());
+    f.service.verify_for_spawn(&agent.session()).unwrap();
     assert_eq!(change_events(&agent.session()), [fallback]);
     f.shutdown().await;
 }

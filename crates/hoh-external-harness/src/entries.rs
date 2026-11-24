@@ -48,8 +48,13 @@ pub(crate) fn search(root: &Path, query: &str, limit: usize) -> (Vec<WorkspaceEn
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
+            // On Unix `\` is an ordinary filename byte. Rewriting it as a path separator would
+            // turn names such as `..\.env` into an escaping path in the window.
+            if name.contains('\\') {
+                continue;
+            }
             let path = relative.join(&name);
-            let Some(text) = path.to_str().map(|text| text.replace('\\', "/")) else {
+            let Some(text) = wire_path(&path) else {
                 continue;
             };
             if name == ".git" || ignored.hides(&name, relative.as_os_str().is_empty()) {
@@ -87,6 +92,20 @@ pub(crate) fn search(root: &Path, query: &str, limit: usize) -> (Vec<WorkspaceEn
         found.into_iter().map(|(_, entry)| entry).collect(),
         truncated,
     )
+}
+
+/// A relative path in the window's wire format. Backslashes in names have already been rejected;
+/// only Windows path separators need conversion. On Unix a backslash is never reinterpreted.
+fn wire_path(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    #[cfg(windows)]
+    {
+        Some(text.replace('\\', "/"))
+    }
+    #[cfg(not(windows))]
+    {
+        Some(text.to_owned())
+    }
 }
 
 /// Where a link inside `root` leads: `Some(true)` to a folder inside `root`, `Some(false)` to a
@@ -299,6 +318,21 @@ mod tests {
         assert_eq!(paths(&entries), ["src/nested/deep.rs"]);
         let (entries, _) = search(&root, "..", 200);
         assert!(entries.is_empty(), "{:?}", paths(&entries));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_names_with_backslashes_are_never_rewritten_into_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("..\\.env"), "secret-shaped").unwrap();
+        let absolute_shaped = format!("{}etc{}passwd", '\\', '\\');
+        std::fs::write(root.join(absolute_shaped), "absolute-shaped").unwrap();
+        std::fs::write(root.join("ordinary.txt"), "ok").unwrap();
+
+        let (entries, truncated) = search(&root, "", 200);
+        assert!(!truncated);
+        assert_eq!(paths(&entries), ["ordinary.txt"]);
     }
 
     #[test]

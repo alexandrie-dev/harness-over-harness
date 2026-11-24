@@ -17,19 +17,30 @@ export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 export type T3RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
 export type HohAccessMode = 'confirm' | 'auto-accept-edits' | 'auto' | 'full';
 export type HohExecutor = 'claude' | 'codex';
+export type T3InteractionMode = 'default' | 'plan';
 
-/** T3's four choices are Codex's four native approval/sandbox policies, one-to-one. */
+/**
+ * T3's four modes and HoH's provider-neutral exact runtime mode, in order from narrowest to
+ * widest. The engine translates auto-accept-edits to each executor's native spelling.
+ */
+const MODES: readonly (readonly [T3RuntimeMode, HohAccessMode])[] = [
+  ['approval-required', 'confirm'], ['auto-accept-edits', 'auto-accept-edits'], ['auto', 'auto'], ['full-access', 'full'],
+];
+export const RUNTIME_MODES: readonly T3RuntimeMode[] = MODES.map(([runtime]) => runtime);
+
+/** A mode nobody knows asks first. */
 export function accessModeOf(mode: T3RuntimeMode): HohAccessMode {
-  if (mode === 'full-access') return 'full';
-  if (mode === 'auto-accept-edits') return 'auto-accept-edits';
-  if (mode === 'auto') return 'auto';
-  return 'confirm';
+  return MODES.find(([runtime]) => runtime === mode)?.[1] ?? 'confirm';
 }
 export function runtimeModeOf(mode: HohAccessMode): T3RuntimeMode {
-  if (mode === 'full') return 'full-access';
-  if (mode === 'auto-accept-edits') return 'auto-accept-edits';
-  if (mode === 'auto') return 'auto';
-  return 'approval-required';
+  return MODES.find(([, access]) => access === mode)?.[0] ?? 'approval-required';
+}
+export function isAccessMode(value: unknown): value is HohAccessMode {
+  return MODES.some(([, access]) => access === value);
+}
+/** How wide a mode is: confirm < auto-accept-edits < auto < full. */
+export function accessRank(mode: HohAccessMode): number {
+  return MODES.findIndex(([, access]) => access === mode);
 }
 
 /** `hoh/executor/discover` for Claude (ui/src/lib/executor.d.mts `DiscoverResult`). */
@@ -228,7 +239,7 @@ export function codexProvider(discovery: CodexDiscovery | null, now: string, req
     instanceId: CODEX_INSTANCE_ID,
     driver: CODEX_INSTANCE_ID,
     displayName: 'Codex',
-    showInteractionModeToggle: true,
+    showInteractionModeToggle: false,
     supportedRuntimeModes: ['approval-required', 'auto-accept-edits', 'auto', 'full-access'],
     supportsConversationRollback: false,
     supportsTextGeneration: false,
@@ -246,19 +257,24 @@ export function codexProvider(discovery: CodexDiscovery | null, now: string, req
 }
 
 /** What T3's welcome page and provider settings show: found or not, signed in or not, as the engine says. */
-export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, requestFailure?: unknown) {
-  const ready = discovery === null
+export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, accessKnown = true, requestFailure?: unknown) {
+  const healthReady = discovery === null
     ? requestFailure === undefined
     : discovery.installed && discovery.auth !== 'unauthenticated' && discovery.failure == null;
+  // Provider health and access-policy readiness are independent lanes. While the engine is
+  // starting, keep Claude's pending health state stable but expose no runtime modes until
+  // access/get succeeds; the host still blocks session/prompt traffic fail-closed.
+  const ready = healthReady;
   return {
     instanceId: CLAUDE_INSTANCE_ID,
     driver: CLAUDE_INSTANCE_ID,
     displayName: 'Claude',
     showInteractionModeToggle: true,
     // T3 renders all four rows; the two unimplemented auto modes are disabled by the base patch.
-    supportedRuntimeModes: ['approval-required', 'auto-accept-edits', 'auto', 'full-access'],
+    supportedRuntimeModes: accessKnown ? ['approval-required', 'auto-accept-edits', 'auto', 'full-access'] : [],
     supportsConversationRollback: false,
     supportsTextGeneration: false,
+    reportsContextWindow: true,
     enabled: true,
     installed: discovery?.installed ?? requestFailure === undefined,
     version: discovery?.version?.trim() || null,
@@ -274,17 +290,23 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, r
 }
 
 /** Every `ServerSettings` field has a decoding default; only what HoH decides is sent. */
-export function serverSettings(model: string, defaultMode: HohAccessMode, overrides: Record<string, unknown> = {}, instanceId = CLAUDE_INSTANCE_ID) {
-  return {
+export function serverSettings(model: string, defaultMode: HohAccessMode, overrides: Record<string, unknown> = {}, instanceId = CLAUDE_INSTANCE_ID, accessKnown = true) {
+  const settings = {
     ...overrides,
     // "Add project" offers no repository host to clone from (T3 turns its default host off by this setting:
     // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
     offeredSourceControlProviders: { github: false },
     defaultModelSelection: { instanceId, model },
+    // The native T3 context-window component lives in Thread details and is opt-in by default.
+    // HoH reports Claude usage, so keep that row visible without requiring a hidden Labs setting.
+    threadDetailsItems: { context: true },
     // The mode a new thread starts in (T3's setting), not the mode in effect: T3 shows the mode chip under
     // the composer only while a thread's mode differs from it (chat/composerControlsOwnership.ts).
     defaultRuntimeMode: runtimeModeOf(defaultMode),
   };
+  if (accessKnown) return settings;
+  const { defaultRuntimeMode: _unknown, ...withoutMode } = settings;
+  return withoutMode;
 }
 
 export interface ConfigInput {
@@ -296,6 +318,7 @@ export interface ConfigInput {
   readonly defaultMode: HohAccessMode;
   readonly defaultInstanceId?: string;
   readonly defaultModel?: string;
+  readonly accessKnown?: boolean;
   readonly settingsOverrides?: Record<string, unknown>;
   readonly now: string;
 }
@@ -341,7 +364,7 @@ export function serverConfig(input: ConfigInput) {
     keybindings: [],
     issues: [],
     providers: [
-      claudeProvider(input.claudeDiscovery, input.now, input.discoveryFailure),
+      claudeProvider(input.claudeDiscovery, input.now, input.accessKnown !== false, input.discoveryFailure),
       codexProvider(input.codexDiscovery, input.now, input.codexDiscoveryFailure),
     ],
     availableEditors: [],
@@ -352,7 +375,7 @@ export function serverConfig(input: ConfigInput) {
       otlpMetricsEnabled: false,
       otlpLogsEnabled: false,
     },
-    settings: serverSettings(model, input.defaultMode, input.settingsOverrides, instanceId),
+    settings: serverSettings(model, input.defaultMode, input.settingsOverrides, instanceId, input.accessKnown !== false),
     serverTime: input.now,
   };
 }

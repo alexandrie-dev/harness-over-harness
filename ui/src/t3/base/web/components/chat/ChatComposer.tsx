@@ -247,6 +247,7 @@ const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidErro
 import { toastManager } from "../ui/toast";
 import { m as resolveMessage } from "../../i18n/messages";
 import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
+import { ComposerControl } from "./ComposerControl";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
@@ -624,6 +625,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isEditingQueuedMessage = editingQueuedAttachments !== null;
   const applyThreadModelPick = useApplyThreadModelPick();
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const setComposerDraftInteractionMode = useComposerDraftStore(
+    (store) => store.setInteractionMode,
+  );
   const composerDraftTargetKeyRef = useRef("");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
   useLayoutEffect(() => {
@@ -2521,6 +2525,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onPromptEdit={editPromptFromTraitsStable}
       compatibleRuntimeMode={compatibleRuntimeMode}
       currentRuntimeMode={props.currentRuntimeMode}
+      planAvailable={selectedProviderEntry?.snapshot.showInteractionModeToggle === true}
+      planActive={(composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan"}
+      currentPlanActive={props.currentRuntimeMode !== undefined && activeThread?.interactionMode === "plan"}
+      onPlanToggle={() => setComposerDraftInteractionMode(composerDraftTarget, (composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan" ? "default" : "plan")}
       defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       handleRuntimeModeChange={handleRuntimeModeChange}

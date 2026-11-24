@@ -507,13 +507,22 @@ object!(SettingsRulesSetParams {
 // External agent harnesses in the window (HOH-18): the access mode of an executor (Claude Code),
 // chosen only by the user; discovery and the choice of the executor that new chats go to.
 choices!(ExecutorAccessMode { Confirm => "confirm", Full => "full" });
-// Exact T3/Codex runtime mode. `ExecutorAccessMode` remains the downgrade-safe two-value
-// projection used by older hosts and by the privileged approval copy.
+// Exact T3 runtime mode. `ExecutorAccessMode` remains the downgrade-safe two-value projection
+// used by older hosts and by the privileged approval copy; each executor translates the middle
+// choices to its native spelling (`auto-accept-edits` for Codex, `acceptEdits` for Claude).
 choices!(ExecutorRuntimeMode {
     Confirm => "confirm",
     AutoAcceptEdits => "auto-accept-edits",
     Auto => "auto",
     Full => "full"
+});
+// A running Plan is a Claude process policy, not a selectable access/set value.
+choices!(ExecutorRunningRuntimeMode {
+    Confirm => "confirm",
+    AutoAcceptEdits => "auto-accept-edits",
+    Auto => "auto",
+    Full => "full",
+    Plan => "plan"
 });
 choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
 choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
@@ -533,6 +542,25 @@ object!(ExecutorTrustResult {
     trusted: bool,
     changed: bool
 });
+pub const EXECUTOR_TITLE_PROMPT_MAX_CHARS: usize = 16 * 1024;
+
+fn title_prompt<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let prompt = String::deserialize(deserializer)?;
+    if prompt.chars().count() > EXECUTOR_TITLE_PROMPT_MAX_CHARS {
+        return Err(serde::de::Error::custom("title prompt is too long"));
+    }
+    Ok(prompt)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutorTitleGenerateParams {
+    pub executor: String,
+    #[serde(deserialize_with = "title_prompt")]
+    #[schemars(length(max = 16384))]
+    pub prompt: String,
+}
+object!(ExecutorTitleGenerateResult { title: String });
 optional!(ExecutorAccessSetParams {
     executor: String,
     mode: ExecutorAccessMode,
@@ -575,7 +603,9 @@ optional!(ExecutorSessionAccess {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     runtime_mode: Option<ExecutorRuntimeMode>,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
-    running_runtime_mode: Option<ExecutorRuntimeMode>,
+    running_runtime_mode: Option<ExecutorRunningRuntimeMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    builtin: Option<bool>,
     pending: bool
 });
 optional!(ExecutorAccessGetResult {

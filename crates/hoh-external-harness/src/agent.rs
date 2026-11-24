@@ -39,9 +39,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::contract::{
     AccessMode, ApprovalDecision, ApprovalMode, EndReason, FileChange, FileChangeKind,
-    HarnessAction, HarnessEvent, HarnessFailure, HarnessPolicy, HarnessQuestion, HarnessResponse,
-    ItemOutcome, NativeSessionId, NetworkAccess, PromptImage, PromptParams, QuestionAnswer,
-    RespondParams, SandboxMode, StartParams, code,
+    HarnessAction, HarnessBackgroundTask, HarnessEvent, HarnessFailure, HarnessPolicy,
+    HarnessQuestion, HarnessResponse, HarnessTelemetry, HarnessTelemetryRecord,
+    HarnessWorkflowProgress, InteractionMode, ItemOutcome, NativeSessionId, NetworkAccess,
+    PromptImage, PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams,
+    TELEMETRY_RECORD, code,
 };
 use crate::executor::{BINDING_RECORD, Launched, Shared};
 use crate::harness::HarnessSession;
@@ -54,6 +56,107 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 const MAX_OUTPUT_CHARS: usize = 64 * 1024;
 const MAX_HEADLINE_CHARS: usize = 600;
 const MAX_DETAILS_CHARS: usize = 3600;
+/// Telemetry is durable and provider-controlled: bound every display string, every repeated
+/// collection, and the final encoded record before it reaches the session log.
+const MAX_TELEMETRY_TEXT_BYTES: usize = 4 * 1024;
+const MAX_TELEMETRY_ITEMS: usize = 256;
+const MAX_TELEMETRY_RECORD_BYTES: usize = 64 * 1024;
+
+fn telemetry_text(text: &str) -> String {
+    let mut text = redact(text);
+    if text.len() > MAX_TELEMETRY_TEXT_BYTES {
+        let mut end = MAX_TELEMETRY_TEXT_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
+}
+
+fn scrub_background_task(task: &mut HarnessBackgroundTask) {
+    task.task_type = task.task_type.as_deref().map(telemetry_text);
+    task.description = task.description.as_deref().map(telemetry_text);
+}
+
+fn scrub_workflow_progress(progress: &mut HarnessWorkflowProgress) {
+    progress.kind = telemetry_text(&progress.kind);
+    progress.title = progress.title.as_deref().map(telemetry_text);
+    progress.label = progress.label.as_deref().map(telemetry_text);
+    progress.state = progress.state.as_deref().map(telemetry_text);
+    progress.phase_title = progress.phase_title.as_deref().map(telemetry_text);
+    progress.model = progress.model.as_deref().map(telemetry_text);
+    progress.prompt_preview = progress.prompt_preview.as_deref().map(telemetry_text);
+    progress.result_preview = progress.result_preview.as_deref().map(telemetry_text);
+}
+
+/// Redact only payload display/free-text: provenance and task/message/run ids are identities and
+/// must remain byte-for-byte provider values. A repeated collection over the limit is rejected
+/// whole, so a complete roster can never become a believable partial snapshot.
+fn prepare_telemetry(record: &mut HarnessTelemetryRecord) -> Result<(), &'static str> {
+    match &mut record.payload {
+        HarnessTelemetry::AssistantUsage { .. } => {}
+        HarnessTelemetry::ResultUsage {
+            model_usage,
+            user_message_uuids,
+            origin,
+            ..
+        } => {
+            if model_usage
+                .as_ref()
+                .is_some_and(|models| models.len() > MAX_TELEMETRY_ITEMS)
+            {
+                return Err("too many model usage entries");
+            }
+            if user_message_uuids.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many echoed user message ids");
+            }
+            if let Some(models) = model_usage {
+                for model in models {
+                    model.model = telemetry_text(&model.model);
+                }
+            }
+            *origin = origin.as_deref().map(telemetry_text);
+        }
+        HarnessTelemetry::McpServers { servers } => {
+            if servers.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many MCP servers");
+            }
+            for server in servers {
+                server.name = telemetry_text(&server.name);
+                server.status = server.status.as_deref().map(telemetry_text);
+            }
+        }
+        HarnessTelemetry::BackgroundTask { update } => {
+            if update.workflow_progress.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many workflow progress entries");
+            }
+            update.subtype = telemetry_text(&update.subtype);
+            update.status = update.status.as_deref().map(telemetry_text);
+            update.summary = update.summary.as_deref().map(telemetry_text);
+            scrub_background_task(&mut update.task);
+            for progress in &mut update.workflow_progress {
+                scrub_workflow_progress(progress);
+            }
+        }
+        HarnessTelemetry::BackgroundTaskUpdated { patch, .. } => {
+            patch.status = patch.status.as_deref().map(telemetry_text);
+        }
+        HarnessTelemetry::BackgroundTasksSnapshot { tasks } => {
+            if tasks.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many background tasks");
+            }
+            for task in tasks {
+                scrub_background_task(task);
+            }
+        }
+    }
+    let encoded = serde_json::to_vec(record).map_err(|_| "cannot encode telemetry")?;
+    if encoded.len() > MAX_TELEMETRY_RECORD_BYTES {
+        return Err("telemetry record is too large");
+    }
+    Ok(())
+}
 
 /// `approval: never` is built in (feature `never-mode`). Off by default until it passes its own
 /// review: the slot then refuses to start a native session under `never`, and nothing in the slot
@@ -80,9 +183,14 @@ pub(crate) fn access_text(executor: &str, access: AccessMode) -> String {
         AccessMode::AutoAcceptEdits => format!(
             "Автоправки: {name} правит файлы сам, команды и расширение доступа подтверждаете вы"
         ),
-        AccessMode::Auto => {
-            format!("Авто: обычные действия {name} проверяет и принимает автоматически")
-        }
+        AccessMode::AcceptEdits => format!(
+            "Правки без вопросов: файлы в папке разговора {name} меняет сам, команды и сеть — \
+             после вашего подтверждения"
+        ),
+        AccessMode::Auto => format!(
+            "Автоматически: что безопасно, {name} решает и выполняет сам, остальное — после \
+             вашего подтверждения"
+        ),
         AccessMode::Full => format!("Полный доступ: {name} выполняет команды без вопросов"),
     }
 }
@@ -106,7 +214,10 @@ pub(crate) fn launch_policy(configured: &HarnessPolicy, access: AccessMode) -> H
             approval: ApprovalMode::OnRequest,
             network: NetworkAccess::Allowed,
         },
-        AccessMode::Confirm | AccessMode::AutoAcceptEdits | AccessMode::Auto => HarnessPolicy {
+        AccessMode::Confirm
+        | AccessMode::AutoAcceptEdits
+        | AccessMode::AcceptEdits
+        | AccessMode::Auto => HarnessPolicy {
             sandbox: match configured.sandbox {
                 SandboxMode::FullAccess => SandboxMode::WorkspaceWrite,
                 other => other,
@@ -181,6 +292,8 @@ struct State {
     /// Access snapshotted for the last accepted prompt. A later choice affects only a later
     /// prompt, even when this turn waited in the inbox.
     access: AccessMode,
+    /// T3's interaction mode for the current turn. A wake without a prompt keeps it.
+    interaction_mode: InteractionMode,
 }
 
 pub(crate) struct NewAgent {
@@ -342,6 +455,24 @@ impl ExternalAgent {
                 .ctx
                 .logger()
                 .warn(format_args!("cannot record native session id: {error}")),
+        }
+    }
+
+    /// Preserve bounded, redacted provider telemetry as an ignorable session record. The
+    /// concrete adapter selects typed-safe fields; this common boundary enforces durable-log
+    /// safety for every adapter without rewriting provider identities.
+    fn record_telemetry(&self, mut record: HarnessTelemetryRecord) {
+        if let Err(reason) = prepare_telemetry(&mut record) {
+            self.ctx
+                .logger()
+                .warn(format_args!("dropping harness telemetry: {reason}"));
+            return;
+        }
+        let data = json!({"harness": self.shared.name, "record": record});
+        if let Err(error) = append_plugin_record(&self.session, TELEMETRY_RECORD, data) {
+            self.ctx
+                .logger()
+                .warn(format_args!("cannot record harness telemetry: {error}"));
         }
     }
 
@@ -514,7 +645,7 @@ impl ExternalAgent {
             self.emit_error(turn, step, error);
             return;
         }
-        self.take_prompt_settings(&input);
+        self.take_prompt_choices(&input);
         let messages = input.messages;
         let mut log = TurnLog::new(self.clone(), turn, step, signal.clone());
         let outcome = self.native_turn(live, &mut log, &messages, &signal).await;
@@ -535,13 +666,14 @@ impl ExternalAgent {
                 json!({"kind": "error", "error": {"message": failure.message, "code": failure.code}})
             }
         };
+        let mut end = json!({"turn": turn, "reason": reason});
+        if let Some(usage) = log.usage {
+            end["usage"] = json!(usage);
+        }
         let closed = self
             .session
             .append("step/end", json!({"turn": turn, "step": step}), None)
-            .and_then(|_| {
-                self.session
-                    .append("turn/end", json!({"turn": turn, "reason": reason}), None)
-            });
+            .and_then(|_| self.session.append("turn/end", end, None));
         if let Err(error) = closed {
             self.ctx
                 .logger()
@@ -578,6 +710,29 @@ impl ExternalAgent {
             Ok(images) => images,
             Err(failure) => return TurnOutcome::Failed(failure),
         };
+        let checked = match self
+            .shared
+            .ctx
+            .get::<hoh_working_directory::WorkingDirectoryKey>()
+        {
+            Some(service) => service.verify_for_spawn(&self.session),
+            None => hoh_working_directory::verify_session_directory(&self.session, &self.cwd()),
+        };
+        match checked {
+            Ok((cwd, identity)) if cwd == session.cwd && identity == session.cwd_identity => {}
+            Ok(_) => {
+                return TurnOutcome::Failed(HarnessFailure::new(
+                    code::IO,
+                    "Рабочая папка разговора изменилась до отправки сообщения",
+                ));
+            }
+            Err(error) => {
+                return TurnOutcome::Failed(HarnessFailure::new(
+                    code::IO,
+                    format!("Рабочая папка разговора недоступна: {error}"),
+                ));
+            }
+        }
         // The answer to the prompt is awaited together with the events: a harness may stream
         // the turn before it answers, and a stop before the answer must not be lost.
         let mut prompt = session.control.prompt(PromptParams {
@@ -680,7 +835,24 @@ impl ExternalAgent {
         live: &mut Option<LiveSession>,
         signal: &AbortSignal,
     ) -> Result<(), HarnessFailure> {
-        let effort = lock(&self.state).effort.clone();
+        if let Some(directories) = self.ctx.get::<hoh_working_directory::WorkingDirectoryKey>() {
+            let owner = self
+                .as_dyn()
+                .ok_or_else(|| HarnessFailure::new(code::CLOSED, "agent is gone"))?;
+            directories
+                .ensure(&owner, Some(signal))
+                .await
+                .map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("Рабочая папка разговора недоступна: {error}"),
+                    )
+                })?;
+        }
+        let (effort, interaction_mode) = {
+            let state = lock(&self.state);
+            (state.effort.clone(), state.interaction_mode)
+        };
         let current_trust =
             if live.is_some() && matches!(self.shared.name.as_str(), "claude" | "codex") {
                 let cwd = self.cwd();
@@ -710,6 +882,7 @@ impl ExternalAgent {
                     HarnessEvent::NativeSession { native_session_id } => {
                         self.record_native(&native_session_id, None)
                     }
+                    HarnessEvent::Telemetry { record } => self.record_telemetry(record),
                     // Outside a turn nobody can be asked: the request is withdrawn, not left
                     // waiting.
                     HarnessEvent::ApprovalRequested { request_id, .. }
@@ -735,11 +908,13 @@ impl ExternalAgent {
             let other_effort = session.effort != effort;
             let other_trust =
                 current_trust.is_some_and(|trusted| trusted != session.folder_trusted);
+            let other_interaction = session.interaction_mode != interaction_mode;
             if session.dead
                 || chosen
                 || retired
                 || other_effort
                 || other_trust
+                || other_interaction
                 || self.model.restart.swap(false, Ordering::SeqCst)
             {
                 if let Some(old) = live.take() {
@@ -748,7 +923,17 @@ impl ExternalAgent {
                 lock(&self.state).control = None;
             }
         }
+        // Revalidate the selected directory before reusing an existing process, too.
         if live.is_some() {
+            match self
+                .shared
+                .ctx
+                .get::<hoh_working_directory::WorkingDirectoryKey>()
+            {
+                Some(service) => service.verify_for_spawn(&self.session),
+                None => hoh_working_directory::verify_session_directory(&self.session, &self.cwd()),
+            }
+            .map_err(|error| HarnessFailure::new(code::IO, error.to_string()))?;
             return Ok(());
         }
         self.model.restart.store(false, Ordering::SeqCst);
@@ -757,7 +942,7 @@ impl ExternalAgent {
         let policy = self.policy_for(access)?;
         // `never` (built only with `never-mode`) is put to the user once per process; full
         // access was already the user's own action in the window, so it is not asked again.
-        let escalated = if access == AccessMode::Confirm && policy.approval == ApprovalMode::Never {
+        let escalated = if access.asks() && policy.approval == ApprovalMode::Never {
             self.ask_escalation(&policy, signal).await?;
             true
         } else {
@@ -776,12 +961,15 @@ impl ExternalAgent {
             .map_err(|error| HarnessFailure::new(code::IO, error.to_string()))
         };
         let (cwd, identity) = checked_cwd()?;
+        let mut launch_cwd = cwd.clone();
+        let mut launch_identity = identity;
         let mut params = StartParams {
             session_id: self.id.to_string(),
             cwd,
             cwd_identity: Some(identity),
             model: lock(&self.model.model).clone(),
             effort: effort.clone(),
+            interaction_mode,
             policy,
             resume: resume.clone(),
         };
@@ -802,7 +990,12 @@ impl ExternalAgent {
                 json!({"cwd": params.cwd, "executor": self.shared.name}),
             );
         }
-        let mut flags = harness.launch_flags_for_folder_trust(&params.policy, access, trusted);
+        let mut flags = harness.launch_flags_for_turn_and_trust(
+            &params.policy,
+            access,
+            interaction_mode,
+            trusted,
+        );
         let mut launched_trusted = trusted;
         let (started, lost) = match harness
             .start_with_folder_trust(params.clone(), access, trusted)
@@ -815,6 +1008,8 @@ impl ExternalAgent {
                 ));
                 params.resume = None;
                 let (cwd, identity) = checked_cwd()?;
+                launch_cwd = cwd.clone();
+                launch_identity = identity;
                 params.cwd = cwd;
                 params.cwd_identity = Some(identity);
                 let trusted = if matches!(self.shared.name.as_str(), "claude" | "codex")
@@ -827,7 +1022,12 @@ impl ExternalAgent {
                 } else {
                     false
                 };
-                flags = harness.launch_flags_for_folder_trust(&params.policy, access, trusted);
+                flags = harness.launch_flags_for_turn_and_trust(
+                    &params.policy,
+                    access,
+                    interaction_mode,
+                    trusted,
+                );
                 launched_trusted = trusted;
                 (
                     harness
@@ -854,6 +1054,7 @@ impl ExternalAgent {
             self.id.as_ref(),
             Launched {
                 access,
+                interaction_mode,
                 flags,
                 session: Arc::downgrade(&started.session),
             },
@@ -861,7 +1062,7 @@ impl ExternalAgent {
         if let Err(error) = append_plugin_record(
             &self.session,
             "plugin:external-harness/launch",
-            json!({ "runtimeMode": access }),
+            json!({ "runtimeMode": if interaction_mode == InteractionMode::Plan { json!("plan") } else { json!(access) }, "interactionMode": interaction_mode }),
         ) {
             self.ctx.logger().warn(format_args!(
                 "could not publish the running access mode: {error}"
@@ -876,6 +1077,9 @@ impl ExternalAgent {
             access,
             effort,
             folder_trusted: launched_trusted,
+            interaction_mode,
+            cwd: launch_cwd,
+            cwd_identity: launch_identity,
         });
         Ok(())
     }
@@ -884,7 +1088,7 @@ impl ExternalAgent {
     /// (none: the harness's own), so a prompt queued behind it does not decide it. A level the
     /// harness does not have is not passed on, and said in the log. A turn whose prompt named
     /// nothing through `session/prompt` (a wake, another method) keeps the last level.
-    fn take_prompt_settings(&self, input: &TurnInput) {
+    fn take_prompt_choices(&self, input: &TurnInput) {
         let Some(prompt) = input.messages.last().filter(|_| input.last_from_next_turn) else {
             return;
         };
@@ -911,8 +1115,15 @@ impl ExternalAgent {
         });
         let mut state = lock(&self.state);
         state.effort = effort;
-        if let Some(access) = access {
-            state.access = access;
+        // Unknown external bindings are never widened to a later global choice.
+        state.access = access.unwrap_or(AccessMode::Confirm);
+        drop(state);
+        if let Some(mode) = self
+            .shared
+            .choices
+            .take_interaction(self.id.as_ref(), prompt.id.as_ref())
+        {
+            lock(&self.state).interaction_mode = mode;
         }
     }
 
@@ -928,12 +1139,13 @@ impl ExternalAgent {
             ));
         }
         let policy = launch_policy(&configured, access);
-        if access == AccessMode::Confirm && policy != configured {
+        if access.asks() && policy != configured {
             self.ctx.logger().warn(format_args!(
                 "the configured policy {} of harness \"{}\" is wider than the access mode the \
-                 user chose (confirm): started with {}",
+                 user chose ({}): started with {}",
                 js_json_stringify(&json!(configured)),
                 self.shared.name,
+                access.as_str(),
                 js_json_stringify(&json!(policy))
             ));
         }
@@ -1356,6 +1568,10 @@ pub(crate) struct LiveSession {
     /// The effort level it was started with: another one in a prompt restarts it.
     effort: Option<String>,
     folder_trusted: bool,
+    /// The interaction mode it was started with: another prompt mode restarts it.
+    interaction_mode: InteractionMode,
+    cwd: String,
+    cwd_identity: [u64; 2],
 }
 
 enum TurnOutcome {
@@ -1423,13 +1639,24 @@ struct TurnLog {
     /// The harness opened this turn (`turn-started` with its id). A request before that was made
     /// between turns, whenever it reaches HoH: it is withdrawn, nobody is asked.
     opened: bool,
+    usage: Option<HarnessUsage>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessUsage {
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    output_tokens: u64,
+    max_tokens: Option<u64>,
 }
 
 impl TurnLog {
     fn new(agent: Arc<ExternalAgent>, turn: u64, step: u64, signal: AbortSignal) -> Self {
         // Under full access the CLI asks nothing: `never`'s rule applies only with confirmation.
         let never = agent.shared.config.policy.approval == ApprovalMode::Never
-            && lock(&agent.state).access == AccessMode::Confirm;
+            && lock(&agent.state).access.asks();
         Self {
             agent,
             turn,
@@ -1446,6 +1673,7 @@ impl TurnLog {
             allowed: Arc::default(),
             broken: false,
             opened: false,
+            usage: None,
         }
     }
 
@@ -1537,6 +1765,33 @@ impl TurnLog {
                 }
             }
             HarnessEvent::Status { .. } => {}
+            HarnessEvent::Telemetry { record } => self.agent.record_telemetry(record),
+            HarnessEvent::Usage {
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                output_tokens,
+                max_tokens,
+            } => {
+                let usage = HarnessUsage {
+                    input_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens,
+                    output_tokens,
+                    max_tokens,
+                };
+                // Usage is a live projection, not merely turn-end accounting. Persisting the
+                // snapshot also broadcasts it through session.event so T3 can repaint its native
+                // context component while Claude is still streaming.
+                if let Err(error) = self.agent.session.append(
+                    "turn/usage",
+                    json!({"turn": self.turn, "usage": usage}),
+                    None,
+                ) {
+                    self.warn("cannot record context usage", error);
+                }
+                self.usage = Some(usage);
+            }
             // Sent before the harness took this turn's prompt: the request belongs to the time
             // between turns (after the last turn ended), even when it reaches HoH only now. It is
             // withdrawn like one found before the prompt, never put to the user as this turn's.
@@ -2792,6 +3047,49 @@ mod tests {
         assert_eq!(
             launch_policy(&HarnessPolicy::default(), AccessMode::Full),
             wide
+        );
+        // The two modes between them (CEO 23.11 00:07) cap the configuration as confirm does.
+        for between in [
+            AccessMode::AutoAcceptEdits,
+            AccessMode::AcceptEdits,
+            AccessMode::Auto,
+        ] {
+            assert_eq!(launch_policy(&wide, between), HarnessPolicy::default());
+            assert_eq!(
+                launch_policy(&reviewer, between),
+                launch_policy(&reviewer, AccessMode::Confirm)
+            );
+        }
+    }
+
+    /// Both native spellings of T3's auto-accept mode round-trip without weakening their common
+    /// security boundary; only full access stops the questions.
+    #[test]
+    fn the_native_modes_keep_their_order_and_names() {
+        let modes = [
+            AccessMode::Confirm,
+            AccessMode::AutoAcceptEdits,
+            AccessMode::AcceptEdits,
+            AccessMode::Auto,
+            AccessMode::Full,
+        ];
+        assert!(modes.windows(2).all(|pair| pair[0] < pair[1]));
+        for mode in modes {
+            let wire = serde_json::to_value(mode).unwrap();
+            assert_eq!(wire, mode.as_str());
+            assert_eq!(serde_json::from_value::<AccessMode>(wire).unwrap(), mode);
+            assert_eq!(mode.asks(), mode != AccessMode::Full);
+            assert!(access_text("claude", mode).contains("Claude"));
+        }
+        assert_eq!(
+            modes.map(AccessMode::as_str),
+            [
+                "confirm",
+                "auto-accept-edits",
+                "acceptEdits",
+                "auto",
+                "full",
+            ]
         );
     }
 

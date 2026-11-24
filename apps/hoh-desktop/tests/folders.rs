@@ -124,3 +124,34 @@ fn only_the_main_window_browses_folders() {
         .is_ok()
     );
 }
+
+#[test]
+fn explicit_window_home_is_isolated_and_invalid_values_fail_closed() {
+    let base = scratch("window-home");
+    let isolated = base.join("home");
+    let ambient = base.join("elsewhere");
+    assert_eq!(
+        hoh_desktop::native::folder_browser_home(
+            Some(isolated.clone().into_os_string()),
+            Some(ambient.clone().into_os_string()),
+        )
+        .unwrap(),
+        isolated.canonicalize().unwrap()
+    );
+    for value in ["", "relative/home", "/definitely/missing/hoh-window-home"] {
+        assert!(
+            hoh_desktop::native::folder_browser_home(
+                Some(value.into()),
+                Some(ambient.clone().into_os_string()),
+            )
+            .is_err(),
+            "explicit {value:?} must not fall back to ambient HOME"
+        );
+    }
+    assert_eq!(
+        hoh_desktop::native::folder_browser_home(None, Some(ambient.clone().into_os_string()))
+            .unwrap(),
+        ambient
+    );
+    fs::remove_dir_all(base).unwrap();
+}

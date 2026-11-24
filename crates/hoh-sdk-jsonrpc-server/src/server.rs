@@ -40,7 +40,7 @@ use hoh_protocol::{
     SessionAssistantStreamNotification, SessionAssistantStreamOutcome, SessionPromptParams,
     SessionPromptResult, SessionQueryParams, SessionQueryResult, SessionResumeParams,
     SessionWaitParams, SessionWorkingDirectoryParams, SessionWorkingDirectoryResult,
-    SessionWorkingDirectorySetParams,
+    SessionWorkingDirectorySetParams, WorkingDirectoryRootIdentity,
 };
 use hoh_session::{SessionCreated, SessionEventEmitted, SessionId, SessionLogOffset};
 use hoh_session_persistence::SessionPersistenceService;
@@ -625,13 +625,18 @@ impl HarnessSdkJsonRpcServer {
         &self,
         params: SessionPromptParams,
     ) -> Result<SessionPromptResult, BoxError> {
+        let listener_params = serde_json::to_value(&params)?;
         let blocks = params
             .content_blocks
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()?;
-        self.prompt_blocks(SessionId::from(params.session_id), blocks, None)
-            .await
+        self.prompt_blocks(
+            SessionId::from(params.session_id),
+            blocks,
+            Some(&listener_params),
+        )
+        .await
     }
     /// `params`: those of a `session/prompt` request, for its listener (HOH-40).
     async fn prompt_blocks(
@@ -641,14 +646,15 @@ impl HarnessSdkJsonRpcServer {
         params: Option<&Value>,
     ) -> Result<SessionPromptResult, BoxError> {
         self.assert_initialized()?;
-        // Allocate and announce the message before the first await. JSON-RPC requests run
-        // concurrently, so a following access-change request must not overtake the snapshot for
-        // this prompt while its session or durable attachments are still being prepared. If
-        // preparation fails, the listener deliberately leaves an abandoned snapshot which its
-        // next successful message drops by id.
         let message_id: MessageId = hoh_util_crypto::random_uuid().as_str().into();
-        if let (Some(params), Some(methods)) = (params, self.inner.ctx.get::<HohRpcMethods>()) {
-            methods.prompted(session_id.as_ref(), message_id.as_ref(), params);
+        // Capture the permission selected when the request is accepted, before attachment I/O
+        // can let a later access change overtake this message.
+        if let Some(methods) = self.inner.ctx.get::<HohRpcMethods>() {
+            methods.prompted(
+                session_id.as_ref(),
+                message_id.as_ref(),
+                params.unwrap_or(&Value::Null),
+            );
         }
         let rec = self.get_or_create_session(session_id.clone()).await?;
         self.inner.lifetime.signal().throw_if_aborted()?;
@@ -896,9 +902,20 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<WorkingDirectoryKey>()
             .ok_or_else(|| error("workingDirectory service is unavailable"))?;
-        Ok(SessionWorkingDirectoryResult {
-            cwd: directory.ensure(&directory_agent(agent), None).await?,
-        })
+        let cwd = directory
+            .ensure(&directory_agent(agent.clone()), None)
+            .await?;
+        let (verified, identity) = directory.verify_for_read(agent.session())?;
+        if verified != cwd {
+            return Err(error(
+                "The conversation folder changed while it was being read",
+            ));
+        }
+        let root_identity = Some(WorkingDirectoryRootIdentity {
+            device: identity[0].to_string(),
+            inode: identity[1].to_string(),
+        });
+        Ok(SessionWorkingDirectoryResult { cwd, root_identity })
     }
     pub async fn set_working_directory(
         &self,
@@ -912,11 +929,15 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<WorkingDirectoryKey>()
             .ok_or_else(|| error("workingDirectory service is unavailable"))?;
-        Ok(SessionWorkingDirectoryResult {
-            cwd: directory
-                .set(&directory_agent(agent), &params.path, None)
-                .await?,
-        })
+        let cwd = directory
+            .set(&directory_agent(agent.clone()), &params.path, None)
+            .await?;
+        let (_, identity) = directory.verify_for_spawn(agent.session())?;
+        let root_identity = Some(WorkingDirectoryRootIdentity {
+            device: identity[0].to_string(),
+            inode: identity[1].to_string(),
+        });
+        Ok(SessionWorkingDirectoryResult { cwd, root_identity })
     }
     async fn working_directory_agent(&self, id: SessionId) -> Result<Arc<dyn Agent>, BoxError> {
         self.assert_initialized()?;
@@ -1238,18 +1259,33 @@ impl HarnessSdkJsonRpcServer {
             }
             "session/prompt" => {
                 self.assert_initialized()?;
-                let id = string_field(
+                // Preserve the SDK-compatible diagnostics for the two required fields while the
+                // typed decode below enforces the rest of the closed request contract.
+                string_field(
                     &params,
                     "sessionId",
                     "session/prompt requires a sessionId string",
                 )?;
-                let blocks = params
+                params
                     .get("contentBlocks")
                     .and_then(Value::as_array)
-                    .cloned()
                     .ok_or_else(|| type_error("session/prompt requires contentBlocks"))?;
+                // `effort` is private glue consumed by the prompt listener, not the public SDK
+                // struct. Everything else crosses the typed protocol boundary before a session,
+                // message, mode choice, or followup can be created.
+                let mut typed = params.clone();
+                if let Some(object) = typed.as_object_mut() {
+                    object.remove("effort");
+                }
+                let typed: SessionPromptParams =
+                    serde_json::from_value(typed).map_err(|error| type_error(error.to_string()))?;
+                let blocks = typed
+                    .content_blocks
+                    .iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()?;
                 serde_json::to_value(
-                    self.prompt_blocks(SessionId::from(id), blocks, Some(&params))
+                    self.prompt_blocks(SessionId::from(typed.session_id), blocks, Some(&params))
                         .await?,
                 )
                 .map_err(Into::into)

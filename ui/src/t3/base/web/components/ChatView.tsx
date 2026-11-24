@@ -992,6 +992,7 @@ export default function ChatView(props: ChatViewProps) {
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
   const runtimeMode =
+    activeThread?.runtimeMode === "unknown" ? "unknown" :
     composerRuntimeMode ??
     (isServerThread ? activeThread?.runtimeMode : undefined) ??
     defaultRuntimeMode;
@@ -3428,6 +3429,11 @@ export default function ChatView(props: ChatViewProps) {
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
             />
+            {activeThread.runtimeMode === "unknown" ? (
+              <span role="status" className="shrink-0 text-xs text-muted-foreground" data-hoh-unknown-access>
+                Executor: <strong>Unknown</strong> · Access: <strong>Unknown</strong>
+              </span>
+            ) : null}
           </header>
         )}
 

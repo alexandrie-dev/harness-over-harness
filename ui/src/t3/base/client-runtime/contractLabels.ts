@@ -102,6 +102,8 @@ export function managedRuntimeModeCeilingMessage(
   resolve: MFunctionType = mFallback,
 ): string {
   switch (ceiling) {
+    case "unknown":
+      return resolve(msg("{organization} has an unknown thread permission limit.", { organization }));
     case "approval-required":
       return resolve(msg("{organization} limits threads to Supervised.", { organization }));
     case "auto-accept-edits":

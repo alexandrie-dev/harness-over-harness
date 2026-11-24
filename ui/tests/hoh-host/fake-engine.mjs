@@ -25,7 +25,7 @@ export class FakeEngine {
   }
   tick() { return this.clock += 1000; }
   seed(id, title, events) {
-    const session = { title, events: [], updatedAt: this.tick() };
+    const session = { title, events: [], updatedAt: this.tick(), executor: this.access.selected.executor };
     this.store.set(id, session);
     for (const [type, data] of events) this.persist(id, type, data);
     return session;
@@ -43,7 +43,11 @@ export class FakeEngine {
     return event;
   }
   emitFrame(sessionId, frame) { this.notify('session.assistant-stream', { sessionId, frame }); }
-  emitStatus(sessionId, status) { this.notify('session.status', { sessionId, status }); }
+  emitStatus(sessionId, status) {
+    const session = this.store.get(sessionId);
+    if (session) session.runningRuntimeMode = status === 'running' ? (this.sessionAccess.get(sessionId) ?? session.runtimeMode ?? 'confirm') : null;
+    this.notify('session.status', { sessionId, status });
+  }
   askApproval(sessionId, approvalId, humanText) { this.notify('approval.pending', { approvalId, sessionId, risk: 'unassessed', humanText, expiresAt: this.clock + 60_000 }); }
   askQuestion(question) { for (const listener of this.questionListeners) listener(question); }
   notify(method, params) { for (const listener of this.listeners) listener({ method, params }); }
@@ -80,9 +84,9 @@ export class FakeEngine {
         const running = session?.runningRuntimeMode;
         return session?.executor || session?.model ? { ...answer, session: {
           executor: session.executor ?? 'claude', model: session.model, privacy: 'remote',
-          mode: chosen === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? 'confirm',
-          running: running === undefined ? null : running === 'full' ? 'full' : 'confirm',
-          runningRuntimeMode: running ?? null, pending: running !== undefined && running !== chosen,
+          mode: (chosen ?? this.access.mode) === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? this.access.mode,
+          running: running == null ? null : running === 'full' ? 'full' : 'confirm',
+          runningRuntimeMode: running ?? null, pending: running != null && running !== chosen,
         } } : answer;
       }
       case 'hoh/executor/access/set':

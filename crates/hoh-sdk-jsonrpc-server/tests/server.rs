@@ -472,7 +472,7 @@ async fn reproduces_the_node_path_resolve_error_for_a_missing_cwd() {
 }
 
 #[tokio::test]
-async fn reproduces_the_attachment_error_for_an_unsupported_prompt_image_type() {
+async fn rejects_unsupported_prompt_image_types_at_the_strict_sdk_wire_boundary() {
     let h = Env::new().await;
     h.initialize().await;
     support::images::Store::mount(&h).await;
@@ -486,14 +486,13 @@ async fn reproduces_the_attachment_error_for_an_unsupported_prompt_image_type() 
         )
         .await
         .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "Image type image/x-invalid is not accepted by this deployment."
+    assert!(
+        error
+            .to_string()
+            .contains("data did not match any variant of untagged enum SdkPromptContentBlock")
     );
-    assert_eq!(
-        hoh_error::HarnessError::of(error.as_ref()).map(hoh_error::HarnessError::code),
-        Some("UNSUPPORTED_IMAGE_TYPE")
-    );
+    assert!(hoh_error::HarnessError::of(error.as_ref()).is_none());
+    assert!(lock(&h.model.requests).is_empty());
     h.close().await;
 }
 
@@ -795,6 +794,41 @@ async fn rejects_inline_sdk_images_when_the_composition_has_no_attachment_store(
     h.close().await;
 }
 #[tokio::test]
+async fn reading_a_missing_selected_directory_never_restores_the_origin() {
+    let h = Env::new().await;
+    h.initialize().await;
+    h.open("missing-selected").await;
+    let child = h.dir.path().join("selected");
+    tokio::fs::create_dir(&child).await.unwrap();
+    h.server
+        .handle_request(
+            "session/working-directory/set",
+            json!({"sessionId":"missing-selected", "path":child}),
+        )
+        .await
+        .unwrap();
+    tokio::fs::remove_dir(&child).await.unwrap();
+    let error = h
+        .server
+        .handle_request(
+            "session/working-directory/get",
+            json!({"sessionId":"missing-selected"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unavailable"), "{error}");
+    let service = h
+        .ctx
+        .get::<hoh_working_directory::WorkingDirectoryKey>()
+        .unwrap();
+    assert_eq!(
+        service.get(h.agent("missing-selected").session()),
+        child.to_string_lossy()
+    );
+    h.close().await;
+}
+
+#[tokio::test]
 async fn changes_effective_directories_through_rpc_while_preserving_session_origins_and_replayable_context()
  {
     let h = Env::new().await;
@@ -810,16 +844,20 @@ async fn changes_effective_directories_through_rpc_while_preserving_session_orig
     );
     h.initialize().await;
     h.open("a").await;
-    assert_eq!(
-        h.server
-            .handle_request(
-                "session/working-directory/set",
-                json!({"sessionId":"a","path":"child"})
-            )
-            .await
-            .unwrap(),
-        json!({"cwd":child})
-    );
+    let selected = h
+        .server
+        .handle_request(
+            "session/working-directory/set",
+            json!({"sessionId":"a","path":"child"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(selected["cwd"], json!(child));
+    for field in ["device", "inode"] {
+        assert!(selected["rootIdentity"][field].as_str().is_some_and(
+            |value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+        ));
+    }
     assert_eq!(
         h.agent("a").session().header()["cwd"],
         h.dir.path().to_str().unwrap()
@@ -989,6 +1027,104 @@ async fn rechecks_agent_liveness_after_asynchronous_image_admission() {
         "session agent was disposed outside the server: image-race"
     );
     assert!(lock(&h.model.requests).is_empty());
+    h.close().await;
+}
+
+#[tokio::test]
+async fn rust_prompt_preserves_plan_for_the_prompt_listener() {
+    use hoh_sdk_jsonrpc_server::{HohRpcMethodRegistry, HohRpcMethods};
+    let h = Env::new().await;
+    let registry = Arc::new(HohRpcMethodRegistry::default());
+    h.ctx
+        .provide::<HohRpcMethods>(registry.clone())
+        .await
+        .unwrap();
+    let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let _guard = registry
+        .on_prompt(&h.ctx, move |_, _, params| {
+            lock(&log).push(params["interactionMode"].clone());
+        })
+        .unwrap();
+    h.initialize().await;
+    let params = serde_json::from_value(json!({"sessionId":"rust-plan","contentBlocks":[{"type":"text","text":"plan"}],"interactionMode":"plan"})).unwrap();
+    h.server.prompt(params).await.unwrap();
+    assert_eq!(*lock(&heard), vec![json!("plan")]);
+    h.wait("rust-plan").await;
+    h.close().await;
+}
+
+#[tokio::test]
+async fn a_plain_query_notifies_the_prompt_listener_before_enqueue() {
+    use hoh_sdk_jsonrpc_server::{HohRpcMethodRegistry, HohRpcMethods};
+    let h = Env::new().await;
+    let registry = Arc::new(HohRpcMethodRegistry::default());
+    h.ctx
+        .provide::<HohRpcMethods>(registry.clone())
+        .await
+        .unwrap();
+    let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let _guard = registry
+        .on_prompt(&h.ctx, move |session, id, _| {
+            lock(&log).push((session.to_owned(), id.to_owned()));
+        })
+        .unwrap();
+    h.initialize().await;
+    let result = h
+        .server
+        .handle_request(
+            "session/query",
+            json!({"sessionId":"query-snapshot","contentBlocks":[{"type":"text","text":"hello"}]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lock(&heard).len(), 1);
+    assert!(result.to_string().contains(&lock(&heard)[0].1));
+    h.wait("query-snapshot").await;
+    h.close().await;
+}
+
+#[tokio::test]
+async fn prompt_listener_captures_choices_before_image_preparation() {
+    use hoh_sdk_jsonrpc_server::{HohRpcMethodRegistry, HohRpcMethods};
+    let h = Env::new().await;
+    let registry = Arc::new(HohRpcMethodRegistry::default());
+    h.ctx
+        .provide::<HohRpcMethods>(registry.clone())
+        .await
+        .unwrap();
+    let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let _guard = registry
+        .on_prompt(&h.ctx, move |_, id, params| {
+            lock(&log).push((id.to_owned(), params["interactionMode"].clone()));
+        })
+        .unwrap();
+    h.initialize().await;
+    let store = support::images::Store::mount(&h).await;
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    *lock(&store.gate) = Some(release.clone());
+    let server = h.server.clone();
+    let a = tokio::spawn(async move {
+        server.handle_request("session/prompt", json!({"sessionId":"race","interactionMode":"plan","contentBlocks":[{"type":"image","data":"AQ==","mimeType":"image/png"}]})).await
+    });
+    store.entered.notified().await;
+    let b = h.server.handle_request("session/prompt", json!({"sessionId":"race","interactionMode":"default","contentBlocks":[{"type":"text","text":"second"}]})).await.unwrap();
+    assert_eq!(lock(&heard).len(), 2);
+    release.add_permits(1);
+    let a = a.await.unwrap().unwrap();
+    assert_eq!(
+        lock(&heard).as_slice(),
+        [
+            (a["messageId"].as_str().unwrap().to_owned(), json!("plan")),
+            (
+                b["messageId"].as_str().unwrap().to_owned(),
+                json!("default")
+            ),
+        ]
+    );
+    h.wait("race").await;
     h.close().await;
 }
 #[tokio::test]
