@@ -164,6 +164,13 @@ impl Shared {
         all.retain(|(id, old)| id != session && old.session.strong_count() > 0);
         all.push((session.to_owned(), launched));
     }
+
+    /// Forget only this particular process, even if another launch replaced it.
+    pub(crate) fn forget_launch(&self, session: &str, control: &Arc<dyn HarnessSession>) {
+        let weak = Arc::downgrade(control);
+        lock(&self.launched)
+            .retain(|(id, entry)| id != session || !Weak::ptr_eq(&entry.session, &weak));
+    }
 }
 
 #[derive(Clone)]

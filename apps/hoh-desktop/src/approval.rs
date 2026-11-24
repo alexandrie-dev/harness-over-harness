@@ -1299,22 +1299,19 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 quoted(&rules.folder)
             ))
         }
-        // The user's own choice of who answers and how freely: the text names the executor (review 232500, item 1;
-        // the same words as hoh-user-approval/src/method.rs).
+        // Folder trust is shared by both executors (the same text as hoh-user-approval).
         "hoh/executor/trust/set" => {
             let request: hoh_protocol::ExecutorTrustSetParams =
                 serde_json::from_value(params.clone())
                     .map_err(|_| "Некорректное доверие к папке")?;
             Ok(if request.trust {
                 format!(
-                    "Доверять настройкам {} в папке {}? Они могут запускать программы.",
-                    executor_name(&request.executor),
+                    "Доверять настройкам проекта в папке {} (Claude и Codex)? Они могут запускать программы.",
                     quoted(&request.cwd)
                 )
             } else {
                 format!(
-                    "Отозвать доверие к настройкам {} в папке {}?",
-                    executor_name(&request.executor),
+                    "Отозвать доверие к настройкам проекта в папке {} (Claude и Codex)?",
                     quoted(&request.cwd)
                 )
             })
@@ -1650,6 +1647,21 @@ mod tests {
     }
 
     #[test]
+    fn folder_trust_preflight_names_both_executors() {
+        for executor in ["claude", "codex"] {
+            for trust in [true, false] {
+                let text = preflight_text(
+                    "hoh/executor/trust/set",
+                    &json!({"executor": executor, "cwd": "/work/project", "trust": trust}),
+                )
+                .unwrap();
+                assert!(text.contains("настройкам проекта"), "{text}");
+                assert!(text.contains("«/work/project» (Claude и Codex)"), "{text}");
+            }
+        }
+    }
+
+    #[test]
     fn every_privileged_method_has_a_concrete_parameterized_text() {
         let samples = vec![
             (
@@ -1700,7 +1712,7 @@ mod tests {
             (
                 "hoh/executor/trust/set",
                 json!({"executor":"claude","cwd":"/work/project","trust":true}),
-                "Доверять настройкам Claude в папке «/work/project»?",
+                "Доверять настройкам проекта в папке «/work/project» (Claude и Codex)?",
             ),
             (
                 "hoh/executor/access/set",

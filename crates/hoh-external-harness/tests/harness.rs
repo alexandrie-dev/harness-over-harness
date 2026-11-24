@@ -2752,6 +2752,38 @@ async fn host_trust_reaches_each_native_start_and_changed_settings_revoke_it() {
     turn(&first, "hello").await;
     assert_eq!(&*lock(&decisions), &[false, true, false]);
     assert!(!of_type(&first, "plugin:external-harness/folder-trust-changed").is_empty());
+    turn(&first, "exit after turn").await;
+    let before_exit = window
+        .call(
+            "hoh/executor/access/get",
+            json!({"executor": "claude", "sessionId": "trust-before"}),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !before_exit["session"]["running"].is_null(),
+        "{before_exit}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let access = window
+            .call(
+                "hoh/executor/access/get",
+                json!({
+                    "executor": "claude", "sessionId": "trust-before"
+                }),
+            )
+            .await
+            .unwrap();
+        if access["session"]["running"].is_null() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "ended process still shown: {access}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     window.close().await;
 }
 

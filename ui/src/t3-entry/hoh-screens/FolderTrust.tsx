@@ -58,7 +58,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     return () => { stopped = true; unsubscribe?.(); generation.current++; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [refresh]);
   if (!state) return null;
-  const view = folderTrustView({ applied: state.applied, trusted: state.trusted, isolated: state.isolated, changed: changedNotice });
+  const view = folderTrustView({ running: state.running, applied: state.applied, trusted: state.trusted, isolated: state.isolated, changed: changedNotice });
   return <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
     {view.text}
     {view.canTrust && <button type="button" disabled={busy} className="underline hover:text-foreground" onClick={async () => {
@@ -68,6 +68,6 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
       try { await engine.request('hoh/executor/trust/set', { executor: state.executor, cwd: state.cwd, trust: true }); setChangedNotice(false); }
       catch { /* The native host rejected or could not confirm the request. */ }
       finally { setBusy(false); void refresh(); }
-    }}>Доверять…</button>}
+    }}>Доверять настройкам проекта в этой папке (Claude и Codex)…</button>}
   </span>;
 }
