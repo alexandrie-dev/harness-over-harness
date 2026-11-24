@@ -1,5 +1,8 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentServerConfigsAtom } from "../state/server";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {
@@ -142,6 +145,10 @@ export function useThreadActionMenu(input: {
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
         branch: thread.branch ?? null,
+        hasProject: projects.some((project) =>
+          project.environmentId === thread.environmentId && project.id === thread.projectId &&
+          !isScratchProject(project, appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.scratchWorkspaceRoot)
+        ),
         projectFilter: null,
         isPinned: thread.pinnedAt != null,
         isSettled: supports.settlement && thread.settledOverride === "settled",

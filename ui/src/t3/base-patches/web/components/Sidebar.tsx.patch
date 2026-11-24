@@ -9,7 +9,14 @@
 -          ],
 +          ].filter((item) => !["unpin", "settle", "snooze", "regenerate-title", "delete"].includes(item.id)),
            position,
-@@ -3439,3 +3438,3 @@
+@@ -2654,2 +2653,6 @@
+               branch: thread.branch ?? null,
++              hasProject: threadProjectGroup !== null && !isScratchProject(
++                threadProjectGroup,
++                serverConfigs.get(thread.environmentId)?.scratchWorkspaceRoot,
++              ),
+               // An archived project is not a filter choice.
+@@ -3439,3 +3442,3 @@
                              snoozeSupported={serverConfigs.has(thread.environmentId)}
 -                            pinningSupported={serverConfigs.has(thread.environmentId)}
 +                            pinningSupported={false}

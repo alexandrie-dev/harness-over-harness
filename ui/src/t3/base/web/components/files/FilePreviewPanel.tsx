@@ -1213,7 +1213,19 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-export default function FilePreviewPanel({
+// HoH: the host has no projects.readFile or projects.listEntries. Keep the panel
+// useful without issuing unsupported requests; uploaded attachments still use the asset path.
+export default function FilePreviewPanel(props: FilePreviewPanelProps) {
+  if (props.attachment !== undefined) return <T3FilePreviewPanel {...props} />;
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground" role="status">
+      <p>File preview and Open in editor</p>
+      <p>Coming Soon</p>
+    </div>
+  );
+}
+
+function T3FilePreviewPanel({
   environmentId,
   cwd,
   projectName,

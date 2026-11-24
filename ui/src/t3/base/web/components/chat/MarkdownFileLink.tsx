@@ -119,6 +119,11 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   };
 
   const handleOpenInFilePreview = () => {
+    // HoH can load GIF/JPEG/PNG/WebP assets; the workspace file API is not available.
+    if (onOpenMedia && /\.(?:gif|jpe?g|png|webp)$/i.test(iconPath)) {
+      onOpenMedia();
+      return;
+    }
     if (threadRef && panelPath) {
       onOpenInPanel(panelPath, line);
       return;

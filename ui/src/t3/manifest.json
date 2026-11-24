@@ -211,8 +211,18 @@
       "web/components/chat/TimelineUserMessageRow.tsx": "скрыты неподдерживаемые edit from here и ссылка на запрос",
       "web/components/chat/threadDetailsItems.ts": "неподдерживаемые сведения скрыты даже при сохранённых настройках",
       "web/components/Sidebar.tsx": "массовое меню и кнопка закрепления без неподдерживаемых действий",
-      "web/components/files/FilePreviewPanel.tsx": "открытие файла во внешнем редакторе обозначено Coming Soon",
-      "web/components/chat/useThreadLifecycle.tsx": "не регистрирует неподдерживаемые сочетания закрепления, смены статуса и перегенерации"
+      "web/components/files/FilePreviewPanel.tsx": "неподдерживаемый просмотр файлов и открытие в редакторе обозначены Coming Soon; вложения сохраняют просмотр",
+      "web/components/chat/useThreadLifecycle.tsx": "не регистрирует неподдерживаемые сочетания закрепления, смены статуса и перегенерации",
+      "web/components/onboarding/WelcomePage.tsx": "установка и вход агента без терминального API обозначены Coming Soon",
+      "web/hooks/useThreadActionMenu.ts": "настройки проекта предлагаются только при наличии проекта",
+      "web/components/chat/MarkdownFileLink.tsx": "ссылки на поддерживаемые изображения открывают просмотр изображений, минуя неподключённый просмотр файлов",
+      "web/components/chat/WorkspaceEntryIcon.tsx": "значок и подпись файла не вызывают неподдерживаемый filesystem.getMetadata",
+      "web/hooks/useT3ProjectFileScripts.ts": "не запрашивает неподдерживаемый файл настроек проекта через projects.readFile",
+      "web/lib/t3ProjectFileDefaults.ts": "не запрашивает неподдерживаемый файл настроек проекта через projects.readFile",
+      "web/components/settings/SettingsScopeContext.tsx": "не запрашивает неподдерживаемый файл настроек проекта через projects.readFile",
+      "web/state/projectClones.ts": "скрытая функция возвращает пустое состояние без неподдерживаемой подписки",
+      "web/state/device.ts": "скрытая функция возвращает пустое состояние без неподдерживаемой подписки",
+      "web/appInit.tsx": "не запускает скрытый просмотр устройств и неподдерживаемую подписку на них"
     },
     "switches": [
       [

@@ -20,6 +20,7 @@ const CLAUDE = { installed: true, version: '2.1.0', auth: 'authenticated', model
 const CHAT = { id: 'chat-1', title: 'Align the release window' };
 const rows = [];
 const observations = [];
+const hostRequests = [];
 const failures = [];
 const round = value => Math.round(value * 10) / 10;
 const fail = (label, message) => failures.push(`${label}: ${message}`);
@@ -109,17 +110,20 @@ async function open(browser, engine, width, height, path = '/', stored = {}) {
     catch { return route.fulfill({ status: 404, body: '' }); }
   });
   await page.exposeBinding('__hohT3Request', (_, method, params) => engine.request(method, params).catch(error => ({ __hohError: String(error?.message ?? error) })));
-  await page.addInitScript(({ stored }) => {
+  if (engine.readImageAsset) await page.exposeBinding('__hohT3ReadImageAsset', (_, input) => engine.readImageAsset(input));
+  await page.addInitScript(({ stored, canReadImage }) => {
     for (const [key, value] of Object.entries(stored)) localStorage.setItem(key, value);
+    window.__HOH_T3_TEST_REQUESTS__ = [];
     const listeners = new Set();
     window.__hohT3Notify = notification => { for (const listener of listeners) listener(notification); };
     window.__HOH_T3_TEST_ENGINE__ = {
+      ...(canReadImage ? { readImageAsset: input => window.__hohT3ReadImageAsset(input) } : {}),
       request: async (method, params) => { const result = await window.__hohT3Request(method, params); if (result?.__hohError) throw new Error(result.__hohError); return result; },
       subscribe: async listener => { listeners.add(listener); return () => listeners.delete(listener); },
       subscribeStatus: async listener => { setTimeout(() => listener({ state: 'ready' }), 0); return () => {}; },
       subscribeQuestions: async () => () => {}, answerQuestion: async () => {}, decideApproval: async () => {},
     };
-  }, { stored });
+  }, { stored, canReadImage: Boolean(engine.readImageAsset) });
   const off = engine.subscribe(notification => { page.evaluate(value => window.__hohT3Notify?.(value), notification).catch(() => {}); });
   await page.goto(ORIGIN + path);
   return { context, page, problems, off };
@@ -148,6 +152,23 @@ async function readyBusy(page, engine, grouped) {
 }
 
 const scenarios = [
+  {
+    name: 'agent-setup', engine: () => { const e = new FakeEngine(); e.access = 'confirm'; e.claude = { installed: false, version: null, auth: 'unknown', models: [] }; return e; }, stored: () => ({}),
+    prepare: async (page) => {
+      await page.getByText('Set up an agent', { exact: true }).click();
+      await page.getByText('Coming Soon', { exact: true }).first().waitFor();
+      if (await page.getByRole('button', { name: /^Install:/ }).count()) throw new Error('Unsupported agent installation button is visible');
+      if (await page.getByText('This connection cannot control terminals.').count()) throw new Error('Unsupported terminal error is visible');
+    }, blocks: ['onboarding'],
+  },
+  {
+    name: 'agent-signin', engine: () => { const e = new FakeEngine(); e.access = 'confirm'; e.claude = { installed: true, version: '2.1.0', auth: 'unauthenticated', models: [] }; return e; }, stored: () => ({}),
+    prepare: async (page) => {
+      await page.getByText('Coming Soon', { exact: true }).first().waitFor();
+      if (await page.getByRole('button', { name: /^Sign in:/ }).count()) throw new Error('Unsupported agent sign-in button is visible');
+      if (await page.getByText('This connection cannot control terminals.').count()) throw new Error('Unsupported terminal error is visible');
+    }, blocks: ['onboarding'],
+  },
   {
     name: 'home-empty', engine: () => { const e = new FakeEngine(); e.access = 'confirm'; e.claude = CLAUDE; return e; }, stored: () => ({}),
     prepare: async (page, _engine, sidebar) => {
@@ -198,11 +219,73 @@ const scenarios = [
       await menu.waitFor();
       const text = await menu.innerText();
       if (/Mark unread|Regenerate title|Pin thread|Delete|Snooze|Settle/.test(text)) throw new Error(`Unsupported thread action: ${text}`);
+      if (await menu.getByText('Project settings', { exact: true }).count() !== 1) throw new Error('Project settings missing for a project');
+    }, blocks: ['conversation'],
+  },
+  {
+    name: 'thread-menu-no-project', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: () => ({}),
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, sidebar);
+      if (sidebar === 'collapsed') return;
+      await page.locator('[data-thread-item]').first().click({ button: 'right' });
+      const menu = page.getByRole('menu').last();
+      await menu.waitFor();
+      if (await menu.getByText('Project settings', { exact: true }).count()) throw new Error('Project settings visible without a project');
+    }, blocks: ['conversation'],
+  },
+  {
+    name: 'file-link', engine: () => { const e = completedEngine(); const event = e.sessions.get(CHAT.id).events.find(item => item.type === 'assistant/message'); event.data.message.content = [{ type: 'text', text: 'See [README.md](/work/alexandrie/README.md).' }]; return e; }, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('README.md', { exact: true }).first().click();
+      await setSidebar(page, sidebar);
+      await page.getByText('Coming Soon', { exact: true }).first().waitFor();
+      if (await page.getByText(/Not available in HoH|Loading files/i).count()) throw new Error('Unsupported file request is visible');
+      const requests = await page.evaluate(() => (window.__HOH_T3_TEST_REQUESTS__ ?? []).map(({ method }) => method));
+      if (requests.some(method => ['projects.readFile', 'projects.listEntries', 'filesystem.getMetadata'].includes(method))) throw new Error(`Unsupported file request was sent: ${requests.join(', ')}`);
+    }, blocks: ['conversation'],
+  },
+  {
+    name: 'image-file-link', engine: () => {
+      const e = completedEngine();
+      const event = e.sessions.get(CHAT.id).events.find(item => item.type === 'assistant/message');
+      event.data.message.content = [{ type: 'text', text: 'See [diagram.png](/work/alexandrie/diagram.png).' }];
+      const png = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==';
+      e.readImageAsset = async ({ path }) => ({ dataBase64: png, mimeType: 'image/png', sizeBytes: Buffer.from(png, 'base64').length, sourcePath: path, fileRevision: 'u1-test' });
+      return e;
+    }, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.locator('img[src^="blob:"]').first().waitFor();
+      await setSidebar(page, sidebar);
+      await page.locator('img[src^="blob:"]').first().click();
+      await page.getByRole('dialog').last().waitFor();
+      if (await page.getByText('Coming Soon', { exact: true }).count()) throw new Error('Supported image opened the file placeholder');
     }, blocks: ['conversation'],
   },
   {
     name: 'quick-view', engine: completedEngine, stored: () => ({}),
     prepare: async (page, _engine, sidebar) => { await page.locator(`.hoh-card`).first().waitFor(); await setSidebar(page, sidebar); await page.getByRole('button', { name: `Open ${CHAT.title}` }).click(); await page.getByRole('dialog').last().waitFor(); await page.getByRole('dialog').last().getByRole('textbox').waitFor(); }, blocks: ['quick'],
+  },
+  {
+    name: 'quick-view-open', engine: completedEngine, stored: () => ({}),
+    prepare: async (page, _engine, sidebar) => {
+      await page.locator('.hoh-card').first().waitFor();
+      await setSidebar(page, sidebar);
+      await page.getByRole('button', { name: `Open ${CHAT.title}` }).click();
+      await page.getByRole('dialog').last().getByRole('button', { name: `Open ${CHAT.title} in full conversation` }).click();
+      await page.waitForURL(`**/hoh-local/${CHAT.id}`);
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      if (await page.locator('.hoh-quick-view').count()) throw new Error('Quick view remained open');
+    }, blocks: ['conversation'],
+  },
+  {
+    name: 'sharing-hidden', engine: completedEngine, path: () => '/settings/access', stored: () => ({}),
+    prepare: async (page, _engine, sidebar) => {
+      await page.waitForURL('**/settings/general');
+      await page.locator('[data-settings-page-scroll]').waitFor();
+      await setSidebar(page, sidebar);
+      if (await page.getByRole('link', { name: /Sharing & access/ }).count()) throw new Error('Sharing remains in settings');
+    }, blocks: ['settings'],
   },
   {
     name: 'settings', engine: completedEngine, path: () => '/settings/general', stored: () => ({}),
@@ -404,7 +487,7 @@ try {
     const { context, page, problems, off } = await open(browser, engine, width, height, scenario.path?.() ?? '/', initialStorage);
     try {
       await scenario.prepare(page, engine, sidebar); await settle(page);
-      const rects = await rectangles(page); measure(label, scenario, size, sidebar, rects);
+      const rects = await rectangles(page); if (!scenario.blocks.includes('onboarding')) measure(label, scenario, size, sidebar, rects);
       const zeroWaiting = await page.locator('.hoh-project').evaluateAll(nodes => nodes.filter(node => /0 waiting/.test(node.textContent ?? '')).map(node => {
         const segmentLabel = node.querySelector('.hoh-project__segments')?.getAttribute('aria-label') ?? '';
         const workingCount = Number(/(\d+) working/.exec(segmentLabel)?.[1] ?? 0);
@@ -427,6 +510,10 @@ try {
           fail(label, `0-waiting project has wrong state/border: ${JSON.stringify(item)}`);
       }
       for (const problem of problems) fail(label, problem);
+      const requests = await page.evaluate(() => (window.__HOH_T3_TEST_REQUESTS__ ?? []).map(({ method, payload }) => ({ method, ...(method === 'orchestration.dispatchCommand' && typeof payload?.type === 'string' ? { command: payload.type } : {}) })));
+      const unsupportedRequests = requests.filter(({ method }) => ['projects.readFile', 'projects.listEntries', 'filesystem.getMetadata', 'subscribeDeviceState', 'subscribeProjectClones'].includes(method));
+      if (unsupportedRequests.length) fail(label, `unsupported requests: ${unsupportedRequests.map(({ method }) => method).join(', ')}`);
+      hostRequests.push({ screen: scenario.name, size, sidebar, requests });
       if (QA) {
         await page.screenshot({ path: join(QA, `${scenario.name}-${size}-${sidebar}.png`), animations: 'disabled' });
         if (scenario.name === 'home-flat') {
@@ -472,6 +559,7 @@ const rendered = table.map(line => line.map((cell, index) => String(cell).padEnd
 console.log(rendered);
 console.log(`align: расхождений ${failures.length} из ${rows.length} замеров; экранов ${scenarios.length * SIZES.length * SIDEBARS.length}`);
 if (QA) {
+  await writeFile(join(QA, 'host-requests.json'), JSON.stringify(hostRequests, null, 2) + '\n');
   await writeFile(join(QA, 'alignments.tsv'), table.map(line => line.join('\t')).join('\n') + '\n');
   await writeFile(join(QA, 'alignments.json'), JSON.stringify({ tolerance: TOL, measurements: rows, failures }, null, 2) + '\n');
 }

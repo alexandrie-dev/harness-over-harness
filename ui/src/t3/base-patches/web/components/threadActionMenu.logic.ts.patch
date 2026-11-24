@@ -1,10 +1,19 @@
 --- a/web/components/threadActionMenu.logic.ts
 +++ b/web/components/threadActionMenu.logic.ts
-@@ -213,3 +213,2 @@
+@@ -98,2 +98,3 @@
+   readonly canFind?: boolean;
++  readonly hasProject?: boolean;
+   readonly branch: string | null;
+@@ -213,3 +214,2 @@
        : []),
 -    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
      ...(state.canShareWithGuest
-@@ -302,5 +301,6 @@
+@@ -287,3 +287,3 @@
+     },
+-    { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
++    ...(state.hasProject ? [{ id: "project-settings" as const, label: resolve(msg("Project settings")), icon: "settings" }] : []),
+     {
+@@ -302,5 +302,6 @@
    ];
 +  const availableItems = items.filter((item) => !["pin", "unpin", "regenerate-title", "delete", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
    return state.canOperate

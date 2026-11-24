@@ -1,0 +1,17 @@
+--- a/web/state/projectClones.ts
++++ b/web/state/projectClones.ts
+@@ -4 +4 @@
+-import { AsyncResult, Atom } from "effect/reactivity";
++import { Atom } from "effect/reactivity";
+@@ -6,2 +5,0 @@
+-import { environmentServerConfigsAtom } from "./server";
+-import { sourceControlEnvironment } from "./sourceControl";
+@@ -13,0 +12 @@
++// HoH does not offer repository cloning or subscribeProjectClones.
+@@ -15,5 +14 @@
+-  Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
+-    if (!get(environmentServerConfigsAtom).has(environmentId)) return EMPTY_CLONES;
+-    const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
+-    return AsyncResult.getOrElse(result, () => EMPTY_CLONES);
+-  }).pipe(Atom.withLabel(`web-project-clones:${environmentId}`)),
++  Atom.make(EMPTY_CLONES).pipe(Atom.withLabel(`web-project-clones:${environmentId}`)),

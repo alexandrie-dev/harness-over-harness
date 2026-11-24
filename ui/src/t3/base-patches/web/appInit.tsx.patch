@@ -1,0 +1,6 @@
+--- a/web/appInit.tsx
++++ b/web/appInit.tsx
+@@ -24 +23,0 @@
+-import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
+@@ -280 +278,0 @@
+-  startAgentOpenedPreviews();

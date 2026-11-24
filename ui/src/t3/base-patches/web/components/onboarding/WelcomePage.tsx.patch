@@ -1,0 +1,22 @@
+--- a/web/components/onboarding/WelcomePage.tsx
++++ b/web/components/onboarding/WelcomePage.tsx
+@@ -619,4 +619,7 @@
+     }
+     if (needsInstallOrSignIn(provider)) {
++      if (!canOperateTerminal) {
++        return <span className="text-sm text-muted-foreground">Coming Soon</span>;
++      }
+       return (
+         <TerminalAction
+@@ -638,11 +641,4 @@
+ 
+   const notes = [
+-    !canOperateTerminal &&
+-    [...found, ...available].some(
+-      (provider) =>
+-        needsInstallOrSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
+-    )
+-      ? gt("This connection cannot control terminals.")
+-      : null,
+     !canManageProviders &&
+     (acpAllowed ||

@@ -15,14 +15,13 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { useMessages } from "gt-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSession } from "./session";
-import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
+import { formatEnvironmentQueryError } from "./query";
 
 export const deviceEnvironment = createDeviceEnvironmentAtoms(connectionAtomRuntime);
 
@@ -44,17 +43,10 @@ export function useDeviceState(environmentId: EnvironmentId | null): {
   readonly error: string | null;
   readonly refresh: () => void;
 } {
-  const resolve = useMessages();
-  const query = useEnvironmentQuery(
-    environmentId === null ? null : deviceEnvironment.state({ environmentId, input: {} }),
-    resolve,
-  );
-  return {
-    state: query.data ?? EMPTY_DEVICE_STATE,
-    loaded: query.data !== null,
-    error: query.error,
-    refresh: query.refresh,
-  };
+  // HoH has no device service. Report the disabled state immediately instead of
+  // waiting forever for subscribeDeviceState, which the host does not implement.
+  void environmentId;
+  return { state: EMPTY_DEVICE_STATE, loaded: true, error: null, refresh: () => {} };
 }
 
 const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>

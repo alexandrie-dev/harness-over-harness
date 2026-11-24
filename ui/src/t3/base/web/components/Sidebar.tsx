@@ -2651,6 +2651,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 AuthOrchestrationOperateScope,
               ),
               branch: thread.branch ?? null,
+              hasProject: threadProjectGroup !== null && !isScratchProject(
+                threadProjectGroup,
+                serverConfigs.get(thread.environmentId)?.scratchWorkspaceRoot,
+              ),
               // An archived project is not a filter choice.
               projectFilter:
                 threadProjectGroup && !threadProjectGroup.archived

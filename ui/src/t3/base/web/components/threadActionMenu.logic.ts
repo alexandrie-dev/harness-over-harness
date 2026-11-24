@@ -96,6 +96,7 @@ export function buildDraftActionMenuItems(
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly canFind?: boolean;
+  readonly hasProject?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -284,7 +285,7 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: resolve(msg("Thread ID")), icon: "hash" },
       ],
     },
-    { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
+    ...(state.hasProject ? [{ id: "project-settings" as const, label: resolve(msg("Project settings")), icon: "settings" }] : []),
     {
       id: "archive",
       label: resolve(msg("Archive thread")),

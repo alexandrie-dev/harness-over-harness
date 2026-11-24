@@ -1,7 +1,21 @@
 --- a/web/components/files/FilePreviewPanel.tsx
 +++ b/web/components/files/FilePreviewPanel.tsx
-@@ -1558,12 +1558,3 @@
-             remoteOpenState.mode !== "local-exec") ? (
+@@ -1216 +1216,13 @@
+-export default function FilePreviewPanel({
++// HoH: the host has no projects.readFile or projects.listEntries. Keep the panel
++// useful without issuing unsupported requests; uploaded attachments still use the asset path.
++export default function FilePreviewPanel(props: FilePreviewPanelProps) {
++  if (props.attachment !== undefined) return <T3FilePreviewPanel {...props} />;
++  return (
++    <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground" role="status">
++      <p>File preview and Open in editor</p>
++      <p>Coming Soon</p>
++    </div>
++  );
++}
++
++function T3FilePreviewPanel({
+@@ -1559,10 +1571 @@
 -            <OpenInPicker
 -              environmentId={environmentId}
 -              keybindings={keybindings}
@@ -13,4 +27,3 @@
 -              revealFileManager={revealsInFileManager}
 -            />
 +            <span className="text-sm text-muted-foreground">Open in editor · Coming Soon</span>
-           ) : null}
