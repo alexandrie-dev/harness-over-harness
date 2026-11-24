@@ -295,12 +295,12 @@ export function buildThreadActionMenuItems(
     },
     {
       id: "delete",
-      label: resolve(msg("Delete", { $context: "verb, delete the thread" })),
+      label: resolve(msg("Delete · Coming Soon")),
       destructive: true,
       icon: "trash",
     },
   ];
-  const availableItems = items.filter((item) => !["pin", "unpin", "regenerate-title", "delete", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
+  const availableItems = items.filter((item) => !["regenerate-title", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
   return state.canOperate
     ? availableItems
     : availableItems.map((item) =>

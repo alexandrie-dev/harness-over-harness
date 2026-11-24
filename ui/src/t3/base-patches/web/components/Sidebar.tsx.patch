@@ -1,23 +1,38 @@
 --- a/web/components/Sidebar.tsx
 +++ b/web/components/Sidebar.tsx
-@@ -2390,3 +2390,2 @@
-               : []),
+@@ -2391 +2390,0 @@
 -            { id: "mark-unread", label: gt("Mark unread ({count})", { count }) },
-             {
-@@ -2397,3 +2396,3 @@
-             },
+@@ -2398 +2397 @@
 -          ],
-+          ].filter((item) => !["unpin", "settle", "snooze", "regenerate-title", "delete"].includes(item.id)),
-           position,
-@@ -2654,2 +2653,6 @@
-               branch: thread.branch ?? null,
++          ].filter((item) => !["settle", "snooze", "regenerate-title", "delete"].includes(item.id)),
+@@ -2654,0 +2654,4 @@
 +              hasProject: threadProjectGroup !== null && !isScratchProject(
 +                threadProjectGroup,
 +                serverConfigs.get(thread.environmentId)?.scratchWorkspaceRoot,
 +              ),
-               // An archived project is not a filter choice.
-@@ -3439,3 +3442,3 @@
-                             snoozeSupported={serverConfigs.has(thread.environmentId)}
--                            pinningSupported={serverConfigs.has(thread.environmentId)}
-+                            pinningSupported={false}
-                             isPinned={thread.pinnedAt != null}
+@@ -2868,24 +2871 @@
+-            if (confirmThreadDelete) {
+-              const confirmed = await settlePromise(() =>
+-                api.dialogs.confirm(
+-                  [
+-                    gt('Delete thread "{title}"?', { title: thread.title }),
+-                    gt("This permanently clears conversation history for this thread."),
+-                  ].join("\n"),
+-                  { variant: "destructive" },
+-                ),
+-              );
+-              if (confirmed._tag === "Failure" || !confirmed.value) return;
+-            }
+-            const result = await deleteThread(threadRef);
+-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+-              const error = squashAtomCommandFailure(result);
+-              toastManager.add(
+-                stackedThreadToast({
+-                  type: "error",
+-                  title: gt("Failed to delete thread"),
+-                  description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+-                }),
+-              );
+-              return;
+-            }
++            toastManager.add({ title: "Coming Soon" });

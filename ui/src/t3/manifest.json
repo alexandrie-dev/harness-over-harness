@@ -192,7 +192,7 @@
       "web/components/chat/ComposerAttachmentStrip.tsx": "диалог скрепки принимает только GIF, JPEG, PNG и WebP, показывает лимит 10 МиБ и использует общий путь addComposerAttachments",
       "web/components/chat/SkillInlineText.tsx": "скрывает View instructions у навыка Claude: движок даёт имя, но не безопасный путь к файлу",
       "web/components/ComposerPromptEditorTiptap.tsx": "скрывает открытие файла для навыка Claude с внутренним hoh-skill идентификатором",
-      "web/routeTree.gen.ts": "выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, разделы настроек кроме пяти) не регистрируются; типы маршрутов остаются",
+      "web/routeTree.gen.ts": "выключатель: маршруты скрытых частей (вход и пары, usage, pull requests, issues, скрытые разделы настроек) не регистрируются; типы маршрутов остаются",
       "web/components/settings/settingsSearch.ts": "выключатель: разделы настроек скрытых частей не показываются в боковой колонке и не ищутся (HOH_SETTINGS_PATHS)",
       "web/components/sidebar/SidebarChrome.tsx": "имя продукта в шапке боковой колонки — HoH вместо «Code» при знаке T3",
       "web/terminalUiStateStore.ts": "выключатель: терминал — ящик терминала не открывается (normalizeThreadTerminalUiState держит terminalOpen: false), клавиши и действия ничего не открывают",
@@ -222,7 +222,8 @@
       "web/components/settings/SettingsScopeContext.tsx": "не запрашивает неподдерживаемый файл настроек проекта через projects.readFile",
       "web/state/projectClones.ts": "скрытая функция возвращает пустое состояние без неподдерживаемой подписки",
       "web/state/device.ts": "скрытая функция возвращает пустое состояние без неподдерживаемой подписки",
-      "web/appInit.tsx": "не запускает скрытый просмотр устройств и неподдерживаемую подписку на них"
+      "web/appInit.tsx": "не запускает скрытый просмотр устройств и неподдерживаемую подписку на них",
+      "web/components/settings/ArchivedThreadsPanel.tsx": "в архиве удаление обозначено Coming Soon до поддержки движком"
     },
     "switches": [
       [
@@ -296,7 +297,7 @@
         "правка + хост (э3)"
       ],
       [
-        "разделы настроек, кроме общих, вида, чата, провайдеров и доступа",
+        "разделы настроек, кроме общих, вида, чата, провайдеров и архива",
         "не регистрируются (routeTree.gen.ts), не показываются и не ищутся (settingsSearch.ts, HOH_SETTINGS_PATHS)",
         "правка"
       ],

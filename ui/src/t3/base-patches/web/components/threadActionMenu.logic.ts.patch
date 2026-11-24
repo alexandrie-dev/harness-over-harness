@@ -1,24 +1,19 @@
 --- a/web/components/threadActionMenu.logic.ts
 +++ b/web/components/threadActionMenu.logic.ts
-@@ -98,2 +98,3 @@
-   readonly canFind?: boolean;
+@@ -98,0 +99 @@
 +  readonly hasProject?: boolean;
-   readonly branch: string | null;
-@@ -213,3 +214,2 @@
-       : []),
+@@ -214 +214,0 @@
 -    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
-     ...(state.canShareWithGuest
-@@ -287,3 +287,3 @@
-     },
+@@ -288 +288 @@
 -    { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
 +    ...(state.hasProject ? [{ id: "project-settings" as const, label: resolve(msg("Project settings")), icon: "settings" }] : []),
-     {
-@@ -302,5 +302,6 @@
-   ];
-+  const availableItems = items.filter((item) => !["pin", "unpin", "regenerate-title", "delete", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
-   return state.canOperate
+@@ -298 +298 @@
+-      label: resolve(msg("Delete", { $context: "verb, delete the thread" })),
++      label: resolve(msg("Delete · Coming Soon")),
+@@ -302,0 +303 @@
++  const availableItems = items.filter((item) => !["regenerate-title", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
+@@ -304,2 +305,2 @@
 -    ? items
 -    : items.map((item) =>
 +    ? availableItems
 +    : availableItems.map((item) =>
-         threadActionRequiresOperate(item.id)

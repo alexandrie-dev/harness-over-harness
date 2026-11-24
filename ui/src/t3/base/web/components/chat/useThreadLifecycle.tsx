@@ -689,6 +689,24 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       );
     };
   const shortcuts = {
+    "thread.pin": ({ event }) => {
+      // An open project list pins its highlighted project with this key instead.
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[role="combobox"][aria-expanded="true"]') !== null
+      ) {
+        return false;
+      }
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+      void (
+        activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
+      ).then(
+        toastThreadActionFailure(
+          activeThreadPinned ? m(msg("Failed to unpin thread")) : m(msg("Failed to pin thread")),
+        ),
+      );
+    },
   } satisfies ChatShortcutCommands;
   return {
     shortcuts,

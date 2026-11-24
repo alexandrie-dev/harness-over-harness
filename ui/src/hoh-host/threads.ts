@@ -170,6 +170,8 @@ export class ThreadModel {
   /** The last turn was closed by `settleUnfinished`, a guess the engine may still correct. */
   private settledByGuess = false;
   archivedAt: number | null = null;
+  pinnedAt: number | null = null;
+  pinOrderKey: string | null = null;
   private readonly seen = new Set<number>();
   private readonly runs: Run[] = [];
   private readonly items: Item[] = [];
@@ -656,6 +658,7 @@ export class ThreadModel {
         branch: null, worktreePath: null, activeProviderThreadId: null,
         lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
+        pinnedAt: this.pinnedAt === null ? null : iso(this.pinnedAt), pinOrderKey: this.pinOrderKey,
         archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, lastVisitedAt: null, deletedAt: null,
       },
       runs: this.runs.map(run => ({
@@ -762,6 +765,7 @@ export class ThreadModel {
       hasActionableProposedPlan: false,
       itemCount: this.items.length, visibleItemCount: this.items.filter(item => item.parentItemId === null).length,
       createdAt: iso(this.createdAt), updatedAt: iso(this.updatedAt),
+      pinnedAt: this.pinnedAt === null ? null : iso(this.pinnedAt), pinOrderKey: this.pinOrderKey,
       archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, deletedAt: null,
     };
   }

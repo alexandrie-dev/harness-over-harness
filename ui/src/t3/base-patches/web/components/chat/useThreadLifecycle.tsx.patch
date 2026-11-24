@@ -1,7 +1,6 @@
 --- a/web/components/chat/useThreadLifecycle.tsx
 +++ b/web/components/chat/useThreadLifecycle.tsx
-@@ -691,44 +691,2 @@
-   const shortcuts = {
+@@ -692,12 +691,0 @@
 -    "thread.settle": () => {
 -      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
 -      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
@@ -14,23 +13,7 @@
 -        toastThreadActionFailure(m(msg("Failed to settle thread"))),
 -      );
 -    },
--    "thread.pin": ({ event }) => {
--      // An open project list pins its highlighted project with this key instead.
--      if (
--        event.target instanceof Element &&
--        event.target.closest('[role="combobox"][aria-expanded="true"]') !== null
--      ) {
--        return false;
--      }
--      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
--      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
--      void (
--        activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
--      ).then(
--        toastThreadActionFailure(
--          activeThreadPinned ? m(msg("Failed to unpin thread")) : m(msg("Failed to pin thread")),
--        ),
--      );
+@@ -721,12 +708,0 @@
 -    },
 -    "thread.regenerateTitle": () => {
 -      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
@@ -43,5 +26,3 @@
 -        const toast = titleRegenerationToast([result]);
 -        if (toast) toastManager.add(toast);
 -      });
--    },
-   } satisfies ChatShortcutCommands;

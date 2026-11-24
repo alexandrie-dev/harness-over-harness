@@ -914,6 +914,7 @@ interface ChatSettingsRouteChildren {
 // HoH (ui/T3-MAP.md): маршруты скрытых частей не регистрируются; их типы остаются, переход по ним — «не найдено».
 const ChatSettingsRouteChildren = {
   ChatSettingsAccessRoute: ChatSettingsAccessRoute,
+  ChatSettingsArchivedRoute: ChatSettingsArchivedRoute,
   ChatSettingsAppearanceRoute: ChatSettingsAppearanceRoute,
   ChatSettingsChatRoute: ChatSettingsChatRoute,
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,

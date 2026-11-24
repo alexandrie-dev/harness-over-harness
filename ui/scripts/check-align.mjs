@@ -98,7 +98,7 @@ function conversationStorage() {
 async function open(browser, engine, width, height, path = '/', stored = {}) {
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, locale: 'en-US', reducedMotion: 'reduce', colorScheme: 'dark' });
   const page = await context.newPage();
-  page.setDefaultTimeout(20_000);
+  page.setDefaultTimeout(30_000);
   const problems = [];
   page.on('pageerror', error => problems.push(`pageerror: ${error.message}`));
   page.on('console', message => { if (message.type() === 'error') problems.push(`console: ${message.text().slice(0, 240)}`); });
@@ -218,9 +218,54 @@ const scenarios = [
       const menu = page.getByRole('menu').last();
       await menu.waitFor();
       const text = await menu.innerText();
-      if (/Mark unread|Regenerate title|Pin thread|Delete|Snooze|Settle/.test(text)) throw new Error(`Unsupported thread action: ${text}`);
+      if (/Mark unread|Regenerate title|Snooze|Settle/.test(text)) throw new Error(`Unsupported thread action: ${text}`);
       if (await menu.getByText('Project settings', { exact: true }).count() !== 1) throw new Error('Project settings missing for a project');
     }, blocks: ['conversation'],
+  },
+  {
+    name: 'thread-actions-restart', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, 'expanded');
+      await page.locator('[data-thread-item]').first().click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Pin thread', exact: true }).click();
+      await page.waitForFunction(id => JSON.parse(localStorage.getItem('hoh-host.thread-metadata.v1') ?? '{}')[id]?.pinnedAt != null, CHAT.id);
+      await page.reload();
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, 'expanded');
+      await page.locator('[data-thread-item]').first().click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Unpin thread', exact: true }).waitFor();
+      await page.getByRole('menuitem', { name: 'Delete · Coming Soon', exact: true }).click();
+      await page.getByText('Coming Soon', { exact: true }).first().waitFor();
+      const requests = await page.evaluate(() => window.__HOH_T3_TEST_REQUESTS__ ?? []);
+      if (requests.some(({ method, payload }) => method === 'orchestration.dispatchCommand' && payload?.type === 'thread.delete')) throw new Error('Unavailable delete was sent to the host');
+      await setSidebar(page, sidebar);
+    }, blocks: ['conversation'],
+  },
+  {
+    name: 'thread-archive-restart', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      page.on('dialog', dialog => dialog.accept());
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, 'expanded');
+      await page.locator('[data-thread-item]').first().click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Archive thread', exact: true }).click();
+      await page.waitForFunction(id => JSON.parse(localStorage.getItem('hoh-host.thread-metadata.v1') ?? '{}')[id]?.archivedAt != null, CHAT.id);
+      await page.goto(`${ORIGIN}/settings/archived`);
+      await page.reload();
+      const unarchive = page.getByRole('button', { name: `Unarchive ${CHAT.title}`, exact: true });
+      await unarchive.waitFor();
+      await page.getByRole('button', { name: `Delete ${CHAT.title} · Coming Soon`, exact: true }).click();
+      await page.getByText('Coming Soon', { exact: true }).first().waitFor();
+      if (QA && page.viewportSize()?.width === 2000 && sidebar === 'expanded') await page.screenshot({ path: join(QA, 'archived-before-restore-2000x1137.png'), animations: 'disabled' });
+      const requests = await page.evaluate(() => window.__HOH_T3_TEST_REQUESTS__ ?? []);
+      if (requests.some(({ method, payload }) => method === 'orchestration.dispatchCommand' && payload?.type === 'thread.delete')) throw new Error('Unavailable archive delete was sent');
+      await unarchive.click();
+      await page.waitForFunction(id => JSON.parse(localStorage.getItem('hoh-host.thread-metadata.v1') ?? '{}')[id]?.archivedAt === null, CHAT.id);
+      await page.reload();
+      await page.getByText('No archived threads', { exact: true }).waitFor();
+      await setSidebar(page, sidebar);
+    }, blocks: ['settings'],
   },
   {
     name: 'thread-menu-no-project', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: () => ({}),
@@ -522,7 +567,7 @@ try {
           await page.screenshot({ path: join(QA, `${scenario.name}-${size}-${sidebar}-scrolled.png`), animations: 'disabled' });
         }
       }
-    } catch (error) { const message = String(error?.message ?? error).split('\n')[0]; fail(label, message); console.error(`align: setup ${label}: ${message}`); }
+    } catch (error) { const message = String(error?.message ?? error).split('\n')[0]; fail(label, message); console.error(`align: setup ${label}: ${String(error?.message ?? error)}`); }
     finally { off(); await context.close(); }
   }
 } finally { await browser?.close(); await rm(chromeHome, { recursive: true, force: true }); }

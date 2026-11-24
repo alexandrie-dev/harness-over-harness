@@ -36,8 +36,8 @@ const ARCHIVE_ACTIONS = [
   },
   {
     action: "delete",
-    label: msg("Delete", { $context: "verb, deletes a thread" }),
-    threadLabel: msg("Delete {title}"),
+    label: msg("Delete · Coming Soon"),
+    threadLabel: msg("Delete {title} · Coming Soon"),
     failureTitle: msg("Failed to delete thread"),
     Icon: Trash2Icon,
   },
@@ -169,6 +169,10 @@ export function ArchivedThreadsPanel() {
   };
 
   const handleThreadAction = async (action: ArchiveAction, thread: ArchivedThread) => {
+    if (action === "delete") {
+      toastManager.add({ title: "Coming Soon" });
+      return;
+    }
     const target = scopeThreadRef(thread.environmentId, thread.id);
     const key = scopedThreadKey(target);
     // Context menus can outlive their render, so checks and cleanup use the live set.

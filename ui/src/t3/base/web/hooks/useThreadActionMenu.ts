@@ -91,7 +91,6 @@ export function useThreadActionMenu(input: {
     confirmAndUnpinThread,
     setThreadAutoSettle,
     archiveThread,
-    deleteThread,
     markThreadUnread,
     turnThreadIntoProject,
   } = useThreadActions();
@@ -99,7 +98,6 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
-  const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
@@ -348,27 +346,7 @@ export function useThreadActionMenu(input: {
           return;
         }
         case "delete": {
-          if (confirmThreadDelete) {
-            const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(
-                [
-                  m(msg('Delete thread "{title}"?', { title: thread.title })),
-                  m(msg("This permanently clears conversation history for this thread.")),
-                ].join("\n"),
-                { variant: "destructive" },
-              ),
-            );
-            if (confirmed._tag === "Failure" || !confirmed.value) return;
-          }
-          const deleted = await deleteThread(threadRef);
-          if (
-            deleted._tag === "Failure" &&
-            !isAtomCommandInterrupted(deleted) &&
-            // A missing thread means cleanup failed after deletion; deleteThread already toasted that failure.
-            readThreadShell(threadRef) !== null
-          ) {
-            failureToast(m(msg("Failed to delete thread")), squashAtomCommandFailure(deleted));
-          }
+          toastManager.add({ title: "Coming Soon" });
           return;
         }
         default:

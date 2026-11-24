@@ -1,0 +1,12 @@
+--- a/web/components/settings/ArchivedThreadsPanel.tsx
++++ b/web/components/settings/ArchivedThreadsPanel.tsx
+@@ -39,2 +39,2 @@
+-    label: msg("Delete", { $context: "verb, deletes a thread" }),
+-    threadLabel: msg("Delete {title}"),
++    label: msg("Delete · Coming Soon"),
++    threadLabel: msg("Delete {title} · Coming Soon"),
+@@ -171,0 +172,4 @@
++    if (action === "delete") {
++      toastManager.add({ title: "Coming Soon" });
++      return;
++    }

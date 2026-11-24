@@ -50,15 +50,15 @@ export const HIDDEN_ROUTES: Readonly<Record<string, string>> = {
   '_chat.settings.beta': '/settings/general',
   '_chat.settings.integrations': '/settings/general',
   '_chat.settings.storage': '/settings/general',
-  '_chat.settings.archived': '/settings/general',
 };
 
-/** Разделы настроек, которые остаются (план: общие, вид, чат, провайдеры, доступ). */
+/** Разделы настроек, которые остаются (план: общие, вид, чат, провайдеры, архив). */
 export const VISIBLE_SETTINGS: readonly string[] = [
   '/settings/general',
   '/settings/appearance',
   '/settings/chat',
   '/settings/providers',
+  '/settings/archived',
   // Сведения о программе и лицензии T3 (MIT; страница лицензий открывается из неё).
   '/settings/about',
 ];
@@ -142,5 +142,5 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'other-providers', title: 'Codex и другие поставщики в Providers, «Add provider» и «+»; в карточке Claude остаются название и состояние (без Runtime, Environment, Models, Usage providers, Advanced)', how: ['component'] },
   { id: 'theme-names', title: 'имена тем «T3 Code» и «T3 Chat» в Appearance → Themes → «Default» и «Chat»', how: ['component'] },
   { id: 'more-agents', title: '«Add more agents» на Welcome', how: ['css'] },
-  { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Access', how: ['route', 'nav'] },
+  { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Archived', how: ['route', 'nav'] },
 ];

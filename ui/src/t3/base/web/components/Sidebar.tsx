@@ -2394,7 +2394,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               destructive: true,
               disabled: !canOperateThreads(selectedThreads),
             },
-          ].filter((item) => !["unpin", "settle", "snooze", "regenerate-title", "delete"].includes(item.id)),
+          ].filter((item) => !["settle", "snooze", "regenerate-title", "delete"].includes(item.id)),
           position,
           source,
         ),
@@ -2868,30 +2868,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           }
           case "delete": {
-            if (confirmThreadDelete) {
-              const confirmed = await settlePromise(() =>
-                api.dialogs.confirm(
-                  [
-                    gt('Delete thread "{title}"?', { title: thread.title }),
-                    gt("This permanently clears conversation history for this thread."),
-                  ].join("\n"),
-                  { variant: "destructive" },
-                ),
-              );
-              if (confirmed._tag === "Failure" || !confirmed.value) return;
-            }
-            const result = await deleteThread(threadRef);
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: gt("Failed to delete thread"),
-                  description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
-                }),
-              );
-              return;
-            }
+            toastManager.add({ title: "Coming Soon" });
             return;
           }
           default:
@@ -3440,7 +3417,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             settlementSupported={serverConfigs.has(thread.environmentId)}
                             snoozeSupported={serverConfigs.has(thread.environmentId)}
-                            pinningSupported={false}
+                            pinningSupported={serverConfigs.has(thread.environmentId)}
                             isPinned={thread.pinnedAt != null}
                             dropVerb={
                               dragState?.activeKey === threadKey
