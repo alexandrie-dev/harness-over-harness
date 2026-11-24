@@ -122,12 +122,14 @@ printf 'HOH-18 isolated live workspace.\n' >"$OUTPUT/home/Documents/HoH/README.t
 CODEX_WRAPPER="$OUTPUT/fakebin/codex"
 {
   printf '#!/usr/bin/env bash\nexec env'
-  for name in XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR; do
+  for name in XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME; do
     [[ -v $name ]] || printf ' -u %q' "$name"
   done
-  for name in XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR; do
+  for name in XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME; do
     [[ -v $name ]] && printf ' %q' "$name=${!name}"
   done
+  # The runtime dir stays the run's own (never /run/user/1000, rule "звук и шина"); Codex's login is in ~/.codex.
+  printf ' %q' "XDG_RUNTIME_DIR=$OUTPUT/runtime"
   printf ' HOME=%q %q "$@"\n' "$REAL_HOME" "$REAL_CODEX"
 } >"$CODEX_WRAPPER"
 cat >"$OUTPUT/fakebin/xdg-open" <<'EOF'
