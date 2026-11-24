@@ -55,11 +55,32 @@ test('archive and unarchive survive separate host restarts', async () => {
   await command(second.client, 'thread.unarchive'); close(second); const third = await f.open();
   assert.equal((await projection(third.client)).archivedAt, null); close(third);
 });
-test('delete is unsupported and the engine session remains after restart', async () => {
+test('delete removes the chat from the shell and home, including after restart', async () => {
   const f = fixture(); const first = await f.open();
+  const shell = await first.client.stream('orchestration.subscribeShell', {});
+  await shell.until(value => value.kind === 'snapshot');
+  await command(first.client, 'thread.metadata.update', { title: 'A title worth keeping' });
+  assert.equal(Object.values(first.host.home.projectCounts()).reduce((a, b) => a + b, 0), 1);
+  await command(first.client, 'thread.delete');
+  assert.equal(JSON.parse(f.storage.getItem('hoh-host.thread-metadata.v1')).chat.title, 'A title worth keeping');
+  const removed = await shell.until(value => value.kind === 'thread.removed');
+  assert.equal(removed.threadId, 'chat');
+  assert.equal(first.engine.requests.some(r => r.method === 'session/delete' && r.params.sessionId === 'chat'), true);
+  assert.equal(first.host.home.entries().some(entry => entry.id === 'chat'), false);
+  assert.equal(Object.values(first.host.home.projectCounts()).reduce((a, b) => a + b, 0), 0);
+  assert.equal(f.store.has('chat'), false);
+  close(first); const second = await f.open();
+  assert.equal(second.host.thread('chat'), undefined);
+  assert.equal(second.host.home.entries().some(entry => entry.id === 'chat'), false);
+  assert.equal(Object.values(second.host.home.projectCounts()).reduce((a, b) => a + b, 0), 0);
+  close(second);
+});
+test('failed engine delete keeps the chat visible', async () => {
+  const f = fixture(); const first = await f.open();
+  const request = first.engine.request.bind(first.engine);
+  first.engine.request = (method, params) => method === 'session/delete' ? Promise.reject(new Error('Chat is running')) : request(method, params);
   const result = await first.client.request('orchestration.dispatchCommand', { type: 'thread.delete', commandId: 'test', threadId: 'chat' });
-  assert.equal(result._tag, 'Failure'); close(first); const second = await f.open();
-  assert.equal((await projection(second.client)).title, 'Original title'); assert.equal(f.store.has('chat'), true); close(second);
+  assert.equal(result._tag, 'Failure'); assert.ok(first.host.thread('chat')); assert.equal(f.store.has('chat'), true); close(first);
 });
 test('a storage failure does not report a successful pin or mutate its state', async () => {
   const f = fixture(); const original = f.storage.setItem;

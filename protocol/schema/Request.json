@@ -179,6 +179,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "session/delete"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/employee/list"
         },
         "params": {

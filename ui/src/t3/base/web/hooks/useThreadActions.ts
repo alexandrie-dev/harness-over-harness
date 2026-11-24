@@ -540,10 +540,8 @@ export function useThreadActions() {
     const environmentConfig = appAtomRegistry
       .get(environmentServerConfigsAtom)
       .get(threadRef.environmentId);
-    let orphanedWorktreePath = getOrphanedWorktreePathForThread(
-      survivingThreads,
-      threadRef.threadId,
-    );
+    // HoH moves only the session to trash; never remove a worktree as a side effect.
+    let orphanedWorktreePath = null as string | null;
     // A shell that leaves idle subagent children out cannot prove nobody else uses the worktree,
     // so the server's list decides. A failed read keeps the worktree.
     if (orphanedWorktreePath !== null && environmentConfig?.shellThreadFamilies === true) {
@@ -601,13 +599,7 @@ export function useThreadActions() {
       shouldDeleteWorktree = confirmationResult.value;
     }
 
-    if (thread.runtime !== null) {
-      await stopThreadSession({
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId },
-      });
-    }
-
+    // The engine rejects running chats; deleting must never stop an active turn.
     const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
     const currentRouteThreadRef = getCurrentRouteThreadRef();
     const shouldNavigateToFallback =
@@ -1029,7 +1021,7 @@ export function useThreadActions() {
             title === null
               ? m(msg('Delete chat "this chat"?'))
               : m(msg('Delete chat "{title}"?', { title })),
-            m(msg("This permanently clears conversation history for this chat.")),
+            m(msg("This moves the chat to the trash.")),
           ].join("\n"),
           { variant: "destructive" },
         ),

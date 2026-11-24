@@ -760,3 +760,144 @@ async fn the_prompt_after_a_cancel_makes_its_own_model_request() {
     assert_eq!(texts, ["fresh text"]);
     env.close().await;
 }
+
+#[tokio::test]
+async fn session_delete_moves_history_to_trash_and_is_idempotent() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    chat(&env, "delete-me", "keep the whole history").await;
+    let store = env.ctx.get::<SessionPersistenceService>().unwrap();
+    store.flush().await.unwrap();
+    let snap = store
+        .stat(&"delete-me".into(), None)
+        .await
+        .unwrap()
+        .unwrap();
+    let log = std::path::PathBuf::from(&snap.location.unwrap().path);
+    let dir = log.parent().unwrap();
+    tokio::fs::write(dir.join("attachment.dat"), b"keep")
+        .await
+        .unwrap();
+    env.server
+        .handle_request("session/delete", json!({"sessionId":"delete-me"}))
+        .await
+        .unwrap();
+    assert!(
+        env.server
+            .handle_request("session/list", json!({}))
+            .await
+            .unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let mut trash = tokio::fs::read_dir(root.path().join("trash"))
+        .await
+        .unwrap();
+    let entry = trash.next_entry().await.unwrap().unwrap();
+    assert_eq!(
+        tokio::fs::read(entry.path().join("attachment.dat"))
+            .await
+            .unwrap(),
+        b"keep"
+    );
+    assert!(entry.path().join(log.file_name().unwrap()).is_file());
+    env.server
+        .handle_request("session/delete", json!({"sessionId":"delete-me"}))
+        .await
+        .unwrap();
+    assert!(trash.next_entry().await.unwrap().is_none());
+    env.close().await;
+    let reopened = Env::persistent(root.path()).await;
+    reopened.initialize().await;
+    assert!(
+        reopened
+            .server
+            .handle_request("session/list", json!({}))
+            .await
+            .unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    reopened
+        .server
+        .handle_request("session/delete", json!({"sessionId":"delete-me"}))
+        .await
+        .unwrap();
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn session_delete_rejects_running_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *lock(&env.model.gate) = Some(gate.clone());
+    env.prompt("busy-delete", "working").await;
+    env.model.entered.notified().await;
+    let error = env
+        .server
+        .handle_request("session/delete", json!({"sessionId":"busy-delete"}))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("running"), "{error}");
+    gate.add_permits(1);
+    env.wait("busy-delete").await;
+    env.close().await;
+}
+
+#[tokio::test]
+async fn session_delete_rejects_an_undecided_approval() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    let agent = env.open("approval-delete").await;
+    agent
+        .session()
+        .append("turn/start", json!({"turn":1}), None)
+        .unwrap();
+    agent
+        .session()
+        .append(
+            "approval/asked",
+            json!({"id":"approval-1", "toolName":"Bash"}),
+            None,
+        )
+        .unwrap();
+    let failure = env
+        .server
+        .handle_request("session/delete", json!({"sessionId":"approval-delete"}))
+        .await
+        .unwrap_err();
+    assert!(failure.to_string().contains("waiting"), "{failure}");
+    assert_eq!(
+        env.server
+            .handle_request("session/list", json!({}))
+            .await
+            .unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    agent
+        .session()
+        .append(
+            "approval/decided",
+            json!({"id":"approval-1", "outcome":"rejected"}),
+            None,
+        )
+        .unwrap();
+    agent
+        .session()
+        .append(
+            "turn/end",
+            json!({"turn":1,"reason":{"kind":"completed"}}),
+            None,
+        )
+        .unwrap();
+    env.close().await;
+}

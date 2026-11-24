@@ -485,3 +485,7 @@ C8: панель пустого чата показывает его стату�
 
 | `web/components/sidebar/SidebarProjectFolderHeader.tsx` | правка (`ui/src/t3/base-patches/web/components/sidebar/SidebarProjectFolderHeader.tsx.patch`) | счётчик включает открытый разговор |
 | `web/components/chat/ProviderModelPicker.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ProviderModelPicker.tsx.patch`) | скрывает временную подмену имени модели именем Claude |
+
+U2: Delete removes a chat through the engine trash; menu and confirmation follow T3.
+
+U2: sidebar deletion and multi-delete use the same trash-backed operation.

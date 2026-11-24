@@ -100,6 +100,13 @@ pub trait SessionPersistence: Send + Sync + 'static {
         access: SessionAccess,
         options: Option<&'a SessionPersistenceOpenOptions>,
     ) -> BoxFuture<'a, Result<Arc<dyn SessionHandle>, BoxError>>;
+    /// Move a session's complete durable storage to the backend's recoverable trash.
+    /// Backends without trash support must reject the operation.
+    fn trash<'a>(&'a self, _id: &'a SessionId) -> BoxFuture<'a, Result<(), BoxError>> {
+        Box::pin(async {
+            Err(std::io::Error::other("session trash is unsupported by this backend").into())
+        })
+    }
     /// Flush every active writer; aggregate failures without abandoning the sweep.
     fn flush(&self) -> BoxFuture<'_, Result<(), BoxError>>;
     fn stat<'a>(

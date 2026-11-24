@@ -295,10 +295,12 @@ const scenarios = [
       await page.locator('[data-thread-item]').first().click({ button: 'right' });
       try { await page.getByRole('menuitem', { name: 'Unpin chat', exact: true }).waitFor({ timeout: 5000 }); }
       catch { throw new Error(`Unpin unavailable: ${await page.evaluate(() => [...document.querySelectorAll('[role=menu]')].map(x => x.innerText).join('|'))}; metadata: ${await page.evaluate(() => localStorage.getItem('hoh-host.thread-metadata.v1'))}`); }
-      await page.getByRole('menuitem', { name: 'Delete · Coming Soon', exact: true }).click();
-      await page.getByText('Coming Soon', { exact: true }).first().waitFor();
+      await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+      const confirmation = page.getByRole('alertdialog');
+      await confirmation.getByText(/moves the chat to the trash/).waitFor();
+      await confirmation.getByRole('button', { name: 'Cancel' }).click();
       const requests = await page.evaluate(() => window.__HOH_T3_TEST_REQUESTS__ ?? []);
-      if (requests.some(({ method, payload }) => method === 'orchestration.dispatchCommand' && payload?.type === 'thread.delete')) throw new Error('Unavailable delete was sent to the host');
+      if (requests.some(({ method, payload }) => method === 'orchestration.dispatchCommand' && payload?.type === 'thread.delete')) throw new Error('Cancelled deletion was sent to the host');
       await setSidebar(page, sidebar);
     }, blocks: ['conversation'],
   },

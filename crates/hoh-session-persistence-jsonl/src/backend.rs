@@ -220,7 +220,7 @@ impl JsonlSessionPersistence {
         check(signal)?;
         Ok(entries
             .into_iter()
-            .filter(|e| e.1)
+            .filter(|e| e.1 && e.0 != "trash")
             .map(|e| node_path::join(&[&self.0.root, &e.0]))
             .collect())
     }
@@ -1347,6 +1347,49 @@ impl SessionPersistence for JsonlSessionPersistence {
                     Err(failure)
                 }
             }
+        })
+    }
+    fn trash<'a>(&'a self, id: &'a SessionId) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            // Share the backend's writer gate and the interprocess lease with normal opens.
+            self.0.tracker.claim_write(id)?;
+            let _claim = WriteClaimGuard {
+                tracker: self.0.tracker.clone(),
+                id: id.clone(),
+                active: true,
+            };
+            let Some(selected) = self.find_log(id, None).await? else {
+                return Ok(());
+            };
+            let source = std::path::Path::new(&selected.source_path)
+                .parent()
+                .ok_or_else(|| error("session log has no parent directory"))?;
+            let lease = SessionWriteLease::acquire(source.to_string_lossy().as_ref(), id).await?;
+            let trash = std::path::Path::new(&self.0.root).join("trash");
+            tokio::fs::create_dir_all(&trash).await?;
+            let token = random_token(16)?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis();
+            let destination = trash.join(format!(
+                "{stamp}-{}-{token}",
+                crate::format::encode_segment(id.as_str())?
+            ));
+            tokio::fs::rename(source, destination).await?;
+            // The rename is the commit point. A close-hook failure must not report a
+            // failed deletion after the directory has already moved to trash.
+            let _ = lease.release().await;
+            self.0
+                .memo
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .shift_remove(id);
+            self.0
+                .listed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            Ok(())
         })
     }
     fn flush(&self) -> BoxFuture<'_, Result<()>> {

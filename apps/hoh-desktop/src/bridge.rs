@@ -11,6 +11,7 @@ pub const WINDOW_METHODS: &[&str] = &[
     "session/list",
     "session/events",
     "session/cancel",
+    "session/delete",
     "session/working-directory/get",
     "session/working-directory/set",
     "hoh/employee/list",

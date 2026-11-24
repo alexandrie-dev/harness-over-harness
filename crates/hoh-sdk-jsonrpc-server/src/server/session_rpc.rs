@@ -5,7 +5,7 @@ use crate::{
     HohPrivilegedApprover, HohRpcMethods,
     error::{HohMethodNotFound, error, type_error},
 };
-use hoh_agent::{Agent, CancelOptions};
+use hoh_agent::{Agent, AgentStatus, CancelOptions};
 use hoh_error::BoxError;
 use hoh_protocol::{
     SessionEventsParams, SessionEventsResult, SessionListParams, SessionListResult, SessionSummary,
@@ -177,6 +177,83 @@ impl HarnessSdkJsonRpcServer {
                 .then_with(|| a.id.cmp(&b.id))
         });
         Ok(serde_json::to_value(SessionListResult { sessions })?)
+    }
+
+    pub(super) async fn session_delete(&self, params: Value) -> Result<Value, BoxError> {
+        self.assert_initialized()?;
+        let params: SessionWaitParams = params_of("session/delete", params)?;
+        if params.session_id.is_empty() {
+            return Err(type_error("session/delete requires a non-empty sessionId"));
+        }
+        let id = SessionId::from(params.session_id);
+        let persistence = self
+            .inner
+            .ctx
+            .get::<SessionPersistenceService>()
+            .ok_or_else(|| error("Session storage is unavailable"))?;
+        let record = {
+            let mut state = lock(&self.inner.state);
+            if state.deleting.contains(&id)
+                || state.prompt_admissions.contains_key(&id)
+                || state
+                    .activities
+                    .values()
+                    .any(|activity| activity.session_id() == &id)
+                || state.creations.contains_key(&id)
+                || state.scheduled.contains_key(&id)
+            {
+                return Err(error(
+                    "Chat is busy. Wait for the current operation to finish.",
+                ));
+            }
+            if let Some(record) = state.sessions.get(&id) {
+                let agent = &record.handle.agent;
+                let mut turn_open = false;
+                let mut approvals = std::collections::HashSet::new();
+                for event in agent.session().snapshot_events(None, None).iter() {
+                    match event.event_type() {
+                        "turn/start" => turn_open = true,
+                        "turn/end" => {
+                            turn_open = false;
+                            approvals.clear();
+                        }
+                        "approval/asked" => {
+                            if let Some(id) = event.data()["id"].as_str() {
+                                approvals.insert(id.to_owned());
+                            }
+                        }
+                        "approval/decided" => {
+                            if let Some(id) = event.data()["id"].as_str() {
+                                approvals.remove(id);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if agent.status() != AgentStatus::Idle
+                    || turn_open
+                    || !approvals.is_empty()
+                    || !agent.inbox().next_turn().is_empty()
+                    || !agent.inbox().next_step().is_empty()
+                {
+                    return Err(error(
+                        "Chat is running or waiting for a response. Stop it before deleting.",
+                    ));
+                }
+            }
+            state.deleting.insert(id.clone());
+            state.sessions.shift_remove(&id)
+        };
+        let result = async {
+            if let Some(record) = record {
+                record.handle.dispose().await?;
+            }
+            persistence.trash(&id).await?;
+            Ok(json!({}))
+        }
+        .await;
+        lock(&self.inner.state).deleting.remove(&id);
+        result
     }
 
     pub(super) fn session_cancel(&self, params: Value) -> Result<Value, BoxError> {

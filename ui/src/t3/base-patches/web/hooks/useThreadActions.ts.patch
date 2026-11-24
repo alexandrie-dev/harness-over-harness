@@ -25,19 +25,35 @@
 @@ -296 +296 @@
 -            message: m(msg("This connection cannot change threads.")),
 +            message: m(msg("This connection cannot change chats.")),
-@@ -590 +590 @@
+@@ -543,4 +543,2 @@
+-    let orphanedWorktreePath = getOrphanedWorktreePathForThread(
+-      survivingThreads,
+-      threadRef.threadId,
+-    );
++    // HoH moves only the session to trash; never remove a worktree as a side effect.
++    let orphanedWorktreePath = null as string | null;
+@@ -590 +588 @@
 -            m(msg("This thread is the only one linked to this worktree:")),
 +            m(msg("This chat is the only one linked to this worktree:")),
-@@ -806 +806 @@
+@@ -604,7 +602 @@
+-    if (thread.runtime !== null) {
+-      await stopThreadSession({
+-        environmentId: threadRef.environmentId,
+-        input: { threadId: threadRef.threadId },
+-      });
+-    }
+-
++    // The engine rejects running chats; deleting must never stop an active turn.
+@@ -806 +798 @@
 -    if (result._tag === "Success") announce(m(msg("Pinned 1 thread")));
 +    if (result._tag === "Success") announce(m(msg("Pinned 1 chat")));
-@@ -990 +990 @@
+@@ -990 +982 @@
 -      failureTitle: m(msg("Failed to wake thread")),
 +      failureTitle: m(msg("Failed to wake chat")),
-@@ -1030,3 +1030,3 @@
+@@ -1030,3 +1022,3 @@
 -              ? m(msg('Delete thread "this thread"?'))
 -              : m(msg('Delete thread "{title}"?', { title })),
 -            m(msg("This permanently clears conversation history for this thread.")),
 +              ? m(msg('Delete chat "this chat"?'))
 +              : m(msg('Delete chat "{title}"?', { title })),
-+            m(msg("This permanently clears conversation history for this chat.")),
++            m(msg("This moves the chat to the trash.")),

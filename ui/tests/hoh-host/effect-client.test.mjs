@@ -248,10 +248,8 @@ test('T3 client: list, new chat, streamed answer, tool step, permission, questio
     assert.equal(force.outcome, 'killed');
     await run(client['orchestration.dispatchCommand']({ type: 'thread.runtime-mode.set', commandId: 'c-4', threadId: 'thread-1', runtimeMode: 'full-access' }));
     await run(client['orchestration.dispatchCommand']({ type: 'thread.model-selection.set', commandId: 'c-5', threadId: 'thread-1', modelSelection: { instanceId: 'claudeAgent', model: 'claude-opus' } }));
-    const exit = await runExit(client['orchestration.dispatchCommand']({ type: 'thread.delete', commandId: 'c-6', threadId: 'thread-1' }));
-    assert(Exit.isFailure(exit));
-    const error = Cause.squash(exit.cause);
-    assert.deepEqual([error._tag, error.commandType, error.message], ['OrchestrationV2DispatchCommandError', 'thread.delete', 'Not available in HoH.']);
+    await run(client['orchestration.dispatchCommand']({ type: 'thread.delete', commandId: 'c-6', threadId: 'thread-1' }));
+    await shell.until(item => item.kind === 'thread.removed' && item.threadId === 'thread-1');
     await thread.stop(); await shell.stop();
   });
 });

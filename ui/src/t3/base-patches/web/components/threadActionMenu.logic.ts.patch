@@ -41,7 +41,7 @@
 +      label: resolve(msg("Archive chat")),
 @@ -298 +298 @@
 -      label: resolve(msg("Delete", { $context: "verb, delete the thread" })),
-+      label: resolve(msg("Delete · Coming Soon")),
++      label: resolve(msg("Delete")),
 @@ -302,0 +303 @@
 +  const availableItems = items.filter((item) => !["regenerate-title", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
 @@ -304,2 +305,2 @@
