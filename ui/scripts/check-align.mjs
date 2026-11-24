@@ -174,6 +174,34 @@ async function assertModeChip(page, label) {
   if (await row.getByText(label, { exact: true }).count() !== 1) throw new Error('mode must have a single visible chip in composer');
 }
 
+function titleRecoveryStorage() {
+  const result = conversationStorage();
+  const saved = JSON.parse(result['hoh-host.projects.v1']);
+  saved.titles = { [CHAT.id]: 'Generated recovery title' };
+  saved.sessions = [{ id: CHAT.id, title: 'Generated recovery title', projectId: 'project-alpha', executor: 'claude', model: 'opus', mode: 'full', createdAt: Date.now() - 60000, updatedAt: Date.now() - 10000, archivedAt: null }];
+  saved.threads['another-chat'] = 'project-alpha';
+  result['hoh-host.projects.v1'] = JSON.stringify(saved);
+  return result;
+}
+function titleRecoveryEngine() {
+  const engine = completedEngine();
+  engine.sessions.get(CHAT.id).title = '';
+  const another = engine.open('another-chat', 'Another conversation');
+  engine.append(another, 'user/message', { id: 'another-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Another conversation' }] });
+  engine.append(another, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  return engine;
+}
+function runningRecoveryEngine() {
+  const engine = completedEngine();
+  engine.access = 'full';
+  engine.sessionModes.set(CHAT.id, 'full');
+  const session = engine.sessions.get(CHAT.id);
+  engine.append(session, 'turn/start', { turn: 2 });
+  engine.append(session, 'user/message', { id: 'running-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Still running' }] });
+  engine.bind(CHAT.id);
+  return engine;
+}
+
 const scenarios = [
   {
     name: 'agent-setup', engine: () => { const e = new FakeEngine(); e.access = 'confirm'; e.claude = { installed: false, version: null, auth: 'unknown', models: [] }; return e; }, stored: () => ({}),
@@ -334,7 +362,7 @@ const scenarios = [
   },
   {
     name: 'quick-view', engine: completedEngine, stored: () => ({}),
-    prepare: async (page, _engine, sidebar) => { await page.locator(`.hoh-card`).first().waitFor(); await setSidebar(page, sidebar); await page.getByRole('button', { name: `Open ${CHAT.title}` }).click(); await page.getByRole('dialog').last().waitFor(); await page.getByRole('dialog').last().getByRole('textbox').waitFor(); }, blocks: ['quick'],
+    prepare: async (page, _engine, sidebar) => { await page.locator(`.hoh-card`).first().waitFor(); await setSidebar(page, sidebar); await page.getByRole('button', { name: `Open ${CHAT.title}` }).click(); await page.getByRole('dialog').last().waitFor(); await page.getByRole('dialog').last().getByRole('textbox').waitFor(); await page.getByRole('dialog').last().getByRole('button', { name: /Permissions: Supervised/ }).waitFor(); }, blocks: ['quick'],
   },
   {
     name: 'quick-view-open', engine: completedEngine, stored: () => ({}),
@@ -404,6 +432,49 @@ const scenarios = [
         } },
     ];
   }),
+  {
+    name: 'c1u-title-actions', engine: titleRecoveryEngine, path: () => `/hoh-local/${CHAT.id}`, stored: titleRecoveryStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, 'expanded');
+      const row = page.locator('[data-thread-item]').filter({ hasText: 'Generated recovery title' });
+      await row.waitFor();
+      await page.getByRole('navigation', { name: 'Thread breadcrumb' }).getByText('Generated recovery title', { exact: true }).waitFor();
+      await row.click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Rename thread', exact: true }).click();
+      const input = page.getByRole('textbox', { name: 'Thread title' });
+      await input.fill('Manual recovery title'); await input.press('Enter');
+      const renamed = page.locator('[data-thread-item]').filter({ hasText: 'Manual recovery title' });
+      await renamed.waitFor();
+      await page.getByRole('navigation', { name: 'Thread breadcrumb' }).getByText('Manual recovery title', { exact: true }).waitFor();
+      await renamed.click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Pin thread', exact: true }).click();
+      await page.waitForFunction(id => JSON.parse(localStorage.getItem('hoh-host.thread-metadata.v1') ?? '{}')[id]?.pinnedAt != null, CHAT.id);
+      if (!(await page.locator('[data-thread-item]').first().innerText()).includes('Manual recovery title')) throw new Error('Pinned conversation did not move to the top');
+      await page.reload();
+      await page.getByText('The measured conversation lane is ready.').waitFor(); await setSidebar(page, 'expanded');
+      await page.locator('[data-thread-item]').filter({ hasText: 'Manual recovery title' }).waitFor();
+      await page.getByRole('navigation', { name: 'Thread breadcrumb' }).getByText('Manual recovery title', { exact: true }).waitFor();
+      await page.waitForTimeout(1000);
+      if (!(await page.locator('[data-thread-item]').first().innerText()).includes('Manual recovery title')) throw new Error('Pinned order was lost after restart');
+      await setSidebar(page, sidebar);
+    }, blocks: ['conversation'],
+  },
+  {
+    name: 'c1u-quick-mode', engine: runningRecoveryEngine, stored: () => ({}),
+    prepare: async (page, _engine, sidebar) => {
+      await page.locator('.hoh-card').first().waitFor(); await setSidebar(page, sidebar);
+      await page.getByRole('button', { name: `Open ${CHAT.title}` }).click();
+      const dialog = page.getByRole('dialog').last(); await dialog.waitFor();
+      await dialog.getByRole('button', { name: /Permissions: Full access/ }).waitFor();
+      if (await dialog.locator('[data-composer-access-unknown]').count()) throw new Error('Known running mode is shown as Unknown');
+      await page.reload();
+      await page.locator('.hoh-card').first().waitFor();
+      await page.getByRole('button', { name: `Open ${CHAT.title}` }).click();
+      await page.getByRole('dialog').last().getByRole('button', { name: /Permissions: Full access/ }).waitFor();
+      await setSidebar(page, sidebar);
+    }, blocks: ['quick'],
+  },
 ].filter(scenario => !process.env.ALIGN_SCREEN || process.env.ALIGN_SCREEN === scenario.name);
 
 async function rectangles(page) {

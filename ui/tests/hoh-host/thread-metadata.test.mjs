@@ -89,3 +89,49 @@ test('metadata is restored when an event arrives before a delayed session list',
   assert.equal(host.thread('chat')?.pinOrderKey, 'early');
   release(); await started; host.stop();
 });
+
+test('generated titles survive reconciliation with blank engine names; manual names take precedence', async () => {
+  const store = new Map();
+  const engine = new FakeEngine({ store });
+  for (const id of ['generated', 'manual']) {
+    engine.seed(id, '', [['user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: `First ${id}` }] }]]);
+    Object.assign(store.get(id), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'full' });
+  }
+  const data = new Map();
+  const storage = { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+  const saved = { version: 1, titles: { generated: 'Generated title', manual: 'Old generated title' }, sessions: ['generated', 'manual'].map(id => ({ id, title: 'New thread', projectId: 'hoh-project', executor: 'claude', model: 'claude-sonnet', mode: 'full', createdAt: 1700000000000, updatedAt: 1700000001000, archivedAt: null })) };
+  storage.setItem(hostModule.STORAGE_KEY, JSON.stringify(saved));
+  storage.setItem('hoh-host.thread-metadata.v1', JSON.stringify({ manual: { title: 'Manual title' } }));
+  const host = new hostModule.HohHost({ engine, storage, throttleMs: 0 });
+  await host.start(); await tick(25); host.flush();
+  assert.equal(host.thread('generated')?.title, 'Generated title');
+  assert.equal(host.thread('manual')?.title, 'Manual title');
+  host.stop();
+  const restarted = new hostModule.HohHost({ engine: new FakeEngine({ store }), storage, throttleMs: 0 });
+  await restarted.start(); await tick(25); restarted.flush();
+  assert.equal(restarted.thread('generated')?.title, 'Generated title');
+  assert.equal(restarted.thread('manual')?.title, 'Manual title');
+  restarted.stop();
+});
+
+test('rename, pin and archive do not wait for a cold conversation history', async () => {
+  const f = fixture();
+  const engine = new FakeEngine({ store: f.store });
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'session/events' ? new Promise(() => {}) : request(method, params);
+  const host = new hostModule.HohHost({ engine, storage: f.storage, throttleMs: 0 });
+  const client = new WireClient(socketModule.HohWebSocket, new wireModule.WireServer(host.handlers()));
+  await host.start();
+  const timed = operation => Promise.race([operation, new Promise((_, reject) => setTimeout(() => reject(new Error('list action waited for history')), 1000))]);
+  await timed(command(client, 'thread.metadata.update', { title: 'Named while loading' }));
+  await timed(command(client, 'thread.pin', { orderKey: 'first' }));
+  await timed(command(client, 'thread.archive'));
+  assert.equal(host.thread('chat')?.title, 'Named while loading');
+  assert.equal(host.thread('chat')?.pinOrderKey, 'first');
+  assert.ok(host.thread('chat')?.archivedAt);
+  client.close(); host.stop();
+  const reopened = await f.open();
+  const restored = await projection(reopened.client);
+  assert.deepEqual([restored.title, restored.pinOrderKey, !!restored.archivedAt], ['Named while loading', 'first', true]);
+  close(reopened);
+});

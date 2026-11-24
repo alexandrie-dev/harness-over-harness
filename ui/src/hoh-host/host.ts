@@ -1210,7 +1210,7 @@ export class HohHost {
         if (this.restored.delete(session.id)) {
           // The cache is only continuity for the first snapshot. Once this session is visible on
           // disk, let its current list entry and history replace stale presentation metadata.
-          existing.title = typeof session.title === 'string' ? session.title : '';
+          existing.title = this.titles.get(session.id) ?? (typeof session.title === 'string' ? session.title : '');
           this.applyThreadMetadata(existing);
           existing.updatedAt = Math.max(existing.updatedAt, at);
           inventoryChanged = true;
@@ -1293,7 +1293,31 @@ export class HohHost {
           afterSeq = page.nextSeq;
         }
         // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
-        try { if ((await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: thread.id }))?.session?.running) thread.setRunning(true, this.now()); } catch { /* unknown: the history decides */ }
+        try {
+          const generation = this.modeGenerations.get(thread.id) ?? 0;
+          const processGeneration = this.accessProcessGeneration;
+          const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: thread.id }))?.session;
+          if (own && generation === (this.modeGenerations.get(thread.id) ?? 0) && processGeneration === this.accessProcessGeneration) {
+            const boundMode = exactMode(own.runtimeMode);
+            if ((own.executor === 'claude' || own.executor === 'codex') && boundMode && (!thread.bindingKnown || thread.executor === own.executor)) {
+              thread.executor = own.executor;
+              thread.bindingKnown = true;
+              thread.builtin = false;
+              this.sessionAccessKnown.add(thread.id);
+              thread.mode = effectiveSessionMode(own, thread.mode);
+            }
+            if (own.running) {
+              thread.setRunning(true, this.now());
+              // Replaying an earlier completed turn clears its live mode; restore only what
+              // this process reports, never the pending choice for a later turn.
+              const runningMode = exactMode(own.runningRuntimeMode) ?? exactMode(own.running);
+              if (runningMode && thread.bindingKnown && own.executor === thread.executor) {
+                thread.mode = runningMode;
+                thread.setRunningInteractionMode(own.runningRuntimeMode === 'plan' ? 'plan' : 'default');
+              }
+            }
+          }
+        } catch { /* unknown: the history decides */ }
         if (this.stopped) return;
         this.applyThreadMetadata(thread);
         thread.settleUnfinished(this.now());
@@ -2181,7 +2205,12 @@ ${message.slice(0, 8000)}`;
       this.flush(); return { sequence: this.sequence };
     }
     await this.start();
-    const thread = typeof command.threadId === 'string' ? await this.loaded(command.threadId) : undefined;
+    // Window-owned list actions do not require opening the engine history. They remain usable
+    // while a cold conversation's history or access lookup is slow or unavailable.
+    const listAction = ['thread.metadata.update', 'thread.pin', 'thread.unpin', 'thread.pin.reorder', 'thread.archive', 'thread.unarchive'].includes(type);
+    const thread = typeof command.threadId === 'string'
+      ? listAction ? this.threads.get(command.threadId) : await this.loaded(command.threadId)
+      : undefined;
     const needThread = () => { if (!thread) throw dispatchError(command, 'This thread does not exist.'); return thread; };
     try {
       switch (type) {
