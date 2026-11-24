@@ -7,14 +7,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
-use std::fs::{self, File};
+use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
 const CHANNEL_CAPABILITY: &[u8] = b"claude/channel";
-const KNOWN_CHANNEL_PLUGINS: &[&str] = &["discord", "fakechat", "imessage", "telegram"];
+const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 const MAX_SCAN_DEPTH: usize = 16;
 const MAX_SCAN_ENTRIES: usize = 20_000;
 const MAX_SCAN_FILES: usize = 10_000;
@@ -53,7 +53,28 @@ fn disabled_channel_settings(extra_env: &[(String, String)], cwd: &Path) -> Opti
         .into_iter()
         .filter(|id| {
             let roots = plugin_roots(registry.as_ref(), &config_dir, home.as_deref(), id);
-            is_known_channel(id) || roots.iter().any(|root| is_channel_root(root))
+            if roots.is_empty() {
+                eprintln!("HoH: cannot inspect enabled plugin {id}; disabling it for this window");
+                return true;
+            }
+            roots.iter().any(|root| {
+                if fs::symlink_metadata(root).map_or(true, |metadata| {
+                    !metadata.is_dir() || metadata.file_type().is_symlink()
+                }) {
+                    eprintln!(
+                        "HoH: cannot inspect plugin root {}; disabling it",
+                        root.display()
+                    );
+                    return true;
+                }
+                let mcp = declares_mcp_server(root);
+                if effective.uncertain && mcp {
+                    eprintln!("HoH: settings could not be inspected; disabling MCP plugin {id}");
+                    true
+                } else {
+                    mcp && source_tree_has_capability(root)
+                }
+            })
         })
         .map(|id| (id, Value::Bool(false)))
         .collect();
@@ -84,9 +105,41 @@ struct EffectivePlugins {
 fn enabled_plugins(config_dir: &Path, cwd: &Path) -> EffectivePlugins {
     let mut effective = BTreeMap::<String, bool>::new();
     let mut uncertain = merge_enabled(&config_dir.join("settings.json"), &mut effective);
-    if let Some(project) = project_settings_dir(cwd) {
-        uncertain |= merge_enabled(&project.join(".claude/settings.json"), &mut effective);
-        uncertain |= merge_enabled(&project.join(".claude/settings.local.json"), &mut effective);
+    let project = cwd.join(".claude");
+    match fs::symlink_metadata(&project) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::fd::AsRawFd;
+                use std::os::unix::fs::OpenOptionsExt;
+                match fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(0x20000 | 0x10000)
+                    .open(&project)
+                {
+                    Ok(dir) => {
+                        let anchored = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+                        uncertain |= merge_enabled(&anchored.join("settings.json"), &mut effective);
+                        uncertain |=
+                            merge_enabled(&anchored.join("settings.local.json"), &mut effective);
+                    }
+                    Err(error) => {
+                        eprintln!("HoH: cannot open project settings directory safely: {error}");
+                        uncertain = true;
+                    }
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                eprintln!("HoH: safe project settings inspection unavailable");
+                uncertain = true;
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        _ => {
+            eprintln!("HoH: project settings directory cannot be inspected safely");
+            uncertain = true;
+        }
     }
     EffectivePlugins {
         ids: effective
@@ -97,24 +150,20 @@ fn enabled_plugins(config_dir: &Path, cwd: &Path) -> EffectivePlugins {
     }
 }
 
-fn project_settings_dir(cwd: &Path) -> Option<PathBuf> {
-    cwd.ancestors()
-        .find(|dir| {
-            let settings = dir.join(".claude/settings.json");
-            let local = dir.join(".claude/settings.local.json");
-            settings.is_file() || local.is_file()
-        })
-        .map(Path::to_path_buf)
-}
-
 /// Returns true when a present settings file could not be interpreted. In that case discovery
 /// widens to installed plugin IDs and still disables anything statically recognizable as a
 /// channel; a parser mismatch must not be the reason a bot-stealing server starts.
 fn merge_enabled(path: &Path, effective: &mut BTreeMap<String, bool>) -> bool {
-    let bytes = match fs::read(path) {
+    let bytes = match read_bounded(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
-        Err(_) => return true,
+        Err(error) => {
+            eprintln!(
+                "HoH: cannot safely inspect settings {}: {error}",
+                path.display()
+            );
+            return true;
+        }
     };
     let Ok(settings) = serde_json::from_slice::<Value>(&bytes) else {
         return true;
@@ -133,6 +182,40 @@ fn merge_enabled(path: &Path, effective: &mut BTreeMap<String, bool>) -> bool {
         }
     }
     uncertain
+}
+
+fn read_bounded(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0x20000);
+    } // O_NOFOLLOW
+    let before = fs::symlink_metadata(path)?;
+    if !before.is_file() || before.file_type().is_symlink() || before.len() > MAX_SETTINGS_BYTES {
+        return Err(std::io::Error::other(
+            "not a regular file or settings size limit exceeded",
+        ));
+    }
+    let file = options.open(path)?;
+    let after = file.metadata()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if before.dev() != after.dev() || before.ino() != after.ino() {
+            return Err(std::io::Error::other("settings file changed while opening"));
+        }
+    }
+    if !after.is_file() || after.len() > MAX_SETTINGS_BYTES {
+        return Err(std::io::Error::other("settings size limit exceeded"));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_SETTINGS_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_SETTINGS_BYTES {
+        return Err(std::io::Error::other("settings size limit exceeded"));
+    }
+    Ok(bytes)
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -266,17 +349,6 @@ fn resolve_install_path(path: &str, config_dir: &Path, home: Option<&Path>) -> P
     }
 }
 
-fn is_known_channel(id: &str) -> bool {
-    let name = id.split_once('@').map_or(id, |(name, _)| name);
-    KNOWN_CHANNEL_PLUGINS
-        .iter()
-        .any(|known| name.eq_ignore_ascii_case(known))
-}
-
-fn is_channel_root(root: &Path) -> bool {
-    manifest_marks_channel(root) || (declares_mcp_server(root) && source_tree_has_capability(root))
-}
-
 /// The capability belongs to an MCP server, not merely to an arbitrary example or test file in
 /// a plugin. Require a non-empty server declaration before accepting a source-tree marker.
 fn declares_mcp_server(root: &Path) -> bool {
@@ -310,8 +382,16 @@ fn manifest_declares_server(path: &Path) -> bool {
 }
 
 fn declaration_file(path: &Path, inspect: impl FnOnce(&Value) -> bool) -> bool {
-    let Ok(bytes) = fs::read(path) else {
-        return false;
+    let bytes = match read_bounded(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(error) => {
+            eprintln!(
+                "HoH: cannot inspect MCP declaration {}: {error}; disabling it",
+                path.display()
+            );
+            return true;
+        }
     };
     match serde_json::from_slice::<Value>(&bytes) {
         Ok(value) => inspect(&value),
@@ -330,30 +410,6 @@ fn non_empty_declaration(value: &Value) -> bool {
     }
 }
 
-fn manifest_marks_channel(root: &Path) -> bool {
-    manifest_has_channel_keyword(&root.join(".claude-plugin/plugin.json"))
-        || fs::read_dir(root).ok().is_some_and(|entries| {
-            entries.flatten().any(|entry| {
-                entry.file_type().is_ok_and(|kind| kind.is_dir())
-                    && manifest_has_channel_keyword(
-                        &entry.path().join(".claude-plugin/plugin.json"),
-                    )
-            })
-        })
-}
-
-fn manifest_has_channel_keyword(path: &Path) -> bool {
-    read_json(path)
-        .and_then(|manifest| manifest.get("keywords").cloned())
-        .and_then(|keywords| keywords.as_array().cloned())
-        .is_some_and(|keywords| {
-            keywords
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|keyword| keyword.eq_ignore_ascii_case("channel"))
-        })
-}
-
 fn source_tree_has_capability(root: &Path) -> bool {
     let mut pending = vec![(root.to_path_buf(), 0_usize)];
     let mut entries_seen = 0_usize;
@@ -361,75 +417,119 @@ fn source_tree_has_capability(root: &Path) -> bool {
     let mut bytes = 0_u64;
     while let Some((dir, depth)) = pending.pop() {
         if depth > MAX_SCAN_DEPTH {
-            continue;
+            eprintln!("HoH: plugin scan depth limit at {}", dir.display());
+            return true;
         }
         let Ok(entries) = fs::read_dir(dir) else {
-            continue;
+            eprintln!("HoH: cannot read MCP plugin directory; disabling it");
+            return true;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let Ok(entry) = entry else {
+                eprintln!("HoH: cannot read MCP plugin entry; disabling it");
+                return true;
+            };
             entries_seen += 1;
             if entries_seen > MAX_SCAN_ENTRIES {
                 // This function is only called after an MCP declaration was found. If its tree
                 // is too wide to classify safely, disable it rather than starting an uncertain
                 // channel server or blocking the window with an unbounded scan.
+                eprintln!("HoH: MCP plugin entry limit exceeded; disabling it");
                 return true;
             }
             let name = entry.file_name();
             let Ok(kind) = entry.file_type() else {
-                continue;
+                eprintln!("HoH: cannot inspect MCP plugin entry; disabling it");
+                return true;
             };
             if kind.is_symlink() {
-                continue;
+                eprintln!("HoH: MCP plugin contains an uninspectable link; disabling it");
+                return true;
             }
             if kind.is_dir() {
-                if name != OsStr::new(".git") && name != OsStr::new("node_modules") {
+                if ![
+                    ".git",
+                    "node_modules",
+                    "examples",
+                    "example",
+                    "docs",
+                    "documentation",
+                    "test",
+                    "tests",
+                ]
+                .iter()
+                .any(|skip| name == OsStr::new(skip))
+                {
                     pending.push((entry.path(), depth + 1));
                 }
                 continue;
             }
-            if !kind.is_file() || !plausible_source(&entry.path()) || files >= MAX_SCAN_FILES {
+            if !kind.is_file() || documentation(&entry.path()) {
                 continue;
             }
+            if files >= MAX_SCAN_FILES {
+                eprintln!("HoH: MCP plugin file limit exceeded; disabling it");
+                return true;
+            }
             let Ok(metadata) = entry.metadata() else {
-                continue;
+                eprintln!("HoH: cannot inspect MCP plugin file; disabling it");
+                return true;
             };
             let len = metadata.len();
             if len > MAX_SOURCE_BYTES || bytes.saturating_add(len) > MAX_SCAN_BYTES {
-                continue;
+                eprintln!("HoH: MCP plugin byte limit exceeded; disabling it");
+                return true;
             }
             files += 1;
             bytes += len;
-            if file_contains(&entry.path(), CHANNEL_CAPABILITY) {
-                return true;
+            match file_contains(&entry.path(), CHANNEL_CAPABILITY) {
+                Ok(true) => return true,
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!("HoH: cannot read MCP plugin file: {error}; disabling it");
+                    return true;
+                }
             }
         }
     }
     false
 }
 
-fn plausible_source(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(OsStr::to_str),
-        Some("cjs" | "cts" | "js" | "json" | "mjs" | "mts" | "ts" | "tsx")
-    )
+fn documentation(path: &Path) -> bool {
+    path.extension().and_then(OsStr::to_str).is_some_and(|ext| {
+        ["md", "mdx", "rst", "txt"]
+            .iter()
+            .any(|doc| ext.eq_ignore_ascii_case(doc))
+    })
 }
 
-fn file_contains(path: &Path, needle: &[u8]) -> bool {
-    let Ok(mut file) = File::open(path) else {
-        return false;
-    };
+fn file_contains(path: &Path, needle: &[u8]) -> std::io::Result<bool> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0x20000);
+    }
+    let file = options.open(path)?;
+    let mut file = file.take(MAX_SOURCE_BYTES + 1);
     let mut buffer = [0_u8; 64 * 1024];
     let mut carry = Vec::new();
+    let mut total = 0_u64;
     loop {
-        let Ok(read) = file.read(&mut buffer) else {
-            return false;
-        };
+        let read = file.read(&mut buffer)?;
         if read == 0 {
-            return false;
+            return Ok(false);
+        }
+        total += read as u64;
+        if total > MAX_SOURCE_BYTES {
+            return Err(std::io::Error::other(
+                "MCP plugin file grew beyond scan limit",
+            ));
         }
         carry.extend_from_slice(&buffer[..read]);
         if carry.windows(needle.len()).any(|window| window == needle) {
-            return true;
+            return Ok(true);
         }
         if carry.len() >= needle.len() {
             carry.drain(..carry.len() - (needle.len() - 1));
@@ -540,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn local_precedence_keyword_and_known_names_fail_closed() {
+    fn local_precedence_does_not_treat_a_keyword_as_a_server() {
         let (_dir, config, project) = fixture();
         let keyword = config.join("plugins/cache/test/custom/1");
         write(
@@ -579,8 +679,79 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&settings).unwrap(),
             serde_json::json!({
-                "enabledPlugins": {"custom@test": false, "telegram@test": false}
+                "enabledPlugins": {"telegram@test": false}
             })
+        );
+    }
+
+    #[test]
+    fn python_server_is_detected_but_examples_and_names_are_not() {
+        let (_dir, config, project) = fixture();
+        let channel = config.join("plugins/cache/test/bot/1");
+        let ordinary = config.join("plugins/cache/test/discord/1");
+        write(
+            &config.join("settings.json"),
+            r#"{"enabledPlugins":{"bot@test":true,"discord@test":true}}"#,
+        );
+        write(
+            &channel.join(".mcp.json"),
+            r#"{"mcpServers":{"bot":{"command":"python3","args":["server.py"]}}}"#,
+        );
+        write(&channel.join("server.py"), "capability = b'claude/channel'");
+        write(&ordinary.join("README.md"), "claude/channel");
+        let settings = disabled_channel_settings(
+            &[(
+                "CLAUDE_CONFIG_DIR".into(),
+                config.to_string_lossy().into_owned(),
+            )],
+            &project,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&settings).unwrap(),
+            serde_json::json!({"enabledPlugins":{"bot@test":false}})
+        );
+    }
+
+    #[test]
+    fn project_settings_symlink_and_oversize_fail_closed_for_mcp() {
+        use std::os::unix::fs::symlink;
+        let (_dir, config, project) = fixture();
+        let plugin = config.join("plugins/cache/test/normal/1");
+        write(
+            &config.join("settings.json"),
+            r#"{"enabledPlugins":{"normal@test":true}}"#,
+        );
+        write(
+            &plugin.join(".mcp.json"),
+            r#"{"mcpServers":{"normal":{"command":"node","args":["server.js"]}}}"#,
+        );
+        write(&plugin.join("server.js"), "ordinary server");
+        fs::create_dir_all(project.join(".claude")).unwrap();
+        symlink(
+            config.join("settings.json"),
+            project.join(".claude/settings.json"),
+        )
+        .unwrap();
+        let env = [(
+            "CLAUDE_CONFIG_DIR".into(),
+            config.to_string_lossy().into_owned(),
+        )];
+        assert!(
+            disabled_channel_settings(&env, &project)
+                .unwrap()
+                .contains("normal@test")
+        );
+        fs::remove_file(project.join(".claude/settings.json")).unwrap();
+        fs::write(
+            project.join(".claude/settings.json"),
+            vec![b' '; MAX_SETTINGS_BYTES as usize + 1],
+        )
+        .unwrap();
+        assert!(
+            disabled_channel_settings(&env, &project)
+                .unwrap()
+                .contains("normal@test")
         );
     }
 

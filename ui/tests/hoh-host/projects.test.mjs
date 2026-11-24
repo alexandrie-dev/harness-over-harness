@@ -30,6 +30,25 @@ const create = (projectId, workspaceRoot, title = workspaceRoot.split('/').at(-1
 });
 const failureOf = exit => exit.cause[0].error;
 
+test('project paths keep trailing spaces and a changed resolved folder refuses the first message', async () => {
+  const spaced = '/home/person/Projects/site ';
+  const engine = new FakeEngine({ folders: ['/home/person/Documents/HoH', spaced, '/home/person/Projects/site'] });
+  const { client } = connect(engine, null);
+  assert.equal((await client.call('projects.mutate', create('p-spaced', spaced, 'Spaced'))).workspaceRoot, spaced);
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => method === 'session/working-directory/set'
+    ? { cwd: '/home/person/Projects/site' }
+    : request(method, params);
+  const result = await client.request('orchestration.launchThread', {
+    commandId: 'changed-folder', threadId: 'changed-folder', projectId: 'p-spaced', title: 'Test',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'full-access',
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'not-sent', text: 'Do not send', attachments: [] },
+  });
+  assert.match(failureOf(result).message, /folder changed/);
+  assert(!engine.requests.some(entry => entry.method === 'session/prompt'));
+});
+
 test('the default chat folder can also be explicitly added as a project', async () => {
   const engine = new FakeEngine();
   const storage = new MemoryStorage();

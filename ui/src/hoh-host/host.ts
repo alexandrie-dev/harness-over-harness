@@ -131,8 +131,7 @@ function windowStorage(): HohStorage | null {
 /** A folder path as T3 compares them: no trailing separator. */
 function folderPath(value: unknown): string {
   if (typeof value !== 'string') return '';
-  const trimmed = value.trim();
-  return trimmed.length > 1 ? trimmed.replace(/\/+$/, '') || '/' : trimmed;
+  return value.length > 1 ? value.replace(/\/+$/, '') || '/' : value;
 }
 /** Rebase T3's eagerly joined relative Markdown path once the draft's real cwd replaces its placeholder. */
 function localImagePathAtRoot(path: string, requestedRoot: string, authoritativeRoot: string): string {
@@ -1335,6 +1334,9 @@ export class HohHost {
           const set = await this.engine.request('session/working-directory/set', { sessionId: threadId, path: folder.workspaceRoot });
           // A typed `~/…` root becomes the folder the engine resolved, so chats' recorded folders match it.
           const resolved = folderPath(set?.cwd);
+          if (resolved !== folder.workspaceRoot && !folder.workspaceRoot.startsWith('~/')) {
+            throw new Error('The project folder changed since it was selected. Select it again before sending a message.');
+          }
           if (resolved && resolved !== folder.workspaceRoot && folder.workspaceRoot.startsWith('~') && !this.folderAt(resolved)) {
             folder.workspaceRoot = resolved;
             folder.updatedAt = this.now();
@@ -1741,7 +1743,10 @@ export class HohHost {
           if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new thread.');
           if (command.modelSelection?.model) { await this.applyModel(target.executor, command.modelSelection.model); target.model = command.modelSelection.model; }
           this.setLevel(target, command.modelSelection?.options);
-          await this.send(target, String(command.messageId), String(command.text ?? ''), command.attachments);
+          await this.withSelectionMutation(async () => {
+            await this.applyMode(target, command.runtimeMode);
+            await this.send(target, String(command.messageId), String(command.text ?? ''), command.attachments);
+          });
           break;
         }
         case 'thread.stop': case 'run.interrupt': await this.cancel(needThread()); break;
@@ -1756,7 +1761,7 @@ export class HohHost {
           }
           break;
         }
-        case 'thread.runtime-mode.set': { const target = needThread(); await this.applyMode(target, command.runtimeMode); break; }
+        case 'thread.runtime-mode.set': { const target = needThread(); await this.withSelectionMutation(() => this.applyMode(target, command.runtimeMode)); break; }
         case 'thread.model-selection.set': {
           const target = needThread();
           if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new thread.');
@@ -1798,12 +1803,16 @@ export class HohHost {
       if (existing && requestedExecutor !== existing.executor) throw new Error('A conversation cannot change its executor. Start a new thread.');
       if (existing && typeof input.projectId === 'string' && input.projectId !== existing.projectId) throw new Error('A conversation cannot change its project folder. Start a new thread.');
       const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.modelSelection?.instanceId);
-      if (existing) await this.applyMode(existing, input.runtimeMode);
       const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
         this.setLevel(thread, input.modelSelection?.options);
-        await this.send(thread, messageId, message.text, message.attachments);
+        await this.withSelectionMutation(async () => {
+          if (existing) await this.applyMode(existing, input.runtimeMode);
+          await this.send(thread, messageId, message.text, message.attachments);
+        });
+      } else if (existing) {
+        await this.withSelectionMutation(() => this.applyMode(existing, input.runtimeMode));
       }
       this.flush();
       return { threadId, projection: thread.projection(), resumed: !!existing, sequence: this.sequence };

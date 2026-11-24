@@ -400,6 +400,26 @@ test('the thread always shows the engine running mode while a different choice i
   assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'running-mode' })).thread.runtimeMode, 'approval-required');
 });
 
+test('each queued message captures its own access choice even when it matches the running turn', async () => {
+  const engine = new FakeEngine();
+  engine.seed('queue-modes', 'Queued', []);
+  Object.assign(engine.store.get('queue-modes'), { executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm', runningRuntimeMode: 'confirm' });
+  const observed = [];
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => {
+    if (method === 'session/prompt') observed.push(engine.sessionAccess.get(params.sessionId));
+    const result = await request(method, params);
+    if (method === 'session/prompt') engine.store.get('queue-modes').runningRuntimeMode = 'confirm';
+    return result;
+  };
+  const { client } = connect(engine);
+  await (await client.stream('orchestration.subscribeShell', {})).until(value => value.kind === 'snapshot');
+  for (const [id, runtimeMode] of [['B', 'full-access'], ['C', 'approval-required']]) {
+    await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: id, threadId: 'queue-modes', messageId: id, text: id, attachments: [], runtimeMode, dispatchMode: { type: 'queue_after_active' } });
+  }
+  assert.deepEqual(observed, ['full', 'confirm']);
+});
+
 test('Codex: app-server models and effort are offered; executor and exact mode apply before the first message', async () => {
   const engine = new FakeEngine();
   const { client, host } = connect(engine);

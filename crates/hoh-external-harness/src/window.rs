@@ -400,7 +400,7 @@ impl Window {
     /// are refused after links have been resolved. Kept on disk before it counts, so a refused
     /// write changes nothing.
     async fn add_folder(&self, params: WorkspaceAddParams) -> Result<WorkspaceAddResult, BoxError> {
-        let typed = params.cwd.trim();
+        let typed = params.cwd.as_str();
         let path = match typed.strip_prefix('~') {
             Some(rest) if rest.is_empty() || rest.starts_with('/') => {
                 let home = std::env::var_os("HOME").ok_or("the home folder is unknown")?;

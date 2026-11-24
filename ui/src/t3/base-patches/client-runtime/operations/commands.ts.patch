@@ -1,0 +1,18 @@
+--- a/client-runtime/operations/commands.ts
++++ b/client-runtime/operations/commands.ts
+@@ -840,6 +840,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
+           ? {}
+           : { idleCompaction: input.message.idleCompaction }),
+         attachments,
++        runtimeMode: input.runtimeMode,
+         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+         ...(input.sourceProposedPlan === undefined
+           ? {}
+@@ -869,6 +870,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
+         ? {}
+         : { idleCompaction: input.message.idleCompaction }),
+       attachments,
++      runtimeMode: input.runtimeMode,
+       ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+       ...(input.sourceProposedPlan === undefined

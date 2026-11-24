@@ -8,6 +8,9 @@
     "web/components/T3Wordmark.tsx"
   ],
   "patched": [
+    "contracts/orchestrationV2.ts",
+    "client-runtime/operations/commands.ts",
+    "web/components/ChatView.tsx",
     "client-runtime/markdownImages.ts",
     "client-runtime/state/assets.ts",
     "client-runtime/state/projects.ts",

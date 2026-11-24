@@ -3672,6 +3672,11 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                               />
                             ) : null}
+                            {activeRunningTurnId && activeThread?.runtimeMode && activeThread.runtimeMode !== runtimeMode ? (
+                              <div role="status" className="text-xs text-muted-foreground">
+                                Current: {activeThread.runtimeMode === "full-access" ? "Full access" : activeThread.runtimeMode === "approval-required" ? "Supervised" : activeThread.runtimeMode} · Next: {runtimeMode === "full-access" ? "Full access" : runtimeMode === "approval-required" ? "Supervised" : runtimeMode}
+                              </div>
+                            ) : null}
                             {!composerMounted ? null : (
                               <ChatComposer
                                 canOperateThread={canOperateThread}
