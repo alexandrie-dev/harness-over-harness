@@ -80,7 +80,7 @@
 +      <span className="ml-auto max-w-44 truncate font-normal text-muted-foreground tabular-nums">{value}</span>
 +    </ThreadDetailsControl>
 +  );
-@@ -142,195 +136,27 @@
+@@ -142,195 +136,30 @@
 -    <ThreadDetailsCard
 -      threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
 -      anchor={props.anchor}
@@ -279,6 +279,9 @@
 +    <ThreadDetailsCard threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
 +      anchor={props.anchor} handle={props.handle} contentKey={`hoh-stats:${turns.length}:${runs.length}:${visible.context}`}>
 +      {() => <div className="group/details-items">
++        {!props.isServerThread && !projection ? <ThreadDetailsSection headingId="chat-details-new-heading" title="Chat details">
++          {row("Status", "New chat")}
++        </ThreadDetailsSection> : null}
 +        {goal || (plan && plan.kind === "proposed_plan" && plan.markdown) ? <ThreadDetailsSection headingId="chat-details-goal-heading" title="Goal and plan">
 +          {goal ? row("Goal", goal) : null}
 +          {plan && plan.kind === "proposed_plan" && plan.markdown ? row("Plan", plan.markdown) : null}

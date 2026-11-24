@@ -76,10 +76,10 @@ test('project grouping derives counts, warning priority, runners and rename-stab
   const paths = { alpha: '/work/alpha', 'hoh-project': '/work/no-project' };
   const first = grouping.groupEntriesByProject(entries, id => id === 'alpha' ? 'Alpha' : 'No project', id => paths[id]);
   assert.equal(first[0].title, 'Chats', 'a waiting project sorts first');
-  assert.deepEqual(first[0].states, { working: 0, waiting: 1, done: 0 });
+  assert.deepEqual(first[0].states, { working: 0, waiting: 1, ready: 0, stopped: 0, interrupted: 0, done: 0 });
   const alpha = first.find(group => group.id === 'alpha');
   assert.deepEqual(alpha.entries.map(entry => entry.id), ['a', 'b']);
-  assert.deepEqual(alpha.states, { working: 1, waiting: 0, done: 1 });
+  assert.deepEqual(alpha.states, { working: 1, waiting: 0, ready: 0, stopped: 0, interrupted: 0, done: 1 });
   assert.deepEqual(alpha.runners, ['claude', 'codex']);
   assert.deepEqual(grouping.runnerKinds([
     ...entries,
@@ -253,4 +253,20 @@ test('visible T3 draft and palette copy is patched to New chat and documented', 
   assert(manifest.base.patched['web/components/CommandPalette.tsx']);
   assert.match(map, /ChatView\.logic\.ts\.patch[^\n]*New chat/);
   assert.match(map, /CommandPalette\.tsx\.patch[^\n]*New chat/);
+});
+
+test('folder status follows visible card labels and singular agent wording', () => {
+  const entry = (id, extra = {}) => ({ id, projectId: 'p', state: 'waiting', startedAt: 1, agents: [], ...extra });
+  const ready = [entry('a', { canComplete: true }), entry('b', { canComplete: true }), entry('c', { canComplete: true })];
+  const folder = grouping.groupEntriesByProject(ready, id => id, id => id)[0];
+  assert.equal(folder.waiting, 0);
+  assert.equal(folder.ready, 3);
+  assert.equal(folder.states.ready, 3);
+  assert.equal(folder.states.done, 0);
+  assert(ready.every(item => waitingLabel(item) === 'Ready for review'));
+  const mixed = grouping.groupEntriesByProject([...ready, entry('d')], id => id, id => id)[0];
+  assert.equal(mixed.waiting, 1);
+  assert.equal(mixed.ready, 3);
+  assert.match(homeSource, /agent\$\{group\.entries\.length === 1 \? '' : 's'\}/);
+  assert.match(homeSource, /agent\{openGroup\.entries\.length === 1 \? '' : 's'\}/);
 });

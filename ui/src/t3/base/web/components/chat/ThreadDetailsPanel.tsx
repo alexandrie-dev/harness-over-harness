@@ -136,6 +136,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     <ThreadDetailsCard threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
       anchor={props.anchor} handle={props.handle} contentKey={`hoh-stats:${turns.length}:${runs.length}:${visible.context}`}>
       {() => <div className="group/details-items">
+        {!props.isServerThread && !projection ? <ThreadDetailsSection headingId="chat-details-new-heading" title="Chat details">
+          {row("Status", "New chat")}
+        </ThreadDetailsSection> : null}
         {goal || (plan && plan.kind === "proposed_plan" && plan.markdown) ? <ThreadDetailsSection headingId="chat-details-goal-heading" title="Goal and plan">
           {goal ? row("Goal", goal) : null}
           {plan && plan.kind === "proposed_plan" && plan.markdown ? row("Plan", plan.markdown) : null}

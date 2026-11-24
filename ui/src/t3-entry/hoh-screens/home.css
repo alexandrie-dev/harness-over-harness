@@ -162,6 +162,7 @@ body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute
 .hoh-project__segments { display: flex; width: 100%; height: 8px; gap: 4px; }
 .hoh-project__segments i { flex-basis: 0; min-width: 0; border-radius: 999px; background: var(--muted-foreground); }
 .hoh-project__segments i[data-state="working"] { background: var(--primary); box-shadow: 0 0 8px color-mix(in srgb, var(--primary) 50%, transparent); }
+.hoh-project__segments i[data-state="ready"] { background: var(--destructive); }
 .hoh-project__segments i[data-state="waiting"] { background: var(--destructive); box-shadow: 0 0 8px color-mix(in srgb, var(--destructive) 50%, transparent); }
 .hoh-project__metric--runners { align-items: flex-start; }
 .hoh-project__runners { display: flex; height: 24px; align-items: center; padding-left: 6px; }
@@ -173,9 +174,9 @@ body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute
 .hoh-project-popover__head span { overflow: hidden; font-size: .8125rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .hoh-project-popover__head small { flex: none; color: var(--muted-foreground); font-size: .6875rem; }
 .hoh-project-popover__cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 272px), 1fr)); gap: 12px; }
-.hoh-project-popover__agent { min-width: 0; opacity: 0; transform: translate(var(--hoh-unfold-x, 0px), var(--hoh-unfold-y, -28px)) scale(var(--hoh-unfold-scale-x, 1), var(--hoh-unfold-scale-y, 1)); animation: hoh-agent-unfold 240ms cubic-bezier(.2, .8, .2, 1) forwards; animation-delay: calc(var(--hoh-agent-index) * 40ms); }
+.hoh-project-popover__agent { min-width: 0; opacity: 0; animation: hoh-agent-unfold 240ms cubic-bezier(.2, .8, .2, 1) forwards; animation-delay: calc(var(--hoh-agent-index) * 40ms); }
 .hoh-project-popover .hoh-card { width: 100%; height: 100%; min-height: 136px; }
-@keyframes hoh-agent-unfold { to { opacity: 1; transform: translate(0, 0) scale(1); } }
+@keyframes hoh-agent-unfold { to { opacity: 1; } }
 @media (min-width: 761px) and (max-width: 900px) { .hoh-project-popover__cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .hoh-project-popover .hoh-card { min-height: 112px; gap: 5px; padding: 10px; } .hoh-project-popover .hoh-card .hoh-mark { width: 18px; height: 18px; margin-bottom: 2px; } }
 @media (max-width: 760px) { .hoh-projects { grid-template-columns: [g1] 1fr [g21]; } .hoh-project-popover { padding: 8px; } .hoh-project-popover__cards { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .hoh-project, .hoh-project-popover__agent { transition: none; animation: none; opacity: 1; transform: none; } }

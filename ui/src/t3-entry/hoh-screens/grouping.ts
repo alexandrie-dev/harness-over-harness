@@ -10,6 +10,9 @@ export interface GroupableEntry {
   projectId: string;
   state: 'working' | 'waiting' | 'done' | 'ended';
   startedAt: number;
+  canComplete?: boolean;
+  interrupted?: boolean;
+  stopped?: boolean;
   agents: GroupableAgent[];
   runner?: 'claude' | 'codex';
 }
@@ -20,7 +23,8 @@ export interface ProjectGroup<Entry extends GroupableEntry = GroupableEntry> {
   color: number;
   entries: Entry[];
   waiting: number;
-  states: { working: number; waiting: number; done: number };
+  ready: number;
+  states: { working: number; waiting: number; ready: number; stopped: number; interrupted: number; done: number };
   runners: Array<'claude' | 'codex'>;
 }
 
@@ -99,9 +103,13 @@ export function groupEntriesByProject<Entry extends GroupableEntry>(
   }
   const groups = [...grouped].map(([id, projectEntries]) => {
     projectEntries.sort((a, b) => b.startedAt - a.startedAt);
-    const states = { working: 0, waiting: 0, done: 0 };
+    const states = { working: 0, waiting: 0, ready: 0, stopped: 0, interrupted: 0, done: 0 };
+    let ready = 0;
     for (const entry of projectEntries) {
       if (entry.state === 'working') states.working += 1;
+      else if (entry.state === 'waiting' && entry.stopped) states.stopped += 1;
+      else if (entry.state === 'waiting' && entry.interrupted) states.interrupted += 1;
+      else if (entry.state === 'waiting' && entry.canComplete) { ready += 1; states.ready += 1; }
       else if (entry.state === 'waiting') states.waiting += 1;
       else states.done += 1;
     }
@@ -113,6 +121,7 @@ export function groupEntriesByProject<Entry extends GroupableEntry>(
       color: projectColor(colorKey),
       entries: projectEntries,
       waiting: states.waiting,
+      ready,
       states,
       runners: runnerKinds(projectEntries),
     };

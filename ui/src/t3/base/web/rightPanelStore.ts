@@ -238,6 +238,8 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   surfaces: [],
 };
 
+const HOH_GLOBAL_PANEL_KEY = "__hoh_global_panel__";
+
 const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
   inlineOpen: false,
   popoverOpen: false,
@@ -441,13 +443,13 @@ const updateThread = (
   if (!current.isOpen && next.isOpen) {
     threadPanelVisibilityByThreadKey = updateThreadPanelVisibilityMap(
       threadPanelVisibilityByThreadKey,
-      threadKey,
+      HOH_GLOBAL_PANEL_KEY,
       (visibility) => (visibility.popoverOpen ? { ...visibility, popoverOpen: false } : visibility),
     );
   } else if (current.isOpen && !next.isOpen) {
     threadPanelVisibilityByThreadKey = updateThreadPanelVisibilityMap(
       threadPanelVisibilityByThreadKey,
-      threadKey,
+      HOH_GLOBAL_PANEL_KEY,
       (visibility) =>
         visibility.popoverOpen && !visibility.inlineOpen
           ? { ...visibility, inlineOpen: true }
@@ -699,21 +701,17 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
             }),
         )
       : {};
-  const threadPanelVisibilityByThreadKey =
-    "threadPanelVisibilityByThreadKey" in persistedState &&
+  const storedVisibility = "threadPanelVisibilityByThreadKey" in persistedState &&
     persistedState.threadPanelVisibilityByThreadKey &&
     typeof persistedState.threadPanelVisibilityByThreadKey === "object"
-      ? Object.fromEntries(
-          Object.entries(
-            persistedState.threadPanelVisibilityByThreadKey as Record<string, unknown>,
-          ).flatMap(([threadKey, value]) => {
-            if (!value || typeof value !== "object" || !("inlineOpen" in value)) return [];
-            return value.inlineOpen === true
-              ? [[threadKey, { inlineOpen: true, popoverOpen: false }]]
-              : [];
-          }),
-        )
+      ? persistedState.threadPanelVisibilityByThreadKey as Record<string, { inlineOpen?: boolean }>
       : {};
+  const globalVisibility = storedVisibility[HOH_GLOBAL_PANEL_KEY];
+  const wasOpen = globalVisibility ? globalVisibility.inlineOpen === true :
+    Object.values(storedVisibility).some((value) => value?.inlineOpen === true);
+  const threadPanelVisibilityByThreadKey = wasOpen
+    ? { [HOH_GLOBAL_PANEL_KEY]: { inlineOpen: true, popoverOpen: false } }
+    : {};
   return { byThreadKey, threadPanelVisibilityByThreadKey };
 }
 
@@ -1240,22 +1238,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface(current, singletonSurface(kind));
           }),
         ),
-      setThreadPanelOpen: (ref, presentation, open) =>
+      setThreadPanelOpen: (_ref, presentation, open) =>
         set((state) => ({
           threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(
             state.threadPanelVisibilityByThreadKey,
-            scopedThreadKey(ref),
+            HOH_GLOBAL_PANEL_KEY,
             (visibility) => {
               const key = presentation === "inline" ? "inlineOpen" : "popoverOpen";
               return visibility[key] === open ? visibility : { ...visibility, [key]: open };
             },
           ),
         })),
-      toggleThreadPanel: (ref, presentation) =>
+      toggleThreadPanel: (_ref, presentation) =>
         set((state) => ({
           threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(
             state.threadPanelVisibilityByThreadKey,
-            scopedThreadKey(ref),
+            HOH_GLOBAL_PANEL_KEY,
             (visibility) =>
               presentation === "inline"
                 ? { ...visibility, inlineOpen: !visibility.inlineOpen }
@@ -1290,7 +1288,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
     }),
     {
       name: RIGHT_PANEL_STORAGE_KEY,
-      version: RIGHT_PANEL_STORAGE_VERSION,
+      version: RIGHT_PANEL_STORAGE_VERSION + 1,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
@@ -1358,7 +1356,7 @@ export function selectThreadPanelVisibility(
   ref: ScopedThreadRef | null | undefined,
 ): ThreadPanelVisibility {
   if (!ref) return DEFAULT_THREAD_PANEL_VISIBILITY;
-  return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_THREAD_PANEL_VISIBILITY;
+  return byThreadKey[HOH_GLOBAL_PANEL_KEY] ?? DEFAULT_THREAD_PANEL_VISIBILITY;
 }
 
 export function selectThreadPanelOpen(

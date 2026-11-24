@@ -475,3 +475,7 @@ C6: остановка после уже выведенного ответа с�
 
 | `web/components/chat/ThreadDetailsPanel.tsx`, `web/components/ChatView.tsx`, `web/rightPanelStore.ts` | правки `base-patches` | C7f: статистика активного чата берётся из проекции и контекста, пустые возможности скрыты, панель по умолчанию закрыта и отсутствует на главной |
 | `web/components/settings/settingsSearch.ts` | правка `base-patches` | C7f: настройка доступна по запросу «Choose what to show» |
+
+C8: общее состояние панели деталей, переход к новому чату проекта и соответствующие патчи ChatView, Sidebar и rightPanelStore.
+
+C8: панель пустого чата показывает его статус; патч ThreadDetailsPanel.

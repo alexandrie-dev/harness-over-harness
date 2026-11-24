@@ -1639,6 +1639,15 @@ export default function ChatView(props: ChatViewProps) {
     followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
   });
   const onCancelWorktreeSetupStable = useStableCallback(() => void cancelWorktreeSetup());
+  const [projectNewChatDraft, setProjectNewChatDraft] = useState<string | null>(() => {
+    try { return sessionStorage.getItem("hoh-project-new-chat"); } catch { return null; }
+  });
+  useEffect(() => {
+    const onProjectNewChat = (event: Event) => setProjectNewChatDraft((event as CustomEvent<string>).detail);
+    window.addEventListener("hoh-project-new-chat", onProjectNewChat);
+    return () => window.removeEventListener("hoh-project-new-chat", onProjectNewChat);
+  }, []);
+  const isProjectNewChat = draftId !== null && draftId === projectNewChatDraft;
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -1646,7 +1655,7 @@ export default function ChatView(props: ChatViewProps) {
     isLocalDraftThread,
     hasTimelineEntries: !timelineEmpty,
     isWorking,
-    draftHeroDockRequested,
+    draftHeroDockRequested: draftHeroDockRequested || isProjectNewChat,
     backgroundSubmissionPending,
     hasWorktreeSetupCard: worktreeSetup !== null,
   });
@@ -3926,7 +3935,7 @@ export default function ChatView(props: ChatViewProps) {
                   onConfirm={handleSwitchCheckoutToThreadStable}
                 />
 
-                {isServerThread ? <ThreadDetailsPanel
+                {isServerThread || isProjectNewChat ? <ThreadDetailsPanel
                   anchor={threadPanelPopoverAnchorRef}
                   handle={threadPanelPopoverHandle}
                   forceNewWorktree={multipleModelSelections !== null}

@@ -16,7 +16,7 @@ test('folder trust describes the running process and pending change independentl
   assert.match(active.text, /Claude and Codex.*active/);
   for (const trusted of [false, true]) {
     const stopped = folderTrustView({ running: false, applied: false, trusted, changed: false });
-    assert.match(stopped.text, trusted ? /enabled from the next message/ : /^No process running;.*will be inactive/);
+    assert.match(stopped.text, trusted ? /: active$/ : /: inactive$/);
   }
   const isolated = folderTrustView({ applied: false, trusted: false, isolated: true, changed: false });
   assert.equal(isolated.canTrust, false);

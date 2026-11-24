@@ -1262,7 +1262,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   const startThreadInProjectFolder = useStableCallback((group: SidebarProjectSnapshot) => {
     if (isMobile) setOpenMobile(false);
-    void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+    void handleNewThread(scopeProjectRef(group.environmentId, group.id)).then((opened) => {
+      if (!opened) return;
+      try { sessionStorage.setItem("hoh-project-new-chat", opened.draftId); } catch { /* Storage is optional. */ }
+      window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: opened.draftId }));
+    });
   });
   const handleProjectFolderContextMenu = useStableCallback(
     (

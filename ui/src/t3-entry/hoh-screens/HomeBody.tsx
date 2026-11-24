@@ -272,15 +272,18 @@ function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: 
         </span>
       </span>
       <span className="hoh-project__actions">
-        <span className="hoh-project__chip"><i />{group.waiting > 0 ? 'Needs answer' : 'Active'}</span>
+        <span className="hoh-project__chip"><i />{group.waiting > 0 ? 'Needs answer' : group.states.working > 0 ? 'Active' : group.ready > 0 ? 'Ready for review' : group.states.interrupted > 0 ? 'Interrupted' : group.states.stopped > 0 ? 'Stopped' : 'Done'}</span>
         <span className="hoh-project__more" aria-hidden>⋯</span>
       </span>
       <span className="hoh-project__footer">
         <span className="hoh-project__metric">
           <small>Agents</small>
-          <span className="hoh-project__segments" aria-label={`${group.states.working} working, ${group.states.waiting} waiting, ${group.states.done} done`}>
+          <span className="hoh-project__segments" aria-label={`${group.states.working} working, ${group.states.waiting} waiting, ${group.states.ready} ready for review, ${group.states.interrupted} interrupted, ${group.states.stopped} stopped, ${group.states.done} done`}>
             {group.states.working > 0 ? <i data-state="working" style={{ flexGrow: group.states.working }} /> : null}
             {group.states.waiting > 0 ? <i data-state="waiting" style={{ flexGrow: group.states.waiting }} /> : null}
+            {group.states.ready > 0 ? <i data-state="ready" style={{ flexGrow: group.states.ready }} /> : null}
+            {group.states.interrupted > 0 ? <i data-state="interrupted" style={{ flexGrow: group.states.interrupted }} /> : null}
+            {group.states.stopped > 0 ? <i data-state="stopped" style={{ flexGrow: group.states.stopped }} /> : null}
             {group.states.done > 0 ? <i data-state="done" style={{ flexGrow: group.states.done }} /> : null}
           </span>
         </span>
@@ -328,23 +331,6 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
     window.addEventListener('resize', update);
     return () => { observer?.disconnect(); window.removeEventListener('resize', update); };
   }, [groupLayoutKey]);
-  useLayoutEffect(() => {
-    const folder = openGroupId ? buttons.current.get(openGroupId) : null;
-    const agents = panel.current?.querySelectorAll<HTMLElement>('.hoh-project-popover__agent');
-    if (!folder || !agents) return;
-    const origin = folder.getBoundingClientRect();
-    agents.forEach((agent) => {
-      agent.style.animation = 'none';
-      agent.style.transform = 'none';
-      const target = agent.getBoundingClientRect();
-      agent.style.removeProperty('transform');
-      agent.style.removeProperty('animation');
-      agent.style.setProperty('--hoh-unfold-x', `${origin.left + origin.width / 2 - target.left - target.width / 2}px`);
-      agent.style.setProperty('--hoh-unfold-y', `${origin.top + origin.height / 2 - target.top - target.height / 2}px`);
-      agent.style.setProperty('--hoh-unfold-scale-x', String(Math.min(1, origin.width / target.width)));
-      agent.style.setProperty('--hoh-unfold-scale-y', String(Math.min(1, origin.height / target.height)));
-    });
-  }, [openGroupId, panelAfter]);
   useEffect(() => {
     if (!openGroupId) return;
     const frame = requestAnimationFrame(() => {
@@ -404,7 +390,7 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
             onMouseEnter={cancelClose}
             onMouseLeave={leave}
           >
-            <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.entries.length} agents</small></div>
+            <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.entries.length} agent{openGroup.entries.length === 1 ? '' : 's'}</small></div>
             <div className="hoh-project-popover__cards">
               {openGroup.entries.map((entry, agentIndex) => (
                 <div key={entry.id} className="hoh-project-popover__agent" style={{ '--hoh-agent-index': agentIndex } as CSSProperties}>
