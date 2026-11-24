@@ -130,7 +130,7 @@ export function ApprovalWindow() {
     try {
       await approvalHost().decide(view.approvalId, outcome);
       setPhase(outcome === 'allowed-once'
-        ? { kind: 'done', title: folderTrust ? 'Allowed once' : 'Разрешено один раз', note: folderTrust ? 'Your choice was saved.' : own ? 'Настройка будет сохранена. В следующий раз окно спросит снова.' : 'Помощник выполнит это действие. В следующий раз он спросит снова.' }
+        ? { kind: 'done', title: folderTrust ? 'Confirmed' : 'Разрешено один раз', note: folderTrust ? 'Your choice was saved.' : own ? 'Настройка будет сохранена. В следующий раз окно спросит снова.' : 'Помощник выполнит это действие. В следующий раз он спросит снова.' }
         : { kind: 'done', title: folderTrust ? 'Declined' : 'Отклонено', note: folderTrust ? 'Nothing changed.' : own ? 'Ничего не изменилось.' : 'Помощник получил отказ. Ничего не изменилось.' });
     } catch (e) {
       sent.current = false;
@@ -197,7 +197,7 @@ export function ApprovalWindow() {
             </div>
             <div className="ap-actions">
               <button ref={rejectRef} type="button" className="btn ap-safe" disabled={sending} onClick={() => void decide('rejected')}>{folderTrust ? 'Decline' : 'Отклонить'}</button>
-              <button type="button" className="btn ap-risky" disabled={!armed || sending} onClick={() => void decide('allowed-once')}>{folderTrust ? 'Allow once' : 'Разрешить один раз'}</button>
+              <button type="button" className="btn ap-risky" disabled={!armed || sending} onClick={() => void decide('allowed-once')}>{folderTrust ? (view.humanText.startsWith('Revoke trust for project settings in ') ? 'Revoke trust' : 'Trust folder') : 'Разрешить один раз'}</button>
             </div>
           </>
         )}

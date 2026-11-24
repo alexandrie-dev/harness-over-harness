@@ -2579,8 +2579,8 @@ fn full_access_args(config: &mut StdioHarnessConfig) {
 }
 
 const CONFIRM_TEXT: &str =
-    "С подтверждением: команды, правки файлов и сеть Stub выполняет после вашего подтверждения";
-const FULL_TEXT: &str = "Полный доступ: Stub выполняет команды без вопросов";
+    "Supervised: Stub asks before running commands, editing files, or using the network";
+const FULL_TEXT: &str = "Full access: Stub runs commands without asking";
 
 #[tokio::test]
 async fn a_retry_after_failed_turn_open_keeps_the_accepted_messages_access() {

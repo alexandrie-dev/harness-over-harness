@@ -177,21 +177,18 @@ pub(crate) fn access_text(executor: &str, access: AccessMode) -> String {
     let name = display_name(executor);
     match access {
         AccessMode::Confirm => format!(
-            "С подтверждением: команды, правки файлов и сеть {name} выполняет после вашего \
-             подтверждения"
+            "Supervised: {name} asks before running commands, editing files, or using the network"
         ),
         AccessMode::AutoAcceptEdits => format!(
-            "Автоправки: {name} правит файлы сам, команды и расширение доступа подтверждаете вы"
+            "Auto-accept edits: {name} edits files without asking; commands and expanded access require your approval"
         ),
         AccessMode::AcceptEdits => format!(
-            "Правки без вопросов: файлы в папке разговора {name} меняет сам, команды и сеть — \
-             после вашего подтверждения"
+            "Accept edits: {name} edits files in the conversation folder without asking; commands and network access require your approval"
         ),
         AccessMode::Auto => format!(
-            "Автоматически: что безопасно, {name} решает и выполняет сам, остальное — после \
-             вашего подтверждения"
+            "Auto: {name} decides what is safe and does it without asking; other actions require your approval"
         ),
-        AccessMode::Full => format!("Полный доступ: {name} выполняет команды без вопросов"),
+        AccessMode::Full => format!("Full access: {name} runs commands without asking"),
     }
 }
 
@@ -2995,12 +2992,23 @@ mod tests {
         );
         assert_eq!(
             access_text("claude", AccessMode::Full),
-            "Полный доступ: Claude выполняет команды без вопросов"
+            "Full access: Claude runs commands without asking"
         );
         assert_eq!(
             access_text("claude", AccessMode::Confirm),
-            "С подтверждением: команды, правки файлов и сеть Claude выполняет после вашего \
-             подтверждения"
+            "Supervised: Claude asks before running commands, editing files, or using the network"
+        );
+        assert_eq!(
+            access_text("claude", AccessMode::AutoAcceptEdits),
+            "Auto-accept edits: Claude edits files without asking; commands and expanded access require your approval"
+        );
+        assert_eq!(
+            access_text("claude", AccessMode::AcceptEdits),
+            "Accept edits: Claude edits files in the conversation folder without asking; commands and network access require your approval"
+        );
+        assert_eq!(
+            access_text("claude", AccessMode::Auto),
+            "Auto: Claude decides what is safe and does it without asking; other actions require your approval"
         );
         assert_eq!(DEFAULT_ACCESS, AccessMode::Confirm);
         assert_eq!(AccessMode::default(), DEFAULT_ACCESS);

@@ -376,11 +376,8 @@ fn open_window(
         &label,
         tauri::WebviewUrl::App("approval.html".into()),
     )
-    .title(if open.view.folder_trust == Some(true) {
-        "HoH — Confirmation"
-    } else {
-        "HoH — Подтверждение"
-    })
+    .title("HoH — Confirmation")
+    .center()
     .inner_size(640.0, 620.0)
     .min_inner_size(520.0, 520.0)
     .resizable(true)
