@@ -109,7 +109,7 @@ export function groupEntriesByProject<Entry extends GroupableEntry>(
     colorKeys.set(id, colorKey);
     return {
       id,
-      title: titleOf(id).trim() || 'No project',
+      title: id === 'hoh-project' ? 'Chats' : titleOf(id).trim() || 'Chats',
       color: projectColor(colorKey),
       entries: projectEntries,
       waiting: states.waiting,
@@ -125,5 +125,17 @@ export function groupEntriesByProject<Entry extends GroupableEntry>(
     while (usedColors.has(group.color)) group.color = (group.color + 1) % PROJECT_COLOR_COUNT;
     usedColors.add(group.color);
   }
-  return groups.sort((a, b) => (b.waiting - a.waiting) || a.title.localeCompare(b.title));
+  groups.sort((a, b) => (b.waiting - a.waiting) || a.title.localeCompare(b.title));
+  // Keep adjacent folders visibly distinct even when the palette wraps after eight projects.
+  const hues = [240, 180, 120, 45, 315, 25, 0, 280];
+  for (let index = 1; index < groups.length; index += 1) {
+    const previous = hues[groups[index - 1].color];
+    const distance = (color: number) => Math.min(Math.abs(hues[color] - previous), 360 - Math.abs(hues[color] - previous));
+    if (distance(groups[index].color) >= 40) continue;
+    const occupied = new Set(groups.filter((_, other) => other !== index).map((group) => group.color));
+    const candidate = hues.findIndex((_, color) => !occupied.has(color) && distance(color) >= 40);
+    if (candidate >= 0) groups[index].color = candidate;
+    else groups[index].color = hues.findIndex((_, color) => distance(color) >= 40);
+  }
+  return groups;
 }
