@@ -302,7 +302,7 @@ export function workEntryIsVisibleInGroup(
   entry: WorkLogEntry,
   expandedToolGroupEntry = false,
 ): boolean {
-  if (entry.itemType === "reasoning") return Boolean(entry.detail?.trim());
+  if (entry.itemType === "reasoning") return entry.toolLifecycleStatus === "inProgress" || Boolean(entry.detail?.trim());
   return (
     (expandedToolGroupEntry &&
       (entry.toolLifecycleStatus === "inProgress" ||
@@ -1236,9 +1236,7 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    const isInterruptedTurn =
-      interruptedRunIds.has(runId) ||
-      (input.latestRun?.runId === runId && input.latestRun.status === "interrupted");
+    const isInterruptedTurn = interruptedRunIds.has(runId);
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd = timelineEntryEnd(lastEntry);

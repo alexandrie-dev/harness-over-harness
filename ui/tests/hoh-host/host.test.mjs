@@ -1415,8 +1415,9 @@ test('after a restart the chat comes back from the engine\'s history; an unfinis
   assert(resumeAt >= 0 && engine.requests.findIndex((r, index) => index > resumeAt && r.method === 'session/events') > resumeAt, 'opened chat is resumed before its full read');
   assert.deepEqual(projection.runs.map(run => run.status), ['completed', 'interrupted']);
   assert.deepEqual(projection.turnItems.map(item => [item.type, item.status]), [
-    ['user_message', 'completed'], ['assistant_message', 'completed'], ['user_message', 'completed'], ['dynamic_tool', 'interrupted'],
+    ['user_message', 'completed'], ['assistant_message', 'completed'], ['user_message', 'completed'], ['dynamic_tool', 'interrupted'], ['system_notice', 'completed'],
   ]);
+  assert.equal(projection.turnItems.at(-1).message, 'Interrupted');
   assert.equal(projection.thread.title, 'Restart me');
   const interrupted = host.home.entries().find(entry => entry.id === 'chat-r');
   assert.deepEqual(
@@ -1483,10 +1484,12 @@ test('a crash placeholder is reconciled when the same turn resumes and completes
     [host.home.entries().find(entry => entry.id === 'chat-recovered').state, JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-recovered'].interrupted],
     ['waiting', true],
   );
+  assert(host.thread('chat-recovered').projection().turnItems.some(item => item.type === 'system_notice' && item.message === 'Interrupted'));
 
   engine.emitStatus('chat-recovered', 'running');
   host.flush();
   assert.equal(host.home.entries().find(entry => entry.id === 'chat-recovered').state, 'working');
+  assert(!host.thread('chat-recovered').projection().turnItems.some(item => item.type === 'system_notice' && item.message === 'Interrupted'));
   assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-recovered'], undefined);
   engine.emitEvent('chat-recovered', 'assistant/message', { turn: 1, message: { id: 'a1', content: [{ type: 'text', text: 'finished after recovery' }] } });
   engine.emitEvent('chat-recovered', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
@@ -3173,4 +3176,86 @@ test('between-turn approvals do not become work of the completed turn, while in-
   assert.deepEqual(restored.runs[0], prior);
   assert(!restored.turnItems.some(item => item.requestId?.startsWith('mode-')));
   restarted.host.stop(); restarted.client.close();
+});
+
+test('recovered engine interruption remains distinct from a user stop', async () => {
+  const engine = new FakeEngine();
+  engine.seed('crashed-run', 'Crash recovery', [
+    ['turn/start', { turn: 1 }],
+    ['user/message', { id: 'before-crash', source: { kind: 'user' }, content: [{ type: 'text', text: 'Run the task' }] }],
+    ['tool/call', { turn: 1, callId: 'crashed-call', name: 'Bash', arguments: '{"command":"sleep 40"}' }],
+    ['turn/end', { turn: 1, reason: { kind: 'interrupted' } }],
+  ]);
+  const { host, client } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'crashed-run' });
+  const result = (await stream.until(value => value.kind === 'snapshot' && value.projection.runs.length)).projection;
+  assert.equal(result.runs[0].status, 'interrupted');
+  assert(result.turnItems.some(item => item.type === 'system_notice' && item.message === 'Interrupted'));
+  assert(!result.turnItems.some(item => item.type === 'run_interrupt_result'));
+  host.stop(); client.close();
+});
+
+test('a running Agent or Task call exposes its task description in the timeline', async () => {
+  const engine = new FakeEngine();
+  engine.seed('agent-description', 'Agent', []);
+  const { host, client } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'agent-description' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitEvent('agent-description', 'user/message', { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Delegate' }] });
+  engine.emitEvent('agent-description', 'tool/call', { turn: 1, callId: 'a', name: 'Agent', arguments: JSON.stringify({ description: 'Count the words', prompt: 'Read notes.txt' }) });
+  engine.emitEvent('agent-description', 'tool/call', { turn: 1, callId: 'b', name: 'Task', arguments: JSON.stringify({ prompt: '  Check the repository  ' }) });
+  await tick(20);
+  const items = host.thread('agent-description').projection().turnItems;
+  assert.equal(items.find(item => item.toolName === 'Agent').title, 'Count the words');
+  assert.equal(items.find(item => item.toolName === 'Task').title, 'Check the repository');
+  host.stop(); client.close();
+});
+
+test('one stream attempt can deliver reasoning followed by text without losing the live answer', async () => {
+  const engine = new FakeEngine(); engine.seed('mixed-stream', 'Mixed', []);
+  const { host, client } = connect(engine);
+  const stream = await client.stream('orchestration.subscribeThread', { threadId: 'mixed-stream' });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitEvent('mixed-stream', 'user/message', { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Say hello' }] });
+  engine.emitFrame('mixed-stream', { type: 'start', attemptId: 'mixed', revision: 1, turn: 1, step: 1 });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed', revision: 1, index: 0, chunk: { type: 'reasoning-delta', text: '' } });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed', revision: 1, index: 1, chunk: { type: 'reasoning-delta', text: 'Consider' } });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed', revision: 1, index: 2, chunk: { type: 'text-delta', text: 'Hello ' } });
+  await tick(30);
+  let items = host.thread('mixed-stream').projection().turnItems;
+  assert(items.some(item => item.type === 'reasoning' && item.streaming));
+  assert(items.some(item => item.type === 'assistant_message' && item.streaming && item.text === 'Hello '));
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed', revision: 1, index: 2, chunk: { type: 'text-delta', text: 'duplicate' } });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed', revision: 1, index: 3, chunk: { type: 'text-delta', text: 'world' } });
+  await tick(20);
+  assert.equal(host.thread('mixed-stream').projection().turnItems.find(item => item.type === 'assistant_message').text, 'Hello world');
+  engine.emitFrame('mixed-stream', { type: 'end', attemptId: 'mixed', revision: 1, index: 4, outcome: 'committed' });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed', revision: 1, index: 4, chunk: { type: 'text-delta', text: 'late' } });
+  await tick(20);
+  items = host.thread('mixed-stream').projection().turnItems;
+  assert(items.filter(item => item.type === 'reasoning' || item.type === 'assistant_message').every(item => !item.streaming));
+  assert.equal(items.find(item => item.type === 'assistant_message').text, 'Hello world');
+  engine.emitEvent('mixed-stream', 'assistant/message', { turn: 1, step: 1, message: { id: 'a', content: [{ type: 'reasoning', text: 'Consider' }, { type: 'text', text: 'Hello world' }] } });
+  await tick(30);
+  items = host.thread('mixed-stream').projection().turnItems;
+  assert.equal(items.filter(item => item.type === 'assistant_message').length, 1);
+  assert.equal(items.find(item => item.type === 'assistant_message').text, 'Hello world');
+  assert.equal(items.filter(item => item.type === 'reasoning').length, 1);
+  assert.equal(items.find(item => item.type === 'reasoning').text, 'Consider');
+  engine.emitFrame('mixed-stream', { type: 'start', attemptId: 'mixed-gap', revision: 2, turn: 1, step: 2 });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed-gap', revision: 2, index: 0, chunk: { type: 'reasoning-delta', text: 'Thinking' } });
+  engine.emitFrame('mixed-stream', { type: 'gap', attemptId: 'mixed-gap', revision: 2, index: 1 });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed-gap', revision: 2, index: 2, chunk: { type: 'text-delta', text: 'must not appear' } });
+  await tick(20);
+  assert(!host.thread('mixed-stream').projection().turnItems.some(item => item.text === 'must not appear'));
+  engine.emitEvent('mixed-stream', 'user/message', { id: 'u2', source: { kind: 'user' }, content: [{ type: 'text', text: 'Again' }] });
+  engine.emitFrame('mixed-stream', { type: 'start', attemptId: 'mixed-empty', revision: 3, turn: 2, step: 1 });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed-empty', revision: 3, index: 0, chunk: { type: 'reasoning-delta', text: '' } });
+  engine.emitFrame('mixed-stream', { type: 'chunk', attemptId: 'mixed-empty', revision: 3, index: 1, chunk: { type: 'text-delta', text: 'Prefix' } });
+  engine.emitEvent('mixed-stream', 'assistant/message', { turn: 2, step: 1, message: { id: 'a2', content: [{ type: 'text', text: 'Prefix final' }] } });
+  await tick(20);
+  items = host.thread('mixed-stream').projection().turnItems;
+  assert.equal(items.filter(item => item.type === 'assistant_message' && item.text === 'Prefix final').length, 1);
+  assert(!items.some(item => item.id === 'item-live-mixed-empty-reasoning'));
+  host.stop(); client.close();
 });
