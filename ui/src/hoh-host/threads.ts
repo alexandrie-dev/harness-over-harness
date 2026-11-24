@@ -26,7 +26,7 @@ function argumentsOf(value: unknown): Record<string, any> {
 type Status = 'idle' | 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 type RunStatus = 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'cancelled';
 interface TokenUsage { usedTokens: number; maxTokens?: number; inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; updatedAt: string }
-interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; engineStartedAt?: number; tokenUsage?: TokenUsage }
+interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; engineStartedAt?: number; useEngineStartOnStop?: boolean; lastJournalAt?: number; tokenUsage?: TokenUsage }
 type Item = Record<string, any> & { id: string; type: string; status: Status; runId: string | null; ordinal: number };
 /** A picture of a message as T3 lists it (`ChatImageAttachment`): its bytes went to the engine, not into the thread. */
 export interface ShownAttachment { readonly type: 'image'; readonly id: string; readonly name: string; readonly mimeType: string; readonly sizeBytes: number }
@@ -203,6 +203,8 @@ export class ThreadModel {
   private promptTimes: Record<string, number> = {};
   /** Durable start from the engine; turn/start normally precedes its user/message. */
   private pendingTurnStart: number | null = null;
+  /** Until the next message, a start may belong to the preceding open run or a new one. */
+  private pendingStartJournal: { run: Run; previous: number | undefined } | null = null;
 
   restorePromptTimes(times: Record<string, number> | undefined) { this.promptTimes = times ?? {}; }
   promptTime(messageId: string): number | undefined { return this.runs.find(run => run.userMessageId === messageId)?.requestedAt; }
@@ -223,6 +225,10 @@ export class ThreadModel {
   private touch(at: number) { if (at > this.updatedAt) this.updatedAt = at; }
   private item(id: string) { return this.items.find(item => item.id === id); }
   private currentRun() { return this.runs.at(-1); }
+  private inferredEnd(run: Run, fallback: number) {
+    return !run.useEngineStartOnStop && run.lastJournalAt !== undefined
+      ? Math.max(run.startedAt ?? run.requestedAt, run.lastJournalAt) : fallback;
+  }
   private base(id: string, type: string, status: Status, at: number, runId = this.currentRun()?.id ?? null, parentItemId: string | null = null): Item {
     return {
       id, threadId: this.id, runId, nodeId: null, providerThreadId: null, providerTurnId: null, nativeItemRef: null,
@@ -242,6 +248,7 @@ export class ThreadModel {
    */
   sendLocal(messageId: string, value: string, at: number, attachments: ShownAttachment[] = [], sent = value) {
     this.addUserMessage(messageId, value, at, attachments);
+    this.currentRun()!.useEngineStartOnStop = true;
     this.outgoing.push({ text: sent, messageId, at });
     this.touch(at);
   }
@@ -276,25 +283,43 @@ export class ThreadModel {
     const messageId = known ?? (pending >= 0 ? this.outgoing.splice(pending, 1)[0].messageId : 'msg-' + engineId);
     this.echoed.set(engineId, messageId);
     if (known || pending >= 0) {
-      if (start !== null) {
-        const run = this.runs.find(entry => entry.userMessageId === messageId);
-        if (run) run.engineStartedAt = start;
+      const run = this.runs.find(entry => entry.userMessageId === messageId);
+      if (this.pendingStartJournal?.run === run) this.pendingStartJournal = null;
+      if (run && (run.status === 'running' || run.status === 'waiting')) {
+        run.lastJournalAt = Math.max(run.lastJournalAt ?? at, at);
+      }
+      if (start !== null && run?.useEngineStartOnStop) {
         // The local send can precede process startup by tens of seconds.
         // Keep that visible start; interrupted turns use the engine start at turn/end.
+        run.engineStartedAt = start;
       }
       return;
     }
     const saved = this.promptTimes[engineId];
-    this.addUserMessage(messageId, value, typeof saved === 'number' && Number.isFinite(saved) && saved > 0 && saved <= at ? saved : start ?? at);
-    if (start !== null) this.currentRun()!.engineStartedAt = start;
+    const hasSavedSend = typeof saved === 'number' && Number.isFinite(saved) && saved > 0 && saved <= at;
+    // Legacy journals have no local send time. The user message event is the
+    // earliest durable evidence of this particular prompt.
+    this.addUserMessage(messageId, value, hasSavedSend ? saved : at);
+    this.currentRun()!.lastJournalAt = at;
+    if (hasSavedSend) {
+      this.currentRun()!.useEngineStartOnStop = true;
+      if (start !== null) this.currentRun()!.engineStartedAt = start;
+    }
   }
 
   private addUserMessage(messageId: string, value: string, at: number, attachments: ShownAttachment[] = []) {
     this.settledByGuess = false; this.stopRequested = false;
+    if (this.pendingStartJournal) {
+      this.pendingStartJournal.run.lastJournalAt = this.pendingStartJournal.previous;
+      this.pendingStartJournal = null;
+    }
     // One run works at a time: the run this turn's start reopened was closed, and a run the engine never
     // closed ends where the next message begins (T3 shows any open run as working).
     if (this.reopened) { this.reopened.run.status = this.reopened.status; this.reopened.run.completedAt = this.reopened.completedAt; this.reopened = null; }
-    for (const run of this.runs) if (run.status === 'running' || run.status === 'waiting') { run.status = 'completed'; run.completedAt = at; }
+    for (const run of this.runs) if (run.status === 'running' || run.status === 'waiting') {
+      run.status = 'completed';
+      run.completedAt = this.inferredEnd(run, at);
+    }
     if (!this.title) this.title = value.split('\n')[0].trim().slice(0, 80);
     const run: Run = { id: 'run-' + messageId, ordinal: this.runs.length + 1, model: this.model, userMessageId: messageId, status: 'running', requestedAt: at, startedAt: at, completedAt: null };
     this.runs.push(run);
@@ -470,7 +495,7 @@ export class ThreadModel {
 
   private endTurn(reason: string, at: number, error?: unknown, cause?: unknown, rawUsage?: unknown) {
     this.runningInteractionMode = null;
-    this.reopened = null;
+    this.reopened = null; this.pendingStartJournal = null;
     const run = this.currentRun();
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
     this.stopRequested = false;
@@ -522,6 +547,17 @@ export class ThreadModel {
     this.seen.add(event.seq as number);
     const at = typeof event.time === 'number' && event.time > 0 ? event.time : Date.now();
     const data = record(event.data);
+    // Keep the last durable event of an open run for legacy histories missing turn/end.
+    // A new user message/start can belong to the next run, so do not assign it here.
+    const current = this.currentRun();
+    if (current && (current.status === 'running' || current.status === 'waiting')
+      && !['turn/start', 'user/message', 'agent/inbox/spliced', 'working-directory/change'].includes(String(event.type))) {
+      current.lastJournalAt = Math.max(current.lastJournalAt ?? at, at);
+    }
+    // An answer, tool call or turn end confirms that a pending start continued this run.
+    if (this.pendingStartJournal && ['assistant/message', 'tool/call', 'turn/end'].includes(String(event.type))) {
+      this.pendingStartJournal = null;
+    }
     // A start precedes its user message. Do not reopen the previous run until an actual
     // continuation (rather than a new prompt) arrives.
     if (this.reopened && ['assistant/message', 'tool/call', 'turn/end'].includes(String(event.type))) {
@@ -546,6 +582,12 @@ export class ThreadModel {
         this.pendingTurnStart = at;
         // A turn without a message of its own continues the last run; a message, when it follows, starts its own.
         const run = this.currentRun();
+        if (run && (run.status === 'running' || run.status === 'waiting')) {
+          if (!this.pendingStartJournal || this.pendingStartJournal.run !== run) {
+            this.pendingStartJournal = { run, previous: run.lastJournalAt };
+          }
+          run.lastJournalAt = Math.max(run.lastJournalAt ?? at, at);
+        }
         if (run && run.status !== 'running' && run.status !== 'waiting') {
           this.reopened = { run, status: run.status, completedAt: run.completedAt };
         }
@@ -643,7 +685,7 @@ export class ThreadModel {
       && this.outgoing.length === 0 && !this.requests.some(request => request.status === 'pending');
     if (this.running === running && !open) return engineChanged;
     this.running = running;
-    if (open) { this.endTurn('completed', at); this.settledByGuess = true; }
+    if (open) { this.endTurn('completed', this.inferredEnd(run!, at)); this.settledByGuess = true; }
     return true;
   }
 
@@ -652,7 +694,7 @@ export class ThreadModel {
     const run = this.currentRun();
     if (!run || (run.status !== 'running' && run.status !== 'waiting')) return false;
     this.stopRequested = true;
-    this.endTurn('aborted', at);
+    this.endTurn('aborted', this.inferredEnd(run, at));
     this.settledByGuess = false;
     return true;
   }
@@ -661,7 +703,9 @@ export class ThreadModel {
   settleUnfinished(at = Date.now()) {
     if (this.engineRunning) return;
     const run = this.currentRun();
-    if (run && (run.status === 'running' || run.status === 'waiting')) { this.endTurn('aborted', at); this.settledByGuess = true; }
+    if (run && (run.status === 'running' || run.status === 'waiting')) {
+      this.endTurn('aborted', this.inferredEnd(run, at)); this.settledByGuess = true;
+    }
   }
 
   /**

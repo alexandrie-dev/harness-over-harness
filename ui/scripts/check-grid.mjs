@@ -317,7 +317,7 @@ try {
     try {
       await page.goto(ORIGIN + `/hoh-local/${id}`);
       for (let restart = 0; restart < 2; restart++) {
-        await page.getByText('You stopped after 34s', { exact: true }).waitFor({ timeout: 10000 });
+        await page.getByText('You stopped after 33s', { exact: true }).waitFor({ timeout: 10000 });
         if (await page.getByText(/Run interrupted.*Stopped by user/).count()) fail(`${kind}: raw interruption remains visible`);
         if (restart === 0) await page.reload();
       }

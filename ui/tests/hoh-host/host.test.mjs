@@ -3040,7 +3040,7 @@ test('background history learns a known binding after an initial access read fai
   host.stop();
 });
 
-test('journal start and end survive host restart for streaming, approval and subagent stops', async () => {
+test('journal user message and end survive host restart for streaming, approval and subagent stops', async () => {
   for (const kind of ['stream', 'approval', 'subagent']) {
     const engine = new FakeEngine();
     const id = `stop-${kind}`;
@@ -3068,7 +3068,7 @@ test('journal start and end survive host restart for streaming, approval and sub
       const { host, client } = connect(new FakeEngine({ store: shared }), { storage: null });
       const projection = await client.call('orchestration.getThreadProjection', { threadId: id });
       const run = projection.runs[0];
-      assert.equal(Date.parse(run.completedAt) - Date.parse(run.startedAt), 34000, `${kind}: journal duration on restart ${restart}`);
+      assert.equal(Date.parse(run.completedAt) - Date.parse(run.startedAt), 33000, `${kind}: journal duration on restart ${restart}`);
       assert.equal(run.status, 'interrupted');
       assert(projection.turnItems.some(item => item.type === 'run_interrupt_result' && item.runId === run.id));
       host.stop();
@@ -3076,7 +3076,7 @@ test('journal start and end survive host restart for streaming, approval and sub
   }
 });
 
-test('Stop during streaming, approval and subagent work replays the engine timing after host restart', async () => {
+test('Stop during streaming, approval and subagent work replays the user-message timing after host restart', async () => {
   for (const kind of ['stream', 'approval', 'subagent']) {
     const engine = new FakeEngine(); const id = `live-stop-${kind}`;
     engine.seed(id, 'Live stop', []);
@@ -3099,10 +3099,11 @@ test('Stop during streaming, approval and subagent work replays the engine timin
     engine.emitEvent(id, 'turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } });
     const stopped = await stream.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.completedAt === new Date(start.time + 34000).toISOString());
     assert.equal(stopped.projection.runs[0].status, 'interrupted');
+    assert.equal(Date.parse(stopped.projection.runs[0].completedAt) - Date.parse(stopped.projection.runs[0].startedAt), 33000, `${kind}: live duration`);
     host.stop();
     const reopened = connect(new FakeEngine({ store: engine.store }), { storage: null });
     const projection = await reopened.client.call('orchestration.getThreadProjection', { threadId: id });
-    assert.equal(Date.parse(projection.runs[0].completedAt) - Date.parse(projection.runs[0].startedAt), 34000, kind);
+    assert.equal(Date.parse(projection.runs[0].completedAt) - Date.parse(projection.runs[0].startedAt), 33000, kind);
     assert(projection.turnItems.some(item => item.type === 'run_interrupt_result'));
     reopened.host.stop();
   }

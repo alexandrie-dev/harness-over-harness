@@ -55,3 +55,113 @@ test('an idle-status guess can be reopened if the engine is still running', () =
   apply(t, 17, 17);
   assert.equal(Date.parse(t.projection().runs[0].completedAt), events.find(e => e.seq === 17).time);
 });
+
+test('legacy history uses the user message time when no send metadata was saved', () => {
+  const start = 1_700_000_000_000;
+  const user = { id: 'old-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] };
+  for (const aborted of [false, true]) {
+    const recorded = [
+      { seq: 1, type: 'turn/start', time: start, data: { turn: 1 } },
+      { seq: 2, type: 'user/message', time: start + 6000, data: user },
+      { seq: 3, type: 'assistant/message', time: start + 39000, data: { turn: 1, step: 1, message: { id: 'a', content: [{ type: 'text', text: 'hi' }] } } },
+      { seq: 4, type: 'turn/end', time: start + 44000, data: { turn: 1, reason: aborted ? { kind: 'aborted', reason: { kind: 'user' } } : { kind: 'completed' } } },
+    ];
+    const live = thread(); for (const event of recorded) live.applyEvent(event);
+    const before = live.projection().runs[0];
+    assert.equal(seconds(before), 38, 'start at the user event, even when the engine started earlier');
+    live.applyEvent({ seq: 5, type: 'turn/start', time: start + 60000, data: { turn: 2 } });
+    assert.equal(seconds(live.projection().runs[0]), 38, 'a later turn cannot change the elapsed time');
+    const restarted = thread(); for (const event of recorded) restarted.applyEvent(event);
+    assert.deepEqual(restarted.projection().runs[0], before);
+  }
+});
+
+test('C6 journal without send metadata contains only a 3.505s first turn', () => {
+  const initial = thread(); apply(initial, 2, 17);
+  const initialRun = initial.projection().runs[0];
+  assert.equal(seconds(initialRun), 3.505);
+  const user = events.find(e => e.seq === 5), start = events.find(e => e.seq === 2);
+  assert.equal(user.time, start.time, 'no earlier user send event survives in this fixture');
+  const restored = thread(); apply(restored, 2, 205);
+  assert.equal(seconds(restored.projection().runs[0]), 3.505);
+  assert.deepEqual(restored.projection().runs.slice(1, 5).map(run => Math.round(seconds(run))), [23, 28, 82, 71]);
+});
+
+test('legacy inbox delivery keeps its earliest user event when the engine starts later', () => {
+  const base = 1_700_010_000_000;
+  const user = { id: 'inbox-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] };
+  const events = [
+    { seq: 1, type: 'agent/inbox/spliced', time: base, data: { inserted: [user] } },
+    { seq: 2, type: 'turn/start', time: base + 7000, data: { turn: 1 } },
+    { seq: 3, type: 'user/message', time: base + 7000, data: user },
+    { seq: 4, type: 'turn/end', time: base + 38000, data: { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } } },
+  ];
+  const live = thread(); for (const event of events) live.applyEvent(event);
+  assert.equal(live.projection().runs.length, 1);
+  assert.equal(seconds(live.projection().runs[0]), 38);
+  const restarted = thread(); for (const event of events) restarted.applyEvent(event);
+  assert.deepEqual(restarted.projection().runs, live.projection().runs);
+});
+
+test('legacy unfinished history freezes at its last durable event, not restart time', () => {
+  const base = 1_700_020_000_000;
+  const journal = [
+    { seq: 1, type: 'user/message', time: base, data: { id: 'unfinished', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] } },
+    { seq: 2, type: 'turn/start', time: base + 1000, data: { turn: 1 } },
+    { seq: 3, type: 'assistant/message', time: base + 7000, data: { turn: 1, step: 1, message: { id: 'a', content: [{ type: 'text', text: 'hi' }] } } },
+    { seq: 4, type: 'plugin:hoh/context-usage', time: base + 9000, data: {} },
+  ];
+  const snapshot = at => {
+    const model = thread(); journal.forEach(event => model.applyEvent(event));
+    model.settleUnfinished(at);
+    return model.projection().runs[0];
+  };
+  const first = snapshot(base + 100000);
+  assert.equal(seconds(first), 9);
+  assert.deepEqual(snapshot(base + 200000), first);
+});
+
+test('an unfinished legacy turn with no reply ends at its last turn/start event', () => {
+  const base = 1_700_030_000_000;
+  const model = thread();
+  model.applyEvent({ seq: 1, type: 'user/message', time: base, data: { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] } });
+  model.applyEvent({ seq: 2, type: 'turn/start', time: base + 5000, data: { turn: 1 } });
+  model.settleUnfinished(base + 100000);
+  assert.equal(seconds(model.projection().runs[0]), 5);
+});
+
+test('a new prompt does not extend a preceding unfinished legacy turn', () => {
+  const base = 1_700_040_000_000;
+  const user = id => ({ id, source: { kind: 'user' }, content: [{ type: 'text', text: id }] });
+  const model = thread();
+  model.applyEvent({ seq: 1, type: 'user/message', time: base, data: user('one') });
+  model.applyEvent({ seq: 2, type: 'turn/start', time: base + 1000, data: { turn: 1 } });
+  model.applyEvent({ seq: 3, type: 'assistant/message', time: base + 3000, data: { turn: 1, step: 1, message: { id: 'a', content: [{ type: 'text', text: 'hi' }] } } });
+  model.applyEvent({ seq: 4, type: 'turn/start', time: base + 20000, data: { turn: 2 } });
+  model.applyEvent({ seq: 5, type: 'user/message', time: base + 21000, data: user('two') });
+  assert.equal(seconds(model.projection().runs[0]), 3);
+});
+
+test('legacy idle without turn/end has the same duration live and after restart', () => {
+  const base = 1_700_050_000_000;
+  const journal = [
+    { seq: 1, type: 'user/message', time: base, data: { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] } },
+    { seq: 2, type: 'turn/start', time: base + 1000, data: { turn: 1 } },
+    { seq: 3, type: 'assistant/message', time: base + 9000, data: { turn: 1, step: 1, message: { id: 'a', content: [{ type: 'text', text: 'hi' }] } } },
+  ];
+  const live = thread(); journal.forEach(event => live.applyEvent(event)); live.setRunning(false, base + 100000);
+  const restored = thread(); journal.forEach(event => restored.applyEvent(event)); restored.settleUnfinished(base + 200000);
+  assert.equal(seconds(live.projection().runs[0]), 9);
+  assert.equal(seconds(restored.projection().runs[0]), 9);
+});
+
+test('a repeated durable user message is the last event of an unfinished legacy turn', () => {
+  const base = 1_700_060_000_000;
+  const user = { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] };
+  const model = thread();
+  model.applyEvent({ seq: 1, type: 'agent/inbox/spliced', time: base, data: { inserted: [user] } });
+  model.applyEvent({ seq: 2, type: 'user/message', time: base + 9000, data: user });
+  model.settleUnfinished(base + 100000);
+  assert.equal(model.projection().runs.length, 1);
+  assert.equal(seconds(model.projection().runs[0]), 9);
+});
