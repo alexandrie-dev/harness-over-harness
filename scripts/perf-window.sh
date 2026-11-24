@@ -2,6 +2,8 @@
 # Record release-window startup against 5 and 30 synthetic saved conversations.
 # The video and engine proxy log are evidence, not an automatic paint assertion.
 set -euo pipefail
+PATH=/usr/bin:/bin
+export PATH
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
   cat <<'HELP'
 Usage: scripts/perf-window.sh [new /mnt/toshiba/alexandrie/hoh/qa/u5-* directory]
@@ -137,7 +139,7 @@ BUS
       sleep "$CAPTURE_SECONDS" & recpid=$!
     fi
     sleep 1
-    setsid env -u DBUS_SESSION_BUS_ADDRESS DISPLAY="$display" HOME="$dir/home" CLAUDE_CONFIG_DIR="$dir/home/claude-config" CODEX_HOME="$dir/home/codex-config" XDG_CONFIG_HOME="$dir/config" XDG_CACHE_HOME="$dir/cache" XDG_DATA_HOME="$dir/data" XDG_STATE_HOME="$dir/state" XDG_RUNTIME_DIR="$dir/runtime" DSH_AGENTS_HOME="$dir/agents" HOH_ENGINE_PATH="$dir/bin/engine-proxy" U5_PROXY_LOG="$dir/logs/engine-frames.jsonl" PATH="$dir/bin:$PATH" GDK_BACKEND=x11 GIO_USE_VFS=local LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=/nonexistent ALSA_CONFIG_PATH=/dev/null GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 \
+    setsid env -u DBUS_SESSION_BUS_ADDRESS DISPLAY="$display" HOME="$dir/home" CLAUDE_CONFIG_DIR="$dir/home/claude-config" CODEX_HOME="$dir/home/codex-config" XDG_CONFIG_HOME="$dir/config" XDG_CACHE_HOME="$dir/cache" XDG_DATA_HOME="$dir/data" XDG_STATE_HOME="$dir/state" XDG_RUNTIME_DIR="$dir/runtime" DSH_AGENTS_HOME="$dir/agents" HOH_ENGINE_PATH="$dir/bin/engine-proxy" U5_PROXY_LOG="$dir/logs/engine-frames.jsonl" PATH="$dir/bin:/usr/bin:/bin" GDK_BACKEND=x11 GIO_USE_VFS=local LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=/nonexistent ALSA_CONFIG_PATH=/dev/null GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 \
       dbus-run-session --config-file="$dir/runtime/bus.conf" -- bash -c '
         metacity >"$1/logs/metacity.log" 2>&1 & wm=$!
         trap '\''kill "$wm" 2>/dev/null || true; wait "$wm" 2>/dev/null || true'\'' EXIT
@@ -187,7 +189,7 @@ PENDING
         sleep "$CAPTURE_SECONDS" & recpid=$!
       fi
       sleep 1
-    setsid env -u DBUS_SESSION_BUS_ADDRESS DISPLAY="$display" HOME="$dir/home" CLAUDE_CONFIG_DIR="$dir/home/claude-config" CODEX_HOME="$dir/home/codex-config" XDG_CONFIG_HOME="$dir/config" XDG_CACHE_HOME="$dir/cache" XDG_DATA_HOME="$dir/data" XDG_STATE_HOME="$dir/state" XDG_RUNTIME_DIR="$dir/runtime" DSH_AGENTS_HOME="$dir/agents" HOH_ENGINE_PATH="$dir/bin/engine-proxy" U5_PROXY_LOG="$dir/logs/restart-engine-frames.jsonl" PATH="$dir/bin:$PATH" GDK_BACKEND=x11 GIO_USE_VFS=local LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=/nonexistent ALSA_CONFIG_PATH=/dev/null GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 \
+    setsid env -u DBUS_SESSION_BUS_ADDRESS DISPLAY="$display" HOME="$dir/home" CLAUDE_CONFIG_DIR="$dir/home/claude-config" CODEX_HOME="$dir/home/codex-config" XDG_CONFIG_HOME="$dir/config" XDG_CACHE_HOME="$dir/cache" XDG_DATA_HOME="$dir/data" XDG_STATE_HOME="$dir/state" XDG_RUNTIME_DIR="$dir/runtime" DSH_AGENTS_HOME="$dir/agents" HOH_ENGINE_PATH="$dir/bin/engine-proxy" U5_PROXY_LOG="$dir/logs/restart-engine-frames.jsonl" PATH="$dir/bin:/usr/bin:/bin" GDK_BACKEND=x11 GIO_USE_VFS=local LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 PULSE_SERVER=unix:/nonexistent PIPEWIRE_REMOTE=/nonexistent ALSA_CONFIG_PATH=/dev/null GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 \
       dbus-run-session --config-file="$dir/runtime/bus.conf" -- bash -c '
         metacity >"$1/logs/restart-metacity.log" 2>&1 & wm=$!
         trap '\''kill "$wm" 2>/dev/null || true; wait "$wm" 2>/dev/null || true'\'' EXIT

@@ -283,6 +283,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 
 | Файл (в `ui/src/t3/base`) | Как | Зачем |
 |---|---|---|
+| `web/connection/storage.ts` | правка (`ui/src/t3/base-patches/web/connection/storage.ts.patch`) | кэш иконок проектов загружается в фоне и не задерживает оболочку и историю чатов; видимый термин — chat |
 | `web/components/T3Wordmark.tsx` | замена (наш файл) | знак T3 не берём: на его месте эмблема HoH (прозрачные растры src/assets/emblem-brand-*.png из emblem-a.webp, srcset 1×/1.5×/2×/3×) |
 | `web/components/T3AppIcon.tsx` | замена (наш файл) | значок приложения T3 не берём: на его месте эмблема HoH; файл T3 ссылается на картинку вне apps/web/src |
 | `contracts/orchestrationV2.ts` | правка (`ui/src/t3/base-patches/contracts/orchestrationV2.ts.patch`) | режим доступа закрепляется за отправляемым сообщением |
