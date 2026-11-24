@@ -437,7 +437,7 @@ fn the_journal_names_who_confirmed_what_and_when_without_the_key() {
         (human.who, human.via, human.outcome.as_str()),
         ("human", "settings-window", "allowed-once")
     );
-    assert_eq!(human.note, "подтверждено человеком в окне настройки");
+    assert_eq!(human.note, "confirmed by the person in the settings window");
     assert_eq!((human.at, human.method.as_str()), (NOW, KEY_SET));
     let core = &log[1];
     assert_eq!(
@@ -446,7 +446,7 @@ fn the_journal_names_who_confirmed_what_and_when_without_the_key() {
     );
     assert_eq!(
         core.note,
-        "подписано ядром без второго окна: то же действие подтверждено человеком в окне настройки"
+        "signed by the core without a second window: the same action was confirmed by the person in the settings window"
     );
     assert_eq!(core.action_hash.len(), 64);
     assert!(
@@ -469,7 +469,9 @@ fn the_journal_file_is_owner_only() {
         NOW,
     );
     let text = std::fs::read_to_string(&path).unwrap();
-    assert!(text.contains("подтверждено человеком в окне настройки") && !text.contains("sk-x"));
+    assert!(
+        text.contains("confirmed by the person in the settings window") && !text.contains("sk-x")
+    );
     assert_eq!(
         std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
@@ -692,7 +694,10 @@ fn a_late_timer_tells_the_truth_in_the_journal() {
     assert!(decision.is_err());
     let entry = broker.audit_log().pop().unwrap();
     assert_eq!(entry.outcome, "expired");
-    assert_eq!(entry.note, "истёк без ответа, подпись невозможна");
+    assert_eq!(
+        entry.note,
+        "expired without an answer; signing is impossible"
+    );
 }
 
 #[test]
@@ -767,7 +772,7 @@ fn a_hidden_nested_command_in_the_settings_text_blocks_allow_once() {
         NOW,
         Instant::now(),
     );
-    assert!(denied.is_err_and(|e| e.contains("разрешить один раз нельзя")));
+    assert!(denied.is_err_and(|e| e.contains("Allow once is unavailable")));
     // rejecting is still possible
     broker
         .decide(
@@ -798,7 +803,7 @@ fn assert_main_window_signature(core: &AuditEntry) {
     );
     assert_eq!(
         core.note,
-        "подписано ядром без второго окна: то же действие подтверждено человеком действием в главном окне"
+        "signed by the core without a second window: the same action was confirmed by the person in the main window"
     );
 }
 
@@ -850,10 +855,7 @@ fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_
             ("human", "main-window", "allowed-once")
         );
         assert_eq!(human.method, ACCESS_SET);
-        assert_eq!(
-            human.note,
-            "подтверждено человеком действием в главном окне"
-        );
+        assert_eq!(human.note, "confirmed by the person in the main window");
         assert_main_window_signature(core);
         assert!(
             human.human_text.contains(cases[index].1),
@@ -1143,7 +1145,7 @@ fn a_permission_request_shown_in_the_conversation_is_answered_from_the_main_wind
     );
     assert_eq!(
         log[0].note,
-        "подтверждено человеком в разговоре главного окна"
+        "confirmed by the person in the main window conversation"
     );
     assert_eq!(broker.history(5)[0]["asker"], "assistant");
     // Answered once.

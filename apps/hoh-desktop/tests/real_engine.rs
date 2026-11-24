@@ -480,7 +480,7 @@ fn first_run_and_a_streamed_turn_work_against_the_real_engine() {
     assert_eq!(
         journal
             .iter()
-            .filter(|e| e.note == "подтверждено человеком в окне настройки")
+            .filter(|e| e.note == "confirmed by the person in the settings window")
             .count(),
         3
     );

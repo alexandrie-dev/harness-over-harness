@@ -27,7 +27,7 @@ pub const GRANT_TTL_MS: u64 = 30_000;
 /// forbids signing; the engine cancels the request by its own deadline and the journal says `expired`.
 pub const EXPIRY_MARGIN_MS: u64 = 5_000;
 const MAX_AUDIT_ENTRIES: usize = 1_000;
-/// The «Подтверждения» section reads at most this much of the end of the journal file.
+/// The Confirmations section reads at most this much of the end of the journal file.
 pub const HISTORY_TAIL_BYTES: u64 = 512 * 1024;
 
 /// The last journal lines, newest first, parsed one by one: a line that is not valid UTF-8 or JSON
@@ -180,6 +180,10 @@ pub fn redact_text(text: &str) -> String {
 }
 
 /// The note the window shows when the mask hid a part that holds a nested command.
+// Old journal entries retain this prefix; history must suppress both old and new core signatures.
+const LEGACY_CORE_SIGNATURE_PREFIX: &str = "подписано ядром без второго окна";
+const CORE_SIGNATURE_PREFIX: &str = "signed by the core without a second window";
+
 const HIDDEN_NESTED_NOTE: &str = "⚠ Part of the command is hidden and contains a nested command. This is dangerous: Allow once is unavailable.";
 
 /// A shell would run something inside this word: a substitution `$(…)`, backticks, a pipe, or a
@@ -459,11 +463,10 @@ impl Broker {
         newest_first
             .iter()
             .filter(|entry| {
+                let note = entry["note"].as_str().unwrap_or_default();
                 entry["who"] == "human"
-                    || !entry["note"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .starts_with("подписано ядром без второго окна")
+                    || !(note.starts_with(LEGACY_CORE_SIGNATURE_PREFIX)
+                        || note.starts_with(CORE_SIGNATURE_PREFIX))
             })
             .filter_map(|entry| {
                 let closed = |key: &str| entry[key].as_str().map(redact_text);
@@ -643,7 +646,7 @@ impl Broker {
         now: u64,
     ) -> Result<(OpenApproval, mpsc::Receiver<bool>), String> {
         if !hoh_protocol::requires_host_approval(method, params) {
-            return Err("Действие не требует подтверждения".into());
+            return Err("This action does not require confirmation".into());
         }
         let sequence = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let action = redacted_action(method, params)?;
@@ -684,10 +687,10 @@ impl Broker {
         now: u64,
     ) -> Result<(), String> {
         if !main_window_confirms(method, params, session_executor) {
-            return Err("Действие подтверждается в отдельном окне".into());
+            return Err("This action must be confirmed in a separate window".into());
         }
         if !hoh_protocol::requires_host_approval(method, params) {
-            return Err("Действие не требует подтверждения".into());
+            return Err("This action does not require confirmation".into());
         }
         let sequence = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let action = redacted_action(method, params)?;
@@ -706,7 +709,7 @@ impl Broker {
             action,
         };
         hoh_protocol::approval::validate_host_request(&request)
-            .map_err(|_| "Некорректное подтверждение".to_owned())?;
+            .map_err(|_| "Invalid confirmation".to_owned())?;
         self.confirm(&request, "main-window", now);
         self.log(
             now,
@@ -714,7 +717,7 @@ impl Broker {
             "main-window",
             &request,
             "allowed-once",
-            "подтверждено человеком действием в главном окне",
+            "confirmed by the person in the main window",
         );
         Ok(())
     }
@@ -725,12 +728,12 @@ impl Broker {
         now: u64,
     ) -> Result<HostApprovalRequest, String> {
         if method != "approval/request" {
-            return Err("Обратный метод не поддерживается".into());
+            return Err("Unsupported callback method".into());
         }
         hoh_protocol::validate_params_host(method, &params)
-            .map_err(|_| "Получено некорректное подтверждение".to_owned())?;
+            .map_err(|_| "Received an invalid confirmation".to_owned())?;
         let request: HostApprovalRequest = serde_json::from_value(params)
-            .map_err(|_| "Получено некорректное подтверждение".to_owned())?;
+            .map_err(|_| "Received an invalid confirmation".to_owned())?;
         validate_time(&request, now)?;
         Ok(request)
     }
@@ -787,7 +790,7 @@ impl Broker {
     ) -> Result<Begun, String> {
         let request = Self::parse_engine_request(method, params, now)?;
         hoh_protocol::approval::validate_host_request(&request)
-            .map_err(|_| "Некорректное подтверждение".to_owned())?;
+            .map_err(|_| "Invalid confirmation".to_owned())?;
         let Some(via) = self.take_grant(generation, &request, now) else {
             return self
                 .insert(
@@ -804,7 +807,7 @@ impl Broker {
             mac: hoh_protocol::approval::mac(&self.key, &request, "allowed-once"),
         };
         hoh_protocol::approval::verify_decision(&self.key, &request, &decision, now)
-            .map_err(|_| "Подтверждение недействительно".to_owned())?;
+            .map_err(|_| "The confirmation is invalid".to_owned())?;
         // The note starts the same for every channel: `history` leaves these lines out by it.
         self.log(
             now,
@@ -813,9 +816,9 @@ impl Broker {
             &request,
             "allowed-once",
             if via == "main-window" {
-                "подписано ядром без второго окна: то же действие подтверждено человеком действием в главном окне"
+                "signed by the core without a second window: the same action was confirmed by the person in the main window"
             } else {
-                "подписано ядром без второго окна: то же действие подтверждено человеком в окне настройки"
+                "signed by the core without a second window: the same action was confirmed by the person in the settings window"
             },
         );
         Ok(Begun::Signed(Resolution::Engine {
@@ -833,7 +836,7 @@ impl Broker {
         in_chat_at: Option<Instant>,
     ) -> Result<OpenApproval, String> {
         hoh_protocol::approval::validate_host_request(&request)
-            .map_err(|_| "Некорректное подтверждение".to_owned())?;
+            .map_err(|_| "Invalid confirmation".to_owned())?;
         let sequence = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let label = format!("approval-{sequence}");
         let view = ApprovalView {
@@ -849,15 +852,15 @@ impl Broker {
         let mut slot = self
             .pending
             .lock()
-            .map_err(|_| "Подтверждение недоступно")?;
+            .map_err(|_| "The confirmation is unavailable")?;
         if slot
             .iter()
             .any(|pending| pending.request.approval_id == request.approval_id)
         {
-            return Err("Подтверждение уже открыто".into());
+            return Err("This confirmation is already open".into());
         }
         if in_chat_at.is_none() && slot.iter().any(|pending| !pending.in_chat) {
-            return Err("Другое подтверждение уже открыто".into());
+            return Err("Another confirmation is already open".into());
         }
         slot.push(Pending {
             label: label.clone(),
@@ -904,11 +907,11 @@ impl Broker {
             let slot = self
                 .pending
                 .lock()
-                .map_err(|_| "Подтверждение недоступно")?;
+                .map_err(|_| "The confirmation is unavailable")?;
             slot.iter()
                 .find(|pending| pending.in_chat && pending.request.approval_id == approval_id)
                 .map(|pending| pending.label.clone())
-                .ok_or("Нет такого запроса разрешения в разговоре")?
+                .ok_or("No such permission request exists in this conversation")?
         };
         self.decide(&label, approval_id, outcome, now, instant)
     }
@@ -917,11 +920,11 @@ impl Broker {
         let mut slot = self
             .pending
             .lock()
-            .map_err(|_| "Подтверждение недоступно")?;
+            .map_err(|_| "The confirmation is unavailable")?;
         let pending = slot
             .iter_mut()
             .find(|pending| pending.label == label)
-            .ok_or("Это окно не может открыть подтверждение")?;
+            .ok_or("This window cannot open the confirmation")?;
         validate_time(&pending.request, now)?;
         pending.shown_at.get_or_insert(instant);
         Ok(ApprovalView {
@@ -947,23 +950,23 @@ impl Broker {
             outcome,
             ApprovalOutcome::AllowedOnce | ApprovalOutcome::Rejected
         ) {
-            return Err("Недопустимый ответ окна".into());
+            return Err("Invalid response from the window".into());
         }
         let request = {
             let slot = self
                 .pending
                 .lock()
-                .map_err(|_| "Подтверждение недоступно")?;
+                .map_err(|_| "The confirmation is unavailable")?;
             let pending = slot
                 .iter()
                 .find(|pending| pending.label == label)
-                .ok_or("Это окно не может ответить на подтверждение")?;
+                .ok_or("This window cannot answer the confirmation")?;
             if pending.request.approval_id != approval_id {
-                return Err("Подтверждение уже сменилось".into());
+                return Err("The confirmation request has changed".into());
             }
             if outcome == ApprovalOutcome::AllowedOnce && pending.blocks_allow {
                 return Err(
-                    "Part of the command is hidden and contains a nested command: разрешить один раз нельзя"
+                    "Part of the command is hidden and contains a nested command: Allow once is unavailable"
                         .into(),
                 );
             }
@@ -974,7 +977,7 @@ impl Broker {
                         .is_none_or(|elapsed| elapsed < ALLOW_DELAY)
                 })
             {
-                return Err("Сначала прочитайте подтверждение".into());
+                return Err("Read the confirmation first".into());
             }
             pending.request.clone()
         };
@@ -1002,12 +1005,12 @@ impl Broker {
             && self
                 .pending
                 .lock()
-                .map_err(|_| "Подтверждение недоступно")?
+                .map_err(|_| "The confirmation is unavailable")?
                 .iter()
                 .any(|pending| pending.label == label && pending.blocks_allow)
         {
             return Err(
-                "Part of the command is hidden and contains a nested command: разрешить один раз нельзя"
+                "Part of the command is hidden and contains a nested command: Allow once is unavailable"
                     .into(),
             );
         }
@@ -1028,9 +1031,9 @@ impl Broker {
                     &pending.request,
                     "allowed-once",
                     match via {
-                        "settings-window" => "подтверждено человеком в окне настройки",
-                        "chat" => "подтверждено человеком в разговоре главного окна",
-                        _ => "подтверждено человеком в окне подтверждения",
+                        "settings-window" => "confirmed by the person in the settings window",
+                        "chat" => "confirmed by the person in the main window conversation",
+                        _ => "confirmed by the person in the confirmation window",
                     },
                 );
             }
@@ -1040,7 +1043,7 @@ impl Broker {
                 via,
                 &pending.request,
                 "rejected",
-                "отклонено человеком",
+                "declined by the person",
             ),
             (Err(_), _) => self.log(
                 now,
@@ -1048,7 +1051,7 @@ impl Broker {
                 via,
                 &pending.request,
                 "invalid",
-                "подтверждение недействительно",
+                "confirmation is invalid",
             ),
         }
         match verified {
@@ -1063,10 +1066,10 @@ impl Broker {
             Err(_) => Ok(DecisionOutcome {
                 resolution: resolve(
                     pending.destination,
-                    Err("Подтверждение отклонено".into()),
+                    Err("The confirmation was declined".into()),
                     false,
                 ),
-                command_result: Err("Подтверждение недействительно".into()),
+                command_result: Err("The confirmation is invalid".into()),
             }),
         }
     }
@@ -1085,7 +1088,7 @@ impl Broker {
         let verified =
             hoh_protocol::approval::verify_decision(&self.key, &pending.request, &decision, now)
                 .map(|()| decision)
-                .map_err(|_| "Подтверждение истекло".to_owned());
+                .map_err(|_| "The confirmation has expired".to_owned());
         // The journal tells what really happened: after the deadline nothing valid can be signed.
         if verified.is_ok() {
             self.log(
@@ -1094,7 +1097,7 @@ impl Broker {
                 via,
                 &pending.request,
                 "cancelled",
-                "срок подтверждения вышел: отменено",
+                "confirmation expired: cancelled",
             );
         } else {
             self.log(
@@ -1103,7 +1106,7 @@ impl Broker {
                 via,
                 &pending.request,
                 "expired",
-                "истёк без ответа, подпись невозможна",
+                "expired without an answer; signing is impossible",
             );
         }
         Some(resolve(pending.destination, verified, false))
@@ -1117,7 +1120,7 @@ impl Broker {
             pending.via(),
             &pending.request,
             "rejected",
-            "окно закрыто или срок вышел: отклонено",
+            "window closed or confirmation expired: declined",
         );
         let decision = HostApprovalDecision {
             approval_id: pending.request.approval_id.clone(),
@@ -1127,7 +1130,7 @@ impl Broker {
         let verified =
             hoh_protocol::approval::verify_decision(&self.key, &pending.request, &decision, now)
                 .map(|()| decision)
-                .map_err(|_| "Подтверждение истекло".into());
+                .map_err(|_| "The confirmation has expired".into());
         Some(resolve(pending.destination, verified, false))
     }
 
@@ -1156,7 +1159,7 @@ impl Broker {
             pending.label,
             resolve(
                 pending.destination,
-                Err("Подтверждение отменено".into()),
+                Err("The confirmation was cancelled".into()),
                 false,
             ),
         )
@@ -1166,13 +1169,13 @@ impl Broker {
         let mut slot = self
             .pending
             .lock()
-            .map_err(|_| "Подтверждение недоступно")?;
+            .map_err(|_| "The confirmation is unavailable")?;
         let index = slot
             .iter()
             .position(|pending| pending.label == label)
-            .ok_or("Это окно не может ответить на подтверждение")?;
+            .ok_or("This window cannot answer the confirmation")?;
         if slot[index].request.approval_id != approval_id {
-            return Err("Подтверждение уже сменилось".into());
+            return Err("The confirmation request has changed".into());
         }
         Ok(slot.remove(index))
     }
@@ -1201,22 +1204,22 @@ fn resolve(
 
 fn validate_time(request: &HostApprovalRequest, now: u64) -> Result<(), String> {
     if now >= request.expires_at {
-        return Err("Подтверждение истекло".into());
+        return Err("The confirmation has expired".into());
     }
     if request.expires_at - now > MAX_LIFETIME_MS {
-        return Err("Срок подтверждения слишком велик".into());
+        return Err("The confirmation lifetime is too long".into());
     }
     Ok(())
 }
 
 fn redacted_action(method: &str, params: &Value) -> Result<Value, String> {
     let params = if method == "hoh/model/key/set" {
-        let api_key = params.get("apiKey").ok_or("Нет ключа модели")?;
+        let api_key = params.get("apiKey").ok_or("The model key is missing")?;
         let base_url = params
             .get("baseUrl")
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
-            .ok_or("Нет адреса модели")?;
+            .ok_or("The model address is missing")?;
         json!({
             "keyHash": hoh_protocol::approval::action_hash(&json!({"apiKey": api_key})),
             "baseUrl": base_url,
@@ -1231,17 +1234,17 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
     match method {
         "session/working-directory/set" => {
             let request: hoh_protocol::SessionWorkingDirectorySetParams =
-                serde_json::from_value(params.clone()).map_err(|_| "Некорректная рабочая папка")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid working folder")?;
             Ok(format!("Allow work in folder {}?", quoted(&request.path)))
         }
         "hoh/workspace/add" => {
             let request: hoh_protocol::WorkspaceAddParams =
-                serde_json::from_value(params.clone()).map_err(|_| "Некорректная папка проекта")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid project folder")?;
             Ok(format!("Add folder {} as a project?", quoted(&request.cwd)))
         }
         "hoh/settings/set" => {
             let request: hoh_protocol::SettingsSetParams =
-                serde_json::from_value(params.clone()).map_err(|_| "Некорректные настройки")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid settings")?;
             let mut changes = Vec::new();
             if let Some(model) = request.model {
                 changes.push(format!(
@@ -1261,14 +1264,13 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 ));
             }
             if changes.is_empty() {
-                return Err("Настройки не содержат изменений".into());
+                return Err("The settings contain no changes".into());
             }
             Ok(format!("Change settings: {}?", changes.join("; ")))
         }
         "hoh/employee/create" => {
             let request: hoh_protocol::EmployeeCreateParams =
-                serde_json::from_value(params.clone())
-                    .map_err(|_| "Некорректный новый сотрудник")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid new employee")?;
             Ok(format!(
                 "Create employee {} with role {}; rules — {}; assigned tasks — {}; permissions: {}?",
                 quoted(&request.draft.name),
@@ -1280,8 +1282,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         }
         "hoh/employee/update" => {
             let request: hoh_protocol::EmployeeUpdateParams =
-                serde_json::from_value(params.clone())
-                    .map_err(|_| "Некорректное изменение сотрудника")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid employee change")?;
             let mut changes = Vec::new();
             if let Some(name) = request.patch.name {
                 changes.push(format!("name — {}", quoted(&name)));
@@ -1299,7 +1300,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 changes.push(format!("permissions: {}", permissions_text(&permissions)));
             }
             if changes.is_empty() {
-                return Err("Изменение сотрудника не содержит новых прав или задач".into());
+                return Err("The employee change contains no new permissions or tasks".into());
             }
             Ok(format!(
                 "Change employee {}: {}?",
@@ -1309,8 +1310,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         }
         "hoh/task/draft/decide" => {
             let request: hoh_protocol::TaskDraftDecideParams =
-                serde_json::from_value(params.clone())
-                    .map_err(|_| "Некорректное решение по черновику")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid draft decision")?;
             Ok(format!(
                 "Create a task from draft {}?",
                 quoted(&request.draft_id)
@@ -1318,7 +1318,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         }
         "hoh/task/rollback" => {
             let request: hoh_protocol::TaskRollbackParams =
-                serde_json::from_value(params.clone()).map_err(|_| "Некорректный откат задачи")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid task rollback")?;
             Ok(format!(
                 "Roll back task {} to version {}?",
                 quoted(&request.id),
@@ -1327,8 +1327,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         }
         "hoh/settings/rules/set" => {
             let rules: hoh_protocol::SettingsRulesSetParams =
-                serde_json::from_value(params.clone())
-                    .map_err(|_| "Некорректные правила доступа")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid access rules")?;
             let internet = match rules.internet {
                 hoh_protocol::SetupInternetMode::Ask => "with permission requested",
                 hoh_protocol::SetupInternetMode::Public => "to public websites",
@@ -1341,8 +1340,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         // Folder trust is shared by both executors (the same text as hoh-user-approval).
         "hoh/executor/trust/set" => {
             let request: hoh_protocol::ExecutorTrustSetParams =
-                serde_json::from_value(params.clone())
-                    .map_err(|_| "Некорректное доверие к папке")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid folder trust")?;
             Ok(if request.trust {
                 format!(
                     "Trust project settings in {} (Claude and Codex)? These settings can run programs.",
@@ -1357,7 +1355,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
         }
         "hoh/executor/access/set" => {
             let request: hoh_protocol::ExecutorAccessSetParams =
-                serde_json::from_value(params.clone()).map_err(|_| "Некорректный режим доступа")?;
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid access mode")?;
             let name = executor_name(&request.executor);
             let runtime = match (&request.mode, request.runtime_mode.as_ref()) {
                 (
@@ -1376,7 +1374,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                     hoh_protocol::ExecutorAccessMode::Confirm,
                     Some(hoh_protocol::ExecutorRuntimeMode::Auto),
                 ) => hoh_protocol::ExecutorRuntimeMode::Auto,
-                _ => return Err("Режим доступа не совпадает с runtimeMode".into()),
+                _ => return Err("The access mode does not match runtimeMode".into()),
             };
             match runtime {
                 hoh_protocol::ExecutorRuntimeMode::Full => Ok(format!(
@@ -1408,7 +1406,7 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             }
         }
         "hoh/executor/select" => {
-            let model = params["model"].as_str().ok_or("Некорректная модель")?;
+            let model = params["model"].as_str().ok_or("Invalid model")?;
             match params["executor"].as_str() {
                 Some(executor) => Ok(format!(
                     "Use {} (model {model}) to respond?",
@@ -1421,22 +1419,22 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
             let address = params["baseUrl"]
                 .as_str()
                 .filter(|value| !value.is_empty())
-                .ok_or("Нет адреса сервиса модели")?;
+                .ok_or("The model service address is missing")?;
             Ok(format!(
                 "Save the access key for service {}?",
                 quoted(address)
             ))
         }
         "hoh/model/probe" => {
-            let probe: hoh_protocol::ModelProbeParams = serde_json::from_value(params.clone())
-                .map_err(|_| "Некорректная проверка модели")?;
+            let probe: hoh_protocol::ModelProbeParams =
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid model check")?;
             Ok(format!(
                 "Allow testing model {} at service {}?",
                 quoted(&probe.model),
                 quoted(&probe.base_url)
             ))
         }
-        _ => Err("Нет безопасного описания привилегированного действия".into()),
+        _ => Err("No safe description is available for this privileged action".into()),
     }
 }
 
@@ -1508,7 +1506,7 @@ mod tests {
         let action = json!({"method":"hoh/model/probe","params":{"baseUrl":"https://example.test","model":"m"}});
         json!({
             "sessionId":"s", "toolName":"hoh/model/probe", "approvalId":id,
-            "risk":"high", "humanText":"Разрешить проверку модели?",
+            "risk":"high", "humanText":"Allow the model check?",
             "actionHash":hoh_protocol::approval::action_hash(&action),
             "expiresAt":now+5_000, "action":action
         })
@@ -1718,8 +1716,8 @@ mod tests {
         let samples = vec![
             (
                 "hoh/employee/create",
-                json!({"draft":{"name":"Алиса","role":"аналитик","rules":["rule-a"],"taskIds":["task-7"],"permissions":permissions()}}),
-                "Алиса",
+                json!({"draft":{"name":"Alice","role":"analyst","rules":["rule-a"],"taskIds":["task-7"],"permissions":permissions()}}),
+                "Alice",
             ),
             (
                 "hoh/employee/update",
