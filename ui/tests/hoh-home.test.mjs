@@ -170,7 +170,7 @@ test('folder art and project state styling use the project hue, blue active stat
   assert.match(css, /\.hoh-project\[data-waiting\] \.hoh-project__chip i\s*\{[^}]*background:\s*var\(--destructive\)/);
   assert.match(css, /\.hoh-project__icon i[^}]*var\(--hoh-project-color\)/);
   assert.match(css, /\.hoh-project__icon b[^}]*var\(--hoh-project-color\)/);
-  assert.match(css, /\.hoh-project__icon b::before/);
+  assert.match(css, /\.hoh-project__icon i::before/);
   assert.match(css, /\.hoh-project__icon em[^}]*border-radius:\s*50%/);
 });
 

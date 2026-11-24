@@ -140,12 +140,12 @@ body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute
 .hoh-project[data-working]:hover, .hoh-project[data-working][data-expanded] { box-shadow: 0 14px 40px color-mix(in srgb, var(--primary) 26%, transparent), inset 0 1px 0 color-mix(in srgb, white 7%, transparent); }
 .hoh-project[data-waiting]:hover, .hoh-project[data-waiting][data-expanded] { box-shadow: 0 14px 40px color-mix(in srgb, var(--destructive) 28%, transparent), inset 0 1px 0 color-mix(in srgb, white 7%, transparent); }
 .hoh-project__top { display: grid; min-width: 0; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 12px; }
-.hoh-project__icon { position: relative; display: block; width: 56px; height: 56px; flex: none; overflow: hidden; border-radius: 16px; background: radial-gradient(circle at 26% 16%, color-mix(in srgb, white 24%, transparent), transparent 38%), linear-gradient(145deg, color-mix(in srgb, var(--hoh-project-color) 78%, white), color-mix(in srgb, var(--hoh-project-color) 68%, black)); box-shadow: inset 0 1px 0 color-mix(in srgb, white 24%, transparent), 0 8px 20px color-mix(in srgb, var(--hoh-project-color) 24%, transparent); }
-.hoh-project__icon i, .hoh-project__icon b { position: absolute; left: 10px; right: 10px; display: block; border-radius: 7px 8px 10px 10px; box-shadow: 0 3px 8px color-mix(in srgb, black 20%, transparent); }
-.hoh-project__icon i { top: 14px; height: 25px; background: color-mix(in srgb, var(--hoh-project-color) 76%, white); opacity: .82; transform: scale(.9); }
-.hoh-project__icon b { top: 24px; height: 23px; background: color-mix(in srgb, var(--hoh-project-color) 66%, white); }
-.hoh-project__icon b::before { content: ""; position: absolute; right: 3px; top: -6px; width: 15px; height: 10px; border-radius: 5px 6px 0 0; background: inherit; }
-.hoh-project__icon em { position: absolute; z-index: 1; left: 16px; right: 14px; top: 28px; height: 12px; border: solid color-mix(in srgb, white 58%, transparent); border-width: 0 0 1px; border-radius: 50%; transform: rotate(-7deg); }
+.hoh-project__icon { position: relative; display: block; width: 56px; height: 56px; flex: none; overflow: hidden; border-radius: 16px; background: linear-gradient(145deg, var(--hoh-project-color), color-mix(in srgb, var(--hoh-project-color) 80%, black)); box-shadow: inset 0 1px 0 color-mix(in srgb, white 12%, transparent), 0 8px 20px color-mix(in srgb, var(--hoh-project-color) 24%, transparent); }
+.hoh-project__icon i, .hoh-project__icon b { position: absolute; left: 0; right: 0; bottom: 0; display: block; }
+.hoh-project__icon i { top: 40%; border-radius: 8px 8px 0 0; background: color-mix(in srgb, var(--hoh-project-color) 88%, white); }
+.hoh-project__icon i::before { content: ""; position: absolute; right: 0; top: -6px; width: 34%; height: 10px; border-radius: 8px 8px 0 0; background: inherit; }
+.hoh-project__icon b { top: 60%; border-radius: 8px 8px 0 0; background: color-mix(in srgb, var(--hoh-project-color) 78%, black); }
+.hoh-project__icon em { position: absolute; z-index: 1; left: -8px; bottom: -21px; width: 80px; height: 40px; border: solid color-mix(in srgb, white 48%, transparent); border-width: 2px 0 0; border-radius: 50%; transform: rotate(-23deg); }
 .hoh-project__heading { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .hoh-project__counts { display: flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: .6875rem; line-height: 1rem; white-space: nowrap; }
 .hoh-project__counts i { width: 1px; height: 10px; background: var(--border); }
