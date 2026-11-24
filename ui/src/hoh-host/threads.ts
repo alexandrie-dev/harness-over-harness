@@ -36,11 +36,9 @@ interface Request {
   createdAt: number; resolvedAt: number | null; decision?: string; answers?: Record<string, unknown>;
 }
 interface Live {
-  itemId: string;
   attemptId: string;
   key: string;
-  kind: 'text' | 'reasoning' | null;
-  raw: string;
+  parts: Partial<Record<'text' | 'reasoning', { itemId: string; raw: string }>>;
   last: number;
   gapped: boolean;
 }
@@ -332,10 +330,10 @@ export class ThreadModel {
   }
 
   private assistantText(key: string, messageId: string, value: string, at: number, parentItemId: string | null) {
-    const found = [...this.live.entries()].find(([, live]) => live.key === key && live.kind === 'text');
-    const live = found?.[1];
-    if (found) { this.live.delete(found[0]); this.retired.add(live!.attemptId); }
-    const id = live?.itemId ?? 'item-a-' + messageId;
+    const found = [...this.live.entries()].find(([, live]) => live.key === key && live.parts.text);
+    const part = found?.[1].parts.text;
+    if (found) this.consumeLivePart(found[0], 'text');
+    const id = part?.itemId ?? 'item-a-' + messageId;
     const existing = this.item(id);
     if (!value) {
       if (existing) this.items.splice(this.items.indexOf(existing), 1);
@@ -360,16 +358,17 @@ export class ThreadModel {
   }
 
   private assistantReasoning(key: string, messageId: string, value: string, at: number, parentItemId: string | null) {
-    const found = [...this.live.entries()].filter(([, live]) => live.key === key && live.kind === 'reasoning');
-    const live = found[0]?.[1];
+    const found = [...this.live.entries()].filter(([, live]) => live.key === key && live.parts.reasoning);
+    const part = found[0]?.[1].parts.reasoning;
     for (const [attempt, entry] of found) {
-      this.live.delete(attempt); this.retired.add(entry.attemptId);
-      if (entry !== live) {
-        const duplicate = this.item(entry.itemId);
+      const candidate = entry.parts.reasoning;
+      this.consumeLivePart(attempt, 'reasoning');
+      if (candidate && candidate !== part) {
+        const duplicate = this.item(candidate.itemId);
         if (duplicate) this.items.splice(this.items.indexOf(duplicate), 1);
       }
     }
-    const id = live?.itemId ?? 'item-r-' + messageId;
+    const id = part?.itemId ?? 'item-r-' + messageId;
     const existing = this.item(id);
     if (!value) {
       if (existing) this.items.splice(this.items.indexOf(existing), 1);
@@ -380,6 +379,16 @@ export class ThreadModel {
       this.settleItem(existing, 'completed', at);
     } else if (!this.item('item-r-' + messageId)) {
       this.items.push({ ...this.base(id, 'reasoning', 'completed', at, undefined, parentItemId), text: value, streaming: false });
+    }
+  }
+
+  private consumeLivePart(attempt: string, kind: 'text' | 'reasoning') {
+    const live = this.live.get(attempt);
+    if (!live) return;
+    delete live.parts[kind];
+    if (!live.parts.text && !live.parts.reasoning) {
+      this.live.delete(attempt);
+      this.retired.add(attempt);
     }
   }
 
@@ -456,7 +465,12 @@ export class ThreadModel {
     } else if (kind === 'web') {
       const pattern = text(args.query ?? args.url);
       item = { ...this.base(id, 'web_search', 'running', at, undefined, parentItemId), ...(pattern ? { patterns: [pattern] } : {}) };
-    } else item = { ...this.base(id, 'dynamic_tool', 'running', at, undefined, parentItemId), toolName: name.trim() || null, input: args };
+    } else {
+      const taskTitle = ['agent', 'task'].includes(name.trim().toLowerCase())
+        ? (text(args.description).trim() || text(args.prompt).trim()).replace(/\s+/g, ' ').slice(0, 160)
+        : '';
+      item = { ...this.base(id, 'dynamic_tool', 'running', at, undefined, parentItemId), toolName: name.trim() || null, input: args, ...(taskTitle ? { title: taskTitle } : {}) };
+    }
     this.calls.set(callId, id);
     this.toolInputs.set(rawId, { name, args, itemId: id });
     this.items.push(item);
@@ -497,11 +511,16 @@ export class ThreadModel {
     this.runningInteractionMode = null;
     this.reopened = null; this.pendingStartJournal = null;
     const run = this.currentRun();
-    const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
+    const userStopped = this.stopRequested || (reason === 'aborted' && record(cause).kind === 'user');
+    const status: RunStatus = reason === 'aborted' || reason === 'interrupted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
     this.stopRequested = false;
     const open = run?.status === 'running' || run?.status === 'waiting';
     const lateCompletedGuess = (run?.status === 'interrupted' || run?.status === 'completed') && this.settledByGuess && status === 'completed';
     const closing = !!run && (open || lateCompletedGuess || (reason === 'aborted' && record(cause).kind === 'user'));
+    if (lateCompletedGuess && run) {
+      const notice = this.item('item-interrupted-' + run.id);
+      if (notice) this.items.splice(this.items.indexOf(notice), 1);
+    }
     if (run && closing) {
       if (status === 'interrupted' && run.engineStartedAt !== undefined) {
         run.startedAt = run.engineStartedAt;
@@ -527,13 +546,18 @@ export class ThreadModel {
     for (const live of this.live.values()) this.retired.add(live.attemptId);
     this.live.clear();
     for (const request of this.requests) if (request.status === 'pending') { request.status = 'cancelled'; request.resolvedAt = at; }
-    // This is durable provenance from the engine, not the browser's Stop click. T3 already uses
-    // run_interrupt_result to remember which run was deliberately stopped; replaying the journal
-    // reconstructs the same marker for Claude and Codex after any window restart.
-    if (reason === 'aborted' && record(cause).kind === 'user' && run && !this.item('item-stop-' + run.id)) {
+    // Mark only an explicit Stop: the click supplies it live and the engine's user cause
+    // reconstructs it from the journal after a restart.
+    if (status === 'interrupted' && userStopped && run && !this.item('item-stop-' + run.id)) {
       this.items.push({
         ...this.base('item-stop-' + run.id, 'run_interrupt_result', 'completed', at, run.id),
         message: 'Stopped by user',
+      });
+    }
+    if (closing && status === 'interrupted' && !userStopped && run && !this.item('item-stop-' + run.id) && !this.item('item-interrupted-' + run.id)) {
+      this.items.push({
+        ...this.base('item-interrupted-' + run.id, 'system_notice', 'completed', at, run.id),
+        message: 'Interrupted',
       });
     }
     // T3's own form and words for a failed turn (packages/provider-core/src/server/failure.ts `makeProviderFailureTurnItem`).
@@ -642,7 +666,7 @@ export class ThreadModel {
     if (frame.type === 'start') {
       const key = String(frame.turn ?? '') + ':' + String(frame.step ?? '');
       if (this.live.has(attempt)) return false;
-      this.live.set(attempt, { itemId: 'item-live-' + attempt, attemptId: attempt, key, kind: null, raw: '', last: -1, gapped: false });
+      this.live.set(attempt, { attemptId: attempt, key, parts: {}, last: -1, gapped: false });
       return false;
     }
     const live = this.live.get(attempt);
@@ -650,20 +674,24 @@ export class ThreadModel {
     if (frame.type === 'gap') { live.gapped = true; return false; }
     if (frame.type === 'end') {
       this.retired.add(attempt);
-      const item = this.item(live.itemId);
-      if (item && !live.gapped) { item.streaming = false; item.updatedAt = iso(at); return true; }
-      return false;
+      let changed = false;
+      for (const part of Object.values(live.parts)) {
+        const item = this.item(part.itemId);
+        if (item && !live.gapped) { item.streaming = false; item.updatedAt = iso(at); changed = true; }
+      }
+      return changed;
     }
     const chunk = record(frame.chunk);
     const kind = chunk.type === 'text-delta' ? 'text' : chunk.type === 'reasoning-delta' ? 'reasoning' : null;
     if (live.gapped || frame.type !== 'chunk' || !kind || typeof chunk.text !== 'string') return false;
-    if (live.kind !== null && live.kind !== kind) return false;
     if (!Number.isSafeInteger(frame.index) || frame.index <= live.last) return false;
-    live.kind = kind; live.last = frame.index; live.raw += chunk.text;
-    const item = this.item(live.itemId);
-    if (item) Object.assign(item, { text: live.raw, updatedAt: iso(at) });
-    else if (kind === 'text') this.items.push({ ...this.base(live.itemId, 'assistant_message', 'running', at), messageId: 'msg-live-' + attempt, text: live.raw, streaming: true });
-    else this.items.push({ ...this.base(live.itemId, 'reasoning', 'running', at), text: live.raw, streaming: true });
+    live.last = frame.index;
+    const part = live.parts[kind] ??= { itemId: 'item-live-' + attempt + '-' + kind, raw: '' };
+    part.raw += chunk.text;
+    const item = this.item(part.itemId);
+    if (item) Object.assign(item, { text: part.raw, updatedAt: iso(at) });
+    else if (kind === 'text') this.items.push({ ...this.base(part.itemId, 'assistant_message', 'running', at), messageId: 'msg-live-' + attempt, text: part.raw, streaming: true });
+    else this.items.push({ ...this.base(part.itemId, 'reasoning', 'running', at), text: part.raw, streaming: true });
     this.touch(at);
     return true;
   }
@@ -674,6 +702,8 @@ export class ThreadModel {
     const run = this.currentRun();
     if (running && this.settledByGuess && run && (run.status === 'interrupted' || run.status === 'completed')) {
       // The history ended mid-turn because the turn is still going: it was not stopped.
+      const notice = this.item('item-interrupted-' + run.id);
+      if (notice) this.items.splice(this.items.indexOf(notice), 1);
       run.status = 'running'; run.completedAt = null; this.settledByGuess = false; this.running = true;
       return true;
     }

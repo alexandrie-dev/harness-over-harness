@@ -1,5 +1,8 @@
 --- a/web/components/chat/MessagesTimeline.logic.ts
 +++ b/web/components/chat/MessagesTimeline.logic.ts
+@@ -305 +305 @@
+-  if (entry.itemType === "reasoning") return Boolean(entry.detail?.trim());
++  if (entry.itemType === "reasoning") return entry.toolLifecycleStatus === "inProgress" || Boolean(entry.detail?.trim());
 @@ -604,0 +605 @@
 +      hasDetails?: boolean;
 @@ -958 +959,2 @@
@@ -21,12 +24,10 @@
 @@ -1226 +1229 @@
 -    if (!hidesNonCompactionWork(group.entries)) {
 +    if (!timingOnly && !hidesNonCompactionWork(group.entries)) {
-@@ -1236,2 +1239,3 @@
+@@ -1236,2 +1239 @@
 -    const isLatestInterruptedTurn =
 -      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
-+    const isInterruptedTurn =
-+      interruptedRunIds.has(runId) ||
-+      (input.latestRun?.runId === runId && input.latestRun.status === "interrupted");
++    const isInterruptedTurn = interruptedRunIds.has(runId);
 @@ -1251 +1255 @@
 -    const label = isLatestInterruptedTurn
 +    const label = isInterruptedTurn
