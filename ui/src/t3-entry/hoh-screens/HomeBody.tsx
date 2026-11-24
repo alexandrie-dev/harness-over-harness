@@ -328,6 +328,23 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
     window.addEventListener('resize', update);
     return () => { observer?.disconnect(); window.removeEventListener('resize', update); };
   }, [groupLayoutKey]);
+  useLayoutEffect(() => {
+    const folder = openGroupId ? buttons.current.get(openGroupId) : null;
+    const agents = panel.current?.querySelectorAll<HTMLElement>('.hoh-project-popover__agent');
+    if (!folder || !agents) return;
+    const origin = folder.getBoundingClientRect();
+    agents.forEach((agent) => {
+      agent.style.animation = 'none';
+      agent.style.transform = 'none';
+      const target = agent.getBoundingClientRect();
+      agent.style.removeProperty('transform');
+      agent.style.removeProperty('animation');
+      agent.style.setProperty('--hoh-unfold-x', `${origin.left + origin.width / 2 - target.left - target.width / 2}px`);
+      agent.style.setProperty('--hoh-unfold-y', `${origin.top + origin.height / 2 - target.top - target.height / 2}px`);
+      agent.style.setProperty('--hoh-unfold-scale-x', String(Math.min(1, origin.width / target.width)));
+      agent.style.setProperty('--hoh-unfold-scale-y', String(Math.min(1, origin.height / target.height)));
+    });
+  }, [openGroupId, panelAfter]);
   useEffect(() => {
     if (!openGroupId) return;
     const frame = requestAnimationFrame(() => {

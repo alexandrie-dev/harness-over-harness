@@ -75,7 +75,7 @@ test('project grouping derives counts, warning priority, runners and rename-stab
   ];
   const paths = { alpha: '/work/alpha', 'hoh-project': '/work/no-project' };
   const first = grouping.groupEntriesByProject(entries, id => id === 'alpha' ? 'Alpha' : 'No project', id => paths[id]);
-  assert.equal(first[0].title, 'No project', 'a waiting project sorts first');
+  assert.equal(first[0].title, 'Chats', 'a waiting project sorts first');
   assert.deepEqual(first[0].states, { working: 0, waiting: 1, done: 0 });
   const alpha = first.find(group => group.id === 'alpha');
   assert.deepEqual(alpha.entries.map(entry => entry.id), ['a', 'b']);
@@ -87,6 +87,7 @@ test('project grouping derives counts, warning priority, runners and rename-stab
   ]), ['claude', 'codex', 'claude', 'claude'], 'runner marks retain participants so the fourth becomes +N');
   const renamed = grouping.groupEntriesByProject(entries, id => id === 'alpha' ? 'Renamed' : 'No project', id => paths[id]);
   assert.equal(renamed.find(group => group.id === 'alpha').color, alpha.color, 'title changes do not alter path-derived color');
+  assert.equal(grouping.groupEntriesByProject(entries.filter(entry => entry.projectId !== 'hoh-project'), id => id, id => id).some(group => group.title === 'Chats'), false);
   assert.equal(grouping.PROJECT_COLOR_COUNT, 8, 'the folder palette has eight distinct slots');
   assert.notEqual(first[0].color, first[1].color, 'neighboring projects never share a palette slot');
   const fixtureColors = ['/work/alexandrie', '/work/hoh', '/work/no-project'].map(path => grouping.projectColor(path));
@@ -110,6 +111,25 @@ test('project grouping derives counts, warning priority, runners and rename-stab
   const colorsById = groups => Object.fromEntries(groups.map(group => [group.id, group.color]));
   assert.deepEqual(colorsById(colorsAfterRename), colorsById(colorsBeforeRename), 'collision resolution is stable across presentation reordering');
   assert.notEqual(colorsBeforeRename[0].color, colorsBeforeRename[1].color, 'colliding paths still receive adjacent distinct colors');
+});
+
+test('adjacent folder hues differ by at least 40 degrees', () => {
+  const hues = [240, 180, 120, 45, 315, 25, 0, 280];
+  for (let count = 2; count <= 16; count += 1) {
+    const entries = Array.from({ length: count }, (_, index) => ({ id: String(index), projectId: `p${index}`, state: 'working', startedAt: index, agents: [] }));
+    const groups = grouping.groupEntriesByProject(entries, id => id, id => `/work/${id}`);
+    for (let index = 1; index < groups.length; index += 1) {
+      const difference = Math.abs(hues[groups[index].color] - hues[groups[index - 1].color]);
+      assert(Math.min(difference, 360 - difference) >= 40);
+    }
+  }
+});
+
+test('folder status segments represent counts with proportional widths and separate colors', async () => {
+  const css = await readFile(new URL('../src/t3-entry/hoh-screens/home.css', import.meta.url), 'utf8');
+  for (const state of ['working', 'waiting', 'done']) assert.match(homeSource, new RegExp(`data-state="${state}" style=\\{\\{ flexGrow: group\\.states\\.${state} \\}\\}`));
+  assert.match(css, /\.hoh-project__segments\s*\{[^}]*gap:\s*4px/);
+  assert.match(css, /\.hoh-project__segments i\[data-state="waiting"\][^{]*\{[^}]*var\(--destructive\)/);
 });
 
 test('project disclosure supports hover, pinned click/keyboard semantics, leave and Escape/outside close', () => {
@@ -150,7 +170,7 @@ test('folder art and project state styling use the project hue, blue active stat
   assert.match(css, /\.hoh-project\[data-waiting\] \.hoh-project__chip i\s*\{[^}]*background:\s*var\(--destructive\)/);
   assert.match(css, /\.hoh-project__icon i[^}]*var\(--hoh-project-color\)/);
   assert.match(css, /\.hoh-project__icon b[^}]*var\(--hoh-project-color\)/);
-  assert.match(css, /\.hoh-project__icon b::before/);
+  assert.match(css, /\.hoh-project__icon i::before/);
   assert.match(css, /\.hoh-project__icon em[^}]*border-radius:\s*50%/);
 });
 
