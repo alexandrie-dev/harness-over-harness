@@ -15,12 +15,14 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
                 serde_json::from_value(params.clone()).map_err(|_| "invalid folder trust")?;
             Ok(if request.trust {
                 format!(
-                    "Доверять настройкам Claude в папке {}? Они могут запускать программы.",
+                    "Доверять настройкам {} в папке {}? Они могут запускать программы.",
+                    executor_name(&request.executor),
                     quoted(&request.cwd)
                 )
             } else {
                 format!(
-                    "Отозвать доверие к настройкам Claude в папке {}?",
+                    "Отозвать доверие к настройкам {} в папке {}?",
+                    executor_name(&request.executor),
                     quoted(&request.cwd)
                 )
             })

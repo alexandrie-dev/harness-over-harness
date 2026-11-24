@@ -113,6 +113,54 @@ async fn discovery_uses_app_server_models_and_account() {
 }
 
 #[tokio::test]
+async fn folder_trust_is_explicit_in_thread_start_and_retained_for_turn() {
+    for trusted in [false, true] {
+        let temp = TempDir::new().unwrap();
+        let (harness, log) = harness(&temp, "trust");
+        let mut started = harness
+            .start_with_folder_trust(start_params(&temp, None), AccessMode::Confirm, trusted)
+            .await
+            .unwrap();
+        started
+            .session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-trust".into(),
+                text: "hello".into(),
+                images: Vec::new(),
+            })
+            .await
+            .unwrap();
+        loop {
+            if matches!(
+                event(&mut started.events).await,
+                HarnessEvent::ApprovalRequested { .. }
+            ) {
+                break;
+            }
+        }
+        started.session.terminate(Duration::from_millis(100)).await;
+        let wire = lines(&log);
+        let thread = wire
+            .iter()
+            .find(|line| line["method"] == "thread/start")
+            .unwrap();
+        let turn = wire
+            .iter()
+            .find(|line| line["method"] == "turn/start")
+            .unwrap();
+        let cwd = temp.path().to_str().unwrap();
+        assert_eq!(
+            thread["params"]["config"]["projects"][cwd]["trust_level"],
+            if trusted { "trusted" } else { "untrusted" }
+        );
+        assert_eq!(turn["params"]["cwd"], cwd);
+        // Codex 0.166's generated TurnStartParams has no config field; the thread config applies.
+        assert!(turn["params"].get("config").is_none());
+    }
+}
+
+#[tokio::test]
 async fn every_mode_is_present_on_thread_and_first_turn() {
     let expected = [
         (

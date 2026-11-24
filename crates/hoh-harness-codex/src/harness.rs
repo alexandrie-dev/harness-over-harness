@@ -142,13 +142,26 @@ async fn check_version(config: &CodexConfig) -> VersionCheck {
     VersionCheck::Supported(shown)
 }
 
-fn app_server_spec(config: &CodexConfig, cwd: &Path) -> ProcessSpec {
+fn app_server_spec(config: &CodexConfig, cwd: &Path, trusted: bool) -> ProcessSpec {
     ProcessSpec {
         program: config.executable.clone(),
         args: vec![
             "app-server".to_owned(),
             "-c".to_owned(),
             "thread_unload_delay_secs=0".to_owned(),
+            "-c".to_owned(),
+            format!(
+                "projects={{{}}}",
+                crate::session::project_trust(cwd, trusted)
+                    .keys()
+                    .map(|path| format!(
+                        "{}={{trust_level=\"{}\"}}",
+                        serde_json::to_string(path).expect("path serializes"),
+                        if trusted { "trusted" } else { "untrusted" }
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
         ],
         cwd: Some(cwd.to_owned()),
         cwd_identity: None,
@@ -162,23 +175,30 @@ mod folder_trust_tests {
     use super::*;
 
     #[test]
-    fn app_server_does_not_set_codex_project_trust() {
-        let spec = app_server_spec(&CodexConfig::default(), Path::new("/project"));
-        assert_eq!(
-            spec.args,
-            ["app-server", "-c", "thread_unload_delay_secs=0"]
+    fn app_server_receives_explicit_project_trust() {
+        let spec = app_server_spec(&CodexConfig::default(), Path::new("/project"), false);
+        assert!(
+            spec.args
+                .iter()
+                .any(|arg| arg.contains("\"/project\"={trust_level=\"untrusted\"}"))
         );
         assert!(
-            !spec
+            spec.args
+                .iter()
+                .any(|arg| arg.contains("\"/\"={trust_level=\"untrusted\"}"))
+        );
+        let trusted = app_server_spec(&CodexConfig::default(), Path::new("/project"), true);
+        assert!(
+            trusted
                 .args
                 .iter()
-                .any(|arg| arg.contains("trust_level") || arg.contains("projects."))
+                .any(|arg| arg.contains("\"/project\"={trust_level=\"trusted\"}"))
         );
     }
 }
 
 fn spawn(config: &CodexConfig, cwd: &Path) -> HarnessResult<Supervisor> {
-    Supervisor::spawn(&app_server_spec(config, cwd), config.limits, None)
+    Supervisor::spawn(&app_server_spec(config, cwd, false), config.limits, None)
 }
 
 fn auth_from(account: &Value) -> AuthState {
@@ -334,6 +354,15 @@ impl ExternalHarness for CodexHarness {
         params: StartParams,
         access: AccessMode,
     ) -> BoxFuture<'static, HarnessResult<Started>> {
+        self.start_with_folder_trust(params, access, false)
+    }
+
+    fn start_with_folder_trust(
+        &self,
+        params: StartParams,
+        access: AccessMode,
+        trusted: bool,
+    ) -> BoxFuture<'static, HarnessResult<Started>> {
         let config = self.config.clone();
         Box::pin(async move {
             let version = match check_version(&config).await {
@@ -349,7 +378,7 @@ impl ExternalHarness for CodexHarness {
                 }
             };
             let cwd = PathBuf::from(&params.cwd);
-            let mut process = app_server_spec(&config, &cwd);
+            let mut process = app_server_spec(&config, &cwd, trusted);
             process.cwd_identity = params.cwd_identity;
             let supervisor = Supervisor::spawn(&process, config.limits, None)?;
             let resume = params.resume.as_ref().map(|id| String::from(id.clone()));
@@ -360,6 +389,7 @@ impl ExternalHarness for CodexHarness {
                     request_timeout: config.request_timeout,
                     mode: mode_settings(access),
                     cwd: params.cwd,
+                    trusted,
                     model: params.model,
                     effort: params.effort,
                     resume,
@@ -394,7 +424,21 @@ impl ExternalHarness for CodexHarness {
             format!("approval={}", settings.approval_policy),
             format!("reviewer={}", settings.reviewer),
             format!("sandbox={}", settings.sandbox),
+            "project-trust=untrusted".to_owned(),
         ]
+    }
+
+    fn launch_flags_for_folder_trust(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        trusted: bool,
+    ) -> Vec<String> {
+        let mut flags = self.launch_flags(policy, access);
+        if trusted {
+            *flags.last_mut().expect("trust flag") = "project-trust=trusted".to_owned();
+        }
+        flags
     }
 
     fn stop_ends_process(&self) -> bool {

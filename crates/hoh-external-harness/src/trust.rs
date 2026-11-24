@@ -1,4 +1,5 @@
 //! Profile-owned folder trust. An absent or unreadable record always means no trust.
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -25,30 +26,43 @@ pub(crate) fn snapshot(folder: &Path) -> std::io::Result<Snapshot> {
     if !metadata.is_dir() {
         return Err(std::io::Error::other("folder is not a directory"));
     }
-    match std::fs::symlink_metadata(path.join(".claude")) {
-        Ok(meta) if !meta.is_dir() || meta.file_type().is_symlink() => {
-            return Err(std::io::Error::other(".claude must be a directory"));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
     let mut hash = Sha256::new();
-    for name in [
-        ".claude/settings.json",
-        ".claude/settings.local.json",
-        ".mcp.json",
-    ] {
-        hash.update((name.len() as u64).to_be_bytes());
-        hash.update(name.as_bytes());
-        match read_setting(&path.join(name)) {
-            Ok(bytes) => {
-                hash.update([1]);
-                hash.update((bytes.len() as u64).to_be_bytes());
-                hash.update(bytes);
+    for root in settings_roots(&path)? {
+        let identity = std::fs::metadata(&root)?;
+        let root_bytes = root.as_os_str().as_encoded_bytes();
+        hash.update((root_bytes.len() as u64).to_be_bytes());
+        hash.update(root_bytes);
+        hash.update(identity.dev().to_be_bytes());
+        hash.update(identity.ino().to_be_bytes());
+        for directory in [".claude", ".codex"] {
+            match std::fs::symlink_metadata(root.join(directory)) {
+                Ok(meta) if !meta.is_dir() || meta.file_type().is_symlink() => {
+                    return Err(std::io::Error::other(
+                        "settings directory must be a directory",
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => hash.update([0]),
-            Err(error) => return Err(error),
+        }
+        for name in [
+            ".claude/settings.json",
+            ".claude/settings.local.json",
+            ".mcp.json",
+            ".codex/config.toml",
+        ] {
+            hash.update((name.len() as u64).to_be_bytes());
+            hash.update(name.as_bytes());
+            match read_setting(&root.join(name)) {
+                Ok(bytes) => {
+                    hash.update([1]);
+                    hash.update((bytes.len() as u64).to_be_bytes());
+                    hash.update(bytes);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => hash.update([0]),
+                Err(error) => return Err(error),
+            }
         }
     }
     Ok(Snapshot {
@@ -61,6 +75,68 @@ pub(crate) fn snapshot(folder: &Path) -> std::io::Result<Snapshot> {
             .map(|byte| format!("{byte:02x}"))
             .collect(),
     })
+}
+
+/// Git worktrees may read local settings from the main checkout as well as the worktree root.
+/// Inspect Git's metadata directly: discovering trust must never execute repository programs.
+fn settings_roots(folder: &Path) -> std::io::Result<BTreeSet<PathBuf>> {
+    let mut roots = BTreeSet::from([folder.to_path_buf()]);
+    for ancestor in folder.ancestors() {
+        let dotgit = ancestor.join(".git");
+        let meta = match std::fs::symlink_metadata(&dotgit) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if meta.file_type().is_symlink() {
+            return Err(std::io::Error::other("symlinked Git metadata"));
+        }
+        // Codex can load project configuration in intermediate directories too.
+        // Only include these after finding the repository boundary: an unrelated
+        // directory outside Git must not pull in settings from the user's home.
+        for root in folder.ancestors() {
+            roots.insert(root.to_path_buf());
+            if root == ancestor {
+                break;
+            }
+        }
+        let gitdir = if meta.is_dir() {
+            dotgit
+        } else if meta.is_file() {
+            let bytes = read_setting(&dotgit)?;
+            let text = std::str::from_utf8(&bytes).map_err(std::io::Error::other)?;
+            let target = text
+                .trim()
+                .strip_prefix("gitdir: ")
+                .ok_or_else(|| std::io::Error::other("invalid gitdir"))?;
+            ancestor.join(target).canonicalize()?
+        } else {
+            return Err(std::io::Error::other("invalid Git metadata"));
+        };
+        match read_setting(&gitdir.join("commondir")) {
+            Ok(bytes) => {
+                let common = std::str::from_utf8(&bytes)
+                    .map_err(std::io::Error::other)?
+                    .trim();
+                let common = gitdir.join(common).canonicalize()?;
+                if common.file_name().is_none_or(|name| name != ".git") {
+                    return Err(std::io::Error::other(
+                        "cannot resolve main checkout from Git common directory",
+                    ));
+                }
+                roots.insert(
+                    common
+                        .parent()
+                        .ok_or_else(|| std::io::Error::other("invalid Git common directory"))?
+                        .canonicalize()?,
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        break;
+    }
+    Ok(roots)
 }
 
 fn read_setting(path: &Path) -> std::io::Result<Vec<u8>> {
@@ -150,6 +226,77 @@ pub(crate) async fn set(profile: &Path, folder: &Path, trusted: bool) -> std::io
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+            ])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    #[tokio::test]
+    async fn git_subfolder_and_worktree_include_all_roots_in_trust() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let worktree = temp.path().join("worktree");
+        let profile = temp.path().join("profile");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&profile).unwrap();
+        git(&repo, &["init", "-q"]);
+        std::fs::write(repo.join("tracked"), "ok").unwrap();
+        git(&repo, &["add", "tracked"]);
+        git(&repo, &["commit", "-qm", "initial"]);
+        let repo_sub = repo.join("sub");
+        std::fs::create_dir_all(&repo_sub).unwrap();
+        std::fs::create_dir_all(repo.join(".claude")).unwrap();
+        set(&profile, &repo_sub, true).await.unwrap();
+        std::fs::write(repo.join(".claude/settings.local.json"), "changed").unwrap();
+        assert_eq!(status(&profile, &repo_sub).await.unwrap(), (false, true));
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-qb",
+                "other",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        let middle = worktree.join("middle");
+        let sub = middle.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        for root in [&repo, &worktree, &middle, &sub] {
+            std::fs::create_dir_all(root.join(".claude")).unwrap();
+            for file in [
+                ".claude/settings.json",
+                ".claude/settings.local.json",
+                ".mcp.json",
+                ".codex/config.toml",
+            ] {
+                if let Some(parent) = root.join(file).parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
+                set(&profile, &sub, true).await.unwrap();
+                std::fs::write(root.join(file), "changed again").unwrap();
+                assert_eq!(
+                    status(&profile, &sub).await.unwrap(),
+                    (false, true),
+                    "{}",
+                    root.join(file).display()
+                );
+            }
+        }
+    }
 
     #[test]
     fn snapshot_resolves_aliases_and_tracks_file_contents_and_absence() {

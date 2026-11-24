@@ -14,6 +14,24 @@ use hoh_external_harness::{
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, oneshot};
 
+/// Explicit per-process trust masks previously trusted parent entries for an untrusted folder.
+pub(crate) fn project_trust(cwd: &std::path::Path, trusted: bool) -> Map<String, Value> {
+    let mut projects = Map::new();
+    for ancestor in cwd.ancestors() {
+        let git_root = ancestor.join(".git").exists();
+        if !trusted || ancestor == cwd || git_root {
+            projects.insert(
+                ancestor.to_string_lossy().into_owned(),
+                json!({"trust_level": if trusted { "trusted" } else { "untrusted" }}),
+            );
+        }
+        if trusted && git_root {
+            break;
+        }
+    }
+    projects
+}
+
 fn lock<T>(value: &Mutex<T>) -> MutexGuard<'_, T> {
     value
         .lock()
@@ -246,6 +264,7 @@ struct Inner {
     terminated: AtomicBool,
     mode: ModeSettings,
     cwd: String,
+    trusted: bool,
     model: Option<String>,
     effort: Option<String>,
 }
@@ -268,6 +287,7 @@ pub(crate) struct StartSettings {
     pub request_timeout: Duration,
     pub mode: ModeSettings,
     pub cwd: String,
+    pub trusted: bool,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub resume: Option<String>,
@@ -285,6 +305,7 @@ impl CodexSession {
         request_timeout: Duration,
         mode: ModeSettings,
         cwd: String,
+        trusted: bool,
         model: Option<String>,
         effort: Option<String>,
     ) -> Result<(Arc<Self>, mpsc::Receiver<HarnessEvent>), HarnessFailure> {
@@ -303,6 +324,7 @@ impl CodexSession {
             terminated: AtomicBool::new(false),
             mode,
             cwd,
+            trusted,
             model,
             effort,
         });
@@ -330,6 +352,7 @@ impl CodexSession {
             request_timeout,
             mode,
             cwd,
+            trusted,
             model,
             effort,
             resume,
@@ -340,6 +363,7 @@ impl CodexSession {
             request_timeout,
             mode,
             cwd,
+            trusted,
             model,
             effort,
         )
@@ -397,6 +421,7 @@ impl CodexSession {
             request_timeout,
             mode_settings(hoh_external_harness::AccessMode::Confirm),
             std::env::temp_dir().to_string_lossy().into_owned(),
+            false,
             None,
             None,
         )
@@ -437,7 +462,7 @@ impl CodexSession {
             "approvalPolicy": mode.approval_policy,
             "approvalsReviewer": mode.reviewer,
             "sandbox": mode.sandbox,
-            "config": {}
+            "config": {"projects": project_trust(std::path::Path::new(&self.inner.cwd), self.inner.trusted)}
         });
         if let Some(model) = &self.inner.model {
             params["model"] = json!(model);

@@ -244,7 +244,7 @@ impl Window {
             )?),
             TRUST_GET => {
                 let params: ExecutorTrustGetParams = parse(method, params)?;
-                if params.executor != "claude" {
+                if !matches!(params.executor.as_str(), "claude" | "codex") {
                     return Err("unknown executor".into());
                 }
                 let folder = self.known_folder(&params.cwd).await?;
@@ -257,7 +257,7 @@ impl Window {
                             let _ = hoh_session::append_plugin_record(
                                 agent.session(),
                                 "plugin:external-harness/folder-trust-changed",
-                                json!({"cwd": folder, "executor": "claude"}),
+                                json!({"cwd": folder, "executor": params.executor}),
                             );
                         }
                     }
@@ -271,7 +271,7 @@ impl Window {
             }
             TRUST_SET => {
                 let params: ExecutorTrustSetParams = parse(method, params)?;
-                if params.executor != "claude" {
+                if !matches!(params.executor.as_str(), "claude" | "codex") {
                     return Err("unknown executor".into());
                 }
                 let folder = self.known_folder(&params.cwd).await?;
