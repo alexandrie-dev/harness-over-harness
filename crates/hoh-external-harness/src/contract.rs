@@ -337,6 +337,9 @@ pub struct StartParams {
     /// The HoH session the native session serves.
     pub session_id: String,
     pub cwd: String,
+    /// Filesystem identity verified for this session's working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd_identity: Option<[u64; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// The effort level of the session, one of the harness's

@@ -707,9 +707,22 @@ impl ExternalAgent {
         };
         let flags = self.shared.harness.launch_flags(&policy, access);
         let resume = lock(&self.state).native.clone();
+        let checked_cwd = || -> Result<(String, [u64; 2]), HarnessFailure> {
+            match self
+                .shared
+                .ctx
+                .get::<hoh_working_directory::WorkingDirectoryKey>()
+            {
+                Some(service) => service.verify_for_spawn(&self.session),
+                None => hoh_working_directory::verify_session_directory(&self.session, &self.cwd()),
+            }
+            .map_err(|error| HarnessFailure::new(code::IO, error.to_string()))
+        };
+        let (cwd, identity) = checked_cwd()?;
         let mut params = StartParams {
             session_id: self.id.to_string(),
-            cwd: self.cwd(),
+            cwd,
+            cwd_identity: Some(identity),
             model: lock(&self.model.model).clone(),
             effort: effort.clone(),
             policy,
@@ -723,6 +736,9 @@ impl ExternalAgent {
                     self.shared.name, params.resume
                 ));
                 params.resume = None;
+                let (cwd, identity) = checked_cwd()?;
+                params.cwd = cwd;
+                params.cwd_identity = Some(identity);
                 (harness.start_with_access(params, access).await?, resume)
             }
             started => {

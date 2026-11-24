@@ -566,6 +566,7 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
             "turn/start",
             "step/start",
             "user/message",
+            "working-directory/change",
             BINDING_RECORD,
             "assistant/message",
             "step/end",

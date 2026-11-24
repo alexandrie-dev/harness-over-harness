@@ -27,18 +27,28 @@ pub(crate) fn append_disabled_channels(
     args: &mut Vec<String>,
     extra_env: &[(String, String)],
     cwd: &Path,
+    expected: Option<[u64; 2]>,
 ) {
-    let Some(settings) = disabled_channel_settings(extra_env, cwd) else {
+    let Some(settings) = disabled_channel_settings_with_identity(extra_env, cwd, expected) else {
         return;
     };
     args.extend(["--settings".to_owned(), settings]);
 }
 
+#[cfg(test)]
 fn disabled_channel_settings(extra_env: &[(String, String)], cwd: &Path) -> Option<String> {
+    disabled_channel_settings_with_identity(extra_env, cwd, None)
+}
+
+fn disabled_channel_settings_with_identity(
+    extra_env: &[(String, String)],
+    cwd: &Path,
+    expected: Option<[u64; 2]>,
+) -> Option<String> {
     let home = env_path(extra_env, "HOME");
     let config_dir = env_path(extra_env, "CLAUDE_CONFIG_DIR")
         .or_else(|| home.as_ref().map(|home| home.join(".claude")))?;
-    let effective = enabled_plugins(&config_dir, cwd);
+    let effective = enabled_plugins_with_identity(&config_dir, cwd, expected);
     let registry = read_json(&config_dir.join("plugins/installed_plugins.json"));
     let mut candidates = effective.ids;
     if effective.uncertain {
@@ -67,12 +77,28 @@ fn disabled_channel_settings(extra_env: &[(String, String)], cwd: &Path) -> Opti
                     );
                     return true;
                 }
-                let mcp = declares_mcp_server(root);
+                #[cfg(target_os = "linux")]
+                let root_fd = match open_directory_no_symlinks(root) {
+                    Ok(root) => root,
+                    Err(error) => {
+                        eprintln!("HoH: cannot inspect plugin root safely: {error}");
+                        return true;
+                    }
+                };
+                #[cfg(target_os = "linux")]
+                let root = {
+                    use std::os::fd::AsRawFd;
+                    PathBuf::from(format!("/proc/self/fd/{}", root_fd.as_raw_fd()))
+                };
+                #[cfg(not(target_os = "linux"))]
+                let root = root.clone();
+                let mcp = declares_mcp_server(&root);
                 if effective.uncertain && mcp {
                     eprintln!("HoH: settings could not be inspected; disabling MCP plugin {id}");
                     true
                 } else {
-                    mcp && source_tree_has_capability(root)
+                    mcp && (declared_server_uses_symlink(&root)
+                        || source_tree_has_capability(&root))
                 }
             })
         })
@@ -102,9 +128,52 @@ struct EffectivePlugins {
     uncertain: bool,
 }
 
+#[cfg(test)]
 fn enabled_plugins(config_dir: &Path, cwd: &Path) -> EffectivePlugins {
+    enabled_plugins_with_identity(config_dir, cwd, None)
+}
+
+fn enabled_plugins_with_identity(
+    config_dir: &Path,
+    cwd: &Path,
+    expected: Option<[u64; 2]>,
+) -> EffectivePlugins {
     let mut effective = BTreeMap::<String, bool>::new();
     let mut uncertain = merge_enabled(&config_dir.join("settings.json"), &mut effective);
+    #[cfg(target_os = "linux")]
+    let root = open_directory_no_symlinks(cwd);
+    #[cfg(target_os = "linux")]
+    let project = match root.as_ref() {
+        Ok(dir) => {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::MetadataExt;
+            if expected.is_some_and(|expected| {
+                dir.metadata()
+                    .map_or(true, |m| [m.dev(), m.ino()] != expected)
+            }) {
+                eprintln!("HoH: project folder identity changed before settings inspection");
+                return EffectivePlugins {
+                    ids: effective
+                        .into_iter()
+                        .filter_map(|(id, enabled)| enabled.then_some(id))
+                        .collect(),
+                    uncertain: true,
+                };
+            }
+            PathBuf::from(format!("/proc/self/fd/{}/.claude", dir.as_raw_fd()))
+        }
+        Err(error) => {
+            eprintln!("HoH: cannot safely open project root: {error}");
+            return EffectivePlugins {
+                ids: effective
+                    .into_iter()
+                    .filter_map(|(id, enabled)| enabled.then_some(id))
+                    .collect(),
+                uncertain: true,
+            };
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
     let project = cwd.join(".claude");
     match fs::symlink_metadata(&project) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
@@ -148,6 +217,34 @@ fn enabled_plugins(config_dir: &Path, cwd: &Path) -> EffectivePlugins {
             .collect(),
         uncertain,
     }
+}
+
+#[cfg(target_os = "linux")]
+fn open_directory_no_symlinks(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::path::Component;
+    if !path.is_absolute() {
+        return Err(std::io::Error::other("project root is not absolute"));
+    }
+    let open = |path: &Path| {
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x20000 | 0x10000)
+            .open(path)
+    };
+    let mut dir = open(Path::new("/"))?;
+    for component in path.components() {
+        match component {
+            Component::RootDir | Component::CurDir => {}
+            Component::Normal(name) => {
+                let child = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join(name);
+                dir = open(&child)?;
+            }
+            _ => return Err(std::io::Error::other("project root is not canonical")),
+        }
+    }
+    Ok(dir)
 }
 
 /// Returns true when a present settings file could not be interpreted. In that case discovery
@@ -352,17 +449,76 @@ fn resolve_install_path(path: &str, config_dir: &Path, home: Option<&Path>) -> P
 /// The capability belongs to an MCP server, not merely to an arbitrary example or test file in
 /// a plugin. Require a non-empty server declaration before accepting a source-tree marker.
 fn declares_mcp_server(root: &Path) -> bool {
-    mcp_file_declares_server(&root.join(".mcp.json"))
-        || manifest_declares_server(&root.join(".claude-plugin/plugin.json"))
-        || fs::read_dir(root).ok().is_some_and(|entries| {
-            entries.flatten().any(|entry| {
-                entry.file_type().is_ok_and(|kind| kind.is_dir())
-                    && (mcp_file_declares_server(&entry.path().join(".mcp.json"))
-                        || manifest_declares_server(
-                            &entry.path().join(".claude-plugin/plugin.json"),
-                        ))
-            })
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let roots = match declaration_roots(root) {
+            Ok(roots) => roots,
+            Err(error) => {
+                eprintln!("HoH: cannot inspect plugin declarations: {error}");
+                return true;
+            }
+        };
+        roots.iter().any(|dir| {
+            let path = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+            mcp_file_declares_server(&path.join(".mcp.json"))
+                || manifest_declares_server(&path.join(".claude-plugin/plugin.json"))
         })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        true
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn declaration_roots(root: &Path) -> std::io::Result<Vec<fs::File>> {
+    use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+    let base = fs::File::open(root)?;
+    let path = PathBuf::from(format!("/proc/self/fd/{}", base.as_raw_fd()));
+    let mut roots = vec![];
+    for (count, entry) in fs::read_dir(path)?.enumerate() {
+        if count >= MAX_SCAN_ENTRIES {
+            return Err(std::io::Error::other(
+                "plugin declaration entry limit exceeded",
+            ));
+        }
+        let entry = entry?;
+        if [
+            ".git",
+            "node_modules",
+            "examples",
+            "example",
+            "docs",
+            "documentation",
+            "test",
+            "tests",
+        ]
+        .iter()
+        .any(|name| entry.file_name() == OsStr::new(name))
+        {
+            continue;
+        }
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        match fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x20000 | 0x10000)
+            .open(entry.path())
+        {
+            Ok(dir) => roots.push(dir),
+            Err(error)
+                if fs::symlink_metadata(entry.path()).is_ok_and(|m| m.file_type().is_symlink()) =>
+            {
+                let _ = error;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    roots.push(base);
+    Ok(roots)
 }
 
 fn mcp_file_declares_server(path: &Path) -> bool {
@@ -374,11 +530,45 @@ fn mcp_file_declares_server(path: &Path) -> bool {
 }
 
 fn manifest_declares_server(path: &Path) -> bool {
-    declaration_file(path, |manifest| {
-        manifest
-            .get("mcpServers")
-            .is_some_and(non_empty_declaration)
-    })
+    match read_manifest(path) {
+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes).map_or(true, |manifest| {
+            manifest
+                .get("mcpServers")
+                .is_some_and(non_empty_declaration)
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            eprintln!("HoH: cannot inspect plugin manifest: {error}");
+            true
+        }
+    }
+}
+
+fn read_manifest(path: &Path) -> std::io::Result<Vec<u8>> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+        let parent = path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("missing manifest directory"))?;
+        if fs::symlink_metadata(parent)?.file_type().is_symlink() {
+            return Err(std::io::ErrorKind::NotFound.into());
+        }
+        let dir = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x20000 | 0x10000)
+            .open(parent)?;
+        read_bounded(
+            &PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join("plugin.json"),
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err(std::io::Error::other(
+            "safe manifest inspection unavailable",
+        ))
+    }
 }
 
 fn declaration_file(path: &Path, inspect: impl FnOnce(&Value) -> bool) -> bool {
@@ -410,17 +600,162 @@ fn non_empty_declaration(value: &Value) -> bool {
     }
 }
 
+/// A linked script or executable named by an MCP declaration cannot be inspected safely.
+fn declared_server_uses_symlink(root: &Path) -> bool {
+    fn linked(root: &Path, raw: &str) -> bool {
+        let value = raw.replace("${CLAUDE_PLUGIN_ROOT}", ".");
+        if value.starts_with('-') || value.contains("${") {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+            let path = Path::new(&value);
+            let mut dir = match fs::File::open(if path.is_absolute() {
+                Path::new("/")
+            } else {
+                root
+            }) {
+                Ok(dir) => dir,
+                Err(_) => return true,
+            };
+            let parts: Vec<_> = path
+                .components()
+                .filter(|part| {
+                    !matches!(
+                        part,
+                        std::path::Component::RootDir | std::path::Component::CurDir
+                    )
+                })
+                .collect();
+            for (index, part) in parts.iter().enumerate() {
+                let std::path::Component::Normal(name) = part else {
+                    return true;
+                };
+                let child = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd())).join(name);
+                match fs::symlink_metadata(&child) {
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        eprintln!("HoH: MCP server path contains a symbolic link: {raw}");
+                        return true;
+                    }
+                    Ok(meta) if index + 1 < parts.len() && meta.is_dir() => {
+                        match fs::OpenOptions::new()
+                            .read(true)
+                            .custom_flags(0x20000 | 0x10000)
+                            .open(&child)
+                        {
+                            Ok(next) => dir = next,
+                            Err(error) => {
+                                eprintln!("HoH: cannot inspect MCP server path {raw}: {error}");
+                                return true;
+                            }
+                        }
+                    }
+                    Ok(_) if index + 1 < parts.len() => return false,
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+                    Err(error) => {
+                        eprintln!("HoH: cannot inspect MCP server path {raw}: {error}");
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = root;
+            true
+        }
+    }
+    fn inspect(root: &Path, value: &Value) -> bool {
+        match value {
+            Value::Object(map) => map.iter().any(|(key, value)| {
+                if key == "command" {
+                    value.as_str().is_some_and(|s| linked(root, s))
+                } else if key == "args" {
+                    value.as_array().is_some_and(|a| {
+                        a.iter().filter_map(Value::as_str).any(|s| linked(root, s))
+                    })
+                } else {
+                    inspect(root, value)
+                }
+            }),
+            Value::Array(items) => items.iter().any(|value| inspect(root, value)),
+            _ => false,
+        }
+    }
+    #[cfg(target_os = "linux")]
+    let roots = match declaration_roots(root) {
+        Ok(roots) => roots,
+        Err(error) => {
+            eprintln!("HoH: cannot inspect plugin declarations: {error}");
+            return true;
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        return true;
+    }
+    #[cfg(target_os = "linux")]
+    roots.iter().any(|handle| {
+        use std::os::fd::AsRawFd;
+        let dir = PathBuf::from(format!("/proc/self/fd/{}", handle.as_raw_fd()));
+        [
+            dir.join(".mcp.json"),
+            dir.join(".claude-plugin/plugin.json"),
+        ]
+        .iter()
+        .any(|file| {
+            let read = if file.file_name() == Some(OsStr::new(".mcp.json")) {
+                read_bounded(file)
+            } else {
+                read_manifest(file)
+            };
+            match read {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => {
+                    eprintln!("HoH: MCP declaration is uninspectable: {error}");
+                    true
+                }
+                Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(value) => inspect(&dir, &value),
+                    Err(error) => {
+                        eprintln!("HoH: MCP declaration is invalid: {error}");
+                        true
+                    }
+                },
+            }
+        })
+    })
+}
+
 fn source_tree_has_capability(root: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+    #[cfg(target_os = "linux")]
+    let root_dir = match fs::File::open(root) {
+        Ok(dir) => dir,
+        Err(_) => return true,
+    };
+    #[cfg(target_os = "linux")]
+    let mut pending = vec![(root_dir, 0_usize)];
+    #[cfg(not(target_os = "linux"))]
     let mut pending = vec![(root.to_path_buf(), 0_usize)];
     let mut entries_seen = 0_usize;
     let mut files = 0_usize;
     let mut bytes = 0_u64;
     while let Some((dir, depth)) = pending.pop() {
+        #[cfg(target_os = "linux")]
+        let dir_path = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+        #[cfg(not(target_os = "linux"))]
+        let dir_path = dir;
         if depth > MAX_SCAN_DEPTH {
-            eprintln!("HoH: plugin scan depth limit at {}", dir.display());
+            eprintln!("HoH: plugin scan depth limit at {}", dir_path.display());
             return true;
         }
-        let Ok(entries) = fs::read_dir(dir) else {
+        let Ok(entries) = fs::read_dir(&dir_path) else {
             eprintln!("HoH: cannot read MCP plugin directory; disabling it");
             return true;
         };
@@ -443,8 +778,7 @@ fn source_tree_has_capability(root: &Path) -> bool {
                 return true;
             };
             if kind.is_symlink() {
-                eprintln!("HoH: MCP plugin contains an uninspectable link; disabling it");
-                return true;
+                continue;
             }
             if kind.is_dir() {
                 if ![
@@ -460,6 +794,22 @@ fn source_tree_has_capability(root: &Path) -> bool {
                 .iter()
                 .any(|skip| name == OsStr::new(skip))
                 {
+                    #[cfg(target_os = "linux")]
+                    match fs::OpenOptions::new()
+                        .read(true)
+                        .custom_flags(0x20000 | 0x10000)
+                        .open(entry.path())
+                    {
+                        Ok(child) => pending.push((child, depth + 1)),
+                        Err(_error)
+                            if fs::symlink_metadata(entry.path())
+                                .is_ok_and(|m| m.file_type().is_symlink()) => {}
+                        Err(error) => {
+                            eprintln!("HoH: cannot inspect MCP plugin directory: {error}");
+                            return true;
+                        }
+                    }
+                    #[cfg(not(target_os = "linux"))]
                     pending.push((entry.path(), depth + 1));
                 }
                 continue;
@@ -471,20 +821,24 @@ fn source_tree_has_capability(root: &Path) -> bool {
                 eprintln!("HoH: MCP plugin file limit exceeded; disabling it");
                 return true;
             }
-            let Ok(metadata) = entry.metadata() else {
+            let Ok(metadata) = fs::symlink_metadata(entry.path()) else {
                 eprintln!("HoH: cannot inspect MCP plugin file; disabling it");
                 return true;
             };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
             let len = metadata.len();
             if len > MAX_SOURCE_BYTES || bytes.saturating_add(len) > MAX_SCAN_BYTES {
                 eprintln!("HoH: MCP plugin byte limit exceeded; disabling it");
                 return true;
             }
             files += 1;
-            bytes += len;
-            match file_contains(&entry.path(), CHANNEL_CAPABILITY) {
-                Ok(true) => return true,
-                Ok(false) => {}
+            match file_contains(&entry.path(), CHANNEL_CAPABILITY, MAX_SCAN_BYTES - bytes) {
+                Ok((true, _)) => return true,
+                Ok((false, scanned)) => {
+                    bytes += scanned;
+                }
                 Err(error) => {
                     eprintln!("HoH: cannot read MCP plugin file: {error}; disabling it");
                     return true;
@@ -503,7 +857,7 @@ fn documentation(path: &Path) -> bool {
     })
 }
 
-fn file_contains(path: &Path, needle: &[u8]) -> std::io::Result<bool> {
+fn file_contains(path: &Path, needle: &[u8], remaining: u64) -> std::io::Result<(bool, u64)> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(target_os = "linux")]
@@ -512,24 +866,25 @@ fn file_contains(path: &Path, needle: &[u8]) -> std::io::Result<bool> {
         options.custom_flags(0x20000);
     }
     let file = options.open(path)?;
-    let mut file = file.take(MAX_SOURCE_BYTES + 1);
+    let limit = MAX_SOURCE_BYTES.min(remaining);
+    let mut file = file.take(limit + 1);
     let mut buffer = [0_u8; 64 * 1024];
     let mut carry = Vec::new();
     let mut total = 0_u64;
     loop {
         let read = file.read(&mut buffer)?;
         if read == 0 {
-            return Ok(false);
+            return Ok((false, total));
         }
         total += read as u64;
-        if total > MAX_SOURCE_BYTES {
+        if total > limit {
             return Err(std::io::Error::other(
                 "MCP plugin file grew beyond scan limit",
             ));
         }
         carry.extend_from_slice(&buffer[..read]);
         if carry.windows(needle.len()).any(|window| window == needle) {
-            return Ok(true);
+            return Ok((true, total));
         }
         if carry.len() >= needle.len() {
             carry.drain(..carry.len() - (needle.len() - 1));
@@ -711,6 +1066,76 @@ mod tests {
             serde_json::from_str::<Value>(&settings).unwrap(),
             serde_json::json!({"enabledPlugins":{"bot@test":false}})
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_examples_and_external_directory_links_are_skipped_but_linked_server_is_disabled() {
+        use std::os::unix::fs::symlink;
+        let (_dir, config, project) = fixture();
+        let normal = config.join("plugins/cache/test/normal/1");
+        let linked = config.join("plugins/cache/test/linked/1");
+        let outside = config.join("outside");
+        write(
+            &config.join("settings.json"),
+            r#"{"enabledPlugins":{"normal@test":true,"linked@test":true}}"#,
+        );
+        write(
+            &normal.join(".mcp.json"),
+            r#"{"mcpServers":{"normal":{"command":"node","args":["server.js"]}}}"#,
+        );
+        write(&normal.join("server.js"), "normal");
+        write(&normal.join("README.md"), "claude/channel");
+        write(&normal.join("examples/demo.json"), "claude/channel");
+        write(&outside.join("payload.py"), "claude/channel");
+        symlink(&outside, normal.join("external")).unwrap();
+        write(
+            &linked.join(".mcp.json"),
+            r#"{"mcpServers":{"linked":{"command":"python3","args":["server.py"]}}}"#,
+        );
+        symlink(outside.join("payload.py"), linked.join("server.py")).unwrap();
+        let env = [(
+            "CLAUDE_CONFIG_DIR".into(),
+            config.to_string_lossy().into_owned(),
+        )];
+        assert_eq!(
+            serde_json::from_str::<Value>(&disabled_channel_settings(&env, &project).unwrap())
+                .unwrap(),
+            serde_json::json!({"enabledPlugins":{"linked@test":false}})
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_project_settings_directory_is_not_read() {
+        use std::os::unix::fs::symlink;
+        let (_dir, config, project) = fixture();
+        let external = config.join("external");
+        write(
+            &external.join("settings.json"),
+            r#"{"enabledPlugins":{"outside@test":true}}"#,
+        );
+        symlink(&external, project.join(".claude")).unwrap();
+        let effective = enabled_plugins(&config, &project);
+        assert!(effective.uncertain);
+        assert!(!effective.ids.contains("outside@test"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_project_root_is_not_read_through_an_outdated_identity() {
+        use std::os::unix::fs::MetadataExt;
+        let (_dir, config, project) = fixture();
+        let metadata = fs::metadata(&project).unwrap();
+        let expected = [metadata.dev(), metadata.ino()];
+        fs::rename(&project, project.with_extension("old")).unwrap();
+        write(
+            &project.join(".claude/settings.json"),
+            r#"{"enabledPlugins":{"outside@test":true}}"#,
+        );
+        let effective = enabled_plugins_with_identity(&config, &project, Some(expected));
+        assert!(effective.uncertain);
+        assert!(!effective.ids.contains("outside@test"));
     }
 
     #[test]

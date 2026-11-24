@@ -172,7 +172,7 @@ impl ClaudeConfig {
     ) -> Vec<String> {
         let mut argv = self.argv(policy, access, model, effort, resume, native_id);
         if self.setting_sources == SettingSources::Personal {
-            channel_plugins::append_disabled_channels(&mut argv, &self.extra_env, cwd);
+            channel_plugins::append_disabled_channels(&mut argv, &self.extra_env, cwd, None);
         }
         argv
     }
@@ -653,6 +653,7 @@ fn spec(config: &ClaudeConfig, args: Vec<String>, cwd: PathBuf, probe: bool) -> 
         program: config.executable.clone(),
         args,
         cwd: Some(cwd),
+        cwd_identity: None,
         env,
         env_remove: Vec::new(),
     }
@@ -920,9 +921,16 @@ impl ExternalHarness for ClaudeHarness {
                 &native,
             );
             if config.setting_sources == SettingSources::Personal {
-                channel_plugins::append_disabled_channels(&mut args, &config.extra_env, &cwd);
+                channel_plugins::append_disabled_channels(
+                    &mut args,
+                    &config.extra_env,
+                    &cwd,
+                    params.cwd_identity,
+                );
             }
-            let sup = spawn(&spec(&config, args, cwd.clone(), false)).await?;
+            let mut process = spec(&config, args, cwd.clone(), false);
+            process.cwd_identity = params.cwd_identity;
+            let sup = spawn(&process).await?;
             let (session, events, _init) = ClaudeSession::start(
                 sup,
                 native.clone(),
@@ -1275,6 +1283,7 @@ mod tests {
         let params = StartParams {
             session_id: "s".into(),
             cwd: "/".into(),
+            cwd_identity: None,
             model: None,
             effort: Some("--dangerously-skip-permissions".into()),
             policy: HarnessPolicy::default(),

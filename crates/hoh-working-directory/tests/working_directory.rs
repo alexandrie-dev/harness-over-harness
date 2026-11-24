@@ -39,6 +39,31 @@ fn json_string(text: &str) -> String {
     serde_json::to_string(text).unwrap()
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn fixed_directory_identity_rejects_replacement_and_disappearance() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new().await;
+    let chosen = f.path(&["chosen"]);
+    let original = f.path(&["original"]);
+    let other = f.path(&["other"]);
+    std::fs::create_dir(&chosen).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    f.service.set(&f.agent.agent, &chosen, None).await.unwrap();
+    assert_eq!(
+        f.service.verify_for_spawn(&f.agent.session()).unwrap().0,
+        chosen
+    );
+    std::fs::rename(&chosen, &original).unwrap();
+    symlink(&other, &chosen).unwrap();
+    assert!(f.service.verify_for_spawn(&f.agent.session()).is_err());
+    std::fs::remove_file(&chosen).unwrap();
+    assert!(f.service.verify_for_spawn(&f.agent.session()).is_err());
+    std::fs::create_dir(&chosen).unwrap();
+    assert!(f.service.verify_for_spawn(&f.agent.session()).is_err());
+    f.shutdown().await;
+}
+
 async fn assemble_for(
     f: &Fixture,
     agent: &support::TestAgent,
@@ -108,6 +133,10 @@ async fn restores_directory_state_from_the_log() {
         )
         .unwrap();
     assert_eq!(f.service.get(&restored), child);
+    assert_eq!(f.service.verify_for_spawn(&restored).unwrap().0, child);
+    std::fs::rename(&child, f.path(&["moved-after-replay"])).unwrap();
+    std::fs::create_dir(&child).unwrap();
+    assert!(f.service.verify_for_spawn(&restored).is_err());
     f.shutdown().await;
 }
 
@@ -172,26 +201,23 @@ async fn serializes_concurrent_relative_changes_and_recovers_after_a_rejected_ch
 }
 
 #[tokio::test]
-async fn returns_to_the_original_project_when_the_selected_directory_disappears_and_injects_the_recovery()
- {
+async fn refuses_when_the_selected_directory_disappears_without_recovery() {
     let f = Fixture::new().await;
     let child = f.path(&["temporary"]);
     std::fs::create_dir(&child).unwrap();
     f.service.set(&f.agent.agent, &child, None).await.unwrap();
     assert_eq!(f.agent.claim().len(), 1);
     std::fs::remove_dir_all(&child).unwrap();
-    assert_eq!(
-        f.service.ensure(&f.agent.agent, None).await.unwrap(),
-        f.root_text
+    assert!(
+        f.service
+            .ensure(&f.agent.agent, None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unavailable")
     );
-    assert_eq!(
-        texts(&f.agent.claim()),
-        [format!(
-            "The working directory {} is unavailable. The working directory is now {}.",
-            json_string(&child),
-            json_string(&f.root_text)
-        )]
-    );
+    assert_eq!(f.service.get(&f.agent.session()), child);
+    assert!(f.agent.claim().is_empty());
     f.shutdown().await;
 }
 
@@ -203,12 +229,12 @@ async fn reports_a_missing_original_project_and_permits_an_explicit_directory_ch
     let agent = f.create("removed-origin", Some(&origin)).await;
     std::fs::remove_dir_all(&origin).unwrap();
     let error = f.service.ensure(&agent.agent, None).await.unwrap_err();
-    assert!(message(&error).contains("directory does not exist"));
+    assert!(message(&error).contains("unavailable"));
     let error = f.service.ensure(&agent.agent, None).await.unwrap_err();
     let cause = harness(&error);
     assert_eq!(cause.name(), "WorkingDirectoryError");
     assert_eq!(cause.code(), "WORKING_DIRECTORY_UNAVAILABLE");
-    assert!(cause.message().contains("is also unavailable"));
+    assert!(cause.message().contains("unavailable"));
     assert_eq!(
         f.service
             .set(&agent.agent, &f.root_text, None)
@@ -268,23 +294,21 @@ async fn keeps_unchanged_reads_and_changes_free_of_transition_notices() {
 }
 
 #[tokio::test]
-async fn provides_required_user_context_instead_of_a_system_prompt_directory_including_recovery_during_assembly()
- {
+async fn refuses_to_assemble_context_for_a_disappeared_directory() {
     let f = Fixture::new().await;
     let child = f.path(&["temporary"]);
     std::fs::create_dir(&child).unwrap();
     f.service.set(&f.agent.agent, &child, None).await.unwrap();
     std::fs::remove_dir_all(&child).unwrap();
-    let assembly = assemble_for(&f, &f.agent).await;
+    let prompt = f.ctx.get::<SystemPromptKey>().unwrap();
     assert!(
-        render_context_snapshot(&assembly)
-            .unwrap()
-            .contains(&format!(
-                "Current working directory: {}.",
-                json_string(&f.root_text)
-            ))
+        prompt
+            .assemble(
+                AssembleContext::new(None).with_extension(AssembleAgent(f.agent.agent.clone()))
+            )
+            .await
+            .is_err()
     );
-    assert!(!render_prompt(&assembly).unwrap().contains(&f.root_text));
     let prompt = f.ctx.get::<SystemPromptKey>().unwrap();
     let bare = prompt.assemble(AssembleContext::default()).await.unwrap();
     assert_eq!(render_context_snapshot(&bare).unwrap(), "");
@@ -320,7 +344,7 @@ async fn rejects_a_relative_deployment_default_before_accepting_sessions() {
 }
 
 #[tokio::test]
-async fn recovers_a_session_without_origin_metadata_to_its_configured_default() {
+async fn does_not_recover_to_the_default_after_the_selected_folder_disappears() {
     let f = Fixture::with_config(|root| json!({ "defaultDirectory": root })).await;
     let agent = f.create("fallback-recovery", None).await;
     let temporary = f.path(&["temporary"]);
@@ -328,19 +352,10 @@ async fn recovers_a_session_without_origin_metadata_to_its_configured_default() 
     f.service.set(&agent.agent, &temporary, None).await.unwrap();
     assert_eq!(agent.claim().len(), 1);
     std::fs::remove_dir_all(&temporary).unwrap();
-    assert_eq!(
-        f.service.ensure(&agent.agent, None).await.unwrap(),
-        f.root_text
-    );
+    assert!(f.service.ensure(&agent.agent, None).await.is_err());
     assert!(agent.session().header().get("cwd").is_none());
-    assert_eq!(
-        texts(&agent.claim()),
-        [format!(
-            "The working directory {} is unavailable. The working directory is now {}.",
-            json_string(&temporary),
-            json_string(&f.root_text)
-        )]
-    );
+    assert_eq!(f.service.get(&agent.session()), temporary);
+    assert!(agent.claim().is_empty());
     f.shutdown().await;
 }
 

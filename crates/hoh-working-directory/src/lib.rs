@@ -224,6 +224,12 @@ fn error_string(error: &BoxError) -> String {
 }
 
 impl WorkingDirectoryService {
+    /// Verify the recorded folder identity immediately before starting an external process.
+    /// Older sessions without an identity acquire one on their first verified launch.
+    pub fn verify_for_spawn(&self, session: &Session) -> Result<(String, [u64; 2]), BoxError> {
+        let current = self.inner.get(session);
+        verify_session_directory(session, &current)
+    }
     /// Validate the configuration and register everything the service contributes.
     async fn start(ctx: Context, deps: Deps, config: &Config) -> Result<Self, BoxError> {
         let directory = match &config.default_directory {
@@ -429,6 +435,71 @@ impl WorkingDirectoryService {
     }
 }
 
+/// Verify and persist an external executor's session directory, including compositions without
+/// the working-directory service.
+pub fn verify_session_directory(
+    session: &Session,
+    current: &str,
+) -> Result<(String, [u64; 2]), BoxError> {
+    let identity = directory_identity(current)?;
+    let events = session.snapshot_events(None, None);
+    let previous = events
+        .iter()
+        .rev()
+        .find_map(|event| {
+            if event.event_type() == WORKING_DIRECTORY_CHANGE {
+                return Some(event.data().get("identity").cloned());
+            }
+            if event.event_type() == "working-directory/identity" {
+                return Some(Some(event.data().clone()));
+            }
+            None
+        })
+        .flatten();
+    if let Some(previous) = previous {
+        if previous != identity {
+            return Err(format!("The conversation folder {current:?} has changed. Select a new folder before starting the executor.").into());
+        }
+    } else {
+        session.append(
+            WORKING_DIRECTORY_CHANGE,
+            json!({ "cwd": current, "identity": identity }),
+            None,
+        )?;
+    }
+    Ok((
+        identity["path"].as_str().unwrap_or(current).to_owned(),
+        [
+            identity["dev"].as_u64().unwrap(),
+            identity["ino"].as_u64().unwrap(),
+        ],
+    ))
+}
+
+#[cfg(unix)]
+fn directory_identity(path: &str) -> Result<Value, BoxError> {
+    use std::os::unix::fs::MetadataExt;
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("The conversation folder {path:?} is unavailable: {error}"))?;
+    if canonical != std::path::Path::new(path) {
+        return Err(format!(
+            "The conversation folder {path:?} has changed or contains a symbolic link."
+        )
+        .into());
+    }
+    let metadata = std::fs::symlink_metadata(&canonical)
+        .map_err(|error| format!("The conversation folder {path:?} is unavailable: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!("The conversation folder {path:?} is not a directory.").into());
+    }
+    Ok(json!({ "path": path, "dev": metadata.dev(), "ino": metadata.ino() }))
+}
+
+#[cfg(not(unix))]
+fn directory_identity(_path: &str) -> Result<Value, BoxError> {
+    Err("Folder identity verification is unavailable on this platform.".into())
+}
+
 impl Operations {
     fn begin(self: &Arc<Self>) -> OperationGuard {
         *lock(&self.running) += 1;
@@ -545,29 +616,14 @@ impl Inner {
         agent.ctx().ensure_active()?;
         if info.is_some_and(|info| info.r#type == FsType::Directory) {
             if self.recorded(session).is_none() {
-                session.append(WORKING_DIRECTORY_CHANGE, json!({ "cwd": current }), None)?;
+                verify_session_directory(session, &current)?;
             }
             return Ok(current);
         }
-        let original = session
-            .header()
-            .get("cwd")
-            .and_then(Value::as_str)
-            .map_or_else(|| self.default_directory().to_owned(), str::to_owned);
-        let restored = self
-            .directory(&original, &original, control, || {
-                WorkingDirectoryError::new(
-                    format!(
-                        "working-directory: directory does not exist: {}; the current working directory {} is also unavailable",
-                        json_string(&original),
-                        json_string(&current),
-                    ),
-                    WorkingDirectoryErrorCode::Unavailable,
-                )
-            })
-            .await?;
-        self.commit(agent, &restored, true, control)?;
-        Ok(restored)
+        Err(WorkingDirectoryError::new(
+            format!("The conversation folder {} is unavailable. Select it again before starting the executor.", json_string(&current)),
+            WorkingDirectoryErrorCode::Unavailable,
+        ).into())
     }
 
     async fn set_now(
@@ -610,9 +666,15 @@ impl Inner {
         let session = agent.session();
         let previous = self.get(session);
         if previous == directory {
+            verify_session_directory(session, directory)?;
             return Ok(());
         }
-        session.append(WORKING_DIRECTORY_CHANGE, json!({ "cwd": directory }), None)?;
+        let identity = directory_identity(directory)?;
+        session.append(
+            WORKING_DIRECTORY_CHANGE,
+            json!({ "cwd": directory, "identity": identity }),
+            None,
+        )?;
         let text = if recovered {
             format!(
                 "The working directory {} is unavailable. The working directory is now {}.",

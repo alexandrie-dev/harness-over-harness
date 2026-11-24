@@ -96,6 +96,7 @@ fn params(dir: &Path, resume: Option<&str>, policy: HarnessPolicy) -> StartParam
     StartParams {
         session_id: "hoh-1".into(),
         cwd: dir.to_string_lossy().into_owned(),
+        cwd_identity: None,
         model: None,
         effort: None,
         policy,

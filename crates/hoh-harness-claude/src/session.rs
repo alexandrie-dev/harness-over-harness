@@ -1879,6 +1879,7 @@ mod round2_tests {
             program: PathBuf::from("sh"),
             args: vec!["-c".into(), "exec 0<&-; exec sleep 30".into()],
             cwd: None,
+            cwd_identity: None,
             env: Vec::new(),
             env_remove: Vec::new(),
         };

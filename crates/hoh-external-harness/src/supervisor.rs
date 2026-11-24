@@ -28,6 +28,7 @@ pub struct ProcessSpec {
     pub program: PathBuf,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
+    pub cwd_identity: Option<[u64; 2]>,
     /// Added to the inherited environment.
     pub env: Vec<(String, String)>,
     /// Removed from the inherited environment.
@@ -144,6 +145,39 @@ impl Supervisor {
             command.env_remove(name);
         }
         command.envs(spec.env.iter().map(|(k, v)| (k, v)));
+        if let (Some(cwd), Some(expected)) = (&spec.cwd, spec.cwd_identity) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let canonical = std::fs::canonicalize(cwd).map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("The conversation folder is unavailable: {error}"),
+                    )
+                })?;
+                let metadata = std::fs::symlink_metadata(cwd).map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("The conversation folder is unavailable: {error}"),
+                    )
+                })?;
+                if canonical != *cwd
+                    || !metadata.is_dir()
+                    || metadata.file_type().is_symlink()
+                    || [metadata.dev(), metadata.ino()] != expected
+                {
+                    return Err(HarnessFailure::new(
+                        code::IO,
+                        "The conversation folder has changed. Select it again before starting the executor.",
+                    ));
+                }
+            }
+            #[cfg(not(unix))]
+            return Err(HarnessFailure::new(
+                code::IO,
+                "The conversation folder identity cannot be verified on this platform.",
+            ));
+        }
         let mut child = command.spawn().map_err(|error| {
             let program = spec.program.display();
             match error.kind() {
@@ -643,6 +677,30 @@ mod tests {
     use super::*;
     use crate::redact::REDACTED;
     use std::path::Path;
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_replaced_or_missing_working_directory_before_spawn() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("work");
+        let moved = tmp.path().join("moved");
+        let other = tmp.path().join("other");
+        std::fs::create_dir(&cwd).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let metadata = std::fs::metadata(&cwd).unwrap();
+        let spec = ProcessSpec {
+            program: "sh".into(),
+            cwd: Some(cwd.clone()),
+            cwd_identity: Some([metadata.dev(), metadata.ino()]),
+            ..Default::default()
+        };
+        std::fs::rename(&cwd, &moved).unwrap();
+        symlink(&other, &cwd).unwrap();
+        assert!(Supervisor::spawn(&spec, SupervisorLimits::default(), None).is_err());
+        std::fs::remove_file(&cwd).unwrap();
+        assert!(Supervisor::spawn(&spec, SupervisorLimits::default(), None).is_err());
+    }
 
     /// Review 221315, item 3: printing a spec shows the names of its environment, not the values.
     #[test]

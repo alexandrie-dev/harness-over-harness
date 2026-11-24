@@ -151,6 +151,7 @@ fn app_server_spec(config: &CodexConfig, cwd: &Path) -> ProcessSpec {
             "thread_unload_delay_secs=0".to_owned(),
         ],
         cwd: Some(cwd.to_owned()),
+        cwd_identity: None,
         env: config.extra_env.clone(),
         env_remove: Vec::new(),
     }
@@ -328,7 +329,9 @@ impl ExternalHarness for CodexHarness {
                 }
             };
             let cwd = PathBuf::from(&params.cwd);
-            let supervisor = spawn(&config, &cwd)?;
+            let mut process = app_server_spec(&config, &cwd);
+            process.cwd_identity = params.cwd_identity;
+            let supervisor = Supervisor::spawn(&process, config.limits, None)?;
             let resume = params.resume.as_ref().map(|id| String::from(id.clone()));
             let started = CodexSession::start(
                 supervisor,

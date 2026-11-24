@@ -21,6 +21,7 @@ fn params(
     StartParams {
         session_id: "cx-live".into(),
         cwd: temp.path().to_string_lossy().into_owned(),
+        cwd_identity: None,
         model: Some(model),
         effort,
         policy: Default::default(),
