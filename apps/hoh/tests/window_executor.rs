@@ -1352,24 +1352,19 @@ async fn p4_full_what_even_bypass_refuses_reaches_the_human() {
     host.shutdown().await;
 }
 
-/// 5. In confirm the network is closed: the CLI gets `--disallowedTools WebFetch,WebSearch`.
+/// 5. In Confirm Claude's web tools stay available behind the same user permission callback.
 #[tokio::test]
-async fn p5_confirm_closes_the_network_of_claude() {
+async fn p5_confirm_keeps_claude_web_tools_behind_confirmation() {
     let workspace = Workspace::new();
     let mut host = engine_with_claude(&workspace, "confirm").await;
     host.prompt("hello").await;
     let start = only_session(&workspace, &host);
-    assert_eq!(
-        start.value_of("--disallowedTools"),
-        Some("WebFetch,WebSearch"),
-        "{start:?}"
-    );
+    assert_eq!(start.value_of("--disallowedTools"), None, "{start:?}");
+    assert_eq!(start.value_of("--permission-prompt-tool"), Some("stdio"));
     let flags = host.access().await["effective"]["flags"].clone();
     let flags: Vec<String> = serde_json::from_value(flags).expect("flags");
-    let at = flags.iter().position(|flag| flag == "--disallowedTools");
-    assert_eq!(
-        at.and_then(|at| flags.get(at + 1)).map(String::as_str),
-        Some("WebFetch,WebSearch"),
+    assert!(
+        !flags.iter().any(|flag| flag == "--disallowedTools"),
         "{flags:?}"
     );
     host.shutdown().await;

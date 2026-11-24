@@ -88,8 +88,10 @@ pub(crate) fn access_text(executor: &str, access: AccessMode) -> String {
 }
 
 /// The policy a native session is started with under `access`. [`AccessMode::Confirm`] caps the
-/// configured sandbox and network to the safe default (the folder, no network): the
-/// configuration does not widen what the user chose. [`AccessMode::Full`] runs without the
+/// configured sandbox and automatic network access to the safe default. Claude is the narrow
+/// exception: WebFetch/WebSearch stay present but each use is decided through its user permission
+/// callback; Codex and every other executor keep this denied network policy. The configuration
+/// does not widen what the user chose. [`AccessMode::Full`] runs without the
 /// CLI's sandbox and with the network, except a session configured read-only: it stays read-only
 /// with its own network (review 232500, item 4; as `hoh-harness-claude` launches it).
 pub(crate) fn launch_policy(configured: &HarnessPolicy, access: AccessMode) -> HarnessPolicy {

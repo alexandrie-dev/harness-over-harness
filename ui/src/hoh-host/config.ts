@@ -254,8 +254,9 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, r
     instanceId: CLAUDE_INSTANCE_ID,
     driver: CLAUDE_INSTANCE_ID,
     displayName: 'Claude',
-    showInteractionModeToggle: false,
-    supportedRuntimeModes: ['approval-required', 'full-access'],
+    showInteractionModeToggle: true,
+    // T3 renders all four rows; the two unimplemented auto modes are disabled by the base patch.
+    supportedRuntimeModes: ['approval-required', 'auto-accept-edits', 'auto', 'full-access'],
     supportsConversationRollback: false,
     supportsTextGeneration: false,
     enabled: true,

@@ -238,7 +238,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `^apps/web/src/components/device/models/.*\.glb$` | 3D-модели устройств скрытой части «устройства и пары» (~12 МБ): не переносятся (решение ведущего); импорты `?url` — адрес-заглушка stubs/absent-url.ts |
 | `^apps/web/src/i18n/translations/(?!(en\|ru)\.json$)[^/]+$` | переводы, кроме en и ru, не переносятся (решение ведущего); список языков сужен правкой gt.config.json |
 
-Файлов перенесено: **1974**, из них без изменений: **1954**, правок файлов T3: **21** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
+Файлов перенесено: **1974**, из них без изменений: **1950**, правок файлов T3: **25** (таблица ниже), НЕОЖИДАННО ОТЛИЧАЮТСЯ: web/components/device/models/ipad-pro-13-m5-magic-keyboard.glb, web/components/device/models/ipad-pro-13-m5.glb, web/components/device/models/iphone-18-pro-max.glb, web/components/device/models/iphone-18-pro.glb, web/components/device/models/iphone-duo.glb, web/i18n/translations/de.json, web/i18n/translations/es.json, web/i18n/translations/fr.json, web/i18n/translations/ja.json, web/i18n/translations/ko.json, web/i18n/translations/pt-BR.json, web/i18n/translations/sv.json, web/i18n/translations/zh.json.
 Отложено (не проверяет tsc: в замыкании импортов есть пакет, которого нет в `ui/package.json` и `ui/node_modules` в версии, совместимой с lock T3: тот же major, для 0.x — тот же minor): **0** из 1949 файлов кода;
 не хватает пакетов (сколько файлов T3 их импортирует): нет. Когда пакеты из `ui/T3-DEPS.md` (раздел HOH-40) стоят, отложенных нет —
 `t3-sync.py` пересчитывает список сам. tsc основы — с настройками T3 (`strict`, `noImplicitAny`, `noUncheckedIndexedAccess`,
@@ -250,10 +250,10 @@ Tailwind прежней оболочки её не сканирует (`@source 
 
 | Папка T3 | Папка у нас | Файлов | Из них кода | Без изменений | Правок | Отложено | На заглушках |
 |---|---|---|---|---|---|---|---|
-| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1442 | 18 | 0 | 70 |
+| `apps/web/src` | `ui/src/t3/base/web` | 1473 | 1436 | 1439 | 21 | 0 | 70 |
 | `packages/contracts/src` | `ui/src/t3/base/contracts` | 79 | 79 | 78 | 1 | 0 | 0 |
 | `packages/shared/src` | `ui/src/t3/base/shared` | 126 | 125 | 126 | 0 | 0 | 1 |
-| `packages/client-runtime/src` | `ui/src/t3/base/client-runtime` | 267 | 267 | 266 | 1 | 0 | 10 |
+| `packages/client-runtime/src` | `ui/src/t3/base/client-runtime` | 267 | 267 | 265 | 2 | 0 | 10 |
 | `packages/issue-tracker-linear/src` | `ui/src/t3/base/issue-tracker-linear` | 1 | 1 | 1 | 0 | 0 | 0 |
 | `packages/provider-acp-registry/src` | `ui/src/t3/base/provider-acp-registry` | 2 | 2 | 2 | 0 | 0 | 0 |
 | `packages/provider-core/src` | `ui/src/t3/base/provider-core` | 2 | 2 | 2 | 0 | 0 | 0 |
@@ -302,8 +302,10 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/branding.ts` | правка (`ui/src/t3/base-patches/web/branding.ts.patch`) | имя продукта: HoH вместо «T3 Code» (заголовок окна, о программе); у T3 его меняет только desktopBridge, которого у окна нет |
 | `web/components/chat/turnDetailAnnouncement.ts` | правка (`ui/src/t3/base-patches/web/components/chat/turnDetailAnnouncement.ts.patch`) | имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code» |
 | `web/components/ChatView.logic.ts` | правка (`ui/src/t3/base-patches/web/components/ChatView.logic.ts.patch`) | термин нового разговора: видимый заголовок черновика — New chat вместо New thread |
-| `web/components/chat/DraftHeroHeadline.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/DraftHeroHeadline.tsx.patch`) | проект HoH с постоянным id всегда показывает продуктовый вопрос без подписи scratch-проекта, поэтому пустая главная не меняется при resize |
+| `web/components/chat/DraftHeroHeadline.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/DraftHeroHeadline.tsx.patch`) | стабильная пустая главная: проект HoH с постоянным id всегда показывает продуктовый вопрос без подписи scratch-проекта |
 | `web/components/CommandPalette.tsx` | правка (`ui/src/t3/base-patches/web/components/CommandPalette.tsx.patch`) | термин нового разговора: видимые действия палитры — New chat вместо New thread |
+| `web/components/chat/runtimeModeConfig.ts` | правка (`ui/src/t3/base-patches/web/components/chat/runtimeModeConfig.ts.patch`) | режим доступа: только Supervised и Full access выбираются; Auto-accept edits и Auto видны как Coming Soon |
+| `web/components/chat/MessagesTimeline.logic.ts` | правка (`ui/src/t3/base-patches/web/components/chat/MessagesTimeline.logic.ts.patch`) | остановленный пользователем ход сохраняет подпись You stopped после перезапуска и после следующих ходов |
 
 Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
 `desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 136 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).

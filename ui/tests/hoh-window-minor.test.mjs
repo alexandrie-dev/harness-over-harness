@@ -105,3 +105,35 @@ test('Claude skills do not offer an unsafe file instruction opener', async () =>
   assert(patched['web/components/ComposerPromptEditorTiptap.tsx']);
   assert.match(map, /SkillInlineText\.tsx\.patch[^\n]*View instructions/);
 });
+
+test('T3 lists auto modes as Coming Soon while Full and Supervised remain selectable', async () => {
+  const [patch, source, manifestText, map] = await Promise.all([
+    readFile(new URL('src/t3/base-patches/web/components/chat/runtimeModeConfig.ts.patch', root), 'utf8'),
+    readFile(new URL('src/t3/base/web/components/chat/runtimeModeConfig.ts', root), 'utf8'),
+    readFile(new URL('src/t3/manifest.json', root), 'utf8'),
+    readFile(new URL('T3-MAP.md', root), 'utf8'),
+  ]);
+  for (const text of [patch, source]) {
+    assert.match(text, /mode === "auto-accept-edits" \|\| mode === "auto"/);
+    assert.match(text, /disabledReason: resolve\(msg\("Coming Soon"\)\)/);
+  }
+  assert(JSON.parse(manifestText).base.patched['web/components/chat/runtimeModeConfig.ts']);
+  assert.match(map, /runtimeModeConfig\.ts\.patch[^\n]*Coming Soon/);
+});
+
+test('T3 materializes durable stopped-run provenance into old turn fold labels', async () => {
+  const [patch, source, manifestText, map] = await Promise.all([
+    readFile(new URL('src/t3/base-patches/web/components/chat/MessagesTimeline.logic.ts.patch', root), 'utf8'),
+    readFile(new URL('src/t3/base/web/components/chat/MessagesTimeline.logic.ts', root), 'utf8'),
+    readFile(new URL('src/t3/manifest.json', root), 'utf8'),
+    readFile(new URL('T3-MAP.md', root), 'utf8'),
+  ]);
+  for (const text of [patch, source]) {
+    assert.match(text, /const isInterruptedTurn =/);
+    assert.match(text, /interruptedRunIds\.has\(runId\)/);
+    assert.match(text, /const label = isInterruptedTurn/);
+  }
+  assert.doesNotMatch(source, /input\.unfoldedRunIds\.has\(runId\) \|\|\s*interruptedRunIds\.has\(runId\)/);
+  assert(JSON.parse(manifestText).base.patched['web/components/chat/MessagesTimeline.logic.ts']);
+  assert.match(map, /MessagesTimeline\.logic\.ts\.patch[^\n]*You stopped/);
+});

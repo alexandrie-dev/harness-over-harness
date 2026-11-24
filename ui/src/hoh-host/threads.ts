@@ -413,7 +413,7 @@ export class ThreadModel {
     if (item.parentItemId) this.refreshSubagent(item.parentItemId);
   }
 
-  private endTurn(reason: string, at: number, error?: unknown) {
+  private endTurn(reason: string, at: number, error?: unknown, cause?: unknown) {
     this.reopened = null;
     const run = this.currentRun();
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
@@ -429,6 +429,15 @@ export class ThreadModel {
     for (const live of this.live.values()) this.retired.add(live.attemptId);
     this.live.clear();
     for (const request of this.requests) if (request.status === 'pending') { request.status = 'cancelled'; request.resolvedAt = at; }
+    // This is durable provenance from the engine, not the browser's Stop click. T3 already uses
+    // run_interrupt_result to remember which run was deliberately stopped; replaying the journal
+    // reconstructs the same marker for Claude and Codex after any window restart.
+    if (reason === 'aborted' && record(cause).kind === 'user' && run && !this.item('item-stop-' + run.id)) {
+      this.items.push({
+        ...this.base('item-stop-' + run.id, 'run_interrupt_result', 'completed', at, run.id),
+        message: 'Stopped by user',
+      });
+    }
     // T3's own form and words for a failed turn (packages/provider-core/src/server/failure.ts `makeProviderFailureTurnItem`).
     if (reason === 'error') this.items.push({ ...this.base('item-error-' + this.ordinal, 'error', 'failed', at), title: 'Provider error', failure: providerFailure(error, 'provider_error', 'Provider turn failed.') });
     this.running = false;
@@ -465,7 +474,12 @@ export class ThreadModel {
         this.running = true; this.settledByGuess = false;
         break;
       }
-      case 'turn/end': this.endTurn(text(record(data.reason).kind), at, record(data.reason).error); this.engineRunning = false; this.settledByGuess = false; break;
+      case 'turn/end': {
+        const reason = record(data.reason);
+        this.endTurn(text(reason.kind), at, reason.error, reason.reason);
+        this.engineRunning = false; this.settledByGuess = false;
+        break;
+      }
       case 'assistant/message': {
         const message = record(data.message);
         if (!text(message.id)) return false;

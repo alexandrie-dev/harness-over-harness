@@ -77,7 +77,13 @@ export class FakeEngine {
         const answer = { executor: params.executor, mode: this.access.mode, runtimeMode: this.access.mode, effective: { mode: this.access.mode, flags: [] }, selected: this.access.selected };
         const session = params.sessionId ? this.store.get(params.sessionId) : undefined;
         const chosen = params.sessionId ? (this.sessionAccess.get(params.sessionId) ?? session?.runtimeMode) : undefined;
-        return session?.executor || session?.model ? { ...answer, session: { executor: session.executor ?? 'claude', model: session.model, privacy: 'remote', mode: chosen === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? 'confirm', running: null, runningRuntimeMode: null, pending: false } } : answer;
+        const running = session?.runningRuntimeMode;
+        return session?.executor || session?.model ? { ...answer, session: {
+          executor: session.executor ?? 'claude', model: session.model, privacy: 'remote',
+          mode: chosen === 'full' ? 'full' : 'confirm', runtimeMode: chosen ?? 'confirm',
+          running: running === undefined ? null : running === 'full' ? 'full' : 'confirm',
+          runningRuntimeMode: running ?? null, pending: running !== undefined && running !== chosen,
+        } } : answer;
       }
       case 'hoh/executor/access/set':
         if (params.sessionId) {
@@ -119,6 +125,7 @@ export class FakeEngine {
         const session = this.store.get(params.sessionId);
         session.executor ??= this.access.selected.executor;
         session.model ??= this.access.selected.model;
+        session.runningRuntimeMode = session.runtimeMode ?? 'confirm';
         const text = params.contentBlocks.map(block => block.text ?? '').join('');
         const messageId = `engine-m-${++this.counter}`;
         // After answering, the engine starts the turn and then records its message (session.v4 order).

@@ -36,17 +36,17 @@ test('handshake: config snapshot, probe, settings, ping; Claude and Codex are of
   assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent', 'codex']);
   assert.deepEqual(first.config.providers[0].models.map(model => model.slug), ['claude-sonnet', 'claude-opus']);
   assert.equal(first.config.providers[0].status, 'ready');
-  assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'full-access']);
+  assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
   assert.deepEqual(first.config.providers[1].models.map(model => model.slug), ['gpt-6-sol']);
   assert.deepEqual(first.config.providers[1].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
   assert.deepEqual(first.config.settings.defaultModelSelection, { instanceId: 'claudeAgent', model: 'claude-sonnet' });
-  assert.equal(first.config.settings.defaultRuntimeMode, 'approval-required');
+  assert.equal(first.config.settings.defaultRuntimeMode, 'full-access');
   // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
   assert.deepEqual(Object.keys(first.config.environment.capabilities).sort(), ['connectionProbe', 'inlineMessageContext', 'providerWorkspaceSnapshotsOnDemand', 'repositoryIdentity', 'threadForceStop']);
   assert.deepEqual(await client.call('server.probe', {}), {});
   assert.deepEqual(await client.request('server.reportClientActivity', {}), { _tag: 'Success', value: null });
   assert.equal((await client.call('server.getConfig', {})).environment.label, 'HoH');
-  assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'approval-required');
+  assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'full-access');
   client.send({ _tag: 'Ping' });
   await tick(5);
   assert(client.frames.some(frame => frame._tag === 'Pong'));
@@ -236,7 +236,7 @@ test('a follow-up message goes to the same chat; Stop is the engine\'s cancel an
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'running');
   await client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'c2', threadId: 'thread-2' });
   assert.equal(engine.cancelled, 1);
-  engine.emitEvent('thread-2', 'turn/end', { reason: { kind: 'aborted' } });
+  engine.emitEvent('thread-2', 'turn/end', { reason: { kind: 'aborted', reason: { kind: 'user' } } });
   await thread.until(value => value.kind === 'snapshot' && value.projection.runs[0]?.status === 'interrupted');
   const stopped = host.home.entries().find(entry => entry.id === 'thread-2');
   assert.deepEqual(
@@ -246,6 +246,37 @@ test('a follow-up message goes to the same chat; Stop is the engine\'s cancel an
   );
   assert.deepEqual(await client.call('orchestration.forceStopThread', { threadId: 'thread-2' }), { outcome: 'killed', sharedWithThreadIds: [] });
   assert.equal(engine.cancelled, 2);
+});
+
+test('a durable user Stop survives restart and later turns for Claude and Codex', async () => {
+  for (const executor of ['claude', 'codex']) {
+    const store = new Map();
+    const first = new FakeEngine({ store });
+    const id = `stopped-${executor}`;
+    first.seed(id, `Stopped ${executor}`, [
+      ['turn/start', { turn: 1 }],
+      ['user/message', { id: `${id}-u1`, source: { kind: 'user' }, content: [{ type: 'text', text: 'first' }] }],
+      ['tool/call', { turn: 1, callId: `${id}-tool`, name: 'Read', arguments: { file_path: 'note.txt' } }],
+      ['turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } }],
+      ['turn/start', { turn: 2 }],
+      ['user/message', { id: `${id}-u2`, source: { kind: 'user' }, content: [{ type: 'text', text: 'second' }] }],
+      ['assistant/message', { turn: 2, step: 1, message: { id: `${id}-a2`, content: [{ type: 'text', text: 'done' }] } }],
+      ['turn/end', { turn: 2, reason: { kind: 'completed' } }],
+    ]);
+    Object.assign(store.get(id), {
+      executor, model: executor === 'codex' ? 'gpt-6-sol' : 'claude-sonnet', runtimeMode: 'confirm',
+    });
+
+    for (let restart = 0; restart < 2; restart++) {
+      const engine = restart === 0 ? first : new FakeEngine({ store });
+      const { client, host } = connect(engine);
+      const projection = await client.call('orchestration.getThreadProjection', { threadId: id });
+      assert.deepEqual(projection.runs.map(run => run.status), ['interrupted', 'completed'], `${executor} restart ${restart}`);
+      const stops = projection.turnItems.filter(item => item.type === 'run_interrupt_result');
+      assert.deepEqual(stops.map(item => [item.runId, item.message]), [[`run-msg-${id}-u1`, 'Stopped by user']], `${executor} restart ${restart}`);
+      host.stop();
+    }
+  }
 });
 
 test('permission request of Claude: shown in the chat as T3 shows Claude\'s (kind and text from the tool call), the answer goes to the engine', async () => {
@@ -310,14 +341,56 @@ test('access mode: T3\'s exact switch is scoped to the thread; the default setti
   const { client } = connect(engine);
   const config = await client.stream('subscribeServerConfig', {});
   await config.until(value => value.type === 'snapshot');
-  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'chat-m', runtimeMode: 'full-access' });
-  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', sessionId: 'chat-m', mode: 'full', runtimeMode: 'full' }]);
-  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-m' })).thread.runtimeMode, 'full-access');
+  await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c1', threadId: 'chat-m', runtimeMode: 'approval-required' });
+  assert.deepEqual(engine.requests.filter(r => r.method === 'hoh/executor/access/set').map(r => r.params), [{ executor: 'claude', sessionId: 'chat-m', mode: 'confirm', runtimeMode: 'confirm' }]);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'chat-m' })).thread.runtimeMode, 'approval-required');
   // T3 shows the mode chip under the composer of a started thread while its mode differs from this setting.
-  assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'approval-required');
+  assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'full-access');
   // T3's in-between modes keep their exact Codex meaning (the legacy field stays confirm).
   await client.call('orchestration.dispatchCommand', { type: 'thread.runtime-mode.set', commandId: 'c2', threadId: 'chat-m', runtimeMode: 'auto-accept-edits' });
   assert.equal(engine.sessionAccess.get('chat-m'), 'auto-accept-edits');
+});
+
+test('Full is only the fresh-chat default; a version-1 browser cache cannot widen a recordless legacy conversation', async () => {
+  const items = new Map([[mod.host.STORAGE_KEY, JSON.stringify({ version: 1, defaultMode: 'confirm' })]]);
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const engine = new FakeEngine();
+  engine.seed('legacy-chat', 'Legacy', []);
+  Object.assign(engine.store.get('legacy-chat'), { executor: 'claude', model: 'claude-sonnet' });
+  const { client } = connect(engine, { storage });
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  assert.equal(snapshot.snapshot.threads.find(thread => thread.id === 'legacy-chat').runtimeMode, 'approval-required');
+  assert.equal((await client.call('server.getSettings', {})).defaultRuntimeMode, 'full-access');
+
+  await client.call('orchestration.launchThread', {
+    commandId: 'fresh', threadId: 'fresh-chat', projectId: 'hoh-project', title: 'Fresh',
+    modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, interactionMode: 'default', workspaceStrategy: { type: 'root' },
+  });
+  assert.equal(engine.sessionAccess.get('fresh-chat'), 'full');
+  assert.equal(JSON.parse(items.get(mod.host.STORAGE_KEY)).version, 2);
+});
+
+test('the thread always shows the engine running mode while a different choice is pending', async () => {
+  const engine = new FakeEngine();
+  engine.seed('running-mode', 'Running mode', []);
+  Object.assign(engine.store.get('running-mode'), {
+    executor: 'claude', model: 'claude-sonnet', runtimeMode: 'confirm', runningRuntimeMode: 'full',
+  });
+  const { client } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', {});
+  const snapshot = await shell.until(value => value.kind === 'snapshot');
+  assert.equal(snapshot.snapshot.threads.find(thread => thread.id === 'running-mode').runtimeMode, 'full-access');
+
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.runtime-mode.set', commandId: 'pending-confirm', threadId: 'running-mode', runtimeMode: 'approval-required',
+  });
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'running-mode' })).thread.runtimeMode, 'full-access');
+
+  delete engine.store.get('running-mode').runningRuntimeMode;
+  engine.emitStatus('running-mode', 'idle');
+  await tick(5);
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'running-mode' })).thread.runtimeMode, 'approval-required');
 });
 
 test('Codex: app-server models and effort are offered; executor and exact mode apply before the first message', async () => {
@@ -1525,7 +1598,9 @@ test('a delayed startup access read cannot overwrite model and mode chosen meanw
   await tick(5);
   const settings = await client.call('server.getSettings', {});
   const projection = await client.call('orchestration.getThreadProjection', { threadId: 'chat-choice' });
-  assert.deepEqual(engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').map(entry => entry.params), []);
+  assert.deepEqual(engine.requests.filter(entry => entry.method === 'hoh/executor/access/set').map(entry => entry.params), [
+    { executor: 'claude', sessionId: 'chat-choice', mode: 'confirm', runtimeMode: 'confirm' },
+  ]);
   assert.equal(settings.defaultModelSelection.model, 'claude-opus');
   assert.equal(projection.thread.runtimeMode, 'approval-required');
   assert.equal(projection.thread.modelSelection.model, 'claude-opus');

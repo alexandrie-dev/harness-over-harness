@@ -864,7 +864,7 @@ async fn approval_never_is_refused_and_no_mode_gets_a_way_around_the_questions()
     let at = args.iter().position(|a| a == "--permission-mode").unwrap();
     assert_eq!(args[at + 1], "default");
     assert!(!args.contains(&"--allowedTools".to_owned()));
-    assert!(args.contains(&"--disallowedTools".to_owned()));
+    assert!(!args.contains(&"--disallowedTools".to_owned()));
     // The tools of writing are not merely unapproved: the CLI is not given them at all.
     let at = args.iter().position(|a| a == "--tools").expect("--tools");
     assert_eq!(args[at + 1], "Read,Glob,Grep,LS,NotebookRead,TodoWrite");
@@ -1430,7 +1430,7 @@ async fn the_chosen_model_reaches_the_command_line() {
 }
 
 #[tokio::test]
-async fn without_network_the_two_network_tools_are_disallowed() {
+async fn confirm_keeps_web_tools_behind_the_permission_prompt() {
     use hoh_external_harness::NetworkAccess;
     let env = Env::new();
     let started = start_with(
@@ -1443,8 +1443,8 @@ async fn without_network_the_two_network_tools_are_disallowed() {
     )
     .await;
     let args = env.args();
-    let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
-    assert_eq!(args[at + 1], "WebFetch,WebSearch");
+    assert!(!args.contains(&"--disallowedTools".to_owned()));
+    assert!(args.contains(&"--permission-prompt-tool".to_owned()));
     started.session.terminate(Duration::from_millis(500)).await;
 }
 
@@ -2076,7 +2076,12 @@ async fn an_input_without_questions_has_no_questions_key_in_the_answer() {
 
 #[tokio::test]
 async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
-    for access in [AccessMode::Confirm, AccessMode::Full] {
+    for access in [
+        AccessMode::Confirm,
+        AccessMode::AutoAcceptEdits,
+        AccessMode::Auto,
+        AccessMode::Full,
+    ] {
         let mut env = Env::new();
         env.access = access;
         let policy = HarnessPolicy::default();
@@ -2110,6 +2115,11 @@ async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
                 assert_eq!(args[at + 1], "bypassPermissions");
             }
         }
+        assert_eq!(
+            has("--disallowedTools"),
+            matches!(access, AccessMode::AutoAcceptEdits | AccessMode::Auto),
+            "{access:?}: {args:?}"
+        );
         started.session.terminate(Duration::from_millis(500)).await;
     }
 }

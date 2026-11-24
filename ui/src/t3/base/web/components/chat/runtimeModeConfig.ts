@@ -62,12 +62,16 @@ export function resolveRuntimeModeOption(
   disabledReason?: string;
 } {
   const config = runtimeModeConfig[mode];
-  return {
+  const option = {
     mode,
     ...config,
     label: resolve(config.label),
     description: resolve(config.description),
   };
+  // HoH implements only Supervised and Full access end to end for both executors.
+  return mode === "auto-accept-edits" || mode === "auto"
+    ? { ...option, disabledReason: resolve(msg("Coming Soon")) }
+    : option;
 }
 
 /** Why `mode` is unavailable under `managedPolicy`, or undefined when it is allowed. */

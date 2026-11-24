@@ -215,7 +215,9 @@ pub(crate) struct Launch {
 /// the plugin's configuration). Confirm: `default` + `can_use_tool`, so every command, write and
 /// network call the CLI does not settle itself is a question to the slot, which has no automatic
 /// "yes" here; read-only is `default` too, with `--tools` limited to the read tools and no
-/// `--allowedTools`. Full: `bypassPermissions` when it widens the policy, `dontAsk` with the read
+/// `--allowedTools`. Claude's web tools remain available in Confirm because their use reaches the
+/// same permission callback; preserved legacy auto modes still keep the network-denied tool cap.
+/// Full: `bypassPermissions` when it widens the policy, `dontAsk` with the read
 /// tools when the session is read-only. `approval: never` under confirm is refused before this
 /// point ([`NEVER_REFUSED`]).
 pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
@@ -253,8 +255,12 @@ pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
         permission_prompt: true,
         bypass: false,
         tools: read_only.then_some(READ_ONLY_TOOLS),
-        // The CLI has no network switch; without network access its two network tools stay off.
-        disallowed_tools: (policy.network == NetworkAccess::Denied).then_some("WebFetch,WebSearch"),
+        // Confirm asks the person about WebFetch/WebSearch through the stdio callback. Keep the
+        // old network-denied cap for persisted auto modes: they can settle actions themselves and
+        // are not part of this exception.
+        disallowed_tools: (access != AccessMode::Confirm
+            && policy.network == NetworkAccess::Denied)
+            .then_some("WebFetch,WebSearch"),
     }
 }
 
@@ -1076,9 +1082,7 @@ mod tests {
                 "--setting-sources",
                 "user,project,local",
                 "--permission-prompt-tool",
-                "stdio",
-                "--disallowedTools",
-                "WebFetch,WebSearch"
+                "stdio"
             ]
         );
         assert_eq!(
@@ -1118,11 +1122,25 @@ mod tests {
                 "",
                 "--strict-mcp-config",
                 "--permission-prompt-tool",
-                "stdio",
-                "--disallowedTools",
-                "WebFetch,WebSearch"
+                "stdio"
             ]
         );
+
+        // The web-tool exception is exactly Confirm. Persisted legacy auto modes keep the
+        // network-denied cap, while Full is already web-enabled.
+        for access in [
+            AccessMode::Confirm,
+            AccessMode::AutoAcceptEdits,
+            AccessMode::Auto,
+            AccessMode::Full,
+        ] {
+            let flags = config.launch_flags(&HarnessPolicy::default(), access);
+            assert_eq!(
+                flags.iter().any(|flag| flag == "--disallowedTools"),
+                matches!(access, AccessMode::AutoAcceptEdits | AccessMode::Auto),
+                "{access:?}: {flags:?}"
+            );
+        }
     }
 
     #[test]

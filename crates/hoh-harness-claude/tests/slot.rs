@@ -369,7 +369,7 @@ async fn the_launch_flags_are_the_flags_the_process_gets() {
     assert_eq!(
         words(confirm(CONFIRM_POLICY)),
         "--permission-mode default --setting-sources user,project,local \
-         --permission-prompt-tool stdio --disallowedTools WebFetch,WebSearch"
+         --permission-prompt-tool stdio"
     );
     assert_eq!(
         words(full(FULL_POLICY)),
@@ -431,20 +431,17 @@ async fn discover_with_status_places_the_version_against_the_checked_range() {
     slot.close().await;
 }
 
-/// (1) Confirm from the slot with the network denied: the CLI's two network tools stay off, even
-/// when the configuration says full.
+/// (1) Confirm from the slot with the network denied: WebFetch/WebSearch remain available but each
+/// use reaches the person's stdio permission prompt, even when the configuration says full.
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
-async fn confirm_from_the_slot_keeps_the_network_tools_off_whatever_the_configuration_says() {
+async fn confirm_from_the_slot_keeps_web_tools_behind_the_permission_prompt() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let slot = mount_claude(json!({ "access": "full" }), None).await;
     let started = slot.start(CONFIRM_POLICY, AccessMode::Confirm).await;
     let args = slot.args();
-    assert_eq!(
-        flag_value(&args, "--disallowedTools"),
-        Some("WebFetch,WebSearch"),
-        "{args:?}"
-    );
+    assert_eq!(flag_value(&args, "--disallowedTools"), None, "{args:?}");
+    assert_eq!(flag_value(&args, "--permission-prompt-tool"), Some("stdio"));
     started.session.terminate(Duration::from_millis(500)).await;
     slot.close().await;
 }

@@ -148,6 +148,10 @@ const timeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(
 const executorOf = (instanceId: unknown): HohExecutor => instanceId === CODEX_INSTANCE_ID ? 'codex' : 'claude';
 const instanceOf = (executor: HohExecutor) => executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID;
 const exactMode = (value: unknown): HohAccessMode | null => ['confirm', 'auto-accept-edits', 'auto', 'full'].includes(String(value)) ? value as HohAccessMode : null;
+/** What the executor is actually running wins over a requested mode waiting for the next turn. */
+const effectiveSessionMode = (session: any, fallback: HohAccessMode): HohAccessMode =>
+  exactMode(session?.runningRuntimeMode) ?? exactMode(session?.running)
+  ?? exactMode(session?.runtimeMode) ?? exactMode(session?.mode) ?? fallback;
 
 const PAGE = 1000;
 const NO_OP_COMMANDS = new Set([
@@ -222,8 +226,8 @@ export class HohHost {
   /** A person's Refresh supersedes the startup lane; incidental workspace reads share its in-flight probe. */
   private discoveryGeneration = 0;
   private discoveryInFlight: { generation: number; promise: Promise<boolean> } | undefined;
-  /** T3's "default permissions" setting: the mode a new thread starts in. Claude asks first until the person changes it. */
-  private defaultMode: HohAccessMode = 'confirm';
+  /** T3's "default permissions" setting: every fresh thread records Full in the engine before its first prompt. */
+  private defaultMode: HohAccessMode = 'full';
   private selectedExecutor: HohExecutor = 'claude';
   /** The model the engine runs new chats with (`hoh/executor/select`), once known. */
   private selectedModel: string | null = null;
@@ -333,7 +337,9 @@ export class HohHost {
       if (Number.isFinite(observedAt) && observedAt > 0) this.homeObservedAt.set(threadId, observedAt);
     }
     if (folderPath(saved?.defaultFolder)) this.workspaceRoot = folderPath(saved.defaultFolder);
-    if (exactMode(saved?.defaultMode)) this.defaultMode = saved.defaultMode;
+    // Version 1 was written while Supervised was the product default. Do not let that browser
+    // preference silently override the new Full default; per-session modes still come from engine.
+    if (Number(saved?.version) >= 2 && exactMode(saved?.defaultMode)) this.defaultMode = saved.defaultMode;
     // Last-known-good list metadata makes the first post-restart snapshot lossless even when the
     // engine's first disk scan is temporarily incomplete. History still comes only from the engine.
     for (const entry of Array.isArray(saved?.sessions) ? saved.sessions : []) {
@@ -368,7 +374,7 @@ export class HohHost {
       }];
     });
     const value = {
-      version: 1, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
+      version: 2, projects: [...this.folders.values()], threads: Object.fromEntries(this.homes),
       ...(this.workspaceRoot !== PLACEHOLDER_ROOT ? { defaultFolder: this.workspaceRoot } : {}),
       defaultMode: this.defaultMode, options: Object.fromEntries(this.levels), homeDispositions: Object.fromEntries(this.homeDispositions),
       homeObservedAt: Object.fromEntries(this.homeObservedAt), sessions,
@@ -984,7 +990,7 @@ export class HohHost {
         if (own) this.sessionAccessKnown.add(session.id);
         if (own?.executor === 'codex' || own?.executor === 'claude') executor = own.executor;
         model = typeof own?.model === 'string' && own.model ? own.model : undefined;
-        mode = exactMode(own?.runtimeMode) ?? exactMode(own?.mode) ?? mode;
+        mode = effectiveSessionMode(own, mode);
       } catch { /* a session without an external executor follows the current composer */ }
       // A Codex row with no persisted model must not publish the synthetic `default` model while
       // app-server's native catalog is already in flight. Claude rows stay non-blocking for cold start.
@@ -994,14 +1000,18 @@ export class HohHost {
 
       const existing = this.threads.get(session.id);
       if (existing) {
+        if (existing.executor !== executor || existing.model !== model || existing.mode !== mode) {
+          existing.executor = executor;
+          existing.model = model;
+          existing.mode = mode;
+          inventoryChanged = true;
+          if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
+        }
         if (this.restored.delete(session.id)) {
           // The cache is only continuity for the first snapshot. Once this session is visible on
           // disk, let its current list entry and history replace stale presentation metadata.
           existing.title = typeof session.title === 'string' ? session.title : '';
           existing.updatedAt = Math.max(existing.updatedAt, at);
-          existing.executor = executor;
-          existing.model = model;
-          existing.mode = mode;
           inventoryChanged = true;
           if (this.sessionsKnown && this.shellSinks.size) this.changed(session.id);
         }
@@ -1116,7 +1126,7 @@ export class HohHost {
           const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: threadId }))?.session;
           if (own?.executor === 'codex' || own?.executor === 'claude') thread.executor = own.executor;
           if (typeof own?.model === 'string' && own.model) thread.model = own.model;
-          thread.mode = exactMode(own?.runtimeMode) ?? exactMode(own?.mode) ?? thread.mode;
+          thread.mode = effectiveSessionMode(own, thread.mode);
         } catch { /* the chat follows the choice for new chats */ }
         thread.loaded = true;
         // The list row learns what the history knows (a title from the first message, the last answer).
@@ -1154,6 +1164,7 @@ export class HohHost {
       case 'session.event': {
         const thread = this.threadFor(params.sessionId);
         if (thread?.applyEvent(params.event)) this.changed(thread.id);
+        if (thread && params.event?.type === 'turn/start') void this.refreshThreadMode(thread);
         // The end of a turn reaches the thread list at once: the sidebar's "Working" must not wait for the next change.
         if (thread && params.event?.type === 'turn/end') this.flush();
         if (thread && params.event?.type === 'working-directory/change') {
@@ -1170,6 +1181,7 @@ export class HohHost {
       case 'session.status': {
         const thread = this.threadFor(params.sessionId);
         if (thread?.setRunning(params.status === 'running', this.now())) { this.changed(thread.id); if (params.status !== 'running') this.flush(); }
+        if (thread) void this.refreshThreadMode(thread);
         return;
       }
       case 'approval.pending': {
@@ -1486,8 +1498,23 @@ export class HohHost {
       mode: wanted === 'full' ? 'full' : 'confirm',
       runtimeMode: wanted,
     });
-    thread.mode = wanted;
-    this.changed(thread.id);
+    await this.refreshThreadMode(thread, wanted);
+  }
+
+  /** Reconcile the projection with the engine's current launch, never with the browser's request. */
+  private async refreshThreadMode(thread: ThreadModel, fallback = thread.mode) {
+    try {
+      const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: thread.id }))?.session;
+      // A just-created SDK session may not expose its executor binding until its first prompt.
+      // access/set already accepted `fallback`, and there is no running launch to contradict it.
+      if (!own) {
+        if (thread.mode !== fallback) { thread.mode = fallback; this.changed(thread.id); }
+        return;
+      }
+      this.sessionAccessKnown.add(thread.id);
+      const actual = effectiveSessionMode(own, fallback);
+      if (thread.mode !== actual) { thread.mode = actual; this.changed(thread.id); }
+    } catch { /* keep the last engine-reported value until the bridge answers again */ }
   }
 
   private async withSelectionMutation<T>(operation: () => Promise<T>): Promise<T> {

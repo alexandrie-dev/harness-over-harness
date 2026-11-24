@@ -75,7 +75,7 @@ test('T3 client: handshake decodes (config stream, getConfig, probe, settings, u
   const snapshot = await config.until(event => event.type === 'snapshot');
   assert.equal(snapshot.config.environment.environmentId, 'hoh-local');
   assert.equal(snapshot.config.providers[0].instanceId, 'claudeAgent');
-  assert.equal(snapshot.config.settings.defaultRuntimeMode, 'approval-required');
+  assert.equal(snapshot.config.settings.defaultRuntimeMode, 'full-access');
   assert.equal(snapshot.config.settings.responseStreamingMode, 'paragraph', 'defaults filled in by T3\'s schema');
   // "Add project" offers no repository host to clone from.
   assert.deepEqual({ ...snapshot.config.settings.offeredSourceControlProviders }, { github: false });
@@ -297,11 +297,10 @@ test('mode chip: T3 shows it under the composer of a started thread whose mode i
     initialMessage: { messageId: 'm-c', text: 'go', attachments: [] },
   }));
   assert.equal(launched.projection.thread.runtimeMode, 'full-access');
-  assert.equal(chip(launched.projection.thread.runtimeMode), true, 'Full access is shown, and Supervised is one click away');
+  assert.equal(chip(launched.projection.thread.runtimeMode), false, 'Full access is the default mode');
   await run(client['orchestration.dispatchCommand']({ type: 'thread.runtime-mode.set', commandId: 'c-m', threadId: 'thread-c', runtimeMode: 'approval-required' }));
   const back = await run(client['orchestration.getThreadProjection']({ threadId: 'thread-c' }));
-  // The default mode: as in T3, the chip steps aside and Permissions stays in the model menu's footer (ComposerPickerFooter).
-  assert.deepEqual([back.thread.runtimeMode, chip(back.thread.runtimeMode)], ['approval-required', false]);
+  assert.deepEqual([back.thread.runtimeMode, chip(back.thread.runtimeMode)], ['full-access', false], 'the running Full turn remains factual while Supervised is pending for the next turn');
 }));
 
 test('T3 first run: an engine with a chat opens the app; Claude not found, or not checked, is said so and Start waits for an agent', async () => {
