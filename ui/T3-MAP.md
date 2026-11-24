@@ -324,7 +324,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/components/settings/ThreadDetailsItemsRow.tsx` | правка (`ui/src/t3/base-patches/web/components/settings/ThreadDetailsItemsRow.tsx.patch`) | счётчик Thread details учитывает только Context window |
 | `web/components/chat/TimelineAssistantRows.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/TimelineAssistantRows.tsx.patch`) | скрыты неподдерживаемые fork и reply |
 | `web/components/chat/TimelineUserMessageRow.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/TimelineUserMessageRow.tsx.patch`) | скрыты неподдерживаемые edit from here и ссылка на запрос |
-| `web/components/chat/threadDetailsItems.ts` | правка (`ui/src/t3/base-patches/web/components/chat/threadDetailsItems.ts.patch`) | неподдерживаемые сведения скрыты даже при сохранённых настройках |
+| `web/components/chat/threadDetailsItems.ts` | правка (`ui/src/t3/base-patches/web/components/chat/threadDetailsItems.ts.patch`) | неподдерживаемые сведения скрыты; Context window по умолчанию виден в панели |
 | `web/components/Sidebar.tsx` | правка (`ui/src/t3/base-patches/web/components/Sidebar.tsx.patch`) | массовое меню без неподдерживаемых действий; закрепление сохраняется |
 | `web/components/files/FilePreviewPanel.tsx` | правка (`ui/src/t3/base-patches/web/components/files/FilePreviewPanel.tsx.patch`) | неподдерживаемый просмотр файлов и открытие в редакторе обозначены Coming Soon; вложения сохраняют просмотр |
 | `web/components/chat/useThreadLifecycle.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/useThreadLifecycle.tsx.patch`) | не регистрирует неподдерживаемые сочетания закрепления, смены статуса и перегенерации |

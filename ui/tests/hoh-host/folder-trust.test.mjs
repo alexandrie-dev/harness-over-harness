@@ -4,20 +4,20 @@ import { folderTrustView } from '../../src/t3-entry/hoh-screens/folder-trust-vie
 
 test('folder trust describes the running process and pending change independently', () => {
   const off = folderTrustView({ running: true, applied: false, trusted: false, changed: false });
-  assert.match(off.text, /Claude и Codex.*не применяются/);
+  assert.match(off.text, /Claude and Codex.*inactive/);
   assert.equal(off.canTrust, true);
   const pending = folderTrustView({ running: true, applied: false, trusted: true, changed: false });
-  assert.match(pending.text, /не применяются.*следующего хода/);
+  assert.match(pending.text, /inactive.*next turn/);
   assert.equal(pending.canTrust, false);
   const changed = folderTrustView({ running: true, applied: true, trusted: false, changed: true });
-  assert.match(changed.text, /применяются.*настройки изменились/);
+  assert.match(changed.text, /active.*settings changed/);
   assert.equal(changed.canTrust, true);
   const active = folderTrustView({ running: true, applied: true, trusted: true, changed: false });
-  assert.match(active.text, /Claude и Codex.*применяются/);
+  assert.match(active.text, /Claude and Codex.*active/);
   for (const trusted of [false, true]) {
     const stopped = folderTrustView({ running: false, applied: true, trusted, changed: false });
-    assert.match(stopped.text, /^Процесс не запущен; следующий ход/);
-    assert.equal(stopped.text.endsWith(trusted ? ' применяются' : ' не применяются'), true);
+    assert.match(stopped.text, /^No process running;/);
+    assert.equal(stopped.text.includes(trusted ? 'will be active' : 'will be inactive'), true);
   }
   const isolated = folderTrustView({ applied: false, trusted: false, isolated: true, changed: false });
   assert.equal(isolated.canTrust, false);

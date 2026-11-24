@@ -40,9 +40,8 @@ type ThreadDetailsItemSettings = Pick<
 
 // People who turned on the retired Labs toggle keep Usage and Context until they change them here.
 function defaultVisible(item: ThreadDetailsItem, settings: ThreadDetailsItemSettings) {
-  return item.id === "usage" || item.id === "context"
-    ? settings.threadDetailsUsageEnabled
-    : item.defaultVisible;
+  if (item.id === "context") return true;
+  return item.id === "usage" ? settings.threadDetailsUsageEnabled : item.defaultVisible;
 }
 
 export function resolveThreadDetailsVisibility(
@@ -67,10 +66,10 @@ export function setThreadDetailsItem(
 }
 
 export function isDefaultThreadDetailsVisibility(visibility: ThreadDetailsVisibility) {
-  return visibility.context === false;
+  return visibility.context === true;
 }
 
-/** Also clears the retired Labs flag, so Usage and Context return to off. */
+/** Also clears the retired Labs flag, so Context returns to its default. */
 export const RESET_THREAD_DETAILS_ITEMS = {
   threadDetailsItems: {},
   threadDetailsUsageEnabled: false,

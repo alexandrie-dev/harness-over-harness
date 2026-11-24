@@ -111,6 +111,30 @@ test('T3 schema decodes an unknown conversation and its pending approval', () =>
   });
 });
 
+test('T3 decodes usage while an agent or subagent approval waits, and stop works', () => withClient(new FakeEngine(), async (client, engine) => {
+  await run(client['orchestration.launchThread']({ commandId: 'waiting-launch', threadId: 'waiting-thread', projectId: 'hoh-project', title: 'Waiting', modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' }, initialMessage: { messageId: 'waiting-message', text: 'Work', attachments: [] } }));
+  const stream = await collect(client['orchestration.subscribeThread']({ threadId: 'waiting-thread' }));
+  await stream.until(event => event.kind === 'snapshot');
+  engine.emitEvent('waiting-thread', 'turn/usage', { usage: { inputTokens: 200, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 10, maxTokens: 200000 } });
+  engine.emitEvent('waiting-thread', 'tool/call', { turn: 1, callId: 'child-agent', name: 'Agent', arguments: { description: 'Inspect', prompt: 'Inspect files' } });
+  for (const [n, tool] of ['Bash', 'Write', 'WebFetch', 'WebSearch'].entries()) {
+    const id = `approval-${n}`;
+    engine.emitEvent('waiting-thread', 'tool/call', { turn: 1, callId: `tool-${n}`, ...(n % 2 ? {} : { parentCallId: 'child-agent' }), name: tool, arguments: {} });
+    engine.askApproval('waiting-thread', id, `Allow ${tool}?`);
+    const pending = await stream.until(event => event.kind === 'snapshot' && event.projection.runtimeRequests.some(request => request.id === id && request.status === 'pending'));
+    assert.equal(pending.projection.runs[0].status, 'waiting');
+    assert.equal(pending.projection.providerTurns[0].status, 'running');
+    assert(pending.projection.visibleTurnItems.some(entry => entry.item.requestId === id && entry.item.type === 'approval_request'));
+    if (n < 3) await run(client['orchestration.dispatchCommand']({ type: 'runtime-request.respond', commandId: `answer-${n}`, threadId: 'waiting-thread', requestId: id, decision: 'accept' }));
+  }
+  await run(client['orchestration.dispatchCommand']({ type: 'thread.stop', commandId: 'waiting-stop', threadId: 'waiting-thread' }));
+  assert.equal(engine.cancelled, 1);
+  engine.emitEvent('waiting-thread', 'turn/end', { reason: { kind: 'aborted' } });
+  const stopped = await stream.until(event => event.kind === 'snapshot' && event.projection.runs[0].status === 'interrupted');
+  assert.equal(stopped.projection.providerTurns[0].status, 'interrupted');
+  await stream.stop();
+}));
+
 test('T3 client: unsupported methods fail with the typed error; hidden streams stay quiet', () => withClient(new FakeEngine(), async client => {
   const exit = await runExit(client['projects.readFile']({ cwd: '/x', relativePath: 'a' }));
   assert(Exit.isFailure(exit));

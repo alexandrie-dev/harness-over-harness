@@ -71,6 +71,6 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
       try { await engine.request('hoh/executor/trust/set', { executor: state.executor, cwd: state.cwd, trust: true }); setChangedNotice(false); }
       catch { /* The native host rejected or could not confirm the request. */ }
       finally { setBusy(false); void refresh(); }
-    }}>Доверять настройкам проекта в этой папке (Claude и Codex)…</button>}
+    }}>Trust project settings in this folder (Claude and Codex)…</button>}
   </span>;
 }

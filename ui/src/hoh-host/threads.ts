@@ -750,7 +750,7 @@ export class ThreadModel {
       attempts: [], nodes: [], subagents: [], providerSessions: [], providerThreads: [],
       providerTurns: this.runs.filter(run => run.tokenUsage).map(run => ({
         id: 'provider-turn-' + run.id, providerThreadId: 'hoh-' + this.id, nodeId: NODE_ID, runAttemptId: null,
-        nativeTurnRef: null, ordinal: run.ordinal, status: run.status, startedAt: run.startedAt === null ? null : iso(run.startedAt),
+        nativeTurnRef: null, ordinal: run.ordinal, status: run.status === 'waiting' ? 'running' : run.status, startedAt: run.startedAt === null ? null : iso(run.startedAt),
         completedAt: run.completedAt === null ? null : iso(run.completedAt), tokenUsage: { ...run.tokenUsage! }, model: run.model,
       })),
       runtimeRequests: this.requests.map(request => ({

@@ -362,6 +362,26 @@ const scenarios = [
     prepare: async (page, _engine, sidebar) => { await page.locator('[data-settings-page-scroll]').waitFor(); await setSidebar(page, sidebar); }, blocks: ['settings'],
   },
   {
+    name: 'thread-context', engine: () => {
+      const engine = completedEngine();
+      const session = engine.sessions.get(CHAT.id);
+      session.events.at(-1).data.usage = { inputTokens: 1000, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 20, maxTokens: 200000 };
+      return engine;
+    }, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, sidebar);
+      const panel = page.locator('[data-thread-details-card]');
+      if (!(await panel.isVisible().catch(() => false))) await page.getByRole('button', { name: 'Toggle thread details panel' }).click();
+      await panel.getByText('Context', { exact: true }).waitFor();
+      await panel.getByText('1k / 200k', { exact: true }).waitFor();
+      // At narrow widths the details card is a popover and intentionally overlays the lane.
+      // Measure the conversation after closing it, as in the other conversation scenarios.
+      await page.getByRole('button', { name: 'Toggle thread details panel' }).click();
+      await panel.waitFor({ state: 'hidden' });
+    }, blocks: ['conversation'],
+  },
+  {
     name: 'thread-details-menu', engine: completedEngine, path: () => '/settings/appearance', stored: () => ({}),
     prepare: async (page, _engine, sidebar) => {
       await page.locator('[data-settings-page-scroll]').waitFor();

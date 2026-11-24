@@ -216,7 +216,7 @@
       "web/components/settings/ThreadDetailsItemsRow.tsx": "счётчик Thread details учитывает только Context window",
       "web/components/chat/TimelineAssistantRows.tsx": "скрыты неподдерживаемые fork и reply",
       "web/components/chat/TimelineUserMessageRow.tsx": "скрыты неподдерживаемые edit from here и ссылка на запрос",
-      "web/components/chat/threadDetailsItems.ts": "неподдерживаемые сведения скрыты даже при сохранённых настройках",
+      "web/components/chat/threadDetailsItems.ts": "неподдерживаемые сведения скрыты; Context window по умолчанию виден в панели",
       "web/components/Sidebar.tsx": "массовое меню без неподдерживаемых действий; закрепление сохраняется",
       "web/components/files/FilePreviewPanel.tsx": "неподдерживаемый просмотр файлов и открытие в редакторе обозначены Coming Soon; вложения сохраняют просмотр",
       "web/components/chat/useThreadLifecycle.tsx": "не регистрирует неподдерживаемые сочетания закрепления, смены статуса и перегенерации",

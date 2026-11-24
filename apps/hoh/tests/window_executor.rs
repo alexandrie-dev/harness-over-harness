@@ -974,7 +974,7 @@ fn assert_asking(start: &Start, permission_mode: &str) {
     );
     assert_eq!(
         start.value_of("--setting-sources"),
-        Some("user,project,local"),
+        Some("user"),
         "{start:?}"
     );
     for wide in [
@@ -2213,11 +2213,15 @@ async fn t5_a_chat_with_claude_does_not_take_a_change_of_folder() {
 async fn replaced_working_directory_is_refused_before_native_executor_launch() {
     let workspace = Workspace::new();
     let mut host = engine_with_claude(&workspace, "confirm").await;
-    host.ok(
-        "session/working-directory/get",
-        json!({"sessionId": SESSION}),
-    )
-    .await;
+    // A read no longer records identity. Explicitly select the folder before replacing it.
+    let selected = host
+        .privileged(
+            "session/working-directory/set",
+            json!({"sessionId": SESSION, "path": workspace.folder}),
+            "allowed-once",
+        )
+        .await;
+    assert!(selected.get("error").is_none(), "{selected}");
     let original = workspace.root.path().join("moved-work");
     std::fs::rename(&workspace.folder, &original).unwrap();
     std::fs::create_dir(&workspace.folder).unwrap();
@@ -2227,7 +2231,7 @@ async fn replaced_working_directory_is_refused_before_native_executor_launch() {
     assert!(
         end["error"]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("папка")),
+            .is_some_and(|message| message.contains("folder") && message.contains("changed")),
         "{end}"
     );
     assert!(
