@@ -610,3 +610,26 @@ SettingSources::Personal` (`harness.rs`). Значение берётся из �
   `launch_flags` = срез argv (с `--effort high`); `user,project,local` в `tests/claude.rs`,
   `tests/slot.rs`; сквозной `apps/hoh/tests/window_executor.rs` `t18_…` (PORT_NOTES
   `hoh-external-harness`, HOH-40).
+
+## HOH-47 U4: канальные плагины не запускаются вторым экземпляром в окне
+
+- Перед запуском обычной (`personal`) сессии отдельный `channel_plugins.rs` объединяет
+  `enabledPlugins` из user/project/local settings, сопоставляет включённые id с
+  `plugins/installed_plugins.json` и статически ищет `claude/channel` в исходниках и сборке
+  установленного плагина; маркер учитывается только при непустом объявлении MCP-сервера, поэтому
+  строка в постороннем примере/тесте не отключает плагин. Дополнительные признаки — keyword
+  `channel` в `plugin.json` и имена
+  `telegram`, `discord`, `imessage`, `fakechat`; при повреждённом реестре проверяется обычный
+  `plugins/cache/<marketplace>/<plugin>`.
+- В argv добавляется только `--settings {"enabledPlugins":{"<channel-id>":false}}`.
+  `--setting-sources user,project,local` остаётся: прочие плагины, хуки, правила и настройки
+  человека не выключаются. Файлы Claude только читаются, ошибки не прерывают запуск; если
+  settings не разобрались, кандидаты берутся консервативно из installed registry/cache, чтобы
+  распознанный канал не запустился из-за несовпадения парсеров. Cache fallback принимает только
+  безопасные компоненты plugin/marketplace; обход ограничен 20 000 directory entries, и
+  MCP-declared plugin при исчерпании лимита считается канальным.
+- `isolated` не получает overlay: он уже не читает настройки и запускается с
+  `--strict-mcp-config`. Пробы discovery/commands не менялись.
+- Тесты: подложные channel/non-channel плагины, keyword/known-name fallback, повреждённые данные и
+  точный selective override в `ClaudeConfig::argv_in`; живой изолированный прогон —
+  `scripts/channel-plugin-check.sh`.

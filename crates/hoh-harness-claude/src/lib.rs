@@ -10,6 +10,7 @@
 //! change to any other crate. Logic and message schemas adapted from T3 Code (MIT), see `NOTICE`
 //! and `PORT_NOTES.md`.
 
+mod channel_plugins;
 mod harness;
 mod session;
 pub mod version;

@@ -56,6 +56,7 @@ export function settingsNavFilter(code: string): string {
 }
 
 const PROVIDER_ANCHORS = [
+  ['    <SettingsPageContainer className="@container/providers gap-8">\n      <ProviderSettingsPanelContent', '    <SettingsPageContainer className="@container/providers gap-8">\n      <p className="text-muted-foreground px-1 text-sm">Channel plugins are disabled in the window</p>\n      <ProviderSettingsPanelContent'],
   ['const visibleProviderSettings = PROVIDER_SETTINGS.filter(', 'const visibleProviderSettings = PROVIDER_SETTINGS.filter((entry) => HOH_PROVIDER_DRIVERS.includes(entry.provider)).filter('],
   ['const canAddProvider =\n', 'const canAddProvider = false &&\n'],
   // Настройки, которых движок не исполняет (путь к claude, свои аргументы, «Usage providers», проверка состояния, сжатие): не рисуются.
