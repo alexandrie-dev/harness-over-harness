@@ -32,8 +32,21 @@ function loadModule(source, fileName = 'module.ts') {
   return exports;
 }
 
-const { greeting, projectLabel, projectPanelInsertAfter } = loadFunctions(homeSource, ['greeting', 'projectLabel', 'projectPanelInsertAfter']);
+const { greeting, projectLabel, waitingLabel, projectPanelInsertAfter } = loadFunctions(homeSource, ['greeting', 'projectLabel', 'waitingLabel', 'projectPanelInsertAfter']);
 const grouping = loadModule(groupingSource, 'grouping.ts');
+
+test('a named project stays a project when its folder is also the engine default', async () => {
+  const source = await readFile(new URL('../src/t3/base/client-runtime/state/projects.ts', import.meta.url), 'utf8');
+  const tree = ts.createSourceFile('projects.ts', source, ts.ScriptTarget.Latest, true);
+  const fn = tree.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'isScratchProject');
+  const js = ts.transpileModule(fn.getText(tree), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const exports = {};
+  Function('exports', 'findProjectByPath', js)(exports, (projects, path) => projects.find(project => project.workspaceRoot === path));
+  const root = '/home/person/Documents/HoH';
+  assert.equal(exports.isScratchProject({ id: 'project-hoh', workspaceRoot: root }, root), false);
+  assert.equal(exports.isScratchProject({ id: 'hoh-project', workspaceRoot: root }, root), true);
+  assert.equal(exports.isScratchProject({ workspaceRoot: root }, root), true);
+});
 
 test('greeting uses the four requested hour ranges at every boundary', () => {
   const cases = [
@@ -168,7 +181,10 @@ test('agent cards have a separate accessible open target and an explicit human c
   assert.match(homeSource, /className="hoh-card__open" aria-label=\{`Open \$\{entry\.title\}`\}/);
   assert.match(homeSource, /className="hoh-card__complete"[^>]*onClick=\{\(\) => void view\.host\?\.complete\(entry\.id\)\}/);
   assert.match(homeSource, />Mark done<\/Button>/);
-  assert.match(homeSource, /entry\.stopped \? 'Stopped' : entry\.interrupted \? 'Interrupted' : 'Waiting for your answer'/);
+  assert.equal(waitingLabel({}), 'Waiting for your answer');
+  assert.equal(waitingLabel({ canComplete: true }), 'Ready for review');
+  assert.equal(waitingLabel({ canComplete: true, stopped: true }), 'Stopped');
+  assert.equal(waitingLabel({ canComplete: true, interrupted: true }), 'Interrupted');
   assert.match(css, /--hoh-card-width:\s*min\(360px, calc\(\(50vw - 14px\) \/ 2\)\)/);
   assert.match(css, /grid-template-columns:\s*repeat\(auto-fill, var\(--hoh-card-width\)\)/);
   assert.match(css, /\.hoh-home__cards\s*\{[^}]*justify-content:\s*start/);

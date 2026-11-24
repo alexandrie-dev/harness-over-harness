@@ -286,6 +286,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `contracts/assets.ts` | правка (`ui/src/t3/base-patches/contracts/assets.ts.patch`) | превью изображений: локальные Blob URL разрешены контрактом assets.createUrl без сетевого источника в CSP; отказ нативной политики несёт ограниченную безопасную причину |
 | `client-runtime/markdownImages.ts` | правка (`ui/src/t3/base-patches/client-runtime/markdownImages.ts.patch`) | безопасность превью: data URI из ответа ассистента не передаётся напрямую в img |
 | `client-runtime/state/assets.ts` | правка (`ui/src/t3/base-patches/client-runtime/state/assets.ts.patch`) | превью изображений: ограниченная причина отказа assets.createUrl сохраняется в состоянии ресурса для видимой заглушки; история URL ограничена LRU |
+| `client-runtime/state/projects.ts` | правка (`ui/src/t3/base-patches/client-runtime/state/projects.ts.patch`) | No project определяется по id, когда реальный проект совпадает с папкой запуска движка |
 | `web/components/ChatMarkdown.tsx` | правка (`ui/src/t3/base-patches/web/components/ChatMarkdown.tsx.patch`) | превью изображений: обычная markdown-ссылка на локальный растровый файл использует штатные T3 ChatMarkdownAssetImage и крупный просмотр |
 | `web/components/chat/ChatMarkdownMedia.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ChatMarkdownMedia.tsx.patch`) | превью изображений: заглушка Image unavailable показывает ограниченную безопасную причину отказа нативной политики |
 | `web/components/chat/ChatComposer.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ChatComposer.tsx.patch`) | скрепка в поле ввода доступна для поддерживаемых Claude изображений без объявления generic file attachments |
@@ -303,7 +304,7 @@ Tailwind прежней оболочки её не сканирует (`@source 
 | `web/components/chat/turnDetailAnnouncement.ts` | правка (`ui/src/t3/base-patches/web/components/chat/turnDetailAnnouncement.ts.patch`) | имя продукта: подпись автора ответа для экранного чтеца — APP_BASE_NAME (HoH) вместо «T3 Code» |
 | `web/components/ChatView.logic.ts` | правка (`ui/src/t3/base-patches/web/components/ChatView.logic.ts.patch`) | термин нового разговора: видимый заголовок черновика — New chat вместо New thread |
 | `web/components/chat/DraftHeroHeadline.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/DraftHeroHeadline.tsx.patch`) | проект HoH с постоянным id всегда показывает продуктовый вопрос без подписи scratch-проекта, поэтому пустая главная не меняется при resize |
-| `web/components/CommandPalette.tsx` | правка (`ui/src/t3/base-patches/web/components/CommandPalette.tsx.patch`) | термин нового разговора: видимые действия палитры — New chat вместо New thread |
+| `web/components/CommandPalette.tsx` | правка (`ui/src/t3/base-patches/web/components/CommandPalette.tsx.patch`) | New chat вместо New thread; папку No project можно явно добавить как проект |
 
 Имя продукта: `APP_BASE_NAME` (`web/branding.ts`) T3 берёт из `window.desktopBridge.getAppBranding()`, иначе «T3 Code»; окно
 `desktopBridge` не задаёт (режим браузера, `ui/src/hoh-host/README.md`), поэтому имя HoH — правкой `web/branding.ts`. В текстах T3 имя «T3 Code» встречается и буквально: в коде `web` — 136 строк, в русском переводе `web/i18n/translations/ru.json` — 144; большая часть — в скрытых частях. Замена в видимых текстах — э4 (через перевод, без правки файлов кода).

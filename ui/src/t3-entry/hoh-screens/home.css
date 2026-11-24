@@ -38,6 +38,7 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 }
 .hoh-home h1 { font-size: 1.75rem; line-height: 2.25rem; font-weight: 600; margin: 0; }
 .hoh-home__date { color: var(--muted-foreground); font-size: 0.875rem; margin-top: 4px; }
+.hoh-home__add-project { margin-top: 12px; }
 .hoh-home__head { position: relative; width: 100%; margin-top: 0; text-align: center; }
 /* Эмблема над приветствием (правило u2: emblem-fit.ts ставит data-hoh-emblem, только если она помещается без прокрутки; на узком окне скрыта). */
 .hoh-home__head[data-hoh-emblem] { margin-top: 134px; }

@@ -126,6 +126,8 @@ export function sidebarList(code: string): string {
   return anchorPatch('Sidebar.tsx', code, [
     ['import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";', 'import { SidebarHeaderIconButton } from "./sidebar/SidebarThreadHeader";\nimport { SidebarTop as SidebarThreadHeader } from ' + JSON.stringify(SIDEBAR_TOP) + ';'],
     ['useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null', '(useClientSettings((s) => s.sidebarWorkingShelfEnabled), false)'],
+    ['const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);', 'const boringSidebarEnabled = true;'],
+    ['scopedProjectGroups.length > 0 || (group.pinned && !group.archived)', '!group.archived'],
     ['section === "active" || section === "pinned" || section === "working";', 'false;'],
     // Пустой черновик (разговор без первого сообщения: хост даёт ему latestUserMessageAt = null) в «Recent chats» не показывается.
     ['  const threads = useQuietThreadShells();', '  const allThreads = useQuietThreadShells();\n  const threads = useHohMemo(() => allThreads.filter((thread) => thread.latestUserMessageAt != null), [allThreads]);'],

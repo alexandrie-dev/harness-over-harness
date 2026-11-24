@@ -39,6 +39,14 @@ export function closeQuickView(restoreFocus = true): void {
   });
 }
 
+/** Unmount the embedded chat before routing to the same conversation. */
+export function openFullFromQuickView(navigate: (threadId: string) => void): void {
+  const threadId = state.threadId;
+  if (threadId === null) return;
+  closeQuickView(false);
+  navigate(threadId);
+}
+
 export const quickViewStore = {
   getSnapshot: (): QuickViewState => state,
   subscribe(listener: () => void): () => void {

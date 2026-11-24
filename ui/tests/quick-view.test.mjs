@@ -72,6 +72,16 @@ test('empty ids do not open quick view or notify subscribers', () => {
   assert.equal(changes, 0);
 });
 
+test('opening the full conversation closes quick view before routing to the selected thread', () => {
+  const store = loadStore();
+  store.openQuickView('thread-full');
+  const routes = [];
+  store.openFullFromQuickView(id => routes.push([id, store.quickViewStore.getSnapshot().threadId]));
+  assert.deepEqual(routes, [['thread-full', null]]);
+  store.openFullFromQuickView(id => routes.push([id, null]));
+  assert.equal(routes.length, 1);
+});
+
 test('quick view keeps T3 DialogPopup and ChatView while exposing state and frame variants', () => {
   assert.match(dialogSource, /<DialogPopup/);
   assert.match(dialogSource, /<ChatView/);
