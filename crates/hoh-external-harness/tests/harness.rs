@@ -2667,6 +2667,16 @@ async fn folder_trust_requires_host_approval_and_is_revoked_on_change() {
     assert_eq!(result["trusted"], true);
     assert_eq!(
         window
+            .call(
+                "hoh/executor/trust/get",
+                json!({"executor": "codex", "cwd": dirs.work})
+            )
+            .await
+            .unwrap()["trusted"],
+        true
+    );
+    assert_eq!(
+        window
             .call("hoh/executor/trust/get", query.clone())
             .await
             .unwrap()["trusted"],

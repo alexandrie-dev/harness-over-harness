@@ -648,27 +648,28 @@ impl ExternalAgent {
         signal: &AbortSignal,
     ) -> Result<(), HarnessFailure> {
         let effort = lock(&self.state).effort.clone();
-        let current_trust = if live.is_some() && self.shared.name == "claude" {
-            let cwd = self.cwd();
-            let (trusted, changed) =
-                if let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>() {
-                    crate::trust::status(&profile.dir, std::path::Path::new(&cwd))
-                        .await
-                        .unwrap_or((false, false))
-                } else {
-                    (false, false)
-                };
-            if changed {
-                let _ = append_plugin_record(
-                    &self.session,
-                    "plugin:external-harness/folder-trust-changed",
-                    json!({"cwd": cwd, "executor": "claude"}),
-                );
-            }
-            Some(trusted)
-        } else {
-            None
-        };
+        let current_trust =
+            if live.is_some() && matches!(self.shared.name.as_str(), "claude" | "codex") {
+                let cwd = self.cwd();
+                let (trusted, changed) =
+                    if let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>() {
+                        crate::trust::status(&profile.dir, std::path::Path::new(&cwd))
+                            .await
+                            .unwrap_or((false, false))
+                    } else {
+                        (false, false)
+                    };
+                if changed {
+                    let _ = append_plugin_record(
+                        &self.session,
+                        "plugin:external-harness/folder-trust-changed",
+                        json!({"cwd": cwd, "executor": self.shared.name}),
+                    );
+                }
+                Some(trusted)
+            } else {
+                None
+            };
         if let Some(session) = live.as_mut() {
             while let Ok(event) = session.events.try_recv() {
                 match event {
@@ -752,7 +753,7 @@ impl ExternalAgent {
             resume: resume.clone(),
         };
         let harness = &self.shared.harness;
-        let (trusted, changed) = if self.shared.name == "claude"
+        let (trusted, changed) = if matches!(self.shared.name.as_str(), "claude" | "codex")
             && let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>()
         {
             crate::trust::status(&profile.dir, std::path::Path::new(&params.cwd))
@@ -783,7 +784,7 @@ impl ExternalAgent {
                 let (cwd, identity) = checked_cwd()?;
                 params.cwd = cwd;
                 params.cwd_identity = Some(identity);
-                let trusted = if self.shared.name == "claude"
+                let trusted = if matches!(self.shared.name.as_str(), "claude" | "codex")
                     && let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>()
                 {
                     crate::trust::status(&profile.dir, std::path::Path::new(&params.cwd))

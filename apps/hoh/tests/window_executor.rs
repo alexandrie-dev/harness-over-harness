@@ -916,10 +916,10 @@ fn assert_confirm(start: &Start) {
         Some("stdio"),
         "{start:?}"
     );
-    // The human's settings and the folder's, as T3 (HOH-40).
+    // Without folder trust, only the human's settings apply.
     assert_eq!(
         start.value_of("--setting-sources"),
-        Some("user,project,local"),
+        Some("user"),
         "{start:?}"
     );
     assert!(!start.has("--strict-mcp-config"), "{start:?}");
@@ -1820,7 +1820,11 @@ impl Host {
                 running |= frame["params"]["status"] == "running";
             }
             // The fake has said it is working: the turn is in the middle.
-            worked |= frame["method"] == "session.event" && frame.to_string().contains("working");
+            worked |= frame["method"] == "session.event"
+                && frame["params"]["event"]["type"] == "assistant/message"
+                && frame["params"]["event"]["data"]
+                    .to_string()
+                    .contains("working");
         }
         let cancel = self
             .send("session/cancel", json!({"sessionId": session}))
@@ -2313,7 +2317,10 @@ async fn hang_turn(host: &mut Host, session: &str, text: &str) {
     while !host.frames.iter().any(|frame| {
         frame["method"] == "session.event"
             && frame["params"]["sessionId"] == session
-            && frame.to_string().contains("working")
+            && frame["params"]["event"]["type"] == "assistant/message"
+            && frame["params"]["event"]["data"]
+                .to_string()
+                .contains("working")
     }) {
         host.next().await;
     }
@@ -2740,7 +2747,7 @@ async fn t16_stop_right_after_a_message_to_a_resumed_claude_ends_it() {
 }
 
 /// HOH-40: the effort the window names in `session/prompt` follows `--effort` of the start of
-/// Claude (and the folder's settings are read: `--setting-sources user,project,local`). The same
+/// Claude (without folder trust, `--setting-sources user`). The same
 /// level keeps the process; another one starts Claude anew on the same conversation (`--resume`),
 /// as T3; a level Claude does not have is not passed on (the engine's log says so; the window
 /// profile does not export it); a prompt without one runs at Claude's own level.
@@ -2754,7 +2761,7 @@ async fn t18_the_effort_of_a_prompt_reaches_the_start_of_claude() {
     assert_eq!(first.value_of("--effort"), Some("high"), "{first:?}");
     assert_eq!(
         first.value_of("--setting-sources"),
-        Some("user,project,local"),
+        Some("user"),
         "{first:?}"
     );
     let native = first
