@@ -1,0 +1,1485 @@
+[
+  {
+    "seq": 2,
+    "type": "turn/start",
+    "time": 1795508853592,
+    "data": {
+      "turn": 1
+    }
+  },
+  {
+    "seq": 5,
+    "type": "user/message",
+    "time": 1795508853592,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "reply: hi"
+        }
+      ],
+      "source": {
+        "kind": "user"
+      },
+      "role": "user",
+      "id": "953a6511-a135-4015-8444-dd3fe45ec43e"
+    }
+  },
+  {
+    "seq": 12,
+    "type": "assistant/message",
+    "time": 1795508857039,
+    "data": {
+      "turn": 1,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "response"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "c544f066-5a8a-4bd7-bbff-bd410cbd0cc3"
+      }
+    }
+  },
+  {
+    "seq": 17,
+    "type": "turn/end",
+    "time": 1795508857097,
+    "data": {
+      "turn": 1,
+      "reason": {
+        "kind": "completed"
+      },
+      "usage": {
+        "inputTokens": 2,
+        "cacheCreationInputTokens": 21921,
+        "cacheReadInputTokens": 13392,
+        "outputTokens": 145,
+        "maxTokens": 1000000
+      }
+    }
+  },
+  {
+    "seq": 18,
+    "type": "turn/start",
+    "time": 1795508891633,
+    "data": {
+      "turn": 2
+    }
+  },
+  {
+    "seq": 20,
+    "type": "user/message",
+    "time": 1795508891633,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "request 20"
+        }
+      ],
+      "source": {
+        "kind": "user"
+      },
+      "role": "user",
+      "id": "62282d3f-6612-47ac-aca7-35e482511097"
+    }
+  },
+  {
+    "seq": 24,
+    "type": "assistant/message",
+    "time": 1795508893591,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "1aafa252-c111-4f20-9773-9127187b03f7"
+      }
+    }
+  },
+  {
+    "seq": 25,
+    "type": "tool/call",
+    "time": 1795508893591,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "callId": "toolu_011SfQKSgXRRY1ASuYhpMzKu",
+      "name": "Agent",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 30,
+    "type": "assistant/message",
+    "time": 1795508894745,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "1b09a114-4e15-4eef-b5d9-89acd7f6b969"
+      },
+      "parentCallId": "toolu_011SfQKSgXRRY1ASuYhpMzKu"
+    }
+  },
+  {
+    "seq": 31,
+    "type": "tool/call",
+    "time": 1795508894745,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "callId": "toolu_01EkWP53KxK6WeAfiXVtFVNt",
+      "name": "WebFetch",
+      "arguments": "{}",
+      "parentCallId": "toolu_011SfQKSgXRRY1ASuYhpMzKu"
+    }
+  },
+  {
+    "seq": 34,
+    "type": "tool/result",
+    "time": 1795508915029,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_011SfQKSgXRRY1ASuYhpMzKu"
+        },
+        "toolCallId": "toolu_011SfQKSgXRRY1ASuYhpMzKu",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": true,
+        "id": "30db78e3-5650-49ad-90c4-70c223be0f16"
+      },
+      "error": {
+        "name": "ExternalHarnessError",
+        "code": "interrupted"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 35,
+    "type": "tool/result",
+    "time": 1795508915029,
+    "data": {
+      "turn": 2,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01EkWP53KxK6WeAfiXVtFVNt"
+        },
+        "toolCallId": "toolu_01EkWP53KxK6WeAfiXVtFVNt",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": true,
+        "id": "866a942a-fa9b-457a-9345-49f87f66a733"
+      },
+      "error": {
+        "name": "ExternalHarnessError",
+        "code": "interrupted"
+      },
+      "parentCallId": "toolu_011SfQKSgXRRY1ASuYhpMzKu",
+      "result": {}
+    }
+  },
+  {
+    "seq": 37,
+    "type": "turn/end",
+    "time": 1795508915029,
+    "data": {
+      "turn": 2,
+      "reason": {
+        "kind": "aborted",
+        "reason": {
+          "kind": "user"
+        }
+      },
+      "usage": {
+        "inputTokens": 2,
+        "cacheCreationInputTokens": 3564,
+        "cacheReadInputTokens": 35313,
+        "outputTokens": 165,
+        "maxTokens": 1000000
+      }
+    }
+  },
+  {
+    "seq": 38,
+    "type": "turn/start",
+    "time": 1795508926962,
+    "data": {
+      "turn": 3
+    }
+  },
+  {
+    "seq": 40,
+    "type": "user/message",
+    "time": 1795508926962,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "request 40"
+        }
+      ],
+      "source": {
+        "kind": "user"
+      },
+      "role": "user",
+      "id": "d4dc6b84-917a-4934-8904-dea59ecb7723"
+    }
+  },
+  {
+    "seq": 46,
+    "type": "assistant/message",
+    "time": 1795508930470,
+    "data": {
+      "turn": 3,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "response"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "c2a37af4-0cb7-43f8-89df-7b8de1f5cdce"
+      }
+    }
+  },
+  {
+    "seq": 48,
+    "type": "assistant/message",
+    "time": 1795508933177,
+    "data": {
+      "turn": 3,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "3afb29e6-89b8-4f72-bbb1-13a157edc075"
+      }
+    }
+  },
+  {
+    "seq": 49,
+    "type": "tool/call",
+    "time": 1795508933177,
+    "data": {
+      "turn": 3,
+      "step": 1,
+      "callId": "toolu_018gyZd5o6LLjNK1idLLb6jS",
+      "name": "Agent",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 52,
+    "type": "tool/result",
+    "time": 1795508955290,
+    "data": {
+      "turn": 3,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_018gyZd5o6LLjNK1idLLb6jS"
+        },
+        "toolCallId": "toolu_018gyZd5o6LLjNK1idLLb6jS",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": true,
+        "id": "fd356746-3578-45cd-b4a0-e4a854814d97"
+      },
+      "error": {
+        "name": "ExternalHarnessError",
+        "code": "interrupted"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 54,
+    "type": "turn/end",
+    "time": 1795508955290,
+    "data": {
+      "turn": 3,
+      "reason": {
+        "kind": "aborted",
+        "reason": {
+          "kind": "user"
+        }
+      },
+      "usage": {
+        "inputTokens": 2,
+        "cacheCreationInputTokens": 2190,
+        "cacheReadInputTokens": 38877,
+        "outputTokens": 443,
+        "maxTokens": null
+      }
+    }
+  },
+  {
+    "seq": 56,
+    "type": "turn/start",
+    "time": 1795509035295,
+    "data": {
+      "turn": 4
+    }
+  },
+  {
+    "seq": 58,
+    "type": "user/message",
+    "time": 1795509035312,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "request 58"
+        }
+      ],
+      "source": {
+        "kind": "user"
+      },
+      "role": "user",
+      "id": "82ef9c00-6e3a-4e2f-a494-315794c598e9"
+    }
+  },
+  {
+    "seq": 64,
+    "type": "assistant/message",
+    "time": 1795509041151,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "8c68d6fe-0501-4f39-9f25-8dbfd9692aa0"
+      }
+    }
+  },
+  {
+    "seq": 65,
+    "type": "tool/call",
+    "time": 1795509041151,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "callId": "toolu_01LWojWenvNsiztfZKNhBcuN",
+      "name": "Agent",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 70,
+    "type": "assistant/message",
+    "time": 1795509044001,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "c63bb96e-daea-4163-9720-52405d18bff2"
+      },
+      "parentCallId": "toolu_01LWojWenvNsiztfZKNhBcuN"
+    }
+  },
+  {
+    "seq": 71,
+    "type": "tool/call",
+    "time": 1795509044001,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "callId": "toolu_017VejdnYSNptFMzTazqsmDh",
+      "name": "bash",
+      "arguments": "{}",
+      "parentCallId": "toolu_01LWojWenvNsiztfZKNhBcuN"
+    }
+  },
+  {
+    "seq": 74,
+    "type": "tool/result",
+    "time": 1795509086875,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_017VejdnYSNptFMzTazqsmDh"
+        },
+        "toolCallId": "toolu_017VejdnYSNptFMzTazqsmDh",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "ba63d765-5e61-4502-b19d-402127a44437"
+      },
+      "parentCallId": "toolu_01LWojWenvNsiztfZKNhBcuN",
+      "result": {}
+    }
+  },
+  {
+    "seq": 77,
+    "type": "assistant/message",
+    "time": 1795509088853,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "84c9d6af-5d5c-49b4-b06c-025ffb2be06f"
+      },
+      "parentCallId": "toolu_01LWojWenvNsiztfZKNhBcuN"
+    }
+  },
+  {
+    "seq": 78,
+    "type": "tool/call",
+    "time": 1795509088853,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "callId": "toolu_01B1LCc8ARUgoVbyVFbtnzjT",
+      "name": "bash",
+      "arguments": "{}",
+      "parentCallId": "toolu_01LWojWenvNsiztfZKNhBcuN"
+    }
+  },
+  {
+    "seq": 81,
+    "type": "tool/result",
+    "time": 1795509113386,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01B1LCc8ARUgoVbyVFbtnzjT"
+        },
+        "toolCallId": "toolu_01B1LCc8ARUgoVbyVFbtnzjT",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "e6a8e01b-bbf4-4e32-820f-d03bfb9a2df7"
+      },
+      "parentCallId": "toolu_01LWojWenvNsiztfZKNhBcuN",
+      "result": {}
+    }
+  },
+  {
+    "seq": 84,
+    "type": "tool/result",
+    "time": 1795509114956,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01LWojWenvNsiztfZKNhBcuN"
+        },
+        "toolCallId": "toolu_01LWojWenvNsiztfZKNhBcuN",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "391f9358-3eb0-4ada-aeeb-eec59a240db3"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 88,
+    "type": "assistant/message",
+    "time": 1795509117697,
+    "data": {
+      "turn": 4,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "response"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "cee35f55-dc01-473f-bf41-60acbcd6f459"
+      }
+    }
+  },
+  {
+    "seq": 93,
+    "type": "turn/end",
+    "time": 1795509117747,
+    "data": {
+      "turn": 4,
+      "reason": {
+        "kind": "completed"
+      },
+      "usage": {
+        "inputTokens": 2,
+        "cacheCreationInputTokens": 4148,
+        "cacheReadInputTokens": 41609,
+        "outputTokens": 211,
+        "maxTokens": 1000000
+      }
+    }
+  },
+  {
+    "seq": 94,
+    "type": "turn/start",
+    "time": 1795509149856,
+    "data": {
+      "turn": 5
+    }
+  },
+  {
+    "seq": 96,
+    "type": "user/message",
+    "time": 1795509149856,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "request 96"
+        }
+      ],
+      "source": {
+        "kind": "user"
+      },
+      "role": "user",
+      "id": "1b5715f5-1e1c-411a-99c9-fc3986ed3b7f"
+    }
+  },
+  {
+    "seq": 101,
+    "type": "assistant/message",
+    "time": 1795509160769,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "020a0c16-4c29-4ad1-9636-8541e2338e1b"
+      }
+    }
+  },
+  {
+    "seq": 102,
+    "type": "tool/call",
+    "time": 1795509160769,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN",
+      "name": "Agent",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 107,
+    "type": "assistant/message",
+    "time": 1795509162467,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "11110af7-b08e-49aa-b2f4-9d51ea7ff402"
+      },
+      "parentCallId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN"
+    }
+  },
+  {
+    "seq": 108,
+    "type": "tool/call",
+    "time": 1795509162467,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01HmGw1z8yupU3M6BHFPb7Qk",
+      "name": "Read",
+      "arguments": "{}",
+      "parentCallId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN"
+    }
+  },
+  {
+    "seq": 109,
+    "type": "tool/result",
+    "time": 1795509162482,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01HmGw1z8yupU3M6BHFPb7Qk"
+        },
+        "toolCallId": "toolu_01HmGw1z8yupU3M6BHFPb7Qk",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": true,
+        "id": "ea99b22f-249f-45c4-a9da-f9e776b28f1f"
+      },
+      "error": {
+        "name": "ExternalHarnessError",
+        "code": "failed"
+      },
+      "parentCallId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN",
+      "result": {}
+    }
+  },
+  {
+    "seq": 112,
+    "type": "assistant/message",
+    "time": 1795509165510,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "2803a214-c81d-47ce-b1ce-41c5949a6ea7"
+      },
+      "parentCallId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN"
+    }
+  },
+  {
+    "seq": 113,
+    "type": "tool/call",
+    "time": 1795509165510,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01NrK4xjTZCLo1shAJmCCeuV",
+      "name": "bash",
+      "arguments": "{}",
+      "parentCallId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN"
+    }
+  },
+  {
+    "seq": 114,
+    "type": "tool/result",
+    "time": 1795509165842,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01NrK4xjTZCLo1shAJmCCeuV"
+        },
+        "toolCallId": "toolu_01NrK4xjTZCLo1shAJmCCeuV",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "8b49f18b-3b0c-43d9-a42d-124e8497ef14"
+      },
+      "parentCallId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN",
+      "result": {}
+    }
+  },
+  {
+    "seq": 117,
+    "type": "tool/result",
+    "time": 1795509168659,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN"
+        },
+        "toolCallId": "toolu_01Ju72YqtgGWSdJoHPQ8XMmN",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "24f2755c-2dc8-4d36-b204-73eb9f60b5d2"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 121,
+    "type": "assistant/message",
+    "time": 1795509170793,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "response"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "53dc9488-f4cc-4c39-b108-9c9bfccd2cd6"
+      }
+    }
+  },
+  {
+    "seq": 123,
+    "type": "assistant/message",
+    "time": 1795509171499,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "9e27687a-ef03-43e2-be81-f07232a3c8f5"
+      }
+    }
+  },
+  {
+    "seq": 124,
+    "type": "tool/call",
+    "time": 1795509171499,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01DRKwjJzAzWaYJbEFcx7ykr",
+      "name": "bash",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 126,
+    "type": "tool/result",
+    "time": 1795509171840,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01DRKwjJzAzWaYJbEFcx7ykr"
+        },
+        "toolCallId": "toolu_01DRKwjJzAzWaYJbEFcx7ykr",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "b8f3db48-c72b-4960-8076-8a9d8090dba4"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 131,
+    "type": "assistant/message",
+    "time": 1795509177603,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "aa09c299-92bd-451f-a3f9-cdbfbd61ce7a"
+      }
+    }
+  },
+  {
+    "seq": 132,
+    "type": "tool/call",
+    "time": 1795509177603,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01WXjV9XnvSvoFpERtHxjoA4",
+      "name": "Agent",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 137,
+    "type": "assistant/message",
+    "time": 1795509180649,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "b7e5005d-0d45-4482-9a71-1edae42ce1ff"
+      },
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4"
+    }
+  },
+  {
+    "seq": 138,
+    "type": "tool/call",
+    "time": 1795509180649,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01JfYBGT7RKmrrS7SSPQQehu",
+      "name": "bash",
+      "arguments": "{}",
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4"
+    }
+  },
+  {
+    "seq": 141,
+    "type": "tool/result",
+    "time": 1795509193397,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01JfYBGT7RKmrrS7SSPQQehu"
+        },
+        "toolCallId": "toolu_01JfYBGT7RKmrrS7SSPQQehu",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": true,
+        "id": "354e1f88-473e-4130-97e3-f5dfcb3d257d"
+      },
+      "error": {
+        "name": "ExternalHarnessError",
+        "code": "declined"
+      },
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4",
+      "result": {}
+    }
+  },
+  {
+    "seq": 144,
+    "type": "tool/result",
+    "time": 1795509202748,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01WXjV9XnvSvoFpERtHxjoA4"
+        },
+        "toolCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "4bfa5fd1-f538-4ba4-ae0c-a4f93df59366"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 148,
+    "type": "assistant/message",
+    "time": 1795509211270,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "response"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "b3cd1407-c1dd-4d54-b295-bba9e2e77e18"
+      }
+    }
+  },
+  {
+    "seq": 150,
+    "type": "assistant/message",
+    "time": 1795509211616,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "030ae2bc-f89b-4ebf-a082-9b1b0fc7d3e1"
+      }
+    }
+  },
+  {
+    "seq": 151,
+    "type": "tool/call",
+    "time": 1795509211616,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01X1tdDZcMrp2zftm7aY2MDP",
+      "name": "ToolSearch",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 152,
+    "type": "tool/result",
+    "time": 1795509211621,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01X1tdDZcMrp2zftm7aY2MDP"
+        },
+        "toolCallId": "toolu_01X1tdDZcMrp2zftm7aY2MDP",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "cdf241f0-3619-44c0-8ed7-dd5d1a1117f9"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 157,
+    "type": "assistant/message",
+    "time": 1795509216735,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "9ce5f619-cf6c-4629-8e98-85b70112ab1f"
+      }
+    }
+  },
+  {
+    "seq": 158,
+    "type": "tool/call",
+    "time": 1795509216735,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_013jUBd54mPpARNzMAvLUsQt",
+      "name": "SendMessage",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 162,
+    "type": "tool/result",
+    "time": 1795509216781,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_013jUBd54mPpARNzMAvLUsQt"
+        },
+        "toolCallId": "toolu_013jUBd54mPpARNzMAvLUsQt",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "3c45ce71-fd7d-4f9f-91f5-0d9db0f4d1cc"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 165,
+    "type": "assistant/message",
+    "time": 1795509218497,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "038718fb-732c-40b9-9cc5-32fdba986449"
+      },
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4"
+    }
+  },
+  {
+    "seq": 166,
+    "type": "tool/call",
+    "time": 1795509218497,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01MTB94FfaNButPZAddCkYpd",
+      "name": "Read",
+      "arguments": "{}",
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4"
+    }
+  },
+  {
+    "seq": 168,
+    "type": "tool/result",
+    "time": 1795509218503,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01MTB94FfaNButPZAddCkYpd"
+        },
+        "toolCallId": "toolu_01MTB94FfaNButPZAddCkYpd",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": true,
+        "id": "35e5b1fe-5d60-4336-ac49-ce6ad267f9ae"
+      },
+      "error": {
+        "name": "ExternalHarnessError",
+        "code": "failed"
+      },
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4",
+      "result": {}
+    }
+  },
+  {
+    "seq": 170,
+    "type": "assistant/message",
+    "time": 1795509220065,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "ffcc9550-a781-4154-80af-4a093417e374"
+      },
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4"
+    }
+  },
+  {
+    "seq": 171,
+    "type": "tool/call",
+    "time": 1795509220065,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "callId": "toolu_01GXtPYtqtqR9LbWnPzWNf6o",
+      "name": "edit_file",
+      "arguments": "{}",
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4"
+    }
+  },
+  {
+    "seq": 176,
+    "type": "assistant/message",
+    "time": 1795509220361,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "response"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "33e5fa10-9a97-445c-9fb0-e3aa7b65564b"
+      }
+    }
+  },
+  {
+    "seq": 179,
+    "type": "tool/result",
+    "time": 1795509220401,
+    "data": {
+      "turn": 5,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01GXtPYtqtqR9LbWnPzWNf6o"
+        },
+        "toolCallId": "toolu_01GXtPYtqtqR9LbWnPzWNf6o",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": true,
+        "id": "e5b9e07f-62f4-4051-be04-83775746dccd"
+      },
+      "error": {
+        "name": "ExternalHarnessError",
+        "code": "interrupted"
+      },
+      "parentCallId": "toolu_01WXjV9XnvSvoFpERtHxjoA4",
+      "result": {}
+    }
+  },
+  {
+    "seq": 183,
+    "type": "turn/end",
+    "time": 1795509220401,
+    "data": {
+      "turn": 5,
+      "reason": {
+        "kind": "completed"
+      },
+      "usage": {
+        "inputTokens": 2,
+        "cacheCreationInputTokens": 581,
+        "cacheReadInputTokens": 51765,
+        "outputTokens": 272,
+        "maxTokens": 1000000
+      }
+    }
+  },
+  {
+    "seq": 184,
+    "type": "turn/start",
+    "time": 1795509238514,
+    "data": {
+      "turn": 6
+    }
+  },
+  {
+    "seq": 186,
+    "type": "user/message",
+    "time": 1795509238514,
+    "data": {
+      "content": [
+        {
+          "type": "text",
+          "text": "request 186"
+        }
+      ],
+      "source": {
+        "kind": "user"
+      },
+      "role": "user",
+      "id": "823f0c47-f711-4391-a3a1-b60acdaba112"
+    }
+  },
+  {
+    "seq": 191,
+    "type": "assistant/message",
+    "time": 1795509242555,
+    "data": {
+      "turn": 6,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "11f707b0-4c04-4196-93be-c1a5f51008c1"
+      }
+    }
+  },
+  {
+    "seq": 192,
+    "type": "tool/call",
+    "time": 1795509242555,
+    "data": {
+      "turn": 6,
+      "step": 1,
+      "callId": "toolu_01E6wJ5nkZ6U3Ny1kwst53rn",
+      "name": "bash",
+      "arguments": "{}"
+    }
+  },
+  {
+    "seq": 196,
+    "type": "tool/result",
+    "time": 1795509277061,
+    "data": {
+      "turn": 6,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "toolu_01E6wJ5nkZ6U3Ny1kwst53rn"
+        },
+        "toolCallId": "toolu_01E6wJ5nkZ6U3Ny1kwst53rn",
+        "content": [
+          {
+            "type": "text",
+            "text": "tool result"
+          }
+        ],
+        "isError": false,
+        "id": "18d5a3fb-47c5-40f1-95af-72b930c0ae15"
+      },
+      "result": {}
+    }
+  },
+  {
+    "seq": 200,
+    "type": "assistant/message",
+    "time": 1795509280036,
+    "data": {
+      "turn": 6,
+      "step": 1,
+      "stream": [],
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "response"
+          }
+        ],
+        "source": {
+          "kind": "model",
+          "provider": "claude",
+          "model": "opus"
+        },
+        "id": "ed503288-424b-45a3-bc9c-551f2a29e5b6"
+      }
+    }
+  },
+  {
+    "seq": 205,
+    "type": "turn/end",
+    "time": 1795509280079,
+    "data": {
+      "turn": 6,
+      "reason": {
+        "kind": "completed"
+      },
+      "usage": {
+        "inputTokens": 2,
+        "cacheCreationInputTokens": 528,
+        "cacheReadInputTokens": 52627,
+        "outputTokens": 208,
+        "maxTokens": 1000000
+      }
+    }
+  }
+]

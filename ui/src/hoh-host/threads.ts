@@ -26,7 +26,7 @@ function argumentsOf(value: unknown): Record<string, any> {
 type Status = 'idle' | 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 type RunStatus = 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'cancelled';
 interface TokenUsage { usedTokens: number; maxTokens?: number; inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; updatedAt: string }
-interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; tokenUsage?: TokenUsage }
+interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; engineStartedAt?: number; tokenUsage?: TokenUsage }
 type Item = Record<string, any> & { id: string; type: string; status: Status; runId: string | null; ordinal: number };
 /** A picture of a message as T3 lists it (`ChatImageAttachment`): its bytes went to the engine, not into the thread. */
 export interface ShownAttachment { readonly type: 'image'; readonly id: string; readonly name: string; readonly mimeType: string; readonly sizeBytes: number }
@@ -278,16 +278,15 @@ export class ThreadModel {
     if (known || pending >= 0) {
       if (start !== null) {
         const run = this.runs.find(entry => entry.userMessageId === messageId);
-        const message = this.messages.find(entry => entry.id === messageId);
-        const item = this.item('item-' + messageId);
-        if (run) { run.requestedAt = start; run.startedAt = start; }
-        if (message) { message.createdAt = start; message.updatedAt = start; }
-        if (item) Object.assign(item, { startedAt: iso(start), completedAt: iso(start), updatedAt: iso(start) });
+        if (run) run.engineStartedAt = start;
+        // The local send can precede process startup by tens of seconds.
+        // Keep that visible start; interrupted turns use the engine start at turn/end.
       }
       return;
     }
     const saved = this.promptTimes[engineId];
-    this.addUserMessage(messageId, value, start ?? (typeof saved === 'number' && Number.isFinite(saved) && saved > 0 && saved <= at ? saved : at));
+    this.addUserMessage(messageId, value, typeof saved === 'number' && Number.isFinite(saved) && saved > 0 && saved <= at ? saved : start ?? at);
+    if (start !== null) this.currentRun()!.engineStartedAt = start;
   }
 
   private addUserMessage(messageId: string, value: string, at: number, attachments: ShownAttachment[] = []) {
@@ -476,9 +475,25 @@ export class ThreadModel {
     const status: RunStatus = reason === 'aborted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
     this.stopRequested = false;
     const open = run?.status === 'running' || run?.status === 'waiting';
-    const lateCompletedGuess = run?.status === 'interrupted' && this.settledByGuess && status === 'completed';
-    if (run && (open || lateCompletedGuess || (reason === 'aborted' && record(cause).kind === 'user'))) { run.status = status; run.completedAt = at; }
+    const lateCompletedGuess = (run?.status === 'interrupted' || run?.status === 'completed') && this.settledByGuess && status === 'completed';
+    const closing = !!run && (open || lateCompletedGuess || (reason === 'aborted' && record(cause).kind === 'user'));
+    if (run && closing) {
+      if (status === 'interrupted' && run.engineStartedAt !== undefined) {
+        run.startedAt = run.engineStartedAt;
+        const message = this.messages.find(entry => entry.id === run.userMessageId);
+        const item = this.item('item-' + run.userMessageId);
+        if (message) { message.createdAt = run.engineStartedAt; message.updatedAt = run.engineStartedAt; }
+        if (item) Object.assign(item, { startedAt: iso(run.engineStartedAt), completedAt: iso(run.engineStartedAt), updatedAt: iso(run.engineStartedAt) });
+      }
+      run.status = status; run.completedAt = at;
+    }
     this.updateUsage(rawUsage, at);
+    // T3 uses the final answer's update time for earlier runs. Advance it to the
+    // durable turn/end, so later turns cannot change the displayed duration.
+    const answer = closing ? [...this.items].reverse().find(item => item.runId === run?.id && item.type === 'assistant_message' && !item.parentItemId) : undefined;
+    if (answer) answer.updatedAt = iso(at);
+    const answerMessage = answer && this.messages.find(message => message.id === answer.messageId);
+    if (answerMessage) answerMessage.updatedAt = at;
     for (const item of this.items) {
       if (item.status === 'running' || item.status === 'waiting' || item.status === 'pending')
         this.settleItem(item, item.type === 'assistant_message' ? 'completed' : status === 'completed' ? 'completed' : 'interrupted', at);
@@ -507,6 +522,11 @@ export class ThreadModel {
     this.seen.add(event.seq as number);
     const at = typeof event.time === 'number' && event.time > 0 ? event.time : Date.now();
     const data = record(event.data);
+    // A start precedes its user message. Do not reopen the previous run until an actual
+    // continuation (rather than a new prompt) arrives.
+    if (this.reopened && ['assistant/message', 'tool/call', 'turn/end'].includes(String(event.type))) {
+      this.reopened.run.status = 'running'; this.reopened.run.completedAt = null; this.reopened = null;
+    }
     switch (event.type) {
       // Not shown in the chat: the folder decides which T3 project the chat belongs to.
       case 'working-directory/change':
@@ -528,7 +548,6 @@ export class ThreadModel {
         const run = this.currentRun();
         if (run && run.status !== 'running' && run.status !== 'waiting') {
           this.reopened = { run, status: run.status, completedAt: run.completedAt };
-          run.status = 'running'; run.completedAt = null;
         }
         this.running = true; this.settledByGuess = false;
         break;
@@ -611,7 +630,7 @@ export class ThreadModel {
     const engineChanged = this.engineRunning !== running;
     this.engineRunning = running;
     const run = this.currentRun();
-    if (running && this.settledByGuess && run && run.status === 'interrupted') {
+    if (running && this.settledByGuess && run && (run.status === 'interrupted' || run.status === 'completed')) {
       // The history ended mid-turn because the turn is still going: it was not stopped.
       run.status = 'running'; run.completedAt = null; this.settledByGuess = false; this.running = true;
       return true;
@@ -624,7 +643,7 @@ export class ThreadModel {
       && this.outgoing.length === 0 && !this.requests.some(request => request.status === 'pending');
     if (this.running === running && !open) return engineChanged;
     this.running = running;
-    if (open) this.endTurn('completed', at);
+    if (open) { this.endTurn('completed', at); this.settledByGuess = true; }
     return true;
   }
 

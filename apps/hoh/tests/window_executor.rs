@@ -1161,7 +1161,7 @@ async fn the_window_engine_discovers_claude_and_keeps_its_access_without_the_hos
     assert!(
         access["effective"]["text"]
             .as_str()
-            .is_some_and(|text| text.starts_with("С подтверждением")),
+            .is_some_and(|text| text.starts_with("Supervised: Claude asks")),
         "{access}"
     );
     assert_eq!(access["selected"]["executor"], Value::Null, "{access}");

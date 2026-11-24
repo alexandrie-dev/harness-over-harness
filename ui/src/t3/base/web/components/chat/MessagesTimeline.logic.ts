@@ -602,6 +602,7 @@ type MessagesTimelineRowContent =
       runId: RunId;
       label: string;
       expanded: boolean;
+      hasDetails?: boolean;
     }
   | {
       kind: "attempt-fold";
@@ -1219,12 +1220,13 @@ function deriveTurnFolds(input: {
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
       hiddenEntryIds.add(entry.id);
     }
-    if (hiddenEntryIds.size === 0) {
+    const timingOnly = hiddenEntryIds.size === 0 && group.terminalEntry !== null && group.entries.length === 1 && group.startBoundary !== null;
+    if (hiddenEntryIds.size === 0 && !timingOnly) {
       continue;
     }
     const hidesNonCompactionWork = (entries: ReadonlyArray<TimelineEntry>) =>
       entries.some((entry) => hiddenEntryIds.has(entry.id) && !timelineEntryIsCompaction(entry));
-    if (!hidesNonCompactionWork(group.entries)) {
+    if (!timingOnly && !hidesNonCompactionWork(group.entries)) {
       continue;
     }
 
@@ -1960,6 +1962,7 @@ export function deriveMessagesTimelineRows(
         createdAt: turnFold.createdAt,
         runId: turnFold.runId,
         label: turnFold.label,
+        hasDetails: turnFold.hiddenEntryIds.size > 0,
         expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
       });
     }
@@ -2794,6 +2797,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.createdAt === bf.createdAt &&
         a.label === bf.label &&
         a.expanded === bf.expanded &&
+        (a.kind !== "turn-fold" || bf.kind !== "turn-fold" || a.hasDetails === bf.hasDetails) &&
         anchors.length === nextAnchors.length &&
         anchors.every((id, index) => id === nextAnchors[index])
       );
