@@ -16,7 +16,16 @@
 +          title: parentSubagentThread?.title ?? gt("Parent chat"),
 @@ -995,0 +995 @@
 +    activeThread?.runtimeMode === "unknown" ? "unknown" :
-@@ -1641,0 +1642,9 @@
+@@ -1518,0 +1519,8 @@
++  // Optimistic sends can render before the provider run summary. A fallback
++  // Thinking there would immediately regress to Starting once the summary arrives.
++  const hohActiveRun = activeActivityRun && ["preparing", "starting", "running", "waiting"].includes(activeActivityRun.status) ? activeActivityRun.runId : null;
++  const hohHasResponse = (serverProjection?.turnItems ?? []).some((item) =>
++    (item.type === "reasoning" || item.type === "assistant_message") &&
++    ((hohActiveRun !== null && item.runId === hohActiveRun) || (item.runId === null && item.status === "running")),
++  ) || (hohActiveRun !== null && (serverProjection?.messages ?? []).some((message) => message.role === "assistant" && message.runId === hohActiveRun));
++  const hohStartingLabel = isWorking && !hohHasResponse ? "Starting" : null;
+@@ -1641,0 +1650,9 @@
 +  const [projectNewChatDraft, setProjectNewChatDraft] = useState<string | null>(() => {
 +    try { return sessionStorage.getItem("hoh-project-new-chat"); } catch { return null; }
 +  });
@@ -26,30 +35,36 @@
 +    return () => window.removeEventListener("hoh-project-new-chat", onProjectNewChat);
 +  }, []);
 +  const isProjectNewChat = draftId !== null && draftId === projectNewChatDraft;
-@@ -1649 +1658 @@
+@@ -1649 +1666 @@
 -    draftHeroDockRequested,
 +    draftHeroDockRequested: draftHeroDockRequested || isProjectNewChat,
-@@ -1915 +1924 @@
+@@ -1915 +1932 @@
 -      throw new Error(gt("Messages from apps need a started thread."));
 +      throw new Error(gt("Messages from apps need a started chat."));
-@@ -2876 +2885 @@
+@@ -2876 +2893 @@
 -        ? gt("Subagent threads cannot start side chats.")
 +        ? gt("Subagent chats cannot start side chats.")
-@@ -2888 +2897 @@
+@@ -2888 +2905 @@
 -                ? gt("Available once the thread's worktree is set up.")
 +                ? gt("Available once the chat's worktree is set up.")
-@@ -3431,0 +3441,5 @@
+@@ -3431,0 +3449,5 @@
 +            {activeThread.runtimeMode === "unknown" ? (
 +              <span role="status" className="shrink-0 text-xs text-muted-foreground" data-hoh-unknown-access>
 +                {activeThread.modelSelection.instanceId === "unknown" ? <>Executor: <strong>Unknown</strong> · </> : null}Access: <strong>Unknown</strong>
 +              </span>
 +            ) : null}
-@@ -3719 +3733 @@
+@@ -3514 +3536 @@
+-                    activeActivityRun?.providerStartingLabelMsg
++                    hohHasResponse ? null : activeActivityRun?.providerStartingLabelMsg
+@@ -3516 +3538 @@
+-                      : null
++                      : hohStartingLabel
+@@ -3719 +3741 @@
 -                                    ? gt("This connection cannot change threads.")
 +                                    ? gt("This connection cannot change chats.")
-@@ -3760,0 +3775 @@
+@@ -3760,0 +3783 @@
 +                                currentRuntimeMode={activeRunningTurnId ? activeThread?.runtimeMode : undefined}
-@@ -3879,14 +3893,0 @@
+@@ -3879,14 +3901,0 @@
 -                                  {...(isServerThread
 -                                    ? {}
 -                                    : {
@@ -64,11 +79,11 @@
 -                                          />
 -                                        ),
 -                                      })}
-@@ -3937 +3938 @@
+@@ -3937 +3946 @@
 -                <ThreadDetailsPanel
 +                {isServerThread || isProjectNewChat ? <ThreadDetailsPanel
-@@ -4000,0 +4002 @@
+@@ -4000,0 +4010 @@
 +                  projection={serverProjection}
-@@ -4007 +4009 @@
+@@ -4007 +4017 @@
 -                />
 +                /> : null}

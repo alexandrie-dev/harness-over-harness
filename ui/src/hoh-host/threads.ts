@@ -160,7 +160,7 @@ export class ThreadModel {
   /** The engine explicitly reported a built-in agent rather than an external executor. */
   builtin = false;
   /** Durable `approval/asked` can arrive before the native `approval.pending`; keep its exact id. */
-  private readonly approvalDetails = new Map<string, { requestKind: string }>();
+  private readonly approvalDetails = new Map<string, { requestKind: string; prompt?: string; itemId?: string }>();
   interactionMode: T3InteractionMode;
   /** The actual interaction policy of the running process, independent of the next selection. */
   runningInteractionMode: T3InteractionMode | null = null;
@@ -199,6 +199,10 @@ export class ThreadModel {
   private readonly echoed = new Map<string, string>();
   private ordinal = 0;
   private promptTimes: Record<string, number> = {};
+  private stopTimes: Record<string, number> = {};
+  restoreStopTimes(times: Record<string, number> | undefined) { this.stopTimes = times ?? {}; }
+  markStopTime(at: number) { const run = this.currentRun(); if (run) this.stopTimes[String(run.ordinal)] = at; }
+  clearStopTime(ordinal: number) { delete this.stopTimes[String(ordinal)]; }
   /** Durable start from the engine; turn/start normally precedes its user/message. */
   private pendingTurnStart: number | null = null;
   /** Until the next message, a start may belong to the preceding open run or a new one. */
@@ -234,7 +238,13 @@ export class ThreadModel {
       startedAt: iso(at), completedAt: status === 'running' || status === 'waiting' || status === 'pending' ? null : iso(at), updatedAt: iso(at), type,
     };
   }
+  private stoppedItemTime(item: Item, at: number) {
+    const run = this.runs.find(candidate => candidate.id === item.runId);
+    const stoppedAt = run && this.stopTimes[String(run.ordinal)];
+    return typeof stoppedAt === 'number' && Number.isFinite(stoppedAt) ? Math.min(at, stoppedAt) : at;
+  }
   private settleItem(item: Item, status: Status, at: number) {
+    at = this.stoppedItemTime(item, at);
     item.status = status; item.updatedAt = iso(at);
     item.completedAt = status === 'running' || status === 'waiting' || status === 'pending' ? null : iso(at);
     if ('streaming' in item) item.streaming = false;
@@ -338,6 +348,8 @@ export class ThreadModel {
   }
 
   private assistantText(key: string, messageId: string, value: string, at: number, parentItemId: string | null) {
+    const run = this.currentRun();
+    if (run?.status === 'interrupted' && run.completedAt !== null && this.stopTimes[String(run.ordinal)] !== undefined) at = Math.min(at, run.completedAt);
     const found = [...this.live.entries()].find(([, live]) => live.key === key && live.parts.text);
     const part = found?.[1].parts.text;
     if (found) this.consumeLivePart(found[0], 'text');
@@ -520,6 +532,10 @@ export class ThreadModel {
     this.reopened = null; this.pendingStartJournal = null;
     const run = this.currentRun();
     const userStopped = this.stopRequested || (reason === 'aborted' && record(cause).kind === 'user');
+    const stopAt = run && this.stopTimes[String(run.ordinal)];
+    if (userStopped && run && typeof stopAt === 'number' && Number.isFinite(stopAt)) {
+      at = Math.max(run.engineStartedAt ?? run.startedAt ?? run.requestedAt, Math.min(at, stopAt));
+    }
     const status: RunStatus = reason === 'aborted' || reason === 'interrupted' || (this.stopRequested && reason !== 'error') ? 'interrupted' : reason === 'error' ? 'failed' : 'completed';
     this.stopRequested = false;
     const open = run?.status === 'running' || run?.status === 'waiting';
@@ -654,9 +670,12 @@ export class ThreadModel {
         const request = tool
           ? toolRequest(tool.name, tool.args, this.cwd)
           : toolRequest(text(data.toolName), {}, this.cwd);
-        this.approvalDetails.set(id, { requestKind: request.requestKind });
+        this.approvalDetails.set(id, { ...request, itemId: tool?.itemId });
         const item = this.item('item-approval-' + id);
-        if (item) item.requestKind = request.requestKind;
+        if (item) {
+          item.requestKind = request.requestKind;
+          if (this.executor === 'codex' && request.requestKind === 'command' && tool && text(tool.args.command)) item.prompt = text(tool.args.command);
+        }
         const entry = this.requests.find(candidate => candidate.id === id);
         if (entry) entry.kind = request.requestKind;
         break;
@@ -686,7 +705,7 @@ export class ThreadModel {
       let changed = false;
       for (const part of Object.values(live.parts)) {
         const item = this.item(part.itemId);
-        if (item && !live.gapped) { item.streaming = false; item.updatedAt = iso(at); changed = true; }
+        if (item && !live.gapped) { item.streaming = false; item.updatedAt = iso(this.stoppedItemTime(item, at)); changed = true; }
       }
       return changed;
     }
@@ -698,9 +717,17 @@ export class ThreadModel {
     const part = live.parts[kind] ??= { itemId: 'item-live-' + attempt + '-' + kind, raw: '' };
     part.raw += chunk.text;
     const item = this.item(part.itemId);
-    if (item) Object.assign(item, { text: part.raw, updatedAt: iso(at) });
-    else if (kind === 'text') this.items.push({ ...this.base(part.itemId, 'assistant_message', 'running', at), messageId: 'msg-live-' + attempt, text: part.raw, streaming: true });
-    else this.items.push({ ...this.base(part.itemId, 'reasoning', 'running', at), text: part.raw, streaming: true });
+    const turn = live.key.split(':', 1)[0];
+    const current = this.currentRun();
+    // An engine turn counter need not equal the number of user-visible runs.
+    // A currently active run still owns its stream; a settled run must not
+    // capture an early frame for the next one.
+    const streamRun = current && (current.status === 'running' || current.status === 'waiting')
+      ? current
+      : turn ? this.runs.find(run => String(run.ordinal) === turn) : current;
+    if (item) Object.assign(item, { text: part.raw, updatedAt: iso(this.stoppedItemTime(item, at)) });
+    else if (kind === 'text') this.items.push({ ...this.base(part.itemId, 'assistant_message', 'running', at, streamRun?.id ?? null), messageId: 'msg-live-' + attempt, text: part.raw, streaming: true });
+    else this.items.push({ ...this.base(part.itemId, 'reasoning', 'running', at, streamRun?.id ?? null), text: part.raw, streaming: true });
     this.touch(at);
     return true;
   }
@@ -733,7 +760,7 @@ export class ThreadModel {
     const run = this.currentRun();
     if (!run || (run.status !== 'running' && run.status !== 'waiting')) return false;
     this.stopRequested = true;
-    this.endTurn('aborted', this.inferredEnd(run, at));
+    this.endTurn('aborted', this.stopTimes[String(run.ordinal)] !== undefined ? at : this.inferredEnd(run, at));
     this.settledByGuess = false;
     return true;
   }
@@ -762,7 +789,7 @@ export class ThreadModel {
     this.items.push({
       ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at, runId),
       requestId: params.approvalId, requestKind: request.requestKind,
-      ...(text(params.humanText) ? { prompt: text(params.humanText) } : {}),
+      ...((this.executor === 'codex' && request.requestKind === 'command' && request.itemId && request.prompt) ? { prompt: request.prompt } : text(params.humanText) ? { prompt: text(params.humanText) } : {}),
       // T3's own set for a Claude request without a standing grant (apps/server ClaudeAdapterV2.ts
       // `CLAUDE_NO_STANDING_GRANT_OPTIONS`): HoH allows one action at a time.
       options: [{ decision: 'decline', label: 'Decline' }, { decision: 'accept', label: 'Approve' }],
@@ -851,7 +878,9 @@ export class ThreadModel {
   /** `OrchestrationV2ThreadProjection`, encoded. */
   projection() {
     const updatedAt = iso(this.updatedAt);
-    const visibleItems = this.items.filter(item => item.parentItemId === null);
+    const pendingCommands = new Set(this.executor === 'codex' ? this.requests.filter(request => request.status === 'pending').map(request => this.approvalDetails.get(request.id)).filter(detail => detail?.requestKind === 'command' && detail.itemId).map(detail => detail!.itemId!) : []);
+    const projectedItems = this.items.filter(item => !pendingCommands.has(item.id));
+    const visibleItems = projectedItems.filter(item => item.parentItemId === null);
     return {
       thread: {
         createdBy: 'user', creationSource: 'web',
@@ -888,7 +917,7 @@ export class ThreadModel {
         attachments: message.attachments ?? [], streaming: message.streaming, createdAt: iso(message.createdAt), updatedAt: iso(message.updatedAt),
       })),
       plans: this.plans.map(plan => ({ ...plan })),
-      turnItems: this.items.map(item => ({ ...item })),
+      turnItems: projectedItems.map(item => ({ ...item })),
       checkpointScopes: [], checkpoints: [], contextHandoffs: [], contextTransfers: [],
       // Native subagent items stay in turnItems for state and attribution, while T3 displays their folded
       // transcript inside the expandable Agent/Task row instead of duplicating them in the root timeline.

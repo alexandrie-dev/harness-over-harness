@@ -86,6 +86,10 @@ for (const id of ['alpha-1', 'alpha-2', 'alpha-done', 'alpha-empty']) {
   engine.append(session, 'assistant/message', { message: { id: `${id}-a`, content: [{ type: 'text', text: 'done' }] } });
   engine.append(session, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
 }
+const beta = engine.open('beta-1', 'beta-1');
+engine.append(beta, 'user/message', { id: 'beta-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'beta' }] });
+engine.append(beta, 'turn/start', { turn: 1 });
+engine.append(beta, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
 const stored = storage(true); const projects = JSON.parse(stored['hoh-host.projects.v1']);
 projects.threads['alpha-empty'] = 'project-alpha'; stored['hoh-host.projects.v1'] = JSON.stringify(projects);
 try {
@@ -93,9 +97,13 @@ try {
     const { page, context, off, problems } = await open(browser, engine, 1200, 900, '/', stored);
     try {
       const folder = page.locator('.hoh-project').filter({ hasText: 'Alexandrie' });
-      await folder.waitFor(); await page.waitForFunction(() => [...document.querySelectorAll('.hoh-project')].some(el => el.textContent.includes('Alexandrie') && el.textContent.includes('4 agents')));
-      assert.match(await folder.innerText(), /4 agents/); assert.deepEqual(problems, []);
-      console.log(`host ${restart + 1}: 4 agents including chat with no turn`);
+      await folder.waitFor(); await page.waitForFunction(() => [...document.querySelectorAll('.hoh-project')].some(el => el.textContent.includes('Alexandrie') && el.textContent.includes('3 agents')));
+      assert.match(await folder.innerText(), /3 agents/); assert.deepEqual(problems, []);
+      const other = page.locator('.hoh-project').filter({ hasText: 'Harness over Harness' });
+      await folder.click(); assert.equal(await folder.getAttribute('aria-expanded'), 'true');
+      await other.click(); assert.equal(await other.getAttribute('aria-expanded'), 'true');
+      assert.equal(await folder.getAttribute('aria-expanded'), 'false');
+      console.log(`host ${restart + 1}: 3 displayed cards; first click switches folder`);
     } finally { off(); await context.close(); }
   }
 } finally { await browser.close(); }

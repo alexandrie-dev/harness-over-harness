@@ -271,8 +271,8 @@ test('folder status follows visible card labels and singular agent wording', () 
   assert.match(homeSource, /agent\{\(openGroup\.totalChats \?\? openGroup\.entries\.length\) === 1 \? '' : 's'\}/);
 });
 
-test('folder totals use all project chats while status counts come from actual cards', () => {
-  assert.match(homeSource, /projectCounts\(\)\[group\.id\]/);
+test('folder totals and status counts come from the displayed project cards', () => {
+  assert.doesNotMatch(homeSource, /projectCounts\(\)\[group\.id\]/);
   const group = grouping.groupEntriesByProject([
     { id: 'interrupted', projectId: 'p', state: 'waiting', interrupted: true, startedAt: 1, agents: [] },
     { id: 'done', projectId: 'p', state: 'done', startedAt: 2, agents: [] },
@@ -322,4 +322,35 @@ test('collapsed sidebar project count includes the currently open chat', async (
   const source = await readFile(new URL('../src/t3/base/web/components/sidebar/SidebarProjectFolderHeader.tsx', import.meta.url), 'utf8');
   assert.match(source, /totalThreads/);
   assert.doesNotMatch(source, /\{hiddenThreads\.length\}/);
+});
+
+test('all counted working cards remain visible, including the seventh', () => {
+  assert.doesNotMatch(homeSource, /working\.slice\(0,\s*6\)/);
+});
+
+test('clicking another project folder is not handled as an outside click', () => {
+  assert.match(homeSource, /buttons\.current\.values\(\)/);
+});
+
+test('composer retains a known label through a temporary model catalog placeholder', async () => {
+  const source=await readFile(new URL('../src/t3/base/web/components/chat/ProviderModelPicker.tsx',import.meta.url),'utf8');
+  assert.match(source,/lastKnownComposerModel/);
+});
+
+test('transient composer startup does not label a run Thinking before it starts', async () => {
+  const source=await readFile(new URL('../src/t3/base/web/components/ChatView.tsx',import.meta.url),'utf8');
+  assert.match(source,/hohStartingLabel/);
+});
+
+test('a known composer model remains visible through an unknown catalog frame without inventing another model', async () => {
+  const source = await readFile(new URL('../src/t3/base/web/components/chat/ProviderModelPicker.tsx', import.meta.url), 'utf8');
+  const { retainComposerModel } = loadFunctions(source, ['retainComposerModel']);
+  const known = retainComposerModel(null, { key: 'local:claude', model: 'opus', label: 'Opus 5.5', unknown: false });
+  assert.equal(known.label, 'Opus 5.5');
+  const pending = retainComposerModel(known.cache, { key: 'local:claude', model: 'default', label: 'Claude', unknown: true });
+  assert.equal(pending.label, 'Opus 5.5');
+  const other = retainComposerModel(known.cache, { key: 'local:claude', model: 'other', label: 'Claude', unknown: true });
+  assert.equal(other.label, '');
+  const first = retainComposerModel(null, { key: 'local:claude', model: 'default', label: 'Claude', unknown: true });
+  assert.equal(first.label, '');
 });

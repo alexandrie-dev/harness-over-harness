@@ -192,7 +192,7 @@ function Cards({ working, done, asking, view }: Lists) {
           <section>
             <h2 className="hoh-home__label">Now <Count list={working} /></h2>
             <div className="hoh-home__cards">
-              {working.slice(0, 6).map((entry) => <EntryCard key={entry.id} entry={entry} view={view} />)}
+              {working.map((entry) => <EntryCard key={entry.id} entry={entry} view={view} />)}
             </div>
           </section>
         ) : null}
@@ -349,7 +349,7 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
     if (!openId) return;
     const close = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Node) || panel.current?.contains(target) || buttons.current.get(openId)?.contains(target)) return;
+      if (!(target instanceof Node) || panel.current?.contains(target) || [...buttons.current.values()].some((button) => button.contains(target))) return;
       setDisclosure((state) => updateProjectDisclosure(state, { type: 'close' }));
     };
     const escape = (event: KeyboardEvent) => {
@@ -412,7 +412,7 @@ function GroupedCards({ working, done, asking, view, projectEntries }: Lists) {
     projectEntries,
     (projectId) => view.host?.projectTitle(projectId) ?? 'No project',
     view.projectKey,
-  ).map((group) => ({ ...group, totalChats: view.host?.projectCounts()[group.id] ?? group.entries.length }));
+  );
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">

@@ -1516,6 +1516,14 @@ export default function ChatView(props: ChatViewProps) {
     isCompacting,
     runlessWorkStartedAt,
   });
+  // Optimistic sends can render before the provider run summary. A fallback
+  // Thinking there would immediately regress to Starting once the summary arrives.
+  const hohActiveRun = activeActivityRun && ["preparing", "starting", "running", "waiting"].includes(activeActivityRun.status) ? activeActivityRun.runId : null;
+  const hohHasResponse = (serverProjection?.turnItems ?? []).some((item) =>
+    (item.type === "reasoning" || item.type === "assistant_message") &&
+    ((hohActiveRun !== null && item.runId === hohActiveRun) || (item.runId === null && item.status === "running")),
+  ) || (hohActiveRun !== null && (serverProjection?.messages ?? []).some((message) => message.role === "assistant" && message.runId === hohActiveRun));
+  const hohStartingLabel = isWorking && !hohHasResponse ? "Starting" : null;
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
@@ -3525,9 +3533,9 @@ export default function ChatView(props: ChatViewProps) {
                   }
                   activeTurnStartedAt={activeWorkStartedAt}
                   providerStartingLabel={
-                    activeActivityRun?.providerStartingLabelMsg
+                    hohHasResponse ? null : activeActivityRun?.providerStartingLabelMsg
                       ? messages(activeActivityRun.providerStartingLabelMsg)
-                      : null
+                      : hohStartingLabel
                   }
                   worktreeSetup={worktreeSetup}
                   onCancelWorktreeSetup={onCancelWorktreeSetupStable}

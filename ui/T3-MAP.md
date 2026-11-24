@@ -485,3 +485,5 @@ C8: панель пустого чата показывает его стату�
 
 | `web/components/sidebar/SidebarProjectFolderHeader.tsx` | правка (`ui/src/t3/base-patches/web/components/sidebar/SidebarProjectFolderHeader.tsx.patch`) | счётчик включает открытый разговор |
 | `web/components/chat/ProviderModelPicker.tsx` | правка (`ui/src/t3/base-patches/web/components/chat/ProviderModelPicker.tsx.patch`) | скрывает временную подмену имени модели именем Claude |
+
+C11: переход Starting → Thinking не откатывается при оптимистичной отправке; композер сохраняет последнее известное имя модели на время обновления каталога.

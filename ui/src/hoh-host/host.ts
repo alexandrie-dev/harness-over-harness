@@ -451,6 +451,7 @@ export class HohHost {
   private applyThreadMetadata(thread: ThreadModel) {
     const metadata = this.threadMetadata.get(thread.id);
     thread.restorePromptTimes(metadata.promptTimes);
+    thread.restoreStopTimes(metadata.stopTimes);
     if (typeof metadata.title === 'string' && metadata.title.trim()) thread.title = metadata.title;
     if (typeof metadata.pinnedAt === 'number' || metadata.pinnedAt === null) thread.pinnedAt = metadata.pinnedAt;
     if (typeof metadata.pinOrderKey === 'string' || metadata.pinOrderKey === null) thread.pinOrderKey = metadata.pinOrderKey;
@@ -2250,7 +2251,13 @@ ${message.slice(0, 8000)}`;
     const stoppedOrdinal = thread.activeRunId() ? thread.home()?.turnOrdinal : undefined;
     const disposition = this.homeDispositions.get(thread.id);
     const replacedCrashDisposition = stoppedOrdinal !== undefined && disposition?.turnOrdinal === stoppedOrdinal && disposition.interrupted === true;
+    const stopAt = this.now();
     if (stoppedOrdinal !== undefined) {
+      thread.markStopTime(stopAt);
+      try {
+        const metadata = this.threadMetadata.get(thread.id);
+        this.threadMetadata.update(thread.id, { stopTimes: { ...metadata.stopTimes, [String(stoppedOrdinal)]: stopAt } });
+      } catch { /* Engine history remains authoritative when storage is unavailable. */ }
       thread.stopRequested = true;
       // Persist the person's intent before crossing the engine boundary. Closing the window while cancel is
       // still in flight must not turn an explicit Stop back into crash recovery on the next launch.
@@ -2266,6 +2273,8 @@ ${message.slice(0, 8000)}`;
       if (!this.stopped && stoppedOrdinal !== undefined && thread.activeRunId()
         && current?.turnOrdinal === stoppedOrdinal && current.state === 'waiting' && current.stopped === true) {
         thread.stopRequested = false;
+        thread.clearStopTime(stoppedOrdinal);
+        try { const times = { ...this.threadMetadata.get(thread.id).stopTimes }; delete times[String(stoppedOrdinal)]; this.threadMetadata.update(thread.id, { stopTimes: times }); } catch { /* Storage is optional. */ }
         if (disposition) this.homeDispositions.set(thread.id, disposition); else this.homeDispositions.delete(thread.id);
         this.save();
         this.changed(thread.id);
@@ -2274,7 +2283,7 @@ ${message.slice(0, 8000)}`;
       throw error;
     }
     // The turn is stopped now: its run closes and the thread list stops saying "Working" without waiting for the engine's closing event.
-    if (thread.interrupt(this.now()) || replacedCrashDisposition || stoppedOrdinal !== undefined) { this.changed(thread.id); this.flush(); }
+    if (thread.interrupt(stopAt) || replacedCrashDisposition || stoppedOrdinal !== undefined) { this.changed(thread.id); this.flush(); }
   }
 
   private async respond(thread: ThreadModel, command: Record<string, any>) {

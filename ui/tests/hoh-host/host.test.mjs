@@ -3405,3 +3405,106 @@ test('an SDK session already open or opening remains usable after restart', asyn
   const folder = await host.trustRequest('session/working-directory/get', { sessionId: 'open-session' });
   assert.equal(folder.cwd, '/home/person/Documents/HoH');
 });
+
+test('user stop time survives a later final event and a history replay', () => {
+  const make = () => new mod.threads.ThreadModel({ id: 'c11-stop', createdAt: 1000, model: 'opus', mode: 'confirm' });
+  const events = [
+    { seq: 1, type: 'turn/start', time: 1100, data: { turn: 1 } },
+    { seq: 2, type: 'user/message', time: 1200, data: { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'count' }] } },
+    { seq: 3, type: 'assistant/message', time: 5900, data: { turn: 1, step: 1, message: { id: 'a', content: [{ type: 'text', text: 'answer' }] } } },
+    { seq: 4, type: 'turn/end', time: 6000, data: { reason: { kind: 'aborted', reason: { kind: 'user' } } } },
+  ];
+  const t=make(); t.sendLocal('local','count',1000); t.applyEvent(events[0]); t.markStopTime(5000); t.interrupt(5000); t.applyEvent(events[2]); t.applyEvent(events[3]);
+  assert.equal(Date.parse(t.projection().runs[0].completedAt),5000);
+  const replay=make(); replay.restoreStopTimes({ '1': 5000 }); for(const event of events) replay.applyEvent(event);
+  assert.equal(Date.parse(replay.projection().runs[0].completedAt),5000);
+});
+
+test('Codex command approval shows the command once and restores the work item after approval', () => {
+  const t = new mod.threads.ThreadModel({ id:'codex-approval',createdAt:1000,model:'gpt-6.2-sol',mode:'confirm',executor:'codex' });
+  t.sendLocal('u','go',1001);
+  t.applyEvent({seq:1,type:'tool/call',time:1002,data:{turn:1,callId:'cmd',name:'bash',arguments:{command:'echo hi'}}});
+  t.applyEvent({seq:2,type:'approval/asked',time:1003,data:{id:'ask',callId:'cmd',toolName:'bash'}});
+  t.approvalPending({approvalId:'ask',humanText:'Run an action that cannot be checked in advance'},1004);
+  const pending=t.projection();
+  assert.equal(pending.turnItems.find(item=>item.type==='approval_request').prompt,'echo hi');
+  assert.equal(pending.turnItems.filter(item=>item.type==='command_execution').length,0);
+  t.approvalResolved({approvalId:'ask',outcome:'allowed-once'},1005);
+  assert.equal(t.projection().turnItems.filter(item=>item.type==='command_execution').length,1);
+});
+
+test('Stop timestamp remains fixed across delayed engine end and a new host', async () => {
+  const engine = new FakeEngine(); const id = 'stop-click-time';
+  engine.seed(id, 'Stop time', []);
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const first = connect(engine, { storage, now: () => engine.clock });
+  const stream = await first.client.stream('orchestration.subscribeThread', { threadId: id });
+  await stream.until(value => value.kind === 'snapshot');
+  engine.emitEvent(id, 'turn/start', { turn: 1 });
+  engine.emitEvent(id, 'user/message', { id: 'u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Count' }] });
+  engine.clock += 4300;
+  const stopAt = engine.clock;
+  await first.client.call('orchestration.dispatchCommand', { type: 'thread.stop', commandId: 'stop-click', threadId: id });
+  engine.clock += 800;
+  engine.emitEvent(id, 'assistant/message', { turn: 1, step: 1, message: { id: 'a', role: 'assistant', content: [{ type: 'text', text: 'partial' }] } });
+  engine.emitEvent(id, 'turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } });
+  const live = await first.client.call('orchestration.getThreadProjection', { threadId: id });
+  assert.equal(Date.parse(live.runs[0].completedAt), stopAt);
+  first.host.stop();
+  const second = connect(new FakeEngine({ store: engine.store }), { storage, now: () => engine.clock });
+  const restored = await second.client.call('orchestration.getThreadProjection', { threadId: id });
+  assert.equal(restored.runs[0].completedAt, live.runs[0].completedAt);
+  assert.equal(restored.runs[0].startedAt, live.runs[0].startedAt);
+  second.host.stop();
+});
+
+test('Codex approval obtains its actual command even when the native request arrives first', () => {
+  const t = new mod.threads.ThreadModel({ id:'codex-reordered', createdAt:1000, model:'gpt-6.2-sol', mode:'confirm', executor:'codex' });
+  t.sendLocal('u', 'go', 1001);
+  t.applyEvent({ seq:1, type:'tool/call', time:1002, data:{turn:1,callId:'cmd',name:'bash',arguments:JSON.stringify({command:"/usr/bin/zsh -c 'echo hi > file'"})} });
+  t.approvalPending({approvalId:'ask',humanText:'generic'},1003);
+  t.applyEvent({seq:2,type:'approval/asked',time:1004,data:{id:'ask',callId:'cmd',toolName:'bash'}});
+  const pending=t.projection();
+  assert.equal(pending.turnItems.find(item=>item.type==='approval_request').prompt,"/usr/bin/zsh -c 'echo hi > file'");
+  assert.equal(pending.turnItems.filter(item=>item.type==='command_execution').length,0);
+});
+
+test('a reasoning frame for the next turn never belongs to the previous completed run', () => {
+  const t = new mod.threads.ThreadModel({ id:'early-next', createdAt:1000, model:'opus', mode:'confirm' });
+  t.sendLocal('old','old message',1001);
+  t.applyEvent({seq:1,type:'turn/end',time:2000,data:{turn:1,reason:{kind:'completed'}}});
+  t.applyStreamFrame({type:'start',attemptId:'early',turn:2,step:1},3000);
+  t.applyStreamFrame({type:'chunk',attemptId:'early',index:0,chunk:{type:'reasoning-delta',text:''}},3001);
+  assert.equal(t.projection().turnItems.find(item=>item.type==='reasoning').runId,null);
+  t.sendLocal('new','new message',3002);
+  assert.equal(t.projection().turnItems.find(item=>item.type==='reasoning').runId,t.projection().runs[1].id);
+});
+
+test('late tool result cannot move a stopped run timeline beyond the Stop click', () => {
+  const t = new mod.threads.ThreadModel({id:'late-stop-tool',createdAt:1000,model:'opus',mode:'confirm'});
+  t.sendLocal('u','run',1100);
+  t.applyEvent({seq:1,type:'tool/call',time:1200,data:{turn:1,callId:'c',name:'bash',arguments:{command:'sleep 1'}}});
+  t.markStopTime(5000); t.interrupt(5000);
+  t.applyEvent({seq:2,type:'tool/result',time:5800,data:{turn:1,message:{toolCallId:'c',content:[{type:'text',text:'stopped'}]}}});
+  const item=t.projection().turnItems.find(item=>item.type==='command_execution');
+  assert.equal(Date.parse(item.updatedAt),5000);
+  assert.equal(Date.parse(item.completedAt),5000);
+  const replay = new mod.threads.ThreadModel({id:'late-stop-tool',createdAt:1000,model:'opus',mode:'confirm'});
+  replay.restoreStopTimes({'1':5000});
+  replay.applyEvent({seq:1,type:'user/message',time:1100,data:{id:'u',source:{kind:'user'},content:[{type:'text',text:'run'}]}});
+  replay.applyEvent({seq:2,type:'tool/call',time:1200,data:{turn:1,callId:'c',name:'bash',arguments:{command:'sleep 1'}}});
+  replay.applyEvent({seq:3,type:'tool/result',time:5800,data:{turn:1,message:{toolCallId:'c',content:[{type:'text',text:'stopped'}]}}});
+  replay.applyEvent({seq:4,type:'turn/end',time:5801,data:{turn:1,reason:{kind:'aborted',reason:{kind:'user'}}}});
+  const replayed = replay.projection().turnItems.find(item=>item.type==='command_execution');
+  assert.equal(replayed.updatedAt,item.updatedAt);
+  assert.equal(replayed.completedAt,item.completedAt);
+});
+
+test('a live engine turn counter that differs from the UI run ordinal keeps its active run', () => {
+  const t = new mod.threads.ThreadModel({id:'engine-turn-counter',createdAt:1000,model:'opus',mode:'confirm'});
+  t.sendLocal('u','go',1001);
+  t.applyStreamFrame({type:'start',attemptId:'stream',turn:9,step:1},1002);
+  t.applyStreamFrame({type:'chunk',attemptId:'stream',index:0,chunk:{type:'text-delta',text:'partial'}},1003);
+  assert.equal(t.projection().turnItems.find(item=>item.type==='assistant_message').runId,t.projection().runs[0].id);
+});

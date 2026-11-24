@@ -43,6 +43,10 @@ export class StubClient {
     this.requests = []; this.notifications = []; this.nextId = 0; this.stderr = '';
     this.closed = false;
     child.stderr.on('data', data => { this.stderr += data.toString(); });
+    // A deliberately killed replay process can close its pipe before the
+    // write callback runs. The callback rejects the request; consume the
+    // stream's matching error event so it does not escape the test process.
+    child.stdin.on('error', () => {});
     const fail = error => {
       for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
       this.pending.clear();

@@ -88,6 +88,17 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
 /** What a docked effort column needs from its picker: the model it serves. */
 export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
 
+export function retainComposerModel(
+  previous: { key: string; model: string; label: string } | null,
+  input: { key: string; model: string; label: string; unknown: boolean },
+) {
+  if (input.unknown) {
+    const matches = previous?.key === input.key && (input.model === "default" || previous.model === input.model);
+    return { cache: previous, label: matches ? previous.label : "" };
+  }
+  return { cache: input.label && input.label !== "Choose model" ? { key: input.key, model: input.model, label: input.label } : previous, label: input.label };
+}
+
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
   workspaceCwd?: string | null;
@@ -282,7 +293,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   // The HoH discovery placeholder names only the provider, not the actual model.
   const hideUnknownComposerModel = props.isComposerOwned && selectedModel?.slug === "default" && selectedModel.name === "Claude";
-  const triggerText = hideUnknownComposerModel ? "" : (props.triggerLabel ?? multipleLabel ?? triggerTitle);
+  // Discovery can briefly replace even the selected slug with `default`. Keep
+  // the last real label for this provider until its catalog catches up.
+  const composerModelKey = `${props.environmentId ?? ""}:${activeInstanceId}`;
+  const lastKnownComposerModel = useRef<{ key: string; model: string; label: string } | null>(null);
+  const resolvedTriggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
+  const retained = retainComposerModel(lastKnownComposerModel.current, { key: composerModelKey, model: props.model, label: resolvedTriggerText, unknown: hideUnknownComposerModel === true });
+  if (props.isComposerOwned) lastKnownComposerModel.current = retained.cache;
+  const triggerText = props.isComposerOwned ? retained.label : resolvedTriggerText;
   const triggerTextProps = {
     className: cn(
       "min-w-0 flex-1 overflow-hidden truncate",
