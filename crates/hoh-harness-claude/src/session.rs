@@ -915,6 +915,22 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                 emit_usage(inner, usage, max_tokens).await;
             }
         }
+        Some("content_block_start") => {
+            let kind = event
+                .get("content_block")
+                .and_then(|block| text(block, "type"));
+            if matches!(kind, Some("thinking" | "redacted_thinking")) {
+                let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
+                let message_id = block_id(inner, parent_item_id.as_deref(), None, index as usize);
+                inner
+                    .emit(HarnessEvent::ReasoningDelta {
+                        message_id,
+                        text: String::new(),
+                        parent_item_id,
+                    })
+                    .await;
+            }
+        }
         Some("content_block_delta") => {
             let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
             let Some(delta) = event.get("delta") else {

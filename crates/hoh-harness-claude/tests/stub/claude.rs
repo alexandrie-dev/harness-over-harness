@@ -590,7 +590,29 @@ impl Stub {
             return;
         }
         self.start_message(&message_id);
-        if text == "hello" {
+        if text == "fixture-thinking" {
+            let events: Vec<Value> = serde_json::from_str(include_str!(
+                "../../../../ui/tests/hoh-host/fixtures/u2a-real-stream.json"
+            ))
+            .unwrap();
+            for event in events {
+                if event.get("type").and_then(Value::as_str) == Some("message_start") {
+                    continue;
+                }
+                let thinking_start = event.get("type").and_then(Value::as_str)
+                    == Some("content_block_start")
+                    && event.pointer("/content_block/type").and_then(Value::as_str)
+                        == Some("thinking");
+                self.stream(event);
+                if thinking_start {
+                    std::thread::sleep(std::time::Duration::from_millis(3000));
+                }
+            }
+            self.result("success", false, "done");
+        } else if text == "redacted-thinking" {
+            self.stream(json!({ "type": "content_block_start", "index": 2, "content_block": { "type": "redacted_thinking", "data": "redacted" } }));
+            self.result("success", false, "done");
+        } else if text == "hello" {
             self.stream(json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }));
             self.stream(json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "thinking_delta", "thinking": "pondering" } }));
             self.assistant(

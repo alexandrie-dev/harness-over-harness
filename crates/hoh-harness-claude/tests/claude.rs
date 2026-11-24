@@ -592,6 +592,72 @@ async fn no_chat_with_an_unsupported_version_or_a_missing_program() {
 }
 
 #[tokio::test]
+async fn fixture_thinking_start_is_emitted_before_the_delayed_first_delta() {
+    let env = Env::new();
+    let Started {
+        session,
+        mut events,
+        ..
+    } = start(&env, None).await;
+    prompt(&session, "t-fixture", "fixture-thinking");
+    let started = tokio::time::timeout(
+        Duration::from_millis(2000),
+        until(&mut events, |event| {
+            matches!(event, HarnessEvent::ReasoningDelta { .. })
+        }),
+    )
+    .await
+    .expect("thinking block start must arrive before its first delayed delta");
+    let id = match started.last().unwrap() {
+        HarnessEvent::ReasoningDelta {
+            message_id, text, ..
+        } => {
+            assert!(text.is_empty());
+            message_id.clone()
+        }
+        _ => unreachable!(),
+    };
+    if std::env::var_os("HOH_C9B_TRACE").is_some() {
+        println!("C9B_START:{id}");
+    }
+    let delta = until(&mut events, |event| {
+        matches!(event, HarnessEvent::ReasoningDelta { .. })
+    })
+    .await;
+    assert!(
+        matches!(delta.last(), Some(HarnessEvent::ReasoningDelta { message_id, .. }) if message_id == &id)
+    );
+    if std::env::var_os("HOH_C9B_TRACE").is_some() {
+        println!("C9B_DELTA:{id}");
+    }
+    until(&mut events, turn_end).await;
+}
+
+#[tokio::test]
+async fn redacted_thinking_start_emits_empty_reasoning_before_later_events() {
+    let env = Env::new();
+    let Started {
+        session,
+        mut events,
+        ..
+    } = start(&env, None).await;
+    prompt(&session, "t-redacted", "redacted-thinking");
+    let seen = until(&mut events, turn_end).await;
+    let reasoning: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            HarnessEvent::ReasoningDelta {
+                message_id, text, ..
+            } => Some((message_id.as_str(), text.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reasoning.len(), 1);
+    assert_eq!(reasoning[0].1, "");
+    assert!(reasoning[0].0.ends_with(":2"));
+}
+
+#[tokio::test]
 async fn a_turn_streams_reasoning_and_text_and_completes() {
     let env = Env::new();
     let Started {
@@ -633,7 +699,20 @@ async fn a_turn_streams_reasoning_and_text_and_completes() {
         HarnessEvent::ReasoningFinal { message_id, .. } => Some(message_id.clone()),
         _ => None,
     });
-    assert_eq!(thinking.as_ref().map(|t| t.1.as_str()), Some("pondering"));
+    assert_eq!(thinking.as_ref().map(|t| t.1.as_str()), Some(""));
+    let reasoning: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            HarnessEvent::ReasoningDelta {
+                message_id, text, ..
+            } => Some((message_id.as_str(), text.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reasoning.len(), 2);
+    assert_eq!(reasoning[0].1, "");
+    assert_eq!(reasoning[1].1, "pondering");
+    assert_eq!(reasoning[0].0, reasoning[1].0);
     assert_eq!(thinking.map(|t| t.0), thinking_final);
     assert!(
         matches!(seen.last(), Some(HarnessEvent::TurnCompleted { turn_id }) if turn_id == "t1")
