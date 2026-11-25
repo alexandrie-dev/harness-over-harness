@@ -494,8 +494,6 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
           >
             <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.totalChats ?? openGroup.entries.length} agent{(openGroup.totalChats ?? openGroup.entries.length) === 1 ? '' : 's'}</small></div>
             <AgentClusters entries={openGroup.entries} view={view} projectId={openGroup.id} />
-              ))}
-            </div>
           </div>,
         );
         return items;
