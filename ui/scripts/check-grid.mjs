@@ -69,10 +69,15 @@ for (const file of await cssFiles(ENTRY)) {
 // ---- 2. Собранное окно ----
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json', '.wasm': 'application/wasm' };
 const ORIGIN = 'http://hoh-window.test';
+const pluginManifest = JSON.parse(await readFile(join(UI, '../plugins/turn-note/hoh-plugin.json'), 'utf8'));
 const SIZES = [[2560, 1440], [2000, 1137], [1920, 1080], [1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]
   .filter(([width, height]) => !process.env.HOH_GRID_SIZE || process.env.HOH_GRID_SIZE === `${width}x${height}`);
 function engineWith(busy) {
   const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/plugins/list'
+    ? Promise.resolve([{ id: pluginManifest.id, manifest: pluginManifest, status: 'mounted', diagnostic: null, data: null }])
+    : request(method, params);
   // Keep every synthetic event and the page's "now" on one local calendar day,
   // even when the real check starts or finishes across midnight.
   engine.clock = FIXTURE_NOW - 60 * 60_000;
@@ -246,16 +251,16 @@ try {
           step = 'open Plugins';
           await page.locator('[data-hoh-page-item="plugins"]').click();
           await page.locator('.hoh-plugins').waitFor({ state: 'visible' });
+          await page.locator('[data-plugin-id="turn-note"]').waitFor({ state: 'visible' });
           if (await page.locator('[data-hoh-page-item="plugins"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Plugins не подсвечен`);
-          if (await page.locator('[data-plugin-list] [data-plugin-id]').count() !== 0) fail(`${label}: страница Plugins выдумывает установленные плагины`);
-          if (await page.locator('[data-plugin-empty]').count() !== 1) fail(`${label}: нет честного пустого состояния Plugins`);
-          if (await page.getByRole('heading', { name: 'No plugins installed' }).count() !== 1) fail(`${label}: нет заголовка No plugins installed`);
+          if (await page.locator('[data-plugin-list] [data-plugin-id]').count() !== 1) fail(`${label}: неверное число установленных плагинов`);
+          if (await page.locator('[data-plugin-id="turn-note"]').getByText('mounted', { exact: true }).count() !== 1) fail(`${label}: нет состояния плагина`);
+          if (await page.locator('[data-plugin-id="turn-note"]').getByText('Select a conversation to see its data.', { exact: true }).count() !== 1) fail(`${label}: нет состояния панели без выбранного разговора`);
           const pluginText = (await page.locator('.hoh-plugins').innerText()).replace(/\s+/g, ' ');
           if (/Sample data|Variant [ABC]/.test(pluginText)) fail(`${label}: на Plugins остались заглушка или переключатель варианта`);
           const overflow = await page.locator('.hoh-plugins').evaluate((node) => node.scrollWidth > node.clientWidth + 1);
           if (overflow) fail(`${label}: страница Plugins имеет горизонтальное переполнение`);
 
-          if (await page.locator('.hoh-plugins').getByText('Coming Soon', { exact: true }).count() !== 1) fail(`${label}: установка Plugins должна показывать одну надпись Coming Soon`);
           if (await page.getByRole('button', { name: /Add from folder|Choose folder|How to install/ }).count() !== 0) fail(`${label}: осталась кнопка установки Plugins`);
           step = 'return to New chat';
           await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();

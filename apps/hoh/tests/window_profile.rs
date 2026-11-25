@@ -1729,7 +1729,7 @@ async fn shutdown_with_an_unsaved_change_ends_in_time_and_the_file_is_already_wr
     )
     .await;
     assert!(changed.get("result").is_some(), "{changed}");
-    // The Tauri core waits 500 ms after `shutdown` and then kills the engine; stdin stays open.
+    // The Tauri core waits 5 seconds after `shutdown` and then kills the engine; stdin stays open.
     let asked = std::time::Instant::now();
     send(
         &mut stdin,
@@ -1744,7 +1744,7 @@ async fn shutdown_with_an_unsaved_change_ends_in_time_and_the_file_is_already_wr
     let took = asked.elapsed();
     assert_eq!(status.code(), Some(0), "{}", engine_stderr(root.path()));
     assert!(
-        took < Duration::from_millis(500),
+        took < Duration::from_secs(5),
         "the engine needed {took:?} after shutdown: the core would have killed it"
     );
     let on_disk: Value =

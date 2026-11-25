@@ -26,3 +26,11 @@ test('reports inventory failure instead of claiming the plugin list is empty', a
   assert.doesNotMatch(h.text(), /No plugins installed/);
   h.unmount();
 });
+
+test('shows the empty state only after the engine returns an empty inventory', async () => {
+  const h = componentHarness(page, 'PluginsPage', {}, { inventory: { list: async () => [] } });
+  await h.settle();
+  assert.match(h.text(), /No plugins installed/);
+  assert(h.nodes().some(node => node.props['data-plugin-empty'] !== undefined));
+  h.unmount();
+});

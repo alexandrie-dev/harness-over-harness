@@ -1312,23 +1312,23 @@ async fn deleting_files_in_the_folder_is_rejected_and_nothing_is_removed() {
     assert!(
         asked
             .human_text
-            .contains("Удалить 3 файла: old1.txt, old2.txt, old3.txt")
-            && asked.human_text.contains("Файлы не попадут в корзину"),
+            .contains("Delete 3 files: old1.txt, old2.txt, old3.txt")
+            && asked.human_text.contains("bypass the trash"),
         "{}",
         asked.human_text
     );
-    // A-03: `reason` is the Russian explanation with the files; the raw command is not in it.
+    // A-03: `reason` names the files and risk; the raw command is not in it.
     let reason = asked.reason.as_deref().unwrap_or_default();
     assert!(
-        reason.contains("Удалить 3 файла: old1.txt, old2.txt, old3.txt")
-            && reason.contains("Файлы не попадут в корзину")
+        reason.contains("Delete 3 files: old1.txt, old2.txt, old3.txt")
+            && reason.contains("bypass the trash")
             && !reason.contains("rm old1.txt")
-            && !reason.contains("Команда:"),
+            && !reason.contains("Command:"),
         "{reason}"
     );
     assert_eq!(
         asked.details.as_deref(),
-        Some("Команда: rm old1.txt old2.txt old3.txt"),
+        Some("Command: rm old1.txt old2.txt old3.txt"),
         "the command belongs in the folded details"
     );
     assert!(mentions(&events, "Файлы оставил."), "{}", brief(&events));
