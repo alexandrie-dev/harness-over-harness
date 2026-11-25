@@ -11,6 +11,7 @@ export interface HohEngineLike {
 export interface HohHostOptions {
   readonly engine: HohEngineLike;
   readonly pluginAuthoringSkill?: string;
+  readonly pluginAuthoringGuide?: string;
 }
 export type InstallHohHost = (options: HohHostOptions) => unknown;
 export type TauriEngine = () => HohEngineLike;
