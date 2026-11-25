@@ -15,3 +15,8 @@
 .hoh-page p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 0.875rem; }
 
 .hoh-side__coming-soon { margin: 0 8px; font-size: 0.875rem; color: var(--muted-foreground); }
+
+/* Trust is a separate, wrapping line: neither its action nor the chat title may leave a narrow window. */
+[data-chat-header]:has([data-hoh-folder-trust]) { height: auto; padding-block: 6px; }
+[data-chat-header] > div:has(> [data-hoh-folder-trust]) { flex-wrap: wrap; row-gap: 4px; }
+[data-hoh-folder-trust] { order: 1; flex: 0 1 100%; min-width: 0; flex-wrap: wrap; }

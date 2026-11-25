@@ -491,3 +491,5 @@ C11: переход Starting → Thinking не откатывается при �
 U2: Delete removes a chat through the engine trash; menu and confirmation follow T3.
 
 U2: sidebar deletion and multi-delete use the same trash-backed operation.
+
+U6: строка доверия к папке в шапке чата переносится под breadcrumb и укладывается в окно; проверяются её границы и окна Rename/Delete на четырёх размерах.

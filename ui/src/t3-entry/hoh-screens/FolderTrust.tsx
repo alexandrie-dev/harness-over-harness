@@ -90,7 +90,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     }).then(off => { if (stopped) off(); else unsubscribe = off; }).catch(() => {});
     return () => { stopped = true; unsubscribe?.(); generation.current++; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [refresh]);
-  if (folderChanged) return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+  if (folderChanged) return <span data-hoh-folder-trust className="inline-flex items-center gap-1 text-xs text-muted-foreground">
     The folder for this chat has changed: {folderChanged.cwd}. Rebind this chat to this folder?
     <button type="button" disabled={busy} className="underline hover:text-foreground" onClick={async () => {
       const engine = window.__HOH_TRUST_ENGINE__;
@@ -104,9 +104,9 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     }}>Rebind…</button>
     {rebindError && <span>Rebinding was not confirmed or the folder changed again.</span>}
   </span>;
-  if (!state) return folderUnknown ? <span className="text-xs text-muted-foreground">Project settings in this folder: unknown</span> : null;
+  if (!state) return folderUnknown ? <span data-hoh-folder-trust className="text-xs text-muted-foreground">Project settings in this folder: unknown</span> : null;
   const view = folderTrustView({ running: state.running ?? false, applied: state.applied ?? false, trusted: state.trusted, isolated: state.isolated ?? false, changed: changedNotice });
-  return <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+  return <span data-hoh-folder-trust className="inline-flex items-center gap-1 text-xs text-muted-foreground">
     {view.text}
     {(view.canTrust || view.canRevoke) && <button type="button" disabled={busy} className="underline hover:text-foreground" onClick={async () => {
       const engine = window.__HOH_TRUST_ENGINE__;

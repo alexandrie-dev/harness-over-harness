@@ -202,6 +202,15 @@ function runningRecoveryEngine() {
   return engine;
 }
 
+function trustEngine(changed = false) {
+  const engine = completedEngine(); engine.bind(CHAT.id);
+  const request = engine.request.bind(engine);
+  engine.request = async (method, params) => method === 'hoh/executor/trust/get'
+    ? { cwd: params.cwd, executor: params.executor, trusted: false, changed }
+    : request(method, params);
+  return engine;
+}
+
 const scenarios = [
   {
     name: 'agent-setup', engine: () => { const e = new FakeEngine(); e.access = 'confirm'; e.claude = { installed: false, version: null, auth: 'unknown', models: [] }; return e; }, stored: () => ({}),
@@ -440,6 +449,46 @@ const scenarios = [
     }, blocks: ['plugins'],
   },
   {
+    name: 'learning', engine: busyEngine, stored: () => storage(true),
+    prepare: async (page, engine, sidebar) => {
+      await readyBusy(page, engine, true);
+      await page.locator('[data-hoh-page-item="learning"]').click();
+      await page.locator('[data-hoh-page="learning"]').waitFor();
+      await setSidebar(page, sidebar);
+    }, blocks: ['learning'],
+  },
+  ...['folder-trust', 'folder-trust-changed'].map(name => ({
+    name, engine: () => trustEngine(name === 'folder-trust-changed'), path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, sidebar);
+      await page.getByRole('button', { name: /Trust project settings in this folder/ }).waitFor();
+    }, blocks: ['conversation', 'trust'],
+  })),
+  {
+    name: 'thread-header-menu', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, sidebar);
+      await page.getByRole('navigation', { name: 'Chat breadcrumb' }).click({ button: 'right' });
+      const menu = page.getByRole('menu').last(); await menu.waitFor();
+      await menu.getByRole('menuitem', { name: 'Rename chat', exact: true }).waitFor();
+      await menu.getByRole('menuitem', { name: 'Delete', exact: true }).waitFor();
+    }, blocks: ['conversation', 'thread-header-menu'],
+  },
+  ...['delete-confirmation', 'rename-editor'].map(name => ({
+    name, engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, _engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, sidebar);
+      await page.getByRole('navigation', { name: 'Chat breadcrumb' }).click({ button: 'right' });
+      const menu = page.getByRole('menu').last(); await menu.waitFor();
+      await menu.getByRole('menuitem', { name: name === 'delete-confirmation' ? 'Delete' : 'Rename chat', exact: true }).click();
+      if (name === 'delete-confirmation') await page.getByRole('alertdialog').getByText(/moves the chat to the trash/).waitFor();
+      else await page.getByRole('textbox', { name: 'Chat title' }).waitFor();
+    }, blocks: ['conversation', name],
+  })),
+  {
     name: 'subagent-approval', engine: () => modeEngine('confirm', true),
     path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
     prepare: async (page, engine, sidebar) => {
@@ -590,6 +639,7 @@ async function rectangles(page) {
     const chatLane = contentBoxOf(mainLaneElement);
     return {
       viewport: { left: 0, top: 0, right: innerWidth, bottom: innerHeight, width: innerWidth, height: innerHeight },
+      pageOverflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth, document.body.scrollWidth - document.body.clientWidth),
       content: firstVisible('[data-slot="sidebar-inset"]'), notch: firstVisible('.hoh-notch'),
       homeViewport, home: firstVisible('.hoh-home__inner'), greeting: firstVisible('.hoh-home__head'), composer,
       headline: firstVisible('[data-chat-composer-stack] > .absolute.inset-x-0.bottom-full'), homeLabel: firstVisible('.hoh-home__label'), cards: firstVisible('.hoh-home__cards'), projects: firstVisible('.hoh-projects'), disclosure: firstVisible('.hoh-project-popover'),
@@ -608,6 +658,11 @@ async function rectangles(page) {
       dialog: firstVisible('[data-slot="dialog-popup"].hoh-quick-view'), quickChat: firstVisible('.hoh-quick-view__chat'), quickComposer: firstVisible('.hoh-quick-view [data-chat-composer-stack]'), quickFeed: firstVisible('.hoh-quick-view [data-chat-canvas] .chat-content-lane'),
       underlayComposerPaint: paint('[data-hoh-home-body] + .chat-composer-lane'), quickComposerPaint: paint('.hoh-quick-view [data-chat-composer-stack]'),
       settingsScroll: firstVisible('[data-settings-page-scroll]'), settings: firstVisible('[data-settings-page-scroll] > div'),
+      approval: firstVisible('[data-v2-item-type="approval_request"]'),
+      menu: firstVisible('[role=menu]'), confirmation: firstVisible('[role=alertdialog]'), rename: firstVisible('input[aria-label="Chat title"]'),
+      learning: contentBox('[data-hoh-page="learning"] .hoh-page__column'),
+      trust: (() => { const b = [...document.querySelectorAll('button')].find(e => e.textContent?.includes('Trust project settings in this folder')); return visible(b?.parentElement); })(),
+      breadcrumb: firstVisible('[aria-label="Chat breadcrumb"]'),
       pluginPage: firstVisible('.hoh-page'), plugins: contentBox('.hoh-plugins'),
       pluginItems: allVisible('.hoh-plugin-card, .hoh-plugin-detail, .hoh-plugins__top, .hoh-plugins-empty'),
       pluginOverflow: (() => { const element = document.querySelector('.hoh-plugins'); return element ? element.scrollWidth - element.clientWidth : null; })(),
@@ -650,7 +705,9 @@ function withinHorizontal(label, name, rect, container) {
 
 function measure(label, scenario, size, sidebar, r) {
   if (!r.content || !r.notch) { fail(label, 'content inset or notch not found'); return; }
-  for (const [name, rect] of [['content-inset', r.content], ['notch', r.notch], ['home-scrollport', r.homeViewport], ['composer', r.composer], ['quick-dialog', r.dialog], ['settings-scrollport', r.settingsScroll], ['plugin-scrollport', r.pluginPage]])
+  rows.push({ screen: scenario.name, size, sidebar, block: 'page-overflow', axis: 'bounds', center: 0, deviation: round(r.pageOverflow), start: 0, end: 0, extent: round(r.viewport.width) });
+  if (r.pageOverflow > TOL) fail(label, `page has ${round(r.pageOverflow)}px horizontal overflow`);
+  for (const [name, rect] of [['content-inset', r.content], ['notch', r.notch], ['home-scrollport', r.homeViewport], ['composer', r.composer], ['quick-dialog', r.dialog], ['settings-scrollport', r.settingsScroll], ['plugin-scrollport', r.pluginPage], ['menu', r.menu], ['confirmation', r.confirmation], ['rename editor', r.rename], ['folder trust', r.trust]])
     withinViewport(label, name, rect, r.viewport);
   add(label, scenario.name, size, sidebar, 'notch', r.notch, r.chatLane ?? r.content);
   if (scenario.blocks.includes('home')) {
@@ -703,6 +760,41 @@ function measure(label, scenario, size, sidebar, r) {
     if (!paints(r.quickComposerPaint)) fail(label, `embedded Quick View composer is hidden: ${JSON.stringify(r.quickComposerPaint)}`);
   }
   if (scenario.blocks.includes('settings')) add(label, scenario.name, size, sidebar, 'settings-content', r.settings, r.settingsScroll);
+  if (scenario.name === 'subagent-approval') {
+    if (!r.approval || !r.feed) fail(label, 'approval card or feed missing');
+    else {
+      withinViewport(label, 'approval card', r.approval, r.viewport);
+      withinHorizontal(label, 'approval card', r.approval, r.feed);
+      const overflow = Math.max(0, r.feed.left - r.approval.left, r.approval.right - r.feed.right);
+      rows.push({ screen: scenario.name, size, sidebar, block: 'approval-boundary', axis: 'bounds', center: round(r.approval.left + r.approval.width / 2), deviation: round(overflow), start: round(r.approval.left - r.feed.left), end: round(r.feed.right - r.approval.right), extent: round(r.approval.width) });
+    }
+  }
+  if (scenario.blocks.includes('learning')) {
+    add(label, scenario.name, size, sidebar, 'learning-column', r.learning, r.chatLane ?? r.content);
+    if (!r.composer) fail(label, 'T3 composer reference missing');
+    else if (r.learning && Math.abs(r.learning.width - r.composer.width) > TOL) fail(label, `Learning content width differs from T3 composer by ${round(r.learning.width - r.composer.width)}px`);
+  }
+  if (scenario.blocks.includes('trust')) {
+    if (!r.trust || !r.breadcrumb) fail(label, 'folder trust or breadcrumb missing');
+    else {
+      const overlap = r.trust.top < r.breadcrumb.bottom - TOL ? Math.max(0, r.trust.right - r.breadcrumb.left) : 0;
+      const outside = Math.max(0, r.viewport.left - r.trust.left, r.trust.right - r.viewport.right, r.viewport.top - r.trust.top, r.trust.bottom - r.viewport.bottom);
+      rows.push({ screen: scenario.name, size, sidebar, block: 'folder-trust-boundary', axis: 'bounds', center: round(r.trust.left + r.trust.width / 2), deviation: round(Math.max(overlap, outside)), start: round(r.trust.left), end: round(r.viewport.right - r.trust.right), extent: round(r.trust.width) });
+      if (overlap > TOL) fail(label, `folder trust overlaps breadcrumb by ${round(overlap)}px`);
+    }
+  }
+  if (scenario.blocks.includes('thread-header-menu')) {
+    if (!r.menu) fail(label, 'chat menu missing');
+    else {
+      const outside = Math.max(0, r.viewport.left - r.menu.left, r.menu.right - r.viewport.right, r.viewport.top - r.menu.top, r.menu.bottom - r.viewport.bottom);
+      rows.push({ screen: scenario.name, size, sidebar, block: 'chat-menu-boundary', axis: 'bounds', center: round(r.menu.left + r.menu.width / 2), deviation: round(outside), start: round(r.menu.left), end: round(r.viewport.right - r.menu.right), extent: round(r.menu.width) });
+    }
+  }
+  if (scenario.blocks.includes('delete-confirmation')) {
+    add(label, scenario.name, size, sidebar, 'delete-dialog', r.confirmation, r.viewport);
+    addVertical(label, scenario.name, size, sidebar, 'delete-dialog', r.confirmation, r.viewport, 2);
+  }
+  if (scenario.blocks.includes('rename-editor') && !r.rename) fail(label, 'rename editor missing');
   if (scenario.blocks.includes('plugins')) {
     add(label, scenario.name, size, sidebar, 'plugins-content', r.plugins, r.content);
     if (r.pluginOverflow === null) fail(label, 'plugins scroll container not found');
@@ -725,7 +817,7 @@ try {
   for (const scenario of scenarios) for (const [width, height] of SIZES) for (const sidebar of SIDEBARS) {
     const size = `${width}x${height}`; const label = `${scenario.name} ${size} ${sidebar}`; const engine = scenario.engine();
     console.log(`align: measure ${label}`);
-    const initialSidebar = scenario.name === 'plugins' ? 'expanded' : sidebar;
+    const initialSidebar = ['plugins', 'learning'].includes(scenario.name) ? 'expanded' : sidebar;
     const initialStorage = { ...scenario.stored(), chat_thread_sidebar_open: initialSidebar === 'expanded' ? 'true' : 'false' };
     const { context, page, problems, off } = await open(browser, engine, width, height, scenario.path?.() ?? '/', initialStorage);
     try {
