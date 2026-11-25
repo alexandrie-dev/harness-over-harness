@@ -29,11 +29,8 @@ pub(crate) fn append_disabled_channels(
     cwd: &Path,
     expected: Option<[u64; 2]>,
 ) {
-    let Some(settings) = disabled_channel_settings_for_sources(extra_env, cwd, expected, true)
-    else {
-        return;
-    };
-    args.extend(["--settings".to_owned(), settings]);
+    let settings = disabled_channel_settings_for_sources(extra_env, cwd, expected, true);
+    append_official_overlay(args, settings);
 }
 
 pub(crate) fn append_disabled_user_channels(
@@ -41,9 +38,16 @@ pub(crate) fn append_disabled_user_channels(
     extra_env: &[(String, String)],
     cwd: &Path,
 ) {
-    if let Some(settings) = disabled_channel_settings_for_sources(extra_env, cwd, None, false) {
-        args.extend(["--settings".to_owned(), settings]);
-    }
+    let settings = disabled_channel_settings_for_sources(extra_env, cwd, None, false);
+    append_official_overlay(args, settings);
+}
+
+fn append_official_overlay(args: &mut Vec<String>, settings: Option<String>) {
+    let mut value = settings
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({"enabledPlugins": {}}));
+    value["enabledPlugins"]["telegram@claude-plugins-official"] = Value::Bool(false);
+    args.extend(["--settings".to_owned(), value.to_string()]);
 }
 
 #[cfg(test)]
@@ -173,18 +177,45 @@ fn enabled_plugins_with_identity(
 ) -> EffectivePlugins {
     let mut effective = BTreeMap::<String, bool>::new();
     let mut uncertain = merge_enabled(&config_dir.join("settings.json"), &mut effective);
-    #[cfg(target_os = "linux")]
-    let root = open_directory_no_symlinks(cwd);
-    #[cfg(target_os = "linux")]
-    let project = match root.as_ref() {
-        Ok(dir) => {
-            use std::os::fd::AsRawFd;
-            use std::os::unix::fs::MetadataExt;
-            if expected.is_some_and(|expected| {
-                dir.metadata()
-                    .map_or(true, |m| [m.dev(), m.ino()] != expected)
-            }) {
-                eprintln!("HoH: project folder identity changed before settings inspection");
+    let roots = match hoh_external_harness::settings_roots(cwd) {
+        Ok(roots) => roots,
+        Err(_) => {
+            return EffectivePlugins {
+                ids: BTreeSet::new(),
+                uncertain: true,
+            };
+        }
+    };
+    // Process broader roots before the current directory so local settings take precedence.
+    let mut roots: Vec<_> = roots.into_iter().collect();
+    roots.sort_by_key(|path| (path.as_path() == cwd, path.components().count()));
+    for root_path in roots {
+        #[cfg(target_os = "linux")]
+        let root = open_directory_no_symlinks(&root_path);
+        #[cfg(target_os = "linux")]
+        let project = match root.as_ref() {
+            Ok(dir) => {
+                use std::os::fd::AsRawFd;
+                use std::os::unix::fs::MetadataExt;
+                if root_path.as_path() == cwd
+                    && expected.is_some_and(|expected| {
+                        dir.metadata()
+                            .map_or(true, |m| [m.dev(), m.ino()] != expected)
+                    })
+                {
+                    eprintln!("HoH: project folder identity changed before settings inspection");
+                    return EffectivePlugins {
+                        ids: effective
+                            .into_iter()
+                            .filter_map(|(id, enabled)| enabled.then_some(id))
+                            .collect(),
+                        uncertain: true,
+                    };
+                }
+                PathBuf::from(format!("/proc/self/fd/{}/.claude", dir.as_raw_fd()))
+            }
+            Err(error) => {
+                eprintln!("HoH: cannot safely open project root: {error}");
                 return EffectivePlugins {
                     ids: effective
                         .into_iter()
@@ -193,54 +224,49 @@ fn enabled_plugins_with_identity(
                     uncertain: true,
                 };
             }
-            PathBuf::from(format!("/proc/self/fd/{}/.claude", dir.as_raw_fd()))
-        }
-        Err(error) => {
-            eprintln!("HoH: cannot safely open project root: {error}");
-            return EffectivePlugins {
-                ids: effective
-                    .into_iter()
-                    .filter_map(|(id, enabled)| enabled.then_some(id))
-                    .collect(),
-                uncertain: true,
-            };
-        }
-    };
-    #[cfg(not(target_os = "linux"))]
-    let project = cwd.join(".claude");
-    match fs::symlink_metadata(&project) {
-        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            #[cfg(target_os = "linux")]
-            {
-                use std::os::fd::AsRawFd;
-                use std::os::unix::fs::OpenOptionsExt;
-                match fs::OpenOptions::new()
-                    .read(true)
-                    .custom_flags(0x20000 | 0x10000)
-                    .open(&project)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let project = root_path.join(".claude");
+        match fs::symlink_metadata(&project) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                #[cfg(target_os = "linux")]
                 {
-                    Ok(dir) => {
-                        let anchored = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
-                        uncertain |= merge_enabled(&anchored.join("settings.json"), &mut effective);
-                        uncertain |=
-                            merge_enabled(&anchored.join("settings.local.json"), &mut effective);
-                    }
-                    Err(error) => {
-                        eprintln!("HoH: cannot open project settings directory safely: {error}");
-                        uncertain = true;
+                    use std::os::fd::AsRawFd;
+                    use std::os::unix::fs::OpenOptionsExt;
+                    match fs::OpenOptions::new()
+                        .read(true)
+                        .custom_flags(0x20000 | 0x10000)
+                        .open(&project)
+                    {
+                        Ok(dir) => {
+                            let anchored =
+                                PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+                            uncertain |=
+                                merge_enabled(&anchored.join("settings.json"), &mut effective);
+                            uncertain |= merge_enabled(
+                                &anchored.join("settings.local.json"),
+                                &mut effective,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "HoH: cannot open project settings directory safely: {error}"
+                            );
+                            uncertain = true;
+                        }
                     }
                 }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    eprintln!("HoH: safe project settings inspection unavailable");
+                    uncertain = true;
+                }
             }
-            #[cfg(not(target_os = "linux"))]
-            {
-                eprintln!("HoH: safe project settings inspection unavailable");
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => {
+                eprintln!("HoH: project settings directory cannot be inspected safely");
                 uncertain = true;
             }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        _ => {
-            eprintln!("HoH: project settings directory cannot be inspected safely");
-            uncertain = true;
         }
     }
     EffectivePlugins {
@@ -974,6 +1000,32 @@ mod tests {
         let project = dir.path().join("project");
         fs::create_dir_all(&project).unwrap();
         (dir, config, project)
+    }
+
+    #[test]
+    fn detects_channel_enabled_at_git_root_from_subdirectory() {
+        let (_dir, config, project) = fixture();
+        let sub = project.join("sub");
+        fs::create_dir_all(project.join(".git")).unwrap();
+        fs::create_dir_all(&sub).unwrap();
+        let channel = config.join("plugins/cache/test/chat/1");
+        write(
+            &project.join(".claude/settings.json"),
+            r#"{"enabledPlugins":{"chat@test":true}}"#,
+        );
+        write(
+            &config.join("plugins/installed_plugins.json"),
+            &serde_json::json!({"plugins":{"chat@test":[{"installPath":channel}]}}).to_string(),
+        );
+        write(
+            &channel.join(".mcp.json"),
+            r#"{"mcpServers":{"chat":{"command":"node","args":["server.js"]}}}"#,
+        );
+        write(&channel.join("server.js"), "claude/channel");
+        let env = vec![("CLAUDE_CONFIG_DIR".into(), config.display().to_string())];
+        let value: Value =
+            serde_json::from_str(&disabled_channel_settings(&env, &sub).unwrap()).unwrap();
+        assert_eq!(value["enabledPlugins"]["chat@test"], false);
     }
 
     #[test]

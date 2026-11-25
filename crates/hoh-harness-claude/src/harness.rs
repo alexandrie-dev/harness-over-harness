@@ -462,7 +462,10 @@ fn commands_probe_args(sources: SettingSources) -> Vec<String> {
     args.extend(
         [
             "--settings",
-            "{\"disableAllHooks\":true}",
+            match sources {
+                "user" => "{\"disableAllHooks\":true,\"enabledPlugins\":{\"telegram@claude-plugins-official\":false}}",
+                _ => "{\"disableAllHooks\":true}",
+            },
             "--no-session-persistence",
             "--mcp-config",
             "{\"mcpServers\":{}}",
@@ -954,11 +957,22 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
     let mut command = tokio::process::Command::new(&config.executable);
     command
         .arg("--version")
-        .envs(config.extra_env.iter().map(|(k, v)| (k, v)))
+        .envs(
+            config
+                .extra_env
+                .iter()
+                .filter(|(k, _)| !hoh_external_harness::supervisor::is_telegram_env(k))
+                .map(|(k, v)| (k, v)),
+        )
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("TELEGRAM_") {
+            command.env_remove(name);
+        }
+    }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error)
@@ -1637,7 +1651,7 @@ mod tests {
         let at = argv.iter().position(|arg| arg == "--settings").unwrap();
         assert_eq!(
             serde_json::from_str::<Value>(&argv[at + 1]).unwrap(),
-            serde_json::json!({"enabledPlugins":{"chat@test":false}})
+            serde_json::json!({"enabledPlugins":{"chat@test":false,"telegram@claude-plugins-official":false}})
         );
         let title = title_spec(&config, &project, true, None);
         let at = title
@@ -1647,8 +1661,58 @@ mod tests {
             .unwrap();
         assert_eq!(
             serde_json::from_str::<Value>(&title.args[at + 1]).unwrap(),
-            serde_json::json!({"disableAllHooks": true, "enabledPlugins":{"chat@test":false}})
+            serde_json::json!({"disableAllHooks": true, "enabledPlugins":{"chat@test":false,"telegram@claude-plugins-official":false}})
         );
+    }
+
+    #[test]
+    fn personal_launches_always_disable_official_telegram() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = ClaudeConfig {
+            extra_env: vec![(
+                "CLAUDE_CONFIG_DIR".into(),
+                dir.path().join("missing").display().to_string(),
+            )],
+            ..ClaudeConfig::default()
+        };
+        let check = |args: &[String]| {
+            let settings: Vec<_> = args
+                .windows(2)
+                .filter(|pair| pair[0] == "--settings")
+                .collect();
+            assert_eq!(settings.len(), 1);
+            let value: Value = serde_json::from_str(&settings[0][1]).unwrap();
+            assert_eq!(
+                value["enabledPlugins"]["telegram@claude-plugins-official"],
+                false
+            );
+        };
+        for resume in [None, Some("existing")] {
+            check(&config.argv_in(
+                &HarnessPolicy::default(),
+                AccessMode::Confirm,
+                None,
+                None,
+                resume,
+                "new",
+                dir.path(),
+            ));
+            let launch = launch_for(&HarnessPolicy::default(), AccessMode::Confirm);
+            let mut trusted =
+                session_args(&launch, SettingSources::Personal, None, None, resume, "new");
+            channel_plugins::append_disabled_channels(
+                &mut trusted,
+                &config.extra_env,
+                dir.path(),
+                None,
+            );
+            check(&trusted);
+        }
+        check(&commands_probe_args(SettingSources::Personal));
+        for persistence in [true, false] {
+            check(&title_spec(&config, dir.path(), persistence, None).args);
+            check(&title_spec(&config, dir.path(), persistence, Some(dir.path())).args);
+        }
     }
 
     #[test]

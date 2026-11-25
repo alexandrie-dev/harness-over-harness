@@ -44,6 +44,7 @@ pub use executor::BINDING_RECORD;
 pub use harness::{ExternalHarness, HarnessResult, HarnessSession, Started};
 pub use stdio::{StdioHarness, StdioHarnessConfig};
 pub use supervisor::{ExitInfo, Frame, ProcessSpec, StderrSink, Supervisor, SupervisorLimits};
+pub use trust::settings_roots;
 
 pub use window::{
     CHOICES_FILE, CODEX_SELECTION_FILE, ExternalHarnessWindowPlugin, SESSION_ACCESS_FILE,

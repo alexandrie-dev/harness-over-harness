@@ -110,7 +110,12 @@ impl Connector for ProcessConfig {
         let mut command = Command::new(&self.path);
         command
             .args(&self.args)
-            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .envs(
+                self.env
+                    .iter()
+                    .filter(|(k, _)| !k.starts_with("TELEGRAM_"))
+                    .map(|(k, v)| (k, v)),
+            )
             .current_dir(&self.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -123,6 +128,11 @@ impl Connector for ProcessConfig {
                     .map_err(|_| "Не удалось открыть журнал ошибок Помощника".to_owned())?,
                 None => Stdio::null(),
             });
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("TELEGRAM_") {
+                command.env_remove(name);
+            }
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;

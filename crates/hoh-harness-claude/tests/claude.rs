@@ -421,7 +421,12 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
         assert!(args.contains(&switch.to_owned()), "{switch}: {args:?}");
     }
     let at = args.iter().position(|arg| arg == "--settings").unwrap();
-    assert_eq!(args[at + 1], "{\"disableAllHooks\":true}");
+    let settings: serde_json::Value = serde_json::from_str(&args[at + 1]).unwrap();
+    assert_eq!(settings["disableAllHooks"], true);
+    assert_eq!(
+        settings["enabledPlugins"]["telegram@claude-plugins-official"],
+        false
+    );
     let at = args
         .iter()
         .position(|arg| arg == "--setting-sources")
