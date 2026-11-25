@@ -588,7 +588,12 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
     let builder = builder.on_webview_ready(|webview| {
         if webview.label() == "main" {
             let dir = webview.app_handle().path().app_data_dir().ok();
+            let previews = webview
+                .state::<crate::html_preview::HtmlPreviews>()
+                .inner()
+                .clone();
             let _ = webview.with_webview(move |platform| {
+                crate::html_preview::install(&platform.inner(), previews);
                 install_zoom(&platform.inner(), dir);
                 // No second page ever opens in the window; a link the person clicked goes to the system browser.
                 platform.inner().connect_create(|_, action| {

@@ -2,13 +2,10 @@
 use std::{
     collections::VecDeque,
     io::Read,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tauri::{
-    Manager, Runtime, UriSchemeContext, Url,
-    http::{Method, Request, Response, StatusCode},
-};
+use tauri::Url;
 
 const SCHEME: &str = "hoh-preview";
 const LIMIT: usize = 12;
@@ -21,8 +18,8 @@ struct Document {
     inserted: Instant,
 }
 
-#[derive(Default)]
-pub struct HtmlPreviews(Mutex<VecDeque<Document>>);
+#[derive(Clone, Default)]
+pub struct HtmlPreviews(Arc<Mutex<VecDeque<Document>>>);
 
 impl HtmlPreviews {
     pub fn store(&self, body: String) -> Result<String, String> {
@@ -72,40 +69,79 @@ pub fn navigation_allowed(url: &Url) -> bool {
     token(url).is_some()
 }
 
-pub fn respond<R: Runtime>(
-    context: UriSchemeContext<'_, R>,
-    request: Request<Vec<u8>>,
-) -> Response<Vec<u8>> {
-    let document = if context.webview_label() == "main" && request.method() == Method::GET {
-        Url::parse(&request.uri().to_string()).ok().and_then(|url| {
-            let token = token(&url)?;
-            context.app_handle().try_state::<HtmlPreviews>()?.get(token)
-        })
-    } else {
-        None
+#[cfg(target_os = "linux")]
+pub fn install(view: &webkit2gtk::WebView, previews: HtmlPreviews) {
+    use gtk::gio::MemoryInputStream;
+    use gtk::glib::{Bytes, prelude::*};
+    use soup::{MessageHeaders, MessageHeadersType};
+    use webkit2gtk::{
+        PolicyDecisionExt, PolicyDecisionType, ResponsePolicyDecision, ResponsePolicyDecisionExt,
+        SecurityManagerExt, URIRequestExt, URISchemeRequestExt, URISchemeResponse,
+        URISchemeResponseExt, WebContextExt, WebViewExt,
     };
-    let (status, body) = document.map_or_else(
-        || {
-            (
-                StatusCode::NOT_FOUND,
-                b"Preview unavailable. Reload the preview.".to_vec(),
-            )
-        },
-        |body| (StatusCode::OK, body),
-    );
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "text/html; charset=utf-8")
-        .header("Content-Security-Policy", CSP)
-        .header("X-Content-Type-Options", "nosniff")
-        .header("Referrer-Policy", "no-referrer")
-        .header("Cache-Control", "no-store")
-        .header(
+
+    let Some(context) = view.context() else {
+        return;
+    };
+    let Some(security) = context.security_manager() else {
+        return;
+    };
+    security.register_uri_scheme_as_secure(SCHEME);
+    let owner = view.downgrade();
+    // Register with WebKit, outside Tauri's local-origin command capability set.
+    context.register_uri_scheme(SCHEME, move |request| {
+        let document = if owner
+            .upgrade()
+            .is_some_and(|view| request.web_view() == Some(view))
+            && request.http_method().as_deref() == Some("GET")
+        {
+            request.uri().and_then(|uri| {
+                let url = Url::parse(&uri).ok()?;
+                previews.get(token(&url)?)
+            })
+        } else {
+            None
+        };
+        let (status, body) = document.map_or_else(
+            || (404, b"Preview unavailable. Reload the preview.".to_vec()),
+            |body| (200, body),
+        );
+        let length = body.len() as i64;
+        let input = MemoryInputStream::from_bytes(&Bytes::from_owned(body));
+        let response = URISchemeResponse::new(&input, length);
+        response.set_status(status, None);
+        response.set_content_type("text/html; charset=utf-8");
+        let headers = MessageHeaders::new(MessageHeadersType::Response);
+        headers.append("Content-Security-Policy", CSP);
+        headers.append("X-Content-Type-Options", "nosniff");
+        headers.append("Referrer-Policy", "no-referrer");
+        headers.append("Cache-Control", "no-store");
+        headers.append(
             "Permissions-Policy",
             "clipboard-read=(), clipboard-write=(), camera=(), microphone=(), geolocation=()",
-        )
-        .body(body)
-        .expect("static HTML preview response headers")
+        );
+        response.set_http_headers(headers);
+        request.finish_with_response(&response);
+    });
+
+    view.connect_decide_policy(|_, decision, kind| {
+        if kind != PolicyDecisionType::Response {
+            return false;
+        }
+        let Some(response) = decision.downcast_ref::<ResponsePolicyDecision>() else {
+            return false;
+        };
+        if response.is_main_frame_main_resource()
+            && response
+                .request()
+                .and_then(|request| request.uri())
+                .is_some_and(|uri| uri.starts_with("hoh-preview:"))
+        {
+            decision.ignore();
+            return true;
+        }
+        false
+    });
 }
 
 #[cfg(test)]

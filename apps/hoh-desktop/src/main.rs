@@ -19,7 +19,6 @@ fn main() {
     hoh_desktop::probe::trace("process:start");
     tauri::Builder::default()
         .manage(hoh_desktop::html_preview::HtmlPreviews::default())
-        .register_uri_scheme_protocol("hoh-preview", hoh_desktop::html_preview::respond)
         .plugin(hoh_desktop::native::main_security_plugin())
         .invoke_handler(tauri::generate_handler![
             hoh_desktop::native::engine_request,
