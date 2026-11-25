@@ -605,8 +605,8 @@ fn window_may_call_exactly_the_eight_executor_methods_and_no_new_ones() {
         ]
     );
     // 47 methods before the executor ones, the eight executor ones, `hoh/workspace/entries` and
-    // `hoh/workspace/add` (HOH-41), delete, and the two folder-rebinding methods.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 8 + 2 + 1 + 2);
+    // `hoh/workspace/add` (HOH-41), delete, two folder-rebinding methods, and plugin inventory.
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 8 + 2 + 1 + 2 + 1);
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/status"));
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/rebind"));
     assert!(bridge::needs_approval(
@@ -628,6 +628,16 @@ fn window_may_call_exactly_the_eight_executor_methods_and_no_new_ones() {
         "hoh/executor/trust/set",
         &json!({"executor":"claude","cwd":"/work","trust":true})
     ));
+}
+
+#[test]
+fn plugin_inventory_is_a_typed_read_for_the_main_window() {
+    let method = "hoh/plugins/list";
+    let params = json!({"sessionId": "chat"});
+    assert!(bridge::check_main("main", method, &params).is_ok());
+    assert!(bridge::check_main("other", method, &params).is_err());
+    assert!(bridge::check_main("main", method, &json!({"sessionId": 1})).is_err());
+    assert!(!bridge::needs_approval(method, &params));
 }
 
 /// The access mode goes from the main window straight to the engine (no confirmation window): the
