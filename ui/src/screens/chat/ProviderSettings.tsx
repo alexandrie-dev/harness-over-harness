@@ -26,20 +26,21 @@ export function ProviderSettings({ executor, claudeModel, engineModel, engineIco
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  const unchanged = choice === 'engine' ? executor === '' : false;
+  const unchanged = choice === 'engine'
+    ? executor === ''
+    : executor === 'claude' && claude.model === claudeModel;
   const canApply = !busy && !unchanged && (choice === 'engine' || claude.ready);
   return (
     <div className="chat-dialog-backdrop" data-provider-dialog-backdrop onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="chat-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-provider-title" data-provider-dialog>
-        <h2 id="chat-provider-title" ref={heading} tabIndex={-1}>Поставщик модели</h2>
-        <p className="chat-dialog-sub">Новые чаты пойдут через выбранного поставщика. Открытые чаты остаются как были.</p>
+        <h2 id="chat-provider-title" ref={heading} tabIndex={-1}>Модель для новых чатов</h2>
         <div className="chat-dialog-seg" role="group" aria-label="Поставщик">
-          <button type="button" aria-pressed={choice === 'engine'} data-provider-choice="engine" onClick={() => setChoice('engine')}>Как настроено в Помощнике</button>
+          <button type="button" aria-pressed={choice === 'engine'} data-provider-choice="engine" onClick={() => setChoice('engine')}>Встроенный помощник</button>
           <button type="button" aria-pressed={choice === 'claude'} data-provider-choice="claude" onClick={() => setChoice('claude')}><ProviderMark icon="claude" />Claude</button>
         </div>
         {choice === 'engine'
-          ? <p className="chat-dialog-note" data-engine-note><ProviderMark icon={engineIcon} />{engineModel ? `Модель, настроенная в Помощнике: ${engineModel}.` : 'Модель, настроенная в Помощнике.'}</p>
-          : <ClaudeConnect discover={discover} onChange={setClaude} current={executor === 'claude' ? claudeModel : undefined} />}
+          ? <p className="chat-dialog-note" data-engine-note><ProviderMark icon={engineIcon} />{engineModel || 'Модель из настроек HoH'}</p>
+          : <ClaudeConnect showProvider={false} discover={discover} onChange={setClaude} current={executor === 'claude' ? claudeModel : undefined} />}
         <div className="chat-dialog-foot">
           <button type="button" className="btn" data-provider-cancel onClick={onClose}>Закрыть</button>
           <button type="button" className="btn btn-primary" data-provider-apply disabled={!canApply}

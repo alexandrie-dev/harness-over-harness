@@ -42,7 +42,7 @@ export function ExecutorModelPicker({ model, newModel, models, busy, disabled, o
                 </MenuPrimitive.RadioItem>
               ))}
             </MenuPrimitive.RadioGroup>
-            <MenuPrimitive.Item className="chat-model-item chat-model-change" data-change-provider onClick={onChangeProvider}>Сменить поставщика…</MenuPrimitive.Item>
+            <MenuPrimitive.Item className="chat-model-item chat-model-change" data-change-provider onClick={onChangeProvider}>Настройки модели…</MenuPrimitive.Item>
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>
       </MenuPrimitive.Portal>

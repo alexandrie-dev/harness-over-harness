@@ -3,7 +3,7 @@ use hoh_error::BoxError;
 use hoh_loader::StartupError;
 use std::{future::Future, path::PathBuf};
 use tokio::io::AsyncWriteExt;
-pub const WARNING: &str = "WARNING: Raw diagnostics may contain configuration or credential values from plugin errors. Review before sharing.\n\n";
+pub const WARNING: &str = "Внимание: отчёт может содержать настройки и учётные данные из ошибок плагинов. Проверьте его перед отправкой.\n\n";
 pub struct StartupDiagnosticContext {
     pub home: PathBuf,
     pub version: String,
@@ -134,9 +134,9 @@ where
     }
     .await;
     if let Err(error) = save {
-        write(format!("\ndsh: warning: could not write startup diagnostics: Error: {error}\nFull diagnostics:\n{report}")).await?;
+        write(format!("\nHoH: не удалось сохранить отчёт о запуске: {error}\nДиагностика:\n{report}")).await?;
         return Ok(());
     }
-    write(format!("\nFull diagnostics: {}\n", log_path.display())).await?;
+    write(format!("\nДиагностика: {}\n", log_path.display())).await?;
     Ok(())
 }

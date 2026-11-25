@@ -562,6 +562,10 @@ try {
     assert.equal(engine.promptExecutors.at(-1), 'claude', 'новый чат отправлен, когда выбран Claude');
     await page.locator('[data-chat-model-chip]').click();
     await page.locator('[data-change-provider]').click();
+    await dialog.getByRole('heading', { name: 'Модель для новых чатов' }).waitFor();
+    await dialog.locator('[data-claude-model]').waitFor();
+    assert.equal(await dialog.locator('[data-claude-model]').inputValue(), 'opus');
+    assert(await dialog.locator('[data-provider-apply]').isDisabled(), 'текущую модель нельзя применить повторно');
     await page.locator('[data-provider-choice="engine"]').click();
     await page.locator('[data-provider-apply]').click();
     await page.waitForFunction(() => !document.querySelector('[data-provider-dialog]'));

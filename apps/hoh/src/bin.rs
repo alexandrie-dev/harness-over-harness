@@ -153,7 +153,7 @@ where
     };
     match invocation {
         DshInvocation::Plugin { .. } => Err(
-            "hoh: plugin package commands are unavailable in this build (package-directory installer redesign pending)"
+            "HoH: управление пакетами плагинов недоступно в этой сборке"
                 .into(),
         ),
         DshInvocation::DumpConfig {

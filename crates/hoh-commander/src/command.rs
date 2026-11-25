@@ -134,6 +134,7 @@ pub struct Command {
     pub(crate) help_command_enabled: Option<bool>,
     pub(crate) help_command_signature: String,
     pub(crate) help_command_description: String,
+    pub(crate) help_headings: [&'static str; 4],
     pub(crate) help_texts: Vec<(String, String)>,
     pub(crate) inherited_before: Vec<String>,
     pub(crate) inherited_after: Vec<String>,
@@ -173,6 +174,7 @@ impl Command {
             help_command_enabled: None,
             help_command_signature: "help [command]".into(),
             help_command_description: "display help for command".into(),
+            help_headings: ["Usage", "Arguments", "Options", "Commands"],
             help_texts: Vec::new(),
             inherited_before: Vec::new(),
             inherited_after: Vec::new(),
@@ -366,6 +368,7 @@ impl Command {
         child.policy = self.policy.clone();
         // Replacing .error on a parent is not inherited by commander.
         child.policy.error_handler = None;
+        child.help_headings = self.help_headings;
         child.help_option_value = self.help_option_value.clone();
         child.help_command_signature = self.help_command_signature.clone();
         child.help_command_description = self.help_command_description.clone();

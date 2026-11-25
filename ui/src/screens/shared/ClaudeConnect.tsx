@@ -18,9 +18,10 @@ export interface ClaudeConnectProps {
   onChange(state: { ready: boolean; model: string }): void;
   /** Модель, выбранная сейчас (для смены поставщика): подставляется, если она есть в списке. */
   current?: string;
+  showProvider?: boolean;
 }
 
-export function ClaudeConnect({ discover, onChange, current }: ClaudeConnectProps) {
+export function ClaudeConnect({ discover, onChange, current, showProvider = true }: ClaudeConnectProps) {
   const [check, setCheck] = useState<Check>({ kind: 'idle' });
   const [model, setModel] = useState('');
   const run = useRef(0);
@@ -54,8 +55,7 @@ export function ClaudeConnect({ discover, onChange, current }: ClaudeConnectProp
   const icon = check.kind === 'checking' ? <Icon name="spinner" small spin /> : view ? <Icon name={view.tone === 'ok' ? 'checkCircle' : 'alert'} small /> : check.kind === 'failed' ? <Icon name="alert" small /> : null;
   return (
     <div className="cc" data-claude-connect data-state={check.kind === 'done' ? (view?.ready ? 'ready' : 'blocked') : check.kind}>
-      <p className="cc-line" data-provider-line data-provider="claude"><ProviderMark icon="claude" /><span>Claude</span></p>
-      <p className="cc-sub">Ключ вводить не нужно: вход выполняется в самом Claude.</p>
+      {showProvider && <p className="cc-line" data-provider-line data-provider="claude"><ProviderMark icon="claude" /><span>Claude</span></p>}
       <p className="cc-sub" data-data-line>{DATA_LINE}</p>
       <div className="cc-verify">
         {!(view && view.ready) && <button type="button" className="btn" data-claude-check disabled={check.kind === 'checking'} onClick={() => void verify()}>

@@ -70,7 +70,7 @@ const RecentChats = memo(function RecentChats({ activeId, disabled, now, onOpen 
   const working = useChatStore(state => state.working);
   const workingIds = useMemo(() => new Set(working), [working]);
   return <section className="chat-group chat-group-chats" aria-labelledby="chat-recent-head">
-    <div className="chat-group-head"><span id="chat-recent-head">Недавние чаты</span><span className="chat-group-line" /><span className="chat-group-count">{sessions.length}</span></div>
+    <div className="chat-group-head"><span id="chat-recent-head">Недавние чаты</span><span className="chat-group-line" /></div>
     <ul className="chat-list" data-chat-list>
       {sessions.map(row => <li key={row.id}>
         <button type="button" className="chat-row chat-item" data-chat-row data-chat-id={row.id} aria-current={row.id === activeId ? 'true' : undefined}
@@ -201,7 +201,7 @@ export function ChatScreen() {
       </nav>
       <div className="chat-side-mid">
         <section className="chat-group" aria-labelledby="chat-team-head">
-          <div className="chat-group-head"><span id="chat-team-head">Команда</span><span className="chat-group-line" /><span className="chat-group-count">1</span></div>
+          <div className="chat-group-head"><span id="chat-team-head">Команда</span><span className="chat-group-line" /></div>
           <button type="button" className="chat-row chat-member" data-nav-chat onClick={() => { setSection('chat'); setMenuOpen(false); }}>
             <span className="chat-avatar"><ChatIcon name="star" small /></span>
             <span className="chat-row-label">Помощник</span>
@@ -250,7 +250,7 @@ export function ChatScreen() {
             {executor === 'claude'
               ? <ExecutorModelPicker model={executorModel} newModel={newExecutor === 'claude' ? newExecutorModel : ''} models={executorModels} busy={executorBusy} disabled={!ready || busy}
                   onOpen={() => void loadExecutorModels()} onPick={id => void selectExecutor('claude', id)} onChangeProvider={() => setProviderOpen(true)} />
-              : model && <button type="button" className="chat-pick chat-pick-text chat-pick-model" data-chat-model-chip title={`${model}. Сменить поставщика`} disabled={!ready || busy} onClick={() => setProviderOpen(true)}><ProviderMark icon={modelIcon} /><span data-chat-model>{model}</span></button>}
+              : model && <button type="button" className="chat-pick chat-pick-text chat-pick-model" data-chat-model-chip title={`${model}. Модель для новых чатов`} disabled={!ready || busy} onClick={() => setProviderOpen(true)}><ProviderMark icon={modelIcon} /><span data-chat-model>{model}</span></button>}
             {access ? <AccessMode personalSettings={personalSettings} mode={access} busy={accessBusy} disabled={!ready || busy} onChange={mode => void setAccess(mode)} />
               : permissions && <span className="chat-pick chat-pick-text" data-chat-permissions><Icon name="shield" small /><span>{permissions}</span></span>}
             <button className="chat-pick" type="button" data-chat-folder disabled={!ready || busy} onClick={() => void chooseFolder()} title="Выбрать рабочую папку"><Icon name="folder" small /><span>{folderLabel}</span></button>

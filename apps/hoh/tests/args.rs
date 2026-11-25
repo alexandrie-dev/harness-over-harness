@@ -193,7 +193,7 @@ fn rejects_repeated_profile_selection() {
     ] {
         let (result, _, err) = parse(&a, false);
         assert_eq!(result, Err(1));
-        assert!(err.contains("select a profile only once"), "{err}");
+        assert!(err.contains("Профиль можно указать только один раз"), "{err}");
     }
 }
 #[test]
@@ -246,7 +246,7 @@ fn prints_the_plugin_forwarder_help() {
     ] {
         let (result, out, _) = parse(&a, false);
         assert_eq!(result, Err(0));
-        assert!(out.contains("Usage: dsh plugin [options] [args...]"));
+        assert!(out.contains("Использование: hoh plugin [параметры] [аргументы…]"));
     }
 }
 #[test]
@@ -413,7 +413,6 @@ fn keeps_its_own_help_for_an_invocation_with_no_app_to_hand_it_to() {
         let (result, out, _) = parse(&[flag], false);
         assert_eq!(result, Err(0));
         assert!(!out.contains("help [command]"));
-        // Source's execa snapshot removes exactly one final newline.
         assert_eq!(
             out.strip_suffix('\n').unwrap(),
             include_str!("expected/launcher-help.txt")

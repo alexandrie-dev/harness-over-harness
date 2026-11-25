@@ -76,7 +76,7 @@ async fn prints_the_summary_and_saved_path_to_stderr_by_default() {
     assert_eq!(
         stderr,
         format!(
-            "{}\n\nFull diagnostics: {}\n",
+            "{}\n\nДиагностика: {}\n",
             error.message,
             path.display()
         )
@@ -113,7 +113,7 @@ async fn waits_for_stderr_completion_before_resolving() {
     assert!(!root.path().join("logs").exists());
     ack.send(()).unwrap();
     let (second, ack) = rx.recv().await.unwrap();
-    assert!(second.starts_with("\nFull diagnostics: "));
+    assert!(second.starts_with("\nДиагностика: "));
     assert!(!finished.load(Ordering::Acquire));
     ack.send(()).unwrap();
     job.await.unwrap();
@@ -324,14 +324,14 @@ async fn prints_the_complete_report_when_the_logs_directory_cannot_be_created() 
     .unwrap();
     for text in [
         "dsh: startup failed:",
-        "dsh: warning: could not write startup diagnostics:",
-        "Full diagnostics:\n",
+        "HoH: не удалось сохранить отчёт о запуске:",
+        "Диагностика:\n",
         "CUSTOM",
         "original details",
     ] {
         assert!(output.contains(text));
     }
-    assert!(!output.contains("Full diagnostics: "));
+    assert!(!output.contains("Диагностика: "));
     assert_eq!(
         std::fs::read_to_string(root.path().join("logs")).unwrap(),
         "blocked"
@@ -358,6 +358,6 @@ async fn an_existing_unique_report_is_never_replaced_even_if_host_facts_collide(
     .await
     .unwrap();
     assert_eq!(std::fs::read(path).unwrap(), before);
-    assert!(output.contains("Full diagnostics:\n"));
+    assert!(output.contains("Диагностика:\n"));
     assert!(output.contains("second"));
 }

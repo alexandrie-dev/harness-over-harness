@@ -30,7 +30,9 @@
       config:
         includeHarnessIdentity: false
         includeRuntimeContext: false
-        personaPrefix: You are a helpful software engineering assistant.
+        personaPrefix: >-
+          Вы помогаете пользователю с задачами по разработке программного обеспечения.
+          По умолчанию отвечайте на языке пользователя, если он не попросил выбрать другой язык.
 
     - id: tools
       name: '@deepseek-ai/dsh-tools'

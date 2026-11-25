@@ -3,6 +3,18 @@ use hoh_util_values::js_json_stringify;
 use serde_json::Value;
 
 impl Command {
+    /// Override the usage, arguments, options and commands headings for this command.
+    pub fn help_headings(
+        &mut self,
+        usage: &'static str,
+        arguments: &'static str,
+        options: &'static str,
+        commands: &'static str,
+    ) -> &mut Self {
+        self.help_headings = [usage, arguments, options, commands];
+        self
+    }
+
     pub(crate) fn visible_options(&self) -> Vec<Opt> {
         let mut options: Vec<_> = self.options.iter().filter(|o| !o.hidden).cloned().collect();
         if let Some(help) = &self.help_option_value
@@ -32,6 +44,7 @@ impl Command {
         self.help_information_for(false)
     }
     fn help_information_for(&self, error: bool) -> String {
+        let [usage, arguments_heading, options_heading, commands_heading] = self.help_headings;
         let help_width = self.help_width(error);
         let options = self.visible_options();
         let arguments = if self
@@ -60,7 +73,7 @@ impl Command {
             path.push(' ');
         }
         let mut output = vec![
-            format!("Usage: {path}{} {}", self.command_name, self.get_usage()),
+            format!("{usage}: {path}{} {}", self.command_name, self.get_usage()),
             String::new(),
         ];
         if !self.command_description.is_empty() {
@@ -68,7 +81,7 @@ impl Command {
             output.push(String::new());
         }
         if !arguments.is_empty() {
-            output.push("Arguments:".into());
+            output.push(format!("{arguments_heading}:"));
             for arg in arguments {
                 output.push(format_item(
                     arg.name(),
@@ -80,7 +93,7 @@ impl Command {
             output.push(String::new());
         }
         if !options.is_empty() {
-            output.push("Options:".into());
+            output.push(format!("{options_heading}:"));
             for opt in options {
                 output.push(format_item(
                     &opt.flags,
@@ -92,7 +105,7 @@ impl Command {
             output.push(String::new());
         }
         if !commands.is_empty() {
-            output.push("Commands:".into());
+            output.push(format!("{commands_heading}:"));
             for (term, description) in commands {
                 output.push(format_item(&term, width, &description, help_width));
             }
