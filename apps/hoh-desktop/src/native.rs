@@ -506,6 +506,24 @@ fn trusted_app_origin(url: &tauri::Url) -> bool {
     url.port().is_none() && trusted
 }
 
+/// The chat composer captures audio in the trusted application view. Preview documents
+/// have their own origin and a sandboxed frame. Camera and screen permissions use defaults.
+pub fn webview_permission(
+    webview: tauri::Webview,
+    kind: tauri::webview::PermissionKind,
+) -> tauri::webview::PermissionResponse {
+    use tauri::webview::{PermissionKind, PermissionResponse};
+    match kind {
+        PermissionKind::Microphone
+            if webview.label() == "main" && webview.url().is_ok_and(|url| trusted_app_origin(&url)) =>
+        {
+            PermissionResponse::Allow
+        }
+        PermissionKind::Microphone => PermissionResponse::Deny,
+        _ => PermissionResponse::Default,
+    }
+}
+
 pub fn approval_navigation_allowed(url: &tauri::Url) -> bool {
     trusted_app_origin(url) && url.path() == "/approval.html"
 }

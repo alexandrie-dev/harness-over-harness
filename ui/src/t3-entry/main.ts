@@ -10,6 +10,7 @@ import './brand.css';
 import './grid/tokens.css';
 import './grid/frame.css';
 import { installGridCheck } from './grid/check';
+import { installWhisperClient } from './whisper/client';
 
 declare global {
   // Только снимки и проверки в браузере без Tauri (scripts/snapshot-t3.mjs): подделка движка.
@@ -23,6 +24,7 @@ declare global {
 
 const testEngine = !window.__TAURI_INTERNALS__ ? window.__HOH_T3_TEST_ENGINE__ : undefined;
 const engine = testEngine ?? tauriEngine();
+installWhisperClient(engine);
 installHohHost({
   engine,
   pluginAuthoringSkill,

@@ -3,6 +3,53 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "action",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WhisperDictationParams {
+    GetSettings {},
+    SetSettings {
+        #[schemars(length(max = 2048))]
+        server_url: String,
+    },
+    Transcribe {
+        #[schemars(length(min = 1, max = 2048))]
+        server_url: String,
+        #[schemars(length(min = 1, max = 12_800_060))]
+        wav_base64: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WhisperDictationResult {
+    Settings { server_url: Option<String> },
+    Transcript { text: String },
+    Error { failure: WhisperDictationFailure },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "code", rename_all = "camelCase", deny_unknown_fields)]
+pub enum WhisperDictationFailure {
+    InvalidAddress {},
+    SaveFailed {},
+    AddressChanged {},
+    InvalidAudio {},
+    Unreachable {},
+    Timeout {},
+    ServerRejected { status: u16 },
+    InvalidResponse {},
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PluginListParams {
@@ -122,6 +169,8 @@ pub enum Request {
     ModelProbe(ModelProbeParams),
     #[serde(rename = "hoh/plugins/list")]
     PluginsList(PluginListParams),
+    #[serde(rename = "hoh/voice/whisper")]
+    WhisperDictation(WhisperDictationParams),
     #[serde(rename = "hoh/settings/get")]
     SettingsGet(Empty),
     #[serde(rename = "hoh/settings/set")]
@@ -208,6 +257,7 @@ impl Request {
             Self::SettingsRulesSet(_) => "hoh/settings/rules/set",
             Self::ModelProbe(_) => "hoh/model/probe",
             Self::PluginsList(_) => "hoh/plugins/list",
+            Self::WhisperDictation(_) => "hoh/voice/whisper",
             Self::SettingsGet(_) => "hoh/settings/get",
             Self::SettingsSet(_) => "hoh/settings/set",
             Self::SecuritySummary(_) => "hoh/security/summary",
@@ -316,6 +366,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/settings/rules/set",
     "hoh/model/probe",
     "hoh/plugins/list",
+    "hoh/voice/whisper",
     "hoh/settings/get",
     "hoh/settings/set",
     "hoh/security/summary",
@@ -408,6 +459,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/settings/rules/set" => admit::<SettingsRulesSetParams>(value),
         "hoh/model/probe" => admit::<ModelProbeParams>(value),
         "hoh/plugins/list" => admit::<PluginListParams>(value),
+        "hoh/voice/whisper" => admit::<WhisperDictationParams>(value),
         "hoh/settings/get" => admit::<Empty>(value),
         "hoh/settings/set" => admit::<SettingsSetParams>(value),
         "hoh/security/summary" => admit::<Empty>(value),
@@ -483,6 +535,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/model/key/set" | "hoh/settings/rules/set" => admit::<Empty>(value),
         "hoh/model/probe" => admit::<ModelProbeResult>(value),
         "hoh/plugins/list" => admit::<Vec<PluginInventoryItem>>(value),
+        "hoh/voice/whisper" => admit::<WhisperDictationResult>(value),
         "hoh/settings/get" => admit::<Settings>(value),
         "hoh/settings/set" => admit::<Settings>(value),
         "hoh/security/summary" => admit::<SecuritySummary>(value),
@@ -1198,6 +1251,12 @@ pub fn schemas() -> Vec<(String, Value)> {
     }
     for (name, method, params, result) in [
         (
+            "WhisperDictation",
+            "hoh/voice/whisper",
+            schema_for!(WhisperDictationParams),
+            schema_for!(WhisperDictationResult),
+        ),
+        (
             "PluginsList",
             "hoh/plugins/list",
             schema_for!(PluginListParams),
@@ -1388,6 +1447,8 @@ enum RequestDecode {
     ModelProbe(ModelProbeParams),
     #[serde(rename = "hoh/plugins/list")]
     PluginsList(PluginListParams),
+    #[serde(rename = "hoh/voice/whisper")]
+    WhisperDictation(WhisperDictationParams),
     #[serde(rename = "hoh/settings/get")]
     SettingsGet(Empty),
     #[serde(rename = "hoh/settings/set")]

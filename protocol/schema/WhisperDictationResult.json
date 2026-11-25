@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WhisperDictationResult",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "settings"
+        },
+        "serverUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "transcript"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "text"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "error"
+        },
+        "failure": {
+          "$ref": "#/$defs/WhisperDictationFailure"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "failure"
+      ]
+    }
+  ],
+  "$defs": {
+    "WhisperDictationFailure": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "invalidAddress"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "saveFailed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "addressChanged"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "invalidAudio"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "unreachable"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "timeout"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "serverRejected"
+            },
+            "status": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "invalidResponse"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "code"
+          ]
+        }
+      ]
+    }
+  },
+  "x-method": "hoh/voice/whisper"
+}

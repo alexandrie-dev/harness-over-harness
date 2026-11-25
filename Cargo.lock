@@ -1114,6 +1114,7 @@ version = "0.1.0"
 dependencies = [
  "hoh-loader",
  "hoh-plugin-turn-note",
+ "hoh-plugin-whisper-dictation",
 ]
 
 [[package]]
@@ -2456,6 +2457,25 @@ dependencies = [
  "hoh-tools",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "hoh-plugin-whisper-dictation"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hoh-atomic-write",
+ "hoh-kernel",
+ "hoh-loader",
+ "hoh-protocol",
+ "hoh-sdk-jsonrpc-server",
+ "hoh-util-crypto",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
 ]
 
 [[package]]

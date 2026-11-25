@@ -606,8 +606,8 @@ fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
         ]
     );
     // 47 methods before the executor ones, the nine executor ones, `hoh/workspace/entries` and
-    // `hoh/workspace/add` (HOH-41), delete, two folder-rebinding methods, and plugin inventory.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 9 + 2 + 1 + 2 + 1);
+    // `hoh/workspace/add` (HOH-41), delete, two folder-rebinding methods, plugin inventory and dictation.
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 9 + 2 + 1 + 2 + 2);
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/status"));
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/rebind"));
     assert!(bridge::needs_approval(
@@ -640,6 +640,20 @@ fn plugin_inventory_is_a_typed_read_for_the_main_window() {
     assert!(bridge::check_main("other", method, &params).is_err());
     assert!(bridge::check_main("main", method, &json!({"sessionId": 1})).is_err());
     assert!(!bridge::needs_approval(method, &params));
+}
+
+#[test]
+fn whisper_dictation_is_typed_and_main_window_only() {
+    let method = "hoh/voice/whisper";
+    let settings = json!({"action": "getSettings"});
+    assert!(bridge::check_main("main", method, &settings).is_ok());
+    assert!(bridge::check_main("other", method, &settings).is_err());
+    assert!(bridge::check_main("main", method, &json!({"action": "setSettings"})).is_err());
+    assert!(bridge::check_main(
+        "main",
+        method,
+        &json!({"action": "getSettings", "url": "https://example.com"})
+    ).is_err());
 }
 
 /// The access mode goes from the main window straight to the engine (no confirmation window): the

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WhisperDictationParams",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "getSettings"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "setSettings"
+        },
+        "serverUrl": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "serverUrl"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "transcribe"
+        },
+        "serverUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "wavBase64": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12800060
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "serverUrl",
+        "wavBase64"
+      ]
+    }
+  ]
+}

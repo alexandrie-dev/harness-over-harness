@@ -16,8 +16,8 @@ const inertNames = new Set([
   'http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd',
   'http://www.w3.org/1999/xhtml', 'http://www.w3.org/2000/xmlns/', // XML namespaces of the markdown pipeline (hast/parse5), never fetched
   'http://www.w3.org/1999/xlink', 'http://www.w3.org/XML/1998/namespace',
-  // Local model configuration is passed to the native host, never fetched by UI.
-  'http://localhost:8000/v1',
+  // Example server addresses are passed to native code, which makes the requests.
+  'http://localhost:8000/v1', 'http://127.0.0.1:8765',
   ...['resize', 'move', 'close-requested', 'destroyed', 'focus', 'blur', 'scale-change',
       'theme-changed', 'window-created', 'suspended', 'resumed', 'webview-created',
       'drag-enter', 'drag-over', 'drag-drop', 'drag-leave'].map(name => 'tauri://' + name),

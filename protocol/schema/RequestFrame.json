@@ -816,6 +816,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/voice/whisper"
+        },
+        "params": {
+          "$ref": "#/$defs/WhisperDictationParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/settings/get"
         },
         "params": {
@@ -2433,6 +2449,66 @@
         }
       },
       "additionalProperties": false
+    },
+    "WhisperDictationParams": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "getSettings"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "setSettings"
+            },
+            "serverUrl": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "serverUrl"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "transcribe"
+            },
+            "serverUrl": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "wavBase64": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 12800060
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "serverUrl",
+            "wavBase64"
+          ]
+        }
+      ]
     },
     "SettingsSetParams": {
       "type": "object",

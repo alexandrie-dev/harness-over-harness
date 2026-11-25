@@ -51,6 +51,7 @@ pub const WINDOW_METHODS: &[&str] = &[
     "hoh/model/probe",
     "hoh/model/key/set",
     "hoh/plugins/list",
+    "hoh/voice/whisper",
     "hoh/settings/get",
     "hoh/settings/set",
     "hoh/settings/rules/set",

@@ -170,6 +170,28 @@ export function sidebarChrome(code: string): string {
     ['<SidebarMenuButton aria-label={label} onClick={onClick} size="icon">\n              {icon}\n            </SidebarMenuButton>', '<SidebarMenuButton aria-label={label} onClick={onClick}>\n              {icon}\n              <span>{label}</span>\n            </SidebarMenuButton>'],
   ]);
 }
+function composerWhisper(code: string): string {
+  const hook = resolve(import.meta.dirname, 'hoh-screens/whisper/useComposerSpeechInput.ts');
+  return anchorPatch('ChatComposer.tsx', code, [[
+    'import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";',
+    `import { useHohComposerSpeechInput as useEnvironmentSpeechInput } from ${JSON.stringify(hook)};`,
+  ], [
+    '            {speechInput.preview ? (',
+    `            {speechInput.whisperError && (
+              <p className="mx-3 mb-2 text-xs text-destructive sm:mx-4">{speechInput.whisperError}</p>
+            )}
+
+            {speechInput.preview ? (`,
+  ]]);
+}
+function chatSettingsWhisper(code: string): string {
+  const setting = resolve(import.meta.dirname, 'hoh-screens/whisper/WhisperSetting.tsx');
+  return anchorPatch('SettingsPanels.tsx', code, [[
+    '    <SettingsPageContainer>\n      <SettingsSection id="composer"',
+    '    <SettingsPageContainer>\n      <HohWhisperSetting />\n      <SettingsSection id="composer"',
+  ]], `import { WhisperSetting as HohWhisperSetting } from ${JSON.stringify(setting)};\n`);
+}
+
 /** HoH accepts pasted text as text. The native engine only accepts raster attachments. */
 function composerPaste(code: string): string {
   const pastedImage = resolve(UI, 'src/t3-entry/pastedImage.ts');
@@ -335,6 +357,10 @@ function hohT3(): Plugin {
       if (!HIDDEN_COMPONENT_NAMES.has(basename(source, '.tsx'))) return null;
       const resolved = await this.resolve(source, importer, { skipSelf: true });
       const file = resolved?.id.startsWith(T3_WEB + '/') ? resolved.id.slice(T3_WEB.length + 1) : null;
+      if (file === 'components/chat/ComposerSpeechButton.tsx' &&
+          importer === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) {
+        return resolved?.id;
+      }
       return file && file in HIDDEN_COMPONENTS ? COMPONENT_PREFIX + file : null;
     },
     load(id) {
@@ -386,7 +412,8 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };
       if (id === resolve(T3_BASE, 'shared/themePalettes.ts')) return { code: themePalettes(code), map: null };
-      if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerPaste(code), map: null };
+      if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerWhisper(composerPaste(code)), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettingsWhisper(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
       if (id === resolve(T3_WEB, 'components/chat/ChatMarkdownMedia.tsx')) return { code: externalMarkdownImage(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };

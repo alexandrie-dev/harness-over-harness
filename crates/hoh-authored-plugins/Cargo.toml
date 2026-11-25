@@ -12,4 +12,5 @@ workspace = true
 hoh-loader = { path = "../hoh-loader" }
 # BEGIN GENERATED PLUGINS
 plugin_0 = { package = "hoh-plugin-turn-note", path = "../../plugins/turn-note" }
+plugin_1 = { package = "hoh-plugin-whisper-dictation", path = "../../plugins/whisper-dictation" }
 # END GENERATED PLUGINS

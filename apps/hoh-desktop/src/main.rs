@@ -23,6 +23,7 @@ fn main() {
     builder
         .manage(hoh_desktop::html_preview::HtmlPreviews::default())
         .plugin(hoh_desktop::native::main_security_plugin())
+        .on_permission_request(hoh_desktop::native::webview_permission)
         .invoke_handler(tauri::generate_handler![
             hoh_desktop::native::engine_request,
             hoh_desktop::native::subscribe_engine_notifications,
