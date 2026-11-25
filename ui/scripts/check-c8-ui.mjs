@@ -164,16 +164,33 @@ try {
   const folder = page.locator('.hoh-project').filter({ hasText: 'Alexandrie' });
   await folder.waitFor(); await folder.click();
   const sheet = page.locator('.hoh-project-popover'); await sheet.waitFor();
-  assert.match(await folder.innerText(), /0 waiting/);
+  assert.match(await folder.innerText(), /2 waiting/);
   assert.match(await folder.innerText(), /Ready for review/);
+  const clusters = sheet.locator('.hoh-agent-clusters');
   for (const ms of [30, 120, 220]) {
-    await sheet.locator('.hoh-project-popover__agent').evaluateAll((nodes, t) => nodes.forEach(node => node.getAnimations().forEach(a => { a.pause(); a.currentTime = t; })), ms);
-    const overlap = await sheet.locator('.hoh-project-popover__agent').evaluateAll(nodes => nodes.some((a, i) => nodes.slice(i + 1).some(b => { const x=a.getBoundingClientRect(), y=b.getBoundingClientRect(); return x.left<y.right && x.right>y.left && x.top<y.bottom && x.bottom>y.top; })));
+    await clusters.evaluate((node, t) => node.getAnimations().forEach(a => { a.pause(); a.currentTime = t; }), ms);
+    const overlap = await clusters.locator('.hoh-card').evaluateAll(nodes => nodes.some((a, i) => nodes.slice(i + 1).some(b => { const x=a.getBoundingClientRect(), y=b.getBoundingClientRect(); return x.left<y.right && x.right>y.left && x.top<y.bottom && x.bottom>y.top; })));
     assert.equal(overlap, false, `cards overlap at ${ms}ms`);
     await screenshot(page, `06-opening-${ms}ms`);
   }
-  await sheet.locator('.hoh-project-popover__agent').evaluateAll(nodes => nodes.forEach(node => node.getAnimations().forEach(a => a.finish())));
+  await clusters.evaluate(node => node.getAnimations().forEach(a => a.finish()));
   await screenshot(page, '01-mixed-folder');
+  const doneCluster = sheet.locator('[data-cluster="done"]');
+  await doneCluster.getByRole('button', { name: 'Done 1' }).press('Enter');
+  assert.equal(await doneCluster.locator('.hoh-card').isVisible(), false);
+  await sheet.locator('.hoh-card[data-thread-id="alpha-1"]').getByRole('button', { name: 'Mark done' }).press('Enter');
+  const doneToggle = doneCluster.getByRole('button', { name: 'Done 2' });
+  await doneToggle.waitFor();
+  assert.match(await folder.innerText(), /1 waiting/);
+  assert.equal(await doneToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await doneToggle.evaluate(node => node === document.activeElement), true);
+  await sheet.locator('.hoh-card--completing').waitFor({ state: 'detached' });
+  await folder.click();
+  await folder.click();
+  assert.equal(await doneToggle.getAttribute('aria-expanded'), 'false');
+  await doneToggle.press('Space');
+  await doneCluster.getByRole('button', { name: 'Open Prepare release notes' }).waitFor();
+  await page.screenshot({ path: join(QA, '07-completed-folder.png'), animations: 'disabled' });
   await folder.click();
   await page.locator('.hoh-project').filter({ hasText: 'Harness over Harness' }).hover();
   await page.locator('.hoh-project-popover__head').getByText('1 agent', { exact: true }).waitFor();

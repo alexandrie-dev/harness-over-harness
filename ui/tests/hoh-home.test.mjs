@@ -199,13 +199,13 @@ test('request detail is an accessible two-line disclosure', async () => {
 test('agent cards have a separate accessible open target and an explicit human completion action', async () => {
   const css = await readFile(new URL('../src/t3-entry/hoh-screens/home.css', import.meta.url), 'utf8');
   assert.match(homeSource, /className="hoh-card__open" aria-label=\{`Open \$\{entry\.title\}`\}/);
-  assert.match(homeSource, /className="hoh-card__complete"[^>]*onClick=\{\(\) => void view\.host\?\.complete\(entry\.id\)\}/);
+  assert.match(homeSource, /className="hoh-card__complete"[^>]*onClick=\{\(event\) => complete\(entry, event\)\}/);
   assert.match(homeSource, />Mark done<\/Button>/);
   assert.equal(waitingLabel({}), 'Waiting for your answer');
   assert.equal(waitingLabel({ canComplete: true }), 'Ready for review');
   assert.equal(waitingLabel({ canComplete: true, stopped: true }), 'Stopped');
   assert.equal(waitingLabel({ canComplete: true, interrupted: true }), 'Interrupted');
-  assert.match(css, /--hoh-card-width:\s*min\(360px, calc\(\(50vw - 14px\) \/ 2\)\)/);
+  assert.match(css, /--hoh-card-width:\s*min\(100%, 360px, calc\(\(50vw - 14px\) \/ 2\)\)/);
   assert.match(css, /grid-template-columns:\s*repeat\(auto-fill, var\(--hoh-card-width\)\)/);
   assert.match(css, /\.hoh-home__cards\s*\{[^}]*justify-content:\s*start/);
   assert.match(css, /\.hoh-projects\s*\{[^}]*justify-content:\s*start/);
@@ -219,7 +219,7 @@ test('agent cards open the shared quick-view host while Mark done keeps its dire
   assert.match(homeSource, /open: openQuickView/);
   assert.match(homeSource, /<QuickViewDialog \/>/);
   assert.doesNotMatch(homeSource, /open:\s*\(threadId\).*navigate/);
-  assert.match(homeSource, /view\.host\?\.complete\(entry\.id\)/);
+  assert.match(homeSource, /view\.host\.complete\(entry\.id, entry\.turnOrdinal\)/);
 });
 
 test('empty Home joins the greeting and native T3 draft composer into one centred hero group', async () => {

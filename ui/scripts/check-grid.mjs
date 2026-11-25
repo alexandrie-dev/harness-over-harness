@@ -170,8 +170,26 @@ try {
           await review.getByText('Ready for review').waitFor({ state: 'attached' });
           if (await review.locator('.hoh-steps').count()) fail(`${label}: completed card still has progress`);
           step = 'mark a completed card Done';
-          await page.evaluate(() => window.__HOH_HOME__.complete('d1'));
-          await page.locator('.hoh-card[data-state="done"]').waitFor({ state: 'attached' });
+          if (width === 1440) await page.emulateMedia({ reducedMotion: 'no-preference' });
+          await review.getByRole('button', { name: 'Mark done' }).click();
+          const done = page.locator('[data-cluster="done"]');
+          await done.getByRole('button', { name: 'Open Summarize the invoices' }).waitFor();
+          if (width === 1440) {
+            const transition = page.locator('.hoh-card--completing');
+            const result = await transition.evaluate((node) => {
+              const frames = node.getAnimations()[0]?.effect?.getKeyframes() ?? [];
+              return { tint: getComputedStyle(node).getPropertyValue('--glow').trim(), success: getComputedStyle(node).getPropertyValue('--success').trim(), end: frames.at(-1)?.transform };
+            });
+            if (result.tint !== result.success || !result.end?.includes('rotate(12deg)')) fail(`${label}: Mark done не подсвечивает и не поворачивает карточку`);
+            const toggle = done.getByRole('button', { name: 'Done 1' });
+            await toggle.press('Space');
+            if (await toggle.getAttribute('aria-expanded') !== 'false' || await done.locator('.hoh-card').isVisible())
+              fail(`${label}: кластер Done не сворачивается клавиатурой`);
+            await toggle.press('Enter');
+            if (await toggle.getAttribute('aria-expanded') !== 'true') fail(`${label}: кластер Done не раскрывается клавиатурой`);
+          } else if (await page.locator('.hoh-card--completing').count() > 0) {
+            fail(`${label}: карточка анимируется при prefers-reduced-motion`);
+          }
         }
         await page.evaluate(() => document.fonts.ready);
         await page.waitForTimeout(800);
@@ -205,12 +223,14 @@ try {
           if (expanded.expanded !== 'true' || expanded.height <= collapsed.height) fail(`${label}: запрос не раскрывается по нажатию (${JSON.stringify({ collapsed, expanded })})`);
           await detail.press('Space');
           if (await detail.getAttribute('aria-expanded') !== 'false') fail(`${label}: запрос не сворачивается клавиатурой`);
-          const nowVisible = await page.evaluate(() => {
-            const heading = [...document.querySelectorAll('.hoh-home__label')].find((node) => node.textContent?.trim().startsWith('Now'))?.getBoundingClientRect();
+          const heading = page.locator('[data-cluster="waiting"] h2');
+          await heading.scrollIntoViewIfNeeded();
+          const waitingVisible = await heading.evaluate((node) => {
+            const heading = node.getBoundingClientRect();
             const composer = document.querySelector('[data-chat-composer-stack]')?.getBoundingClientRect();
-            return Boolean(heading && composer && heading.top >= 0 && heading.bottom <= composer.top);
+            return Boolean(composer && heading.top >= 0 && heading.bottom <= composer.top);
           });
-          if (!nowVisible) fail(`${label}: шапка карточек «Now» не видна над полем ввода`);
+          if (!waitingVisible) fail(`${label}: шапка карточек «Waiting for you» не видна над полем ввода`);
         }
         const found = await page.evaluate(() => (window.hohGridCheck ? window.hohGridCheck() : null));
         if (found === null) fail(`${label}: в окне нет window.hohGridCheck`);
@@ -218,11 +238,17 @@ try {
         if (busy) {
           const cards = await page.locator('.hoh-card').evaluateAll((nodes) => nodes.map((node) => {
             const box = node.getBoundingClientRect();
-            return { x: box.x, y: box.y, right: box.right, width: box.width, state: node.getAttribute('data-state') };
+            return { x: box.x, y: box.y, right: box.right, width: box.width, height: box.height, state: node.getAttribute('data-state'), cluster: node.closest('[data-cluster]')?.dataset.cluster };
           }));
           const count = state => cards.filter(card => card.state === state).length;
           if (cards.length !== 5 || count('working') !== 2 || count('waiting') !== 2 || count('done') !== 1)
             fail(`${label}: нужны 5 карточек (2 working, 2 waiting, 1 done), получено ${JSON.stringify(cards.map(card => card.state))}`);
+          if (cards.some(card => card.cluster !== card.state)) fail(`${label}: карточка находится вне своего кластера`);
+          const waiting = cards.find(card => card.state === 'waiting');
+          const working = cards.find(card => card.state === 'working');
+          const done = cards.find(card => card.state === 'done');
+          if (waiting && working && done && !(waiting.height > working.height && working.height > done.height && working.width > done.width))
+            fail(`${label}: Working и Done не стали компактнее`);
           if (cards.some(card => card.x < -0.5 || card.right > width + 0.5)) fail(`${label}: карточка вышла за окно`);
           if (width >= 1100) {
             if (cards.some(card => card.width > 360.5)) fail(`${label}: карточка шире 360 px: ${cards.map(card => card.width.toFixed(1)).join(', ')}`);

@@ -23,7 +23,7 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 @media (max-height: 34rem) {
   .hoh-draft-hero:has(> .hoh-home:not([data-busy])) { justify-content: flex-end; }
 }
-/* Один столбец: приветствие, затем «Needs your answer», карточки, «Done» (запрос, который ждёт человека, выше карточек). */
+/* Приветствие и запросы идут перед карточками. */
 .hoh-home__main { display: contents; }
 .hoh-home__main > section:last-child { order: 3; }
 .hoh-home__head { order: -2; }
@@ -41,30 +41,60 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 .hoh-home__greeting { display: block; width: 100%; text-align: center; }
 .hoh-home__label { display: flex; align-items: baseline; gap: 8px; font-size: 0.875rem; font-weight: 600; margin: 0 0 10px; }
 .hoh-home__count { color: var(--muted-foreground); font-weight: 400; }
+.hoh-agent-clusters { position: relative; display: flex; flex-direction: column; gap: 24px; min-width: 0; order: 3; }
+.hoh-agent-clusters__flights { position: absolute; z-index: 4; inset: 0; pointer-events: none; }
+.hoh-agent-cluster__toggle { display: inline-flex; align-items: center; gap: 8px; color: inherit; font: inherit; cursor: pointer; border-radius: var(--radius-sm); }
+.hoh-agent-cluster__toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.hoh-agent-cluster__toggle svg { width: 14px; height: 14px; color: var(--success-foreground); transition: transform 180ms ease; }
+.hoh-agent-cluster__toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.hoh-agent-cluster[data-cluster="done"]:has([hidden]) .hoh-home__label { margin-bottom: 0; }
 .hoh-home__cards {
-  --hoh-card-width: min(360px, calc((50vw - 14px) / 2));
+  --hoh-card-width: min(100%, 360px, calc((50vw - 14px) / 2));
   display: grid; grid-template-columns: repeat(auto-fill, var(--hoh-card-width)); justify-content: start; gap: 14px;
 }
-/* Карточка агента: тёмная, скруглённая, граница-градиент и мягкое свечение цвета состояния (палитра окна: синий — работает,
-   красный — ждёт ответа, нейтральный — готово). Свечение — статичная тень вне карточки (текст не размывает), без анимации. */
-.hoh-card { --glow: var(--muted-foreground); text-align: left; position: relative; border: 1px solid transparent; border-radius: calc(var(--radius-xl) + 4px); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 124px; cursor: pointer; color: inherit; font: inherit;
+.hoh-home__cards--compact { --hoh-card-width: min(100%, 260px); gap: 8px; }
+[data-cluster="done"] .hoh-home__cards { --hoh-card-width: min(100%, 220px); }
+.hoh-home__cards[hidden] { display: none; }
+.hoh-card { --glow: var(--muted-foreground); text-align: left; position: relative; border: 1px solid transparent; border-radius: calc(var(--radius-xl) + 4px); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 124px; cursor: pointer; color: inherit; font: inherit;
   background: linear-gradient(var(--background), var(--background)) padding-box, linear-gradient(135deg, var(--glow), color-mix(in srgb, var(--glow) 18%, transparent) 48%, color-mix(in srgb, var(--glow) 70%, transparent)) border-box;
   box-shadow: 0 0 20px color-mix(in srgb, var(--glow) 36%, transparent), 0 0 56px color-mix(in srgb, var(--glow) 16%, transparent); }
 .hoh-card[data-state="working"] { --glow: var(--primary); }
 .hoh-card[data-state="waiting"] { --glow: var(--warning); }
 .hoh-card:hover { box-shadow: 0 0 24px color-mix(in srgb, var(--glow) 48%, transparent), 0 0 64px color-mix(in srgb, var(--glow) 22%, transparent); }
+.hoh-home__cards--compact .hoh-card {
+  flex-direction: row; align-items: center; min-height: 42px; padding: 8px 12px; border-radius: var(--radius-lg);
+  border-color: color-mix(in srgb, var(--glow) 24%, var(--border)); background: var(--card); box-shadow: none;
+}
+.hoh-home__cards--compact .hoh-card:hover {
+  border-color: color-mix(in srgb, var(--glow) 64%, var(--border));
+  background: color-mix(in srgb, var(--card) 92%, var(--glow));
+}
+.hoh-home__cards--compact .hoh-card[data-state="done"] {
+  --glow: var(--success); min-height: 38px; padding-block: 6px;
+  background: color-mix(in srgb, var(--card) 95%, var(--success));
+}
+.hoh-home__cards--compact .hoh-card[data-state="done"]:hover { background: color-mix(in srgb, var(--card) 90%, var(--success)); }
+.hoh-card.hoh-card--completing {
+  --glow: var(--success); position: absolute; pointer-events: none; min-height: 0;
+  background: linear-gradient(color-mix(in srgb, var(--background) 88%, var(--success)), var(--background)) padding-box, var(--success) border-box;
+  box-shadow: 0 0 24px color-mix(in srgb, var(--success) 60%, transparent), 0 0 56px color-mix(in srgb, var(--success) 24%, transparent);
+}
+.hoh-card--completing .hoh-card__complete { visibility: hidden; }
+.hoh-card--completing[data-state] .hoh-card__state b { color: var(--success-foreground); }
 .hoh-card:has(.hoh-card__open:focus-visible) { outline: 2px solid var(--ring); outline-offset: 3px; }
 .hoh-card__open { position: absolute; z-index: 1; inset: 0; width: 100%; border: 0; border-radius: inherit; padding: 0; background: none; cursor: pointer; }
 .hoh-card > :not(.hoh-card__open) { position: relative; z-index: 2; pointer-events: none; }
 .hoh-card .hoh-mark { width: 22px; height: 22px; margin-bottom: 6px; }
 .hoh-card__title { font-size: 1rem; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hoh-home__cards--compact .hoh-mark { width: 15px; height: 15px; margin: 0; }
+.hoh-home__cards--compact .hoh-card__title { display: block; font-size: 0.8125rem; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
+.hoh-card__time { margin-inline-start: auto; white-space: nowrap; color: var(--muted-foreground); font-size: 0.6875rem; }
 .hoh-card__where { color: var(--muted-foreground); font-size: 0.75rem; }
-.hoh-card__state { margin-top: auto; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 8px; font-size: 0.75rem; color: var(--muted-foreground); }
-.hoh-card__state-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
-.hoh-card__complete { pointer-events: auto; }
-.hoh-card__state b { font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
-.hoh-card[data-state="working"] .hoh-card__state b { color: var(--primary); }
-.hoh-card[data-state="waiting"] .hoh-card__state b { color: var(--warning-foreground); }
+.hoh-card__state { margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 0.75rem; color: var(--muted-foreground); }
+.hoh-card__elapsed { margin-inline-start: auto; white-space: nowrap; }
+.hoh-card__complete { pointer-events: auto; margin-inline-start: auto; }
+.hoh-card__complete + .hoh-card__elapsed { margin-inline-start: 0; }
+.hoh-card__state b { font-weight: 500; color: var(--warning-foreground); }
 .hoh-orbit { width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); border-top-color: var(--primary); animation: hoh-spin 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .hoh-orbit { animation: none; } }
 .hoh-card .hoh-orbit { animation: none; } /* в карточке состояние — цвет свечения и точка, ничто не крутится */
@@ -163,10 +193,13 @@ body:has([data-hoh-home-body][data-busy]) [data-chat-composer-stack] > .absolute
 .hoh-project-popover__head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 4px 10px; }
 .hoh-project-popover__head span { overflow: hidden; font-size: .8125rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .hoh-project-popover__head small { flex: none; color: var(--muted-foreground); font-size: .6875rem; }
-.hoh-project-popover__cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 272px), 1fr)); gap: 12px; }
-.hoh-project-popover__agent { min-width: 0; opacity: 0; animation: hoh-agent-unfold 240ms cubic-bezier(.2, .8, .2, 1) forwards; animation-delay: calc(var(--hoh-agent-index) * 40ms); }
-.hoh-project-popover .hoh-card { width: 100%; height: 100%; min-height: 136px; }
-@keyframes hoh-agent-unfold { to { opacity: 1; } }
-@media (min-width: 761px) and (max-width: 900px) { .hoh-project-popover__cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .hoh-project-popover .hoh-card { min-height: 112px; gap: 5px; padding: 10px; } .hoh-project-popover .hoh-card .hoh-mark { width: 18px; height: 18px; margin-bottom: 2px; } }
-@media (max-width: 760px) { .hoh-projects { grid-template-columns: [g1] 1fr [g21]; } .hoh-project-popover { padding: 8px; } .hoh-project-popover__cards { grid-template-columns: 1fr; } }
-@media (prefers-reduced-motion: reduce) { .hoh-project, .hoh-project-popover__agent { transition: none; animation: none; opacity: 1; transform: none; } }
+.hoh-project-popover .hoh-agent-clusters { gap: 16px; }
+.hoh-project-popover .hoh-home__cards:not(.hoh-home__cards--compact) { grid-template-columns: repeat(auto-fill, minmax(min(100%, 256px), 1fr)); }
+.hoh-project-popover .hoh-card[data-state="waiting"] { min-height: 136px; }
+.hoh-project-popover .hoh-card--completing[data-state="waiting"] { min-height: 0; }
+@media (max-width: 760px) { .hoh-projects { grid-template-columns: [g1] 1fr [g21]; } .hoh-project-popover { padding: 8px; } }
+@media (prefers-reduced-motion: no-preference) {
+  .hoh-project-popover .hoh-agent-clusters, [data-cluster="done"] .hoh-home__cards:not([hidden]) { animation: hoh-agent-unfold 200ms ease-out; }
+}
+@keyframes hoh-agent-unfold { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .hoh-project, .hoh-agent-cluster__toggle svg { transition: none; } .hoh-project { transform: none; } }

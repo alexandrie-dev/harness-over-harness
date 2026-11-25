@@ -402,7 +402,7 @@ try {
           const grid = document.querySelector('.hoh-projects')?.getBoundingClientRect();
           const home = document.querySelector('.hoh-home')?.getBoundingClientRect();
           const composer = document.querySelector('[data-chat-composer-stack]')?.getBoundingClientRect();
-          const cards = [...panel.querySelectorAll('.hoh-project-popover__agent')];
+          const cards = [...panel.querySelectorAll('.hoh-home__cards > .hoh-card')];
           const visible = home ? { left: Math.max(rect.left, home.left), top: Math.max(rect.top, home.top), right: Math.min(rect.right, home.right), bottom: Math.min(rect.bottom, home.bottom) } : rect;
           const overlapsComposer = composer ? visible.left < composer.right && visible.right > composer.left && visible.top < composer.bottom && visible.bottom > composer.top : false;
           const last = cards.at(-1);

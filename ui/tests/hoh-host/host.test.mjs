@@ -1498,13 +1498,14 @@ test('engine lost mid-turn: the running turn ends as stopped', async () => {
   interrupted = host.home.entries().find(entry => entry.id === 'chat-l');
   assert.deepEqual([interrupted.state, interrupted.interrupted, interrupted.canComplete], ['waiting', true, true]);
   await host.home.complete('chat-l');
-  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-l'], { turnOrdinal: 1, state: 'done', interrupted: true });
+  const markedAt = host.home.entries().find(entry => entry.id === 'chat-l').doneAt;
+  assert.deepEqual(JSON.parse(items.get(mod.host.STORAGE_KEY)).homeDispositions['chat-l'], { turnOrdinal: 1, state: 'done', interrupted: true, markedAt });
 
   // Replay now contains durable `aborted`, so only the persisted Home cause can keep the human decision visible.
   const afterRestart = connect(new FakeEngine({ store }), { storage });
   await afterRestart.host.start();
   const done = afterRestart.host.home.entries().find(entry => entry.id === 'chat-l');
-  assert.deepEqual([done.state, done.interrupted, done.canComplete], ['done', true, undefined]);
+  assert.deepEqual([done.state, done.interrupted, done.canComplete, done.doneAt], ['done', true, undefined, markedAt]);
 });
 
 test('a crash placeholder is reconciled when the same turn resumes and completes', async () => {
@@ -1965,10 +1966,12 @@ test('home turn lifecycle: Claude reply waits for the person, Mark done survives
     ['waiting', { turnOrdinal: 2, state: 'waiting' }],
   );
 
-  await first.host.home.complete('live-home');
+  await first.host.home.complete('live-home', 1);
+  assert.equal(first.host.home.entries().find(entry => entry.id === 'live-home').state, 'waiting', 'a stale click cannot complete the next turn');
+  await first.host.home.complete('live-home', 2);
   assert.equal(first.host.home.entries().find(entry => entry.id === 'live-home').state, 'done');
   const saved = JSON.parse(items.get(mod.host.STORAGE_KEY));
-  assert.deepEqual(saved.homeDispositions['live-home'], { turnOrdinal: 2, state: 'done' });
+  assert.deepEqual(saved.homeDispositions['live-home'], { turnOrdinal: 2, state: 'done', markedAt: engine.clock });
 
   // Replay uses the engine's message id instead of T3's local id, but ordinal 1 still identifies this exact turn.
   const second = new FakeEngine({ store });
@@ -2004,6 +2007,10 @@ test('home turn lifecycle: Claude reply waits for the person, Mark done survives
   restored.host.flush();
   const oldWaiting = restored.host.home.entries().find(entry => entry.id === 'live-home');
   assert.deepEqual([oldWaiting.state, oldWaiting.turnOrdinal, oldWaiting.canComplete], ['waiting', 3, true]);
+  assert(oldWaiting.doneAt < later.clock);
+  await restored.host.home.complete('live-home', 3);
+  const oldMarked = restored.host.home.entries().find(entry => entry.id === 'live-home');
+  assert.deepEqual([oldMarked.state, oldMarked.doneAt], ['done', later.clock]);
 });
 
 test('home disposition migration classifies a completed reply older than today even without prior metadata', async () => {

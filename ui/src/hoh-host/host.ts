@@ -56,6 +56,7 @@ interface HomeDisposition {
   /** Run ordinal is stable when the engine history is replayed after a restart. */
   turnOrdinal: number;
   state: 'waiting' | 'done';
+  markedAt?: number;
   /** This exact turn entered Home because its durable history ended mid-run, not because the person pressed Stop. */
   interrupted?: boolean;
   /** This exact turn was deliberately stopped by the person; it is not a crash-recovery placeholder. */
@@ -407,9 +408,11 @@ export class HohHost {
     for (const [threadId, value] of Object.entries(saved?.homeDispositions && typeof saved.homeDispositions === 'object' ? saved.homeDispositions : {})) {
       const entry = value as Record<string, unknown> | null;
       const turnOrdinal = Number(entry?.turnOrdinal);
+      const markedAt = timeOf(entry?.markedAt);
       if (Number.isInteger(turnOrdinal) && turnOrdinal > 0 && (entry?.state === 'waiting' || entry?.state === 'done'))
         this.homeDispositions.set(threadId, {
           turnOrdinal, state: entry.state,
+          ...(entry.state === 'done' && markedAt !== null ? { markedAt } : {}),
           ...(entry.interrupted === true ? { interrupted: true } : {}),
           ...(entry.stopped === true ? { stopped: true } : {}),
         });
@@ -539,7 +542,7 @@ export class HohHost {
       return {
         id: thread.id, title: thread.shell().title, projectId: thread.projectId, providerInstanceId: instanceOf(thread.executor),
         state: disposition.state, turnOrdinal: disposition.turnOrdinal,
-        startedAt: thread.updatedAt, doneAt: thread.updatedAt,
+        startedAt: thread.updatedAt, doneAt: disposition.markedAt ?? thread.updatedAt,
         steps: { done: 0, total: 0 }, agents: [],
         ...(disposition.state === 'waiting' ? { canComplete: true } : {}),
         ...(disposition.interrupted === true ? { interrupted: true } : {}),
@@ -551,7 +554,7 @@ export class HohHost {
     const completable = entry?.state === 'done' || (entry?.state === 'ended' && (interrupted || stopped));
     if (!entry || !completable) return entry;
     return disposition?.turnOrdinal === entry.turnOrdinal && disposition.state === 'done'
-      ? { ...entry, state: 'done', ...(interrupted ? { interrupted: true } : {}), ...(stopped ? { stopped: true } : {}) }
+      ? { ...entry, state: 'done', doneAt: disposition.markedAt ?? entry.doneAt, ...(interrupted ? { interrupted: true } : {}), ...(stopped ? { stopped: true } : {}) }
       : { ...entry, state: 'waiting', canComplete: true, ...(interrupted ? { interrupted: true } : {}), ...(stopped ? { stopped: true } : {}) };
   }
 
@@ -571,7 +574,8 @@ export class HohHost {
         return true;
       }
       if (entry.state === 'done') {
-        this.homeDispositions.set(thread.id, { turnOrdinal: entry.turnOrdinal, state: current.state });
+        const { interrupted: _, ...resolved } = current;
+        this.homeDispositions.set(thread.id, resolved);
         return true;
       }
     }
@@ -621,7 +625,7 @@ export class HohHost {
       this.flush();
     },
     /** A completed answer becomes Done only by the person's explicit action on that exact turn. */
-    complete: async (threadId: string) => {
+    complete: async (threadId: string, turnOrdinal?: number) => {
       const thread = await this.loaded(threadId);
       const disposition = this.homeDispositions.get(threadId);
       const latest = thread?.home();
@@ -630,14 +634,17 @@ export class HohHost {
         : latest;
       const interrupted = entry?.interrupted === true || (disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.interrupted === true);
       const stopped = disposition?.turnOrdinal === entry?.turnOrdinal && disposition?.stopped === true;
-      if (!thread || !entry || (entry.state !== 'done' && !(entry.state === 'ended' && (interrupted || stopped)))) return;
+      if (!thread || !entry || (entry.state !== 'done' && !(entry.state === 'ended' && (interrupted || stopped)))) return false;
+      if (turnOrdinal !== undefined && entry.turnOrdinal !== turnOrdinal) return false;
+      if (disposition?.turnOrdinal === entry.turnOrdinal && disposition.state === 'done') return true;
       this.homeDispositions.set(threadId, {
-        turnOrdinal: entry.turnOrdinal, state: 'done',
+        turnOrdinal: entry.turnOrdinal, state: 'done', markedAt: this.now(),
         ...(interrupted ? { interrupted: true } : {}), ...(stopped ? { stopped: true } : {}),
       });
       this.save();
       this.changed(threadId);
       this.flush();
+      return true;
     },
     /** A new chat with this first message, in the project (or "No project"); returns its id. */
     start: async (message: string, projectId?: string) => {

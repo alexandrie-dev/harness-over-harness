@@ -3,8 +3,8 @@
 // Это не отдельный экран: vite.ts подставляет <HomeBody/> в пустой разговор T3 (ChatView, DraftHeroHeadline), так что поле ввода,
 // чип модели с уровнями, Permissions, выбор проекта и отправка — настоящие, их. Здесь только содержимое над ними.
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
-import { CheckIcon, XIcon } from 'lucide-react';
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { CheckIcon, ChevronDownIcon, XIcon } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
 
 import { ClaudeAI, OpenAI } from '~/components/Icons';
 import { Button } from '~/components/ui/button';
@@ -35,7 +35,7 @@ interface Agent {
 interface Home {
   version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectEntries(): Entry[]; projectTitle(id: string): string; projectKey(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
-  complete(threadId: string): Promise<void>;
+  complete(threadId: string, turnOrdinal: number): Promise<boolean>;
 }
 const home = (): Home | undefined => (globalThis as { __HOH_HOME__?: Home }).__HOH_HOME__;
 
@@ -69,7 +69,11 @@ export function requestLabel(request: { kind: string; requestKind: string | null
 const clock = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 
 
-interface View { host: Home | undefined; now: number; open(threadId: string): void; where(entry: Entry): string; projectKey(projectId: string): string }
+interface View {
+  host: Home | undefined; now: number; open(threadId: string): void; where(entry: Entry): string; projectKey(projectId: string): string;
+  collapsedDone: ReadonlySet<string | null>;
+  toggleDone(projectId: string | null): void;
+}
 
 /** The executor's mark from T3's own provider set. */
 const Mark = ({ entry }: { entry: Entry }) => entry.providerInstanceId === 'codex'
@@ -137,66 +141,162 @@ function Ask({ entry, view }: { entry: Entry; view: View }) {
 export function waitingLabel(entry: Pick<Entry, 'stopped' | 'interrupted' | 'canComplete'>): string {
   return entry.stopped ? 'Stopped' : entry.interrupted ? 'Interrupted' : entry.canComplete ? 'Ready for review' : 'Waiting for your answer';
 }
-const stateLabel = (entry: Entry) => entry.state === 'working'
-  ? <><span className="hoh-orbit" aria-hidden />Working</>
-  : entry.state === 'ended' ? 'Inactive' : waitingLabel(entry);
-/** An agent as a card (HOH-41): the executor's mark top-left, the title, where it works, its subagents inside, the state at the bottom.
- *  The glow of the border follows the state (home.css: blue — working, red — waits for the person, neutral — done). */
-function Card({ entry, view, children }: { entry: Entry; view: View; children: React.ReactNode }) {
-  const project = projectLabel(entry.projectId, view.where(entry));
+type Complete = (entry: Entry, event: MouseEvent<HTMLButtonElement>) => void;
+
+function EntryCard({ entry, view, complete, grouped }: { entry: Entry; view: View; complete: Complete; grouped: boolean }) {
+  const waiting = entry.state === 'waiting';
+  const project = waiting && !grouped ? projectLabel(entry.projectId, view.where(entry)) : null;
   return (
-    <article className="hoh-card" data-state={entry.state}>
-      <button type="button" className="hoh-card__open" aria-label={`Open ${entry.title}`} onClick={() => view.open(entry.id)} />
+    <article className="hoh-card" data-state={entry.state} data-thread-id={entry.id}>
+      <button type="button" className="hoh-card__open" aria-label={`Open ${entry.title}`} title={waiting ? undefined : entry.title} onClick={() => view.open(entry.id)} />
       <Mark entry={entry} />
       <span className="hoh-card__title">{entry.title}</span>
       {project ? <span className="hoh-card__where">{project}</span> : null}
-      {entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
-      {children}
+      {waiting && entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
+      {waiting ? (
+        <>
+          <span className="hoh-card__state">
+            <b>{waitingLabel(entry)}</b>
+            {entry.canComplete ? <Button className="hoh-card__complete" variant="ghost-muted" size="micro" onClick={(event) => complete(entry, event)}><CheckIcon aria-hidden />Mark done</Button> : null}
+            <span className="hoh-card__elapsed">{elapsed(entry.startedAt, view.now)}</span>
+          </span>
+          <Steps entry={entry} />
+        </>
+      ) : null}
+      {entry.state === 'done' && entry.doneAt !== null ? <span className="hoh-card__time">{clock(entry.doneAt)}</span> : null}
     </article>
   );
 }
-function EntryCard({ entry, view }: { entry: Entry; view: View }) {
-  if (entry.state === 'done') {
-    return <Card entry={entry} view={view}><span className="hoh-card__state"><b>Done</b><span>{clock(entry.doneAt ?? 0)}</span></span></Card>;
-  }
+
+interface Completion {
+  turnOrdinal: number;
+  from: DOMRect;
+  source: HTMLButtonElement;
+  restoreFocus: boolean;
+  preview: HTMLElement | null;
+}
+
+function AgentClusters({ entries, view, projectId = null }: { entries: Entry[]; view: View; projectId?: string | null }) {
+  const root = useRef<HTMLDivElement>(null);
+  const flights = useRef<HTMLDivElement>(null);
+  const doneToggle = useRef<HTMLButtonElement>(null);
+  const pending = useRef(new Map<string, Completion>());
+  const doneId = useId();
+  const expanded = !view.collapsedDone.has(projectId);
+  const sections = [
+    { state: 'waiting', label: 'Waiting for you', items: entries.filter((entry) => entry.state === 'waiting') },
+    { state: 'working', label: 'Working', items: entries.filter((entry) => entry.state === 'working') },
+    { state: 'ended', label: 'Inactive', items: entries.filter((entry) => entry.state === 'ended') },
+    { state: 'done', label: 'Done', items: entries.filter((entry) => entry.state === 'done').sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0)) },
+  ];
+
+  const complete: Complete = (entry, event) => {
+    const source = event.currentTarget;
+    const card = source.closest<HTMLElement>('.hoh-card');
+    if (!view.host || !card || pending.current.has(entry.id)) return;
+    const animate = !matchMedia('(prefers-reduced-motion: reduce)').matches && typeof card.animate === 'function';
+    const completion = {
+      turnOrdinal: entry.turnOrdinal,
+      from: card.getBoundingClientRect(),
+      source,
+      restoreFocus: event.detail === 0,
+      preview: animate ? card.cloneNode(true) as HTMLElement : null,
+    };
+    pending.current.set(entry.id, completion);
+    void view.host.complete(entry.id, entry.turnOrdinal).then((marked) => {
+      // A stale click can be ignored by the host while the thread is loading.
+      if (!marked && pending.current.get(entry.id) === completion) pending.current.delete(entry.id);
+    }, (error: unknown) => {
+      if (pending.current.get(entry.id) === completion) pending.current.delete(entry.id);
+      console.error('Could not mark the chat done', error);
+    });
+  };
+
+  useLayoutEffect(() => {
+    const container = root.current;
+    const layer = flights.current;
+    if (!container || !layer || pending.current.size === 0) return;
+    const cards = expanded ? Array.from(container.querySelectorAll<HTMLElement>('.hoh-card[data-state="done"]')) : [];
+    for (const [id, completion] of pending.current) {
+      const entry = entries.find((item) => item.id === id);
+      if (entry?.turnOrdinal !== completion.turnOrdinal) {
+        pending.current.delete(id);
+        continue;
+      }
+      if (entry.state !== 'done') continue;
+      pending.current.delete(id);
+      const card = cards.find((node) => node.dataset.threadId === id);
+      const target = card ?? doneToggle.current;
+      if (!target) continue;
+      const { from, source, restoreFocus, preview } = completion;
+      const focusTarget = card?.querySelector<HTMLButtonElement>('.hoh-card__open') ?? doneToggle.current;
+      if (restoreFocus && (document.activeElement === document.body || document.activeElement === source)) {
+        focusTarget?.focus({ preventScroll: Boolean(preview) });
+      }
+      if (!preview) continue;
+
+      // The real Done card takes its place in the new layout while the inert preview leaves the old one.
+      const origin = layer.getBoundingClientRect();
+      const to = target.getBoundingClientRect();
+      preview.classList.add('hoh-card--completing');
+      preview.removeAttribute('data-thread-id');
+      const status = preview.querySelector('.hoh-card__state b');
+      if (status) status.textContent = 'Done';
+      Object.assign(preview.style, {
+        left: `${from.left - origin.left}px`, top: `${from.top - origin.top}px`, width: `${from.width}px`, height: `${from.height}px`,
+      });
+      layer.append(preview);
+
+      const x = to.left + (to.width - from.width) / 2 - from.left;
+      const y = to.top + (to.height - from.height) / 2 - from.top;
+      const scaleX = Math.min(1, to.width / from.width);
+      const scaleY = Math.min(1, to.height / from.height);
+      const motion = preview.animate([
+        { offset: 0, transform: 'none', opacity: 1 },
+        { offset: .22, transform: 'translateY(8px) rotate(-4deg)', opacity: 1 },
+        { offset: .8, opacity: 1 },
+        { offset: 1, transform: `translate(${x}px, ${y}px) rotate(12deg) scale(${scaleX}, ${scaleY})`, opacity: 0 },
+      ], { duration: 580, easing: 'cubic-bezier(.3, 0, .2, 1)' });
+      void motion.finished.then(() => {
+        preview.remove();
+        if (restoreFocus && focusTarget && document.activeElement === focusTarget) focusTarget.scrollIntoView({ block: 'nearest' });
+      }, () => preview.remove());
+      card?.animate([{ opacity: 0 }, { opacity: 1 }], { delay: 410, duration: 170, fill: 'backwards' });
+    }
+  }, [entries, expanded]);
+
   return (
-    <Card entry={entry} view={view}>
-      <span className="hoh-card__state">
-        <b>{stateLabel(entry)}</b>
-        <span className="hoh-card__state-actions">
-          {entry.canComplete ? <Button className="hoh-card__complete" variant="ghost-muted" size="micro" onClick={() => void view.host?.complete(entry.id)}><CheckIcon aria-hidden />Mark done</Button> : null}
-          <span>{elapsed(entry.startedAt, view.now)}</span>
-        </span>
-      </span>
-      <Steps entry={entry} />
-    </Card>
+    <div ref={root} className="hoh-agent-clusters">
+      {sections.filter(({ items }) => items.length > 0).map(({ state, label, items }) => (
+        <section key={state} className="hoh-agent-cluster" data-cluster={state}>
+          <h2 className="hoh-home__label">
+            {state === 'done' ? (
+              <button ref={doneToggle} type="button" className="hoh-agent-cluster__toggle" aria-expanded={expanded} aria-controls={doneId} onClick={() => view.toggleDone(projectId)}>
+                <ChevronDownIcon aria-hidden />{label} <span className="hoh-home__count">{items.length}</span>
+              </button>
+            ) : <>{label} <span className="hoh-home__count">{items.length}</span></>}
+          </h2>
+          <div
+            id={state === 'done' ? doneId : undefined}
+            hidden={state === 'done' && !expanded}
+            className={`hoh-home__cards${state === 'waiting' ? '' : ' hoh-home__cards--compact'}`}
+          >
+            {items.map((entry) => <EntryCard key={entry.id} entry={entry} view={view} complete={complete} grouped={projectId !== null} />)}
+          </div>
+        </section>
+      ))}
+      <div ref={flights} className="hoh-agent-clusters__flights" aria-hidden="true" inert />
+    </div>
   );
 }
-const DoneCards = ({ done, view }: { done: Entry[]; view: View }) => done.length === 0 ? null : (
-  <section>
-    <h2 className="hoh-home__label">Done <span className="hoh-home__count">{done.length}</span></h2>
-    <div className="hoh-home__cards">
-      {done.map((entry) => <EntryCard key={entry.id} entry={entry} view={view} />)}
-    </div>
-  </section>
-);
-const Count = ({ list }: { list: Entry[] }) => { const subs = list.reduce((sum, entry) => sum + entry.agents.length, 0); return <span className="hoh-home__count">{list.length}{subs > 0 ? ` · ${subs} subagent${subs === 1 ? '' : 's'}` : ''}</span>; };
 
 /** Cards: an agent is a card, its subagents are lines inside it; the request that waits for the person stands above them. */
-function Cards({ working, done, asking, view }: Lists) {
+function Cards({ entries, asking, view }: Lists) {
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">
-        <Head now={view.now} busy={working.length + done.length + asking.length > 0} />
-        {working.length > 0 ? (
-          <section>
-            <h2 className="hoh-home__label">Now <Count list={working} /></h2>
-            <div className="hoh-home__cards">
-              {working.map((entry) => <EntryCard key={entry.id} entry={entry} view={view} />)}
-            </div>
-          </section>
-        ) : null}
-        <DoneCards done={done} view={view} />
+        <Head now={view.now} busy={entries.length + asking.length > 0} />
+        {entries.length > 0 ? <AgentClusters entries={entries} view={view} /> : null}
       </div>
       {asking.length > 0 ? (
         <aside className="hoh-home__side">
@@ -248,7 +348,7 @@ function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: 
   const style = { '--hoh-project-color': `var(--hoh-project-color-${group.color})` } as CSSProperties;
   const count = group.totalChats ?? group.entries.length;
   const agentLabel = `${count} agent${count === 1 ? '' : 's'}`;
-  const waitingLabel = `${group.waiting} waiting`;
+  const waitingCount = group.entries.filter((entry) => entry.state === 'waiting').length;
   return (
     <button
       ref={setButton}
@@ -268,7 +368,7 @@ function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: 
       <span className="hoh-project__top">
         <span className="hoh-project__icon" aria-hidden><i /><b /><em /></span>
         <span className="hoh-project__heading">
-          <span className="hoh-project__counts"><span>{agentLabel}</span><i /><span>{waitingLabel}</span></span>
+          <span className="hoh-project__counts"><span>{agentLabel}</span><i /><span>{waitingCount} waiting</span></span>
           <span className="hoh-project__title">{group.title}</span>
         </span>
       </span>
@@ -393,11 +493,7 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
             onMouseLeave={leave}
           >
             <div className="hoh-project-popover__head"><span>{openGroup.title}</span><small>{openGroup.totalChats ?? openGroup.entries.length} agent{(openGroup.totalChats ?? openGroup.entries.length) === 1 ? '' : 's'}</small></div>
-            <div className="hoh-project-popover__cards">
-              {openGroup.entries.map((entry, agentIndex) => (
-                <div key={entry.id} className="hoh-project-popover__agent" style={{ '--hoh-agent-index': agentIndex } as CSSProperties}>
-                  <EntryCard entry={entry} view={view} />
-                </div>
+            <AgentClusters entries={openGroup.entries} view={view} projectId={openGroup.id} />
               ))}
             </div>
           </div>,
@@ -408,7 +504,7 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
   );
 }
 
-function GroupedCards({ working, done, asking, view, projectEntries }: Lists) {
+function GroupedCards({ entries, asking, view, projectEntries }: Lists) {
   const groups = groupEntriesByProject(
     projectEntries,
     (projectId) => view.host?.projectTitle(projectId) ?? 'No project',
@@ -417,7 +513,7 @@ function GroupedCards({ working, done, asking, view, projectEntries }: Lists) {
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">
-        <Head now={view.now} busy={working.length + done.length + asking.length > 0} />
+        <Head now={view.now} busy={entries.length + asking.length > 0} />
         {groups.length > 0 ? (
           <section>
             <h2 className="hoh-home__label">Projects <span className="hoh-home__count">{groups.length}</span></h2>
@@ -442,7 +538,7 @@ function GroupedCards({ working, done, asking, view, projectEntries }: Lists) {
   );
 }
 
-interface Lists { working: Entry[]; done: Entry[]; asking: Entry[]; projectEntries: Entry[]; view: View }
+interface Lists { entries: Entry[]; asking: Entry[]; projectEntries: Entry[]; view: View }
 function Head({ now, busy }: { now: number; busy: boolean }) {
   const date = new Date(now);
   return (
@@ -459,6 +555,7 @@ export function HomeBody() {
   // One snapshot per change of any chat; entries are read after it.
   useSyncExternalStore(host?.subscribe ?? (() => () => {}), host?.version ?? (() => 0));
   const grouped = useSyncExternalStore(subscribeGroupAgentsByProject, getGroupAgentsByProject, () => false);
+  const [collapsedDone, setCollapsedDone] = useState(() => new Set<string | null>());
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(timer); }, []);
   const now = Date.now();
@@ -467,19 +564,26 @@ export function HomeBody() {
     runner: entry.providerInstanceId === 'codex' ? 'codex' as const : 'claude' as const,
   });
   const entries = (host?.entries() ?? []).map(withRunner);
-  const working = entries.filter((entry) => entry.state === 'working' || entry.state === 'waiting').sort((a, b) => b.startedAt - a.startedAt);
-  const done = entries.filter((entry) => entry.state === 'done' && entry.doneAt !== null && sameDay(entry.doneAt, now)).sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
+  const visible = entries.filter((entry) =>
+    entry.state === 'working' || entry.state === 'waiting' ||
+    (entry.state === 'done' && entry.doneAt !== null && sameDay(entry.doneAt, now)),
+  ).sort((a, b) => b.startedAt - a.startedAt);
   const asking = entries.filter((entry) => entry.request);
   const view: View = {
-    host, now,
+    host, now, collapsedDone,
     open: openQuickView,
     where: (entry) => host?.projectTitle(entry.projectId) ?? '',
     projectKey: (projectId) => host?.projectKey(projectId) ?? projectId,
+    toggleDone: (projectId) => setCollapsedDone((previous) => {
+      const next = new Set(previous);
+      if (next.has(projectId)) next.delete(projectId); else next.add(projectId);
+      return next;
+    }),
   };
   const projectEntries = grouped ? (host?.projectEntries() ?? []).map(withRunner) : [];
-  const lists = { working, done, asking, projectEntries, view };
+  const lists = { entries: visible, asking, projectEntries, view };
   return (
-    <div className="hoh-home" data-hoh-home-body="" data-busy={working.length + done.length + asking.length + projectEntries.length > 0 || undefined}>
+    <div className="hoh-home" data-hoh-home-body="" data-busy={visible.length + asking.length + projectEntries.length > 0 || undefined}>
       {grouped ? <GroupedCards {...lists} /> : <Cards {...lists} />}
       <QuickViewDialog />
     </div>
