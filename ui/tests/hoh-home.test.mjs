@@ -354,3 +354,15 @@ test('a known composer model remains visible through an unknown catalog frame wi
   const first = retainComposerModel(null, { key: 'local:claude', model: 'default', label: 'Claude', unknown: true });
   assert.equal(first.label, '');
 });
+
+test('cold composer uses the saved provider model until discovery and never borrows another provider', async () => {
+  const { coldComposerModel } = await import('../src/t3-entry/hoh-screens/cold-model.mjs');
+  const value = JSON.stringify({state:{stickyModelSelectionByProvider:{claudeAgent:{instanceId:'claudeAgent',model:'opus'},codex:{instanceId:'codex',model:'gpt-6.2-sol'}}},version:9});
+  const storage = {getItem: key => key === 't3code:composer-drafts:v1' ? value : null};
+  assert.equal(coldComposerModel(storage,'claudeAgent','default'), 'opus');
+  assert.equal(coldComposerModel(storage,'claudeAgent','sonnet'), 'sonnet');
+  assert.equal(coldComposerModel(storage,'claudeAgent','unknown'), 'opus');
+  assert.equal(coldComposerModel(storage,'codex','default'), 'gpt-6.2-sol');
+  assert.equal(coldComposerModel(storage,'other','default'), null);
+  assert.equal(coldComposerModel({getItem(){throw new Error('unavailable')}},'claudeAgent','default'), null);
+});

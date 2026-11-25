@@ -1,3 +1,5 @@
+import { coldComposerModel } from "../../../../../t3-entry/hoh-screens/cold-model.mjs";
+import { coldClaudeModel } from "../../../../../t3-entry/hoh-screens/cold-model-display.mjs";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -292,7 +294,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     .join(" · ");
 
   // The HoH discovery placeholder names only the provider, not the actual model.
-  const hideUnknownComposerModel = props.isComposerOwned && selectedModel?.slug === "default" && selectedModel.name === "Claude";
+  const hideUnknownComposerModel = props.isComposerOwned && selectedModel?.slug === "default" && (selectedModel.name === "Claude" || selectedModel.name === "Codex");
   // Discovery can briefly replace even the selected slug with `default`. Keep
   // the last real label for this provider until its catalog catches up.
   const composerModelKey = `${props.environmentId ?? ""}:${activeInstanceId}`;
@@ -300,7 +302,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const resolvedTriggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
   const retained = retainComposerModel(lastKnownComposerModel.current, { key: composerModelKey, model: props.model, label: resolvedTriggerText, unknown: hideUnknownComposerModel === true });
   if (props.isComposerOwned) lastKnownComposerModel.current = retained.cache;
-  const triggerText = props.isComposerOwned ? retained.label : resolvedTriggerText;
+  const catalogPending = !activeEntry || (activeEntry.snapshot.version === null && activeEntry.status !== "error");
+  let coldSlug: string | null = null;
+  if (hideUnknownComposerModel && catalogPending && !retained.label) {
+    try { coldSlug = coldComposerModel(globalThis.localStorage, activeInstanceId, props.model); } catch { /* Storage is optional. */ }
+  }
+  const coldEntry = coldSlug && activeInstanceId === "claudeAgent"
+    ? coldClaudeModel(coldSlug)
+    : coldSlug ? { slug: coldSlug, name: coldSlug } : null;
+  const coldLabel = coldEntry ? getTriggerDisplayModelName(coldEntry, activeEntry?.driverKind) : null;
+  const triggerText = props.isComposerOwned
+    ? (hideUnknownComposerModel && !catalogPending
+        ? (activeEntry?.status === "error" ? gt("Model unavailable") : gt("Default model"))
+        : retained.label || coldLabel || (hideUnknownComposerModel ? gt("Loading model…") : ""))
+    : resolvedTriggerText;
   const triggerTextProps = {
     className: cn(
       "min-w-0 flex-1 overflow-hidden truncate",
