@@ -119,6 +119,38 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "session/working-directory/status"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/working-directory/rebind"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionWorkingDirectoryRebindParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "shutdown"
         }
       },
@@ -1376,6 +1408,40 @@
       "required": [
         "sessionId",
         "path"
+      ]
+    },
+    "SessionWorkingDirectoryRebindParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "rootIdentity": {
+          "$ref": "#/$defs/WorkingDirectoryRootIdentity"
+        }
+      },
+      "required": [
+        "sessionId",
+        "path",
+        "rootIdentity"
+      ]
+    },
+    "WorkingDirectoryRootIdentity": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "inode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "device",
+        "inode"
       ]
     },
     "SessionListParams": {

@@ -87,6 +87,16 @@ object!(WorkingDirectoryRootIdentity {
     device: String,
     inode: String
 });
+object!(SessionWorkingDirectoryRebindParams {
+    session_id: String,
+    path: String,
+    root_identity: WorkingDirectoryRootIdentity
+});
+object!(SessionWorkingDirectoryStatusResult {
+    cwd: String,
+    root_identity: WorkingDirectoryRootIdentity,
+    changed: bool
+});
 optional!(SessionWorkingDirectoryResult {
     cwd: String,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]

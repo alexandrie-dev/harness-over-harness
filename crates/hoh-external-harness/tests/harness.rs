@@ -45,6 +45,87 @@ struct TrustCaptureHarness {
     decisions: Arc<Mutex<Vec<bool>>>,
 }
 
+struct TerminationBarrierHarness {
+    inner: StdioHarness,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    armed: Arc<AtomicBool>,
+}
+
+struct TerminationBarrierSession {
+    inner: Arc<dyn hoh_external_harness::HarnessSession>,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    armed: Arc<AtomicBool>,
+}
+
+impl hoh_external_harness::HarnessSession for TerminationBarrierSession {
+    fn prompt(
+        &self,
+        params: hoh_external_harness::PromptParams,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<()>> {
+        self.inner.prompt(params)
+    }
+    fn interrupt(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<()>> {
+        self.inner.interrupt()
+    }
+    fn respond(
+        &self,
+        params: hoh_external_harness::RespondParams,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<()>> {
+        self.inner.respond(params)
+    }
+    fn terminate(&self, grace: Duration) -> futures_util::future::BoxFuture<'static, ()> {
+        let inner = self.inner.clone();
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+        let armed = self.armed.clone();
+        Box::pin(async move {
+            if armed.swap(false, Ordering::SeqCst) {
+                entered.notify_one();
+                release.notified().await;
+            }
+            inner.terminate(grace).await;
+        })
+    }
+    fn diagnostics(&self) -> String {
+        self.inner.diagnostics()
+    }
+}
+
+impl hoh_external_harness::ExternalHarness for TerminationBarrierHarness {
+    fn discover(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<Discovery>>
+    {
+        self.inner.discover()
+    }
+    fn start_or_resume(
+        &self,
+        params: hoh_external_harness::StartParams,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        let started = self.inner.start_or_resume(params);
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+        let armed = self.armed.clone();
+        Box::pin(async move {
+            let mut started = started.await?;
+            started.session = Arc::new(TerminationBarrierSession {
+                inner: started.session,
+                entered,
+                release,
+                armed,
+            });
+            Ok(started)
+        })
+    }
+}
+
 impl hoh_external_harness::ExternalHarness for TrustCaptureHarness {
     fn discover(
         &self,
@@ -3045,6 +3126,119 @@ async fn folder_trust_requires_host_approval_and_is_revoked_on_change() {
             .any(|event| event.event_type() == "plugin:external-harness/folder-trust-changed")
     );
     window.close().await;
+}
+
+#[tokio::test]
+async fn revoking_trust_reserves_agent_during_termination_and_releases_on_cancel() {
+    for case in 0..3 {
+        let dirs = dirs();
+        let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+        mount::<hoh_fs_local::FsLocalPlugin>(&window.base.ctx, json!({"cwd": dirs.work})).await;
+        mount::<hoh_system_prompt::SystemPrompt>(
+            &window.base.ctx,
+            json!({"includeRuntimeContext": false}),
+        )
+        .await;
+        mount::<hoh_working_directory::WorkingDirectory>(
+            &window.base.ctx,
+            json!({"defaultDirectory": dirs.work}),
+        )
+        .await;
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let config = StdioHarnessConfig::new(ProcessSpec {
+            program: PathBuf::from(STUB),
+            args: vec!["--state".into(), dirs.state.to_string_lossy().into_owned()],
+            ..ProcessSpec::default()
+        });
+        let _registration = window
+            .base
+            .harnesses
+            .register(
+                &window.base.ctx,
+                "claude",
+                Arc::new(TerminationBarrierHarness {
+                    inner: StdioHarness::new(config),
+                    entered: entered.clone(),
+                    release: release.clone(),
+                    armed: Arc::new(AtomicBool::new(true)),
+                }),
+            )
+            .unwrap();
+        let agent = window
+            .base
+            .create_with(
+                "trust-reservation",
+                AgentOptions {
+                    provider: Some(Live::Value("claude".into())),
+                    model: Some(Live::Value("stub-small".into())),
+                    ..AgentOptions::default()
+                },
+            )
+            .await;
+        window
+            .call(
+                "hoh/executor/trust/set",
+                json!({"executor":"claude", "cwd":dirs.work, "trust":true}),
+            )
+            .await
+            .unwrap();
+        turn(&agent, "hello").await;
+        if case == 2 {
+            // An invalid settings directory makes snapshotting fail after the reservation.
+            let bad_settings = dirs.work.join(".claude");
+            std::fs::write(&bad_settings, "not a directory").unwrap();
+            let result = window
+                .call(
+                    "hoh/executor/trust/set",
+                    json!({"executor":"claude", "cwd":dirs.work, "trust":false}),
+                )
+                .await;
+            assert!(
+                result.is_err(),
+                "revocation must report the snapshot failure"
+            );
+            std::fs::remove_file(bad_settings).unwrap();
+            agent
+                .followup(message("after failed revoke"))
+                .expect("reservation must be released on error");
+            tokio::time::timeout(Duration::from_secs(10), agent.when_idle())
+                .await
+                .unwrap();
+            release.notify_one();
+            window.close().await;
+            continue;
+        }
+        let server = window.server.clone();
+        let params = json!({"executor":"claude", "cwd":dirs.work, "trust":false});
+        let revoke = tokio::spawn(async move {
+            server
+                .handle_request("hoh/executor/trust/set", params)
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .expect("revocation did not start stopping the process");
+        let admitted_during_revoke = agent.followup(message("racing prompt")).is_ok();
+        if case == 1 {
+            revoke.abort();
+            let _ = revoke.await;
+        } else {
+            release.notify_one();
+            revoke.await.unwrap().unwrap();
+        }
+        assert!(
+            !admitted_during_revoke,
+            "a prompt was admitted before the old process stopped"
+        );
+        agent
+            .followup(message("after revoke"))
+            .expect("reservation must be released");
+        tokio::time::timeout(Duration::from_secs(10), agent.when_idle())
+            .await
+            .unwrap();
+        window.close().await;
+    }
 }
 
 #[tokio::test]

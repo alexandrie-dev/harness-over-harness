@@ -301,7 +301,7 @@ impl HarnessSdkJsonRpcServer {
             return Ok(());
         }
         if !lock(&self.inner.state).host_approvals {
-            return if method.starts_with("hoh/") {
+            return if method.starts_with("hoh/") || method == "session/working-directory/rebind" {
                 Err(error(format!("{method} requires host approvals")))
             } else {
                 Ok(())

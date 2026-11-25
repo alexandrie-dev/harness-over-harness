@@ -55,6 +55,14 @@ pub fn method_human_text(method: &str, params: &Value) -> Result<String, String>
                 serde_json::from_value(params.clone()).map_err(|_| "invalid working directory")?;
             Ok(format!("Allow work in folder {}?", quoted(&request.path)))
         }
+        "session/working-directory/rebind" => {
+            let request: hoh_protocol::SessionWorkingDirectoryRebindParams =
+                serde_json::from_value(params.clone()).map_err(|_| "invalid working directory")?;
+            Ok(format!(
+                "The folder for this chat has changed: {}. Rebind this chat to this folder?",
+                quoted(&request.path)
+            ))
+        }
         "hoh/settings/set" => {
             let request: hoh_protocol::SettingsSetParams =
                 serde_json::from_value(params.clone()).map_err(|_| "invalid settings")?;

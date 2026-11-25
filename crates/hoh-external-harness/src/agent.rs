@@ -918,7 +918,7 @@ impl ExternalAgent {
         }
         // Revalidate the selected directory before reusing an existing process, too.
         if live.is_some() {
-            match self
+            let (cwd, identity) = match self
                 .shared
                 .ctx
                 .get::<hoh_working_directory::WorkingDirectoryKey>()
@@ -927,7 +927,16 @@ impl ExternalAgent {
                 None => hoh_working_directory::verify_session_directory(&self.session, &self.cwd()),
             }
             .map_err(|error| HarnessFailure::new(code::IO, error.to_string()))?;
-            return Ok(());
+            if live
+                .as_ref()
+                .is_some_and(|session| session.cwd == cwd && session.cwd_identity == identity)
+            {
+                return Ok(());
+            }
+            if let Some(old) = live.take() {
+                old.control.terminate(self.terminate_grace()).await;
+            }
+            lock(&self.state).control = None;
         }
         self.model.restart.store(false, Ordering::SeqCst);
         // Read at every start, from the user's choice in the window only.

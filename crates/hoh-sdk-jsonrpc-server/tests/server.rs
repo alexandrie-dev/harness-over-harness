@@ -794,6 +794,49 @@ async fn rejects_inline_sdk_images_when_the_composition_has_no_attachment_store(
     h.close().await;
 }
 #[tokio::test]
+async fn rebind_requires_a_signed_host_approval_even_in_plain_sdk_mode() {
+    let h = Env::new().await;
+    h.initialize().await;
+    h.open("plain-rebind").await;
+    let folder = h.dir.path().join("rebind-folder");
+    std::fs::create_dir(&folder).unwrap();
+    h.server
+        .handle_request(
+            "session/working-directory/set",
+            json!({"sessionId":"plain-rebind", "path":folder}),
+        )
+        .await
+        .unwrap();
+    std::fs::rename(&folder, h.dir.path().join("old-rebind-folder")).unwrap();
+    std::fs::create_dir(&folder).unwrap();
+    let status = h
+        .server
+        .handle_request(
+            "session/working-directory/status",
+            json!({"sessionId":"plain-rebind"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status["changed"], true);
+    let error = h.server.handle_request("session/working-directory/rebind", json!({"sessionId":"plain-rebind", "path": status["cwd"], "rootIdentity": status["rootIdentity"]})).await.unwrap_err();
+    assert!(
+        error.to_string().contains("requires host approval"),
+        "{error}"
+    );
+    assert_eq!(
+        h.server
+            .handle_request(
+                "session/working-directory/status",
+                json!({"sessionId":"plain-rebind"})
+            )
+            .await
+            .unwrap()["changed"],
+        true
+    );
+    h.close().await;
+}
+
+#[tokio::test]
 async fn reading_a_missing_selected_directory_never_restores_the_origin() {
     let h = Env::new().await;
     h.initialize().await;

@@ -450,6 +450,10 @@ fn supervise(
                                 // pick its fallback; error text and data can hold secrets.
                                 Err(if error.code == Some(-32601) {
                                     METHOD_UNAVAILABLE.into()
+                                } else if error.code == Some(-32021) {
+                                    crate::errors::FOLDER_CHANGED.into()
+                                } else if error_code(&error) == Some("TRUST_REVOKE_BUSY") {
+                                    crate::errors::TRUST_REVOKE_BUSY.into()
                                 } else if error_code(&error) == Some("EXECUTOR_FOLDER_FIXED") {
                                     // A closed list of codes may pass on (no text): the window explains this one.
                                     crate::errors::FOLDER_FIXED.into()

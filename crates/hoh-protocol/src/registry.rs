@@ -20,6 +20,10 @@ pub enum Request {
     WorkingDirectoryGet(SessionWorkingDirectoryParams),
     #[serde(rename = "session/working-directory/set")]
     WorkingDirectorySet(SessionWorkingDirectorySetParams),
+    #[serde(rename = "session/working-directory/status")]
+    WorkingDirectoryStatus(SessionWorkingDirectoryParams),
+    #[serde(rename = "session/working-directory/rebind")]
+    WorkingDirectoryRebind(SessionWorkingDirectoryRebindParams),
     #[serde(rename = "shutdown")]
     Shutdown,
     #[serde(rename = "session/list")]
@@ -141,6 +145,8 @@ impl Request {
             Self::SessionWait(_) => "session/wait",
             Self::WorkingDirectoryGet(_) => "session/working-directory/get",
             Self::WorkingDirectorySet(_) => "session/working-directory/set",
+            Self::WorkingDirectoryStatus(_) => "session/working-directory/status",
+            Self::WorkingDirectoryRebind(_) => "session/working-directory/rebind",
             Self::Shutdown => "shutdown",
             Self::SessionList(_) => "session/list",
             Self::SessionEvents(_) => "session/events",
@@ -245,6 +251,8 @@ pub const REQUEST_METHODS: &[&str] = &[
     "session/wait",
     "session/working-directory/get",
     "session/working-directory/set",
+    "session/working-directory/status",
+    "session/working-directory/rebind",
     "shutdown",
     "session/list",
     "session/events",
@@ -334,6 +342,8 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "session/wait" => admit::<SessionWaitParams>(value),
         "session/working-directory/get" => admit::<SessionWorkingDirectoryParams>(value),
         "session/working-directory/set" => admit::<SessionWorkingDirectorySetParams>(value),
+        "session/working-directory/status" => admit::<SessionWorkingDirectoryParams>(value),
+        "session/working-directory/rebind" => admit::<SessionWorkingDirectoryRebindParams>(value),
         "shutdown" => admit::<Empty>(value),
         "session/list" => admit::<SessionListParams>(value),
         "session/events" => admit::<SessionEventsParams>(value),
@@ -407,6 +417,8 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "session/wait" => admit::<Empty>(value),
         "session/working-directory/get" => admit::<SessionWorkingDirectoryResult>(value),
         "session/working-directory/set" => admit::<SessionWorkingDirectoryResult>(value),
+        "session/working-directory/status" => admit::<SessionWorkingDirectoryStatusResult>(value),
+        "session/working-directory/rebind" => admit::<SessionWorkingDirectoryResult>(value),
         "shutdown" => admit::<Empty>(value),
         "session/list" => admit::<SessionListResult>(value),
         "session/events" => admit::<SessionEventsResult>(value),
@@ -599,6 +611,28 @@ pub fn schemas() -> Vec<(String, Value)> {
             Value::String("session/working-directory/set".into()),
         );
         schemas.push(("WorkingDirectorySetResult".into(), schema));
+    }
+    for (name, method, params, result) in [
+        (
+            "WorkingDirectoryStatus",
+            "session/working-directory/status",
+            serde_json::to_value(schema_for!(SessionWorkingDirectoryParams)).unwrap(),
+            serde_json::to_value(schema_for!(SessionWorkingDirectoryStatusResult)).unwrap(),
+        ),
+        (
+            "WorkingDirectoryRebind",
+            "session/working-directory/rebind",
+            serde_json::to_value(schema_for!(SessionWorkingDirectoryRebindParams)).unwrap(),
+            serde_json::to_value(schema_for!(SessionWorkingDirectoryResult)).unwrap(),
+        ),
+    ] {
+        schemas.push((format!("{name}Params"), params));
+        let mut result = result;
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("x-method".into(), Value::String(method.into()));
+        schemas.push((format!("{name}Result"), result));
     }
     schemas.push((
         "ShutdownParams".into(),
@@ -1229,6 +1263,10 @@ enum RequestDecode {
     WorkingDirectoryGet(SessionWorkingDirectoryParams),
     #[serde(rename = "session/working-directory/set")]
     WorkingDirectorySet(SessionWorkingDirectorySetParams),
+    #[serde(rename = "session/working-directory/status")]
+    WorkingDirectoryStatus(SessionWorkingDirectoryParams),
+    #[serde(rename = "session/working-directory/rebind")]
+    WorkingDirectoryRebind(SessionWorkingDirectoryRebindParams),
     #[serde(rename = "shutdown")]
     Shutdown,
     #[serde(rename = "session/list")]
@@ -1385,6 +1423,7 @@ privileged_methods! {
     "hoh/task/rollback" => |_:&Value| true,
     "hoh/settings/set" => |p:&Value| p.get("security").is_some() || p.get("model").is_some(),
     "session/working-directory/set" => |_:&Value| true,
+    "session/working-directory/rebind" => |_:&Value| true,
     "hoh/model/probe" => |p:&Value| p.get("baseUrl").is_some(),
     "hoh/model/key/set" => |_:&Value| true,
     "hoh/settings/rules/set" => |_:&Value| true,

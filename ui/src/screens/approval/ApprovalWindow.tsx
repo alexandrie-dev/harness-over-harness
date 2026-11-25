@@ -166,7 +166,8 @@ export function ApprovalWindow() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('pagehide', onHide); };
   }, [view?.approvalId]);
 
-  const headline = view ? plainWords(tidyHuman(view.humanText)) : undefined;
+  const headline = view ? (view.humanText.startsWith('The folder for this chat has changed: ')
+    ? view.humanText : plainWords(tidyHuman(view.humanText))) : undefined;
   const reason = view?.reason ? plainWords(view.reason.trim()) : '';
   const executorAsks = !!view && fromExecutor(view);
   // The explanation is shown when it says something the headline does not; for Claude's requests silence is not a message.

@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/working-directory/status","result":{"cwd":"/workspace","rootIdentity":{"device":"1","inode":"2"},"changed":true}}

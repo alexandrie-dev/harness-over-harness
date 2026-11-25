@@ -180,6 +180,23 @@ impl Shared {
         ended
     }
 
+    /// Forget and return the live processes belonging to these conversations.
+    pub(crate) fn retire_sessions(&self, ids: &[String]) -> Vec<Arc<dyn HarnessSession>> {
+        let mut all = lock(&self.launched);
+        let mut ended = Vec::new();
+        all.retain(|(id, launched)| {
+            let Some(session) = launched.session.upgrade() else {
+                return false;
+            };
+            if !ids.contains(id) {
+                return true;
+            }
+            ended.push(session);
+            false
+        });
+        ended
+    }
+
     /// A native session of conversation `session` started: it replaces that conversation's
     /// earlier entry (and any entry whose process is gone), and is the one started last.
     pub(crate) fn record_launch(&self, session: &str, launched: Launched) {
