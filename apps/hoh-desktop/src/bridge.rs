@@ -14,6 +14,8 @@ pub const WINDOW_METHODS: &[&str] = &[
     "session/delete",
     "session/working-directory/get",
     "session/working-directory/set",
+    "session/working-directory/status",
+    "session/working-directory/rebind",
     "hoh/employee/list",
     "hoh/employee/get",
     "hoh/employee/create",

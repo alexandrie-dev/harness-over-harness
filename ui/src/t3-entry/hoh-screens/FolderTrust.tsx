@@ -6,6 +6,7 @@ import { readAppliedTrust, writeAppliedTrust } from './folder-trust-record.mjs';
 declare global { interface Window { __HOH_TRUST_ENGINE__?: HohEngineLike } }
 
 type Trust = { cwd: string; executor: string; trusted: boolean; changed: boolean; isolated?: boolean; running?: boolean; applied?: boolean };
+type FolderStatus = { cwd: string; rootIdentity: { device: string; inode: string }; changed: boolean };
 
 /** The approval itself is provided by the native host, not by this page. */
 export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadId: string; fallbackCwd: string | null; isServerThread: boolean }) {
@@ -13,6 +14,8 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
   const [busy, setBusy] = useState(false);
   const [folderUnknown, setFolderUnknown] = useState(false);
   const [changedNotice, setChangedNotice] = useState(false);
+  const [folderChanged, setFolderChanged] = useState<FolderStatus | null>(null);
+  const [rebindError, setRebindError] = useState(false);
   const generation = useRef(0);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
@@ -20,6 +23,14 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     const engine = window.__HOH_TRUST_ENGINE__;
     if (!engine) return;
     try {
+      if (isServerThread) {
+        try {
+          const folder = await engine.request('session/working-directory/status', { sessionId: threadId }) as FolderStatus;
+          if (current !== generation.current) return;
+          setFolderChanged(folder.changed ? folder : null);
+          if (folder.changed) { update(null); return; }
+        } catch { /* Older engines do not provide folder status. */ }
+      }
       let access = await engine.request('hoh/executor/access/get', isServerThread
         ? { executor: 'claude', sessionId: threadId }
         : { executor: 'claude' }) as { session?: { executor?: string | null; running?: string | null }; selected?: { executor?: string | null }; effective?: { flags?: string[] } };
@@ -55,13 +66,15 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
         }
       } catch { /* Storage is optional; never claim a prior launch without evidence. */ }
       if (result.changed && current === generation.current) setChangedNotice(true);
-      update({ ...result, trusted: isolated ? false : result.trusted, isolated, running, applied });
+      update({ ...result, isolated, running, applied });
     } catch { update(null); }
   }, [threadId, fallbackCwd, isServerThread]);
   useEffect(() => {
     setState(null);
     setFolderUnknown(false);
     setChangedNotice(false);
+    setFolderChanged(null);
+    setRebindError(false);
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
     window.addEventListener('focus', refresh);
@@ -75,17 +88,31 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     }).then(off => { if (stopped) off(); else unsubscribe = off; }).catch(() => {});
     return () => { stopped = true; unsubscribe?.(); generation.current++; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [refresh]);
+  if (folderChanged) return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+    The folder for this chat has changed: {folderChanged.cwd}. Rebind this chat to this folder?
+    <button type="button" disabled={busy} className="underline hover:text-foreground" onClick={async () => {
+      const engine = window.__HOH_TRUST_ENGINE__;
+      if (!engine) return;
+      setBusy(true); setRebindError(false);
+      try {
+        await engine.request('session/working-directory/rebind', { sessionId: threadId, path: folderChanged.cwd, rootIdentity: folderChanged.rootIdentity });
+        setFolderChanged(null);
+      } catch { setRebindError(true); }
+      finally { setBusy(false); void refresh(); }
+    }}>Rebind…</button>
+    {rebindError && <span>Rebinding was not confirmed or the folder changed again.</span>}
+  </span>;
   if (!state) return folderUnknown ? <span className="text-xs text-muted-foreground">Project settings in this folder: unknown</span> : null;
   const view = folderTrustView({ running: state.running ?? false, applied: state.applied ?? false, trusted: state.trusted, isolated: state.isolated ?? false, changed: changedNotice });
   return <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
     {view.text}
-    {view.canTrust && <button type="button" disabled={busy} className="underline hover:text-foreground" onClick={async () => {
+    {(view.canTrust || view.canRevoke) && <button type="button" disabled={busy} className="underline hover:text-foreground" onClick={async () => {
       const engine = window.__HOH_TRUST_ENGINE__;
       if (!engine) return;
       setBusy(true);
-      try { if (isServerThread) { try { writeAppliedTrust(window.localStorage, threadId, null); } catch { /* Storage is optional. */ } } await engine.request('hoh/executor/trust/set', { executor: state.executor, cwd: state.cwd, trust: true }); setChangedNotice(false); }
+      try { await engine.request('hoh/executor/trust/set', { executor: state.executor, cwd: state.cwd, trust: !state.trusted }); if (isServerThread) { try { writeAppliedTrust(window.localStorage, threadId, null); } catch { /* Storage is optional. */ } } setChangedNotice(false); }
       catch { /* The native host rejected or could not confirm the request. */ }
       finally { setBusy(false); void refresh(); }
-    }}>Trust project settings in this folder (Claude and Codex)…</button>}
+    }}>{view.canRevoke ? 'Revoke trust…' : 'Trust project settings in this folder (Claude and Codex)…'}</button>}
   </span>;
 }

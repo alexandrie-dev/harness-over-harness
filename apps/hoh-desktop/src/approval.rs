@@ -1237,6 +1237,14 @@ fn preflight_text(method: &str, params: &Value) -> Result<String, String> {
                 serde_json::from_value(params.clone()).map_err(|_| "Invalid working folder")?;
             Ok(format!("Allow work in folder {}?", quoted(&request.path)))
         }
+        "session/working-directory/rebind" => {
+            let request: hoh_protocol::SessionWorkingDirectoryRebindParams =
+                serde_json::from_value(params.clone()).map_err(|_| "Invalid working folder")?;
+            Ok(format!(
+                "The folder for this chat has changed: {}. Rebind this chat to this folder?",
+                quoted(&request.path)
+            ))
+        }
         "hoh/workspace/add" => {
             let request: hoh_protocol::WorkspaceAddParams =
                 serde_json::from_value(params.clone()).map_err(|_| "Invalid project folder")?;
@@ -1742,6 +1750,11 @@ mod tests {
             (
                 "session/working-directory/set",
                 json!({"sessionId":"session-1","path":"/work/project"}),
+                "/work/project",
+            ),
+            (
+                "session/working-directory/rebind",
+                json!({"sessionId":"session-1","path":"/work/project","rootIdentity":{"device":"1","inode":"2"}}),
                 "/work/project",
             ),
             (

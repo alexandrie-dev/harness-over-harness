@@ -82,3 +82,54 @@ test('FolderTrust does not send a tilde fallback after cwd lookup fails and retr
   assert.deepEqual(calls.filter(call => call.method === 'hoh/executor/trust/get').map(call => call.params.cwd), ['/work/project']);
   h.unmount();
 });
+
+for (const executor of ['claude', 'codex']) {
+  test(`FolderTrust asks the host to revoke ${executor} project trust`, async () => {
+    const calls = [];
+    const h = componentHarness(resolve(ui, 'src/t3-entry/hoh-screens/FolderTrust.tsx'), 'FolderTrust', {}, { threadId: 'saved', fallbackCwd: '/work/project', isServerThread: true });
+    h.window.__HOH_TRUST_ENGINE__ = { request: async (method, params) => {
+      calls.push({ method, params });
+      if (method === 'session/working-directory/status') return { changed: false };
+      if (method === 'hoh/executor/access/get') return { session: { executor }, effective: { flags: [] } };
+      if (method === 'session/working-directory/get') return { cwd: '/work/project' };
+      if (method === 'hoh/executor/trust/get') return { cwd: params.cwd, executor, trusted: true, changed: false };
+      if (method === 'hoh/executor/trust/set') return {};
+      throw Error(method);
+    } };
+    await h.event('focus');
+    await h.settle();
+    await h.click('Revoke trust…');
+    assert.deepEqual({ ...calls.find(call => call.method === 'hoh/executor/trust/set')?.params }, { executor, cwd: '/work/project', trust: false });
+    h.unmount();
+  });
+}
+
+test('changed chat folder requires an explicit rebind of the inspected identity', async () => {
+  const calls = []; let changed = true; let reject = true;
+  const identity = { device: '123', inode: '456' };
+  const h = componentHarness(resolve(ui, 'src/t3-entry/hoh-screens/FolderTrust.tsx'), 'FolderTrust', {}, { threadId: 'saved', fallbackCwd: '/work/project', isServerThread: true });
+  h.window.__HOH_TRUST_ENGINE__ = { request: async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'session/working-directory/status') return { cwd: '/work/project', rootIdentity: identity, changed };
+    if (method === 'session/working-directory/rebind') { if (reject) throw Error('declined'); changed = false; return {}; }
+    if (method === 'hoh/executor/access/get') return { session: { executor: 'claude' }, effective: { flags: [] } };
+    if (method === 'session/working-directory/get') return { cwd: '/work/project' };
+    if (method === 'hoh/executor/trust/get') return { cwd: params.cwd, executor: 'claude', trusted: false, changed: false };
+    throw Error(method);
+  } };
+  await h.event('focus');
+  assert.match(h.text(), /folder for this chat has changed/i);
+  assert.equal(calls.some(call => call.method === 'session/working-directory/rebind'), false);
+  await h.click('Rebind…');
+  assert.match(h.text(), /not confirmed/i);
+  assert.match(h.text(), /folder for this chat has changed/i);
+  reject = false;
+  await h.click('Rebind…');
+  const request = calls.filter(call => call.method === 'session/working-directory/rebind').at(-1).params;
+  assert.equal(request.sessionId, 'saved');
+  assert.equal(request.path, '/work/project');
+  assert.equal(request.rootIdentity.device, '123');
+  assert.equal(request.rootIdentity.inode, '456');
+  assert.doesNotMatch(h.text(), /folder for this chat has changed/i);
+  h.unmount();
+});

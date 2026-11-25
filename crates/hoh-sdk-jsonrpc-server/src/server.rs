@@ -39,8 +39,8 @@ use hoh_protocol::{
     ServerInfo, SessionAssistantStreamChunk, SessionAssistantStreamFrame,
     SessionAssistantStreamNotification, SessionAssistantStreamOutcome, SessionPromptParams,
     SessionPromptResult, SessionQueryParams, SessionQueryResult, SessionResumeParams,
-    SessionWaitParams, SessionWorkingDirectoryParams, SessionWorkingDirectoryResult,
-    SessionWorkingDirectorySetParams, WorkingDirectoryRootIdentity,
+    SessionWaitParams, SessionWorkingDirectoryParams, SessionWorkingDirectoryRebindParams,
+    SessionWorkingDirectoryResult, SessionWorkingDirectorySetParams, WorkingDirectoryRootIdentity,
 };
 use hoh_session::{SessionCreated, SessionEventEmitted, SessionId, SessionLogOffset};
 use hoh_session_persistence::SessionPersistenceService;
@@ -1390,6 +1390,50 @@ impl HarnessSdkJsonRpcServer {
                     .into(),
                 })
                 .await
+            }
+            "session/working-directory/status" | "session/working-directory/rebind" => {
+                let id = string_field(
+                    &params,
+                    "sessionId",
+                    "working-directory requests require a sessionId",
+                )?;
+                if id.is_empty() {
+                    return Err(type_error(
+                        "working-directory requests require a non-empty sessionId",
+                    ));
+                }
+                self.assert_initialized()?;
+                let session_id = SessionId::from(id.to_owned());
+                let record = lock(&self.inner.state)
+                    .sessions
+                    .get(&session_id)
+                    .cloned()
+                    .ok_or_else(|| error(format!("unknown SDK session: {session_id}")))?;
+                self.assert_live_agent(&record, &session_id)?;
+                let agent = record.handle.agent.clone();
+                let directory = self
+                    .inner
+                    .ctx
+                    .get::<WorkingDirectoryKey>()
+                    .ok_or_else(|| error("workingDirectory service is unavailable"))?;
+                if method == "session/working-directory/status" {
+                    let (cwd, identity, changed) = directory.folder_status(agent.session())?;
+                    Ok(
+                        json!({"cwd": cwd, "rootIdentity": {"device": identity[0].to_string(), "inode": identity[1].to_string()}, "changed": changed}),
+                    )
+                } else {
+                    let request: SessionWorkingDirectoryRebindParams =
+                        serde_json::from_value(params.clone())?;
+                    let identity = [
+                        request.root_identity.device.parse::<u64>()?,
+                        request.root_identity.inode.parse::<u64>()?,
+                    ];
+                    self.approve_privileged(method, &params).await?;
+                    let cwd = directory
+                        .rebind(&directory_agent(agent), &request.path, identity)
+                        .await?;
+                    Ok(json!({"cwd": cwd, "rootIdentity": request.root_identity}))
+                }
             }
             "session/working-directory/get" | "session/working-directory/set" => {
                 let id = string_field(

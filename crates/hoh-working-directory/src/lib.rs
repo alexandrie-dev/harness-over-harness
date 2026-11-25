@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, oneshot};
 
 pub use error::{WORKING_DIRECTORY_ERROR_CODES, WorkingDirectoryError, WorkingDirectoryErrorCode};
-use hoh_agent::{Agent, Agents, AssembleAgent};
+use hoh_agent::{Agent, AgentStatus, Agents, AssembleAgent};
 use hoh_session_projection::{
     ProjectionDefinition, ProjectionHandle, ProjectionWire, SessionProjections,
 };
@@ -224,6 +224,79 @@ fn error_string(error: &BoxError) -> String {
 }
 
 impl WorkingDirectoryService {
+    /// Inspect the current folder without accepting a changed identity.
+    pub fn folder_status(&self, session: &Session) -> Result<(String, [u64; 2], bool), BoxError> {
+        let cwd = self.inner.get(session);
+        let identity = directory_identity(&cwd)?;
+        let changed = recorded_identity(session).is_some_and(|old| old != identity);
+        Ok((
+            cwd,
+            [
+                identity["dev"].as_u64().unwrap(),
+                identity["ino"].as_u64().unwrap(),
+            ],
+            changed,
+        ))
+    }
+
+    /// Accept exactly the current folder and identity that the person confirmed.
+    pub fn rebind(
+        &self,
+        agent: &impl AsLiveAgent,
+        cwd: &str,
+        identity: [u64; 2],
+    ) -> impl Future<Output = Result<String, BoxError>> + Send + 'static {
+        let inner = self.inner.clone();
+        let owner = agent.live();
+        let cwd = cwd.to_owned();
+        self.inner
+            .serialize(owner.clone(), None, move |control| async move {
+                let event = WorkingDirectoryAccess {
+                    agent: owner.clone(),
+                    path: None,
+                    signal: control.clone(),
+                };
+                let tail = inner.clone();
+                inner
+                    .ctx
+                    .waterfall(event, move |_| async move {
+                        control.throw_if_aborted()?;
+                        owner.ctx().ensure_active()?;
+                        if owner.status() == AgentStatus::Running {
+                            return Err(
+                                "Wait for the conversation to stop before rebinding its folder."
+                                    .into(),
+                            );
+                        }
+                        let session = owner.session();
+                        if tail.get(session) != cwd {
+                            return Err(
+                                "The conversation folder changed before confirmation.".into()
+                            );
+                        }
+                        let actual = directory_identity(&cwd)?;
+                        if actual["dev"].as_u64() != Some(identity[0])
+                            || actual["ino"].as_u64() != Some(identity[1])
+                        {
+                            return Err(
+                                "The conversation folder changed before confirmation.".into()
+                            );
+                        }
+                        let previous = recorded_identity(session)
+                            .ok_or("The conversation has no folder identity to rebind.")?;
+                        if previous == actual {
+                            return Err("The conversation folder has not changed.".into());
+                        }
+                        session.append(
+                            WORKING_DIRECTORY_CHANGE,
+                            json!({ "cwd": cwd, "identity": actual }),
+                            None,
+                        )?;
+                        Ok(cwd)
+                    })
+                    .await
+            })
+    }
     /// Verify the recorded folder identity immediately before starting an external process.
     /// Older sessions without an identity acquire one on their first verified launch.
     pub fn verify_for_spawn(&self, session: &Session) -> Result<(String, [u64; 2]), BoxError> {
@@ -456,23 +529,10 @@ fn inspect_session_directory(
     bind: bool,
 ) -> Result<(String, [u64; 2]), BoxError> {
     let identity = directory_identity(current)?;
-    let events = session.snapshot_events(None, None);
-    let previous = events
-        .iter()
-        .rev()
-        .find_map(|event| {
-            if event.event_type() == WORKING_DIRECTORY_CHANGE {
-                return Some(event.data().get("identity").cloned());
-            }
-            if event.event_type() == "working-directory/identity" {
-                return Some(Some(event.data().clone()));
-            }
-            None
-        })
-        .flatten();
+    let previous = recorded_identity(session);
     if let Some(previous) = previous {
         if previous != identity {
-            return Err(format!("The conversation folder {current:?} has changed. Select a new folder before starting the executor.").into());
+            return Err(WorkingDirectoryError::new(format!("The folder for this chat has changed: {current}. Rebind this chat to this folder?"), WorkingDirectoryErrorCode::Changed).into());
         }
     } else if bind {
         session.append(
@@ -488,6 +548,23 @@ fn inspect_session_directory(
             identity["ino"].as_u64().unwrap(),
         ],
     ))
+}
+
+fn recorded_identity(session: &Session) -> Option<Value> {
+    session
+        .snapshot_events(None, None)
+        .iter()
+        .rev()
+        .find_map(|event| {
+            if event.event_type() == WORKING_DIRECTORY_CHANGE {
+                return Some(event.data().get("identity").cloned());
+            }
+            if event.event_type() == "working-directory/identity" {
+                return Some(Some(event.data().clone()));
+            }
+            None
+        })
+        .flatten()
 }
 
 #[cfg(unix)]

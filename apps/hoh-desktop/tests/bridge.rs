@@ -584,8 +584,14 @@ fn window_may_call_exactly_the_eight_executor_methods_and_no_new_ones() {
         ]
     );
     // 47 methods before the executor ones, the eight executor ones, `hoh/workspace/entries` and
-    // `hoh/workspace/add` (HOH-41); a new window method must be a deliberate change of this number.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 8 + 2 + 1);
+    // `hoh/workspace/add` (HOH-41), delete, and the two folder-rebinding methods.
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 8 + 2 + 1 + 2);
+    assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/status"));
+    assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/rebind"));
+    assert!(bridge::needs_approval(
+        "session/working-directory/rebind",
+        &json!({})
+    ));
     for method in [
         "hoh/executor/access/get",
         "hoh/executor/discover",

@@ -6,10 +6,11 @@ use hoh_error::HarnessError;
 /// - `WORKING_DIRECTORY_INVALID` — a requested directory is empty or otherwise malformed.
 /// - `WORKING_DIRECTORY_NOT_FOUND` — the requested directory does not exist or is not a directory; the caller picks another path.
 /// - `WORKING_DIRECTORY_UNAVAILABLE` — neither the current directory nor the original project exists, or the owning service was disposed.
-pub const WORKING_DIRECTORY_ERROR_CODES: [&str; 3] = [
+pub const WORKING_DIRECTORY_ERROR_CODES: [&str; 4] = [
     "WORKING_DIRECTORY_INVALID",
     "WORKING_DIRECTORY_NOT_FOUND",
     "WORKING_DIRECTORY_UNAVAILABLE",
+    "WORKING_DIRECTORY_CHANGED",
 ];
 
 /// One code from [`WORKING_DIRECTORY_ERROR_CODES`].
@@ -18,6 +19,7 @@ pub enum WorkingDirectoryErrorCode {
     Invalid,
     NotFound,
     Unavailable,
+    Changed,
 }
 
 impl WorkingDirectoryErrorCode {
@@ -27,6 +29,7 @@ impl WorkingDirectoryErrorCode {
             Self::Invalid => WORKING_DIRECTORY_ERROR_CODES[0],
             Self::NotFound => WORKING_DIRECTORY_ERROR_CODES[1],
             Self::Unavailable => WORKING_DIRECTORY_ERROR_CODES[2],
+            Self::Changed => WORKING_DIRECTORY_ERROR_CODES[3],
         }
     }
 }

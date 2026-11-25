@@ -19,6 +19,7 @@ pub const CONNECTION_INTERRUPTED: &str = "Связь с Помощником п�
 pub const REFUSED: &str = "Помощник отклонил запрос";
 /// The engine refused to change the folder of a chat that runs through an executor (`EXECUTOR_FOLDER_FIXED`).
 pub const FOLDER_FIXED: &str = "executor-folder-fixed";
+pub const FOLDER_CHANGED: &str = "conversation-folder-changed";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HostError {
@@ -35,6 +36,7 @@ pub fn host_error(message: String) -> HostError {
         CONNECTING | RECONNECTING | CONNECTION_INTERRUPTED => "connecting",
         crate::engine::METHOD_UNAVAILABLE => "unavailable",
         FOLDER_FIXED => "folder-fixed",
+        FOLDER_CHANGED => "folder-changed",
         REFUSED => "refused",
         _ => "failed",
     };

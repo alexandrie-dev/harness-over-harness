@@ -9,6 +9,7 @@ export function folderTrustView({ running, applied, trusted, isolated, changed }
     ? `Project settings in this folder (Claude and Codex): ${applied ? 'active' : 'inactive'}`
     : 'Project settings in this folder (Claude and Codex): inactive';
   if (running && !trusted && applied && !changed) text += ' — inactive from the next turn';
+  if (!trusted && !isolated) text += ' — not trusted';
   if (changed && !trusted) text += ' — settings changed; trust again?';
-  return { text, canTrust: !trusted && !isolated };
+  return { text, canTrust: !trusted && !isolated, canRevoke: trusted };
 }

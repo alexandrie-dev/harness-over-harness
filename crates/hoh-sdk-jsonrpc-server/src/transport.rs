@@ -807,6 +807,10 @@ impl JsonRpcLineTransport {
                             Err(e) => {
                                 let code = if e.downcast_ref::<HohMethodNotFound>().is_some() {
                                     -32601
+                                } else if hoh_error::HarnessError::of(e.as_ref())
+                                    .is_some_and(|e| e.code() == "WORKING_DIRECTORY_CHANGED")
+                                {
+                                    -32021
                                 } else {
                                     -32603
                                 };

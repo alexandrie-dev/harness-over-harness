@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionWorkingDirectoryRebindParams",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "rootIdentity": {
+      "$ref": "#/$defs/WorkingDirectoryRootIdentity"
+    }
+  },
+  "required": [
+    "sessionId",
+    "path",
+    "rootIdentity"
+  ],
+  "$defs": {
+    "WorkingDirectoryRootIdentity": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "inode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "device",
+        "inode"
+      ]
+    }
+  }
+}

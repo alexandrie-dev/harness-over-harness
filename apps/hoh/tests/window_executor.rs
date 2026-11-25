@@ -2241,6 +2241,172 @@ async fn replaced_working_directory_is_refused_before_native_executor_launch() {
 }
 
 #[tokio::test]
+async fn explicit_trust_revocation_restarts_fake_claude_without_project_settings() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let params = |trust| json!({"executor": "claude", "cwd": workspace.folder, "trust": trust});
+    let granted = host
+        .privileged("hoh/executor/trust/set", params(true), "allowed-once")
+        .await;
+    assert!(granted.get("error").is_none(), "{granted}");
+    host.turn(SESSION, "first", None).await;
+    assert_eq!(
+        workspace
+            .sessions()
+            .last()
+            .unwrap()
+            .value_of("--setting-sources"),
+        Some("user,project,local")
+    );
+    let revoked = host
+        .privileged("hoh/executor/trust/set", params(false), "allowed-once")
+        .await;
+    assert!(revoked.get("error").is_none(), "{revoked}");
+    host.turn(SESSION, "second", None).await;
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert_eq!(starts[1].value_of("--setting-sources"), Some("user"));
+    host.shutdown().await;
+}
+
+/// Move the complete data home as a person restoring a backup would, without touching the project.
+#[tokio::test]
+async fn copied_profile_opens_all_chats_after_original_is_renamed() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    for id in ["copied-chat-a", "copied-chat-b"] {
+        host.turn(id, "before backup", None).await;
+    }
+    host.shutdown().await;
+    let home = workspace.root.path().join("home");
+    let copied = workspace.root.path().join("copied-home");
+    assert!(
+        std::process::Command::new("cp")
+            .args(["-a", home.to_str().unwrap(), copied.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::rename(&home, workspace.root.path().join("old-home")).unwrap();
+    let copied_env = copied.to_str().unwrap();
+    let mut host = Host::start_with_env(&workspace, &[("DSH_HOME", copied_env)]);
+    host.initialize(&workspace).await;
+    for id in ["copied-chat-a", "copied-chat-b"] {
+        host.ok("session/resume", json!({"sessionId": id})).await;
+        let status = host
+            .ok("session/working-directory/status", json!({"sessionId": id}))
+            .await;
+        assert_eq!(status["changed"], false, "{status}");
+        host.turn(id, "after backup", None).await;
+        assert_eq!(host.turn_end(id)["kind"], "completed");
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn copied_profile_and_replaced_project_require_confirmed_rebind() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.turn(SESSION, "before backup", None).await;
+    host.shutdown().await;
+    let home = workspace.root.path().join("home");
+    let copied = workspace.root.path().join("restored-home");
+    assert!(
+        std::process::Command::new("cp")
+            .args(["-a", home.to_str().unwrap(), copied.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::rename(&home, workspace.root.path().join("old-home")).unwrap();
+    let project_copy = workspace.root.path().join("project-copy");
+    assert!(
+        std::process::Command::new("cp")
+            .args([
+                "-a",
+                workspace.folder.to_str().unwrap(),
+                project_copy.to_str().unwrap()
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::rename(&workspace.folder, workspace.root.path().join("old-project")).unwrap();
+    std::fs::rename(&project_copy, &workspace.folder).unwrap();
+    let mut host = Host::start_with_env(&workspace, &[("DSH_HOME", copied.to_str().unwrap())]);
+    host.initialize(&workspace).await;
+    host.ok("session/resume", json!({"sessionId": SESSION}))
+        .await;
+    let status = host
+        .ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION}),
+        )
+        .await;
+    assert_eq!(status["changed"], true, "{status}");
+    let id = host
+        .send(
+            "session/working-directory/get",
+            json!({"sessionId": SESSION}),
+        )
+        .await;
+    let (refusal, _) = host.response(&id, None).await;
+    assert_eq!(refusal["error"]["code"], -32021, "{refusal}");
+    let params = json!({"sessionId": SESSION, "path": status["cwd"], "rootIdentity": status["rootIdentity"]});
+    let denied = host
+        .privileged(
+            "session/working-directory/rebind",
+            params.clone(),
+            "rejected",
+        )
+        .await;
+    assert!(denied.get("error").is_some(), "{denied}");
+    assert_eq!(
+        host.ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION})
+        )
+        .await["changed"],
+        true
+    );
+    let other = workspace.root.path().join("old-project");
+    let mut wrong = params.clone();
+    wrong["path"] = json!(other);
+    let refused = host
+        .privileged("session/working-directory/rebind", wrong, "allowed-once")
+        .await;
+    assert!(refused.get("error").is_some(), "{refused}");
+    let mut stale = params.clone();
+    stale["rootIdentity"]["inode"] = json!("0");
+    let refused = host
+        .privileged("session/working-directory/rebind", stale, "allowed-once")
+        .await;
+    assert!(refused.get("error").is_some(), "{refused}");
+    let accepted = host
+        .privileged("session/working-directory/rebind", params, "allowed-once")
+        .await;
+    assert!(accepted.get("error").is_none(), "{accepted}");
+    host.turn(SESSION, "after restore", None).await;
+    assert_eq!(host.turn_end(SESSION)["kind"], "completed");
+    host.shutdown().await;
+    let mut host = Host::start_with_env(&workspace, &[("DSH_HOME", copied.to_str().unwrap())]);
+    host.initialize(&workspace).await;
+    host.ok("session/resume", json!({"sessionId": SESSION}))
+        .await;
+    assert_eq!(
+        host.ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION})
+        )
+        .await["changed"],
+        false
+    );
+    host.turn(SESSION, "after restart", None).await;
+    assert_eq!(host.turn_end(SESSION)["kind"], "completed");
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn missing_selected_directory_never_falls_back_to_the_original_folder() {
     let workspace = Workspace::new();
     let mut host = engine_with_claude(&workspace, "confirm").await;

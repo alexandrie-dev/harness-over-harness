@@ -11,7 +11,7 @@ before(async () => {
   built = await buildHost();
   mod = {
     threads: await built.load('threads'), host: await built.load('host'), wire: await built.load('wire'), socket: await built.load('socket'),
-    http: await built.load('http'), config: await built.load('config'), index: await built.load('index'),
+    http: await built.load('http'), config: await built.load('config'), index: await built.load('index'), errors: await built.load('errors'),
   };
 });
 after(async () => { await rm(built.dir, { recursive: true, force: true }); });
@@ -24,6 +24,13 @@ function connect(engine, options = {}) {
 }
 const lastSnapshot = stream => stream.values.filter(value => value.kind === 'snapshot').at(-1);
 const itemsOf = snapshot => snapshot.projection.turnItems;
+
+test('changed-folder refusal is explained without exposing an engine error', () => {
+  const failure = mod.errors.providerFailure({ code: 'folder-changed', message: 'internal error -32603' }, 'transport_error', 'Failed');
+  assert.match(failure.message, /folder for this chat has changed/i);
+  assert.match(failure.message, /rebind/i);
+  assert.doesNotMatch(failure.message, /-32603/);
+});
 
 test('handshake: config snapshot, probe, settings, ping; Claude and Codex are offered', async () => {
   const engine = new FakeEngine();
