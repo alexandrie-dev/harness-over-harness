@@ -8,6 +8,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import { CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS } from '@t3tools/shared/markdownPipeline';
 import { ChatImage, ChatLink } from '../lib/markdown';
+import { createIncrementalMarkdownPlugin } from './web/markdown-incremental';
+import { splitMarkdownBlocks } from './web/components/chat/markdownStreamBlocks';
 
 type MdNode = { type: string; value?: string; children?: MdNode[] };
 
@@ -27,10 +29,11 @@ function remarkHtmlAsText() {
   return (tree: MdNode) => walk(tree);
 }
 
-const REMARK_PLUGINS = [...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS, [remarkMath, { singleDollarTextMath: true }], remarkHtmlAsText] as never;
+const REMARK_PLUGINS = [...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS, [remarkMath, { singleDollarTextMath: true }], remarkHtmlAsText];
 
 type Katex = { renderToString(tex: string, options?: Record<string, unknown>): string };
 let katexPromise: Promise<Katex> | undefined;
+const formulaCache = new Map<string, string>();
 /** katex и его стили приходят отдельным куском при первой формуле. Вывод — MathML: у него нет встроенных style="…", которые запрещает CSP окна (style-src 'self'). */
 function loadKatex(): Promise<Katex> {
   katexPromise ??= Promise.all([import('katex'), import('katex/dist/katex.min.css')]).then(([module]) => module.default as Katex);
@@ -38,15 +41,25 @@ function loadKatex(): Promise<Katex> {
 }
 
 function Formula({ tex, display }: { tex: string; display: boolean }) {
-  const [html, setHtml] = useState<string | null>(null);
+  const key = (display ? 'display:' : 'inline:') + tex;
+  const [rendered, setRendered] = useState<{ key: string; html: string } | null>(null);
+  const html = formulaCache.get(key) ?? (rendered?.key === key ? rendered.html : null);
   useEffect(() => {
+    if (html !== null) return;
     let live = true;
     void loadKatex().then(katex => {
       if (!live) return;
-      try { setHtml(katex.renderToString(tex, { displayMode: display, throwOnError: false, trust: false, output: 'mathml' })); } catch { setHtml(null); }
+      try {
+        const result = formulaCache.get(key) ?? katex.renderToString(tex, { displayMode: display, throwOnError: false, trust: false, output: 'mathml' });
+        if (tex.length <= 1024 && result.length <= 8192 && !formulaCache.has(key)) {
+          if (formulaCache.size >= 128) formulaCache.delete(formulaCache.keys().next().value!);
+          formulaCache.set(key, result);
+        }
+        setRendered({ key, html: result });
+      } catch { /* show the original source */ }
     }).catch(() => undefined);
     return () => { live = false; };
-  }, [tex, display]);
+  }, [tex, display, key, html]);
   // Until katex is there (or when it can not draw the formula) the authored source is shown.
   if (html === null) {
     const source = display ? '$$' + tex + '$$' : '$' + tex + '$';
@@ -60,7 +73,8 @@ function Formula({ tex, display }: { tex: string; display: boolean }) {
 const textOf = (node: ReactNode): string => Children.toArray(node).map(child => typeof child === 'string' ? child : isValidElement<{ children?: ReactNode }>(child) ? textOf(child.props.children) : '').join('');
 const isMath = (className?: string) => /\blanguage-math\b/.test(className ?? '');
 
-export const T3Markdown = memo(function T3Markdown({ text }: { text: string }) {
+const MarkdownBlock = memo(function MarkdownBlock({ text, streaming }: { text: string; streaming: boolean }) {
+  const remarkPlugins = useMemo(() => streaming ? [...REMARK_PLUGINS, createIncrementalMarkdownPlugin()] : REMARK_PLUGINS, [streaming]);
   const components = useMemo<NonNullable<ComponentProps<typeof ReactMarkdown>['components']>>(() => {
     const raw = (node: { position?: { start: { offset?: number }; end: { offset?: number } } } | undefined) => {
       const start = node?.position?.start.offset; const end = node?.position?.end.offset;
@@ -81,5 +95,21 @@ export const T3Markdown = memo(function T3Markdown({ text }: { text: string }) {
       input: ({ checked }) => <span aria-label={checked ? 'Выполнено' : 'Не выполнено'}>{checked ? '☑ ' : '☐ '}</span>,
     };
   }, [text]);
-  return <div className="chat-markdown" data-markdown="safe" data-renderer="t3"><ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components} urlTransform={url => url}>{text}</ReactMarkdown></div>;
+  return <ReactMarkdown remarkPlugins={remarkPlugins as never} components={components} urlTransform={url => url}>{text}</ReactMarkdown>;
+});
+
+const MAX_LIVE_BLOCK = 4_096;
+export const T3Markdown = memo(function T3Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const split = streaming ? splitMarkdownBlocks(text) : null;
+  const blocks = split ?? [text];
+  return <div className="chat-markdown" data-markdown="safe" data-renderer="t3">
+    {blocks.map((block, index) => {
+      const live = streaming && index === blocks.length - 1;
+      // Document-wide syntax or a single long block can still require a full parse.
+      // Keep that live text responsive and render its final Markdown on settlement.
+      return live && block.length >= MAX_LIVE_BLOCK
+        ? <p key={index} style={{ whiteSpace: 'pre-wrap' }}>{block}</p>
+        : <MarkdownBlock key={index} text={block} streaming={live} />;
+    })}
+  </div>;
 });

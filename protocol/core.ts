@@ -353,7 +353,7 @@ export type SessionEvent = { "type": string; "seq": number; "time": number; "dat
 
 export type SessionEventNotification = { "sessionId": string; "event": SessionEvent; };
 
-export type SessionEventsParams = { "sessionId": string; "afterSeq"?: number; "limit": number; };
+export type SessionEventsParams = { "sessionId": string; "afterSeq"?: number; "tail"?: boolean; "limit": number; };
 
 export type SessionEventsResult = { "events": Array<SessionEvent>; "nextSeq": number; };
 

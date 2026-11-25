@@ -27,6 +27,9 @@ optional!(SessionEventsParams {
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     #[schemars(required)]
     after_seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    #[schemars(required)]
+    tail: Option<bool>,
     limit: u32,
 });
 object!(SessionEventsResult { events: Vec<SessionEvent>, next_seq: i64 });

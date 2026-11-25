@@ -34,6 +34,20 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         crate::native::setup(app)?;
         trace("setup:native-host:complete");
     }
+    if std::env::var_os("HOH_NATIVE_PERF_PROBE").is_some() {
+        let window = app.get_webview_window("main").ok_or("Нет главного окна")?;
+        let handle = app.handle().clone();
+        window.with_webview(move |webview| {
+            webview.inner().connect_title_notify(move |view| {
+                if let Some(title) = view.title()
+                    && let Some(result) = title.strip_prefix("HOH_PERF ")
+                {
+                    println!("HOH_PERF {result}");
+                    handle.exit(if result.contains("\"error\":") { 1 } else { 0 });
+                }
+            });
+        })?;
+    }
     if approval_probe {
         trace("main:lookup:start");
         let window = app.get_webview_window("main").ok_or("Нет главного окна")?;

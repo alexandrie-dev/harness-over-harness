@@ -9,6 +9,6 @@ export { LinkContext, type LinkActions } from '../lib/markdown';
 const T3Markdown = lazy(() => import('./chatMarkdown').then(m => ({ default: m.T3Markdown })));
 
 export interface ChatMarkdownProps { readonly text: string; readonly streaming?: boolean; readonly cwd?: string }
-export function ChatMarkdown({ text }: ChatMarkdownProps) {
-  return <Suspense fallback={<div className="chat-markdown" data-markdown="safe" data-renderer="pending" style={{ whiteSpace: 'pre-wrap' }}>{text}</div>}><T3Markdown text={text} /></Suspense>;
+export function ChatMarkdown({ text, streaming }: ChatMarkdownProps) {
+  return <Suspense fallback={<div className="chat-markdown" data-markdown="safe" data-renderer="pending" style={{ whiteSpace: 'pre-wrap' }}>{text}</div>}><T3Markdown text={text} streaming={streaming} /></Suspense>;
 }

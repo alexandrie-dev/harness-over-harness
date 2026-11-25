@@ -189,8 +189,9 @@ test('5000 real stub history messages are loaded across exclusive-cursor pages',
       assert.equal(controller.state.entries[0].text, 'Сообщение 0');
       assert.equal(controller.state.entries[4999].text, 'Сообщение 4999');
       const requests = stub.requests.filter(r => r.method === 'session/events');
-      assert.equal(requests.length, 6);
-      assert(requests.slice(1).every((r, i) => r.params.afterSeq === 999 + 1000 * i));
+      const [tail, ...backfill] = requests;
+      assert.equal(tail.params.tail, true);
+      assert.deepEqual(backfill.map(r => r.params.afterSeq), [159, 1159, 2159, 3159, 4159]);
     }, { immediate: true, extra: ['--recording', path] });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -695,10 +696,101 @@ test('switching chats shows only that chat and does not mix histories', async ()
     assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ', 'Третий вопрос', 'Ответ на: Третий вопрос']);
     await controller.openSession('window-main');
     assert.deepEqual(shown(controller), ['Первый вопрос', 'Первый ответ']);
-    await controller.openSession('chat-old');
+    const prior = engine.requests.length;
+    const returning = controller.openSession('chat-old');
+    assert.equal(shown(controller)[0], 'Старый вопрос', 'a previously seen chat paints immediately');
+    await returning;
     assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ', 'Третий вопрос', 'Ответ на: Третий вопрос']);
+    const pages = engine.requests.slice(prior).filter(request => request.method === 'session/events');
+    assert.equal(pages.length, 1);
+    assert.equal(pages[0].params.afterSeq, 1, 'a warm chat only reads events after its cursor');
     assert(engine.requests.some(r => r.method === 'session/resume' && r.params.sessionId === 'chat-old'));
   });
+});
+
+test('the sidebar refreshes once for a burst of turn completion notifications', async () => {
+  await withChats(async (controller, engine) => {
+    const count = () => engine.requests.filter(request => request.method === 'session/list').length;
+    const previous = count();
+    engine.emit('session.event', { sessionId: 'window-main', event: {
+      seq: 10, type: 'turn/end', data: { reason: { kind: 'completed' } },
+    } });
+    engine.emit('session.status', { sessionId: 'window-main', status: 'idle' });
+    engine.emit('session.status', { sessionId: 'window-main', status: 'idle' });
+    await controller.queue;
+    await waitUntil(() => count() > previous);
+    assert.equal(count(), previous + 1);
+  });
+});
+
+test('a recent preview stays interactive and a superseded backfill cannot publish', async () => {
+  const engine = new FakeEngine();
+  engine.seed('window-main', { user: 'Первый чат', assistant: 'Ответ' });
+  engine.open('chat-long');
+  const long = engine.sessions.get('chat-long');
+  for (let i = 0; i < 200; i++) {
+    long.events.push({ seq: i, time: i, type: 'user/message', data: {
+      id: 'long-' + i, source: { kind: 'user' }, content: [{ type: 'text', text: 'Длинный чат ' + i }],
+    } });
+  }
+  let finish;
+  const blocked = new Promise(resolve => { finish = resolve; });
+  const client = {
+    request: async (method, params) => {
+      if (method === 'session/events' && params.sessionId === 'chat-long' && !params.tail) await blocked;
+      return engine.request(method, params);
+    },
+    subscribe: async listener => engine.subscribe(listener),
+  };
+  const seen = [];
+  const controller = new ChatController(() => client, state => seen.push(state), async () => {});
+  try {
+    await controller.connect();
+    await waitUntil(() => controller.state.sessions.length === 2);
+    const loading = controller.openSession('chat-long');
+    await waitUntil(() => shown(controller).includes('Длинный чат 199'));
+    assert.equal(controller.state.connection, 'connecting');
+    assert.equal(controller.state.openingChat, true);
+    engine.emit('approval.pending', { sessionId: 'chat-long' });
+    assert(!shown(controller).includes('Первый чат'));
+    controller.setDraft('Следующий вопрос');
+    await controller.openSession('window-main');
+    assert.equal(controller.state.draft, 'Следующий вопрос');
+    finish(); await loading;
+    assert.deepEqual(shown(controller), ['Первый чат', 'Ответ']);
+    assert(seen.filter(state => state.currentId === 'chat-long').every(state => !state.entries.some(entry => entry.text === 'Первый чат')));
+  } finally {
+    finish();
+    controller.disconnect();
+    await engine.close();
+  }
+});
+
+test('retrying a failed chat load cannot show the previous chat under the failed chat title', async () => {
+  const engine = new FakeEngine();
+  engine.seed('window-main', { user: 'Первый чат', assistant: 'Первый ответ' });
+  engine.seed('chat-old', { user: 'Другой чат', assistant: 'Другой ответ' });
+  let fail = true;
+  const controller = new ChatController(() => ({
+    request: (method, params) => method === 'session/events' && params.sessionId === 'chat-old' && fail
+      ? Promise.reject(new Error('history not ready')) : engine.request(method, params),
+    subscribe: async listener => engine.subscribe(listener),
+  }), () => {}, async () => {});
+  try {
+    await controller.connect();
+    await controller.openSession('chat-old');
+    assert.equal(controller.state.connection, 'error');
+    assert.deepEqual(shown(controller), []);
+    controller.engineStatus({ state: 'restarting' });
+    assert.deepEqual(shown(controller), []);
+    fail = false;
+    await controller.connect(true);
+    assert.equal(controller.state.currentId, 'chat-old');
+    assert.deepEqual(shown(controller), ['Другой чат', 'Другой ответ']);
+  } finally {
+    controller.disconnect();
+    await engine.close();
+  }
 });
 
 test('events of a chat that is not open never reach the open chat, and are there when it is opened', async () => {

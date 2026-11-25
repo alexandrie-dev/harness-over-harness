@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-subscribe-engine-notifications"
+description = "Enables the subscribe_engine_notifications command without any pre-configured scope."
+commands.allow = ["subscribe_engine_notifications"]
+
+[[permission]]
+identifier = "deny-subscribe-engine-notifications"
+description = "Denies the subscribe_engine_notifications command without any pre-configured scope."
+commands.deny = ["subscribe_engine_notifications"]

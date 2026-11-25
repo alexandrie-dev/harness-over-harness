@@ -12,13 +12,15 @@ use std::{
     ffi::OsString,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, ipc::Channel};
+
+type EngineNotifications = Arc<Mutex<Option<Channel<Value>>>>;
 #[cfg(target_os = "linux")]
 use webkit2gtk::{URIRequestExt, WebViewExt};
 
@@ -35,6 +37,7 @@ pub struct Host {
     pub questions: Arc<QuestionBroker>,
     workspace: Workspace,
     ready: Arc<AtomicBool>,
+    notifications: EngineNotifications,
 }
 
 /// How the native host starts the engine. The real `hoh` needs the window profile and its own
@@ -196,6 +199,8 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let event_approvals = approvals.clone();
     let event_questions = questions.clone();
     let event_ready = ready.clone();
+    let notifications = EngineNotifications::default();
+    let event_notifications = notifications.clone();
     let init = json!({"cwd":session_folder,"provider":config.provider,"model":config.model,"capabilities":{"approvals":"host","userQuestions":true},"hoh":{"protocolVersion":1,"approvalKey":hoh_protocol::approval::hex(&key)}});
     let engine = Engine::start(
         Arc::new(config),
@@ -207,6 +212,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 &event_questions,
                 &event_ready,
                 in_chat,
+                &event_notifications,
                 event,
             )
         }),
@@ -220,6 +226,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             config_dir,
         },
         ready,
+        notifications,
     });
     #[cfg(feature = "probe")]
     crate::probe::trace("native:setup:complete");
@@ -240,6 +247,7 @@ fn handle_event(
     questions: &Arc<QuestionBroker>,
     ready: &Arc<AtomicBool>,
     in_chat: bool,
+    notifications: &EngineNotifications,
     event: HostEvent,
 ) {
     match event {
@@ -255,7 +263,15 @@ fn handle_event(
                 questions.cancel(id);
             }
             let frame = window_frame(frame);
-            let _ = handle.emit_to("main", "engine-notification", frame);
+            let channel = notifications
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            if let Some(channel) = channel {
+                let _ = channel.send(frame);
+            } else {
+                let _ = handle.emit_to("main", "engine-notification", frame);
+            }
         }
         HostEvent::Status(status) => {
             let is_ready = status["state"] == "ready";
@@ -766,6 +782,22 @@ fn destroy_window(handle: &tauri::AppHandle, label: &str) {
     if let Some(window) = handle.get_webview_window(label) {
         let _ = window.destroy();
     }
+}
+
+#[tauri::command]
+pub fn subscribe_engine_notifications(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    on_message: Channel<Value>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Подписка доступна только в главном окне".into());
+    }
+    *state
+        .notifications
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(on_message);
+    Ok(())
 }
 
 #[tauri::command]

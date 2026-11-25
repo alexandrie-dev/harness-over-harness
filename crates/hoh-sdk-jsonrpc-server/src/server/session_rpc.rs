@@ -11,10 +11,10 @@ use hoh_protocol::{
     SessionEventsParams, SessionEventsResult, SessionListParams, SessionListResult, SessionSummary,
     SessionWaitParams,
 };
-use hoh_session::{AgentCancelCause, SessionEvent, SessionId};
+use hoh_session::{AgentCancelCause, MAX_SAFE_INTEGER, SessionEvent, SessionId};
 use hoh_session_persistence::{SessionAccess, SessionPersistenceService};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 const MAX_EVENTS_PER_PAGE: u32 = 1000;
 const DEFAULT_EMPLOYEE_ID: &str = "default";
@@ -83,26 +83,6 @@ impl HarnessSdkJsonRpcServer {
         Some(record.handle.agent.clone())
     }
 
-    /// Full log of a session: the live one this server owns, else the stored one, read-only.
-    async fn session_log(&self, id: &SessionId) -> Result<Arc<[Arc<SessionEvent>]>, BoxError> {
-        if let Some(agent) = self.live_agent(id) {
-            return Ok(agent.session().snapshot_events(None, None));
-        }
-        let unknown = || error(format!("unknown SDK session: {id}"));
-        let persistence = self
-            .inner
-            .ctx
-            .get::<SessionPersistenceService>()
-            .ok_or_else(unknown)?;
-        persistence.stat(id, None).await?.ok_or_else(unknown)?;
-        let handle = persistence.open(id, SessionAccess::Read, None).await?;
-        let read = handle.read(None, None, None).await;
-        let closed = handle.close().await;
-        let events = read?.events;
-        closed?;
-        Ok(events.into())
-    }
-
     pub(super) async fn session_events(&self, params: Value) -> Result<Value, BoxError> {
         self.assert_initialized()?;
         let params: SessionEventsParams = params_of("session/events", params)?;
@@ -112,13 +92,50 @@ impl HarnessSdkJsonRpcServer {
                 "session/events requires limit 1..1000 and afterSeq >= -1",
             ));
         }
-        let log = self
-            .session_log(&SessionId::from(params.session_id))
-            .await?;
-        let events = log
+        let tail = params.tail.unwrap_or_default();
+        if tail && params.after_seq.is_some() {
+            return Err(type_error(
+                "session/events tail cannot be combined with afterSeq",
+            ));
+        }
+        let id = SessionId::from(params.session_id);
+        let limit = params.limit as usize;
+        let log = if let Some(agent) = self.live_agent(&id) {
+            agent.session().snapshot_events(None, None)
+        } else {
+            let unknown = || error(format!("unknown SDK session: {id}"));
+            let persistence = self
+                .inner
+                .ctx
+                .get::<SessionPersistenceService>()
+                .ok_or_else(unknown)?;
+            let snapshot = persistence.stat(&id, None).await?.ok_or_else(unknown)?;
+            let offset = if tail {
+                snapshot
+                    .event_count
+                    .map(|count| count.saturating_sub(limit as u64))
+            } else {
+                Some((after.saturating_add(1) as u64).min(MAX_SAFE_INTEGER))
+            };
+            let handle = persistence.open(&id, SessionAccess::Read, None).await?;
+            let read = handle
+                .read(offset, (!tail).then_some(limit as u64), None)
+                .await;
+            let closed = handle.close().await;
+            let events = read?.events;
+            closed?;
+            events.into()
+        };
+        let start = if tail {
+            log.len().saturating_sub(limit)
+        } else {
+            log.partition_point(|event| {
+                i64::try_from(u64::from(event.seq())).is_ok_and(|seq| seq <= after)
+            })
+        };
+        let events = log[start..]
             .iter()
-            .filter(|event| i64::try_from(u64::from(event.seq())).is_ok_and(|seq| seq > after))
-            .take(params.limit as usize)
+            .take(limit)
             .map(|event| serde_json::from_value(serde_json::to_value(event)?))
             .collect::<Result<Vec<_>, serde_json::Error>>()?;
         let next_seq = events
@@ -135,7 +152,7 @@ impl HarnessSdkJsonRpcServer {
         self.assert_initialized()?;
         let params: SessionListParams = params_of("session/list", params)?;
         let mut sessions = Vec::new();
-        let mut seen = Vec::new();
+        let mut seen = HashSet::new();
         if let Some(persistence) = self.inner.ctx.get::<SessionPersistenceService>() {
             for snapshot in persistence.list(None).await? {
                 let header = serde_json::to_value(&snapshot.header)?;
@@ -143,22 +160,52 @@ impl HarnessSdkJsonRpcServer {
                 if is_subagent(&header) {
                     continue;
                 }
-                // One unreadable stored log must not hide the other sessions.
-                let events = self.session_log(&id).await.unwrap_or_else(|e| {
-                    self.inner
-                        .ctx
-                        .logger()
-                        .warn(format!("session/list: cannot read session {id}: {e}"));
-                    Arc::from(Vec::new())
-                });
-                sessions.push(summary_of(&id, &header, &events));
-                seen.push(id);
+                seen.insert(id.clone());
+                if let Some(agent) = self.live_agent(&id) {
+                    let events = agent.session().snapshot_events(None, None);
+                    sessions.push(summary_of(&id, &header, &events));
+                    continue;
+                }
+                let cached = lock(&self.inner.stored_summaries)
+                    .get(&id)
+                    .filter(|(revision, _)| *revision == snapshot.revision)
+                    .map(|(_, summary)| summary.clone());
+                if let Some(summary) = cached {
+                    sessions.push(summary);
+                    continue;
+                }
+                let read = async {
+                    let handle = persistence.open(&id, SessionAccess::Read, None).await?;
+                    let read = handle.read(None, None, None).await;
+                    let closed = handle.close().await;
+                    closed?;
+                    Ok::<_, BoxError>(read?.events)
+                }
+                .await;
+                let summary = match read {
+                    Ok(events) => {
+                        let summary = summary_of(&id, &header, &events);
+                        lock(&self.inner.stored_summaries)
+                            .insert(id, (snapshot.revision, summary.clone()));
+                        summary
+                    }
+                    Err(e) => {
+                        // A damaged log must not hide other sessions or poison a cached title.
+                        self.inner
+                            .ctx
+                            .logger()
+                            .warn(format!("session/list: cannot read session {id}: {e}"));
+                        summary_of(&id, &header, &[])
+                    }
+                };
+                sessions.push(summary);
             }
         }
+        lock(&self.inner.stored_summaries).retain(|id, _| seen.contains(id));
         let live = lock(&self.inner.state)
             .sessions
             .iter()
-            .filter(|(id, _)| !seen.contains(id))
+            .filter(|(id, _)| !seen.contains(*id))
             .map(|(id, record)| (id.clone(), record.handle.agent.clone()))
             .collect::<Vec<_>>();
         for (id, agent) in live {

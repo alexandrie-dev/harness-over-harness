@@ -10,6 +10,9 @@
       "type": "integer",
       "format": "int64"
     },
+    "tail": {
+      "type": "boolean"
+    },
     "limit": {
       "type": "integer",
       "format": "uint32",

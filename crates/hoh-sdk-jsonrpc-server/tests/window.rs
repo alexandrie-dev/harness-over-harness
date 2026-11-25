@@ -232,6 +232,17 @@ async fn session_events_pages_by_seq_and_matches_the_live_notifications() {
     }
     assert_eq!(all, streamed);
     assert_eq!(all[0]["seq"], 0);
+    let tail = env
+        .server
+        .handle_request(
+            "session/events",
+            json!({"sessionId": "s1", "tail": true, "limit": 2}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(tail["events"], json!(&all[all.len() - 2..]));
+    assert_eq!(tail["nextSeq"], all.last().unwrap()["seq"]);
+
     env.close().await;
 }
 
@@ -252,6 +263,7 @@ async fn session_events_rejects_bad_arguments_and_unknown_sessions() {
         json!({"sessionId": "s1", "limit": 0}),
         json!({"sessionId": "s1", "limit": 1001}),
         json!({"sessionId": "s1", "limit": 5, "afterSeq": -2}),
+        json!({"sessionId": "s1", "limit": 5, "afterSeq": 0, "tail": true}),
         json!({"sessionId": "s1"}),
         json!({"limit": 5}),
     ] {
@@ -335,6 +347,22 @@ async fn session_list_covers_live_and_stored_sessions_with_titles_and_filter() {
             .iter()
             .any(|e| e["type"] == "user/message")
     );
+    let tail = again
+        .server
+        .handle_request(
+            "session/events",
+            json!({"sessionId": "older", "limit": 2, "tail": true}),
+        )
+        .await
+        .unwrap();
+    let events = page["events"].as_array().unwrap();
+    assert_eq!(tail["events"], json!(&events[events.len() - 2..]));
+    let cached_list = again
+        .server
+        .handle_request("session/list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(cached_list, list);
     again.close().await;
 }
 

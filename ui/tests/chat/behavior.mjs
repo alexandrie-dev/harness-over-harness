@@ -443,9 +443,17 @@ try {
     await chip.click(); await page.locator('[data-access-option="full"]').click(); await page.locator('[data-enable-full]').click();
     await page.waitForSelector('[data-chat-access][data-access-mode="full"]');
     await page.screenshot({ path: join(UX, 'ux-access-pending-1440.png'), animations: 'disabled' });
-    await page.locator('[data-chat-input]').fill('второе');
-    await page.locator('[data-chat-send]').click();
-    assert.equal(await page.locator('[data-access-pending]').count(), 1, 'отправка строку не стирает');
+    const answer = engine.answer.bind(engine);
+    const held = [];
+    engine.answer = (...args) => held.push(args);
+    try {
+      await page.locator('[data-chat-input]').fill('второе');
+      await page.locator('[data-chat-send]').click();
+      assert.equal(await page.locator('[data-access-pending]').count(), 1, 'отправка строку не стирает');
+    } finally {
+      engine.answer = answer;
+      for (const args of held) answer(...args);
+    }
     await page.getByText('Ответ на: второе').waitFor();
     await page.waitForFunction(() => !document.querySelector('[data-access-pending]'));
     assert.equal(await page.locator('[data-chat-access]').getAttribute('data-access-mode'), 'full', 'следующий ход пошёл в выбранном режиме');
@@ -455,7 +463,7 @@ try {
     assert(engine.requests.filter(r => r.method === 'hoh/executor/access/get').every(r => r.params.sessionId === 'window-main'), 'движок спрашивают про открытый чат');
   }, [], { fake: accessEngine(), viewport: { width: 1440, height: 900 } });
   await check('two-chats-show-their-own-mode-and-provider', '', async (page, engine) => {
-    const open = async title => { await page.locator('[data-chat-row]', { hasText: title }).click(); await page.waitForFunction(t => document.querySelector('[data-chat-row][aria-current="true"]')?.textContent.includes(t), title); await page.waitForSelector('[data-chat-input]:not([disabled])'); };
+    const open = async title => { await page.locator('[data-chat-row]', { hasText: title }).click(); await page.waitForFunction(t => document.querySelector('[data-chat-row][aria-current="true"]')?.textContent.includes(t), title); await page.waitForSelector('[data-chat-screen][data-connection="ready"]'); };
     await page.locator('[data-chat-access]').waitFor();
     await say(page, 'в первом');
     await page.locator('[data-chat-access]').click(); await page.locator('[data-access-option="full"]').click(); await page.locator('[data-enable-full]').click();
@@ -938,6 +946,14 @@ try {
       await page.screenshot({ path: join(shots, `t3md-formula-table-code-${name}.png`), animations: 'disabled' });
     }
   }, ['--recording', richFile]);
+
+  const referenceFile = await historyFile('markdown-reference', [
+    '[Ссылка][hello world]\n\n' + 'Длинный ответ. '.repeat(340) + '\n\n[hello\nworld]: https://example.test/',
+  ]);
+  await check('long-markdown-resolves-multiline-reference', 'text-turn', async page => {
+    const link = page.locator('[data-markdown-link="url"]').filter({ hasText: "Ссылка" });
+    await link.waitFor();
+  }, ['--recording', referenceFile]);
 
   const harmful = harmfulMarkdownCases.map(({ source }) => source);
   const markdownFile = await historyFile('markdown', harmful);

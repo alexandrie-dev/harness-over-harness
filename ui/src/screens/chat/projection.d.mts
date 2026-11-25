@@ -27,4 +27,5 @@ export class ChatProjection {
   setRunning(running: boolean): void;
   stop(preserveGaps?: boolean): void;
 }
+export function chatEntryKey(entry: ChatEntry): string;
 export function numberRepeatedSteps(entries: ChatEntry[]): ChatEntry[];

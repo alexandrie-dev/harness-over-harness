@@ -43,7 +43,7 @@ use hoh_protocol::{
     SessionWorkingDirectoryResult, SessionWorkingDirectorySetParams, WorkingDirectoryRootIdentity,
 };
 use hoh_session::{SessionCreated, SessionEventEmitted, SessionId, SessionLogOffset};
-use hoh_session_persistence::SessionPersistenceService;
+use hoh_session_persistence::{SessionPersistenceRevision, SessionPersistenceService};
 use hoh_timeout::{AbortController, AbortSignal};
 use hoh_util_values::js_trim;
 use hoh_working_directory::WorkingDirectoryKey;
@@ -241,6 +241,8 @@ struct Inner {
     transport: Arc<dyn JsonRpcTransportPeer>,
     options: HarnessSdkJsonRpcServerOptions,
     state: Mutex<State>,
+    stored_summaries:
+        Mutex<IndexMap<SessionId, (SessionPersistenceRevision, hoh_protocol::SessionSummary)>>,
     lifetime: AbortController,
     initialization: tokio::sync::watch::Sender<bool>,
     disposers: Mutex<Vec<Disposer>>,
@@ -293,6 +295,7 @@ impl HarnessSdkJsonRpcServer {
                     llm_fiber: None,
                     shutdown: None,
                 }),
+                stored_summaries: Mutex::new(IndexMap::new()),
                 lifetime: AbortController::new(),
                 initialization: tokio::sync::watch::channel(false).0,
                 disposers: Mutex::new(Vec::new()),

@@ -8,7 +8,7 @@ import { ProviderMark } from '../shared/ProviderMark';
 import { EXAMPLES } from '../../lib/examples.mjs';
 import { Emblem } from '../shared/Emblem';
 import { pickFolder } from '../firstrun/engine';
-import type { ChatEntry } from './projection.mjs';
+import { chatEntryKey, type ChatEntry } from './projection.mjs';
 import { ChatIcon } from './icons';
 import { QuestionCard } from './QuestionCard';
 import { ApprovalsScreen } from './ApprovalsScreen';
@@ -20,8 +20,7 @@ import '../shared/primitives.css';
 import './chat.css';
 
 const FOLLOW_END = { animated: false, on: { dataChange: true, itemLayout: true, layout: true, footerLayout: false } } as const;
-const keyOf = (entry: ChatEntry) => entry.id;
-const renderItem = ({ item }: { item: ChatEntry }) => <ChatRow key={item.id} entry={item} />;
+const renderItem = ({ item }: { item: ChatEntry }) => <ChatRow key={chatEntryKey(item)} entry={item} />;
 const ChatRow = memo(function ChatRow({ entry }: { entry: ChatEntry }) {
   if (entry.kind === 'step') return <article className="chat-entry chat-work-entry" data-chat-entry="step" data-operation={entry.operation} data-status={entry.status} data-entry-id={entry.id}>
     <details className="chat-work-step">
@@ -43,6 +42,7 @@ const ChatRow = memo(function ChatRow({ entry }: { entry: ChatEntry }) {
     {entry.failed && <p className="chat-delivery-error" data-delivery="failed">Не отправлено</p>}
   </article>;
 });
+const PRESERVE_VISIBLE_ROWS = { data: true } as const;
 const feedStart = <div className="chat-feed-start" />;
 const feedEnd = <div className="chat-feed-end" />;
 function cssValue(name: string) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
@@ -85,8 +85,8 @@ const RecentChats = memo(function RecentChats({ activeId, disabled, now, onOpen 
 
 const ChatTimeline = memo(function ChatTimeline({ estimate }: { estimate: number | undefined }) {
   const entries = useChatStore(state => state.entries);
-  return <LegendList<ChatEntry> data={entries} renderItem={renderItem} keyExtractor={keyOf} estimatedItemSize={estimate}
-    initialScrollAtEnd maintainScrollAtEnd={FOLLOW_END} ListHeaderComponent={feedStart} ListFooterComponent={feedEnd}
+  return <LegendList<ChatEntry> data={entries} renderItem={renderItem} keyExtractor={chatEntryKey} estimatedItemSize={estimate}
+    initialScrollAtEnd maintainScrollAtEnd={FOLLOW_END} maintainVisibleContentPosition={PRESERVE_VISIBLE_ROWS} ListHeaderComponent={feedStart} ListFooterComponent={feedEnd}
     className="chat-timeline" tabIndex={0} aria-label="Сообщения" data-testid="chat-timeline" />;
 });
 
@@ -104,6 +104,7 @@ function SendButton({ ready, canceling }: { ready: boolean; canceling: boolean }
 export function ChatScreen() {
   const empty = useChatStore(state => state.entries.length === 0);
   const connection = useChatStore(state => state.connection);
+  const openingChat = useChatStore(state => state.openingChat);
   const busy = useChatStore(state => state.busy);
   const canceling = useChatStore(state => state.canceling);
   const error = useChatStore(state => state.error);
@@ -208,7 +209,7 @@ export function ChatScreen() {
             <span className="chat-state" data-working={ready && busy ? 'true' : 'false'}>{ready && busy && <Icon name="spinner" small spin />}<span className="chat-state-text" title={state}>{state}</span></span>
           </button>
         </section>
-        <RecentChats activeId={section === 'chat' ? currentId : ''} disabled={connection === 'connecting'} now={now} onOpen={switchChat} />
+        <RecentChats activeId={section === 'chat' ? currentId : ''} disabled={connection === 'connecting' && !openingChat} now={now} onOpen={switchChat} />
       </div>
     </aside>
     {compact && menuOpen && <div className="chat-scrim" data-chat-scrim aria-hidden="true" onClick={() => setMenuOpen(false)} />}
@@ -226,7 +227,7 @@ export function ChatScreen() {
       {section === 'approvals' && <ApprovalsScreen />}
       <section className="chat-conversation-area" aria-label="Чат с Помощником" hidden={section !== 'chat'}>
         <section className="chat-conversation" aria-label="Переписка" aria-busy={busy}>
-          {empty && <div className="chat-empty" data-chat-empty><div className="chat-col"><h2>С чего <span className="chat-key">начнём</span>?</h2><p>{connection === 'connecting' ? 'Подключаюсь к Помощнику…' : ready ? 'Напишите, что нужно сделать. Ход работы появится здесь.' : 'Разговор появится после подключения.'}</p>{access === 'full' && <p className="chat-full-line" data-full-access-line>Включён полный доступ: Помощник не спрашивает разрешения.</p>}
+          {empty && <div className="chat-empty" data-chat-empty><div className="chat-col"><h2>С чего <span className="chat-key">начнём</span>?</h2><p>{connection === 'connecting' ? (openingChat ? 'Загружаю историю чата…' : 'Подключаюсь к Помощнику…') : ready ? 'Напишите, что нужно сделать. Ход работы появится здесь.' : 'Разговор появится после подключения.'}</p>{access === 'full' && <p className="chat-full-line" data-full-access-line>Включён полный доступ: Помощник не спрашивает разрешения.</p>}
             {ready && <div className="chat-examples" data-chat-examples>
               {EXAMPLES.map(example => <button key={example.id} type="button" data-chat-example={example.id} onClick={() => { setDraft(example.text); document.getElementById('chat-message-input')?.focus(); }}>
                 <span className="chat-example-tile"><Icon name={example.icon} /></span>
@@ -234,7 +235,7 @@ export function ChatScreen() {
               </button>)}
             </div>}
             {ready && access !== 'full' && <p className="chat-folder-line" data-folder-line>Папка Помощника: {folderLabel}. Кладите туда файлы, с которыми нужна помощь.</p>}{privacy === 'remote' && <p className="chat-key-note" data-key-note>{keyNote()}</p>}</div></div>}
-          <ChatTimeline estimate={estimate} />
+          <ChatTimeline key={currentId} estimate={estimate} />
         </section>
         <output className="chat-sr-only" aria-live="polite" data-chat-status>{connection === 'recovering' ? 'Связь с Помощником прервалась, восстанавливаю…' : canceling ? 'Останавливаю…' : busy ? 'Помощник отвечает…' : ready ? 'Можно написать сообщение' : ''}</output>
         {error && <div className="chat-error chat-col" role="alert">{error}{connection === 'error' && <button className="btn" type="button" onClick={() => void connect()}>Подключиться ещё раз</button>}{folderFixed && <button className="btn" type="button" data-new-chat-folder onClick={() => void newChatElsewhere()}>Новый чат в другой папке</button>}</div>}
@@ -245,7 +246,7 @@ export function ChatScreen() {
           {access && accessPending && <p className="chat-access-pending" role="status" data-access-pending>{ACCESS_PENDING_NOTE}</p>}
           <div className="chat-input-box">
           <label className="chat-sr-only" htmlFor="chat-message-input">Сообщение Помощнику</label>
-          <ChatInput ready={ready} onKeyDown={keyDown} />
+          <ChatInput ready={ready || openingChat} onKeyDown={keyDown} />
           <div className="chat-composer-actions">
             {executor === 'claude'
               ? <ExecutorModelPicker model={executorModel} newModel={newExecutor === 'claude' ? newExecutorModel : ''} models={executorModels} busy={executorBusy} disabled={!ready || busy}

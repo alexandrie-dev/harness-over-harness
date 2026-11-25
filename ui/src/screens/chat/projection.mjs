@@ -175,13 +175,22 @@ function labelFor(step, status, code) {
   return verbs[step.operation][index] + (['read', 'write'].includes(step.operation) && status !== 'stopped' ? ' ' + step.file : '') + (status === 'done' ? what : '');
 }
 /** Steps one right after another that say the same thing get a number, so no two headings in a row look alike for different actions. Other entries keep their identity. */
+const renderedKeys = new WeakMap();
+export function chatEntryKey(entry) { return renderedKeys.get(entry) ?? entry.id; }
+
+const numberedSteps = new WeakMap();
 export function numberRepeatedSteps(entries) {
   let run = 0;
   return entries.map((entry, index) => {
     const previous = entries[index - 1];
     if (entry.kind !== 'step') { run = 0; return entry; }
     run = previous?.kind === 'step' && previous.label === entry.label ? run + 1 : 1;
-    return run > 1 ? { ...entry, label: `${entry.label} (${run})` } : entry;
+    if (run === 1) return entry;
+    const cached = numberedSteps.get(entry);
+    if (cached?.run === run) return cached.entry;
+    const numbered = { ...entry, label: `${entry.label} (${run})` };
+    numberedSteps.set(entry, { run, entry: numbered });
+    return numbered;
   });
 }
 export function assistantChunks(event) {
@@ -383,7 +392,10 @@ export class ChatProjection {
     this.incomplete.delete(key);
     if (!value) { this.remove(index); return true; }
     const id = 'assistant-' + message.id;
-    this.replace(index, { id, kind: 'assistant', text: visibleText(value, this.folder), streaming: false });
+    const entry = { id, kind: 'assistant', text: visibleText(value, this.folder), streaming: false };
+    // The durable ID is exposed to the UI, but the rendered row keeps its live identity.
+    renderedKeys.set(entry, chatEntryKey(this.#entries[index]));
+    this.replace(index, entry);
     this.assistants.set(id, index);
     return true;
   }

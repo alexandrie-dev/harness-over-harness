@@ -249,6 +249,12 @@
           "markdownDescription": "Enables the read_pasted_image command without any pre-configured scope."
         },
         {
+          "description": "Enables the subscribe_engine_notifications command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-subscribe-engine-notifications",
+          "markdownDescription": "Enables the subscribe_engine_notifications command without any pre-configured scope."
+        },
+        {
           "description": "Denies the approval_current command without any pre-configured scope.",
           "type": "string",
           "const": "deny-approval-current",
@@ -319,6 +325,12 @@
           "type": "string",
           "const": "deny-read-pasted-image",
           "markdownDescription": "Denies the read_pasted_image command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the subscribe_engine_notifications command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-subscribe-engine-notifications",
+          "markdownDescription": "Denies the subscribe_engine_notifications command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

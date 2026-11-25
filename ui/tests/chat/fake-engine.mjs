@@ -50,7 +50,7 @@ export class FakeEngine {
       case 'session/events': {
         const session = this.sessions.get(params.sessionId); if (!session) throw new Error('unknown SDK session');
         const after = params.afterSeq ?? -1;
-        const events = session.events.filter(e => e.seq > after).slice(0, params.limit);
+        const events = params.tail ? session.events.slice(-params.limit) : session.events.filter(e => e.seq > after).slice(0, params.limit);
         return { events, nextSeq: events.at(-1)?.seq ?? after };
       }
       case 'session/list': return { sessions: [...this.sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt)

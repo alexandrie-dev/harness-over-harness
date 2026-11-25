@@ -25,6 +25,7 @@ fn main() {
         .plugin(hoh_desktop::native::main_security_plugin())
         .invoke_handler(tauri::generate_handler![
             hoh_desktop::native::engine_request,
+            hoh_desktop::native::subscribe_engine_notifications,
             hoh_desktop::native::pick_folder,
             hoh_desktop::native::browse_folders,
             hoh_desktop::native::read_image_asset,

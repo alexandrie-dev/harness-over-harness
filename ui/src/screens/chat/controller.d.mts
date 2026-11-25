@@ -4,7 +4,7 @@ import type { ChatTransport, PendingQuestion, QuestionAnswer } from './transport
 export type ChatData = {
   entries: ChatEntry[];
   connection: 'connecting' | 'ready' | 'recovering' | 'error';
-  busy: boolean; canceling: boolean; error: string;
+  openingChat: boolean; busy: boolean; canceling: boolean; error: string;
   privacy: 'local' | 'remote' | 'unknown'; folderLabel: string; model: string; modelIcon: string; modelScope: string; permissions: string; notice: string; folderPath: string;
   /** Mode of the NEXT turn of the open chat as the engine reports it (`session.mode` of access/get with the chat's id); '' = this chat does not run through Claude. */
   access: '' | 'confirm' | 'full'; accessBusy: boolean; /** The mode waits for the next message: the live process of the chat still runs in the other one (`session.pending`). */ accessPending: boolean; /** The engine refused to change the folder of this chat (it runs through Claude): the screen offers a new chat. */ folderFixed: boolean; draft: string;

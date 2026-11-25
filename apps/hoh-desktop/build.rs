@@ -5,6 +5,7 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "engine_request",
+            "subscribe_engine_notifications",
             "pick_folder",
             "browse_folders",
             "read_image_asset",

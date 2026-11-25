@@ -669,8 +669,16 @@ impl<W: Write> Engine<W> {
                 if !(1..=1000).contains(&limit) || after < -1 {
                     return Err("events requires limit 1..1000 and afterSeq >= -1".into());
                 }
-                let events: Vec<_> = state
-                    .history
+                let tail = params["tail"].as_bool().unwrap_or(false);
+                if tail && params.get("afterSeq").is_some() {
+                    return Err("events tail cannot be combined with afterSeq".into());
+                }
+                let start = if tail {
+                    state.history.len().saturating_sub(limit as usize)
+                } else {
+                    0
+                };
+                let events: Vec<_> = state.history[start..]
                     .iter()
                     .filter(|e| e["seq"].as_i64().unwrap_or(-1) > after)
                     .take(limit as usize)
