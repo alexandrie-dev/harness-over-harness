@@ -548,3 +548,47 @@ fn drain_backoff(rx: &mpsc::Receiver<Message>) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod telegram_environment_tests {
+    use super::*;
+
+    #[test]
+    fn engine_process_does_not_receive_telegram_environment() {
+        let directory = std::env::temp_dir().join(format!("hoh-engine-env-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let output = directory.join("env");
+        let config = ProcessConfig {
+            path: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "env > \"$1\"".into(),
+                "sh".into(),
+                output.display().to_string(),
+            ],
+            env: vec![
+                ("TELEGRAM_U4_EXPLICIT".into(), "fixture".into()),
+                ("HOH_U4_ALLOWED".into(), "yes".into()),
+            ],
+            stderr_file: None,
+            cwd: directory.clone(),
+            provider: "mock".into(),
+            model: "mock".into(),
+        };
+        let (sender, _receiver) = mpsc::channel();
+        let mut process = config.connect(0, sender).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !process.exited() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        process.close();
+        let environment = std::fs::read_to_string(output).unwrap();
+        assert!(environment.lines().any(|line| line == "HOH_U4_ALLOWED=yes"));
+        assert!(
+            !environment
+                .lines()
+                .any(|line| line.starts_with("TELEGRAM_"))
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
