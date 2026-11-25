@@ -32,6 +32,11 @@ test('changed-folder refusal is explained without exposing an engine error', () 
   assert.doesNotMatch(failure.message, /-32603/);
 });
 
+test('a busy chat cannot be deleted and the reason reaches the window', () => {
+  assert.equal(mod.errors.englishError({ code: 'chat-delete-busy', message: 'secret engine details' }),
+    'Chat is running or waiting for a response. Stop it before deleting.');
+});
+
 test('handshake: config snapshot, probe, settings, ping; Claude and Codex are offered', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);

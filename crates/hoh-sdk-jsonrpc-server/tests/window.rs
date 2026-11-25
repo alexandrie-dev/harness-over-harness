@@ -843,7 +843,10 @@ async fn session_delete_rejects_running_turn() {
         .handle_request("session/delete", json!({"sessionId":"busy-delete"}))
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("running"), "{error}");
+    assert!(
+        error.to_string().starts_with("CHAT_DELETE_BUSY: "),
+        "{error}"
+    );
     gate.add_permits(1);
     env.wait("busy-delete").await;
     env.close().await;

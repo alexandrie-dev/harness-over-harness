@@ -596,8 +596,8 @@ fn an_existing_session_keeps_its_folder_identity_and_a_new_session_uses_the_new_
     );
 
     // What the core does after the person's rules were allowed: reopen in the chosen folder.
-    // A conversation already bound to the previous folder must fail closed instead of silently
-    // changing identity; a new conversation is rooted in the newly selected folder.
+    // The existing conversation resumes in its original folder; only new conversations use
+    // the new default. Resuming must not silently rebind a conversation to another folder.
     let chosen = h.root.join("chosen");
     std::fs::create_dir_all(&chosen).unwrap();
     h.engine.restart_in(&chosen).unwrap();
@@ -610,16 +610,18 @@ fn an_existing_session_keeps_its_folder_identity_and_a_new_session_uses_the_new_
             Err(error) if error.contains("подключается") && Instant::now() < until => {
                 thread::sleep(Duration::from_millis(100));
             }
-            Err(error) => {
-                assert!(
-                    error.contains("отклонил"),
-                    "unexpected identity refusal: {error}"
+            Ok(value) => {
+                assert_eq!(
+                    value["cwd"],
+                    json!(h.work),
+                    "existing chat changed folder: {value}"
                 );
                 break;
             }
-            other => panic!("the existing conversation changed folder identity: {other:?}"),
+            other => panic!("the existing conversation could not resume: {other:?}"),
         }
     }
+    h.prompt_and_wait("continue in the original folder");
     loop {
         match h.engine.request(
             "session/working-directory/get",

@@ -21,6 +21,7 @@ pub const REFUSED: &str = "Помощник отклонил запрос";
 pub const FOLDER_FIXED: &str = "executor-folder-fixed";
 pub const FOLDER_CHANGED: &str = "conversation-folder-changed";
 pub const TRUST_REVOKE_BUSY: &str = "trust-revoke-busy";
+pub const CHAT_DELETE_BUSY: &str = "chat-delete-busy";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HostError {
@@ -39,6 +40,7 @@ pub fn host_error(message: String) -> HostError {
         FOLDER_FIXED => "folder-fixed",
         FOLDER_CHANGED => "folder-changed",
         TRUST_REVOKE_BUSY => "trust-revoke-busy",
+        CHAT_DELETE_BUSY => "chat-delete-busy",
         REFUSED => "refused",
         _ => "failed",
     };

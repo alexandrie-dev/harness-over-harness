@@ -464,6 +464,10 @@ fn supervise(
                                     crate::errors::FOLDER_CHANGED.into()
                                 } else if error_code(&error) == Some("TRUST_REVOKE_BUSY") {
                                     crate::errors::TRUST_REVOKE_BUSY.into()
+                                } else if p.method == "session/delete"
+                                    && error_code(&error) == Some("CHAT_DELETE_BUSY")
+                                {
+                                    crate::errors::CHAT_DELETE_BUSY.into()
                                 } else if error_code(&error) == Some("EXECUTOR_FOLDER_FIXED") {
                                     // A closed list of codes may pass on (no text): the window explains this one.
                                     crate::errors::FOLDER_FIXED.into()

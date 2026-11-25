@@ -92,6 +92,17 @@ impl Transport for MemoryTransport {
                 .unwrap();
             return Ok(());
         }
+        if frame["method"] == "session/delete" {
+            let error = framing::error(
+                frame["id"].clone(),
+                -32000,
+                "CHAT_DELETE_BUSY: private engine detail /secret",
+            );
+            self.inbox
+                .send(Message::Incoming(self.generation, classify(error).unwrap()))
+                .unwrap();
+            return Ok(());
+        }
         if frame["method"] == "hoh/test/folder-fixed-prefix" {
             // Exactly what the engine sends: the code in front of the text, no `data`.
             let error = framing::error(
@@ -248,6 +259,16 @@ fn the_window_gets_codes_for_the_engine_and_host_refusals() {
         json!({"code": "refused", "message": "Помощник отклонил запрос"})
     );
     assert!(!refused.to_string().contains("id_rsa"), "{refused}");
+    let busy = sent(
+        engine
+            .request("session/delete", json!({"sessionId":"busy"}))
+            .unwrap_err(),
+    );
+    assert_eq!(
+        busy,
+        json!({"code":"chat-delete-busy","message":"chat-delete-busy"})
+    );
+    assert!(!busy.to_string().contains("secret"));
     // The bridge's own refusals of the confirmation (what `native.rs` returns for «Отклонить» and for a timeout).
     for (message, code) in [
         (hoh_desktop::errors::REJECTED, "rejected"),

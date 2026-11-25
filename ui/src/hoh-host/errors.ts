@@ -25,6 +25,7 @@ const BY_CODE: Readonly<Record<string, string>> = {
   unavailable: 'Not available in HoH.',
   'folder-fixed': 'A Claude chat works in one folder. Start a new chat to work in another.',
   'folder-changed': 'The folder for this chat has changed. Rebind the chat to this folder to continue.',
+  'chat-delete-busy': 'Chat is running or waiting for a response. Stop it before deleting.',
   refused: 'HoH refused this request.',
 };
 

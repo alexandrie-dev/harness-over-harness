@@ -240,10 +240,14 @@ impl HarnessSdkJsonRpcServer {
                     || !agent.inbox().next_step().is_empty()
                 {
                     return Err(error(
-                        "Chat is running or waiting for a response. Stop it before deleting.",
+                        "CHAT_DELETE_BUSY: Chat is running or waiting for a response. Stop it before deleting.",
                     ));
                 }
-                agent.reserve_deletion()?;
+                agent.reserve_deletion().map_err(|failure| {
+                    if failure.to_string() == "Chat is running or waiting for a response. Stop it before deleting." {
+                        error("CHAT_DELETE_BUSY: Chat is running or waiting for a response. Stop it before deleting.")
+                    } else { failure }
+                })?;
             }
             state.deleting.insert(id.clone());
             state.sessions.shift_remove(&id)

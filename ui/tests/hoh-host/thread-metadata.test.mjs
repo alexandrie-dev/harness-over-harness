@@ -180,6 +180,21 @@ test('del2 events and approval remain visible while a deletion is refused', asyn
   close(first);
 });
 
+test('deleting a running chat explains why it was refused', async () => {
+  const f = fixture(); const first = await f.open();
+  await projection(first.client);
+  const original = first.engine.request.bind(first.engine);
+  first.engine.request = async (method, params) => {
+    if (method === 'session/delete') throw { code: 'chat-delete-busy', message: 'chat-delete-busy' };
+    return original(method, params);
+  };
+  const result = await first.client.request('orchestration.dispatchCommand', { type: 'thread.delete', commandId: 'busy', threadId: 'chat' });
+  assert.equal(result._tag, 'Failure');
+  assert.match(JSON.stringify(result), /Chat is running or waiting for a response\. Stop it before deleting\./);
+  assert(first.host.thread('chat'));
+  close(first);
+});
+
 test('del2 a delayed message cannot send after its chat is deleted', async () => {
   const f = fixture(); const first = await f.open();
   await projection(first.client);
