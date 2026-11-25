@@ -85,6 +85,7 @@ fn main() {
     }
     assert_eq!(args.get(1).map(String::as_str), Some("app-server"));
     let scenario = std::env::var("CODEX_STUB_SCENARIO").unwrap_or_else(|_| "stream".into());
+    log(&json!({"stubEvent":"argv", "args": &args[1..]}));
     let stdin = std::io::stdin();
     let mut approval = 0_u8;
     let mut child: Option<Child> = None;
@@ -93,6 +94,7 @@ fn main() {
     let mut late_interrupt: Option<Value> = None;
     let delayed_turn_active = Arc::new(AtomicBool::new(false));
     let mut turn_count = 0_u8;
+    let mut supervised_cwd = None;
     for line in BufReader::new(stdin.lock()).lines() {
         let line = line.unwrap();
         let message: Value = serde_json::from_str(&line).unwrap();
@@ -125,6 +127,15 @@ fn main() {
                 send(json!({"id":id,"result":{"thread":{"id":returned}}}));
             }
             Some("turn/start") => {
+                if scenario == "supervised-write" {
+                    let cwd = message["params"]["cwd"].as_str().unwrap();
+                    assert_eq!(message["params"]["approvalPolicy"], "untrusted");
+                    assert_eq!(
+                        message["params"]["sandboxPolicy"],
+                        json!({"type":"workspaceWrite", "writableRoots":[cwd]})
+                    );
+                    supervised_cwd = Some(cwd.to_owned());
+                }
                 turn_count += 1;
                 if scenario == "result-before-turn-started" {
                     let spawned = Command::new("sh")
@@ -399,7 +410,13 @@ fn main() {
             }
             None if message.get("id") == Some(&json!("approval-command")) => {
                 approval = 1;
-                if scenario == "approvals" {
+                if scenario == "supervised-write" {
+                    assert_eq!(message["result"]["decision"], "accept");
+                    let cwd = supervised_cwd.as_deref().unwrap();
+                    std::fs::write(std::path::Path::new(cwd).join("approved.txt"), "approved")
+                        .unwrap();
+                    finish_turn("completed");
+                } else if scenario == "approvals" {
                     send(
                         json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","item":{"type":"fileChange","id":"file-1","status":"inProgress","changes":[{"path":"src/lib.rs","kind":"update","diff":"+ok"}]}}}),
                     );
