@@ -27,10 +27,10 @@ use hoh_loader::ProfileContextKey;
 use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
-    ExecutorEffectiveAccess, ExecutorParams, ExecutorRuntimeMode, ExecutorSelectParams,
-    ExecutorSessionAccess, ExecutorTitleGenerateParams, ExecutorTrustGetParams,
-    ExecutorTrustResult, ExecutorTrustSetParams, SessionInteractionMode, WorkspaceAddParams,
-    WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult,
+    ExecutorEffectiveAccess, ExecutorLimitsResult, ExecutorLimitsState, ExecutorParams,
+    ExecutorRuntimeMode, ExecutorSelectParams, ExecutorSessionAccess, ExecutorTitleGenerateParams,
+    ExecutorTrustGetParams, ExecutorTrustResult, ExecutorTrustSetParams, SessionInteractionMode,
+    WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -59,6 +59,7 @@ pub const CODEX_SELECTION_FILE: &str = "external-harness-codex-selection.json";
 pub const FOLDERS_FILE: &str = "workspace-folders.json";
 
 const DISCOVER: &str = "hoh/executor/discover";
+const LIMITS: &str = "hoh/executor/limits";
 const SELECT: &str = "hoh/executor/select";
 const ACCESS_GET: &str = "hoh/executor/access/get";
 const ACCESS_SET: &str = "hoh/executor/access/set";
@@ -91,8 +92,9 @@ impl Drop for TrustReservations {
         }
     }
 }
-const METHODS: [&str; 10] = [
+const METHODS: [&str; 11] = [
     DISCOVER,
+    LIMITS,
     SELECT,
     ACCESS_GET,
     ACCESS_SET,
@@ -330,6 +332,19 @@ impl Window {
             DISCOVER => {
                 let params: ExecutorParams = parse(method, params)?;
                 self.discover(&params.executor).await
+            }
+            LIMITS => {
+                let params: ExecutorParams = parse(method, params)?;
+                let harness = self
+                    .service()
+                    .get(&params.executor)
+                    .ok_or_else(|| format!("no external harness named \"{}\"", params.executor))?;
+                let (state, windows) = match harness.rate_limits().await {
+                    Ok(Some(windows)) => (ExecutorLimitsState::Available, windows),
+                    Ok(None) => (ExecutorLimitsState::Unavailable, Vec::new()),
+                    Err(_) => (ExecutorLimitsState::Failed, Vec::new()),
+                };
+                Ok(serde_json::to_value(ExecutorLimitsResult { state, windows })?)
             }
             SELECT => self.select(parse(method, params)?).await,
             ACCESS_GET => {

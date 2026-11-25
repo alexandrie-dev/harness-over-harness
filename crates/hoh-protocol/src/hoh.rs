@@ -663,6 +663,21 @@ optional!(ExecutorDiscoverResult {
     #[schemars(required)]
     failure: Option<ExecutorDiscoveryFailure>,
 });
+choices!(ExecutorLimitsState {
+    Available => "available",
+    Unavailable => "unavailable",
+    Failed => "failed",
+});
+object!(ExecutorLimitWindow {
+    name: Option<String>,
+    remaining_percent: u8,
+    window_minutes: Option<u32>,
+    resets_at: Option<u64>,
+});
+object!(ExecutorLimitsResult {
+    state: ExecutorLimitsState,
+    windows: Vec<ExecutorLimitWindow>,
+});
 // `hoh/executor/commands` (HOH-41): the slash commands and skills the executor itself declares
 // for a folder the engine knows (its default one when `cwd` is absent, a project added with
 // `hoh/workspace/add`, or the folder of an open conversation), asked before the first turn without

@@ -880,6 +880,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/executor/limits"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/executor/select"
         },
         "params": {

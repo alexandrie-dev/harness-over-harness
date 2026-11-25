@@ -130,6 +130,8 @@ pub enum Request {
     SecuritySummary(Empty),
     #[serde(rename = "hoh/executor/discover")]
     ExecutorDiscover(ExecutorParams),
+    #[serde(rename = "hoh/executor/limits")]
+    ExecutorLimits(ExecutorParams),
     #[serde(rename = "hoh/executor/select")]
     ExecutorSelect(ExecutorSelectParams),
     #[serde(rename = "hoh/executor/access/get")]
@@ -210,6 +212,7 @@ impl Request {
             Self::SettingsSet(_) => "hoh/settings/set",
             Self::SecuritySummary(_) => "hoh/security/summary",
             Self::ExecutorDiscover(_) => "hoh/executor/discover",
+            Self::ExecutorLimits(_) => "hoh/executor/limits",
             Self::ExecutorSelect(_) => "hoh/executor/select",
             Self::ExecutorAccessGet(_) => "hoh/executor/access/get",
             Self::ExecutorAccessSet(_) => "hoh/executor/access/set",
@@ -317,6 +320,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/settings/set",
     "hoh/security/summary",
     "hoh/executor/discover",
+    "hoh/executor/limits",
     "hoh/executor/select",
     "hoh/executor/access/get",
     "hoh/executor/access/set",
@@ -407,7 +411,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/settings/get" => admit::<Empty>(value),
         "hoh/settings/set" => admit::<SettingsSetParams>(value),
         "hoh/security/summary" => admit::<Empty>(value),
-        "hoh/executor/discover" => admit::<ExecutorParams>(value),
+        "hoh/executor/discover" | "hoh/executor/limits" => admit::<ExecutorParams>(value),
         "hoh/executor/select" => admit::<ExecutorSelectParams>(value),
         "hoh/executor/access/get" => admit::<ExecutorAccessGetParams>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetParams>(value),
@@ -483,6 +487,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/settings/set" => admit::<Settings>(value),
         "hoh/security/summary" => admit::<SecuritySummary>(value),
         "hoh/executor/discover" => admit::<ExecutorDiscoverResult>(value),
+        "hoh/executor/limits" => admit::<ExecutorLimitsResult>(value),
         "hoh/executor/select" => admit::<ExecutorSelection>(value),
         "hoh/executor/access/get" => admit::<ExecutorAccessGetResult>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetResult>(value),
@@ -1205,6 +1210,12 @@ pub fn schemas() -> Vec<(String, Value)> {
             schema_for!(ExecutorDiscoverResult),
         ),
         (
+            "ExecutorLimits",
+            "hoh/executor/limits",
+            schema_for!(ExecutorParams),
+            schema_for!(ExecutorLimitsResult),
+        ),
+        (
             "ExecutorSelect",
             "hoh/executor/select",
             schema_for!(ExecutorSelectParams),
@@ -1385,6 +1396,8 @@ enum RequestDecode {
     SecuritySummary(Empty),
     #[serde(rename = "hoh/executor/discover")]
     ExecutorDiscover(ExecutorParams),
+    #[serde(rename = "hoh/executor/limits")]
+    ExecutorLimits(ExecutorParams),
     #[serde(rename = "hoh/executor/select")]
     ExecutorSelect(ExecutorSelectParams),
     #[serde(rename = "hoh/executor/access/get")]

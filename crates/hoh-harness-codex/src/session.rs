@@ -411,6 +411,27 @@ impl CodexSession {
         Ok((session, events, thread_id, resumed))
     }
 
+    pub(crate) async fn read_rate_limits(
+        supervisor: Supervisor,
+        request_timeout: Duration,
+        cwd: String,
+    ) -> Result<Value, HarnessFailure> {
+        let (session, _events) = Self::open(
+            supervisor,
+            1,
+            request_timeout,
+            mode_settings(hoh_external_harness::AccessMode::Confirm),
+            cwd,
+            false,
+            None,
+            None,
+        )
+        .await?;
+        let result = session.request("account/rateLimits/read", Value::Null).await;
+        session.terminate_now(Duration::from_millis(300)).await;
+        result
+    }
+
     pub(crate) async fn probe(
         supervisor: Supervisor,
         request_timeout: Duration,

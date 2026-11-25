@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
-    AccessMode, AuthState, Discovery, ExternalHarness, HarnessEffort, HarnessFailure, HarnessModel,
-    HarnessPolicy, HarnessResult, ProcessSpec, StartParams, StartResult, Started, Supervisor,
-    SupervisorLimits, VersionStatus, code,
+    AccessMode, AuthState, Discovery, ExecutorLimitWindow, ExternalHarness, HarnessEffort,
+    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, ProcessSpec, StartParams, StartResult,
+    Started, Supervisor, SupervisorLimits, VersionStatus, code,
 };
 use serde_json::Value;
 
@@ -343,7 +343,78 @@ async fn discover_codex(config: &CodexConfig) -> (Discovery, VersionStatus) {
     }
 }
 
+fn rate_limit_windows(response: &Value) -> Vec<ExecutorLimitWindow> {
+    let mut windows = Vec::new();
+    let snapshots = response.get("rateLimitsByLimitId").and_then(Value::as_object);
+    let main = response.get("rateLimits");
+    let main_id = main
+        .and_then(|snapshot| snapshot.get("limitId"))
+        .and_then(Value::as_str);
+    let main_is_in_map = main_id
+        .zip(snapshots)
+        .is_some_and(|(id, snapshots)| snapshots.contains_key(id));
+    let snapshots = main
+        .filter(|_| !main_is_in_map)
+        .into_iter()
+        .chain(snapshots.into_iter().flat_map(|entries| entries.values()));
+
+    for snapshot in snapshots {
+        let name = snapshot.get("limitName").and_then(Value::as_str);
+        let id = snapshot.get("limitId").and_then(Value::as_str);
+        let name = name
+            .or(id.filter(|id| *id != "codex"))
+            .map(|label| {
+                label
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(80)
+                    .collect::<String>()
+            })
+            .filter(|label| !label.trim().is_empty());
+        for key in ["primary", "secondary"] {
+            let Some(window) = snapshot.get(key) else {
+                continue;
+            };
+            let Some(used) = window.get("usedPercent").and_then(Value::as_u64) else {
+                continue;
+            };
+            let remaining_percent = 100_u8.saturating_sub(used.min(100) as u8);
+            let window_minutes = window
+                .get("windowDurationMins")
+                .and_then(Value::as_u64)
+                .and_then(|minutes| u32::try_from(minutes).ok())
+                .filter(|minutes| *minutes > 0);
+            let resets_at = window
+                .get("resetsAt")
+                .and_then(Value::as_u64)
+                .filter(|seconds| *seconds > 0 && *seconds <= 8_640_000_000_000);
+            windows.push(ExecutorLimitWindow {
+                name: name.clone(),
+                remaining_percent,
+                window_minutes,
+                resets_at,
+            });
+        }
+    }
+    windows
+}
+
 impl ExternalHarness for CodexHarness {
+    fn rate_limits(&self) -> BoxFuture<'static, HarnessResult<Option<Vec<ExecutorLimitWindow>>>> {
+        let config = self.config.clone();
+        Box::pin(async move {
+            let cwd = std::env::temp_dir();
+            let supervisor = spawn(&config, &cwd)?;
+            let response = CodexSession::read_rate_limits(
+                supervisor,
+                config.request_timeout,
+                cwd.to_string_lossy().into_owned(),
+            )
+            .await?;
+            Ok(Some(rate_limit_windows(&response)))
+        })
+    }
+
     fn discover(&self) -> BoxFuture<'static, HarnessResult<Discovery>> {
         let config = self.config.clone();
         Box::pin(async move { Ok(discover_codex(&config).await.0) })

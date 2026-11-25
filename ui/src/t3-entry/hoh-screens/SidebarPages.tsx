@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 
 import { PAGE_TITLES, pages } from './pages';
 import { PluginsPage } from './PluginsPage';
+import { UsagePage } from './UsagePage';
 
 export function usePage() { return useSyncExternalStore(pages.subscribe, pages.current, () => null); }
 
@@ -23,7 +24,7 @@ export function PageLayer() {
   if (!page || !host) return null;
   return createPortal(
     <div className="hoh-page" data-hoh-page={page}>
-      {page === 'plugins' ? <PluginsPage /> : (
+      {page === 'plugins' ? <PluginsPage /> : page === 'usage' ? <UsagePage onClose={pages.close} /> : (
         <div className="hoh-page__column">
           <h1>{PAGE_TITLES[page]}</h1>
           <p>Coming Soon</p>

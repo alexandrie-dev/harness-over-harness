@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutorLimitsResult",
+  "type": "object",
+  "properties": {
+    "state": {
+      "$ref": "#/$defs/ExecutorLimitsState"
+    },
+    "windows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExecutorLimitWindow"
+      }
+    }
+  },
+  "required": [
+    "state",
+    "windows"
+  ],
+  "$defs": {
+    "ExecutorLimitsState": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable",
+        "failed"
+      ]
+    },
+    "ExecutorLimitWindow": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remainingPercent": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "windowMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "resetsAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "remainingPercent"
+      ]
+    }
+  },
+  "x-method": "hoh/executor/limits"
+}

@@ -9,6 +9,10 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::to_value(serde_json::from_value::<InitializeResult>(value).unwrap())
                 .unwrap()
         }
+        "hoh/executor/limits" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorLimitsResult>(value).unwrap())
+                .unwrap()
+        }
         "hoh/executor/discover" => {
             serde_json::to_value(serde_json::from_value::<ExecutorDiscoverResult>(value).unwrap())
                 .unwrap()

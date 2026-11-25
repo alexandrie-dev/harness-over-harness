@@ -18,6 +18,13 @@ pub type HarnessResult<T> = Result<T, HarnessFailure>;
 pub trait ExternalHarness: Send + Sync + 'static {
     /// Installed, signed in, models — without reading secrets.
     fn discover(&self) -> BoxFuture<'static, HarnessResult<Discovery>>;
+    /// Read the account's live quota windows when the provider exposes them.
+    fn rate_limits(
+        &self,
+    ) -> BoxFuture<'static, HarnessResult<Option<Vec<crate::ExecutorLimitWindow>>>> {
+        Box::pin(std::future::ready(Ok(None)))
+    }
+
     /// Start a native session for one HoH session, or continue `params.resume`. A `resume` the
     /// harness no longer knows fails with [`crate::code::SESSION_NOT_FOUND`].
     fn start_or_resume(&self, params: StartParams) -> BoxFuture<'static, HarnessResult<Started>>;

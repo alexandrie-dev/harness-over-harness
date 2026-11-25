@@ -584,7 +584,7 @@ fn real_stub_child_accepts_host_handshake_serves_settings_and_stops() {
 }
 
 #[test]
-fn window_may_call_exactly_the_eight_executor_methods_and_no_new_ones() {
+fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
     let mut executor: Vec<&str> = bridge::WINDOW_METHODS
         .iter()
         .copied()
@@ -598,15 +598,16 @@ fn window_may_call_exactly_the_eight_executor_methods_and_no_new_ones() {
             "hoh/executor/access/set",
             "hoh/executor/commands",
             "hoh/executor/discover",
+            "hoh/executor/limits",
             "hoh/executor/select",
             "hoh/executor/title/generate",
             "hoh/executor/trust/get",
             "hoh/executor/trust/set"
         ]
     );
-    // 47 methods before the executor ones, the eight executor ones, `hoh/workspace/entries` and
+    // 47 methods before the executor ones, the nine executor ones, `hoh/workspace/entries` and
     // `hoh/workspace/add` (HOH-41), delete, two folder-rebinding methods, and plugin inventory.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 8 + 2 + 1 + 2 + 1);
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 9 + 2 + 1 + 2 + 1);
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/status"));
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/rebind"));
     assert!(bridge::needs_approval(
@@ -616,6 +617,7 @@ fn window_may_call_exactly_the_eight_executor_methods_and_no_new_ones() {
     for method in [
         "hoh/executor/access/get",
         "hoh/executor/discover",
+        "hoh/executor/limits",
         "hoh/executor/title/generate",
         "hoh/executor/trust/get",
     ] {

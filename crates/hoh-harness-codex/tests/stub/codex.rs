@@ -113,6 +113,25 @@ fn main() {
             Some("account/read") => send(
                 json!({"id":id,"result":{"account":{"type":"chatgpt","email":"founder@example.test","planType":"pro"},"requiresOpenaiAuth":true}}),
             ),
+            Some("account/rateLimits/read") => {
+                let main = json!({
+                    "limitId": "codex",
+                    "primary": {"usedPercent": 16, "windowDurationMins": 300, "resetsAt": 1795672800},
+                    "secondary": {"usedPercent": 57, "windowDurationMins": 10080, "resetsAt": 1796176800},
+                });
+                send(json!({"id": id, "result": {
+                    "rateLimits": main,
+                    "rateLimitsByLimitId": {
+                        "codex": main,
+                        "review": {
+                            "limitId": "review",
+                            "limitName": "Code review",
+                            "primary": {"usedPercent": 100, "windowDurationMins": 10080},
+                            "secondary": null,
+                        },
+                    },
+                }}));
+            }
             Some("thread/start") => send(json!({"id":id,"result":{"thread":{"id":"thread-stub"}}})),
             Some("thread/resume") => {
                 let thread = message

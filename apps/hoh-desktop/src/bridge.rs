@@ -60,6 +60,7 @@ pub const WINDOW_METHODS: &[&str] = &[
     "hoh/executor/trust/get",
     "hoh/executor/trust/set",
     "hoh/executor/discover",
+    "hoh/executor/limits",
     "hoh/executor/select",
     // HOH-41: `/`, `$` and `@` of the T3 composer. Read-only, and only for a folder the engine
     // knows (the engine checks it); like every method here, only from the main window.

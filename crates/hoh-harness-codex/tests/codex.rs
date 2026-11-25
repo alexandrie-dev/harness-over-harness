@@ -33,6 +33,33 @@ fn harness(temp: &TempDir, scenario: &str) -> (CodexHarness, PathBuf) {
     (CodexHarness::new(config), log)
 }
 
+#[tokio::test]
+async fn account_limits_read_real_windows_without_starting_a_thread() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "account-limits");
+
+    let windows = harness.rate_limits().await.unwrap().unwrap();
+    assert_eq!(windows.len(), 3);
+    assert_eq!(windows[0].remaining_percent, 84);
+    assert_eq!(windows[0].window_minutes, Some(300));
+    assert_eq!(windows[0].resets_at, Some(1795672800));
+    assert_eq!(windows[1].remaining_percent, 43);
+    assert_eq!(windows[1].window_minutes, Some(10080));
+    assert_eq!(windows[2].name.as_deref(), Some("Code review"));
+    assert_eq!(windows[2].remaining_percent, 0);
+    assert_eq!(windows[2].resets_at, None);
+
+    let requests = lines(&log);
+    let methods: Vec<_> = requests
+        .iter()
+        .filter_map(|entry| entry["method"].as_str())
+        .collect();
+    assert_eq!(
+        methods,
+        ["initialize", "initialized", "account/rateLimits/read"]
+    );
+}
+
 fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
     StartParams {
         session_id: "hoh-session".into(),
