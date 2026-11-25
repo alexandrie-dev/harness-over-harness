@@ -60,6 +60,9 @@ for (const executor of ['claude', 'codex']) {
     assert(text.endsWith(brief));
     const user = host.threads.get(threadId).projection().messages.find(message => message.role === 'user');
     assert.equal(user.text, brief);
+    const card = host.home.projectEntries().find(entry => entry.id === threadId);
+    assert.equal(card.pluginCreator, true);
+    assert.equal(card.projectId, 'author');
     assert.deepEqual(engine.starts, [{ sessionId: threadId, executor, cwd }]);
     assert.equal(engine.sessionAccess.get(threadId), 'confirm');
   });
@@ -72,7 +75,7 @@ test('replays old Plugin Creator chats with the brief visible and leaves later m
   const original = `# HoH plugin authoring\n\n${previousInstructions}`;
   const previous = skill.slice(skill.indexOf('# HoH plugin authoring')).trim();
   for (const instructions of [original, previous]) {
-    const thread = new ThreadModel({ id: 'legacy', createdAt: 1, model: 'model', mode: 'confirm' });
+    const thread = new ThreadModel({ id: 'legacy', title: 'Renamed plugin chat', createdAt: 1, model: 'model', mode: 'confirm' });
     thread.pluginAuthoringPrefixes = pluginAuthoringPrefixes(skill, guide);
     const savedPrompt = instructions + `\n\n## Plugin request\n\n${brief}`;
     for (const seq of [1, 2]) {
@@ -84,6 +87,7 @@ test('replays old Plugin Creator chats with the brief visible and leaves later m
     }
     const messages = thread.projection().messages.filter(message => message.role === 'user');
     assert.deepEqual(messages.map(message => message.text), [brief, savedPrompt]);
+    assert.equal(thread.home().pluginCreator, true);
   }
 });
 

@@ -3,12 +3,14 @@
 // Это не отдельный экран: vite.ts подставляет <HomeBody/> в пустой разговор T3 (ChatView, DraftHeroHeadline), так что поле ввода,
 // чип модели с уровнями, Permissions, выбор проекта и отправка — настоящие, их. Здесь только содержимое над ними.
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
-import { CheckIcon, ChevronDownIcon, XIcon } from 'lucide-react';
+import { CheckIcon, ChevronDownIcon, PlusIcon, XIcon } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
 
 import { ClaudeAI, OpenAI } from '~/components/Icons';
+import { T3AppIcon } from '~/components/T3AppIcon';
 import { Button } from '~/components/ui/button';
 import { openCommandPalette } from '~/commandPaletteBus';
+import type { HomeAgent as Agent, HomeEntry } from '../../hoh-host/threads';
 import { openQuickView, QuickViewDialog } from './QuickViewDialog';
 import {
   getGroupAgentsByProject,
@@ -19,21 +21,9 @@ import {
 } from './grouping';
 import './home.css';
 
-interface Entry {
-  id: string; title: string; projectId: string; state: 'working' | 'waiting' | 'done' | 'ended';
-  providerInstanceId: string;
-  runner: 'claude' | 'codex';
-  turnOrdinal: number; canComplete?: boolean; interrupted?: boolean; stopped?: boolean;
-  startedAt: number; doneAt: number | null; steps: { done: number; total: number };
-  request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
-  agents: Agent[];
-}
-interface Agent {
-  id: string; name: string; kind: string; state: 'working' | 'done' | 'failed';
-  startedAt: number; doneAt: number | null; currentStep: string | null;
-}
+type Entry = HomeEntry & { runner: 'claude' | 'codex' };
 interface Home {
-  version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectEntries(): Entry[]; projectTitle(id: string): string; projectKey(id: string): string;
+  version(): number; subscribe(listener: () => void): () => void; entries(): HomeEntry[]; projectEntries(): HomeEntry[]; projectTitle(id: string): string; projectKey(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
   complete(threadId: string, turnOrdinal: number): Promise<boolean>;
 }
@@ -79,6 +69,16 @@ interface View {
 const Mark = ({ entry }: { entry: Entry }) => entry.providerInstanceId === 'codex'
   ? <OpenAI className="hoh-mark" role="img" aria-label="Codex" />
   : <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
+
+function PluginCreatorMark({ entry }: { entry: Entry }) {
+  return (
+    <span className="hoh-card__partnership" role="img" aria-label={`Alexandrie + ${entry.runner === 'codex' ? 'Codex' : 'Claude'}`}>
+      <span className="hoh-card__emblem" aria-hidden><T3AppIcon /></span>
+      <span className="hoh-card__union" aria-hidden><PlusIcon strokeWidth={2.5} /></span>
+      <span className="hoh-card__worker" aria-hidden><Mark entry={entry} /></span>
+    </span>
+  );
+}
 
 function Steps({ entry }: { entry: Entry }) {
   if (entry.steps.total === 0 || entry.canComplete) return null;
@@ -142,28 +142,29 @@ export function waitingLabel(entry: Pick<Entry, 'stopped' | 'interrupted' | 'can
   return entry.stopped ? 'Stopped' : entry.interrupted ? 'Interrupted' : entry.canComplete ? 'Ready for review' : 'Waiting for your answer';
 }
 type Complete = (entry: Entry, event: MouseEvent<HTMLButtonElement>) => void;
+const CREATOR_STATES = { working: 'Working', done: 'Done', ended: 'Inactive' };
 
 function EntryCard({ entry, view, complete, grouped }: { entry: Entry; view: View; complete: Complete; grouped: boolean }) {
   const waiting = entry.state === 'waiting';
-  const project = waiting && !grouped ? projectLabel(entry.projectId, view.where(entry)) : null;
+  const project = waiting && !grouped && !entry.pluginCreator ? projectLabel(entry.projectId, view.where(entry)) : null;
+  const label = waiting ? waitingLabel(entry) : entry.pluginCreator && CREATOR_STATES[entry.state];
   return (
-    <article className="hoh-card" data-state={entry.state} data-thread-id={entry.id}>
+    <article className={entry.pluginCreator ? 'hoh-card hoh-card--plugin-creator' : 'hoh-card'} data-state={entry.state} data-thread-id={entry.id}>
       <button type="button" className="hoh-card__open" aria-label={`Open ${entry.title}`} title={waiting ? undefined : entry.title} onClick={() => view.open(entry.id)} />
-      <Mark entry={entry} />
+      {entry.pluginCreator ? <PluginCreatorMark entry={entry} /> : <Mark entry={entry} />}
       <span className="hoh-card__title">{entry.title}</span>
       {project ? <span className="hoh-card__where">{project}</span> : null}
       {waiting && entry.agents.length > 0 ? <span className="hoh-subs">{entry.agents.map((agent) => <Sub key={agent.id} agent={agent} now={view.now} />)}</span> : null}
-      {waiting ? (
-        <>
-          <span className="hoh-card__state">
-            <b>{waitingLabel(entry)}</b>
-            {entry.canComplete ? <Button className="hoh-card__complete" variant="ghost-muted" size="micro" onClick={(event) => complete(entry, event)}><CheckIcon aria-hidden />Mark done</Button> : null}
-            <span className="hoh-card__elapsed">{elapsed(entry.startedAt, view.now)}</span>
-          </span>
-          <Steps entry={entry} />
-        </>
+      {label ? (
+        <span className="hoh-card__state">
+          <b>{label}</b>
+          {entry.canComplete ? <Button className="hoh-card__complete" variant="ghost-muted" size="micro" onClick={(event) => complete(entry, event)}><CheckIcon aria-hidden />Mark done</Button> : null}
+          {waiting || entry.state === 'working' ? <span className="hoh-card__elapsed">{elapsed(entry.startedAt, view.now)}</span> : null}
+          {entry.state === 'done' && entry.doneAt !== null ? <span className="hoh-card__time">{clock(entry.doneAt)}</span> : null}
+        </span>
       ) : null}
-      {entry.state === 'done' && entry.doneAt !== null ? <span className="hoh-card__time">{clock(entry.doneAt)}</span> : null}
+      {waiting || (entry.pluginCreator && entry.state === 'working') ? <Steps entry={entry} /> : null}
+      {!entry.pluginCreator && entry.state === 'done' && entry.doneAt !== null ? <span className="hoh-card__time">{clock(entry.doneAt)}</span> : null}
     </article>
   );
 }
@@ -176,13 +177,15 @@ interface Completion {
   preview: HTMLElement | null;
 }
 
-function AgentClusters({ entries, view, projectId = null }: { entries: Entry[]; view: View; projectId?: string | null }) {
+function AgentClusters({ entries, view, projectId = null, pluginCreator = false }: {
+  entries: Entry[]; view: View; projectId?: string | null; pluginCreator?: boolean;
+}) {
   const root = useRef<HTMLDivElement>(null);
   const flights = useRef<HTMLDivElement>(null);
   const doneToggle = useRef<HTMLButtonElement>(null);
   const pending = useRef(new Map<string, Completion>());
   const doneId = useId();
-  const expanded = !view.collapsedDone.has(projectId);
+  const expanded = pluginCreator || !view.collapsedDone.has(projectId);
   const sections = [
     { state: 'waiting', label: 'Waiting for you', items: entries.filter((entry) => entry.state === 'waiting') },
     { state: 'working', label: 'Working', items: entries.filter((entry) => entry.state === 'working') },
@@ -266,8 +269,12 @@ function AgentClusters({ entries, view, projectId = null }: { entries: Entry[]; 
   }, [entries, expanded]);
 
   return (
-    <div ref={root} className="hoh-agent-clusters">
-      {sections.filter(({ items }) => items.length > 0).map(({ state, label, items }) => (
+    <div ref={root} className="hoh-agent-clusters" role={pluginCreator ? 'region' : undefined} aria-label={pluginCreator ? 'Plugin Creator' : undefined}>
+      {pluginCreator ? (
+        <div className="hoh-home__creator-cards">
+          {entries.map((entry) => <EntryCard key={entry.id} entry={entry} view={view} complete={complete} grouped={false} />)}
+        </div>
+      ) : sections.filter(({ items }) => items.length > 0).map(({ state, label, items }) => (
         <section key={state} className="hoh-agent-cluster" data-cluster={state}>
           <h2 className="hoh-home__label">
             {state === 'done' ? (
@@ -291,11 +298,12 @@ function AgentClusters({ entries, view, projectId = null }: { entries: Entry[]; 
 }
 
 /** Cards: an agent is a card, its subagents are lines inside it; the request that waits for the person stands above them. */
-function Cards({ entries, asking, view }: Lists) {
+function Cards({ entries, asking, creators, view }: Lists) {
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">
-        <Head now={view.now} busy={entries.length + asking.length > 0} />
+        <Head now={view.now} busy={entries.length + asking.length + creators.length > 0} />
+        {creators.length > 0 ? <AgentClusters entries={creators} view={view} pluginCreator /> : null}
         {entries.length > 0 ? <AgentClusters entries={entries} view={view} /> : null}
       </div>
       {asking.length > 0 ? (
@@ -502,7 +510,7 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
   );
 }
 
-function GroupedCards({ entries, asking, view, projectEntries }: Lists) {
+function GroupedCards({ entries, asking, creators, view, projectEntries }: Lists) {
   const groups = groupEntriesByProject(
     projectEntries,
     (projectId) => view.host?.projectTitle(projectId) ?? 'No project',
@@ -511,7 +519,8 @@ function GroupedCards({ entries, asking, view, projectEntries }: Lists) {
   return (
     <div className="hoh-home__inner">
       <div className="hoh-home__main">
-        <Head now={view.now} busy={entries.length + asking.length > 0} />
+        <Head now={view.now} busy={entries.length + asking.length + creators.length > 0} />
+        {creators.length > 0 ? <AgentClusters entries={creators} view={view} pluginCreator /> : null}
         {groups.length > 0 ? (
           <section>
             <h2 className="hoh-home__label">Projects <span className="hoh-home__count">{groups.length}</span></h2>
@@ -536,7 +545,7 @@ function GroupedCards({ entries, asking, view, projectEntries }: Lists) {
   );
 }
 
-interface Lists { entries: Entry[]; asking: Entry[]; projectEntries: Entry[]; view: View }
+interface Lists { entries: Entry[]; asking: Entry[]; creators: Entry[]; projectEntries: Entry[]; view: View }
 function Head({ now, busy }: { now: number; busy: boolean }) {
   const date = new Date(now);
   return (
@@ -557,7 +566,7 @@ export function HomeBody() {
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(timer); }, []);
   const now = Date.now();
-  const withRunner = (entry: Entry) => ({
+  const withRunner = (entry: HomeEntry): Entry => ({
     ...entry,
     runner: entry.providerInstanceId === 'codex' ? 'codex' as const : 'claude' as const,
   });
@@ -579,7 +588,12 @@ export function HomeBody() {
     }),
   };
   const projectEntries = grouped ? (host?.projectEntries() ?? []).map(withRunner) : [];
-  const lists = { entries: visible, asking, projectEntries, view };
+  const creators = (grouped ? projectEntries : visible).filter((entry) => entry.pluginCreator).sort((a, b) => b.startedAt - a.startedAt);
+  const lists = {
+    entries: visible.filter((entry) => !entry.pluginCreator),
+    asking, creators, view,
+    projectEntries: projectEntries.filter((entry) => !entry.pluginCreator),
+  };
   return (
     <div className="hoh-home" data-hoh-home-body="" data-busy={visible.length + asking.length + projectEntries.length > 0 || undefined}>
       {grouped ? <GroupedCards {...lists} /> : <Cards {...lists} />}

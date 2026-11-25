@@ -111,6 +111,7 @@ export function visibleSubagentResult(value: unknown): string {
 export interface HomeEntry {
   id: string; title: string; projectId: string;
   providerInstanceId: string;
+  pluginCreator?: boolean;
   state: 'working' | 'waiting' | 'done' | 'ended';
   /** Stable across replay: runs are rebuilt in the same order even when their message ids change after a restart. */
   turnOrdinal: number;
@@ -166,6 +167,7 @@ export class ThreadModel {
   runningInteractionMode: T3InteractionMode | null = null;
   projectId: string;
   pluginAuthoringPrefixes: readonly string[] = [];
+  pluginCreator?: boolean;
   /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
   cwd: string | null = null;
   /** History was read from the engine (or the chat is new); until then only the shell row is known. */
@@ -318,8 +320,11 @@ export class ThreadModel {
 
   private addUserMessage(messageId: string, value: string, at: number, attachments: ShownAttachment[] = []) {
     // The journal keeps the full first prompt for the harness. The message bubble shows the user's words.
-    const authoringPrefix = this.pluginAuthoringPrefixes.find(prefix => value.startsWith(prefix));
-    if (authoringPrefix && this.userMessageCount() === 0) value = value.slice(authoringPrefix.length);
+    if (this.pluginAuthoringPrefixes.length && this.userMessageCount() === 0) {
+      const authoringPrefix = this.pluginAuthoringPrefixes.find(prefix => value.startsWith(prefix));
+      this.pluginCreator = this.pluginCreator === true || authoringPrefix !== undefined;
+      if (authoringPrefix) value = value.slice(authoringPrefix.length);
+    }
     this.settledByGuess = false; this.stopRequested = false;
     if (this.pendingStartJournal) {
       this.pendingStartJournal.run.lastJournalAt = this.pendingStartJournal.previous;
@@ -980,6 +985,7 @@ export class ThreadModel {
     const interrupted = run === this.currentRun() && run.status === 'interrupted' && this.settledByGuess;
     return {
       id: this.id, title: this.titleText(), projectId: this.projectId, providerInstanceId: this.instanceId(),
+      ...(this.pluginCreator ? { pluginCreator: true } : {}),
       state: open ? (pending ? 'waiting' : 'working') : run.status === 'completed' ? 'done' : 'ended',
       turnOrdinal: run.ordinal,
       startedAt: run.startedAt ?? run.requestedAt, doneAt: run.completedAt,

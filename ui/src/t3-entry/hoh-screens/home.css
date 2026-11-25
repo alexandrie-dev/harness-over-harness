@@ -95,6 +95,64 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 .hoh-card__complete { pointer-events: auto; margin-inline-start: auto; }
 .hoh-card__complete + .hoh-card__elapsed { margin-inline-start: 0; }
 .hoh-card__state b { font-weight: 500; color: var(--warning-foreground); }
+.hoh-home__creator-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 16px;
+}
+.hoh-card--plugin-creator {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 14px;
+  row-gap: 4px;
+  align-content: center;
+  max-width: 420px;
+  min-height: 76px;
+  padding: 14px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--card) 90%, var(--glow)), var(--card) 68%) padding-box,
+    linear-gradient(120deg, color-mix(in srgb, var(--glow) 55%, var(--border)), var(--border) 72%) border-box;
+  box-shadow: 0 5px 20px color-mix(in srgb, var(--glow) 9%, transparent);
+}
+.hoh-card--plugin-creator:hover { box-shadow: 0 6px 24px color-mix(in srgb, var(--glow) 18%, transparent); }
+.hoh-card--plugin-creator .hoh-card__open:focus-visible { outline: none; }
+.hoh-card--plugin-creator[data-state="done"] { --glow: var(--success); }
+.hoh-card--plugin-creator[data-state="done"] .hoh-card__state b { color: var(--success-foreground); }
+.hoh-card--plugin-creator[data-state="working"] .hoh-card__state b { color: var(--primary); }
+.hoh-card--plugin-creator[data-state="ended"] .hoh-card__state b { color: var(--muted-foreground); }
+.hoh-card--plugin-creator .hoh-card__title { grid-area: 1 / 2; align-self: end; }
+.hoh-card--plugin-creator .hoh-card__state { grid-area: 2 / 2; margin-top: 0; align-self: start; column-gap: 4px; }
+.hoh-card--plugin-creator .hoh-steps, .hoh-card--plugin-creator .hoh-subs { grid-column: 1 / -1; margin-top: 4px; }
+.hoh-card__partnership {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  grid-area: 1 / 1 / span 2;
+}
+.hoh-card__emblem, .hoh-card__worker {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background);
+}
+.hoh-card__emblem img { width: 30px; height: 30px; object-fit: contain; }
+.hoh-card .hoh-card__worker .hoh-mark { width: 21px; height: 21px; margin: 0; }
+.hoh-card__union {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  margin-inline: -4px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--primary) 17%, var(--background));
+  color: var(--foreground);
+}
+.hoh-card__union svg { width: 12px; height: 12px; }
 .hoh-orbit { width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); border-top-color: var(--primary); animation: hoh-spin 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .hoh-orbit { animation: none; } }
 .hoh-card .hoh-orbit { animation: none; } /* в карточке состояние — цвет свечения и точка, ничто не крутится */

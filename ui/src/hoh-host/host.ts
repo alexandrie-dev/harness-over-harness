@@ -453,6 +453,7 @@ export class HohHost {
       });
       thread.options = this.levels.get(id);
       thread.archivedAt = entry?.archivedAt === null ? null : timeOf(entry?.archivedAt);
+      if (typeof entry?.pluginCreator === 'boolean') thread.pluginCreator = entry.pluginCreator;
       this.applyThreadMetadata(thread);
       this.threads.set(id, thread);
       this.restored.add(id);
@@ -480,6 +481,7 @@ export class HohHost {
       return [{
         id: thread.id, title: shell.title, projectId: thread.projectId, executor: thread.executor, model: thread.model, mode: thread.mode,
         createdAt: thread.createdAt, updatedAt: thread.updatedAt, archivedAt: thread.archivedAt,
+        pluginCreator: thread.pluginCreator,
       }];
     });
     const value = {
@@ -542,6 +544,7 @@ export class HohHost {
     if (!entry && disposition && !thread.loaded) {
       return {
         id: thread.id, title: thread.shell().title, projectId: thread.projectId, providerInstanceId: instanceOf(thread.executor),
+        ...(thread.pluginCreator ? { pluginCreator: true } : {}),
         state: disposition.state, turnOrdinal: disposition.turnOrdinal,
         startedAt: thread.updatedAt, doneAt: disposition.markedAt ?? thread.updatedAt,
         steps: { done: 0, total: 0 }, agents: [],
@@ -607,6 +610,7 @@ export class HohHost {
       if (thread.archivedAt !== null || shell.latestUserMessageAt === null) return [];
       return [this.homeEntry(thread) ?? {
         id: thread.id, title: shell.title, projectId: thread.projectId, providerInstanceId: instanceOf(thread.executor),
+        ...(thread.pluginCreator ? { pluginCreator: true } : {}),
         state: 'ended', turnOrdinal: 0, startedAt: thread.updatedAt, doneAt: null,
         steps: { done: 0, total: 0 }, agents: [],
       }];
@@ -1448,13 +1452,19 @@ export class HohHost {
     const todayThreads = candidates.filter(thread => new Date(thread.updatedAt).toDateString() === today)
       .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
     const changedWhileAway = candidates.filter(thread => (this.homeObservedAt.get(thread.id) ?? 0) < thread.updatedAt);
+    // Backfill older sessions from their first prompt, including ones that have been renamed.
+    const authoringEnabled = this.pluginAuthoringPrefixes.length > 0;
+    const unclassified = authoringEnabled ? candidates.filter(thread => thread.pluginCreator === undefined) : [];
     const recent = [...new Map([...changedWhileAway, ...candidates.filter(thread => waiting.has(thread.id)), ...todayThreads].map(thread => [thread.id, thread])).values()]
       .sort((a, b) => b.updatedAt - a.updatedAt);
+    const recentIds = new Set(recent.map(thread => thread.id));
+    recent.push(...unclassified.filter(thread => !recentIds.has(thread.id)));
     let dispositionChanged = false;
     let cursor = 0;
     const inspect = async (thread: ThreadModel) => {
       if (this.stopped) return;
       try {
+        const previousPluginCreator = thread.pluginCreator;
         let afterSeq: number | undefined;
         for (;;) {
           const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
@@ -1494,6 +1504,8 @@ export class HohHost {
         this.applyThreadMetadata(thread);
         thread.settleUnfinished(this.now());
         this.peeked.add(thread.id);
+        if (authoringEnabled) thread.pluginCreator ??= false;
+        if (thread.pluginCreator !== previousPluginCreator) dispositionChanged = true;
         if (this.syncHomeDisposition(thread)) dispositionChanged = true;
         if (this.homeObservedAt.get(thread.id) !== thread.updatedAt) { this.homeObservedAt.set(thread.id, thread.updatedAt); dispositionChanged = true; }
         // Startup classification may discover an old arbitrary folder, but it must not race a person's Add project
