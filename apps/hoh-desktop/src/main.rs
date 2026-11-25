@@ -17,7 +17,10 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
 fn main() {
     #[cfg(feature = "probe")]
     hoh_desktop::probe::trace("process:start");
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "linux")]
+    let builder = builder.manage(hoh_desktop::clipboard_image::ImagePasteGesture::default());
+    builder
         .manage(hoh_desktop::html_preview::HtmlPreviews::default())
         .plugin(hoh_desktop::native::main_security_plugin())
         .invoke_handler(tauri::generate_handler![
@@ -26,6 +29,8 @@ fn main() {
             hoh_desktop::native::browse_folders,
             hoh_desktop::native::read_image_asset,
             hoh_desktop::native::preview_html,
+            #[cfg(target_os = "linux")]
+            hoh_desktop::clipboard_image::read_pasted_image,
             hoh_desktop::native::open_link,
             hoh_desktop::native::question_answer,
             hoh_desktop::native::approval_history,

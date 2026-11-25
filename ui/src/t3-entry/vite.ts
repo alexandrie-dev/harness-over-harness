@@ -172,7 +172,25 @@ export function sidebarChrome(code: string): string {
 }
 /** HoH accepts pasted text as text. The native engine only accepts raster attachments. */
 function composerPaste(code: string): string {
+  const pastedImage = resolve(UI, 'src/t3-entry/pastedImage.ts');
   return anchorPatch('ChatComposer.tsx', code, [
+    ['    if (pastedContext) return;', `    if (pastedContext) return;
+    // WebKitGTK can dispatch a real paste without exposing the image offered by the OS.
+    if (window.__TAURI_INTERNALS__ && event.nativeEvent.isTrusted && activeThreadId &&
+        !bypassAutoAttachment && event.clipboardData.types.length === 0) {
+      const draftKey = attachmentTargetKeyRef.current;
+      pendingDraftWork.begin(draftKey);
+      void readHohPastedImage().then((file) => {
+        if (file && composerMountedRef.current && attachmentTargetKeyRef.current === draftKey) {
+          return addComposerAttachments([file]);
+        }
+      }).catch((error: unknown) => {
+        if (composerMountedRef.current && attachmentTargetKeyRef.current === draftKey) {
+          setThreadError(activeThreadId, typeof error === "string" ? error : "Could not paste the image.");
+        }
+      }).finally(() => pendingDraftWork.end(draftKey));
+      return;
+    }`],
     ['  const { addComposerAttachments, removeComposerImage, foldPastedText } =', '  const { addComposerAttachments, removeComposerImage } ='],
     ['    if (!foldPastedText(plainText, bypassAutoAttachment)) {\n      return;\n    }\n\n    event.preventDefault();\n    event.stopPropagation();', '    // Leave text to the editor, including long and multiline clipboard content.'],
     [`      pasteTextAtEnd: (text: string, options) => {
@@ -191,7 +209,7 @@ function composerPaste(code: string): string {
         return true;
       },`, '      pasteTextAtEnd: () => false,'],
     ['      foldPastedText,\n', ''],
-  ]);
+  ], `import { readPastedImage as readHohPastedImage } from ${JSON.stringify(pastedImage)};\n`);
 }
 function editorPaste(code: string): string {
   return anchorPatch('ComposerPromptEditorTiptap.tsx', code, [

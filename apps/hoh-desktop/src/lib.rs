@@ -19,3 +19,6 @@ pub fn probe_compiled() -> bool {
 
 #[cfg(feature = "desktop")]
 pub mod html_preview;
+
+#[cfg(all(feature = "desktop", target_os = "linux"))]
+pub mod clipboard_image;

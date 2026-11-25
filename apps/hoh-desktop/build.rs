@@ -8,6 +8,7 @@ fn main() {
             "pick_folder",
             "browse_folders",
             "read_image_asset",
+            "read_pasted_image",
             "preview_html",
             "open_link",
             "question_answer",

@@ -1121,6 +1121,15 @@ pub fn read_project_image(
     ))
 }
 
+#[cfg(all(feature = "desktop", target_os = "linux"))]
+pub(crate) fn encode_clipboard_image(bytes: &[u8], mime: &str) -> Result<String, String> {
+    let kind = sniff_kind(bytes)
+        .filter(|kind| kind.mime_type() == mime)
+        .ok_or_else(|| unavailable("the clipboard contents do not match the image type"))?;
+    inspect_image(kind, bytes)?;
+    Ok(encode_base64(bytes))
+}
+
 fn encode_base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
