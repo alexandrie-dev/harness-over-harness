@@ -28,13 +28,17 @@ export interface PluginCreatorApi {
   launch(input: PluginCreatorInput): Promise<string>;
 }
 
-export function pluginAuthoringPrefixes(skill: string): [string, ...string[]] {
+export function pluginAuthoringPrefixes(skill: string, guide?: string): [string, ...string[]] {
   const instructions = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
   const separator = '\n\n## Plugin request\n\n';
   const implementation = instructions.split('\n\n## Implement the agreed plugin\n\n')[1];
-  const current = instructions + separator;
-  // Preserve the short message bubble for chats written before the interview was bundled.
-  return implementation ? [current, '# HoH plugin authoring\n\n' + implementation + separator] : [current];
+  const previous = instructions + separator;
+  const prefix: [string, ...string[]] = guide?.trim()
+    ? [guide.trim() + '\n\n' + previous, previous]
+    : [previous];
+  // Keep the original user brief visible in chats written with earlier bundled instructions.
+  if (implementation) prefix.push('# HoH plugin authoring\n\n' + implementation + separator);
+  return prefix;
 }
 
 declare global {

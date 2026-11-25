@@ -26,6 +26,7 @@ export interface InstallOptions extends WireServerOptions {
   readonly engine: HohEngine;
   readonly hostname?: string;
   readonly pluginAuthoringSkill?: string;
+  readonly pluginAuthoringGuide?: string;
   readonly target?: any;
 }
 
@@ -43,7 +44,7 @@ export function installHohHost(options: InstallOptions) {
   (options.target ?? globalThis).__HOH_HOME__ = host.home;
   (options.target ?? globalThis).__HOH_PLUGINS__ = pluginInventory(options.engine);
   if (options.pluginAuthoringSkill) {
-    (options.target ?? globalThis).__HOH_PLUGIN_CREATOR__ = host.pluginCreator(options.pluginAuthoringSkill);
+    (options.target ?? globalThis).__HOH_PLUGIN_CREATOR__ = host.pluginCreator(options.pluginAuthoringSkill, options.pluginAuthoringGuide);
   }
   (options.target ?? globalThis).__HOH_TRUST_ENGINE__ = {
     request: (method: string, params: unknown) => host.trustRequest(method, params),

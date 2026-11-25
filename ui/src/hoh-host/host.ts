@@ -668,8 +668,8 @@ export class HohHost {
     });
   }
 
-  pluginCreator(skill: string): PluginCreatorApi {
-    const prefixes = pluginAuthoringPrefixes(skill);
+  pluginCreator(skill: string, guide?: string): PluginCreatorApi {
+    const prefixes = pluginAuthoringPrefixes(skill, guide);
     const [promptPrefix] = prefixes;
     this.pluginAuthoringPrefixes = prefixes;
     for (const thread of this.threads.values()) thread.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;

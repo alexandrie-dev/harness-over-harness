@@ -557,6 +557,7 @@ const scenarios = [
       assert.equal(engine.cwd, '/work/hoh');
       assert.deepEqual(engine.promptExecutors, ['claude']);
       const prompt = engine.requests.find(({ method }) => method === 'session/prompt');
+      assert.match(prompt.params.contentBlocks[0].text, /^# In-repository Rust plugin kit/);
       assert.match(prompt.params.contentBlocks[0].text, /Ask exactly one design question per turn/);
       assert.match(prompt.params.contentBlocks[0].text, /Build a clock plugin$/);
     }, blocks: ['conversation'],

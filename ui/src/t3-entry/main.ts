@@ -2,6 +2,7 @@
 // startAppServices, AppRoot, router, их index.css, тема и шрифты), но сначала хост HoH ставит свой протокол,
 // поэтому клиент говорит с движком HoH, а не с сервером T3. Файлы T3 не правятся.
 import { installHohHost, tauriEngine } from 'virtual:hoh-host';
+import pluginAuthoringGuide from '../../../docs/plugin-authoring-kit.md?raw';
 import pluginAuthoringSkill from './skills/hoh-plugin-authoring/SKILL.md?raw';
 import type { HohEngineLike } from './host';
 import { HIDDEN_SELECTORS } from './features';
@@ -25,6 +26,7 @@ const engine = testEngine ?? tauriEngine();
 installHohHost({
   engine,
   pluginAuthoringSkill,
+  pluginAuthoringGuide,
   ...(testEngine ? { onRequest: (method: string, payload: unknown) => window.__HOH_T3_TEST_REQUESTS__?.push({ method, payload }) } : {}),
 });
 // Элементы, которые T3 рисует без условия (features.ts, HIDDEN_SELECTORS), скрываются стилем входа.
