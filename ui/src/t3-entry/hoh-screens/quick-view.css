@@ -6,8 +6,8 @@
   isolation: isolate;
   width: min(calc(var(--chat-content-max-width) + 6rem + 2px), 100%);
   max-width: calc(var(--chat-content-max-width) + 6rem + 2px) !important;
-  height: min(51.25rem, calc(100dvh - var(--hoh-notch-height, 0px) - 3rem));
-  max-height: calc(100dvh - var(--hoh-notch-height, 0px) - 3rem);
+  height: min(51.25rem, calc(100dvh - 3rem));
+  max-height: calc(100dvh - 3rem);
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
@@ -65,10 +65,8 @@
 .hoh-quick-view__chat { display: flex; min-height: 0; flex: 1 1 0; overflow: hidden; background: var(--background); }
 
 /* Base UI portals Dialog next to #root. T3's fixed inset-0 DialogViewport owns the horizontal axis, independent of
-   the sidebar; HoH only reserves its top notch band and lowers that decoration under T3's z-50 dialog stack. */
-body:has(.hoh-quick-view) .hoh-notch-band { z-index: 40; }
+   the sidebar. */
 body:has(.hoh-quick-view) [data-slot="dialog-viewport"]:has(.hoh-quick-view) {
-  inset-block-start: var(--hoh-notch-height, 0px);
   padding: 24px;
 }
 
@@ -98,8 +96,8 @@ body:has(.hoh-quick-view) [data-slot="dialog-viewport"]:has(.hoh-quick-view) {
   .hoh-quick-view {
     width: 100%;
     max-width: 100% !important;
-    height: calc(100dvh - var(--hoh-notch-height, 0px) - 1rem);
-    max-height: calc(100dvh - var(--hoh-notch-height, 0px) - 1rem);
+    height: calc(100dvh - 1rem);
+    max-height: calc(100dvh - 1rem);
   }
   /* The frame keeps its 8 px window clearance while ChatView still measures the same content width as the full
      conversation: 8 px on each side plus the frame's 1 px borders are visual chrome, not a second chat gutter. */

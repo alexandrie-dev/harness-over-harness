@@ -233,8 +233,18 @@ const scenarios = [
     name: 'home-empty', engine: () => { const e = new FakeEngine(); e.access = 'confirm'; e.claude = CLAUDE; return e; }, stored: () => ({}),
     prepare: async (page, _engine, sidebar) => {
       await page.getByRole('button', { name: 'Start', exact: true }).click();
-      await page.getByRole('button', { name: 'Start without a project', exact: true }).click();
-      await page.getByText(/Good (night|morning|afternoon|evening)/).first().waitFor(); await setSidebar(page, sidebar);
+      await page.getByRole('button', { name: 'Start without a project', exact: true }).waitFor();
+      await setSidebar(page, sidebar);
+      assert.equal(await page.locator('#hoh-notch').count(), 0, 'the top notch must be absent');
+      if (sidebar === 'expanded') {
+        const logo = page.getByRole('link', { name: 'HoH home' });
+        await logo.locator('img').waitFor({ state: 'visible' });
+        assert.equal((await logo.innerText()).trim(), '', 'the sidebar logo has no visible wordmark');
+        await page.getByRole('button', { name: /^New chat/ }).first().click();
+      } else {
+        await page.keyboard.press('Control+Shift+O');
+      }
+      await page.locator('[data-chat-composer-stack]').waitFor({ state: 'visible' });
       const headline = page.locator('[data-chat-composer-stack] h1').first();
       const before = await headline.innerText();
       const viewport = page.viewportSize();
@@ -640,7 +650,7 @@ async function rectangles(page) {
     return {
       viewport: { left: 0, top: 0, right: innerWidth, bottom: innerHeight, width: innerWidth, height: innerHeight },
       pageOverflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth, document.body.scrollWidth - document.body.clientWidth),
-      content: firstVisible('[data-slot="sidebar-inset"]'), notch: firstVisible('.hoh-notch'),
+      content: firstVisible('[data-slot="sidebar-inset"]'),
       homeViewport, home: firstVisible('.hoh-home__inner'), greeting: firstVisible('.hoh-home__head'), composer,
       headline: firstVisible('[data-chat-composer-stack] > .absolute.inset-x-0.bottom-full'), homeLabel: firstVisible('.hoh-home__label'), cards: firstVisible('.hoh-home__cards'), projects: firstVisible('.hoh-projects'), disclosure: firstVisible('.hoh-project-popover'),
       cardItems: allVisible('.hoh-home__cards > .hoh-card'), projectItems: allVisible('.hoh-projects > .hoh-project'),
@@ -704,12 +714,11 @@ function withinHorizontal(label, name, rect, container) {
 }
 
 function measure(label, scenario, size, sidebar, r) {
-  if (!r.content || !r.notch) { fail(label, 'content inset or notch not found'); return; }
+  if (!r.content) { fail(label, 'content inset not found'); return; }
   rows.push({ screen: scenario.name, size, sidebar, block: 'page-overflow', axis: 'bounds', center: 0, deviation: round(r.pageOverflow), start: 0, end: 0, extent: round(r.viewport.width) });
   if (r.pageOverflow > TOL) fail(label, `page has ${round(r.pageOverflow)}px horizontal overflow`);
-  for (const [name, rect] of [['content-inset', r.content], ['notch', r.notch], ['home-scrollport', r.homeViewport], ['composer', r.composer], ['quick-dialog', r.dialog], ['settings-scrollport', r.settingsScroll], ['plugin-scrollport', r.pluginPage], ['menu', r.menu], ['confirmation', r.confirmation], ['rename editor', r.rename], ['folder trust', r.trust]])
+  for (const [name, rect] of [['content-inset', r.content], ['home-scrollport', r.homeViewport], ['composer', r.composer], ['quick-dialog', r.dialog], ['settings-scrollport', r.settingsScroll], ['plugin-scrollport', r.pluginPage], ['menu', r.menu], ['confirmation', r.confirmation], ['rename editor', r.rename], ['folder trust', r.trust]])
     withinViewport(label, name, rect, r.viewport);
-  add(label, scenario.name, size, sidebar, 'notch', r.notch, r.chatLane ?? r.content);
   if (scenario.blocks.includes('home')) {
     add(label, scenario.name, size, sidebar, 'home-column', r.home, r.chatLane ?? r.content);
     add(label, scenario.name, size, sidebar, 'greeting', r.greeting, r.home);
@@ -718,7 +727,6 @@ function measure(label, scenario, size, sidebar, r) {
     if (r.composer && r.home && r.composer.width > r.home.width + TOL) fail(label, `composer ${round(r.composer.width)}px is wider than home ${round(r.home.width)}px`);
     if (r.greeting && r.home && r.greeting.top > r.home.top + 40) fail(label, `greeting starts ${round(r.greeting.top - r.home.top)}px below the column top`);
     if (scenario.name === 'home-empty') {
-      add(label, scenario.name, size, sidebar, 'notch-composer', r.notch, r.chatLane, { equalMargins: false, tolerance: 2 });
       addVertical(label, scenario.name, size, sidebar, 'empty-group', unionRects(r.greeting, r.headline, r.composer), r.viewport, 8);
     }
   }
@@ -744,7 +752,6 @@ function measure(label, scenario, size, sidebar, r) {
   if (scenario.blocks.includes('conversation')) {
     add(label, scenario.name, size, sidebar, 'composer', r.composer, r.chatLane);
     add(label, scenario.name, size, sidebar, 'feed', r.feed, r.chatLane);
-    add(label, scenario.name, size, sidebar, 'notch-composer', r.notch, r.chatLane, { equalMargins: false, tolerance: 2 });
     if (r.feed && r.composer && Math.abs(r.feed.width - r.composer.width) > TOL) fail(label, `feed/composer widths differ by ${round(r.feed.width - r.composer.width)}px`);
     if (r.detailsCard && r.feed && r.feed.right > r.detailsCard.left - 8 + TOL)
       fail(label, `thread details overlap the message lane by ${round(r.feed.right - r.detailsCard.left)}px`);

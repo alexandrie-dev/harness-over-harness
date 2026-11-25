@@ -133,12 +133,57 @@ export function sidebarList(code: string): string {
     ['section === "active" || section === "pinned" || section === "working";', 'false;'],
     // Пустой черновик (разговор без первого сообщения: хост даёт ему latestUserMessageAt = null) в «Recent chats» не показывается.
     ['  const threads = useQuietThreadShells();', '  const allThreads = useQuietThreadShells();\n  const threads = useHohMemo(() => allThreads.filter((thread) => thread.latestUserMessageAt != null), [allThreads]);'],
-  ], 'import { useMemo as useHohMemo } from "react";\n');
+    ['  const handleNewThreadClick = (_event?: ReactMouseEvent) => {', '  const scratch = useHohScratchProject();\n  const scratchId = scratch.scratchEnvironmentId(null);\n  const handleNewThreadClick = (_event?: ReactMouseEvent) => {'],
+    ['      if (!started) openCommandPalette({ open: "new-thread-in" });', `      if (!started) {
+        if (scratchId === null) openCommandPalette({ open: "new-thread-in" });
+        else void scratch.startScratchThread(scratchId);
+      }`],
+    ['newThreadDisabled={projects.length === 0}', 'newThreadDisabled={projects.length === 0 && scratchId === null}'],
+  ], 'import { useMemo as useHohMemo } from "react";\nimport { useScratchProject as useHohScratchProject } from "~/hooks/useScratchProject";\n');
 }
 /** «Settings» внизу панели — со значком и подписью (как в раунде 12), а не только значком. */
 export function sidebarChrome(code: string): string {
   return anchorPatch('SidebarChrome.tsx', code, [
+    ['aria-label={gt("T3 Code home")}', 'aria-label={gt("HoH home")}'],
+    ['flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5', 'flex h-9 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden'],
+    ['hidden h-7 w-fit min-w-0', 'hidden h-9 w-fit min-w-0'],
+    ['<SidebarBrandMark onBackdrop={onBackdrop} />', '<SidebarBrandMark />'],
+    ['<SidebarBrandMark onBackdrop={false} />', '<SidebarBrandMark />'],
+    [`function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
+      <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
+      <span
+        className={cn(
+          "truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1",
+          onBackdrop ? "text-white/70" : "text-muted-foreground",
+        )}
+      >
+        {/* HoH (ui/T3-MAP.md): имя продукта — HoH, знак — эмблема HoH (замена T3Wordmark.tsx). */}
+        {"HoH"}
+      </span>
+    </span>
+  );
+}`, `function SidebarBrandMark() {
+  return <T3Wordmark className="block shrink-0" />;
+}`],
     ['<SidebarMenuButton aria-label={label} onClick={onClick} size="icon">\n              {icon}\n            </SidebarMenuButton>', '<SidebarMenuButton aria-label={label} onClick={onClick}>\n              {icon}\n              <span>{label}</span>\n            </SidebarMenuButton>'],
+  ]);
+}
+/** From a clean profile, New chat invokes the same scratch action as Home. */
+export function chatRouteCommands(code: string): string {
+  return anchorPatch('chatRouteCommands.ts', code, [
+    ['      if (!started) openCommandPalette({ open: "new-thread-in" });', `      if (!started) {
+        const environmentId = scratch.scratchEnvironmentId(null);
+        if (environmentId === null) openCommandPalette({ open: "new-thread-in" });
+        else void scratch.startScratchThread(environmentId);
+      }`],
+    ['        const groups = readProjectGroups();\n        if (', `        const groups = readProjectGroups();
+        if (!groups.some((group) => !group.archived)) {
+          startNewLocal(event);
+          return;
+        }
+        if (`],
   ]);
 }
 /** Главная без проектов — «What should we work on?» T3 (эмблема, «Add project», «Start without a project»), заголовок — приветствие с датой. */
@@ -234,6 +279,7 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/Sidebar.tsx')) return { code: sidebarList(code), map: null };
       if (id === resolve(T3_WEB, 'components/sidebar/SidebarChrome.tsx')) return { code: sidebarChrome(code), map: null };
+      if (id === resolve(T3_WEB, 'shortcuts/chatRouteCommands.ts')) return { code: chatRouteCommands(code), map: null };
       if (id === resolve(T3_WEB, 'components/NoProjectsHero.tsx')) return { code: noProjectsHero(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderInstanceCard.tsx')) return { code: providerInstanceCard(code), map: null };
       return null;

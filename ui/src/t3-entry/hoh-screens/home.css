@@ -14,11 +14,9 @@
 body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat-composer-lane { visibility: hidden; }
 .hoh-home__inner { display: flex; flex: 0 0 auto; flex-direction: column; gap: 28px; width: 100%; max-width: var(--chat-content-max-width); margin: 0 auto; padding: 28px 0 var(--hoh-home-scroll-clearance); }
 /* T3 centres its one-item empty draft hero vertically. HoH inserts the greeting as a preceding sibling, so the two
-   compact children form one centred column. The app root starts below the notch band; extending only this empty hero
-   behind that band centres the visible group in the full-height content region. Occupied Home keeps its docked layout. */
+   compact children form one centred column. Occupied Home keeps its docked layout. */
 .hoh-draft-hero:has(> .hoh-home:not([data-busy])) {
   justify-content: center;
-  inset-block-start: calc(-1 * var(--hoh-notch-height, 0px));
 }
 .hoh-home:not([data-busy]) { flex: 0 0 auto; overflow: visible; margin-bottom: 28px; -webkit-mask-image: none; mask-image: none; }
 .hoh-home:not([data-busy]) .hoh-home__inner { padding-block: 0; gap: 0; }
@@ -41,14 +39,6 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 .hoh-home__add-project { margin-top: 12px; }
 .hoh-home__head { position: relative; width: 100%; margin-top: 0; text-align: center; }
 .hoh-home__greeting { display: block; width: 100%; text-align: center; }
-/* Эмблема над приветствием (правило u2: emblem-fit.ts ставит data-hoh-emblem, только если она помещается без прокрутки; на узком окне скрыта). */
-.hoh-home__head[data-hoh-emblem] { margin-top: 134px; }
-.hoh-home__head[data-hoh-emblem]::before {
-  content: ""; position: absolute; left: 50%; bottom: 100%; width: 96px; height: 104px; margin: 0 0 22px -48px; pointer-events: none;
-  background: url("../../assets/emblem-chat-1x.png") center / 96px 104px no-repeat;
-  background-image: -webkit-image-set(url("../../assets/emblem-chat-1x.png") 1x, url("../../assets/emblem-chat-15x.png") 1.5x, url("../../assets/emblem-chat-2x.png") 2x, url("../../assets/emblem-chat-3x.png") 3x);
-  background-image: image-set(url("../../assets/emblem-chat-1x.png") 1x, url("../../assets/emblem-chat-15x.png") 1.5x, url("../../assets/emblem-chat-2x.png") 2x, url("../../assets/emblem-chat-3x.png") 3x);
-}
 .hoh-home__label { display: flex; align-items: baseline; gap: 8px; font-size: 0.875rem; font-weight: 600; margin: 0 0 10px; }
 .hoh-home__count { color: var(--muted-foreground); font-weight: 400; }
 .hoh-home__cards {

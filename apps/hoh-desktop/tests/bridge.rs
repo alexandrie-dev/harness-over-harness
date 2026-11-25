@@ -878,3 +878,20 @@ fn session_delete_is_confined_to_main_and_requires_the_typed_session_id() {
     assert!(bridge::check_main("other", "session/delete", &json!({"sessionId":"chat"})).is_err());
     assert!(bridge::check_main("main", "session/delete", &json!({"sessionId":null})).is_err());
 }
+
+#[test]
+fn prompt_reasoning_effort_passes_native_validation_without_admitting_other_fields() {
+    let prompt = json!({"sessionId":"chat","contentBlocks":[{"type":"text","text":"Test"}],
+        "interactionMode":"default","effort":"medium"});
+    assert!(bridge::check_main("main", "session/prompt", &prompt).is_ok());
+    assert!(bridge::check_main("other", "session/prompt", &prompt).is_err());
+
+    for effort in [json!(42), json!(""), Value::Null] {
+        let mut invalid = prompt.clone();
+        invalid["effort"] = effort;
+        assert!(bridge::check_main("main", "session/prompt", &invalid).is_err());
+    }
+    let mut invalid = prompt;
+    invalid["unexpected"] = json!(true);
+    assert!(bridge::check_main("main", "session/prompt", &invalid).is_err());
+}

@@ -76,8 +76,26 @@ pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), Strin
     if !WINDOW_METHODS.contains(&method) {
         return Err("Метод не разрешён окну".into());
     }
-    hoh_protocol::validate_params(method, params)
-        .map_err(|_| "Некорректные параметры запроса".to_owned())
+    let invalid = || "Некорректные параметры запроса".to_owned();
+    // The engine consumes effort as a window extension before decoding the public SDK request.
+    // Validate it here, then check the unchanged SDK fields. Forward the original request.
+    if method == "session/prompt"
+        && let Some(effort) = params.get("effort")
+    {
+        if !effort
+            .as_str()
+            .is_some_and(|effort| !effort.trim().is_empty())
+        {
+            return Err(invalid());
+        }
+        let mut sdk_params = params.clone();
+        sdk_params
+            .as_object_mut()
+            .ok_or_else(invalid)?
+            .remove("effort");
+        return hoh_protocol::validate_params(method, &sdk_params).map_err(|_| invalid());
+    }
+    hoh_protocol::validate_params(method, params).map_err(|_| invalid())
 }
 pub fn needs_approval(method: &str, params: &Value) -> bool {
     hoh_protocol::PRIVILEGED_METHODS.contains(&method)

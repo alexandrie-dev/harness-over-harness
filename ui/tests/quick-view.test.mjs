@@ -6,7 +6,6 @@ import ts from 'typescript';
 const source = await readFile(new URL('../src/t3-entry/hoh-screens/quick-view-store.ts', import.meta.url), 'utf8');
 const dialogSource = await readFile(new URL('../src/t3-entry/hoh-screens/QuickViewDialog.tsx', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../src/t3-entry/hoh-screens/quick-view.css', import.meta.url), 'utf8');
-const notchSource = await readFile(new URL('../src/t3-entry/notch/HohNotch.tsx', import.meta.url), 'utf8');
 
 function loadStore() {
   const output = ts.transpileModule(source, {
@@ -101,9 +100,7 @@ test('quick view restores upstream T3 lane width and gutters inside a bounded mo
   assert.match(styles, /\.hoh-quick-view \.chat-composer-lane/);
   assert.match(styles, /\.hoh-quick-view \[data-chat-canvas\] \.messages-timeline-scroll/);
   assert.match(styles, /env\(safe-area-inset-left\) \+ 3rem/);
-  assert.match(styles, /inset-block-start: var\(--hoh-notch-height, 0px\)/);
   assert.doesNotMatch(styles, /inset-inline-start/);
-  assert.match(styles, /body:has\(\.hoh-quick-view\) \.hoh-notch-band \{ z-index: 40; \}/);
   assert.match(styles, /padding: 24px/);
   assert.match(styles, /padding: 8px/);
   assert.match(styles, /width: calc\(100% \+ 18px\); margin-inline: -9px/);
@@ -111,6 +108,4 @@ test('quick view restores upstream T3 lane width and gutters inside a bounded mo
   assert.match(styles, /data-frame-variant="2"/);
   assert.match(styles, /data-frame-state="working"/);
   assert.match(styles, /data-frame-state="waiting"/);
-  assert.match(notchSource, /style\.display !== 'none'/);
-  assert.doesNotMatch(notchSource, /style\.visibility !== 'hidden'/);
 });

@@ -591,7 +591,7 @@ class Harness:
             main = self.shot("01-main")
             main_dump = self.dump("01-main")
             source_contracts = {
-                "Alexandrie": REPO / "ui/src/t3-entry/notch/HohNotch.tsx",
+                "T3Wordmark": REPO / "ui/src/t3/base/web/components/T3Wordmark.tsx",
                 "data-hoh-home-body": REPO / "ui/src/t3-entry/hoh-screens/HomeBody.tsx",
                 "data-approval-detail": REPO / "ui/src/t3-entry/hoh-screens/HomeBody.tsx",
                 "data-hoh-page-item": REPO / "ui/src/t3-entry/hoh-screens/SidebarTop.tsx",
