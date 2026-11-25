@@ -211,7 +211,7 @@ async fn env_full(
     program: &str,
     adjust: impl FnOnce(&mut StdioHarnessConfig),
 ) -> Env {
-    env_core(dirs, config, program, adjust, None).await
+    env_core(dirs, config, program, adjust, None, None).await
 }
 
 /// [`env_full`], with the classifier over `fs` instead of the real file system.
@@ -221,6 +221,7 @@ async fn env_core(
     program: &str,
     adjust: impl FnOnce(&mut StdioHarnessConfig),
     fs: Option<Arc<dyn hoh_destructive_classifier::Fs>>,
+    io_hook: Option<hoh_session_persistence_jsonl::testing::IoHook>,
 ) -> Env {
     let kernel = Kernel::start();
     let ctx = kernel.root();
@@ -241,11 +242,26 @@ async fn env_core(
             .expect("classifier");
         }
     }
-    mount::<hoh_session_persistence_jsonl::JsonlSessionPersistencePlugin>(
-        &ctx,
-        json!({"root": dirs.store.to_str().expect("utf-8"), "compression": "none"}),
-    )
-    .await;
+    if let Some(hook) = io_hook {
+        let mut config = hoh_session_persistence_jsonl::Config::new(dirs.store.to_str().unwrap());
+        config.compression = hoh_session_persistence_jsonl::JsonlCompression::None;
+        let backend = hoh_session_persistence_jsonl::testing::create_jsonl_test_backend(
+            &ctx,
+            config,
+            Some(hook),
+        )
+        .await
+        .unwrap();
+        ctx.provide::<SessionPersistenceService>(Arc::new(backend))
+            .await
+            .unwrap();
+    } else {
+        mount::<hoh_session_persistence_jsonl::JsonlSessionPersistencePlugin>(
+            &ctx,
+            json!({"root": dirs.store.to_str().expect("utf-8"), "compression": "none"}),
+        )
+        .await;
+    }
     // The launcher names the profile before the plugins mount: the window's saved choices are
     // kept next to it.
     ctx.provide::<hoh_loader::ProfileContextKey>(Arc::new(hoh_loader::ProfileContext {
@@ -2511,7 +2527,17 @@ async fn window(
     host: Host,
     adjust: impl FnOnce(&mut StdioHarnessConfig),
 ) -> Window {
-    let base = env_full(dirs, config, STUB, adjust).await;
+    window_with_hook(dirs, config, host, adjust, None).await
+}
+
+async fn window_with_hook(
+    dirs: &Dirs,
+    config: Value,
+    host: Host,
+    adjust: impl FnOnce(&mut StdioHarnessConfig),
+    hook: Option<hoh_session_persistence_jsonl::testing::IoHook>,
+) -> Window {
+    let base = env_core(dirs, config, STUB, adjust, None, hook).await;
     let ctx = base.ctx.clone();
     mount::<hoh_llm::LlmPlugin>(&ctx, json!({})).await;
     let adapter = ctx
@@ -3509,7 +3535,7 @@ async fn file_change_checks_run_off_the_runtime_thread() {
         on_runtime: on_runtime.clone(),
         calls: calls.clone(),
     });
-    let env = env_core(&dirs, quick(), STUB, |_| {}, Some(watched)).await;
+    let env = env_core(&dirs, quick(), STUB, |_| {}, Some(watched), None).await;
     env.set_answer(Answer::Reject);
     let agent = env.create("s-overwrite").await;
     turn(
@@ -3628,4 +3654,282 @@ async fn a_codex_selection_and_model_survive_restart_in_a_downgrade_safe_sidecar
         json!({"executor":"stub","model":"stub-large"})
     );
     after_downgrade.close().await;
+}
+
+#[tokio::test]
+async fn del2_external_dispose_reports_a_journal_close_failure() {
+    use hoh_session_persistence_jsonl::testing::{IoHook, IoOperation};
+    let dirs = dirs();
+    let fail = Arc::new(AtomicBool::new(false));
+    let switch = fail.clone();
+    let hook: IoHook = Arc::new(move |request| {
+        let fail = switch.load(Ordering::SeqCst)
+            && request.operation == IoOperation::Close
+            && request.path.ends_with("session.lock")
+            && !request.after;
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("close failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let env = env_core(&dirs, quick(), STUB, |_| {}, None, Some(hook)).await;
+    let handle = env.create_handle("close-fail-del2", env.options()).await;
+    handle
+        .agent
+        .session()
+        .append("plugin:test", json!({"ignorable":true}), None)
+        .unwrap();
+    env.ctx
+        .get::<SessionPersistenceService>()
+        .unwrap()
+        .flush()
+        .await
+        .unwrap();
+    fail.store(true, Ordering::SeqCst);
+    assert!(
+        handle.dispose().await.is_err(),
+        "a close failure must reach the deleting caller"
+    );
+    fail.store(false, Ordering::SeqCst);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn del2_external_reservation_blocks_late_and_already_accepted_input() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let reserved = env.create("reserved-del2").await;
+    reserved.reserve_deletion().unwrap();
+    assert!(
+        reserved
+            .followup(message("late scheduler delivery"))
+            .is_err()
+    );
+    reserved.release_deletion();
+    reserved.followup(message("accepted first")).unwrap();
+    assert!(
+        reserved.reserve_deletion().is_err(),
+        "accepted input must prevent deletion even before turn/start"
+    );
+    reserved.when_idle().await;
+    env.close().await;
+}
+
+#[tokio::test]
+async fn del2_delete_does_not_move_the_log_when_external_close_fails() {
+    use hoh_session_persistence_jsonl::testing::{IoHook, IoOperation};
+    let dirs = dirs();
+    let armed = Arc::new(AtomicBool::new(false));
+    let switch = armed.clone();
+    let hook: IoHook = Arc::new(move |request| {
+        let fail = switch.load(Ordering::SeqCst)
+            && request.operation == IoOperation::Close
+            && request.path.ends_with("session.lock")
+            && !request.after;
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("close failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let window = window_with_hook(&dirs, quick(), Host::Allows, |_| {}, Some(hook)).await;
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":HARNESS,"model":"stub-small"}),
+        )
+        .await
+        .unwrap();
+    window.call("session/prompt", json!({"sessionId":"close-delete-del2","contentBlocks":[{"type":"text","text":"hello"}]})).await.unwrap();
+    let agent = window
+        .base
+        .agents
+        .get(&SessionId::from("close-delete-del2"))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), agent.when_idle())
+        .await
+        .unwrap();
+    agent
+        .session()
+        .append("plugin:test", json!({"ignorable":true}), None)
+        .unwrap();
+    let persistence = window.base.ctx.get::<SessionPersistenceService>().unwrap();
+    persistence.flush().await.unwrap();
+    armed.store(true, Ordering::SeqCst);
+    let result = window
+        .call("session/delete", json!({"sessionId":"close-delete-del2"}))
+        .await;
+    assert!(result.is_err(), "failed close must reject Delete");
+    assert!(
+        persistence
+            .stat(&"close-delete-del2".into(), None)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(!dirs.store.join("trash").exists());
+    armed.store(false, Ordering::SeqCst);
+    window.close().await;
+}
+
+#[tokio::test]
+async fn del3_delete_does_not_flush_another_chats_failing_writer() {
+    use hoh_session_persistence_jsonl::testing::{IoHook, IoOperation};
+    let dirs = dirs();
+    let armed = Arc::new(AtomicBool::new(false));
+    let flag = armed.clone();
+    let hook: IoHook = Arc::new(move |request| {
+        let fail = flag.load(Ordering::SeqCst)
+            && !request.after
+            && request.operation == IoOperation::Write
+            && request.path.contains("other-del3")
+            && request.path.ends_with(".jsonl");
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("unrelated writer failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let window = window_with_hook(&dirs, quick(), Host::Allows, |_| {}, Some(hook)).await;
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":HARNESS,"model":"stub-small"}),
+        )
+        .await
+        .unwrap();
+    window
+        .call(
+            "session/prompt",
+            json!({"sessionId":"target-del3","contentBlocks":[{"type":"text","text":"hello"}]}),
+        )
+        .await
+        .unwrap();
+    let target = window
+        .base
+        .agents
+        .get(&SessionId::from("target-del3"))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), target.when_idle())
+        .await
+        .unwrap();
+    let other = window.base.create("other-del3").await;
+    other
+        .session()
+        .append("plugin:test", json!({"ignorable":true}), None)
+        .unwrap();
+    window
+        .base
+        .ctx
+        .get::<SessionPersistenceService>()
+        .unwrap()
+        .flush()
+        .await
+        .unwrap();
+    other
+        .session()
+        .append("plugin:test", json!({"ignorable":true,"late":true}), None)
+        .unwrap();
+    armed.store(true, Ordering::SeqCst);
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        window.call("session/delete", json!({"sessionId":"target-del3"})),
+    )
+    .await
+    .expect("another writer must not block deletion");
+    assert!(
+        result.is_ok(),
+        "unrelated writer must not reject deletion: {result:?}"
+    );
+    armed.store(false, Ordering::SeqCst);
+    window.close().await;
+}
+
+#[tokio::test]
+async fn del3_failed_close_tail_rejects_delete_and_retry_until_saved() {
+    use hoh_session_persistence_jsonl::testing::{IoHook, IoOperation};
+    let dirs = dirs();
+    let armed = Arc::new(AtomicBool::new(false));
+    let flag = armed.clone();
+    let hook: IoHook = Arc::new(move |request| {
+        let fail = flag.load(Ordering::SeqCst)
+            && !request.after
+            && request.operation == IoOperation::Write
+            && request.path.contains("tail-delete-del3")
+            && request.path.ends_with(".jsonl");
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("tail write failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let window = window_with_hook(&dirs, quick(), Host::Allows, |_| {}, Some(hook)).await;
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":HARNESS,"model":"stub-small"}),
+        )
+        .await
+        .unwrap();
+    window.call("session/prompt", json!({"sessionId":"tail-delete-del3","contentBlocks":[{"type":"text","text":"hello"}]})).await.unwrap();
+    let agent = window
+        .base
+        .agents
+        .get(&SessionId::from("tail-delete-del3"))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), agent.when_idle())
+        .await
+        .unwrap();
+    let session = agent.session().clone();
+    let flag = armed.clone();
+    let _effect = agent
+        .ctx()
+        .try_effect(
+            "del3 late event",
+            move |undos| -> Result<(), hoh_error::BoxError> {
+                undos.push(hoh_kernel::Undo::future(move || async move {
+                    session.append("plugin:test", json!({"ignorable":true,"tail":"del3"}), None)?;
+                    flag.store(true, Ordering::SeqCst);
+                    Ok(())
+                }))?;
+                Ok(())
+            },
+        )
+        .unwrap();
+    for _ in 0..2 {
+        assert!(
+            window
+                .call("session/delete", json!({"sessionId":"tail-delete-del3"}))
+                .await
+                .is_err()
+        );
+        assert!(!dirs.store.join("trash").exists());
+    }
+    armed.store(false, Ordering::SeqCst);
+    window
+        .call("session/delete", json!({"sessionId":"tail-delete-del3"}))
+        .await
+        .unwrap();
+    let mut trash = std::fs::read_dir(dirs.store.join("trash")).unwrap();
+    let dir = trash.next().unwrap().unwrap().path();
+    let path = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .unwrap();
+    let journal = std::fs::read_to_string(path).unwrap();
+    assert!(
+        journal.contains("\"tail\":\"del3\""),
+        "the recovered tail must reach trash"
+    );
+    window.close().await;
 }

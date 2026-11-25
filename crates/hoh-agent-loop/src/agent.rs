@@ -295,6 +295,7 @@ pub struct ReactLoopAgent {
     model: AgentModel,
     model_check: CheckModel,
     inbox: ReactLoopInbox,
+    deletion_gate: hoh_agent::DeletionGate,
     state: Arc<Mutex<State>>,
     lifetime_signal: AbortSignal,
     runtime_context: RuntimeContextProjection,
@@ -338,6 +339,7 @@ impl ReactLoopAgent {
                 options,
                 model_check: projections.model_check,
                 inbox: ReactLoopInbox::new(projections.inbox, session.clone(), dispatch),
+                deletion_gate: hoh_agent::DeletionGate::default(),
                 system_prompt: SystemPromptProjection::new(session.clone()),
                 session,
                 scope,
@@ -404,6 +406,7 @@ impl ReactLoopAgent {
         target: InboxTarget,
         wakeup: bool,
     ) -> Result<(), BoxError> {
+        let _admission = self.deletion_gate.enter()?;
         // Waking input cannot join an aborted activity, so it starts the next turn. Captured before
         // the insertion so a reentrant cancel from a splice observer cannot reclassify it.
         let (waking_after_abort, ticket) = {
@@ -1798,6 +1801,16 @@ impl Agent for ReactLoopAgent {
     ) -> Result<(), BoxError> {
         self.send_impl(message, target, wakeup)
     }
+    fn reserve_deletion(&self) -> Result<(), BoxError> {
+        self.deletion_gate.reserve(|| {
+            let state = lock(&self.state);
+            matches!(state.phase, Phase::Idle { .. }) && !self.inbox.has_pending().unwrap_or(true)
+        })
+    }
+    fn release_deletion(&self) {
+        self.deletion_gate.release();
+    }
+
     fn followup(&self, message: UserMessage) -> Result<(), BoxError> {
         self.send_impl(message, InboxTarget::NextTurn, true)
     }

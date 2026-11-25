@@ -74,6 +74,7 @@ struct Handle {
     lease: Mutex<Option<Arc<SessionWriteLease>>>,
     chain: Mutex<watch::Receiver<bool>>,
     closing: AtomicBool,
+    retain_on_drain_error: AtomicBool,
     close_result: Mutex<Option<Completion>>,
     observed: AtomicU64,
     buffer: Mutex<Vec<Arc<SessionEvent>>>,
@@ -123,6 +124,7 @@ impl JsonlSessionHandle {
             lease: Mutex::new(lease),
             chain: Mutex::new(done_queue()),
             closing: AtomicBool::new(false),
+            retain_on_drain_error: AtomicBool::new(false),
             close_result: Mutex::new(None),
             observed: AtomicU64::new(0),
             buffer: Mutex::new(vec![]),
@@ -355,6 +357,13 @@ impl JsonlSessionHandle {
             let mut errors = vec![];
             loop {
                 if let Err(failure) = handle.drain_live().await {
+                    if handle.0.retain_on_drain_error.load(Ordering::Acquire) {
+                        // Keep both the lease and the buffered tail until a later close can
+                        // persist it. This also keeps trash from claiming this session.
+                        *lock(&handle.0.close_result) = None;
+                        let _ = sender.send(Some(Err(SharedError::new(failure))));
+                        return;
+                    }
                     errors.push(failure);
                     break;
                 }
@@ -630,6 +639,20 @@ impl JsonlBackendTracker {
     }
     pub fn writer(&self, id: &SessionId) -> Option<Arc<JsonlSessionHandle>> {
         lock(&self.state).writers.get(id).cloned().flatten()
+    }
+    pub async fn prepare_delete(&self, id: &SessionId) -> Result<()> {
+        let Some(writer) = self.writer(id) else {
+            return Ok(());
+        };
+        writer
+            .0
+            .retain_on_drain_error
+            .store(true, Ordering::Release);
+        if writer.0.closing.load(Ordering::Acquire) {
+            return writer.close_handle().await;
+        }
+        writer.drain_live().await?;
+        writer.flush(None).await
     }
     pub async fn flush_all(&self) -> Result<()> {
         let writers = lock(&self.state)

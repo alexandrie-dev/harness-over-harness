@@ -2409,3 +2409,81 @@ async fn trash_refuses_a_live_writer() {
     f.backend.trash(&id).await.unwrap();
     f.finish().await;
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn del2_lock_symlink_never_changes_the_referenced_file() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new(JsonlCompression::None).await;
+    let (path, _) = f.store(&meta("lock-link"), &close_turn()).await;
+    let victim = f.root.path().join("victim");
+    tokio::fs::write(&victim, b"untouched").await.unwrap();
+    symlink(
+        &victim,
+        std::path::Path::new(&path)
+            .parent()
+            .unwrap()
+            .join("session.lock"),
+    )
+    .unwrap();
+    assert!(f.backend.trash(&"lock-link".into()).await.is_err());
+    assert_eq!(tokio::fs::read(victim).await.unwrap(), b"untouched");
+    f.finish().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn del2_trash_symlink_is_refused_without_moving_data() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new(JsonlCompression::None).await;
+    let external = tempfile::tempdir().unwrap();
+    let (path, bytes) = f.store(&meta("trash-link"), &close_turn()).await;
+    symlink(external.path(), f.root.path().join("trash")).unwrap();
+    assert!(f.backend.trash(&"trash-link".into()).await.is_err());
+    assert_eq!(tokio::fs::read(path).await.unwrap(), bytes);
+    assert!(std::fs::read_dir(external.path()).unwrap().next().is_none());
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn del2_trash_rejects_a_log_with_a_different_header_id() {
+    let f = Fixture::new(JsonlCompression::None).await;
+    let (path, bytes) = f.store(&meta("actual"), &close_turn()).await;
+    let source = std::path::Path::new(&path).parent().unwrap();
+    let wrong = source.parent().unwrap().join("requested");
+    tokio::fs::rename(source, &wrong).await.unwrap();
+    assert!(f.backend.trash(&"requested".into()).await.is_err());
+    assert_eq!(
+        tokio::fs::read(wrong.join(std::path::Path::new(&path).file_name().unwrap()))
+            .await
+            .unwrap(),
+        bytes
+    );
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn del2_inventory_ignores_a_nested_foreign_trash_but_keeps_a_chat_named_trash() {
+    let f = Fixture::new(JsonlCompression::None).await;
+    let (foreign_path, _) = f.store(&meta("foreign"), &close_turn()).await;
+    let project = std::path::Path::new(&foreign_path)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let nested = project.join("trash");
+    tokio::fs::rename(
+        std::path::Path::new(&foreign_path).parent().unwrap(),
+        &nested,
+    )
+    .await
+    .unwrap();
+    assert!(f.backend.list(None).await.unwrap().is_empty());
+    tokio::fs::remove_dir_all(&nested).await.unwrap();
+    f.store(&meta("trash"), &close_turn()).await;
+    assert_eq!(
+        f.backend.list(None).await.unwrap()[0].header.id.as_str(),
+        "trash"
+    );
+    f.finish().await;
+}

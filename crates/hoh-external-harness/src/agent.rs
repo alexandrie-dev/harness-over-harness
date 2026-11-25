@@ -253,6 +253,7 @@ pub(crate) struct ExternalAgent {
     options: AgentOptions,
     model: ExternalModel,
     inbox: ExternalInbox,
+    deletion_gate: hoh_agent::DeletionGate,
     status: watch::Sender<AgentStatus>,
     wake: Notify,
     state: Mutex<State>,
@@ -321,6 +322,7 @@ impl ExternalAgent {
             options: init.options,
             model,
             inbox: ExternalInbox::default(),
+            deletion_gate: hoh_agent::DeletionGate::default(),
             status: watch::channel(AgentStatus::Idle).0,
             wake: Notify::new(),
             state: Mutex::new(State {
@@ -2787,6 +2789,7 @@ impl Agent for ExternalAgent {
         target: InboxTarget,
         wakeup: bool,
     ) -> Result<(), BoxError> {
+        let _admission = self.deletion_gate.enter()?;
         self.inbox.append(target, message)?;
         if wakeup {
             lock(&self.state).wake_pending = true;
@@ -2794,6 +2797,20 @@ impl Agent for ExternalAgent {
             self.wake.notify_one();
         }
         Ok(())
+    }
+
+    fn reserve_deletion(&self) -> Result<(), BoxError> {
+        self.deletion_gate.reserve(|| {
+            let state = lock(&self.state);
+            !state.closed
+                && state.abort.is_none()
+                && !state.wake_pending
+                && self.inbox.next_turn().is_empty()
+                && self.inbox.next_step().is_empty()
+        })
+    }
+    fn release_deletion(&self) {
+        self.deletion_gate.release();
     }
 
     fn followup(&self, message: UserMessage) -> Result<(), BoxError> {

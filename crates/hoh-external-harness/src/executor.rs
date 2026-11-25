@@ -12,7 +12,7 @@ use hoh_agent::{
     bound_executor as bound_harness, stored_executor_binding,
 };
 use hoh_destructive_classifier::DestructiveClassifier;
-use hoh_error::BoxError;
+use hoh_error::{BoxError, SharedError};
 use hoh_kernel::{Context, Disposer, Service, Undo};
 use hoh_scope::{CreateScopeOptions, Scope, ScopeKey, create_scope};
 use hoh_session::{
@@ -569,9 +569,9 @@ async fn initialize(
                 format!("externalHarness.lifecycle({})", dyn_agent.id()),
                 move |undos| -> Result<(), BoxError> {
                     undos.push(Undo::future(move || async move {
-                        follow.teardown().await;
+                        let result = follow.teardown().await;
                         follow.leave().await;
-                        Ok(())
+                        result.map_err(|e| Box::new(e) as BoxError)
                     }))?;
                     Ok(())
                 },
@@ -586,14 +586,11 @@ async fn initialize(
             let handle_lifecycle = lifecycle.clone();
             Ok(AgentHandle::new(dyn_agent, move || {
                 let lifecycle = handle_lifecycle.clone();
-                Box::pin(async move {
-                    lifecycle.dispose().await;
-                    Ok(())
-                })
+                Box::pin(async move { lifecycle.dispose().await })
             }))
         }
         Err(error) => {
-            lifecycle.dispose().await;
+            let _ = lifecycle.dispose().await;
             Err(error)
         }
     }
@@ -608,18 +605,18 @@ struct Lifecycle {
     detach_agent: Mutex<Option<AgentDetach>>,
     driver: Mutex<Option<Disposer>>,
     follows: Mutex<Vec<Disposer>>,
-    done: OnceCell<()>,
+    done: OnceCell<Result<(), SharedError>>,
 }
 
 impl Lifecycle {
     /// Stop the turn, the driver and the harness process, unwind the scope, close the write
     /// handle, leave the registries. Memoized: every owner awaits the same teardown.
-    async fn teardown(self: &Arc<Self>) {
+    async fn teardown(self: &Arc<Self>) -> Result<(), SharedError> {
         let this = self.clone();
-        self.done.get_or_init(|| this.run_teardown()).await;
+        self.done.get_or_init(|| this.run_teardown()).await.clone()
     }
 
-    async fn run_teardown(self: Arc<Self>) {
+    async fn run_teardown(self: Arc<Self>) -> Result<(), SharedError> {
         // No turn starts from here on, even from input queued before.
         self.agent.close();
         let driver = lock(&self.driver).take();
@@ -632,15 +629,11 @@ impl Lifecycle {
             control.terminate(grace).await;
         }
         self.scope.dispose().await;
-        if let Some(stored) = &self.stored
-            && let Err(error) = stored.handle.close().await
-        {
-            self.agent
-                .shared
-                .ctx
-                .logger()
-                .warn(format_args!("closing the session log failed: {error}"));
-        }
+        let close = if let Some(stored) = &self.stored {
+            stored.handle.close().await.map_err(SharedError::new)
+        } else {
+            Ok(())
+        };
         let detach = lock(&self.detach_agent).take();
         if let Some(detach) = detach {
             detach.detach();
@@ -649,12 +642,14 @@ impl Lifecycle {
         if let Some(detach) = detach {
             detach.detach();
         }
+        close
     }
 
     /// Teardown, then leave the owners' effects.
-    async fn dispose(self: &Arc<Self>) {
-        self.teardown().await;
+    async fn dispose(self: &Arc<Self>) -> Result<(), BoxError> {
+        let result = self.teardown().await;
         self.leave().await;
+        result.map_err(|error| Box::new(error) as BoxError)
     }
 
     /// Leave the owners' effects. The one being undone right now returns at once (a repeat

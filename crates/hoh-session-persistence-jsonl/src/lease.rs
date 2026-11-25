@@ -5,7 +5,8 @@ use crate::{
 };
 use hoh_session::SessionId;
 use hoh_session_persistence::SessionAlreadyOwnedError;
-use std::os::unix::fs::MetadataExt;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::{fs::File, sync::Mutex};
 pub const LEASE_FILENAME: &str = "session.lock";
 pub struct SessionWriteLease {
@@ -25,13 +26,24 @@ impl SessionWriteLease {
         let fs = FileSystem { hook };
         let path = hoh_util_workspace_path::node_path::join(&[dir, LEASE_FILENAME]);
         fs.mkdir(dir).await?;
+        // Pin the session directory without following a final symlink before creating the lock.
+        let directory = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(
+                (rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::NOFOLLOW).bits() as i32,
+            )
+            .open(dir)?;
+        let anchored = format!("/proc/self/fd/{}/{}", directory.as_raw_fd(), LEASE_FILENAME);
         for _ in 0..3 {
             fs.hook(IoOperation::Open, &path, None, false, None).await?;
             let file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
-                .truncate(true)
-                .open(&path)
+                // Never follow a lock symlink or modify an existing file before ownership.
+                .custom_flags(
+                    (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
+                )
+                .open(&anchored)
                 .await
                 .map_err(|e| fs_error(e, "open", &path, None))?
                 .into_std()
@@ -47,6 +59,12 @@ impl SessionWriteLease {
                 })
                 .await?;
                 let held = result.map_err(|e| fs_error(e, "flock", &path, None))?;
+                if !held.is_file() {
+                    return Err(std::io::Error::other(format!(
+                        "session lock is not a regular file: {path}"
+                    ))
+                    .into());
+                }
                 fs.hook(IoOperation::Flock, &path, None, true, None).await?;
                 let current = match fs.metadata(&path).await {
                     Ok(current) => Some(current),
