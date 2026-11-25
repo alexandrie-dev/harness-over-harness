@@ -1,36 +1,47 @@
 # Plugin Creator
 
-Plugin Creator входит в движок HoH как `hoh:core-plugin-creator`. Автор
-или внешний агент может работать через CLI из репозитория HoH.
+Автор и внешний агент используют один CLI для создания и проверки Rust-плагинов HoH.
+Для каждого плагина откройте отдельный worktree, чтобы его Cargo workspace и индекс
+оставались независимыми от других авторов.
 
 ```sh
-hoh plugin templates --json
-hoh plugin guide tool --json
-hoh plugin new hello --template tool --json
-hoh plugin check hello --json
-cargo test --offline -p hoh-plugin-hello
+git worktree add -b plugin/hello ../hoh-hello HEAD
+cd ../hoh-hello
+cargo run --offline -p hoh -- plugin templates --json
 ```
 
-Шаблон `tool` регистрирует `hello_echo` через сервис Tools ядра. Готовый
-smoke-тест вызывает инструмент, проверяет ошибку при неверном входе и
-проверяет снятие регистрации при выгрузке. Измените обработчик и его схемы
-в `plugins/hello/src/lib.rs`. Имя инструмента укажите также в
-`plugins/hello/hoh-plugin.json`.
+Нужны закреплённый в `rust-toolchain.toml` Rust, офлайн-кеш Cargo и Python 3.11 или новее.
+Если `hoh` ещё не доступен в PATH, используйте префикс
+`cargo run --offline -p hoh -- plugin` для команд ниже.
 
-Команда `hoh plugin new hello` создаёт минимальный Rust-плагин с тестом
-загрузки. Для обработки события сессии и вывода в панели выполните
-`hoh plugin guide session-panel`. Рецепт указывает на пример `plugins/turn-note`.
+```sh
+hoh plugin new hello --template tool --json
+hoh plugin test hello --json
+```
 
-Команда `check` проверяет наличие Cargo-манифеста и поля
-`hoh-plugin.json`. Ошибки попадают в `issues`, код выхода равен 1.
-Поле `linkedManifest` сравнивает файл со встроенным в движок манифестом.
-Возможные значения — `missing`, `matches` и `differs`. У свежего шаблона
-это `missing`. Для проверки поведения Rust запустите smoke-тест.
+`new` выводит каталог, два основных файла в `editFiles` и следующую команду в
+`testCommand`. Шаблон `tool` регистрирует `hello_echo` и включает проверки вызова,
+неверного ввода и выгрузки. Шаблон `basic` проверяет загрузку. Для события сессии
+и панели выполните `hoh plugin guide session-panel` и откройте `plugins/turn-note`.
 
-После ревью запустите из корня `python3 scripts/generate-plugin-index.py`
-и пересоберите движок. Через этот индекс Rust-плагины подключаются к
-профилю окна. Команда `scripts/plugin-dev.sh hello` выполняет оба шага
-с настроенным офлайн-кешем Cargo.
+- `hoh plugin check hello --json` проверяет идентификатор, JSON-манифест и имя
+  пакета в Cargo. `linkedManifest` сравнивает метаданные со встроенной копией.
+- `hoh plugin test hello --json` сначала делает ту же проверку, затем запускает
+  офлайн-тесты выбранного пакета. При ошибке сборки показывает до трёх
+  диагностик. Полный вывод Cargo и тестов доступен по пути `log`.
+- Отчёты создания, проверки и тестирования имеют `formatVersion: 1`.
+  Успех помечается `ok: true`. При ошибке код выхода ненулевой, а в `issues`
+  есть стабильный `code`, сообщение и, где применимо, файл, строка и подсказка.
 
-Сгенерированный Rust исполняется внутри HoH. Ревью исходников перед
-добавлением в индекс проводится по тем же правилам, что и для кода ядра.
+## Подключение к движку
+
+Для предварительного просмотра индекса выполните
+`python3 scripts/generate-plugin-index.py --candidate hello --dry-run --json`.
+Для локального запуска с окном используйте `scripts/plugin-dev.sh hello` в
+worktree автора с настроенными `CARGO_HOME` и `CARGO_TARGET_DIR`. Скрипт
+пересобирает движок с выпущенными плагинами и выбранным кандидатом, затем
+печатает путь к бинарнику для уже собранного окна.
+
+После ревью Rust-кода внесите ID в `plugins/index.json` и выполните
+`python3 scripts/generate-plugin-index.py` для сборки поставки. Rust-плагин
+работает внутри процесса HoH, поэтому его исходники ревьюятся как код ядра.

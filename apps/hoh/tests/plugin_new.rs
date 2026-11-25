@@ -78,10 +78,7 @@ fn agent_can_discover_generate_and_check_a_tool_without_booting_a_profile() {
     assert!(create.status.success(), "{:?}", create);
     let scaffold = json(&create);
     assert_eq!(scaffold["template"], "tool");
-    assert_eq!(
-        scaffold["testCommand"],
-        "cargo test --offline -p hoh-plugin-demo-tool"
-    );
+    assert_eq!(scaffold["testCommand"], "hoh plugin test demo-tool --json");
     let path = root.path().join("plugins/demo-tool");
     let manifest = path.join("hoh-plugin.json");
     let scaffold_manifest: serde_json::Value =
@@ -99,7 +96,12 @@ fn agent_can_discover_generate_and_check_a_tool_without_booting_a_profile() {
     fs::write(&manifest, "{").unwrap();
     let check = cli(&cwd, &["plugin", "check", "demo-tool", "--json"]);
     assert_eq!(check.status.code(), Some(1));
-    assert_eq!(json(&check)["issues"][0]["file"], "hoh-plugin.json");
+    assert_eq!(
+        json(&check)["issues"][0]["file"],
+        "plugins/demo-tool/hoh-plugin.json"
+    );
+    assert_eq!(json(&check)["issues"][0]["code"], "manifest_unreadable");
+    assert_eq!(json(&check)["formatVersion"], 1);
 }
 
 #[test]
@@ -135,4 +137,56 @@ fn refuses_a_symlinked_plugins_directory() {
     std::os::unix::fs::symlink(outside.path(), root.path().join("plugins")).unwrap();
     assert!(create(root.path(), "demo").is_err());
     assert!(!outside.path().join("demo").exists());
+}
+
+#[test]
+fn expected_failures_have_structured_diagnostics_and_test_fails_before_cargo() {
+    let root = repository();
+    let cwd = root.path();
+    assert!(create(cwd, "demo").is_ok());
+    let path = cwd.join("plugins/demo");
+    let cases: &[(&[&str], &str)] = &[
+        (&["plugin", "new", "inventory", "--json"], "reserved_id"),
+        (&["plugin", "new", "demo", "--json"], "already_exists"),
+        (
+            &["plugin", "check", "missing", "--json"],
+            "plugin_directory",
+        ),
+        (
+            &["plugin", "new", "demo", "--template", "unknown", "--json"],
+            "unknown_template",
+        ),
+    ];
+    for (args, code) in cases {
+        let result = cli(cwd, args);
+        assert!(!result.status.success(), "{result:?}");
+        let report = json(&result);
+        assert_eq!(report["formatVersion"], 1);
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["issues"][0]["code"], *code);
+    }
+
+    fs::write(path.join("Cargo.toml"), "[package]\nname = \"wrong\"\n").unwrap();
+    for verb in ["check", "test"] {
+        let result = cli(cwd, &["plugin", verb, "--json", "demo"]);
+        assert_eq!(result.status.code(), Some(1));
+        let report = json(&result);
+        assert_eq!(report["issues"][0]["code"], "cargo_package_name");
+        assert!(report.get("log").is_none());
+    }
+}
+
+#[test]
+fn simultaneous_scaffolds_publish_one_complete_plugin() {
+    let root = repository();
+    std::thread::scope(|scope| {
+        let left = scope.spawn(|| create(root.path(), "demo"));
+        let right = scope.spawn(|| create(root.path(), "demo"));
+        let results = [left.join().unwrap(), right.join().unwrap()];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    });
+    let check = cli(root.path(), &["plugin", "check", "demo", "--json"]);
+    assert!(check.status.success(), "{check:?}");
+    assert_eq!(json(&check)["ok"], true);
+    assert!(root.path().join("plugins/demo/tests/smoke.rs").is_file());
 }

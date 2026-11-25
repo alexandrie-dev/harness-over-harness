@@ -13,3 +13,7 @@ workspace = true
 hoh-kernel = { path = "../hoh-kernel" }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))'.dependencies]
+rustix.workspace = true

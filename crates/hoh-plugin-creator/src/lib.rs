@@ -1,18 +1,21 @@
 //! Built-in authoring support for the in-tree Rust plugin workflow.
 
+mod test;
+mod validation;
+
+pub use test::TestReport;
+pub use validation::{FORMAT_VERSION, Issue};
+
 use hoh_kernel::{Cfg, Context, Error, NoConfig, Plugin, service};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::{
-    fs::{self, OpenOptions},
-    io::{self, Read, Write},
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 const MANIFEST: &str = "hoh-plugin.json";
 const FILES: [&str; 4] = ["Cargo.toml", "src/lib.rs", MANIFEST, "tests/smoke.rs"];
-const INDEX_COMMAND: &str = "python3 scripts/generate-plugin-index.py";
 
 pub struct PluginCreator;
 service!(pub Creator: PluginCreator = "pluginCreator");
@@ -79,12 +82,15 @@ impl std::str::FromStr for Template {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Scaffold {
+    pub format_version: u32,
+    pub ok: bool,
     pub id: String,
     pub template: Template,
     pub path: PathBuf,
     pub files: [&'static str; 4],
+    pub edit_files: [&'static str; 2],
     pub test_command: String,
-    pub index_command: &'static str,
+    pub index_command: String,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -98,40 +104,35 @@ pub enum LinkedManifest {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Inspection {
+    pub format_version: u32,
+    pub ok: bool,
     pub id: String,
     pub path: PathBuf,
     pub issues: Vec<Issue>,
     pub linked_manifest: LinkedManifest,
     pub test_command: String,
-    pub index_command: &'static str,
-}
-
-#[derive(Serialize)]
-pub struct Issue {
-    pub file: &'static str,
-    pub message: String,
+    pub index_command: String,
 }
 
 impl PluginCreator {
-    pub fn create(&self, cwd: &Path, id: &str, template: Template) -> Result<Scaffold, Error> {
-        validate_id(id)?;
+    pub fn create(&self, cwd: &Path, id: &str, template: Template) -> Result<Scaffold, Issue> {
+        let root = repository(cwd)?;
+        if let Some(issue) = validation::preflight(root, "--check-id", id)?.issues.pop() {
+            return Err(issue);
+        }
         let tool = template == Template::Tool;
         if tool && id.len() > 59 {
-            return Err(
-                "the tool template needs an id of at most 59 characters to fit the tool name"
-                    .into(),
-            );
+            return Err(Issue::new(
+                "tool_id_length",
+                "The tool template needs an ID of at most 59 characters.",
+            ));
         }
-        let parent = repository(cwd)?.join("plugins");
+        let parent = root.join("plugins");
         create_plugins_dir(&parent)?;
         let path = parent.join(id);
-        fs::create_dir(&path).map_err(|error| {
-            if error.kind() == io::ErrorKind::AlreadyExists {
-                format!("{} already exists. Choose a new plugin id", path.display())
-            } else {
-                format!("cannot create {}: {error}", path.display())
-            }
-        })?;
+        if fs::symlink_metadata(&path).is_ok() {
+            return Err(already_exists(&path, id));
+        }
 
         let dependencies = if tool {
             include_str!("../templates/tool-dependencies.toml")
@@ -166,48 +167,32 @@ impl PluginCreator {
             "permissions": if tool { serde_json::json!({"tools": [tool_name]}) } else { serde_json::json!({}) }
         });
 
-        let mut created_files = Vec::new();
-        let mut created_dirs = Vec::new();
-        let result = (|| -> Result<(), Error> {
-            for directory in ["src", "tests"] {
-                let directory = path.join(directory);
-                fs::create_dir(&directory)?;
-                created_dirs.push(directory);
+        let contents = [
+            cargo,
+            render(source),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&manifest).expect("scaffold manifest is JSON")
+            ),
+            render(smoke),
+        ];
+        stage_scaffold(root, &path, contents).map_err(|error| {
+            if error.kind() == io::ErrorKind::AlreadyExists || fs::symlink_metadata(&path).is_ok() {
+                already_exists(&path, id)
+            } else {
+                Issue::new("create_failed", error.to_string()).at(&path)
             }
-            let contents = [
-                cargo,
-                render(source),
-                format!("{}\n", serde_json::to_string_pretty(&manifest)?),
-                render(smoke),
-            ];
-            for (name, contents) in FILES.into_iter().zip(contents) {
-                let file = path.join(name);
-                let mut writer = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&file)?;
-                created_files.push(file);
-                writer.write_all(contents.as_bytes())?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            for file in created_files {
-                let _ = fs::remove_file(file);
-            }
-            for directory in created_dirs {
-                let _ = fs::remove_dir(directory);
-            }
-            let _ = fs::remove_dir(&path);
-            return Err(format!("could not write {}: {error}", path.display()).into());
-        }
+        })?;
         Ok(Scaffold {
+            format_version: FORMAT_VERSION,
+            ok: true,
             id: id.into(),
             template,
             path,
             files: FILES,
+            edit_files: ["src/lib.rs", MANIFEST],
             test_command: test_command(id),
-            index_command: INDEX_COMMAND,
+            index_command: preview_command(id),
         })
     }
 
@@ -217,148 +202,121 @@ impl PluginCreator {
         cwd: &Path,
         id: &str,
         linked: &[(&str, &str)],
-    ) -> Result<Inspection, Error> {
-        validate_id(id)?;
-        let parent = repository(cwd)?.join("plugins");
-        require_directory(&parent)?;
-        let path = parent.join(id);
-        require_directory(&path)?;
-        let mut issues = Vec::new();
-        if !path.join("Cargo.toml").is_file() {
-            issues.push(Issue {
-                file: "Cargo.toml",
-                message: format!("add the hoh-plugin-{id} Cargo package"),
-            });
+    ) -> Result<Inspection, Issue> {
+        let root = repository(cwd)?;
+        let report = validation::preflight(root, "--check", id)?;
+        if report
+            .issues
+            .iter()
+            .any(|issue| matches!(issue.code.as_str(), "invalid_id" | "reserved_id"))
+        {
+            return Err(report.issues.into_iter().next().expect("invalid ID issue"));
         }
-        let manifest = match read_manifest(&path.join(MANIFEST)) {
-            Ok(text) => {
-                match serde_json::from_str::<Value>(&text) {
-                    Ok(manifest) => check_manifest(&manifest, id, &mut issues),
-                    Err(error) => issues.push(Issue {
-                        file: MANIFEST,
-                        message: format!("invalid JSON: {error}"),
-                    }),
-                }
-                Some(text)
-            }
-            Err(error) => {
-                issues.push(Issue {
-                    file: MANIFEST,
-                    message: error.to_string(),
-                });
-                None
-            }
-        };
         let linked_manifest = match linked.iter().find(|(name, _)| *name == id) {
             None => LinkedManifest::Missing,
-            Some((_, text)) if manifest.as_deref() == Some(*text) => LinkedManifest::Matches,
+            Some((_, text)) if report.manifest.as_deref() == Some(*text) => LinkedManifest::Matches,
             Some(_) => LinkedManifest::Differs,
         };
+        let path = root.join("plugins").join(id);
         Ok(Inspection {
+            format_version: FORMAT_VERSION,
+            ok: report.issues.is_empty(),
             id: id.into(),
             path,
-            issues,
+            issues: report.issues,
             linked_manifest,
             test_command: test_command(id),
-            index_command: INDEX_COMMAND,
+            index_command: preview_command(id),
         })
     }
 }
 
-fn repository(cwd: &Path) -> Result<&Path, Error> {
+pub(crate) fn repository(cwd: &Path) -> Result<&Path, Issue> {
     cwd.ancestors()
         .find(|root| root.join("crates/hoh-kernel/Cargo.toml").is_file())
-        .ok_or_else(|| "run this command inside a HoH source checkout".into())
+        .ok_or_else(|| {
+            Issue::new(
+                "checkout_missing",
+                "Run this command inside a HoH source checkout.",
+            )
+        })
 }
 
-fn validate_id(id: &str) -> Result<(), Error> {
-    let bytes = id.as_bytes();
-    if bytes.len() <= 64
-        && bytes.first().is_some_and(u8::is_ascii_lowercase)
-        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
-    {
-        return Ok(());
-    }
-    Err("plugin id must start with a lowercase letter, end with a letter or digit, and contain only lowercase letters, digits and hyphens (maximum 64 characters)".into())
-}
-
-fn create_plugins_dir(path: &Path) -> Result<(), Error> {
+fn create_plugins_dir(path: &Path) -> Result<(), Issue> {
     match fs::create_dir(path) {
         Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => require_directory(path),
-        Err(error) => Err(format!("cannot create {}: {error}", path.display()).into()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
+                Ok(())
+            } else {
+                Err(Issue::new(
+                    "plugins_directory",
+                    "Expected a plugins directory without symlinks.",
+                )
+                .at(path))
+            }
+        }
+        Err(error) => Err(Issue::new("create_failed", error.to_string()).at(path)),
     }
 }
 
-fn require_directory(path: &Path) -> Result<(), Error> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => Ok(()),
-        Ok(_) => Err(format!(
-            "expected a directory without a symlink at {}",
-            path.display()
-        )
-        .into()),
-        Err(error) => Err(format!("cannot open {}: {error}", path.display()).into()),
-    }
+fn already_exists(path: &Path, id: &str) -> Issue {
+    Issue::new("already_exists", "A plugin path already exists.")
+        .at(path)
+        .with_hint(format!(
+            "Use hoh plugin check {id} to resume work, or choose a different ID."
+        ))
 }
 
-fn read_manifest(path: &Path) -> Result<String, Error> {
-    const MAX_BYTES: u64 = 256 * 1024;
-    if !fs::symlink_metadata(path)?.is_file() {
-        return Err("expected a regular manifest file without a symlink".into());
+fn stage_scaffold(root: &Path, destination: &Path, contents: [String; 4]) -> io::Result<()> {
+    // Stage next to the workspace, outside Cargo's plugins/* glob.
+    let staged = tempfile::Builder::new()
+        .prefix(".hoh-scaffold-")
+        .tempdir_in(root)?;
+    let path = staged.path().join("plugin");
+    fs::create_dir(&path)?;
+    fs::create_dir(path.join("src"))?;
+    fs::create_dir(path.join("tests"))?;
+    for (file, contents) in FILES.into_iter().zip(contents) {
+        fs::write(path.join(file), contents)?;
     }
-    let mut text = String::new();
-    let size = fs::File::open(path)?
-        .take(MAX_BYTES + 1)
-        .read_to_string(&mut text)?;
-    if size as u64 > MAX_BYTES {
-        return Err("manifest exceeds 256 KiB".into());
-    }
-    Ok(text)
+    publish_scaffold(&path, destination)
 }
 
-fn check_manifest(manifest: &Value, id: &str, issues: &mut Vec<Issue>) {
-    let mut issue = |message: &str| {
-        issues.push(Issue {
-            file: MANIFEST,
-            message: message.into(),
-        });
-    };
-    if !manifest.is_object() {
-        issue("manifest must be a JSON object");
-        return;
-    }
-    if manifest["id"].as_str() != Some(id) {
-        issue("id must match the plugin directory");
-    }
-    if !manifest["version"]
-        .as_str()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        issue("version must be a nonempty string");
-    }
-    if !manifest["entry"].as_str().is_some_and(is_rust_identifier) {
-        issue("entry must name a Rust type exported by the crate");
-    }
-    if manifest
-        .get("permissions")
-        .is_some_and(|value| !value.is_object())
-    {
-        issue("permissions must be an object");
-    }
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn publish_scaffold(source: &Path, destination: &Path) -> io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+    Ok(renameat_with(
+        CWD,
+        source,
+        CWD,
+        destination,
+        RenameFlags::NOREPLACE,
+    )?)
 }
 
-fn is_rust_identifier(value: &str) -> bool {
-    let mut bytes = value.bytes();
-    bytes
-        .next()
-        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
-        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+#[cfg(windows)]
+fn publish_scaffold(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_vendor = "apple",
+    windows
+)))]
+fn publish_scaffold(_: &Path, _: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "This platform does not support exclusive directory publication.",
+    ))
 }
 
 fn test_command(id: &str) -> String {
-    format!("cargo test --offline -p hoh-plugin-{id}")
+    format!("hoh plugin test {id} --json")
+}
+
+fn preview_command(id: &str) -> String {
+    format!("python3 scripts/generate-plugin-index.py --candidate {id} --dry-run --json")
 }
