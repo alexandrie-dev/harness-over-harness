@@ -648,11 +648,22 @@ impl JsonlBackendTracker {
             .0
             .retain_on_drain_error
             .store(true, Ordering::Release);
-        if writer.0.closing.load(Ordering::Acquire) {
-            return writer.close_handle().await;
+        let result = if writer.0.closing.load(Ordering::Acquire) {
+            writer.close_handle().await
+        } else {
+            async {
+                writer.drain_live().await?;
+                writer.flush(None).await
+            }
+            .await
+        };
+        if result.is_err() {
+            writer
+                .0
+                .retain_on_drain_error
+                .store(false, Ordering::Release);
         }
-        writer.drain_live().await?;
-        writer.flush(None).await
+        result
     }
     pub async fn flush_all(&self) -> Result<()> {
         let writers = lock(&self.state)
