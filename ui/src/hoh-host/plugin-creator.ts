@@ -28,11 +28,13 @@ export interface PluginCreatorApi {
   launch(input: PluginCreatorInput): Promise<string>;
 }
 
-export function pluginAuthoringPrompt(skill: string, brief: string): string {
-  // The shipped skill goes in the first turn for both harnesses, including sessions
-  // where project-local skill discovery is disabled by the normal trust policy.
+export function pluginAuthoringPrefixes(skill: string): [string, ...string[]] {
   const instructions = skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
-  return `${instructions}\n\n## Plugin request\n\n${brief}`;
+  const separator = '\n\n## Plugin request\n\n';
+  const implementation = instructions.split('\n\n## Implement the agreed plugin\n\n')[1];
+  const current = instructions + separator;
+  // Preserve the short message bubble for chats written before the interview was bundled.
+  return implementation ? [current, '# HoH plugin authoring\n\n' + implementation + separator] : [current];
 }
 
 declare global {

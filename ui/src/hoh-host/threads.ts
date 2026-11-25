@@ -165,7 +165,7 @@ export class ThreadModel {
   /** The actual interaction policy of the running process, independent of the next selection. */
   runningInteractionMode: T3InteractionMode | null = null;
   projectId: string;
-  pluginAuthoringPrefix: string | undefined;
+  pluginAuthoringPrefixes: readonly string[] = [];
   /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
   cwd: string | null = null;
   /** History was read from the engine (or the chat is new); until then only the shell row is known. */
@@ -318,9 +318,8 @@ export class ThreadModel {
 
   private addUserMessage(messageId: string, value: string, at: number, attachments: ShownAttachment[] = []) {
     // The journal keeps the full first prompt for the harness. The message bubble shows the user's words.
-    if (this.pluginAuthoringPrefix && value.startsWith(this.pluginAuthoringPrefix) && this.userMessageCount() === 0) {
-      value = value.slice(this.pluginAuthoringPrefix.length);
-    }
+    const authoringPrefix = this.pluginAuthoringPrefixes.find(prefix => value.startsWith(prefix));
+    if (authoringPrefix && this.userMessageCount() === 0) value = value.slice(authoringPrefix.length);
     this.settledByGuess = false; this.stopRequested = false;
     if (this.pendingStartJournal) {
       this.pendingStartJournal.run.lastJournalAt = this.pendingStartJournal.previous;

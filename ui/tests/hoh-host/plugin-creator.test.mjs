@@ -46,6 +46,11 @@ for (const executor of ['claude', 'codex']) {
     assert.equal(prompts[0].params.sessionId, threadId);
     const [{ text }] = prompts[0].params.contentBlocks;
     assert(text.startsWith('# HoH plugin authoring\n'));
+    const interview = text.indexOf('## Start with an interview');
+    const implementation = text.indexOf('## Implement the agreed plugin');
+    assert(interview > 0 && implementation > interview);
+    assert.match(text.slice(interview, implementation), /exactly one design question per turn/);
+    assert.match(text.slice(interview, implementation), /Wait for approval before scaffolding/);
     assert(text.includes('hoh plugin new <id> --template tool --json'));
     assert(text.includes('hoh plugin test <id> --json'));
     assert(text.includes('plugins/turn-note'));
@@ -56,6 +61,24 @@ for (const executor of ['claude', 'codex']) {
     assert.equal(engine.sessionAccess.get(threadId), 'confirm');
   });
 }
+
+test('replays old Plugin Creator chats with the brief visible and leaves later messages intact', async () => {
+  const { ThreadModel } = await built.load('threads');
+  const { pluginAuthoringPrefixes } = await built.load('plugin-creator');
+  const thread = new ThreadModel({ id: 'legacy', createdAt: 1, model: 'model', mode: 'confirm' });
+  thread.pluginAuthoringPrefixes = pluginAuthoringPrefixes(skill);
+  const previousInstructions = skill.slice(skill.indexOf('Work in the selected HoH checkout.')).trim();
+  const savedPrompt = `# HoH plugin authoring\n\n${previousInstructions}\n\n## Plugin request\n\n${brief}`;
+  for (const seq of [1, 2]) {
+    thread.applyEvent({
+      seq, time: seq, type: 'user/message', data: {
+        id: String(seq), source: { kind: 'user' }, content: [{ type: 'text', text: savedPrompt }],
+      },
+    });
+  }
+  const messages = thread.projection().messages.filter(message => message.role === 'user');
+  assert.deepEqual(messages.map(message => message.text), [brief, savedPrompt]);
+});
 
 test('an unrelated folder or unavailable harness never sends a prompt', async t => {
   const engine = new FakeEngine();

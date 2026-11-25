@@ -500,7 +500,7 @@ const scenarios = [
       engine.clock = Date.now();
       const append = engine.append.bind(engine);
       engine.append = (session, type, data) => append(session, type, type === 'assistant/message'
-        ? { ...data, message: { ...data.message, content: [{ type: 'text', text: 'I’ll scaffold a clock tool and run its smoke test.' }] } }
+        ? { ...data, message: { ...data.message, content: [{ type: 'text', text: 'Should the clock tool return local time or UTC? I recommend UTC for consistent output.' }] } }
         : data);
       const request = engine.request.bind(engine);
       engine.request = async (method, params) => {
@@ -527,11 +527,12 @@ const scenarios = [
         page.waitForURL('**/hoh-local/thread-*'),
         launchError.waitFor().then(async () => { throw new Error(await launchError.innerText()); }),
       ]);
-      await page.getByText('I’ll scaffold a clock tool and run its smoke test.').waitFor();
+      await page.getByText('Should the clock tool return local time or UTC? I recommend UTC for consistent output.').waitFor();
       await page.getByText('Build a clock plugin', { exact: true }).waitFor();
       assert.equal(engine.cwd, '/work/hoh');
       assert.deepEqual(engine.promptExecutors, ['claude']);
       const prompt = engine.requests.find(({ method }) => method === 'session/prompt');
+      assert.match(prompt.params.contentBlocks[0].text, /Ask exactly one design question per turn/);
       assert.match(prompt.params.contentBlocks[0].text, /Build a clock plugin$/);
     }, blocks: ['conversation'],
   },

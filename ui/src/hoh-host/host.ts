@@ -27,7 +27,7 @@ import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProj
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 import { ThreadMetadataStore } from './thread-metadata.ts';
 import {
-  MAX_PLUGIN_BRIEF, PLUGIN_CREATOR_CHECKOUT_FILE, pluginAuthoringPrompt,
+  MAX_PLUGIN_BRIEF, PLUGIN_CREATOR_CHECKOUT_FILE, pluginAuthoringPrefixes,
   type PluginCreatorApi, type PluginCreatorOptions,
 } from './plugin-creator.ts';
 
@@ -243,7 +243,7 @@ export class HohHost {
   private readonly localImageContextGraceMs: number;
   private stopped = false;
   private readonly threads = new Map<string, ThreadModel>();
-  private pluginAuthoringPrefix: string | undefined;
+  private pluginAuthoringPrefixes: readonly string[] = [];
   private readonly projectTrustRevisions = new Map<string, number>();
   /** Rows restored before the engine answers; its list/history replaces their cached metadata once available. */
   private readonly restored = new Set<string>();
@@ -457,7 +457,7 @@ export class HohHost {
   }
 
   private applyThreadMetadata(thread: ThreadModel) {
-    thread.pluginAuthoringPrefix = this.pluginAuthoringPrefix;
+    thread.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;
     const metadata = this.threadMetadata.get(thread.id);
     thread.restorePromptTimes(metadata.promptTimes);
     thread.restoreStopTimes(metadata.stopTimes);
@@ -669,8 +669,10 @@ export class HohHost {
   }
 
   pluginCreator(skill: string): PluginCreatorApi {
-    this.pluginAuthoringPrefix = pluginAuthoringPrompt(skill, '');
-    for (const thread of this.threads.values()) thread.pluginAuthoringPrefix = this.pluginAuthoringPrefix;
+    const prefixes = pluginAuthoringPrefixes(skill);
+    const [promptPrefix] = prefixes;
+    this.pluginAuthoringPrefixes = prefixes;
+    for (const thread of this.threads.values()) thread.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;
     return {
       options: async () => {
         await this.start();
@@ -707,7 +709,7 @@ export class HohHost {
           threadId, commandId: 'plugin-creator-' + threadId, projectId,
           title: 'Plugin Creator',
           modelSelection: { instanceId: instanceOf(executor), model: provider.model },
-          initialMessage: { messageId: 'msg-' + threadId, text: pluginAuthoringPrompt(skill, task), attachments: [] },
+          initialMessage: { messageId: 'msg-' + threadId, text: promptPrefix + task, attachments: [] },
         });
         return result.threadId;
       },
@@ -1931,7 +1933,7 @@ export class HohHost {
           }
         }
         const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor, projectId: folder?.id ?? HOH_PROJECT_ID });
-        thread.pluginAuthoringPrefix = this.pluginAuthoringPrefix;
+        thread.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;
         thread.setInteractionMode(interaction);
         this.interactions.set(threadId, interaction);
         thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;

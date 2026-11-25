@@ -96,7 +96,7 @@ export function PluginCreatorPage({
         <section className="hoh-plugin-creator__intro">
           <div className="hoh-plugin-creator__mark" aria-hidden><Puzzle size={27} strokeWidth={1.5} /></div>
           <h1 id="plugin-creator-title">What should your plugin do?</h1>
-          <p>Create and test a plugin with your harness.</p>
+          <p>Your harness will ask questions and confirm the plan before building.</p>
           {options && !brief && !pending ? (
             <div className="hoh-plugin-creator__starters" aria-label="Example requests">
               {starters.map(starter => (
