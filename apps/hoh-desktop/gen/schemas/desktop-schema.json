@@ -201,6 +201,12 @@
           "markdownDescription": "Enables the browse_folders command without any pre-configured scope."
         },
         {
+          "description": "Enables the confirm_external_image command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-confirm-external-image",
+          "markdownDescription": "Enables the confirm_external_image command without any pre-configured scope."
+        },
+        {
           "description": "Enables the engine_request command without any pre-configured scope.",
           "type": "string",
           "const": "allow-engine-request",
@@ -265,6 +271,12 @@
           "type": "string",
           "const": "deny-browse-folders",
           "markdownDescription": "Denies the browse_folders command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the confirm_external_image command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-confirm-external-image",
+          "markdownDescription": "Denies the confirm_external_image command without any pre-configured scope."
         },
         {
           "description": "Denies the engine_request command without any pre-configured scope.",

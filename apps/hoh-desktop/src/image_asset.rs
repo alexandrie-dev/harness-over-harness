@@ -1071,6 +1071,49 @@ fn read_project_image_from_root(
     })
 }
 
+/// Only a user-confirmed absolute raster may use its own folder as the read root.
+#[cfg(target_os = "linux")]
+pub(crate) fn external_image_path(path: &str) -> Result<&Path, String> {
+    let candidate = Path::new(path);
+    if path.len() > 4096
+        || !candidate.is_absolute()
+        || candidate.file_name().is_none()
+        || path.chars().any(|ch| {
+            ch.is_control() || matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
+        || candidate
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    {
+        return Err(unavailable("the external image path is invalid"));
+    }
+    expected_kind(candidate)?;
+    Ok(candidate)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn read_confirmed_image(path: &str, home: &Path) -> Result<ImageAsset, String> {
+    let candidate = external_image_path(path)?;
+    // Reject protected paths before inspecting the containing folder.
+    if protected_home_path(candidate, home) || system_pseudo_path(candidate) {
+        return Err(unavailable("protected files cannot be shown"));
+    }
+    let parent = candidate
+        .parent()
+        .ok_or_else(|| unavailable("the image has no containing folder"))?;
+    let identity = std::fs::symlink_metadata(parent)
+        .map_err(|_| unavailable("the image folder cannot be opened"))?;
+    read_project_image(
+        parent,
+        ProjectRootIdentity {
+            device: identity.dev(),
+            inode: identity.ino(),
+        },
+        path,
+        home,
+    )
+}
+
 /// Read an explicit HTML artifact through the same root and file checks as a project image.
 #[cfg(target_os = "linux")]
 pub fn read_project_html(

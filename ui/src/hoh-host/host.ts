@@ -96,6 +96,7 @@ type LocalImageUrl = {
   url: string; revision: string; sourcePath: string; sizeBytes: number; threadId: string;
   decodeProfile: LocalImageDecodeProfile;
   requestKeys: Set<string>;
+  confirmedPath?: string;
 };
 export type LocalImageDecodeProfile = {
   canvasPixels: number; decodedFramePixels: number;
@@ -905,6 +906,10 @@ export class HohHost {
         this.refundLocalImageAttempt(threadId, attempt);
       }
     }
+    return this.retainLocalImage(threadId, requestKey, image);
+  }
+
+  private retainLocalImage(threadId: string, requestKey: string, image: LocalImageAsset): LocalImageUrl {
     if (this.stopped) throw new Error('Image unavailable: this window has closed.');
     if (!LOCAL_IMAGE_TYPES.has(image?.mimeType) || !Number.isSafeInteger(image?.sizeBytes) || image.sizeBytes < 1 || image.sizeBytes > LOCAL_IMAGE_BYTES)
       throw new Error('Image unavailable: the native image response is invalid.');
@@ -983,10 +988,15 @@ export class HohHost {
     if (this.stopped) return Promise.reject(new Error('Image unavailable: this window has closed.'));
     if (path.length > 4096) return Promise.reject(new Error('Image unavailable: the image path is too long.'));
     const requestKey = `${threadId}\0${path}`;
+    // An accepted external image is a snapshot tied to this exact request and conversation.
+    for (const image of this.localImageUrls.values()) {
+      if (image.threadId === threadId && image.confirmedPath === path) return Promise.resolve(image);
+    }
     const failure = lruGet(this.localImageFailures, requestKey);
     if (failure && failure.expiresAt > this.now()) return Promise.reject(new Error(failure.message));
     const pending = this.localImageInflight.get(requestKey);
     if (pending) return pending;
+    if (this.localImageReservations.has(requestKey)) return Promise.reject(new Error('This image is awaiting confirmation.'));
     try {
       this.reserveLocalImage(requestKey, threadId);
     } catch (error) {
@@ -1009,6 +1019,22 @@ export class HohHost {
       });
     this.localImageInflight.set(requestKey, read);
     return read;
+  }
+
+  async showExternalImage(threadId: string, path: string): Promise<boolean> {
+    if (!this.engine.confirmExternalImage || this.stopped || path.length > 4096 ||
+        !this.threads.has(threadId) || this.deletedThreads.has(threadId)) return false;
+    const requestKey = `${threadId}\0${path}`;
+    if (this.localImageReservations.has(requestKey)) return false;
+    this.reserveLocalImage(requestKey, threadId);
+    try {
+      const image = await this.engine.confirmExternalImage({ sessionId: threadId, path });
+      if (!image || this.deletedThreads.has(threadId) || !this.localImageReservations.has(requestKey)) return false;
+      this.retainLocalImage(threadId, requestKey, image).confirmedPath = path;
+      return true;
+    } finally {
+      this.localImageReservations.delete(requestKey);
+    }
   }
 
   private async load() {

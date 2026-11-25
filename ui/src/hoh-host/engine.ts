@@ -26,6 +26,7 @@ export interface HohEngine {
   request(method: string, params: unknown): Promise<any>;
   /** Native-only bounded read of a raster, rooted by the native host in this conversation's cwd. */
   readImageAsset?(input: { readonly sessionId: string; readonly path: string }): Promise<LocalImageAsset>;
+  confirmExternalImage?(input: { readonly sessionId: string; readonly path: string }): Promise<LocalImageAsset | null>;
   subscribe(listener: (notification: EngineNotification) => void): Promise<Unsubscribe>;
   subscribeStatus?(listener: (status: EngineStatus) => void): Promise<Unsubscribe>;
   subscribeQuestions?(listener: (question: EngineQuestion) => void): Promise<Unsubscribe>;

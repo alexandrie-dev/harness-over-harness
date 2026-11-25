@@ -300,6 +300,41 @@ test('a picture T3 uploads: an address for it, its bytes there, the message carr
   await assert.rejects(fetch(reminted.relativeUrl));
 });
 
+test('an external image snapshot requires confirmation and is confined to its chat and exact path', async () => {
+  const path = '/tmp/hoh-qa/screenshot.png';
+  const message = "Image unavailable: the file is outside this conversation's project.";
+  const engine = new FakeEngine();
+  engine.readImageAsset = async () => { throw new Error(message); };
+  let approved = false;
+  engine.confirmExternalImage = async input => {
+    assert.deepEqual(input, { sessionId: 'chat-approved-image', path });
+    return approved ? {
+      dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES, sourcePath: path,
+      fileRevision: 'confirmed-image', decodeProfile: STATIC_PROFILE,
+    } : null;
+  };
+  const { host, client } = connect(engine);
+  try {
+    await newThread(client, 'chat-approved-image');
+    await newThread(client, 'chat-other-image');
+    const read = (threadId, requested = path) => client.call('assets.createUrl', {
+      resource: { _tag: 'media-file', threadId, path: requested },
+    });
+    await assert.rejects(read('chat-approved-image'));
+    assert.equal(await host.showExternalImage('chat-approved-image', path), false);
+    await assert.rejects(read('chat-approved-image'));
+    approved = true;
+    assert.equal(await host.showExternalImage('chat-approved-image', path), true);
+    const preview = await read('chat-approved-image');
+    assert.match(preview.relativeUrl, /^blob:/);
+    assert.equal((await fetch(preview.relativeUrl)).headers.get('content-type'), 'image/png');
+    await assert.rejects(read('chat-other-image'));
+    await assert.rejects(read('chat-approved-image', path.replace('screenshot', 'other')));
+  } finally {
+    host.stop();
+  }
+});
+
 test('a new conversation accepts its first-turn image before subscribe/create, then rebases it to the project folder', async () => {
   const engine = new FakeEngine();
   const originalRequest = engine.request.bind(engine);
