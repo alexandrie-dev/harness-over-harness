@@ -69,6 +69,7 @@ impl PluginCreator {
                 stdout_log.write_all(&line)?;
                 if report.issues.len() < 3
                     && let Some(issue) = cargo_issue(&line).or_else(|| failed_test(&line))
+                    && !report.issues.contains(&issue)
                 {
                     report.issues.push(issue);
                 }

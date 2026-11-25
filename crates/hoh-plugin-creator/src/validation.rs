@@ -10,7 +10,7 @@ use std::{
 const VALIDATOR: &str = include_str!("../../../scripts/generate-plugin-index.py");
 pub const FORMAT_VERSION: u32 = 1;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Issue {
     pub code: String,
     pub message: String,
