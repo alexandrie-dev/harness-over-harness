@@ -1389,6 +1389,20 @@ impl SessionPersistence for JsonlSessionPersistence {
             self.read_generation_header(&selected, Some(id), None)
                 .await?
                 .ok_or_else(|| error("session header disappeared before deletion"))?;
+            // A failed fsync and failed rollback can leave the same batch on disk twice.
+            // Refuse to move any log that a resumed session would reject.
+            let stored = self.require_stored(id, None, false).await?;
+            if stored.torn.is_some() {
+                return Err(error(
+                    "cannot delete a session with an incomplete or corrupt log",
+                ));
+            }
+            let events = stored
+                .events
+                .iter()
+                .map(|event| (**event).clone())
+                .collect::<Vec<_>>();
+            assert_contiguous(id, &events, 0)?;
             let trash = std::path::Path::new(&self.0.root).join("trash");
             match std::fs::create_dir(&trash) {
                 Ok(()) => (),
