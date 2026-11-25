@@ -2,5 +2,5 @@
   "identifier": "main",
   "description": "Main UI: filtered engine requests and native folder selection; conversation-bound raster image reads; opening links inside the chosen folder or in the browser; answering the permission request shown in its conversation (the host accepts only that one); names of subfolders for «Add project» (never files); no reading of approval windows, general files, shell or window creation.",
   "windows": ["main"],
-  "permissions": ["allow-engine-request", "allow-pick-folder", "allow-browse-folders", "allow-read-image-asset", "allow-read-pasted-image", "allow-preview-html", "allow-open-link", "allow-question-answer", "allow-approval-history", "allow-approval-decide", "core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": ["allow-engine-request", "allow-pick-folder", "allow-browse-folders", "allow-read-image-asset", "allow-confirm-external-image", "allow-read-pasted-image", "allow-preview-html", "allow-open-link", "allow-question-answer", "allow-approval-history", "allow-approval-decide", "core:event:allow-listen", "core:event:allow-unlisten"]
 }

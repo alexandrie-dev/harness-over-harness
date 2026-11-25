@@ -1099,6 +1099,82 @@ pub async fn read_image_asset(
     .map_err(|_| "Image unavailable: the read was interrupted.".to_owned())?
 }
 
+/// The OS dialog names the one file whose bytes will be copied into this chat's window cache.
+#[tauri::command]
+pub async fn confirm_external_image(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    session_id: String,
+    path: String,
+) -> Result<Option<crate::image_asset::ImageAsset>, String> {
+    if window.label() != "main" || !window.is_focused().unwrap_or(false) {
+        return Ok(None);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (state, session_id, path);
+        Ok(None)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        crate::image_asset::external_image_path(&path)?;
+        static CONFIRMING: AtomicBool = AtomicBool::new(false);
+        if CONFIRMING.swap(true, Ordering::AcqRel) {
+            return Err("An image confirmation is already open.".into());
+        }
+        struct DialogSlot;
+        impl Drop for DialogSlot {
+            fn drop(&mut self) {
+                CONFIRMING.store(false, Ordering::Release);
+            }
+        }
+        let _slot = DialogSlot;
+        let engine = state.engine.clone();
+        let (_, _, home) =
+            tauri::async_runtime::spawn_blocking(move || preview_root(&engine, session_id))
+                .await
+                .map_err(|_| "Could not verify the conversation folder.".to_owned())??;
+        let app = window.app_handle().clone();
+        let shown_path = path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            use gtk::prelude::*;
+            let result = window
+                .gtk_window()
+                .map_err(|_| "Could not open the image confirmation.".to_owned())
+                .map(|parent| {
+                    let dialog = gtk::MessageDialog::new(
+                        Some(&parent),
+                        gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
+                        gtk::MessageType::Question,
+                        gtk::ButtonsType::None,
+                        "Show image from outside the project?",
+                    );
+                    dialog.set_secondary_text(Some(&shown_path));
+                    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+                    dialog.add_button("Show image", gtk::ResponseType::Accept);
+                    dialog.set_default_response(gtk::ResponseType::Cancel);
+                    let accepted = dialog.run() == gtk::ResponseType::Accept;
+                    dialog.close();
+                    accepted
+                });
+            let _ = tx.send(result);
+        })
+        .map_err(|_| "Could not open the image confirmation.".to_owned())?;
+        tauri::async_runtime::spawn_blocking(move || {
+            if !rx
+                .recv()
+                .map_err(|_| "The image confirmation was interrupted.".to_owned())??
+            {
+                return Ok(None);
+            }
+            crate::image_asset::read_confirmed_image(&path, &home).map(Some)
+        })
+        .await
+        .map_err(|_| "The image read was interrupted.".to_owned())?
+    }
+}
+
 fn preview_root(
     engine: &Engine,
     session_id: String,

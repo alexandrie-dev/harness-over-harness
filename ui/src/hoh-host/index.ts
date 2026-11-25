@@ -49,12 +49,16 @@ export function installHohHost(options: InstallOptions) {
     request: (method: string, params: unknown) => host.trustRequest(method, params),
     subscribe: (listener: any) => options.engine.subscribe(listener),
   };
+  (options.target ?? globalThis).__HOH_EXTERNAL_IMAGE__ = (threadId: string, path: string) => host.showExternalImage(threadId, path);
   void host.start();
   return {
     host,
     server,
-    uninstall: () => { delete (options.target ?? globalThis).__HOH_PLUGINS__;
+    uninstall: () => {
+      delete (options.target ?? globalThis).__HOH_PLUGINS__;
       delete (options.target ?? globalThis).__HOH_PLUGIN_CREATOR__;
-      restoreSocket(); restoreFetch(); restoreXhr(); host.stop(); },
+      delete (options.target ?? globalThis).__HOH_EXTERNAL_IMAGE__;
+      restoreSocket(); restoreFetch(); restoreXhr(); host.stop();
+    },
   };
 }

@@ -28,6 +28,7 @@ fn main() {
             hoh_desktop::native::pick_folder,
             hoh_desktop::native::browse_folders,
             hoh_desktop::native::read_image_asset,
+            hoh_desktop::native::confirm_external_image,
             hoh_desktop::native::preview_html,
             #[cfg(target_os = "linux")]
             hoh_desktop::clipboard_image::read_pasted_image,
