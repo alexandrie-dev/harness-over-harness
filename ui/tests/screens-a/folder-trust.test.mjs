@@ -3,6 +3,19 @@ import { test } from 'node:test';
 import { resolve } from 'node:path';
 import { componentHarness } from './component-harness.mjs';
 
+test('rebind confirmation preserves the exact signed folder text', async () => {
+  const text = 'The folder for this chat has changed: «/work/исполнитель«»‹›». Rebind this chat to this folder?';
+  const h = componentHarness(resolve(ui, 'src/screens/approval/ApprovalWindow.tsx'), 'ApprovalWindow', {
+    '../../lib/hostError.mjs': { errorText: (_error, fallback) => fallback },
+    '../../lib/humanText': { tidyHuman: value => value.replace(/\s*«»/g, '') },
+    '../shared/icons': { Icon: () => null },
+    './bridge': { approvalHost: () => ({ current: async () => ({ approvalId: 'native-preflight-a', risk: 'high', humanText: text, expiresAt: 105000 }) }) },
+  });
+  await h.settle();
+  assert(h.text().includes(text));
+  h.unmount();
+});
+
 const ui = resolve(import.meta.dirname, '../..');
 for (const [description, humanText, label] of [
   ['grant', 'Trust project settings in /work/project (Claude and Codex)?', 'Trust folder'],
@@ -103,6 +116,22 @@ for (const executor of ['claude', 'codex']) {
     h.unmount();
   });
 }
+
+test('a busy conversation explains why trust cannot yet be revoked', async () => {
+  const h = componentHarness(resolve(ui, 'src/t3-entry/hoh-screens/FolderTrust.tsx'), 'FolderTrust', {}, { threadId: 'saved', fallbackCwd: '/work/project', isServerThread: true });
+  h.window.__HOH_TRUST_ENGINE__ = { request: async (method, params) => {
+    if (method === 'session/working-directory/status') return { changed: false };
+    if (method === 'hoh/executor/access/get') return { session: { executor: 'claude' }, effective: { flags: [] } };
+    if (method === 'session/working-directory/get') return { cwd: '/work/project' };
+    if (method === 'hoh/executor/trust/get') return { cwd: params.cwd, executor: 'claude', trusted: true, changed: false };
+    if (method === 'hoh/executor/trust/set') throw { code: 'trust-revoke-busy' };
+    throw Error(method);
+  } };
+  await h.event('focus'); await h.settle();
+  await h.click('Revoke trust…');
+  assert.match(h.text(), /wait for.*finish/i);
+  h.unmount();
+});
 
 test('changed chat folder requires an explicit rebind of the inspected identity', async () => {
   const calls = []; let changed = true; let reject = true;

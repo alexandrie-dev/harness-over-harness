@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { folderTrustView } from '../../src/t3-entry/hoh-screens/folder-trust-view.mjs';
+
+test('folder trust type declaration exposes the revoke action', async () => {
+  const declaration = await readFile(new URL('../../src/t3-entry/hoh-screens/folder-trust-view.d.mts', import.meta.url), 'utf8');
+  assert.match(declaration, /canRevoke:\s*boolean/);
+});
 
 test('folder trust describes the running process and pending change independently', () => {
   const off = folderTrustView({ running: true, applied: false, trusted: false, changed: false });

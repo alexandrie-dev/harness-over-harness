@@ -352,7 +352,33 @@ impl Window {
                 }
                 let folder = self.known_folder(&params.cwd).await?;
                 let profile = self.path.parent().ok_or("missing profile")?;
+                let mut sessions = Vec::new();
+                if !params.trust
+                    && let Some(directories) = self.ctx.get::<WorkingDirectoryKey>()
+                {
+                    for agent in self.agents.list() {
+                        if !std::fs::canonicalize(directories.get(agent.session()))
+                            .is_ok_and(|cwd| cwd == folder)
+                        {
+                            continue;
+                        }
+                        let id = agent.session().id().to_string();
+                        if agent.status() != AgentStatus::Idle {
+                            return Err("TRUST_REVOKE_BUSY: Wait for the conversation to finish before revoking folder trust.".into());
+                        }
+                        sessions.push(id);
+                    }
+                }
                 crate::trust::set(profile, &folder, params.trust).await?;
+                if !params.trust {
+                    for executor in ["claude", "codex"] {
+                        if let Some(shared) = self.service().shared(executor) {
+                            for process in shared.retire_sessions(&sessions) {
+                                process.terminate(shared.terminate_grace()).await;
+                            }
+                        }
+                    }
+                }
                 Ok(serde_json::to_value(ExecutorTrustResult {
                     executor: params.executor,
                     cwd: folder.to_string_lossy().into_owned(),

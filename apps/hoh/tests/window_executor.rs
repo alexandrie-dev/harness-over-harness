@@ -2262,10 +2262,77 @@ async fn explicit_trust_revocation_restarts_fake_claude_without_project_settings
         .privileged("hoh/executor/trust/set", params(false), "allowed-once")
         .await;
     assert!(revoked.get("error").is_none(), "{revoked}");
+    assert!(
+        until_dead(workspace.sessions()[0].pid).await,
+        "trusted idle process survived revocation"
+    );
     host.turn(SESSION, "second", None).await;
     let starts = workspace.sessions();
     assert_eq!(starts.len(), 2, "{starts:?}");
     assert_eq!(starts[1].value_of("--setting-sources"), Some("user"));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn rebind_rejects_a_changed_folder_while_the_real_agent_is_running() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    hang_turn(&mut host, SESSION, "hang").await;
+    std::fs::rename(
+        &workspace.folder,
+        workspace.root.path().join("old-running-folder"),
+    )
+    .unwrap();
+    std::fs::create_dir(&workspace.folder).unwrap();
+    let status = host
+        .ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION}),
+        )
+        .await;
+    assert_eq!(status["changed"], true);
+    let params = json!({"sessionId": SESSION, "path": status["cwd"], "rootIdentity": status["rootIdentity"]});
+    let result = host
+        .privileged("session/working-directory/rebind", params, "allowed-once")
+        .await;
+    assert!(result.get("error").is_some(), "{result}");
+    assert_eq!(
+        host.ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION})
+        )
+        .await["changed"],
+        true
+    );
+    stop_turn(&mut host, SESSION).await;
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn revoking_folder_trust_during_a_turn_is_refused() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let grant = json!({"executor": "claude", "cwd": workspace.folder, "trust": true});
+    assert!(
+        host.privileged("hoh/executor/trust/set", grant, "allowed-once")
+            .await
+            .get("error")
+            .is_none()
+    );
+    hang_turn(&mut host, SESSION, "hang").await;
+    let revoke = json!({"executor": "claude", "cwd": workspace.folder, "trust": false});
+    let result = host
+        .privileged("hoh/executor/trust/set", revoke, "allowed-once")
+        .await;
+    assert!(result.get("error").is_some(), "{result}");
+    let status = host
+        .ok(
+            "hoh/executor/trust/get",
+            json!({"executor":"claude", "cwd":workspace.folder}),
+        )
+        .await;
+    assert_eq!(status["trusted"], true);
+    stop_turn(&mut host, SESSION).await;
     host.shutdown().await;
 }
 

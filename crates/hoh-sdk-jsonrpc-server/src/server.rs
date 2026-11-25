@@ -1429,9 +1429,7 @@ impl HarnessSdkJsonRpcServer {
                         request.root_identity.inode.parse::<u64>()?,
                     ];
                     self.approve_privileged(method, &params).await?;
-                    let cwd = directory
-                        .rebind(&directory_agent(agent), &request.path, identity)
-                        .await?;
+                    let cwd = directory.rebind(&agent, &request.path, identity).await?;
                     Ok(json!({"cwd": cwd, "rootIdentity": request.root_identity}))
                 }
             }

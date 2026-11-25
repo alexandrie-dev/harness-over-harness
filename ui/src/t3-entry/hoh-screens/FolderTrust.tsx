@@ -16,6 +16,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
   const [changedNotice, setChangedNotice] = useState(false);
   const [folderChanged, setFolderChanged] = useState<FolderStatus | null>(null);
   const [rebindError, setRebindError] = useState(false);
+  const [trustError, setTrustError] = useState('');
   const generation = useRef(0);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
@@ -75,6 +76,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     setChangedNotice(false);
     setFolderChanged(null);
     setRebindError(false);
+    setTrustError('');
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
     window.addEventListener('focus', refresh);
@@ -109,10 +111,14 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     {(view.canTrust || view.canRevoke) && <button type="button" disabled={busy} className="underline hover:text-foreground" onClick={async () => {
       const engine = window.__HOH_TRUST_ENGINE__;
       if (!engine) return;
-      setBusy(true);
+      setBusy(true); setTrustError('');
       try { await engine.request('hoh/executor/trust/set', { executor: state.executor, cwd: state.cwd, trust: !state.trusted }); if (isServerThread) { try { writeAppliedTrust(window.localStorage, threadId, null); } catch { /* Storage is optional. */ } } setChangedNotice(false); }
-      catch { /* The native host rejected or could not confirm the request. */ }
+      catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'trust-revoke-busy')
+          setTrustError('Wait for the conversation to finish before revoking folder trust.');
+      }
       finally { setBusy(false); void refresh(); }
     }}>{view.canRevoke ? 'Revoke trust…' : 'Trust project settings in this folder (Claude and Codex)…'}</button>}
+    {trustError && <span>{trustError}</span>}
   </span>;
 }
