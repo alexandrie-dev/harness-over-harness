@@ -243,6 +243,7 @@ export class HohHost {
   private readonly localImageContextGraceMs: number;
   private stopped = false;
   private readonly threads = new Map<string, ThreadModel>();
+  private pluginAuthoringPrefix: string | undefined;
   private readonly projectTrustRevisions = new Map<string, number>();
   /** Rows restored before the engine answers; its list/history replaces their cached metadata once available. */
   private readonly restored = new Set<string>();
@@ -456,6 +457,7 @@ export class HohHost {
   }
 
   private applyThreadMetadata(thread: ThreadModel) {
+    thread.pluginAuthoringPrefix = this.pluginAuthoringPrefix;
     const metadata = this.threadMetadata.get(thread.id);
     thread.restorePromptTimes(metadata.promptTimes);
     thread.restoreStopTimes(metadata.stopTimes);
@@ -667,6 +669,8 @@ export class HohHost {
   }
 
   pluginCreator(skill: string): PluginCreatorApi {
+    this.pluginAuthoringPrefix = pluginAuthoringPrompt(skill, '');
+    for (const thread of this.threads.values()) thread.pluginAuthoringPrefix = this.pluginAuthoringPrefix;
     return {
       options: async () => {
         await this.start();
@@ -1927,6 +1931,7 @@ export class HohHost {
           }
         }
         const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor, projectId: folder?.id ?? HOH_PROJECT_ID });
+        thread.pluginAuthoringPrefix = this.pluginAuthoringPrefix;
         thread.setInteractionMode(interaction);
         this.interactions.set(threadId, interaction);
         thread.cwd = folder ? folder.workspaceRoot : folderPath(directory?.cwd) || null;

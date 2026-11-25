@@ -1,0 +1,144 @@
+.hoh-plugin-creator {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  color: var(--foreground);
+}
+
+.hoh-plugin-creator__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: .875rem;
+  font-weight: 600;
+}
+
+.hoh-plugin-creator__header svg { color: var(--muted-foreground); }
+
+.hoh-plugin-creator__lane {
+  display: grid;
+  flex: 1;
+  align-content: center;
+  gap: clamp(24px, 5vh, 40px);
+  width: min(100%, calc(var(--chat-content-max-width, 46rem) + 32px));
+  margin-inline: auto;
+  padding: clamp(24px, 6vh, 64px) 16px;
+}
+
+.hoh-plugin-creator__intro { text-align: center; }
+.hoh-plugin-creator__mark {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.hoh-plugin-creator .hoh-plugin-creator__intro h1 {
+  font-size: clamp(1.5rem, 4vw, 1.875rem);
+  line-height: 1.25;
+  letter-spacing: -.03em;
+  font-weight: 600;
+}
+
+.hoh-plugin-creator .hoh-plugin-creator__intro p { max-width: 40ch; margin: 8px auto 0; }
+.hoh-plugin-creator__starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.hoh-plugin-creator__starters button,
+.hoh-plugin-creator__add,
+.hoh-plugin-creator__picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border-radius: 8px;
+  padding-inline: 9px;
+  color: var(--muted-foreground);
+  font-size: .8125rem;
+}
+
+.hoh-plugin-creator__starters button { border: 1px solid var(--border); }
+.hoh-plugin-creator :is(.hoh-plugin-creator__starters button, .hoh-plugin-creator__add, .hoh-plugin-creator__picker):hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.hoh-plugin-creator__composer {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.hoh-plugin-creator__composer:focus-within { border-color: color-mix(in srgb, var(--foreground) 24%, var(--border)); }
+.hoh-plugin-creator__composer textarea {
+  min-width: 0;
+  width: 100%;
+  min-height: 68px;
+  max-height: 30vh;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 3px 4px 0;
+  color: inherit;
+  font: inherit;
+  font-size: .9375rem;
+  line-height: 1.5;
+}
+
+.hoh-plugin-creator__composer textarea::placeholder { color: var(--muted-foreground); }
+.hoh-plugin-creator__toolbar, .hoh-plugin-creator__options { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.hoh-plugin-creator__toolbar { justify-content: space-between; gap: 8px; }
+.hoh-plugin-creator__options { flex-wrap: wrap; }
+.hoh-plugin-creator__picker { position: relative; min-width: 0; max-width: 100%; padding-inline: 0; }
+.hoh-plugin-creator__picker > :is(svg, .provider-mark) { position: absolute; pointer-events: none; }
+.hoh-plugin-creator__picker > :first-child { inset-inline-start: 8px; }
+.hoh-plugin-creator__picker > :last-child { inset-inline-end: 8px; }
+.hoh-plugin-creator__picker .provider-mark { --color-provider-claude: #d97757; display: flex; color: var(--foreground); }
+.hoh-plugin-creator__picker .provider-mark svg { width: 16px; height: 16px; }
+.hoh-plugin-creator__picker select {
+  appearance: none;
+  max-width: min(12rem, 40vw);
+  height: 32px;
+  padding-inline: 29px 27px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.hoh-plugin-creator__picker option { background: var(--card); color: var(--foreground); }
+.hoh-plugin-creator__picker:focus-within, .hoh-plugin-creator button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.hoh-plugin-creator button:not(:disabled) { cursor: pointer; }
+.hoh-plugin-creator button:disabled { opacity: .45; }
+.hoh-plugin-creator__send {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--foreground);
+  color: var(--background);
+}
+.hoh-plugin-creator__composer p { margin: 0 4px 2px; font-size: .8125rem; }
+.hoh-plugin-creator [role="alert"] { color: var(--destructive); }

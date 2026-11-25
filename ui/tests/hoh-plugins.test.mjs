@@ -65,10 +65,13 @@ test('Plugin Creator collects the checkout, harness and brief and opens the laun
     creator, onAddProject: () => added++, onOpenThread: id => opened.push(id),
   });
   await h.settle();
-  assert(h.button('Start authoring').disabled);
-  assert.match(h.text(), /Sign in to Claude/);
-  await h.click('Add project');
+  assert(h.nodes().find(node => node.props['aria-label'] === 'Send plugin request').disabled);
+  assert.equal(h.byId('plugin-creator-project').props.value, 'checkout');
+  assert.equal(h.byId('plugin-creator-harness').props.value, 'codex');
+  h.nodes().find(node => node.props['aria-label'] === 'Add project').props.onClick();
   assert.equal(added, 1);
+  await h.click('Summarize session activity');
+  assert.equal(h.byId('plugin-creator-brief').props.value, 'Summarize session activity');
   const form = await filledForm(h);
   const event = { preventDefault() {} };
   await Promise.all([form.props.onSubmit(event), form.props.onSubmit(event)]);
@@ -96,6 +99,6 @@ test('Plugin Creator keeps the request available when starting a harness fails',
   await h.settle();
   assert.match(h.text(), /Choose a HoH checkout/);
   assert.equal(h.byId('plugin-creator-brief').props.value, '  Add a clock tool.  ');
-  assert.equal(h.button('Start authoring').disabled, false);
+  assert.equal(h.nodes().find(node => node.props['aria-label'] === 'Send plugin request').disabled, false);
   h.unmount();
 });

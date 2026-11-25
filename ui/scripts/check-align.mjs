@@ -495,6 +495,47 @@ const scenarios = [
     }, blocks: ['plugins'],
   },
   {
+    name: 'plugin-creator', engine: () => {
+      const engine = completedEngine();
+      engine.clock = Date.now();
+      const append = engine.append.bind(engine);
+      engine.append = (session, type, data) => append(session, type, type === 'assistant/message'
+        ? { ...data, message: { ...data.message, content: [{ type: 'text', text: 'I’ll scaffold a clock tool and run its smoke test.' }] } }
+        : data);
+      const request = engine.request.bind(engine);
+      engine.request = async (method, params) => {
+        if (method === 'hoh/workspace/entries') return { entries: [{ kind: 'file', path: 'crates/hoh-plugin-creator/Cargo.toml' }] };
+        const result = await request(method, params);
+        return method === 'session/working-directory/set' ? { ...result, cwd: engine.cwd } : result;
+      };
+      return engine;
+    }, stored: () => storage(true),
+    prepare: async (page, engine, sidebar) => {
+      await page.locator('[data-hoh-page-item="plugin-creator"]').click();
+      await page.getByRole('heading', { name: 'What should your plugin do?' }).waitFor();
+      await setSidebar(page, sidebar);
+      await page.getByLabel('HoH checkout').selectOption('project-beta');
+      await page.getByLabel('Harness', { exact: true }).selectOption('claude');
+      await page.getByRole('button', { name: 'Summarize session activity' }).click();
+      const composer = page.getByRole('textbox', { name: 'Plugin request' });
+      assert.equal(await composer.inputValue(), 'Summarize session activity');
+      await composer.fill('Build a clock plugin');
+      if (QA) await page.screenshot({ path: join(QA, `plugin-creator-draft-${page.viewportSize().width}-${sidebar}.png`), animations: 'disabled' });
+      await composer.press('Enter');
+      const launchError = page.locator('.hoh-plugin-creator [role="alert"]');
+      await Promise.race([
+        page.waitForURL('**/hoh-local/thread-*'),
+        launchError.waitFor().then(async () => { throw new Error(await launchError.innerText()); }),
+      ]);
+      await page.getByText('I’ll scaffold a clock tool and run its smoke test.').waitFor();
+      await page.getByText('Build a clock plugin', { exact: true }).waitFor();
+      assert.equal(engine.cwd, '/work/hoh');
+      assert.deepEqual(engine.promptExecutors, ['claude']);
+      const prompt = engine.requests.find(({ method }) => method === 'session/prompt');
+      assert.match(prompt.params.contentBlocks[0].text, /Build a clock plugin$/);
+    }, blocks: ['conversation'],
+  },
+  {
     name: 'learning', engine: busyEngine, stored: () => storage(true),
     prepare: async (page, engine, sidebar) => {
       await readyBusy(page, engine, true);
@@ -860,7 +901,7 @@ try {
   for (const scenario of scenarios) for (const [width, height] of SIZES) for (const sidebar of SIDEBARS) {
     const size = `${width}x${height}`; const label = `${scenario.name} ${size} ${sidebar}`; const engine = scenario.engine();
     console.log(`align: measure ${label}`);
-    const initialSidebar = ['plugins', 'learning'].includes(scenario.name) ? 'expanded' : sidebar;
+    const initialSidebar = ['plugins', 'learning', 'plugin-creator'].includes(scenario.name) ? 'expanded' : sidebar;
     const initialStorage = { ...scenario.stored(), chat_thread_sidebar_open: initialSidebar === 'expanded' ? 'true' : 'false' };
     const { context, page, problems, off } = await open(browser, engine, width, height, scenario.path?.() ?? '/', initialStorage);
     try {

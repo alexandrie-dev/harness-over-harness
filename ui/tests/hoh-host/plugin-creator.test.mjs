@@ -50,6 +50,8 @@ for (const executor of ['claude', 'codex']) {
     assert(text.includes('hoh plugin test <id> --json'));
     assert(text.includes('plugins/turn-note'));
     assert(text.endsWith(brief));
+    const user = host.threads.get(threadId).projection().messages.find(message => message.role === 'user');
+    assert.equal(user.text, brief);
     assert.deepEqual(engine.starts, [{ sessionId: threadId, executor, cwd }]);
     assert.equal(engine.sessionAccess.get(threadId), 'confirm');
   });
