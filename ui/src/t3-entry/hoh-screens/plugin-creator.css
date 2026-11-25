@@ -58,8 +58,7 @@
 }
 
 .hoh-plugin-creator__starters button,
-.hoh-plugin-creator__add,
-.hoh-plugin-creator__picker {
+.hoh-plugin-creator__add {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -71,7 +70,7 @@
 }
 
 .hoh-plugin-creator__starters button { border: 1px solid var(--border); }
-.hoh-plugin-creator :is(.hoh-plugin-creator__starters button, .hoh-plugin-creator__add, .hoh-plugin-creator__picker):hover {
+.hoh-plugin-creator :is(.hoh-plugin-creator__starters button, .hoh-plugin-creator__add):hover {
   background: var(--accent);
   color: var(--foreground);
 }
@@ -107,28 +106,16 @@
 .hoh-plugin-creator__toolbar, .hoh-plugin-creator__options { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .hoh-plugin-creator__toolbar { justify-content: space-between; gap: 8px; }
 .hoh-plugin-creator__options { flex-wrap: wrap; }
-.hoh-plugin-creator__picker { position: relative; min-width: 0; max-width: 100%; padding-inline: 0; }
-.hoh-plugin-creator__picker > :is(svg, .provider-mark) { position: absolute; pointer-events: none; }
-.hoh-plugin-creator__picker > :first-child { inset-inline-start: 8px; }
-.hoh-plugin-creator__picker > :last-child { inset-inline-end: 8px; }
-.hoh-plugin-creator__picker .provider-mark { --color-provider-claude: #d97757; display: flex; color: var(--foreground); }
-.hoh-plugin-creator__picker .provider-mark svg { width: 16px; height: 16px; }
-.hoh-plugin-creator__picker select {
-  appearance: none;
-  max-width: min(12rem, 40vw);
-  height: 32px;
-  padding-inline: 29px 27px;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-overflow: ellipsis;
-  cursor: pointer;
+.hoh-plugin-creator__picker { min-width: 0; max-width: min(12rem, 40vw); }
+.hoh-plugin-creator__picker-list { max-width: min(20rem, calc(100vw - 32px)); }
+:is(.hoh-plugin-creator__picker, .hoh-plugin-creator__picker-list) .provider-mark {
+  --color-provider-claude: #d97757;
+  display: flex;
+  flex-shrink: 0;
+  color: var(--foreground);
 }
-
-.hoh-plugin-creator__picker option { background: var(--card); color: var(--foreground); }
-.hoh-plugin-creator__picker:focus-within, .hoh-plugin-creator button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+:is(.hoh-plugin-creator__picker, .hoh-plugin-creator__picker-list) .provider-mark svg { width: 16px; height: 16px; }
+.hoh-plugin-creator button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .hoh-plugin-creator button:not(:disabled) { cursor: pointer; }
 .hoh-plugin-creator button:disabled { opacity: .45; }
 .hoh-plugin-creator__send {

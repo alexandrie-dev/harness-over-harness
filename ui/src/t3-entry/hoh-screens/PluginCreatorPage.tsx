@@ -1,9 +1,10 @@
-import { ArrowUp, ChevronDown, Folder, FolderPlus, Puzzle } from 'lucide-react';
+import { ArrowUp, Folder, FolderPlus, Puzzle } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ProviderMark } from '../../screens/shared/ProviderMark';
 import {
   MAX_PLUGIN_BRIEF, type PluginCreatorApi, type PluginCreatorOptions,
 } from '../../hoh-host/plugin-creator';
+import { Select, SelectItem, SelectPopup, SelectTrigger } from '../../t3/base/web/components/ui/select';
 import './plugin-creator.css';
 
 const starters = [
@@ -123,34 +124,46 @@ export function PluginCreatorPage({
             <div className="hoh-plugin-creator__toolbar">
               <div className="hoh-plugin-creator__options">
                 {options.projects.length ? (
-                  <div className="hoh-plugin-creator__picker" title={project?.path}>
-                    <Folder size={16} aria-hidden />
-                    <select id="plugin-creator-project" aria-label="HoH checkout" value={project?.id ?? ''}
-                      disabled={pending} onChange={event => setProjectId(event.target.value)}>
-                      <option value="" disabled>Choose a project</option>
-                      {options.projects.map(option => <option key={option.id} value={option.id}>{option.title}</option>)}
-                    </select>
-                    <ChevronDown size={14} aria-hidden />
-                  </div>
+                  <Select value={project?.id ?? null} disabled={pending}
+                    onValueChange={value => setProjectId(value ?? '')}>
+                    <SelectTrigger id="plugin-creator-project" className="hoh-plugin-creator__picker"
+                      variant="ghost" size="sm" aria-label="HoH checkout" title={project?.path}>
+                      <Folder size={16} aria-hidden />
+                      <span className="truncate">{project?.title ?? 'Choose a project'}</span>
+                    </SelectTrigger>
+                    <SelectPopup alignItemWithTrigger={false} className="hoh-plugin-creator__picker-list">
+                      {options.projects.map(option => (
+                        <SelectItem key={option.id} value={option.id} label={option.title} title={option.path}>
+                          <span className="block truncate">{option.title}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
                 ) : null}
                 <button type="button" className="hoh-plugin-creator__add" aria-label="Add project"
                   title="Add project" disabled={pending} onClick={onAddProject}>
                   <FolderPlus size={16} aria-hidden />
                   {!options.projects.length ? 'Add project' : null}
                 </button>
-                <div className="hoh-plugin-creator__picker" title={selected?.model}>
-                  {selected ? <ProviderMark icon={selected.executor === 'codex' ? 'openai' : 'claude'} /> : <Puzzle size={16} aria-hidden />}
-                  <select id="plugin-creator-harness" aria-label="Harness" value={selected?.executor ?? ''}
-                    disabled={pending} onChange={event => setExecutor(event.target.value)}>
-                    <option value="" disabled>Choose a harness</option>
+                <Select value={selected?.executor ?? null} disabled={pending}
+                  onValueChange={value => setExecutor(value ?? '')}>
+                  <SelectTrigger id="plugin-creator-harness" className="hoh-plugin-creator__picker"
+                    variant="ghost" size="sm" aria-label="Harness" title={selected?.model}>
+                    {selected ? <ProviderMark icon={selected.executor === 'codex' ? 'openai' : 'claude'} /> : <Puzzle size={16} aria-hidden />}
+                    <span className="truncate">{selected?.name ?? 'Choose a harness'}</span>
+                  </SelectTrigger>
+                  <SelectPopup alignItemWithTrigger={false} className="hoh-plugin-creator__picker-list">
                     {options.harnesses.map(harness => (
-                      <option key={harness.executor} value={harness.executor} disabled={!harness.available}>
-                        {harness.name}{harness.available ? '' : ' · Unavailable'}
-                      </option>
+                      <SelectItem key={harness.executor} value={harness.executor} label={harness.name}
+                        disabled={!harness.available}>
+                        <span className="flex items-center gap-2">
+                          <ProviderMark icon={harness.executor === 'codex' ? 'openai' : 'claude'} />
+                          <span>{harness.name}{harness.available ? '' : ' · Unavailable'}</span>
+                        </span>
+                      </SelectItem>
                     ))}
-                  </select>
-                  <ChevronDown size={14} aria-hidden />
-                </div>
+                  </SelectPopup>
+                </Select>
               </div>
               <button type="submit" className="hoh-plugin-creator__send" aria-label="Send plugin request"
                 title="Send plugin request" disabled={!canLaunch}>
