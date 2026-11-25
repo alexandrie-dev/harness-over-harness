@@ -255,6 +255,42 @@ const scenarios = [
     }, blocks: ['home'],
   },
   {
+    name: 'composer-paste', engine: completedEngine, path: () => `/hoh-local/${CHAT.id}`, stored: conversationStorage,
+    prepare: async (page, engine, sidebar) => {
+      await page.getByText('The measured conversation lane is ready.').waitFor();
+      await setSidebar(page, sidebar);
+      const editor = page.getByTestId('composer-editor');
+      await editor.focus();
+      const png = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==';
+      const paste = (text, file) => editor.evaluate((element, { text, file, png }) => {
+        const clipboardData = new DataTransfer();
+        if (text) clipboardData.setData('text/plain', text);
+        if (file === 'text') clipboardData.items.add(new File(['clipboard contents'], 'clipboard.txt', { type: 'text/plain' }));
+        if (file === 'image') {
+          const bytes = Uint8Array.from(atob(png), character => character.charCodeAt(0));
+          clipboardData.items.add(new File([bytes], 'clipboard.png', { type: 'image/png' }));
+        }
+        element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+      }, { text, file, png });
+      const short = 'Short clipboard text';
+      await paste(short);
+      assert.equal((await editor.innerText()).trim(), short);
+      await editor.press('ControlOrMeta+a');
+      const multiline = Array.from({ length: 35 }, (_, index) => `Clipboard line ${index + 1}`).join('\n');
+      await paste(multiline, 'text');
+      assert.equal((await editor.innerText()).trim().replace(/\n+/g, '\n'), multiline);
+      await paste('', 'image');
+      await page.getByRole('button', { name: 'Remove clipboard.png', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Submit message' }).click();
+      await page.getByText(/Ответ на: Clipboard line 1/).waitFor();
+      const prompt = engine.requests.find(({ method }) => method === 'session/prompt')?.params;
+      assert.deepEqual(prompt?.contentBlocks.map(block => block.type), ['image', 'text']);
+      const [sentText, imageReference] = prompt.contentBlocks[1].text.split(' ![clipboard.png]');
+      assert.equal(sentText.replace(/\n+/g, '\n'), multiline);
+      assert.match(imageReference, /^\(t3-context:\/\/v1\/image\/image_[^)]+\)$/);
+    }, blocks: ['conversation'],
+  },
+  {
     name: 'home-flat', engine: busyEngine, stored: () => storage(false),
     prepare: async (page, engine, sidebar) => {
       await readyBusy(page, engine, false); await setSidebar(page, sidebar);

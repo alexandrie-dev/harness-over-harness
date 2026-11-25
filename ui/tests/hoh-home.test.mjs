@@ -76,10 +76,10 @@ test('project grouping derives counts, warning priority, runners and rename-stab
   const paths = { alpha: '/work/alpha', 'hoh-project': '/work/no-project' };
   const first = grouping.groupEntriesByProject(entries, id => id === 'alpha' ? 'Alpha' : 'No project', id => paths[id]);
   assert.equal(first[0].title, 'Chats', 'a waiting project sorts first');
-  assert.deepEqual(first[0].states, { working: 0, waiting: 1, ready: 0, stopped: 0, interrupted: 0, done: 0 });
+  assert.deepEqual(first[0].states, { working: 0, waiting: 1, ready: 0, stopped: 0, interrupted: 0, done: 0, inactive: 0 });
   const alpha = first.find(group => group.id === 'alpha');
   assert.deepEqual(alpha.entries.map(entry => entry.id), ['a', 'b']);
-  assert.deepEqual(alpha.states, { working: 1, waiting: 0, ready: 0, stopped: 0, interrupted: 0, done: 1 });
+  assert.deepEqual(alpha.states, { working: 1, waiting: 0, ready: 0, stopped: 0, interrupted: 0, done: 1, inactive: 0 });
   assert.deepEqual(alpha.runners, ['claude', 'codex']);
   assert.deepEqual(grouping.runnerKinds([
     ...entries,
@@ -275,8 +275,10 @@ test('folder totals and status counts come from the displayed project cards', ()
   const group = grouping.groupEntriesByProject([
     { id: 'interrupted', projectId: 'p', state: 'waiting', interrupted: true, startedAt: 1, agents: [] },
     { id: 'done', projectId: 'p', state: 'done', startedAt: 2, agents: [] },
+    { id: 'cold', projectId: 'p', state: 'ended', startedAt: 3, agents: [] },
   ], id => id, id => id)[0];
-  assert.equal(group.entries.length, 2);
+  assert.equal(group.entries.length, 3);
+  assert.equal(group.states.inactive, 1);
   assert.equal(group.states.interrupted, 1);
   assert.equal(group.states.done, 1);
 });

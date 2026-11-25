@@ -273,19 +273,20 @@ function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: 
         </span>
       </span>
       <span className="hoh-project__actions">
-        <span className="hoh-project__chip"><i />{group.waiting > 0 ? 'Needs answer' : group.states.working > 0 ? 'Active' : group.ready > 0 ? 'Ready for review' : group.states.interrupted > 0 ? 'Interrupted' : group.states.stopped > 0 ? 'Stopped' : 'Done'}</span>
+        <span className="hoh-project__chip"><i />{group.waiting > 0 ? 'Needs answer' : group.states.working > 0 ? 'Active' : group.ready > 0 ? 'Ready for review' : group.states.interrupted > 0 ? 'Interrupted' : group.states.stopped > 0 ? 'Stopped' : group.states.done > 0 ? 'Done' : 'Inactive'}</span>
         <span className="hoh-project__more" aria-hidden>⋯</span>
       </span>
       <span className="hoh-project__footer">
         <span className="hoh-project__metric">
           <small>Agents</small>
-          <span className="hoh-project__segments" aria-label={`${group.states.working} working, ${group.states.waiting} waiting, ${group.states.ready} ready for review, ${group.states.interrupted} interrupted, ${group.states.stopped} stopped, ${group.states.done} done`}>
+          <span className="hoh-project__segments" aria-label={`${group.states.working} working, ${group.states.waiting} waiting, ${group.states.ready} ready for review, ${group.states.interrupted} interrupted, ${group.states.stopped} stopped, ${group.states.done} done, ${group.states.inactive} inactive`}>
             {group.states.working > 0 ? <i data-state="working" style={{ flexGrow: group.states.working }} /> : null}
             {group.states.waiting > 0 ? <i data-state="waiting" style={{ flexGrow: group.states.waiting }} /> : null}
             {group.states.ready > 0 ? <i data-state="ready" style={{ flexGrow: group.states.ready }} /> : null}
             {group.states.interrupted > 0 ? <i data-state="interrupted" style={{ flexGrow: group.states.interrupted }} /> : null}
             {group.states.stopped > 0 ? <i data-state="stopped" style={{ flexGrow: group.states.stopped }} /> : null}
             {group.states.done > 0 ? <i data-state="done" style={{ flexGrow: group.states.done }} /> : null}
+            {group.states.inactive > 0 ? <i data-state="inactive" style={{ flexGrow: group.states.inactive }} /> : null}
           </span>
         </span>
         <span className="hoh-project__metric hoh-project__metric--runners"><small>Runners</small><Runners runners={group.runners} /></span>
