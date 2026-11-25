@@ -901,3 +901,86 @@ async fn session_delete_rejects_an_undecided_approval() {
         .unwrap();
     env.close().await;
 }
+
+#[tokio::test]
+async fn del2_deleted_id_cannot_be_recreated_by_a_late_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    chat(&env, "gone-del2", "the original conversation").await;
+    env.server
+        .handle_request("session/delete", json!({"sessionId":"gone-del2"}))
+        .await
+        .unwrap();
+    let result = env
+        .server
+        .handle_request(
+            "session/prompt",
+            json!({"sessionId":"gone-del2", "contentBlocks":[{"type":"text","text":"late"}]}),
+        )
+        .await;
+    assert!(result.is_err(), "late prompt recreated the deleted chat");
+    env.close().await;
+    let reopened = Env::persistent(root.path()).await;
+    reopened.initialize().await;
+    let after_restart = reopened.server.handle_request("session/prompt", json!({"sessionId":"gone-del2", "contentBlocks":[{"type":"text","text":"late after restart"}]})).await;
+    assert!(
+        after_restart.is_err(),
+        "deleted ID must remain reserved after restart"
+    );
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn del2_failed_trash_keeps_the_session_usable() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    chat(&env, "rollback-del2", "first").await;
+    tokio::fs::write(root.path().join("trash"), b"not a directory")
+        .await
+        .unwrap();
+    assert!(
+        env.server
+            .handle_request("session/delete", json!({"sessionId":"rollback-del2"}))
+            .await
+            .is_err()
+    );
+    let result = env
+        .server
+        .handle_request(
+            "session/prompt",
+            json!({"sessionId":"rollback-del2", "contentBlocks":[{"type":"text","text":"second"}]}),
+        )
+        .await;
+    assert!(
+        result.is_ok(),
+        "chat must remain usable after the failed move: {result:?}"
+    );
+    env.wait("rollback-del2").await;
+    env.close().await;
+}
+
+#[tokio::test]
+async fn del2_deletion_reservation_blocks_direct_followup_and_releases_on_rollback() {
+    let env = Env::new().await;
+    env.initialize().await;
+    let agent = env.open("reservation-del2").await;
+    agent
+        .reserve_deletion()
+        .expect("idle session can be reserved");
+    let message = || {
+        hoh_llm::create_user_message(hoh_llm::NewUserMessage {
+            content: vec![hoh_llm::ContentBlock::text("scheduler message")],
+            source: hoh_llm::MessageSource::new("user"),
+        })
+    };
+    assert!(
+        agent.followup(message()).is_err(),
+        "direct scheduler delivery must be refused while deleting"
+    );
+    agent.release_deletion();
+    agent.followup(message()).unwrap();
+    env.wait("reservation-del2").await;
+    env.close().await;
+}

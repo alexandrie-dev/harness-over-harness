@@ -107,8 +107,21 @@ pub trait SessionPersistence: Send + Sync + 'static {
             Err(std::io::Error::other("session trash is unsupported by this backend").into())
         })
     }
+    /// Whether this ID is reserved by a session already in recoverable trash.
+    fn is_trashed<'a>(&'a self, _id: &'a SessionId) -> BoxFuture<'a, Result<bool, BoxError>> {
+        Box::pin(async { Ok(false) })
+    }
     /// Flush every active writer; aggregate failures without abandoning the sweep.
     fn flush(&self) -> BoxFuture<'_, Result<(), BoxError>>;
+    /// Prepare one writer for deletion; preserve its buffered tail if its close fails.
+    fn prepare_delete<'a>(&'a self, _id: &'a SessionId) -> BoxFuture<'a, Result<(), BoxError>> {
+        Box::pin(async {
+            Err(
+                std::io::Error::other("safe session deletion is unsupported by this backend")
+                    .into(),
+            )
+        })
+    }
     fn stat<'a>(
         &'a self,
         id: &'a SessionId,
