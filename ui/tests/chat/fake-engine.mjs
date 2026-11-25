@@ -43,6 +43,7 @@ export class FakeEngine {
     if (this.unavailable.has(method)) throw new Error('method-unavailable');
     switch (method) {
       case 'hoh/employee/open': case 'hoh/security/summary': throw new Error('method-unavailable');
+      case 'hoh/plugins/list': return [];
       case 'hoh/settings/get': return { model: { baseUrl: this.baseUrl ?? 'http://localhost:8000/v1', model: 'local' }, security: { internet: 'ask', domains: [], folders: [], writeFiles: false, programs: false, programNetwork: [], actAsUser: false } };
       case 'session/resume': if (!this.sessions.has(params.sessionId)) throw new Error('session not found'); return {};
       case 'session/working-directory/get': this.open(params.sessionId); return { cwd: this.cwd ?? '/workspace/chat' };
