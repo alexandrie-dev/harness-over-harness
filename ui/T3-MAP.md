@@ -493,3 +493,5 @@ U2: Delete removes a chat through the engine trash; menu and confirmation follow
 U2: sidebar deletion and multi-delete use the same trash-backed operation.
 
 U6: строка доверия к папке в шапке чата переносится под breadcrumb и укладывается в окно; проверяются её границы и окна Rename/Delete на четырёх размерах.
+
+C12U: пока каталог провайдера загружается, `ProviderModelPicker` показывает сохранённый в T3 выбор модели (или состояние загрузки), а после ответа каталога — актуальную подпись; запасной выбор используется только для отображения.
