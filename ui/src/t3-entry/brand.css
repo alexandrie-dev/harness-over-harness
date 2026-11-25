@@ -1,5 +1,5 @@
 /* Эмблема HoH в экранах T3 (HOH-41 А) без правки файлов T3: рисуется стилем над заголовками.
-   Растры — прозрачные (src/assets/emblem-{hero,chat}-{1x,15x,2x,3x}.png), из исходника emblem-a.webp, scripts/emblem-assets.sh;
+   Растры — прозрачные (src/assets/emblem-{hero,chat}-{1x,15x,2x,3x}.png), из apps/hoh-desktop/icons/icon.svg, scripts/emblem-assets.sh;
    image-set отдаёт растр под плотность экрана (масштаб окна 100 %, 150 %…), поэтому браузер сам их не масштабирует. */
 
 /* Welcome: над заголовком «Welcome to …», по левому краю текстовой колонки. */

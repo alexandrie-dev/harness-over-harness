@@ -59,6 +59,6 @@
 
 ## HOH-41, эмблема в окне на T3 (22.11.2026, u2)
 
-- Растры эмблемы — прозрачные, из исходника `ui/src/assets/emblem-a.webp` (копия `site/assets/emblem-a.webp`, 696×750 sRGBA): `sh ui/scripts/emblem-assets.sh` (ImageMagick `convert`, Lanczos, альфа сохраняется) пишет `emblem-{splash,hero,chat,brand,fav}-{1x,15x,2x,3x}.png` и значки окна `apps/hoh-desktop/icons/*` (квадрат с прозрачными углами). Эмблема на экранах — `image-set` / `srcset` под плотность экрана.
+- Растры эмблемы — прозрачные, из исходника `apps/hoh-desktop/icons/icon.svg` (Alexandrie «Ультрамарин»): `sh ui/scripts/emblem-assets.sh` (ImageMagick `convert`, Lanczos, альфа сохраняется) пишет `emblem-{splash,hero,chat,brand,fav}-{1x,15x,2x,3x}.png` и значки окна `apps/hoh-desktop/icons/*` (квадрат с прозрачными углами). Эмблема на экранах — `image-set` / `srcset` под плотность экрана.
 - Пустой разговор: эмблема вне потока (absolute над заголовком), показывается только если над заголовком хватает места между шапкой и им (`src/t3-entry/emblem-fit.ts`, атрибут `data-hoh-emblem`, учёт масштаба окна) — не под шапкой и не двигает заголовок. Шапка боковой панели: знак 32×34 px (`T3Wordmark.tsx`, srcset 1×/1.5×/2×/3×). Welcome: знак по левому краю текста. Заставка: слой `fixed; inset: 0` + flex-центр.
 - Снимки: `node scripts/t3-emblem-shots.mjs <папка> [dist]` (Chromium, хост HoH с поддельным движком; матрица 1440×900 / 800×550 × масштаб 100 %, 150 %, 1.2, 1.44, 1.73).

@@ -1,12 +1,13 @@
 #!/bin/sh
-# Растры эмблемы HoH с прозрачным фоном (HOH-41): из исходника с прозрачностью ui/src/assets/emblem-a.webp
-# (696×750, sRGBA; копия site/assets/emblem-a.webp, утверждённая эмблема), только установленный ImageMagick (`convert`).
+# Растры эмблемы HoH из apps/hoh-desktop/icons/icon.svg, ImageMagick (`convert`).
 # Фильтр Lanczos, альфа сохраняется; на каждый размер показа — файлы 1×/1.5×/2×/3× (image-set / srcset).
 # Запуск из корня дерева: sh ui/scripts/emblem-assets.sh
 set -eu
 SRC=ui/src/assets/emblem-a.webp
 OUT=ui/src/assets
-# имя ширина высота (размер показа в CSS px, поле с запасом по пропорции 696:750) резкость
+ICONS=apps/hoh-desktop/icons
+convert -background none "$ICONS/icon.svg" -define webp:lossless=true "$SRC"
+# имя ширина высота (размер показа в CSS px) резкость
 sets() { cat <<'LIST'
 splash 200 216 0
 hero 108 116 0
@@ -27,11 +28,15 @@ sets | while read -r name w h sharp; do
       -define png:exclude-chunk=all "$OUT/emblem-$name-${tag}x.png"
   done
 done
+# Эмблема общей оболочки использует собственные размеры srcset.
+for size in 22x24 45x48; do
+  convert "$SRC" -alpha on -filter Lanczos -resize "$size" -background none -gravity center -extent "$size" \
+    -define png:exclude-chunk=all "$OUT/emblem-${size#*x}.png"
+done
 # Значки окна: квадрат с прозрачными углами, эмблема по центру с полем 5 %.
-ICONS=apps/hoh-desktop/icons
 for n in 32 48 64 128 256 512; do
   inner=$(awk "BEGIN{printf \"%d\", $n*0.90+0.5}")
   convert "$SRC" -alpha on -filter Lanczos -resize "${inner}x${inner}" -background none -gravity center -extent "${n}x${n}" \
-    -define png:exclude-chunk=all "$ICONS/${n}x${n}.png"
+    -define png:exclude-chunk=all "PNG32:$ICONS/${n}x${n}.png"
 done
 cp "$ICONS/256x256.png" "$ICONS/icon.png"
