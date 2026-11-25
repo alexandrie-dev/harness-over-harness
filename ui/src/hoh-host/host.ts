@@ -20,6 +20,7 @@ import {
   accessModeOf, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, claudeProvider, codexEffortOf, codexProvider, defaultClaudeModel, defaultCodexModel, effortOf, listedClaudeModel, listedCodexModel, runtimeModeOf, serverConfig, serverSettings, type ClaudeDiscovery, type CodexDiscovery, type HohAccessMode, type HohExecutor, type T3RuntimeMode,
   isAccessMode, type T3InteractionMode,
 } from './config.ts';
+import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
@@ -2613,6 +2614,12 @@ ${message.slice(0, 8000)}`;
         // Focus and typing reports of the window: nothing to schedule here, accepted and dropped.
         'server.reportClientActivity': () => undefined,
         'server.getConfig': async () => { await this.start(); return this.config(); },
+        'server.refreshUsageRates': () => usagePricing,
+        'server.getUsageSummary': async (input: UsageSummaryInput) => {
+          await this.start();
+          await this.peekInFlight;
+          return usageSummary(input, [...this.threads.values()].filter(thread => this.accessVisible(thread.id)), this.peeked);
+        },
         'server.getSettings': async () => { await this.start(); return this.settings(); },
         'server.updateSettings': async (payload: any) => {
           await this.start();

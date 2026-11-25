@@ -889,6 +889,16 @@ test('Claude stream usage reaches T3 providerTurns with its exact context fill',
   const usage = snapshot.projection.providerTurns[0].tokenUsage;
   assert.deepEqual(usage, { usedTokens: 309, maxTokens: 200_000, inputTokens: 300, cachedInputTokens: 60, outputTokens: 9, reasoningOutputTokens: 0, updatedAt: usage.updatedAt });
   assert.equal((usage.usedTokens / usage.maxTokens) * 100, 0.1545);
+  const day = usage.updatedAt.slice(0, 10);
+  const summary = await client.call('server.getUsageSummary', {
+    sinceDay: day, untilDay: day, timeZone: 'UTC',
+  });
+  assert.equal(summary.buckets.length, 1);
+  assert.deepEqual(summary.buckets[0].totals, {
+    uncachedInputTokens: 200, cachedInputTokens: 60, cacheCreationTokens: 40,
+    outputTokens: 9, reasoningTokens: 0,
+  });
+  assert.equal(summary.sources.find(source => source.fingerprint.provider === 'claude').distinctSessions, 1);
 });
 
 test('cold history restores usage from both plugin and legacy events', async () => {

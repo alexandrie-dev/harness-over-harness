@@ -6,7 +6,7 @@
 import { HOH_ENVIRONMENT_ID, HOH_LABEL, ORCHESTRATION_PROTOCOL_VERSION } from './config.ts';
 
 export const HOH_SCOPES = [
-  'orchestration:read', 'orchestration:operate', 'settings:write', 'providers:manage', 'filesystem:read', 'filesystem:write',
+  'orchestration:read', 'orchestration:operate', 'settings:write', 'providers:manage', 'filesystem:read', 'filesystem:write', 'diagnostics:read',
 ] as const;
 
 export function environmentDescriptor() {

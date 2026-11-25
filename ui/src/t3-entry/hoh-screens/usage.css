@@ -1,103 +1,129 @@
 .hoh-usage {
-  width: min(100%, 54rem);
-  margin-inline: auto;
-  padding: clamp(1rem, 5vw, 4rem);
-}
-
-.hoh-usage__header,
-.hoh-usage__provider-header,
-.hoh-usage__window-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: .5rem 1.25rem;
-}
-
-.hoh-usage__actions {
-  display: flex;
-  gap: .5rem;
-}
-
-.hoh-usage__actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: .375rem;
-  min-height: 2.25rem;
-  padding: .375rem .625rem;
-  border: 1px solid var(--border);
-  border-radius: .5rem;
-  font-size: .875rem;
-}
-
-.hoh-usage__actions button:not(:disabled):hover {
-  background: var(--accent);
-}
-
-.hoh-usage__actions button:disabled {
-  opacity: .55;
-}
-
-.hoh-usage__actions svg {
-  width: 1rem;
-  height: 1rem;
+  display: grid;
+  gap: 2rem;
 }
 
 .hoh-usage__provider {
-  padding: 1rem 1.25rem;
-  margin-top: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: .75rem;
-  background: var(--card);
-  color: var(--card-foreground);
+  --quota-fill: color-mix(in oklab, var(--foreground) 37%, var(--muted));
+  --quota-stripe: color-mix(in oklab, var(--foreground) 24%, transparent);
+  display: grid;
+  gap: .75rem;
+}
+
+.hoh-usage__provider[data-provider="claude"] {
+  --quota-fill: color-mix(in oklab, #d97757 34%, var(--muted));
+  --quota-stripe: color-mix(in oklab, #d97757 30%, transparent);
+}
+
+.hoh-usage__provider-header,
+.hoh-usage__provider h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+}
+
+.hoh-usage__provider-header {
+  justify-content: space-between;
 }
 
 .hoh-usage__provider h2 {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
+  font-weight: 500;
+}
+
+.hoh-usage__provider > p,
+.hoh-usage__provider-header time,
+.hoh-usage__window-title > span + span {
+  color: var(--muted-foreground);
+  font-size: .8125rem;
 }
 
 .hoh-usage__window {
   display: grid;
-  gap: .5rem;
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
+  grid-template-columns: minmax(8rem, 1fr) minmax(0, 4fr);
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: .625rem;
+}
+
+.hoh-usage__window-title {
+  display: grid;
+  gap: .25rem;
 }
 
 .hoh-usage__window-title strong {
-  font-size: 1.25rem;
+  margin-inline-end: .375rem;
+  color: var(--foreground);
+  font-size: 2rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.hoh-usage__track {
+  position: relative;
+  height: 2rem;
 }
 
 .hoh-usage__window progress {
+  display: block;
   width: 100%;
-  height: .625rem;
+  height: 100%;
   appearance: none;
+  overflow: hidden;
   border: 0;
-  border-radius: 1rem;
-  background: var(--muted);
-  color: var(--foreground);
+  border-radius: .375rem;
+  background: repeating-linear-gradient(135deg, var(--quota-stripe) 0 1px, transparent 1px 6px), var(--muted);
 }
 
 .hoh-usage__window progress::-webkit-progress-bar {
-  border-radius: 1rem;
-  background: var(--muted);
+  background: transparent;
 }
 
 .hoh-usage__window progress::-webkit-progress-value {
-  border-radius: 1rem;
-  background: var(--foreground);
+  border-radius: .375rem;
+  background: var(--quota-fill);
 }
 
 .hoh-usage__window progress::-moz-progress-bar {
-  border-radius: 1rem;
-  background: var(--foreground);
+  border-radius: .375rem;
+  background: var(--quota-fill);
 }
 
-.hoh-usage__provider-header time,
+.hoh-usage__pace {
+  position: absolute;
+  inset-block: 2px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--foreground);
+  box-shadow: 0 0 0 1px var(--background);
+}
+
 .hoh-usage__reset {
-  color: var(--muted-foreground);
+  position: absolute;
+  inset-inline-end: .375rem;
+  top: 50%;
+  translate: 0 -50%;
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  padding: .125rem .375rem;
+  border-radius: .25rem;
+  background: var(--background);
   font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.hoh-usage__reset svg {
+  width: .625rem;
+  height: .625rem;
+}
+
+@media (max-width: 480px) {
+  .hoh-usage__window {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

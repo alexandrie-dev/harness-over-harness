@@ -6,7 +6,6 @@ import { createPortal } from 'react-dom';
 
 import { PAGE_TITLES, pages } from './pages';
 import { PluginsPage } from './PluginsPage';
-import { UsagePage } from './UsagePage';
 import { PluginCreatorPage } from './PluginCreatorPage';
 import { openCommandPalette } from '~/commandPaletteBus';
 import { HOH_ENVIRONMENT_ID } from '../../hoh-host/config';
@@ -28,7 +27,7 @@ export function PageLayer() {
   if (!page || !host) return null;
   return createPortal(
     <div className="hoh-page" data-hoh-page={page}>
-      {page === 'plugins' ? <PluginsPage /> : page === 'usage' ? <UsagePage onClose={pages.close} /> : page === 'plugin-creator' ? (
+      {page === 'plugins' ? <PluginsPage /> : page === 'plugin-creator' ? (
         <PluginCreatorPage
           onAddProject={() => openCommandPalette({ open: 'add-project' })}
           onOpenThread={(threadId) => {

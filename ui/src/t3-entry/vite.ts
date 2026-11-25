@@ -361,6 +361,27 @@ function hohT3(): Plugin {
       // The home screen is maintained on another line; keep its chat wording until that change lands.
       if (id === HOME_BODY) return { code: code.replace('Answer in the thread', 'Answer in the chat'), map: null };
       if (id === resolve(T3_WEB, 'components/settings/settingsSearch.ts')) return { code: settingsNavFilter(code), map: null };
+      if (id === resolve(T3_WEB, 'routeTree.gen.ts')) {
+        return {
+          code: anchorPatch('routeTree.gen.ts', code, [
+            ['  ChatSettingsRoute: ChatSettingsRouteWithChildren,', '  ChatSettingsRoute: ChatSettingsRouteWithChildren,\n  ChatUsageRoute: ChatUsageRoute,'],
+          ]),
+          map: null,
+        };
+      }
+      if (id === resolve(T3_WEB, 'components/usage/UsagePage.tsx')) {
+        const refreshStart = code.indexOf('  const refreshLimits = (automatic = false) =>');
+        const refreshEnd = code.indexOf('  const onUsageKeyDown =', refreshStart);
+        if (refreshStart < 0 || refreshEnd < 0) throw new Error('UsagePage.tsx: missing limits refresh');
+        return {
+          code: anchorPatch('UsagePage.tsx', code, [
+            ['import { UsageLimitsSection } from "./UsageLimits";', `import { UsageLimitsSection } from ${JSON.stringify(resolve(UI, 'src/t3-entry/hoh-screens/UsagePage.tsx'))};`],
+            [code.slice(refreshStart, refreshEnd), '  const refreshLimits = async () => { setLimitsNow(Date.now()); };\n'],
+            ['{metric === "cost"\n                ? formatUsd(merged.costUsd, locale)', '{metric === "cost"\n                ? (merged.costQuality.unpricedShare === 1 ? gt("Unavailable") : formatUsd(merged.costUsd, locale))'],
+          ]),
+          map: null,
+        };
+      }
       if (id === resolve(T3_WEB, 'components/settings/ProviderSettingsPanel.tsx')) return { code: providerSettingsPanel(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };

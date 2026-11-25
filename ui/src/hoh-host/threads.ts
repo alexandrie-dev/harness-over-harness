@@ -26,7 +26,7 @@ function argumentsOf(value: unknown): Record<string, any> {
 type Status = 'idle' | 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 type RunStatus = 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'cancelled';
 interface TokenUsage { usedTokens: number; maxTokens?: number; inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; updatedAt: string }
-interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; engineStartedAt?: number; useEngineStartOnStop?: boolean; lastJournalAt?: number; tokenUsage?: TokenUsage }
+interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; engineStartedAt?: number; useEngineStartOnStop?: boolean; lastJournalAt?: number; tokenUsage?: TokenUsage; cacheCreationTokens?: number }
 type Item = Record<string, any> & { id: string; type: string; status: Status; runId: string | null; ordinal: number };
 /** A picture of a message as T3 lists it (`ChatImageAttachment`): its bytes went to the engine, not into the thread. */
 export interface ShownAttachment { readonly type: 'image'; readonly id: string; readonly name: string; readonly mimeType: string; readonly sizeBytes: number }
@@ -527,6 +527,7 @@ export class ThreadModel {
     const input = count(usage.inputTokens); const created = count(usage.cacheCreationInputTokens); const cached = count(usage.cacheReadInputTokens); const output = count(usage.outputTokens); const max = count(usage.maxTokens);
     if (run && input !== null && created !== null && cached !== null && output !== null) {
       const inputTokens = input + created + cached; const maxTokens = max !== null && max > 0 ? max : run.tokenUsage?.maxTokens;
+      run.cacheCreationTokens = created;
       run.tokenUsage = { usedTokens: inputTokens + output, ...(maxTokens ? { maxTokens } : {}), inputTokens, cachedInputTokens: cached, outputTokens: output, reasoningOutputTokens: 0, updatedAt: iso(at) };
     }
   }
@@ -880,6 +881,13 @@ export class ThreadModel {
   private titleText() { return nonBlank(this.title, 'New chat'); }
 
   /** `OrchestrationV2ThreadProjection`, encoded. */
+  *usageTurns() {
+    if (!this.bindingKnown) return;
+    for (const run of this.runs) {
+      if (run.tokenUsage) yield { model: run.model, usage: run.tokenUsage, cacheCreationTokens: run.cacheCreationTokens ?? 0 };
+    }
+  }
+
   projection() {
     const updatedAt = iso(this.updatedAt);
     const pendingCommands = new Set(this.executor === 'codex' ? this.requests.filter(request => request.status === 'pending').map(request => this.approvalDetails.get(request.id)).filter(detail => detail?.requestKind === 'command' && detail.itemId).map(detail => detail!.itemId!) : []);

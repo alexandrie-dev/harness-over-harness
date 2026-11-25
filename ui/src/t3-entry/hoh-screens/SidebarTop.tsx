@@ -3,6 +3,7 @@
 // списком разговоров T3. Под «New chat» находятся Learning и Plugins. Подставляется вместо SidebarThreadHeader при сборке (vite.ts, sidebarList);
 // получает те же свойства, что получал T3 (SidebarThreadHeaderProps).
 import { ChartNoAxesColumnIcon, GraduationCapIcon, PlusIcon, PuzzleIcon, SquarePenIcon, WrenchIcon } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
 import { useState, type MouseEvent } from 'react';
 
 import { SidebarHeaderIconButton } from '~/components/sidebar/SidebarThreadHeader';
@@ -23,6 +24,7 @@ interface Props {
 
 export function SidebarTop({ onNewThread, newThreadDisabled, newThreadShortcutLabel }: Props) {
   const page = usePage();
+  const navigate = useNavigate();
   const [teamComingSoon, setTeamComingSoon] = useState(false);
   return (
     <div className="hoh-side" data-hoh-sidebar-top="">
@@ -35,7 +37,10 @@ export function SidebarTop({ onNewThread, newThreadDisabled, newThreadShortcutLa
       {(['learning', 'plugins', 'plugin-creator', 'usage'] as PageKey[]).map((key) => {
         const Icon = PAGE_ICONS[key];
         return (
-          <SidebarMenuButton key={key} type="button" className="hoh-side__new" isActive={page === key} aria-current={page === key ? 'page' : undefined} data-hoh-page-item={key} onClick={() => pages.open(key)}>
+          <SidebarMenuButton key={key} type="button" className="hoh-side__new" isActive={page === key} aria-current={page === key ? 'page' : undefined} data-hoh-page-item={key} onClick={() => {
+            if (key === 'usage') { pages.close(); void navigate({ to: '/usage' }); }
+            else pages.open(key);
+          }}>
             <Icon aria-hidden />
             <span>{PAGE_TITLES[key]}</span>
           </SidebarMenuButton>

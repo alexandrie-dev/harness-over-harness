@@ -24,7 +24,6 @@ export interface HiddenArea {
 export const HIDDEN_ROUTES: Readonly<Record<string, string>> = {
   '_chat.issues': '/',
   '_chat.pull-requests': '/',
-  '_chat.usage': '/',
   'connect': '/',
   'connect-agent': '/',
   'approve-agent': '/',
@@ -130,7 +129,7 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'attachments', title: 'вложения (загрузка)', how: ['host'] },
   { id: 'diff', title: 'панель изменений (diff)', how: ['host', 'route', 'nav'] },
   { id: 'office', title: 'офисные форматы', how: ['host'] },
-  { id: 'usage', title: 'использование/телеметрия/диагностика/ресурсы', how: ['host', 'route', 'nav', 'css'] },
+  { id: 'diagnostics', title: 'телеметрия, диагностика процессов и ресурсы', how: ['host', 'route', 'nav', 'css'] },
   { id: 'updates', title: 'обновления приложения', how: ['host'] },
   { id: 'providers-install', title: 'ACP-реестр, установка и вход поставщиков моделей T3; в выборе модели только Claude', how: ['host'] },
   { id: 'secrets', title: 'секреты/1Password', how: ['host', 'route', 'nav'] },

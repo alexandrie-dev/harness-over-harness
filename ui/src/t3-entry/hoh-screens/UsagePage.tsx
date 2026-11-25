@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import { RefreshCwIcon, XIcon } from 'lucide-react';
+import { RotateCcwIcon } from 'lucide-react';
+import { ProviderInstanceIcon } from '~/components/chat/ProviderInstanceIcon';
+import { PROVIDER_PRESENTATION } from '~/components/usage/usageProviders';
 import { useEffect, useState } from 'react';
 
 import type { ExecutorLimitsResult } from '../../protocol';
@@ -51,9 +53,9 @@ function ProviderLimits({ provider, state }: { provider: Provider; state: Provid
   }[status];
 
   return (
-    <section className="hoh-usage__provider" aria-label={title}>
+    <section className="hoh-usage__provider" aria-label={title} data-provider={provider.executor}>
       <header className="hoh-usage__provider-header">
-        <h2>{title}</h2>
+        <h2><ProviderInstanceIcon driverKind={PROVIDER_PRESENTATION[provider.executor].driverKind} displayName={title} iconClassName="size-4" />{title}</h2>
         {snapshot ? (
           <time dateTime={new Date(snapshot.checkedAt).toISOString()}>
             {status === 'available' ? 'Updated' : 'Last successful check'} {dateTime.format(snapshot.checkedAt)}
@@ -64,18 +66,34 @@ function ProviderLimits({ provider, state }: { provider: Provider; state: Provid
       {snapshot?.windows.map((window, index) => {
         const label = windowLabel(window);
         const reset = window.resetsAt ? new Date(window.resetsAt * 1000) : undefined;
+        const windowMs = (window.windowMinutes ?? 0) * 60_000;
+        const pace = reset && windowMs > 0
+          ? Math.max(0, Math.min(100, 100 * (reset.getTime() - Date.now()) / windowMs))
+          : null;
+        const hours = reset ? Math.max(0, Math.ceil((reset.getTime() - Date.now()) / 3_600_000)) : 0;
+        const countdown = hours >= 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : hours ? `${hours}h` : '<1h';
         return (
           <div className="hoh-usage__window" key={`${label}:${index}`}>
             <div className="hoh-usage__window-title">
               <span>{label}</span>
               <span><strong>{window.remainingPercent}%</strong> left</span>
             </div>
-            <progress aria-label={`${title} ${label} remaining`} value={window.remainingPercent} max={100} />
-            {reset ? (
-              <span className="hoh-usage__reset" title={reset.toLocaleString()}>
-                Resets <time dateTime={reset.toISOString()}>{dateTime.format(reset)}</time>
-              </span>
-            ) : null}
+            <div className="hoh-usage__track">
+              <progress aria-label={`${title} ${label} remaining`} value={window.remainingPercent} max={100} />
+              {pace !== null ? (
+                <span
+                  className="hoh-usage__pace"
+                  style={{ insetInlineStart: `clamp(2px, ${pace}%, calc(100% - 2px))` }}
+                  title={`${Math.round(pace)}% of the limit window remains`}
+                />
+              ) : null}
+              {reset ? (
+                <span className="hoh-usage__reset" title={reset.toLocaleString()}>
+                  <RotateCcwIcon aria-hidden />
+                  <time aria-label={`Resets ${dateTime.format(reset)}`} dateTime={reset.toISOString()}>{countdown}</time>
+                </span>
+              ) : null}
+            </div>
           </div>
         );
       })}
@@ -83,16 +101,18 @@ function ProviderLimits({ provider, state }: { provider: Provider; state: Provid
   );
 }
 
-export function UsagePage({ onClose }: { onClose: () => void }) {
-  const [revision, setRevision] = useState(0);
+export function UsageLimitsSection({ now, hiddenProviders }: { now: number; hiddenProviders: ReadonlySet<string> }) {
   const [states, setStates] = useState<Record<Provider['executor'], ProviderState>>({
     codex: { status: 'loading' },
     claude: { status: 'loading' },
   });
-  const refreshing = providers.some(({ executor }) => states[executor].status === 'loading');
 
   useEffect(() => {
     let current = true;
+    setStates((previous) => ({
+      codex: { ...previous.codex, status: 'loading' },
+      claude: { ...previous.claude, status: 'loading' },
+    }));
     for (const { executor } of providers) {
       void readLimits(executor).then((result) => {
         if (!current) return;
@@ -107,33 +127,13 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
       });
     }
     return () => { current = false; };
-  }, [revision]);
+  }, [now]);
 
-  function refresh() {
-    setStates((previous) => ({
-      codex: { ...previous.codex, status: 'loading' },
-      claude: { ...previous.claude, status: 'loading' },
-    }));
-    setRevision((previous) => previous + 1);
-  }
-
+  const visible = providers.filter(({ executor }) => !hiddenProviders.has(executor));
+  if (visible.length === 0) return <p className="text-sm text-muted-foreground">Select a provider to see limits.</p>;
   return (
-    <main className="hoh-usage" aria-labelledby="hoh-usage-heading">
-      <header className="hoh-usage__header">
-        <div>
-          <h1 id="hoh-usage-heading">Usage</h1>
-          <p>Account limits</p>
-        </div>
-        <div className="hoh-usage__actions">
-          <button type="button" onClick={refresh} disabled={refreshing}>
-            <RefreshCwIcon aria-hidden /> Refresh
-          </button>
-          <button type="button" aria-label="Close usage" onClick={onClose}>
-            <XIcon aria-hidden />
-          </button>
-        </div>
-      </header>
-      {providers.map((provider) => <ProviderLimits key={provider.executor} provider={provider} state={states[provider.executor]} />)}
-    </main>
+    <div className="hoh-usage">
+      {visible.map((provider) => <ProviderLimits key={provider.executor} provider={provider} state={states[provider.executor]} />)}
+    </div>
   );
 }
