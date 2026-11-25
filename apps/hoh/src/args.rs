@@ -36,8 +36,11 @@ pub enum DshInvocation {
         profile: String,
         args: Vec<String>,
     },
+    PluginNew {
+        id: String,
+    },
 }
-const HELP_EXAMPLES: &str = "\nExamples:\n  dsh web                                   boot the web profile (same as: dsh --profile web)\n  dsh rescue --from-default-profile web\n                                            recreate rescue from the shipped web template, then boot it\n  dsh headless \"run the tests\"              answer one task, print the result, and exit\n  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay\n  dsh tui --resume <session>                arguments after the launcher flags reach the app\n  dsh web --help                            the web app's own flags and help\n  dsh plugin --profile tui add <package>    install a plugin into the tui profile\n";
+const HELP_EXAMPLES: &str = "\nExamples:\n  dsh web                                   boot the web profile (same as: dsh --profile web)\n  dsh rescue --from-default-profile web\n                                            recreate rescue from the shipped web template, then boot it\n  dsh headless \"run the tests\"              answer one task, print the result, and exit\n  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay\n  dsh tui --resume <session>                arguments after the launcher flags reach the app\n  dsh web --help                            the web app's own flags and help\n  hoh plugin new <id>                       create an in-repository Rust plugin scaffold\n  dsh plugin --profile tui add <package>    manage a profile plugin (unavailable in this build)\n";
 fn select_profile(value: &str, previous: Option<&Value>) -> Result<Value, InvalidArgumentError> {
     if previous.is_some() {
         return Err(InvalidArgumentError::new("select a profile only once"));
@@ -130,6 +133,16 @@ pub fn parse_dsh_args(
     manage_desktop_profile: bool,
     output: Output,
 ) -> Result<DshInvocation, ParseError> {
+    if argv.first().map(String::as_str) == Some("plugin")
+        && argv.get(1).map(String::as_str) == Some("new")
+    {
+        if argv.len() != 3 {
+            return Err(ParseError::Other("usage: hoh plugin new <id>".into()));
+        }
+        return Ok(DshInvocation::PluginNew {
+            id: argv[2].clone(),
+        });
+    }
     let first = argv.first().map(String::as_str);
     let resolved = Arc::new(Mutex::new(None));
     let result = resolved.clone();

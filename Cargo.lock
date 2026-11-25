@@ -740,6 +740,7 @@ dependencies = [
  "hoh-agent-loop",
  "hoh-atomic-write",
  "hoh-attachment-local",
+ "hoh-authored-plugins",
  "hoh-authorization",
  "hoh-bash-local",
  "hoh-bash-sandbox",
@@ -1104,6 +1105,14 @@ dependencies = [
  "webp",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "hoh-authored-plugins"
+version = "0.1.0"
+dependencies = [
+ "hoh-loader",
+ "hoh-plugin-turn-note",
 ]
 
 [[package]]
@@ -2422,6 +2431,19 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "hoh-plugin-turn-note"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
+ "hoh-llm",
+ "hoh-session",
+ "hoh-system-prompt",
+ "hoh-tools",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

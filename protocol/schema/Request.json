@@ -787,6 +787,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/plugins/list"
+        },
+        "params": {
+          "$ref": "#/$defs/PluginListParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/settings/get"
         },
         "params": {
@@ -2356,6 +2372,18 @@
         "baseUrl",
         "model"
       ]
+    },
+    "PluginListParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "SettingsSetParams": {
       "type": "object",

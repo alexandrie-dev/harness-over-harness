@@ -3,6 +3,22 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginInventoryItem {
+    pub id: String,
+    pub manifest: Value,
+    pub status: String,
+    pub diagnostic: Option<String>,
+    pub data: Option<Value>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(tag = "method", content = "params")]
 pub enum Request {
@@ -104,6 +120,8 @@ pub enum Request {
     SettingsRulesSet(SettingsRulesSetParams),
     #[serde(rename = "hoh/model/probe")]
     ModelProbe(ModelProbeParams),
+    #[serde(rename = "hoh/plugins/list")]
+    PluginsList(PluginListParams),
     #[serde(rename = "hoh/settings/get")]
     SettingsGet(Empty),
     #[serde(rename = "hoh/settings/set")]
@@ -187,6 +205,7 @@ impl Request {
             Self::ModelKeySet(_) => "hoh/model/key/set",
             Self::SettingsRulesSet(_) => "hoh/settings/rules/set",
             Self::ModelProbe(_) => "hoh/model/probe",
+            Self::PluginsList(_) => "hoh/plugins/list",
             Self::SettingsGet(_) => "hoh/settings/get",
             Self::SettingsSet(_) => "hoh/settings/set",
             Self::SecuritySummary(_) => "hoh/security/summary",
@@ -293,6 +312,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/model/key/set",
     "hoh/settings/rules/set",
     "hoh/model/probe",
+    "hoh/plugins/list",
     "hoh/settings/get",
     "hoh/settings/set",
     "hoh/security/summary",
@@ -383,6 +403,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/model/key/set" => admit::<ModelKeySetParams>(value),
         "hoh/settings/rules/set" => admit::<SettingsRulesSetParams>(value),
         "hoh/model/probe" => admit::<ModelProbeParams>(value),
+        "hoh/plugins/list" => admit::<PluginListParams>(value),
         "hoh/settings/get" => admit::<Empty>(value),
         "hoh/settings/set" => admit::<SettingsSetParams>(value),
         "hoh/security/summary" => admit::<Empty>(value),
@@ -457,6 +478,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/artifact/render" => admit::<ArtifactRenderResult>(value),
         "hoh/model/key/set" | "hoh/settings/rules/set" => admit::<Empty>(value),
         "hoh/model/probe" => admit::<ModelProbeResult>(value),
+        "hoh/plugins/list" => admit::<Vec<PluginInventoryItem>>(value),
         "hoh/settings/get" => admit::<Settings>(value),
         "hoh/settings/set" => admit::<Settings>(value),
         "hoh/security/summary" => admit::<SecuritySummary>(value),
@@ -1171,6 +1193,12 @@ pub fn schemas() -> Vec<(String, Value)> {
     }
     for (name, method, params, result) in [
         (
+            "PluginsList",
+            "hoh/plugins/list",
+            schema_for!(PluginListParams),
+            schema_for!(Vec<PluginInventoryItem>),
+        ),
+        (
             "ExecutorDiscover",
             "hoh/executor/discover",
             schema_for!(ExecutorParams),
@@ -1347,6 +1375,8 @@ enum RequestDecode {
     SettingsRulesSet(SettingsRulesSetParams),
     #[serde(rename = "hoh/model/probe")]
     ModelProbe(ModelProbeParams),
+    #[serde(rename = "hoh/plugins/list")]
+    PluginsList(PluginListParams),
     #[serde(rename = "hoh/settings/get")]
     SettingsGet(Empty),
     #[serde(rename = "hoh/settings/set")]
@@ -1397,6 +1427,7 @@ impl<'de> Deserialize<'de> for Request {
                 | "hoh/task/list"
                 | "hoh/button/list"
                 | "hoh/schedule/list"
+                | "hoh/plugins/list"
                 | "hoh/settings/get"
                 | "hoh/settings/set"
                 | "hoh/security/summary"

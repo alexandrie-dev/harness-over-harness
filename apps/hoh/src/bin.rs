@@ -152,6 +152,11 @@ where
         }
     };
     match invocation {
+        DshInvocation::PluginNew { id } => {
+            let path = super::plugin_new::create(&host.cwd, &id)?;
+            (host.io.stdout)(&format!("Created {}\n", path.display()))?;
+            Ok(0)
+        }
         DshInvocation::Plugin { .. } => Err(
             "hoh: plugin package commands are unavailable in this build (package-directory installer redesign pending)"
                 .into(),

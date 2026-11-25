@@ -1243,6 +1243,42 @@ impl Loader {
             .get(&addressed_key(id))
             .and_then(Node::failure)
     }
+    /// A non-sensitive classification of an entry failure for inventory surfaces.
+    pub fn diagnostic_kind(&self, id: &str) -> Option<&'static str> {
+        let tree = lock(&self.root.inner.site.tree);
+        let node = tree.nodes.get(&addressed_key(id))?;
+        if node.info.disabled {
+            return None;
+        }
+        fn validation(error: &KernelError) -> bool {
+            match error {
+                KernelError::Validation(_) => true,
+                KernelError::Failed(inner) => {
+                    inner.downcast_ref::<KernelError>().is_some_and(validation)
+                }
+                _ => false,
+            }
+        }
+        if node.cause.as_ref().is_some_and(validation)
+            || (node.update_error.is_some() && node.cause.is_none())
+        {
+            return Some("configuration-error");
+        }
+        if node.info.status == EntryStatus::Unresolved {
+            return Some("configuration-error");
+        }
+        if node.update_error.is_some()
+            || node.error.is_some()
+            || node
+                .info
+                .fiber
+                .as_ref()
+                .is_some_and(|fiber| fiber.state() == FiberState::Failed)
+        {
+            return Some("apply-error");
+        }
+        None
+    }
     pub fn resolve(&self, id: &str) -> Option<EntryInfo> {
         // A colon denotes a subtree, not part of a tree-local selector (V27).
         let mut prefix = String::new();

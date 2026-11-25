@@ -1,0 +1,9 @@
+# In-repository Rust plugin kit
+
+From the repository root, run `hoh plugin new my-plugin`. The command creates `plugins/my-plugin` with a manifest, a `Plugin` implementation and a smoke test; it refuses to overwrite an existing directory. `plugins/turn-note` is an example that records the outcome of each completed session turn and registers `last_turn` in the tool registry. Calling that tool from an external model is a separate integration.
+
+After editing a plugin, run `scripts/plugin-dev.sh my-plugin` with `CARGO_HOME` and `CARGO_TARGET_DIR` set for the build environment. The script validates every plugin directory, regenerates the dependency and Rust indexes, and builds the engine offline. Cargo needs its dependencies before build scripts run, so regenerate the index before a direct Cargo build as well: `python3 scripts/generate-plugin-index.py`. The generated index and Cargo dependency entries are checked-in build inputs, not files an author edits by hand. The script prints the `HOH_ENGINE_PATH` setting for an already-built desktop window and does not launch one.
+
+`hoh-plugin.json` supplies `id`, `entry` (a public Rust type implementing `hoh_kernel::Plugin`), version, name, and optional `panel`. A panel specifies a record suffix and labeled fields; the window reads the latest matching `plugin:<id>/<record>` from the selected loaded session and renders those values without plugin JavaScript. A plugin uses `append_plugin_record` to append such records; the session layer marks them ignorable.
+
+The Plugins page lists the linked manifests and loader status. It reports when the selected conversation is not loaded. Activation and configuration diagnostics are deliberately generic and do not expose arbitrary error text. In-process Rust code has the privileges of the engine; this kit does not implement a process sandbox, signatures, snapshot approval, or a session-permission broker.

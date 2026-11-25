@@ -46,6 +46,7 @@ impl Plugin for ExitThenFailFixture {
 pub fn registry() -> PluginRegistry {
     let mut registry = PluginRegistry::default();
     registry
+        .add::<crate::plugin_inventory::PluginInventory>("hoh:plugin-inventory")
         .add::<ConfigEditor>("@deepseek-ai/dsh-config-editor")
         .add::<hoh_llm::LlmPlugin>("@deepseek-ai/dsh-llm")
         .add::<hoh_session::SessionPlugin>("@deepseek-ai/dsh-session")
@@ -109,6 +110,7 @@ pub fn registry() -> PluginRegistry {
         .add::<hoh_harness_codex::HarnessCodexPlugin>("hoh:harness-codex")
         .add::<hoh_external_harness::ExternalHarnessWindowPlugin>("hoh:external-harness-window");
     crate::v1_registry::add(&mut registry);
+    hoh_authored_plugins::register(&mut registry);
     #[cfg(debug_assertions)]
     if std::env::var_os("HOH_TEST_EXIT_THEN_FAIL").is_some() {
         registry.add::<ExitThenFailFixture>("hoh:test-exit-then-fail");

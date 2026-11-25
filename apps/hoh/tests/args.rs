@@ -421,3 +421,11 @@ fn keeps_its_own_help_for_an_invocation_with_no_app_to_hand_it_to() {
     }
     assert_eq!(code(&["--version"]), 0);
 }
+
+#[test]
+fn routes_plugin_new_without_a_profile() {
+    assert_eq!(
+        value(&["plugin", "new", "turn-note"]),
+        json!({"mode":"plugin-new","id":"turn-note"})
+    );
+}

@@ -29,4 +29,5 @@ Examples:
   dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
   dsh tui --resume <session>                arguments after the launcher flags reach the app
   dsh web --help                            the web app's own flags and help
-  dsh plugin --profile tui add <package>    install a plugin into the tui profile
+  hoh plugin new <id>                       create an in-repository Rust plugin scaffold
+  dsh plugin --profile tui add <package>    manage a profile plugin (unavailable in this build)

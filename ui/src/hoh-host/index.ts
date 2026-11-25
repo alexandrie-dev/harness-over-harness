@@ -8,6 +8,7 @@
 // and `/.well-known/t3/environment` through `globalThis.fetch`; both are answered here, in memory.
 import type { HohEngine } from './engine.ts';
 import { HohHost } from './host.ts';
+import { pluginInventory } from './plugin-inventory.ts';
 import { installHohFetch, installHohXhr } from './http.ts';
 import { installHohWebSocket, socketMatcher } from './socket.ts';
 import { WireServer, type WireServerOptions } from './wire.ts';
@@ -39,6 +40,7 @@ export function installHohHost(options: InstallOptions) {
     method === 'POST' ? host.receiveUpload(pathname, contentType, body) : Promise.resolve({ status: 404 }), options.target);
   // The home screen (src/t3-entry/hoh-screens) reads the host through this handle.
   (options.target ?? globalThis).__HOH_HOME__ = host.home;
+  (options.target ?? globalThis).__HOH_PLUGINS__ = pluginInventory(options.engine);
   (options.target ?? globalThis).__HOH_TRUST_ENGINE__ = {
     request: (method: string, params: unknown) => host.trustRequest(method, params),
     subscribe: (listener: any) => options.engine.subscribe(listener),
@@ -47,6 +49,6 @@ export function installHohHost(options: InstallOptions) {
   return {
     host,
     server,
-    uninstall: () => { restoreSocket(); restoreFetch(); restoreXhr(); host.stop(); },
+    uninstall: () => { delete (options.target ?? globalThis).__HOH_PLUGINS__; restoreSocket(); restoreFetch(); restoreXhr(); host.stop(); },
   };
 }
