@@ -18,7 +18,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use hoh_agent::{AgentRegistry, AgentStatus, Agents, ExecutorSelection, stored_executor_binding};
+use hoh_agent::{
+    Agent, AgentRegistry, AgentStatus, Agents, ExecutorSelection, stored_executor_binding,
+};
 use hoh_error::BoxError;
 use hoh_kernel::{Cfg, Context, Inject, Logger, NoConfig, Plugin, Service};
 use hoh_loader::ProfileContextKey;
@@ -67,6 +69,28 @@ const ENTRIES: &str = "hoh/workspace/entries";
 const ADD: &str = "hoh/workspace/add";
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(30);
 const TITLE_GENERATE: &str = "hoh/executor/title/generate";
+
+/// Keep input blocked until folder trust has been changed and its old processes stopped.
+#[derive(Default)]
+struct TrustReservations(Vec<Arc<dyn Agent>>);
+
+impl TrustReservations {
+    fn reserve(&mut self, agent: Arc<dyn Agent>) -> Result<(), BoxError> {
+        agent.reserve_deletion().map_err(|_| -> BoxError {
+            "TRUST_REVOKE_BUSY: Wait for the conversation to finish before revoking folder trust.".into()
+        })?;
+        self.0.push(agent);
+        Ok(())
+    }
+}
+
+impl Drop for TrustReservations {
+    fn drop(&mut self) {
+        for agent in self.0.drain(..).rev() {
+            agent.release_deletion();
+        }
+    }
+}
 const METHODS: [&str; 10] = [
     DISCOVER,
     SELECT,
@@ -353,6 +377,7 @@ impl Window {
                 let folder = self.known_folder(&params.cwd).await?;
                 let profile = self.path.parent().ok_or("missing profile")?;
                 let mut sessions = Vec::new();
+                let mut reservations = TrustReservations::default();
                 if !params.trust
                     && let Some(directories) = self.ctx.get::<WorkingDirectoryKey>()
                 {
@@ -363,9 +388,7 @@ impl Window {
                             continue;
                         }
                         let id = agent.session().id().to_string();
-                        if agent.status() != AgentStatus::Idle {
-                            return Err("TRUST_REVOKE_BUSY: Wait for the conversation to finish before revoking folder trust.".into());
-                        }
+                        reservations.reserve(agent)?;
                         sessions.push(id);
                     }
                 }
