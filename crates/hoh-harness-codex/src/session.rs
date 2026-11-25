@@ -1163,7 +1163,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
 }
 
 async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
-    if matches!(
+    let turn_scoped = matches!(
         method,
         "item/agentMessage/delta"
             | "item/reasoning/summaryTextDelta"
@@ -1175,7 +1175,21 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
             | "item/started"
             | "item/completed"
             | "turn/completed"
-    ) {
+    );
+    if turn_scoped || method == "turn/started" {
+        // Codex also publishes subagent turn and item notifications on this connection.
+        // They must not open, end, or add items to the conversation we own.
+        let state = lock(&inner.state);
+        if !state.thread_id.is_empty()
+            && params
+                .get("threadId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty() && id != state.thread_id)
+        {
+            return;
+        }
+    }
+    if turn_scoped {
         let checked = active_context(&lock(&inner.state), &params);
         if let Err(message) = checked {
             protocol_violation(inner, message).await;

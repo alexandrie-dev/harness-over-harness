@@ -823,6 +823,50 @@ async fn duplicate_native_request_ids_close_fail_closed_without_answering_anothe
 }
 
 #[tokio::test]
+async fn subagent_notifications_leave_the_parent_turn_and_its_output_intact() {
+    let temp = TempDir::new().unwrap();
+    let (harness, _) = harness(&temp, "subagent-notifications");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Full)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "parent-turn".into(),
+            text: "fixture".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let mut turns_started = 0;
+    let mut text = String::new();
+    loop {
+        match event(&mut started.events).await {
+            HarnessEvent::TurnStarted { turn_id } => {
+                assert_eq!(turn_id, "parent-turn");
+                turns_started += 1;
+            }
+            HarnessEvent::TextDelta { text: delta, .. } => text.push_str(&delta),
+            HarnessEvent::TurnCompleted { turn_id } => {
+                assert_eq!(turn_id, "parent-turn");
+                break;
+            }
+            HarnessEvent::SessionEnded {
+                reason, message, ..
+            } => {
+                panic!("child notification stopped the parent: {reason:?}: {message:?}");
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(turns_started, 1);
+    assert_eq!(text, "part done");
+}
+
+#[tokio::test]
 async fn foreign_thread_requests_and_resolutions_fail_before_showing_a_card() {
     for (scenario, forbidden_id) in [
         ("foreign-thread-request", Some("foreign-approval")),

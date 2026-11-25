@@ -290,6 +290,19 @@ fn main() {
                 send(
                     json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
                 );
+                if scenario == "subagent-notifications" {
+                    send(
+                        json!({"method":"turn/started","params":{"threadId":"child-thread","turn":{"id":"child-turn","status":"inProgress"}}}),
+                    );
+                    send(
+                        json!({"method":"item/agentMessage/delta","params":{"threadId":"child-thread","turnId":"child-turn","itemId":"message-1","delta":"child output"}}),
+                    );
+                    send(
+                        json!({"method":"turn/completed","params":{"threadId":"child-thread","turn":{"id":"child-turn","status":"completed"}}}),
+                    );
+                    finish_turn("completed");
+                    continue;
+                }
                 if scenario == "nested-parent" {
                     send(
                         json!({"method":"item/started","params":{"threadId":"thread-stub","turnId":"turn-stub","parentItemId":"collab-parent","item":{"type":"commandExecution","id":"cmd-1","command":"printf hello","cwd":"/work","status":"inProgress","aggregatedOutput":""}}}),
